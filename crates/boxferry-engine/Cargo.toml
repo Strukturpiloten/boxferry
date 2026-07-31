@@ -1,0 +1,13 @@
+[package]
+name = "boxferry-engine"
+description = "Conversion planning, policy, capability, and diagnostic engine for BoxFerry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true

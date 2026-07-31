@@ -1,0 +1,6 @@
+[alias]
+ci-check = "check --locked --workspace --all-targets --all-features"
+ci-clippy = "clippy --locked --workspace --all-targets --all-features -- -D warnings"
+ci-doc = "doc --locked --workspace --all-features --no-deps"
+ci-doctest = "test --locked --doc --workspace --all-features"
+ci-test = "test --locked --workspace --all-targets --all-features"

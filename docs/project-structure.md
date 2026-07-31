@@ -1,12 +1,17 @@
-# Target project structure
+# Project structure
 
-BoxFerry will be a Cargo workspace from its first implementation milestone. The following is the target structure, not a statement that every directory already exists.
+BoxFerry is a Cargo workspace. The CLI, neutral model, and engine crates are scaffolded; entries marked `planned` are created only when their milestone begins.
 
 ```text
 boxferry/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── rust-toolchain.toml
+├── rustfmt.toml
+├── clippy.toml
+├── deny.toml
+├── .cargo/
+│   └── config.toml              # canonical Cargo aliases
 ├── AGENTS.md
 ├── README.md
 ├── LICENSE
@@ -14,22 +19,23 @@ boxferry/
 │   ├── boxferry/                 # CLI executable
 │   ├── boxferry-model/           # format-independent application model
 │   ├── boxferry-engine/          # planning, policies, capabilities, diagnostics
-│   ├── boxferry-compose/         # ComposeLens mapping
-│   ├── boxferry-quadlet/         # QuadletLens mapping
-│   ├── boxferry-kubernetes/      # Kubernetes mapping and target policy
-│   ├── boxferry-docker/          # Docker runtime inspection
-│   ├── boxferry-podman/          # Podman runtime inspection
-│   ├── boxferry-helm/            # Helm rendering/generation integration
-│   ├── boxferry-kustomize/       # Kustomize rendering/generation integration
-│   └── boxferry-testkit/         # shared test builders; never a runtime dependency
+│   ├── boxferry-compose/         # planned: ComposeLens mapping
+│   ├── boxferry-quadlet/         # planned: QuadletLens mapping
+│   ├── boxferry-kubernetes/      # planned: Kubernetes mapping and target policy
+│   ├── boxferry-docker/          # planned: Docker runtime inspection
+│   ├── boxferry-podman/          # planned: Podman runtime inspection
+│   ├── boxferry-helm/            # planned: Helm rendering/generation integration
+│   ├── boxferry-kustomize/       # planned: Kustomize rendering/generation integration
+│   └── boxferry-testkit/         # planned: shared test builders; test-only
 ├── docs/
-├── tests/
+├── tests/                        # planned with the first conversion scenarios
 │   ├── conversions/              # cross-format golden scenarios
 │   ├── real-world/               # licensed, provenance-recorded projects
 │   └── runtimes/                 # opt-in Docker, Podman, and Kubernetes tests
 └── .github/
-    ├── workflows/
-    └── ISSUE_TEMPLATE/
+    ├── renovate.json
+    └── workflows/
+        └── ci.yml
 ```
 
 ## Crate publication policy

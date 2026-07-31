@@ -11,7 +11,8 @@ Read these documents in order:
 3. `docs/project-structure.md`
 4. `docs/conversion-model.md`
 5. `docs/testing.md`
-6. `docs/decisions/README.md` and all accepted ADRs
+6. `docs/dependency-policy.md`
+7. `docs/decisions/README.md` and all accepted ADRs
 
 If a change contradicts an accepted ADR, update or supersede the ADR in the same change. Do not let code silently redefine the architecture.
 
@@ -49,5 +50,21 @@ Using a third-party dependency is allowed when its license, maintenance state, a
 - Update capability data and evidence when target-version behavior changes.
 - Update documentation in the same change as user-visible behavior or architectural changes.
 - Avoid adding empty abstractions for hypothetical formats. New adapters need a defined input/output contract and tests.
+- Pin every GitHub Action to its full commit SHA and append its exact release tag as a comment. Verify new pins upstream; Renovate must preserve and update both values.
 
-No Rust workspace exists yet. Once it is scaffolded, document canonical formatting, linting, testing, and documentation commands here and in `docs/testing.md`.
+## Canonical development commands
+
+The workspace uses Rust 2024, supports Rust 1.85.0 and newer, and pins the normal development toolchain in `rust-toolchain.toml`.
+
+```shell
+cargo fmt --all -- --check
+cargo ci-check
+cargo ci-clippy
+cargo ci-test
+cargo ci-doctest
+RUSTDOCFLAGS="-D warnings" cargo ci-doc
+cargo +1.85.0 ci-check
+cargo deny check
+```
+
+The `ci-*` aliases in `.cargo/config.toml` use locked resolution and all workspace features and targets where applicable. Do not weaken an alias or CI lint to accommodate new code; address the finding or document a narrowly justified policy change.

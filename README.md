@@ -60,6 +60,10 @@ Repository-specific guidance for coding agents is in [AGENTS.md](AGENTS.md).
 
 BoxFerry is a new implementation. It is not a fork or continuation of Podlet, and source code is not imported from Podlet. Existing tools may be used for behavioral comparison and interoperability testing, with their provenance recorded in test metadata.
 
+## Stewardship
+
+BoxFerry is created and maintained by [Martin “Becks” Beckert](https://github.com/TheRealBecks) through [Strukturpiloten OHG](https://www.strukturpiloten.de/). The project is part of Strukturpiloten's work on open, maintainable, and portable container infrastructure.
+
 ## License
 
 BoxFerry is licensed under the [Mozilla Public License 2.0](LICENSE).

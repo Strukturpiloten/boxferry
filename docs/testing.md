@@ -56,4 +56,17 @@ If redistribution is not permitted, store a generation script or minimal origina
 
 ## Canonical commands
 
-The workspace has not been scaffolded yet. Once it exists, this document must list the exact commands used by CI for formatting, linting, unit tests, integration tests, documentation, dependency policy, and minimum-supported-Rust-version checks.
+The workspace uses Rust 2024 with an MSRV of 1.85.0. `rust-toolchain.toml` pins the normal development toolchain; the explicit MSRV command prevents that pin from hiding accidental use of newer language or library features.
+
+```shell
+cargo fmt --all -- --check
+cargo ci-check
+cargo ci-clippy
+cargo ci-test
+cargo ci-doctest
+RUSTDOCFLAGS="-D warnings" cargo ci-doc
+cargo +1.85.0 ci-check
+cargo deny check
+```
+
+The `ci-*` aliases use `--locked`, all workspace features, and all targets where the Cargo command supports them. CI also runs markdownlint and lychee over the documentation. Runtime and cross-platform/version matrices remain opt-in until their isolated harnesses exist; add their exact commands before enabling them in CI.
