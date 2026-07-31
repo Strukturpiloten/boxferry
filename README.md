@@ -51,6 +51,7 @@ Start with the [documentation index](docs/README.md). Important design documents
 - [Target project structure](docs/project-structure.md)
 - [Conversion model and diagnostics](docs/conversion-model.md)
 - [Testing strategy](docs/testing.md)
+- [Cross-repository implementation plan](docs/implementation-plan.md)
 - [Roadmap](docs/roadmap.md)
 - [Architecture decisions](docs/decisions/README.md)
 

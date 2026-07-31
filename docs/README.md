@@ -10,6 +10,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Testing strategy](testing.md) — unit, fixture, compatibility, and runtime testing
 - [Fixture format](fixture-format.md) — shared metadata, provenance, and secrets contract
 - [Dependency and license policy](dependency-policy.md) — dependency selection, allowed sources, and license checks
+- [Implementation plan](implementation-plan.md) — synchronized cross-repository tasks T1–T7
 - [Roadmap](roadmap.md) — ordered milestones without calendar promises
 - [Architecture decisions](decisions/README.md) — durable decisions and their rationale
 

@@ -2,6 +2,8 @@
 
 This roadmap describes dependency order, not delivery dates. A later phase may be explored early, but stable behavior must be built on completed lower layers.
 
+Cross-repository delivery uses the stable task numbers in the [implementation plan](implementation-plan.md). This roadmap remains the detailed internal phase order for BoxFerry.
+
 ## Phase 0: foundation
 
 - Accept repository and licensing decisions.
