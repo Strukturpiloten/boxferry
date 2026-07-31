@@ -8,6 +8,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Project structure](project-structure.md) — intended Cargo workspace and ownership boundaries
 - [Conversion model](conversion-model.md) — application model, conversion outcomes, and diagnostics
 - [Testing strategy](testing.md) — unit, fixture, compatibility, and runtime testing
+- [Fixture format](fixture-format.md) — shared metadata, provenance, and secrets contract
 - [Dependency and license policy](dependency-policy.md) — dependency selection, allowed sources, and license checks
 - [Roadmap](roadmap.md) — ordered milestones without calendar promises
 - [Architecture decisions](decisions/README.md) — durable decisions and their rationale

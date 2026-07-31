@@ -47,6 +47,10 @@ Every imported fixture requires:
 
 If redistribution is not permitted, store a generation script or minimal original reproduction instead of the source file.
 
+## Test organization
+
+Cross-crate scenarios are organized in [`../tests/`](../tests/README.md), and Cargo-discovered repository-policy tests live in `crates/boxferry/tests/`. Fixtures live in [`../fixtures/`](../fixtures/README.md) and are validated against the versioned [fixture manifest contract](fixture-format.md). Product suites are added only with implemented behavior and meaningful assertions.
+
 ## Security rules
 
 - Never commit live credentials, tokens, private keys, or production inspect output.
@@ -61,11 +65,13 @@ The workspace uses Rust 2024 with an MSRV of 1.85.0. `rust-toolchain.toml` pins 
 ```shell
 cargo fmt --all -- --check
 cargo ci-check
+cargo ci-policy
 cargo ci-clippy
 cargo ci-test
 cargo ci-doctest
 RUSTDOCFLAGS="-D warnings" cargo ci-doc
 cargo +1.85.0 ci-check
+cargo +1.85.0 ci-policy
 cargo deny check
 ```
 

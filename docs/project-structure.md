@@ -17,6 +17,7 @@ boxferry/
 ├── LICENSE
 ├── crates/
 │   ├── boxferry/                 # CLI executable
+│   │   └── tests/                # repository-policy integration tests
 │   ├── boxferry-model/           # format-independent application model
 │   ├── boxferry-engine/          # planning, policies, capabilities, diagnostics
 │   ├── boxferry-compose/         # planned: ComposeLens mapping
@@ -27,11 +28,12 @@ boxferry/
 │   ├── boxferry-helm/            # planned: Helm rendering/generation integration
 │   ├── boxferry-kustomize/       # planned: Kustomize rendering/generation integration
 │   └── boxferry-testkit/         # planned: shared test builders; test-only
+├── fixtures/
+│   └── README.md                  # fixture location and safety rules
+├── tests/
+│   └── README.md                  # cross-crate scenario ownership
 ├── docs/
-├── tests/                        # planned with the first conversion scenarios
-│   ├── conversions/              # cross-format golden scenarios
-│   ├── real-world/               # licensed, provenance-recorded projects
-│   └── runtimes/                 # opt-in Docker, Podman, and Kubernetes tests
+│   └── fixture-format.md          # versioned fixture manifest contract
 └── .github/
     ├── renovate.json
     └── workflows/

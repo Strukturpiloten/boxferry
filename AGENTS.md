@@ -59,11 +59,13 @@ The workspace uses Rust 2024, supports Rust 1.85.0 and newer, and pins the norma
 ```shell
 cargo fmt --all -- --check
 cargo ci-check
+cargo ci-policy
 cargo ci-clippy
 cargo ci-test
 cargo ci-doctest
 RUSTDOCFLAGS="-D warnings" cargo ci-doc
 cargo +1.85.0 ci-check
+cargo +1.85.0 ci-policy
 cargo deny check
 ```
 
