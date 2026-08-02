@@ -15,6 +15,12 @@ homepage = "https://www.strukturpiloten.de/"
 repository = "https://github.com/Strukturpiloten/boxferry"
 license = "MPL-2.0"
 
+[workspace.metadata.strukturpiloten]
+company = "Strukturpiloten OHG"
+github = "https://github.com/TheRealBecks"
+maintainer = 'Martin "Becks" Beckert'
+website = "https://www.strukturpiloten.de/"
+
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 dbg_macro = "warn"

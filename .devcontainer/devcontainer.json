@@ -1,0 +1,43 @@
+{
+  "name": "BoxFerry",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1.1.0": {
+      "version": "2.97.0"
+    }
+  },
+  "containerEnv": {
+    "PATH": "/home/vscode/.local/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  },
+  "postCreateCommand": "cargo fetch --locked",
+  "waitFor": "postCreateCommand",
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb",
+    "storage": "16gb"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "DavidAnson.vscode-markdownlint",
+        "redhat.vscode-yaml",
+        "rust-lang.rust-analyzer",
+        "streetsidesoftware.code-spell-checker",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "files.watcherExclude": {
+          "**/target/**": true
+        },
+        "rust-analyzer.check.command": "clippy"
+      }
+    }
+  }
+}

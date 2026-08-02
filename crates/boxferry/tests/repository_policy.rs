@@ -20,6 +20,11 @@ fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
 }
 
 #[test]
+fn repository_supply_chain_has_single_sources_and_immutable_pins() -> Result<(), String> {
+    support::validate_repository_supply_chain(&repository_root())
+}
+
+#[test]
 fn fixture_manifests_follow_the_common_contract() -> Result<(), String> {
     support::validate_fixture_tree(&repository_root(), FIXTURE_SUITES)
 }
@@ -82,25 +87,15 @@ summary = "Must not be accepted."
     );
 
     assert!(
-        errors
-            .iter()
-            .any(|error| error.contains("secrets_reviewed")),
+        errors.iter().any(|error| error.contains("secrets_reviewed")),
         "{errors:#?}"
     );
     assert!(
-        errors
-            .iter()
-            .any(|error| error.contains("unsafe fixture path")),
+        errors.iter().any(|error| error.contains("unsafe fixture path")),
         "{errors:#?}"
     );
-    assert!(
-        errors.iter().any(|error| error.contains("`url`")),
-        "{errors:#?}"
-    );
-    assert!(
-        errors.iter().any(|error| error.contains("`revision`")),
-        "{errors:#?}"
-    );
+    assert!(errors.iter().any(|error| error.contains("`url`")), "{errors:#?}");
+    assert!(errors.iter().any(|error| error.contains("`revision`")), "{errors:#?}");
 }
 
 fn repository_root() -> PathBuf {

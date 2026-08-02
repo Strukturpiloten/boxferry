@@ -1,16 +1,49 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended",
-    "helpers:pinGitHubActionDigests",
-    ":configMigration",
-    ":maintainLockFilesWeekly"
-  ],
+  "extends": ["config:best-practices"],
   "dependencyDashboard": true,
   "minimumReleaseAge": "3 days",
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "timezone": "Europe/Berlin",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update versioned Dev Container tools",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nARG [A-Z0-9_]+_VERSION=(?<currentValue>[^\\s]+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Dev Container base release and digest together",
+      "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n# release: (?<currentValue>[^\\s]+)\\nFROM [^\\s]+@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the documented Dev Container CLI",
+      "managerFilePatterns": ["/^docs/development-environment\\.md$/"],
+      "matchStrings": [
+        "@devcontainers/cli@(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "@devcontainers/cli"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the GitHub CLI installed in the Dev Container",
+      "managerFilePatterns": ["/^\\.devcontainer/devcontainer\\.json$/"],
+      "matchStrings": [
+        "\"ghcr\\.io/devcontainers/features/github-cli:[^\"]+\"[\\s\\S]*?\"version\": \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "cli/cli"
+    }
+  ],
   "packageRules": [
     {
       "description": "Group compatible Rust dependency updates",
@@ -30,6 +63,16 @@
       "matchDepTypes": ["action"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
       "groupName": "GitHub Actions"
+    },
+    {
+      "description": "Keep Dev Container feature versions current; the lock file owns digests",
+      "matchManagers": ["devcontainer"],
+      "matchDepTypes": ["feature"],
+      "pinDigests": false,
+      "groupName": "Dev Container",
+      "prBodyNotes": [
+        "Regenerate and commit the Dev Container feature lock as documented in docs/development-environment.md."
+      ]
     },
     {
       "description": "Keep Rust toolchain updates visible and separate",

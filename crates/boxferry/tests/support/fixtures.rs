@@ -19,16 +19,10 @@ const ROOT_FIELDS: &[&str] = &[
     "suite",
 ];
 
-pub(crate) fn validate_fixture_tree(
-    repository_root: &Path,
-    allowed_suites: &[&str],
-) -> Result<(), String> {
+pub(crate) fn validate_fixture_tree(repository_root: &Path, allowed_suites: &[&str]) -> Result<(), String> {
     let fixtures_root = repository_root.join("fixtures");
     if !fixtures_root.join("README.md").is_file() {
-        return Err(format!(
-            "{} must contain README.md",
-            fixtures_root.display()
-        ));
+        return Err(format!("{} must contain README.md", fixtures_root.display()));
     }
 
     let mut manifests = Vec::new();
@@ -43,11 +37,7 @@ pub(crate) fn validate_fixture_tree(
     finish(&errors)
 }
 
-pub(crate) fn validate_fixture_manifest_text(
-    name: &str,
-    text: &str,
-    allowed_suites: &[&str],
-) -> Vec<String> {
+pub(crate) fn validate_fixture_manifest_text(name: &str, text: &str, allowed_suites: &[&str]) -> Vec<String> {
     let table = match text.parse::<Table>() {
         Ok(table) => table,
         Err(error) => return vec![format!("{name}: invalid TOML: {error}")],
@@ -182,9 +172,7 @@ fn validate_provenance(name: &str, table: &Table, errors: &mut Vec<String>) {
 
 fn validate_oracle(name: &str, table: &Table, errors: &mut Vec<String>) {
     let Some(oracle) = table.get("oracle").and_then(Value::as_table) else {
-        errors.push(format!(
-            "{name}: generated fixtures require an `oracle` table"
-        ));
+        errors.push(format!("{name}: generated fixtures require an `oracle` table"));
         return;
     };
     for field in ["implementation", "version", "command"] {
@@ -192,13 +180,7 @@ fn validate_oracle(name: &str, table: &Table, errors: &mut Vec<String>) {
     }
 }
 
-fn validate_named_table(
-    name: &str,
-    table: &Table,
-    table_name: &str,
-    field: &str,
-    errors: &mut Vec<String>,
-) {
+fn validate_named_table(name: &str, table: &Table, table_name: &str, field: &str, errors: &mut Vec<String>) {
     let Some(nested) = table.get(table_name).and_then(Value::as_table) else {
         errors.push(format!("{name}: `{table_name}` must be a table"));
         return;
@@ -224,10 +206,7 @@ fn validate_location(path: &Path, fixtures_root: &Path, table: &Table, errors: &
         ));
     }
     if suite_directory != string_field(table, "suite") {
-        errors.push(format!(
-            "{}: suite must match its parent directory",
-            path.display()
-        ));
+        errors.push(format!("{}: suite must match its parent directory", path.display()));
     }
 }
 
@@ -250,12 +229,11 @@ fn validate_referenced_files(path: &Path, table: &Table, errors: &mut Vec<String
 }
 
 fn collect_manifests(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = fs::read_dir(directory)
-        .map_err(|error| format!("failed to read {}: {error}", directory.display()))?;
+    let entries =
+        fs::read_dir(directory).map_err(|error| format!("failed to read {}: {error}", directory.display()))?;
 
     for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("failed to inspect {}: {error}", directory.display()))?;
+        let entry = entry.map_err(|error| format!("failed to inspect {}: {error}", directory.display()))?;
         let path = entry.path();
         let file_type = entry
             .file_type()

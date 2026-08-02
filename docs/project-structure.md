@@ -4,6 +4,7 @@ BoxFerry is a Cargo workspace. The CLI, neutral model, and engine crates are sca
 
 ```text
 boxferry/
+├── .devcontainer/                   # digest-pinned VS Code environment and feature lock
 ├── Cargo.toml
 ├── Cargo.lock
 ├── rust-toolchain.toml

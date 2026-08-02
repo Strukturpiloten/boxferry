@@ -21,14 +21,20 @@ Cross-repository delivery uses the stable task numbers in the [implementation pl
 ## Phase 1: application model and engine — open
 
 - [ ] Implement the minimal application graph for one multi-service application.
+- [ ] Represent resource ownership, lifecycle, service attachment, and declared-source provenance.
 - [ ] Implement provenance and structured diagnostics.
 - [ ] Implement target profiles and conversion outcome policies.
+- [ ] Support strict planning plus explicitly authorized partial output with a diagnostic for every loss.
 - [ ] Provide adapter contracts and an in-memory test adapter.
 
 ## Phase 2: Compose to Quadlet vertical slice — open
 
 - [ ] Consume ComposeLens and QuadletLens as independent dependencies.
 - [ ] Support images, commands, environment, ports, named volumes, bind mounts, and networks.
+- [ ] Preserve declaring-service ownership when a target moves ports or resources to pod scope.
+- [ ] Select pod grouping only when service networking and port semantics remain compatible.
+- [ ] Distinguish application-owned, external, and implicit default networks and volumes.
+- [ ] Translate Compose paths into explicit absolute or systemd-specifier-aware target paths.
 - [ ] Generate a complete compatibility report.
 - [ ] Validate Podman 5.4 and newer capability selection.
 
@@ -36,6 +42,9 @@ Cross-repository delivery uses the stable task numbers in the [implementation pl
 
 - [ ] Inspect existing Podman containers, pods, networks, volumes, and images.
 - [ ] Inspect equivalent Docker resources.
+- [ ] Treat runtime `CreateCommand` data as optional provenance rather than a required source of truth.
+- [ ] Reconstruct overrides by comparing effective container and image inspection data.
+- [ ] Preserve multiple network aliases and resource relationships from observations.
 - [ ] Reconstruct application intent with explicit uncertainty.
 - [ ] Generate Compose and Quadlet definitions from observations.
 
@@ -59,3 +68,9 @@ Cross-repository delivery uses the stable task numbers in the [implementation pl
 - [ ] Add packaging and signed releases.
 - [ ] Publish compatibility matrices and migration guides.
 - [ ] Establish contributor governance and long-term maintenance policy.
+
+## Issue-derived evidence
+
+The dated [Podlet and `compose_spec_rs` issue-corpus review](research/podlet-compose-spec-rs-issues-2026-08-01.md)
+maps real user reports to these phases and to the owning Lens repositories. Issue state does not
+complete a task or establish compatibility; specifications and exact-version tests remain required.

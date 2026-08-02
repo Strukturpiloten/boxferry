@@ -4,7 +4,8 @@ Dependencies are design decisions, not incidental implementation details. Prefer
 
 ## Baseline rules
 
-- Use an exact, reviewable Cargo version requirement; wildcard requirements are denied.
+- Use explicit, compatible Cargo version requirements by default; wildcard requirements are denied.
+- Use an exact pin only for a documented compatibility or representation reason.
 - Use crates.io releases by default. Unapproved registries and Git dependencies are denied.
 - Keep default features only when they are understood and useful.
 - Avoid overlapping crates that solve the same problem without a documented reason.
