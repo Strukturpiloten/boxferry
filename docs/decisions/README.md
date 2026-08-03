@@ -14,6 +14,7 @@ Architecture decision records capture choices that constrain future development.
 | ADR                                           | Status   | Decision                                                                        |
 | --------------------------------------------- | -------- | ------------------------------------------------------------------------------- |
 | [0001](0001-project-boundaries-and-origin.md) | accepted | Independent repositories, dependency direction, and from-scratch implementation |
+| [0002](0002-public-library-facade.md)         | accepted | Public library facade, reusable component crates, and CLI parity                |
 
 ## Adding an ADR
 

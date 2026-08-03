@@ -1,7 +1,10 @@
 [alias]
 ci-check = "check --locked --workspace --all-targets --all-features"
 ci-clippy = "clippy --locked --workspace --all-targets --all-features -- -D warnings"
+ci-compose = "check --locked --package boxferry --all-targets --no-default-features --features compose"
+ci-core = "check --locked --package boxferry --all-targets --no-default-features"
 ci-doc = "doc --locked --workspace --all-features --no-deps"
 ci-doctest = "test --locked --doc --workspace --all-features"
 ci-policy = "test --locked --package boxferry --test repository_policy"
+ci-quadlet = "check --locked --package boxferry --all-targets --no-default-features --features quadlet"
 ci-test = "test --locked --workspace --all-targets --all-features"

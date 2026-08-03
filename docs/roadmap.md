@@ -9,34 +9,58 @@ Cross-repository delivery uses the stable task numbers in the [implementation pl
 - [x] Completed and validated
 - [ ] Open
 
-## Phase 0: foundation — in progress
+## Phase 0: foundation — completed
 
 - [x] Accept repository and licensing decisions.
 - [x] Establish documentation and ADR practice.
 - [x] Scaffold the Cargo workspace and crate boundaries.
+- [x] Define the public library facade, reusable component-crate, CLI-parity, and publication boundaries.
 - [x] Define Rust version, lint, dependency, CI, and release policies.
 - [x] Define fixture provenance requirements.
-- [ ] Define the product diagnostic schema.
+- [x] Define the product diagnostic schema.
 
-## Phase 1: application model and engine — open
+## Phase 1: application model and engine — completed
 
-- [ ] Implement the minimal application graph for one multi-service application.
-- [ ] Represent resource ownership, lifecycle, service attachment, and declared-source provenance.
-- [ ] Implement provenance and structured diagnostics.
-- [ ] Implement target profiles and conversion outcome policies.
-- [ ] Support strict planning plus explicitly authorized partial output with a diagnostic for every loss.
-- [ ] Provide adapter contracts and an in-memory test adapter.
+- [x] Implement the minimal application graph for one multi-service application.
+- [x] Represent resource ownership, lifecycle, service attachment, and declared-source provenance.
+- [x] Implement provenance and structured diagnostics.
+- [x] Implement target profiles and conversion outcome policies.
+- [x] Support strict planning plus explicitly authorized partial output with a diagnostic for every loss.
+- [x] Provide adapter contracts and an in-memory test adapter.
 
-## Phase 2: Compose to Quadlet vertical slice — open
+## Phase 2: Compose to Quadlet vertical slice — completed
 
-- [ ] Consume ComposeLens and QuadletLens as independent dependencies.
-- [ ] Support images, commands, environment, ports, named volumes, bind mounts, and networks.
-- [ ] Preserve declaring-service ownership when a target moves ports or resources to pod scope.
-- [ ] Select pod grouping only when service networking and port semantics remain compatible.
-- [ ] Distinguish application-owned, external, and implicit default networks and volumes.
-- [ ] Translate Compose paths into explicit absolute or systemd-specifier-aware target paths.
-- [ ] Generate a complete compatibility report.
-- [ ] Validate Podman 5.4 and newer capability selection.
+- [x] Consume released ComposeLens 0.1 as an independent crates.io dependency.
+- [x] Consume QuadletLens 0.1.1 as an independent crates.io dependency.
+- [x] Import Compose images, commands, environment, single ports, named volumes, bind mounts,
+  networks, explicit profiles, source provenance, and SELinux relabel intent.
+- [x] Consume a loss-aware typed ComposeLens merged-project view for multi-file projects without
+  reparsing canonical YAML or losing source provenance.
+- [x] Export the first neutral subset through QuadletLens with explicit outcomes for deferred value forms.
+- [x] Preserve declaring-service ownership by keeping the first slice in separate container units.
+- [x] Select pod grouping only when service networking and port semantics remain compatible.
+- [x] Distinguish application-owned, external, and implicit default networks and volumes.
+- [x] Translate absolute and systemd-specifier paths and resolve relative paths only with an explicit caller-provided project root.
+- [x] Generate a complete compatibility report for every first-slice target decision.
+- [x] Validate Podman 5.4.0 through the finite current QuadletLens catalogue ceiling.
+
+Current dependency gates:
+
+- ComposeLens 0.1.1 is published and consumed through its native merged-project view. The adapter
+  regression imports complete unquoted short-volume scalars such as `./data:/data:Z,ro` and retains
+  all contributing multi-file source origins.
+- QuadletLens 0.1.1 is published and consumed through its validated document builder and finite
+  capability catalogue. The exporter generates container, optional explicitly selected pod,
+  application-owned network, and application-owned volume units; retains external resources as
+  direct references; validates its native dependency graph; and redacts generated contents from
+  `Debug` output. Single-pod grouping requires compatible declarations and explicit approximation
+  authorization; incompatible requests fail without fallback.
+- Public-facade golden scenarios prove multi-file Compose processing, explicit profile selection,
+  strict/partial/approximate authorization, exact separate-container and pod-grouped file bytes,
+  stable diagnostics, dependency graphs, and provenance.
+- Relative bind paths resolve lexically when the caller supplies their absolute Compose project
+  root; otherwise they remain explicit losses. Tilde/home and non-POSIX forms, per-network aliases,
+  and quoting-dependent values remain documented target-side losses.
 
 ## Phase 3: runtime migration — open
 

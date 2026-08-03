@@ -1,0 +1,34 @@
+name: ferry-demo
+services:
+  web:
+    image: registry.example:5000/team/web:1.2@sha256:abcdef
+    command: ["php", "-v"]
+    environment:
+      EMPTY: ""
+      FROM_HOST:
+      PORT: 8080
+    ports:
+      - "127.0.0.1:8080:80/tcp"
+      - target: 8443
+        published: 8443
+        protocol: tcp
+    volumes:
+      - data:/var/lib/data:ro
+      - "./config:/etc/app:Z,ro"
+      - type: bind
+        source: ./shared
+        target: /srv/shared
+        bind:
+          selinux: z
+    networks:
+      frontend:
+        aliases:
+          - web.local
+  worker:
+    image: registry.example/team/worker:1
+    profiles:
+      - worker
+volumes:
+  data:
+networks:
+  frontend:

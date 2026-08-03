@@ -32,6 +32,11 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check all targets
         run: cargo ci-check
+      - name: Check facade feature boundaries
+        run: |
+          cargo ci-core
+          cargo ci-compose
+          cargo ci-quadlet
       - name: Check repository policies
         run: cargo ci-policy
       - name: Run Clippy

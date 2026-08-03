@@ -6,20 +6,22 @@ BoxFerry reports semantic fidelity. Successfully producing a file does not by it
 
 ## Application graph
 
-The application model is a graph rather than a flat list of containers. Expected node types include:
+The first application model is an ordered graph rather than a flat list of containers. Implemented
+nodes and attachments include:
 
 - application
-- workload
-- container
-- image or build input
+- service
+- image and command
 - network
 - storage
-- secret
-- configuration item
-- endpoint
-- health check
+- environment value
+- published port
 
-Edges express dependencies, grouping, attachment, exposure, ownership, and provenance. This permits a single-host Compose project, a Quadlet pod, and a multi-node Kubernetes workload to be compared without treating them as identical.
+Service collections express network and storage attachment, exposure, lifecycle ownership, and
+provenance. Workload grouping, health checks, build input, secrets, configuration objects, and
+dependencies are added with the native vertical slices. This permits a single-host Compose project,
+a Quadlet pod, and a multi-node Kubernetes workload to be compared without treating them as
+identical.
 
 ## Provenance
 
@@ -35,36 +37,40 @@ Provenance is necessary for useful diagnostics and for distinguishing explicit v
 
 ## Conversion outcomes
 
-Each mapped feature receives one outcome:
+The core planner assigns each mapped subject one fidelity class:
 
-| Outcome        | Meaning                                                                 |
-| -------------- | ----------------------------------------------------------------------- |
-| `exact`        | Target expresses the same relevant semantics directly.                  |
-| `equivalent`   | Representation differs but expected behavior is equivalent.             |
-| `approximated` | Target output is usable with a documented semantic difference.          |
-| `manual`       | BoxFerry can generate partial output but a person must complete a step. |
-| `omitted`      | Feature was intentionally omitted by configured policy.                 |
-| `unsupported`  | No acceptable mapping or fallback exists.                               |
-| `unknown`      | BoxFerry cannot prove the source or target behavior.                    |
+| Outcome       | Meaning                                                                 |
+| ------------- | ----------------------------------------------------------------------- |
+| `exact`       | Target expresses the relevant intent, even if representation differs.   |
+| `approximate` | Target output has a documented semantic difference or manual follow-up. |
+| `unsupported` | No acceptable mapping or fallback exists.                               |
+| `invalid`     | Source intent or the explicit target profile cannot be planned safely.  |
 
-Unsupported and unknown outcomes are errors by default. Policies may allow approximated, manual, or intentionally omitted outcomes, but they must remain visible in the report.
+Detailed diagnostics state whether an approximation needs manual action or an unsupported feature
+was intentionally omitted. `ExactOnly`, `AllowApproximate`, and `AllowPartial` policies decide
+whether candidate output is released; invalid output is always blocked. Every non-exact outcome
+must reference a diagnostic present in the plan.
 
 ## Diagnostics
 
-A structured diagnostic contains:
+A structured diagnostic currently contains:
 
 - stable diagnostic code
 - severity
 - human-readable summary
-- source location or runtime resource
-- source feature
-- target and target profile
-- conversion outcome
-- explanation
-- suggested action
-- related documentation or capability evidence
+- ordered plain or sensitive fields
+
+Outcomes carry the source provenance that contributed to their decision. Adapter-specific
+diagnostics will add source feature, target capability, explanation, suggested action, and evidence
+fields without changing the redaction contract.
 
 Human and machine-readable renderers consume the same diagnostic objects. JSON output must not be reconstructed from terminal text.
+
+The first target adapter assigns `BFQ0001` through `BFQ0007` to invalid target ranges, finite
+evidence notes, unsupported target mappings, invalid values, native generation failures, and
+capability or explicit grouping decisions. Its warning/error outcomes retain neutral-model
+provenance, while sensitive environment contents remain absent from diagnostic fields. The
+complete boundary is documented in the [Quadlet exporter](quadlet-adapter.md).
 
 ## Target ranges
 

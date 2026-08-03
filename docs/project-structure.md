@@ -1,6 +1,7 @@
 # Project structure
 
-BoxFerry is a Cargo workspace. The CLI, neutral model, and engine crates are scaffolded; entries marked `planned` are created only when their milestone begins.
+BoxFerry is a Cargo workspace. The public facade/CLI package, neutral model, and engine crates are
+scaffolded; entries marked `planned` are created only when their milestone begins.
 
 ```text
 boxferry/
@@ -17,12 +18,14 @@ boxferry/
 ├── README.md
 ├── LICENSE
 ├── crates/
-│   ├── boxferry/                 # CLI executable
-│   │   └── tests/                # repository-policy integration tests
-│   ├── boxferry-model/           # format-independent application model
-│   ├── boxferry-engine/          # planning, policies, capabilities, diagnostics
-│   ├── boxferry-compose/         # planned: ComposeLens mapping
-│   ├── boxferry-quadlet/         # planned: QuadletLens mapping
+│   ├── boxferry/                 # public library facade and CLI executable
+│   │   ├── src/lib.rs            # re-exports supported core and optional adapter APIs
+│   │   ├── src/main.rs           # argument parsing and presentation only
+│   │   └── tests/                # facade contracts and repository-policy tests
+│   ├── boxferry-model/           # ordered application graph, provenance, protected values
+│   ├── boxferry-engine/          # adapters, planning, loss policy, targets, diagnostics
+│   ├── boxferry-compose/         # implemented: ComposeLens import mapping
+│   ├── boxferry-quadlet/         # implemented: validated QuadletLens export mapping
 │   ├── boxferry-kubernetes/      # planned: Kubernetes mapping and target policy
 │   ├── boxferry-docker/          # planned: Docker runtime inspection
 │   ├── boxferry-podman/          # planned: Podman runtime inspection
@@ -43,23 +46,34 @@ boxferry/
 
 ## Crate publication policy
 
-- `boxferry` is the installable application.
-- Internal crates start with `publish = false` even when their boundaries are designed for reuse.
-- A library is published only after its API, support policy, documentation, and semver commitments are explicit.
-- Adapter crates remain independently testable whether or not they are published.
+- `boxferry` is the supported high-level library facade and the package containing the installable
+  application.
+- `boxferry-model` and `boxferry-engine` are reusable component crates. They are intended for
+  publication once T4 establishes their supported API contracts.
+- Format adapters are independently testable and may be published when their first supported
+  native mapping is complete.
+- Runtime adapters are published only when an embedded caller can use them safely without relying
+  on CLI-global state.
+- Test utilities and repository-only tools remain unpublished.
+- Every crate starts with `publish = false`; publication is enabled only with API policy,
+  documentation, package-content checks, and release automation.
+- Supported BoxFerry crates use one lockstep pre-1.0 version so cross-crate requirements and
+  release notes remain understandable.
 
 ## Placement rules
 
-| Concern                                     | Owner                    |
-| ------------------------------------------- | ------------------------ |
-| CLI parsing and presentation                | `boxferry`               |
-| Neutral domain types                        | `boxferry-model`         |
-| Planning and loss policy                    | `boxferry-engine`        |
-| Compose semantic mapping                    | `boxferry-compose`       |
-| Quadlet semantic mapping                    | `boxferry-quadlet`       |
-| Kubernetes resource selection               | `boxferry-kubernetes`    |
-| Runtime command/API handling                | Docker or Podman adapter |
-| Native Compose syntax                       | ComposeLens repository   |
-| Native Quadlet syntax and version catalogue | QuadletLens repository   |
+| Concern                                      | Owner                    |
+| -------------------------------------------- | ------------------------ |
+| Public facade, CLI parsing, and presentation | `boxferry`               |
+| Neutral domain types                         | `boxferry-model`         |
+| Planning and loss policy                     | `boxferry-engine`        |
+| Compose semantic mapping                     | `boxferry-compose`       |
+| Quadlet semantic mapping                     | `boxferry-quadlet`       |
+| Kubernetes resource selection                | `boxferry-kubernetes`    |
+| Runtime command/API handling                 | Docker or Podman adapter |
+| Native Compose syntax                        | ComposeLens repository   |
+| Native Quadlet syntax and version catalogue  | QuadletLens repository   |
 
-Do not place conversion logic in the CLI, native syntax handling in an adapter, or target-specific fields in the neutral model merely to avoid defining a proper mapping.
+Do not place conversion logic in the CLI, native syntax handling in an adapter, or target-specific
+fields in the neutral model merely to avoid defining a proper mapping. Public high-level behavior
+must be callable through the `boxferry` library target before the CLI exposes it.

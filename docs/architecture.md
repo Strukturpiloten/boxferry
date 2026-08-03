@@ -2,7 +2,10 @@
 
 ## Purpose
 
-BoxFerry translates container application intent between formats and environments with explicit compatibility reporting. It is not a text-to-text YAML transformer and does not promise lossless conversion between models with different operational semantics.
+BoxFerry translates container application intent between formats and environments with explicit
+compatibility reporting. Its conversion system is a reusable Rust library; the CLI is one
+application of that library. BoxFerry is not a text-to-text YAML transformer and does not promise
+lossless conversion between models with different operational semantics.
 
 ## System context
 
@@ -30,7 +33,10 @@ It is deliberately not a new container specification. It may carry source proven
 
 ### Conversion engine
 
-The engine coordinates adapters, capability resolution, planning, and diagnostics. It produces a conversion plan before rendering. A plan records what is exact, adjusted, omitted by request, unsupported, or requires manual work.
+The engine coordinates adapters, capability resolution, planning, and diagnostics. Source adapters
+record source-to-neutral-model outcomes, and target adapters add neutral-to-target outcomes. The
+combined plan therefore applies one explicit loss policy to both halves before rendering. A plan
+records what is exact, adjusted, omitted by request, unsupported, or requires manual work.
 
 ### Format adapters
 
@@ -40,6 +46,17 @@ Adapters map between a native model and the application model. They own semantic
 - The Quadlet adapter depends on QuadletLens.
 - The Kubernetes adapter depends on maintained Kubernetes API types.
 - Helm and Kustomize adapters initially invoke native renderers and pass the result to the Kubernetes adapter.
+
+The Compose adapter consumes a `MergedProject`, an optional matching ComposeLens
+`ProfileSelection`, and caller-owned identities for every contributing source document. It builds
+ComposeLens's native project view directly, without canonical rendering or reparsing. BoxFerry does
+not infer active profiles or read the process environment.
+
+The Quadlet exporter consumes the neutral application explicitly, evaluates the caller's Podman
+version range through QuadletLens, and constructs typed native documents. It keeps services as
+separate container units for the first slice, resolves generated network and volume references as
+a document set, and returns structured losses for value forms it cannot encode safely. It never
+reads an installed Podman version or writes unit files.
 
 ### Runtime inspectors
 
@@ -53,21 +70,33 @@ A target profile describes the environment for which output must work. Examples 
 
 Each adapter owns its relevant capability provider. The engine combines capability results but does not contain a global list of platform-specific keys.
 
+### Public facade and CLI
+
+The `boxferry` package contains both a library facade and the `boxferry` executable. The facade
+provides the supported high-level entry point and re-exports deliberately supported component
+surfaces. Format and runtime adapters remain separate crates so applications can select only the
+integrations they need.
+
+The executable owns argument parsing, terminal presentation, configuration-file discovery, and
+process exit codes. It calls public library orchestration APIs for every conversion. A behavior
+that can only be reached through private CLI code is an architectural defect.
+
 ## Dependency rules
 
 ```text
-compose-lens ───▶ boxferry-compose ───┐
-quadlet-lens ───▶ boxferry-quadlet ───┤
-k8s libraries ──▶ boxferry-kubernetes─┤──▶ boxferry CLI
-runtime APIs ───▶ runtime adapters ───┘
-                         ▲
-              model and engine crates
+compose-lens ───▶ boxferry-compose ────┐
+quadlet-lens ───▶ boxferry-quadlet ────┤
+k8s libraries ──▶ boxferry-kubernetes ─┤──▶ boxferry facade ──▶ boxferry CLI
+runtime APIs ───▶ runtime adapters ────┘            ▲
+                                                    │
+                                       model and engine crates
 ```
 
 - Lens libraries never depend on BoxFerry.
 - `boxferry-model` never depends on native-format libraries.
 - Adapters may depend on a native library, the model, and engine interfaces.
-- The CLI composes adapters but does not implement conversion rules.
+- The facade may expose core crates and optional adapters but does not hide their side effects.
+- The CLI consumes the facade and does not implement conversion rules.
 
 ## Execution phases
 
@@ -76,10 +105,10 @@ runtime APIs ───▶ runtime adapters ───┘
 3. Validate according to the selected source implementation profile.
 4. Map into the application model while recording provenance.
 5. Resolve target capabilities.
-6. Build a conversion plan and diagnostics.
-7. Stop before rendering when policy forbids unresolved losses.
-8. Map into the native target model.
-9. Validate and render the target.
+6. Map into the native target model and build a candidate conversion plan.
+7. Validate and render the candidate through the owning native library.
+8. Apply the explicit loss policy before releasing candidate output to the caller.
+9. Optionally write the authorized files through a caller-selected interface.
 10. Optionally verify output with an installed native tool.
 
 ## Safety and predictability

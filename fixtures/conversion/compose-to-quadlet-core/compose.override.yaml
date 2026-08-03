@@ -1,0 +1,8 @@
+services:
+  web:
+    image: registry.example:5000/team/web:1.3@sha256:fedcba
+    environment:
+      PORT: 9090
+      OVERRIDE_ONLY: enabled
+    volumes:
+      - ./data:/srv/data:Z,ro

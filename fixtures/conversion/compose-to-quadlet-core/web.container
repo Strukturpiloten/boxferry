@@ -1,0 +1,10 @@
+[Container]
+Image=registry.example:5000/team/web:1.3@sha256:fedcba
+Exec=php -v
+Environment=EMPTY=
+Environment=PORT=9090
+Environment=OVERRIDE_ONLY=enabled
+PublishPort=127.0.0.1:8080:80/tcp
+PublishPort=8443:8443/tcp
+Volume=data.volume:/var/lib/data:ro
+Network=frontend.network

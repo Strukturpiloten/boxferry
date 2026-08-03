@@ -10,10 +10,12 @@ Read these documents in order:
 2. `docs/implementation-plan.md`
 3. `docs/architecture.md`
 4. `docs/project-structure.md`
-5. `docs/conversion-model.md`
-6. `docs/testing.md`
-7. `docs/dependency-policy.md`
-8. `docs/decisions/README.md` and all accepted ADRs
+5. `docs/library-api.md`
+6. `docs/api-stability.md`
+7. `docs/conversion-model.md`
+8. `docs/testing.md`
+9. `docs/dependency-policy.md`
+10. `docs/decisions/README.md` and all accepted ADRs
 
 If a change contradicts an accepted ADR, update or supersede the ADR in the same change. Do not let code silently redefine the architecture.
 
@@ -46,6 +48,8 @@ Using a third-party dependency is allowed when its license, maintenance state, a
 ## Development rules
 
 - Put code in the target crate described by `docs/project-structure.md`; do not grow a root-level monolith.
+- Keep the `boxferry` facade usable as a library; the CLI must call the same public orchestration
+  APIs available to external consumers.
 - Keep the neutral model independent of Compose, Quadlet, Docker, Podman, and Kubernetes types.
 - Add tests with every behavior change. Prefer small unit tests plus an end-to-end fixture when a mapping changes.
 - Update capability data and evidence when target-version behavior changes.
@@ -60,6 +64,9 @@ The workspace uses Rust 2024, supports Rust 1.85.0 and newer, and pins the norma
 ```shell
 cargo fmt --all -- --check
 cargo ci-check
+cargo ci-core
+cargo ci-compose
+cargo ci-quadlet
 cargo ci-policy
 cargo ci-clippy
 cargo ci-test
