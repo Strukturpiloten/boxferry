@@ -6,9 +6,11 @@
 
 mod observation;
 mod reconstruct;
+mod resolution;
 
 pub use observation::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation, PodObservation,
     RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
 };
 pub use reconstruct::{OverrideReconstruction, RuntimeImporter};
+pub use resolution::{RuntimeResolutionError, RuntimeResolutions, RuntimeResourceKind};

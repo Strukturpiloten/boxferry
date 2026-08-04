@@ -2,13 +2,13 @@
 
 use boxferry_engine::{ConversionKind, DiagnosticCode, ImportAdapter};
 use boxferry_model::{
-    Command, EnvironmentValue, Identifier, ImageReference, Mount, MountSource, NetworkAttachment, ProvenanceKind,
-    ResourceOwnership, SourceId,
+    Command, EnvironmentValue, Identifier, ImageReference, Mount, MountSource, NetworkAttachment, Provenance,
+    ProvenanceKind, ResourceOwnership, SourceId, Sourced,
 };
 use boxferry_runtime::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation,
     OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeImporter,
-    RuntimeSnapshot, VolumeObservation,
+    RuntimeResolutions, RuntimeSnapshot, VolumeObservation,
 };
 
 #[test]
@@ -57,10 +57,7 @@ fn image_comparison_retains_only_inferred_overrides_with_decision_provenance() -
     assert_eq!(service.user().map(|value| value.value().expose()), Some("1001"));
     assert_eq!(service.group().map(|value| value.value().expose()), Some("1002"));
     assert!(service.working_directory().is_none());
-    assert_eq!(
-        service.read_only_root_filesystem().map(boxferry_model::Sourced::value),
-        Some(&true)
-    );
+    assert_eq!(service.read_only_root_filesystem().map(Sourced::value), Some(&true));
 
     for subject in [
         "services.web.command",
@@ -125,10 +122,7 @@ fn preserve_policy_keeps_effective_values_without_requiring_image_inspection() -
         service.working_directory().map(|value| value.value().expose()),
         Some("/srv/observed")
     );
-    assert_eq!(
-        service.read_only_root_filesystem().map(boxferry_model::Sourced::value),
-        Some(&false)
-    );
+    assert_eq!(service.read_only_root_filesystem().map(Sourced::value), Some(&false));
     assert!(
         result
             .outcomes()
@@ -314,6 +308,92 @@ fn pod_membership_becomes_a_provenance_aware_neutral_service_group() -> Result<(
 }
 
 #[test]
+fn explicit_lifecycle_resolutions_retain_observation_and_user_override_provenance() -> Result<(), String> {
+    let container_source = source("runtime:podman:container:web")?;
+    let pod_source = source("runtime:podman:pod:observed")?;
+    let mut container = complete_container(container_source.clone(), "web")?;
+    container.set_image(image_reference()?, None);
+    container.set_pod_source_id(pod_source.clone());
+    container.add_network(NetworkAttachment::new(id("frontend")?, Vec::new()));
+    container.add_mount(
+        Mount::new(MountSource::Volume(id("data")?), "/var/lib/example", false).map_err(|error| error.to_string())?,
+    );
+
+    let mut pod = PodObservation::new(pod_source, id("observed-pod")?);
+    pod.add_member(container_source);
+    let mut snapshot = snapshot()?;
+    snapshot
+        .add_network(NetworkObservation::new(
+            source("runtime:podman:network:frontend")?,
+            id("frontend")?,
+        ))
+        .map_err(|error| error.to_string())?;
+    snapshot
+        .add_volume(VolumeObservation::new(
+            source("runtime:podman:volume:data")?,
+            id("data")?,
+        ))
+        .map_err(|error| error.to_string())?;
+    snapshot.add_container(container).map_err(|error| error.to_string())?;
+    snapshot.add_pod(pod).map_err(|error| error.to_string())?;
+
+    let mut resolutions = RuntimeResolutions::new();
+    resolutions
+        .set_network_ownership(id("frontend")?, user_resolution(ResourceOwnership::External)?)
+        .map_err(|error| error.to_string())?;
+    resolutions
+        .set_volume_ownership(id("data")?, user_resolution(ResourceOwnership::Application)?)
+        .map_err(|error| error.to_string())?;
+    resolutions
+        .set_service_group_ownership(id("observed-pod")?, user_resolution(ResourceOwnership::Application)?)
+        .map_err(|error| error.to_string())?;
+
+    let importer = importer(OverrideReconstruction::PreserveObservedState)?.with_resolutions(resolutions);
+    let result = importer.import(&snapshot);
+    let application = result.application().ok_or("application expected")?;
+    assert_eq!(
+        application.networks()[0].value().ownership(),
+        ResourceOwnership::External
+    );
+    assert_eq!(
+        application.volumes()[0].value().ownership(),
+        ResourceOwnership::Application
+    );
+    assert_eq!(
+        application.service_groups()[0].value().ownership(),
+        ResourceOwnership::Application
+    );
+    for origins in [
+        application.networks()[0].origins(),
+        application.volumes()[0].origins(),
+        application.service_groups()[0].origins(),
+    ] {
+        assert_eq!(
+            origin_kinds(origins),
+            vec![ProvenanceKind::RuntimeObservation, ProvenanceKind::UserOverride]
+        );
+    }
+    for subject in [
+        "networks.frontend",
+        "volumes.data",
+        "service_groups.observed-pod.lifecycle",
+    ] {
+        let outcome = result
+            .outcomes()
+            .iter()
+            .find(|outcome| outcome.subject() == subject)
+            .ok_or_else(|| format!("outcome expected for {subject}"))?;
+        assert_eq!(outcome.kind(), ConversionKind::Approximate);
+        assert_eq!(outcome.diagnostic().map(DiagnosticCode::as_str), Some("BFR0009"));
+        assert_eq!(
+            origin_kinds(outcome.origins()),
+            vec![ProvenanceKind::RuntimeObservation, ProvenanceKind::UserOverride]
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn contradictory_pod_and_container_membership_is_invalid_instead_of_guessed() -> Result<(), String> {
     let container_source = source("runtime:podman:container:web")?;
     let pod_source = source("runtime:podman:pod:example")?;
@@ -394,8 +474,8 @@ fn reconstruction_outcome(
         .ok_or_else(|| "reconstruction outcome expected".to_owned())
 }
 
-fn origin_kinds(origins: &[boxferry_model::Provenance]) -> Vec<ProvenanceKind> {
-    origins.iter().map(boxferry_model::Provenance::kind).collect()
+fn origin_kinds(origins: &[Provenance]) -> Vec<ProvenanceKind> {
+    origins.iter().map(Provenance::kind).collect()
 }
 
 fn expected_inferred_origins() -> Vec<ProvenanceKind> {
@@ -428,4 +508,11 @@ fn id(value: &str) -> Result<Identifier, String> {
 
 fn source(value: &str) -> Result<SourceId, String> {
     SourceId::new(value).map_err(|error| error.to_string())
+}
+
+fn user_resolution(ownership: ResourceOwnership) -> Result<Sourced<ResourceOwnership>, String> {
+    Ok(Sourced::from_source(
+        ownership,
+        Provenance::user_override(source("decision:runtime-lifecycle")?),
+    ))
 }

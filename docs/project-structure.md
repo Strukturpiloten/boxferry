@@ -24,7 +24,7 @@ boxferry/
 │   │   └── tests/                # facade contracts and repository-policy tests
 │   ├── boxferry-model/           # ordered application graph, provenance, protected values
 │   ├── boxferry-engine/          # adapters, planning, loss policy, targets, diagnostics
-│   ├── boxferry-compose/         # implemented: ComposeLens import mapping
+│   ├── boxferry-compose/         # implemented: ComposeLens import/export mapping
 │   ├── boxferry-quadlet/         # implemented: validated QuadletLens export mapping
 │   ├── boxferry-runtime/         # implemented: runtime-neutral observations and reconstruction
 │   ├── boxferry-kubernetes/      # planned: Kubernetes mapping and target policy

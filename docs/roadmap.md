@@ -226,8 +226,11 @@ boundary for pre-existing external Podman secrets.
   uncertainty, provenance, redaction, and policy-controlled outcomes.
 - [x] Generate first-slice Quadlet definitions from caller-supplied observations through the
   public importer, engine, loss policy, and exporter path.
-- [ ] Generate Compose definitions from observations and extend Quadlet generation with explicit
-  lifecycle/grouping resolutions.
+- [x] Apply exact-name, provenance-bearing network, volume, and service-group lifecycle
+  resolutions and preserve one complete application-owned group as a named Quadlet pod.
+- [x] Generate deterministic, parse-back-validated Compose definitions from observations through
+  an exact provider target, optional exact backend runtime, compatibility diagnostics, explicit
+  loss authorization, resource-name preservation, and the public facade.
 
 ## Phase 4: Kubernetes — open
 

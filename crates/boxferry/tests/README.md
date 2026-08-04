@@ -6,3 +6,5 @@ The root [`tests/`](../../../tests/README.md) directory documents cross-crate sc
 
 `public_api.rs` protects the core and additive facade surfaces. `compose_to_quadlet.rs` owns the
 first public end-to-end golden conversion when both native adapter features are enabled.
+`runtime_to_quadlet.rs` and `runtime_to_compose.rs` prove that caller-built observations use the
+same public import, planning, policy, provenance, and secret-redaction path as native files.

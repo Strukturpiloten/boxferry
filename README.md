@@ -79,7 +79,9 @@ Every runtime reconstruction reports that original author intent is uncertain, i
 and environment contents are sensitive by default, and optional creation commands contribute
 provenance without becoming a required source of truth. Consistent Podman pod membership becomes
 an ordered neutral `ServiceGroup`; it records structural membership without inventing shared-
-namespace or lifecycle semantics. Podman response parsing is available
+namespace or lifecycle semantics. Embedded callers can resolve exact observed network, volume,
+and group names as application-owned or external only through provenance-bearing
+`RuntimeResolutions`; there is no implicit lifecycle default. Podman response parsing is available
 behind the non-default `podman-runtime` feature for explicit 5.4.0-through-6.0.2 inspect arrays.
 Embedded callers can acquire explicitly selected resources through a replaceable read-only Podman
 executor. An explicit finite policy can add selected pods' member containers and selected
@@ -114,11 +116,20 @@ already be used from a repository checkout to implement an [`ImportAdapter`](doc
 and [`ExportAdapter`](docs/library-api.md), call `boxferry::convert`, and receive a typed
 `ConversionResult` instead of parsing CLI output.
 
-The additive `compose` feature exposes `ComposeImporter` and `ComposeSource` through the facade.
+The additive `compose` feature exposes `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
+`ComposeRuntime`, and provider target constants through the facade.
 The importer consumes an explicit ComposeLens merged project, maps its native project view without
 rendering and reparsing YAML, preserves every contributing source origin, requires a matching
 ComposeLens profile selection whenever profiles are present, retains SELinux relabel intent, and
 reports unsupported source features as policy-controlled conversion outcomes.
+
+The exporter consumes the neutral application and an exact Docker Compose or `podman-compose`
+provider target, with an optional exact Docker Engine or Podman backend. ComposeLens 0.1.7 owns
+deterministic short/long syntax choices, sensitive-output redaction, and parse-back validation.
+BoxFerry reports compatibility-sensitive tag-plus-digest images, `host-gateway`, Podman user
+namespaces, SELinux relabeling, and SCTP before the caller authorizes output. Runtime-observed
+network and volume names are emitted explicitly so Compose project scoping cannot rename them.
+See the [Compose exporter contract](docs/compose-adapter.md).
 
 The additive `quadlet` feature exposes `QuadletExporter` and its validated file-set output. The
 exporter uses QuadletLens 0.1.6 for typed native construction and capability evidence, supports
@@ -133,6 +144,9 @@ Explicit single-pod grouping is available only for compatible declared networks,
 ordered host mappings. It is
 reported as an approximation because sharing a network namespace changes Compose service
 isolation, and incompatible requests fail without an automatic fallback.
+`QuadletGroupingPolicy::PreserveSingleGroup` separately preserves one complete application-owned
+neutral group under its own name. This also requires approximation authorization because neutral
+membership alone does not prove shared Podman namespace semantics.
 
 The neutral model preserves explicit service host mappings, including the `host-gateway` runtime
 token and IPv4/IPv6 addresses. Compose `extra_hosts` convert to capability-checked Quadlet
@@ -144,7 +158,7 @@ durations, retries, startup grace period, and `start_interval` with field-level 
 Quadlet adapter emits the capability-checked regular health-check subset and reports
 `start_interval` as an explicit loss because Quadlet has no equivalent key.
 
-ComposeLens 0.1.6 service dependencies retain source order, short/long defaults, and field-level
+ComposeLens 0.1.7 service dependencies retain source order, short/long defaults, and field-level
 provenance in the neutral graph. Required and optional startup dependencies become capability-
 checked systemd `Requires`/`Wants` plus `After` directives. A healthy dependency additionally
 enables `Notify=healthy` only when BoxFerry can establish an explicit target health command.
@@ -163,7 +177,7 @@ invalidate the requested grouping rather than selecting a value by service order
 The format-independent graph now also represents application-owned or external configuration and
 secret resources, optional runtime names and material origins, and ordered short/long service
 grants with per-option provenance. Sensitive material and grant values use the same redacting
-`ProtectedString` boundary as environment values. ComposeLens 0.1.6 imports these definitions and
+`ProtectedString` boundary as environment values. ComposeLens 0.1.7 imports these definitions and
 grants. QuadletLens 0.1.6 emits exact mounted-file `Secret=` references for pre-existing external
 Podman secrets, including custom-name default preservation and validated target, UID, GID, and
 read-only mode options. Application-owned secret materialization and Compose config lifecycle are

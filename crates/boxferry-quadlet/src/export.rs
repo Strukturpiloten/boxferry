@@ -39,6 +39,11 @@ pub enum QuadletGroupingPolicy {
     SeparateContainers,
     /// Place every service in one application-owned `.pod` unit when declared topology permits.
     SinglePod,
+    /// Preserve one application-owned neutral service group as its correspondingly named `.pod`.
+    ///
+    /// The group must contain every application service exactly once. This policy does not infer
+    /// how multiple or partial groups should map to Quadlet units.
+    PreserveSingleGroup,
 }
 
 /// Native target adapter for validated Podman Quadlet output.
@@ -282,6 +287,14 @@ struct Mapping<'a> {
     generation_failed: bool,
 }
 
+struct PodPlan {
+    name: String,
+    subject: String,
+    origins: Vec<Provenance>,
+    consumed_group: Option<String>,
+    approximation: &'static str,
+}
+
 #[derive(Clone, Copy)]
 enum HealthcheckScalarKind {
     Duration,
@@ -368,18 +381,34 @@ impl<'a> Mapping<'a> {
             self.generation_failed = true;
             return;
         }
-        let grouped = match self.exporter.grouping_policy {
-            QuadletGroupingPolicy::SeparateContainers => false,
+        let pod_plan = match self.exporter.grouping_policy {
+            QuadletGroupingPolicy::SeparateContainers => None,
             QuadletGroupingPolicy::SinglePod => {
                 if !self.validate_single_pod_grouping() {
                     self.generation_failed = true;
                     return;
                 }
-                true
+                Some(PodPlan {
+                    name: self.application.name().as_str().to_owned(),
+                    subject: "application.pod".to_owned(),
+                    origins: service_origins(self.application.services()),
+                    consumed_group: None,
+                    approximation: "caller-selected single-pod grouping shares one network namespace across source services",
+                })
+            }
+            QuadletGroupingPolicy::PreserveSingleGroup => {
+                let Some(plan) = self.preserve_single_group_plan() else {
+                    self.generation_failed = true;
+                    return;
+                };
+                Some(plan)
             }
         };
         for group in self.application.service_groups() {
-            self.map_service_group(group);
+            if pod_plan.as_ref().and_then(|plan| plan.consumed_group.as_deref()) != Some(group.value().name().as_str())
+            {
+                self.map_service_group(group);
+            }
         }
         for network in self.application.networks() {
             self.map_network(network);
@@ -393,12 +422,81 @@ impl<'a> Mapping<'a> {
         for secret in self.application.secrets() {
             self.map_secret(secret);
         }
-        if grouped {
-            self.map_pod();
+        if let Some(plan) = &pod_plan {
+            self.map_pod(plan);
         }
         for service in self.application.services() {
-            self.map_service(service, grouped);
+            self.map_service(service, pod_plan.as_ref().map(|plan| plan.name.as_str()));
         }
+    }
+
+    fn preserve_single_group_plan(&mut self) -> Option<PodPlan> {
+        let groups = self.application.service_groups();
+        if groups.len() != 1 {
+            let origins = groups
+                .iter()
+                .flat_map(|group| group.origins().iter().cloned())
+                .collect::<Vec<_>>();
+            self.invalid(
+                self.exporter.codes.grouping.clone(),
+                "application.grouping",
+                "preserving a neutral service group requires exactly one group",
+                if groups.is_empty() {
+                    "the application contains no service group"
+                } else {
+                    "the application contains multiple service groups"
+                },
+                &origins,
+            );
+            return None;
+        }
+
+        let group = &groups[0];
+        if group.value().ownership() != ResourceOwnership::Application {
+            self.invalid(
+                self.exporter.codes.grouping.clone(),
+                "application.grouping",
+                "only an application-owned service group can be generated as a Quadlet pod",
+                "resolve the group lifecycle as application-owned before selecting preserve-single-group",
+                group.origins(),
+            );
+            return None;
+        }
+
+        let service_names = self
+            .application
+            .services()
+            .iter()
+            .map(|service| service.value().name().as_str())
+            .collect::<BTreeSet<_>>();
+        let member_names = group
+            .value()
+            .members()
+            .iter()
+            .map(|member| member.value().as_str())
+            .collect::<BTreeSet<_>>();
+        if service_names != member_names || group.value().members().len() != self.application.services().len() {
+            let origins = service_group_origins(group, self.application.services());
+            self.invalid(
+                self.exporter.codes.grouping.clone(),
+                "application.grouping",
+                "preserved Quadlet pod membership must cover the complete application",
+                "the single service group does not contain every application service exactly once",
+                &origins,
+            );
+            return None;
+        }
+        if !self.validate_single_pod_grouping() {
+            return None;
+        }
+
+        Some(PodPlan {
+            name: group.value().name().as_str().to_owned(),
+            subject: format!("service_groups.{}", group.value().name().as_str()),
+            origins: service_group_origins(group, self.application.services()),
+            consumed_group: Some(group.value().name().as_str().to_owned()),
+            approximation: "caller-selected preservation maps structural membership to one shared Podman pod namespace",
+        })
     }
 
     fn validate_dependency_graph(&mut self) -> bool {
@@ -737,21 +835,21 @@ impl<'a> Mapping<'a> {
         }
     }
 
-    fn map_pod(&mut self) {
-        let subject = "application.pod";
-        let name = self.application.name().as_str();
-        let origins = service_origins(self.application.services());
-        let Some(file_name) = self.unit_file_name(subject, name, "pod", &origins) else {
+    fn map_pod(&mut self, plan: &PodPlan) {
+        let subject = plan.subject.as_str();
+        let name = plan.name.as_str();
+        let origins = &plan.origins;
+        let Some(file_name) = self.unit_file_name(subject, name, "pod", origins) else {
             return;
         };
-        if !self.capability("quadlet.unit-type.pod", subject, &origins)
-            || !self.capability("quadlet.pod.name", subject, &origins)
+        if !self.capability("quadlet.unit-type.pod", subject, origins)
+            || !self.capability("quadlet.pod.name", subject, origins)
         {
             return;
         }
 
         let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Pod);
-        if !self.push_pod(&mut builder, PodKey::PodName, name, subject, &origins) {
+        if !self.push_pod(&mut builder, PodKey::PodName, name, subject, origins) {
             return;
         }
 
@@ -795,15 +893,12 @@ impl<'a> Mapping<'a> {
             }
         }
 
-        self.approximate(
-            "application.grouping",
-            "caller-selected single-pod grouping shares one network namespace across source services",
-            &origins,
-        );
-        self.finish_document(file_name, &builder, subject, &origins);
+        self.approximate("application.grouping", plan.approximation, origins);
+        self.finish_document(file_name, &builder, subject, origins);
     }
 
-    fn map_service(&mut self, service: &Sourced<Service>, grouped: bool) {
+    fn map_service(&mut self, service: &Sourced<Service>, pod_name: Option<&str>) {
+        let grouped = pod_name.is_some();
         let name = service.value().name().as_str();
         let subject = format!("services.{name}");
         let Some(file_name) = self.unit_file_name(&subject, name, "container", service.origins()) else {
@@ -881,9 +976,9 @@ impl<'a> Mapping<'a> {
         for (index, mount) in service.value().mounts().iter().enumerate() {
             self.map_mount(&subject, index, mount, &mut builder);
         }
-        if grouped {
+        if let Some(pod_name) = pod_name {
             let pod_subject = format!("{subject}.pod");
-            let pod_reference = format!("{}.pod", self.application.name().as_str());
+            let pod_reference = format!("{pod_name}.pod");
             if self.capability("quadlet.container.pod", &pod_subject, service.origins())
                 && self.push_container(
                     &mut builder,
@@ -2229,6 +2324,25 @@ fn service_origins(services: &[Sourced<Service>]) -> Vec<Provenance> {
         .iter()
         .flat_map(|service| service.origins().iter().cloned())
         .collect()
+}
+
+fn service_group_origins(
+    group: &Sourced<boxferry_model::ServiceGroup>,
+    services: &[Sourced<Service>],
+) -> Vec<Provenance> {
+    let mut origins = group.origins().to_vec();
+    for origin in group
+        .value()
+        .members()
+        .iter()
+        .flat_map(Sourced::origins)
+        .chain(services.iter().flat_map(Sourced::origins))
+    {
+        if !origins.contains(origin) {
+            origins.push(origin.clone());
+        }
+    }
+    origins
 }
 
 fn secret_grant_origins(grant: &Sourced<ResourceGrant>, secret: &Sourced<Secret>) -> Vec<Provenance> {

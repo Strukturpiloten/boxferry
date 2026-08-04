@@ -3,9 +3,12 @@
 use std::path::{Path, PathBuf};
 
 use boxferry_engine::{ConversionKind, DiagnosticCode, ImportAdapter, PlatformVersion, Severity};
-use boxferry_model::{Command, EnvironmentValue, Identifier, MountSource, Protocol, SelinuxRelabel};
+use boxferry_model::{
+    Command, EnvironmentValue, Identifier, MountSource, Protocol, Provenance, ResourceOwnership, SelinuxRelabel,
+    SourceId, Sourced,
+};
 use boxferry_podman::{PodmanImporter, PodmanInspectDocuments, PodmanInspectSource};
-use boxferry_runtime::{EffectiveCommand, OverrideReconstruction, RuntimeImplementation};
+use boxferry_runtime::{EffectiveCommand, OverrideReconstruction, RuntimeImplementation, RuntimeResolutions};
 
 #[test]
 fn podman_5_4_decodes_effective_state_and_relationships_without_raw_id_leaks() -> Result<(), String> {
@@ -112,9 +115,7 @@ fn podman_import_composes_native_losses_with_runtime_override_reconstruction() -
         .ok_or("service group expected")?
         .value();
 
-    assert!(
-        matches!(service.command().map(boxferry_model::Sourced::value), Some(Command::Exec(arguments)) if arguments.len() == 2)
-    );
+    assert!(matches!(service.command().map(Sourced::value), Some(Command::Exec(arguments)) if arguments.len() == 2));
     assert_eq!(service.environment().len(), 1);
     assert_eq!(service.environment()[0].value().name().as_str(), "MODE");
     assert_eq!(group.name().as_str(), "app-pod");
@@ -122,10 +123,7 @@ fn podman_import_composes_native_losses_with_runtime_override_reconstruction() -
     assert_eq!(service.user().map(|value| value.value().expose()), Some("1001"));
     assert_eq!(service.group().map(|value| value.value().expose()), Some("1002"));
     assert!(service.working_directory().is_none());
-    assert_eq!(
-        service.read_only_root_filesystem().map(boxferry_model::Sourced::value),
-        Some(&true)
-    );
+    assert_eq!(service.read_only_root_filesystem().map(Sourced::value), Some(&true));
     assert!(matches!(
         service.environment()[0].value().value(),
         EnvironmentValue::Literal(value) if value.expose() == "production"
@@ -141,6 +139,53 @@ fn podman_import_composes_native_losses_with_runtime_override_reconstruction() -
     }
     assert!(!format!("{result:?}").contains("production"));
     assert!(!format!("{result:?}").contains("1001:1002"));
+    Ok(())
+}
+
+#[test]
+fn podman_importer_forwards_explicit_runtime_lifecycle_resolutions() -> Result<(), String> {
+    let source = fixture_source("podman-inspect-5-4", PlatformVersion::new(5, 4, 2))?;
+    let mut resolutions = RuntimeResolutions::new();
+    resolutions
+        .set_network_ownership(id("frontend")?, resolution(ResourceOwnership::External)?)
+        .map_err(|error| error.to_string())?;
+    resolutions
+        .set_volume_ownership(id("data")?, resolution(ResourceOwnership::Application)?)
+        .map_err(|error| error.to_string())?;
+    resolutions
+        .set_service_group_ownership(id("app-pod")?, resolution(ResourceOwnership::Application)?)
+        .map_err(|error| error.to_string())?;
+    let importer = importer(OverrideReconstruction::PreserveObservedState)?.with_resolutions(resolutions);
+    assert_eq!(
+        importer
+            .resolutions()
+            .network_ownership(&id("frontend")?)
+            .map(Sourced::value),
+        Some(&ResourceOwnership::External)
+    );
+
+    let result = importer.import(&source);
+    let application = result.application().ok_or("application expected")?;
+    assert_eq!(
+        application.networks()[0].value().ownership(),
+        ResourceOwnership::External
+    );
+    assert_eq!(
+        application.volumes()[0].value().ownership(),
+        ResourceOwnership::Application
+    );
+    assert_eq!(
+        application.service_groups()[0].value().ownership(),
+        ResourceOwnership::Application
+    );
+    assert_eq!(
+        result
+            .outcomes()
+            .iter()
+            .filter(|outcome| outcome.diagnostic().is_some_and(|code| code.as_str() == "BFR0009"))
+            .count(),
+        3
+    );
     Ok(())
 }
 
@@ -255,6 +300,13 @@ fn read(root: &Path, name: &str) -> Result<String, String> {
 
 fn importer(policy: OverrideReconstruction) -> Result<PodmanImporter, String> {
     PodmanImporter::new(policy).map_err(|error| error.to_string())
+}
+
+fn resolution(ownership: ResourceOwnership) -> Result<Sourced<ResourceOwnership>, String> {
+    Ok(Sourced::from_source(
+        ownership,
+        Provenance::user_override(SourceId::new("decision:test-lifecycle").map_err(|error| error.to_string())?),
+    ))
 }
 
 fn id(value: &str) -> Result<Identifier, String> {

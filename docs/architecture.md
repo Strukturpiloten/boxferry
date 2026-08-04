@@ -65,6 +65,12 @@ The Compose adapter consumes a `MergedProject`, an optional matching ComposeLens
 ComposeLens's native project view directly, without canonical rendering or reparsing. BoxFerry does
 not infer active profiles or read the process environment.
 
+In the reverse direction, `ComposeExporter` accepts an exact Docker Compose or `podman-compose`
+provider target plus an optional exact Docker Engine or Podman backend. It maps the neutral graph
+into ComposeLens's generated values and returns deterministic, parse-back-validated YAML. Provider
+and runtime identity remain separate, compatibility-sensitive constructs become policy-controlled
+outcomes, and no installed tool is inspected. See [ADR 0013](decisions/0013-explicit-compose-provider-and-runtime.md).
+
 The Quadlet exporter consumes the neutral application explicitly, evaluates the caller's Podman
 version range through QuadletLens, and constructs typed native documents. It keeps services as
 separate container units for the first slice, resolves generated network and volume references as
@@ -101,16 +107,22 @@ commands may support an inference, but effective inspection data remains the pri
 Optional creation-command arguments are sensitive by default and can add provenance to the broad
 reconstruction decision, but cannot change an effective value. Resource inspection establishes
 network and volume existence and relationships, not lifecycle ownership; the neutral model records
-that ownership as uncertain until a caller chooses application-owned or external behavior.
+that ownership as uncertain until an exact-name `RuntimeResolutions` entry chooses
+application-owned or external behavior with user-override provenance.
 Consistent Podman pod membership enters the neutral graph as a structural service group; response
-disagreement is invalid and target grouping/lifecycle resolution remains caller-owned.
+disagreement is invalid and target grouping/lifecycle resolution remains caller-owned. The
+Quadlet adapter can preserve one resolved application-owned group that covers the complete
+application; it does not infer multi-group or partial-group topology.
 
 External commands and APIs are behind runtime-specific replaceable interfaces so tests can supply
 deterministic implementations.
 
 ### Target profiles and capability providers
 
-A target profile describes the environment for which output must work. Examples include Podman and systemd version ranges, Kubernetes versions and API resources, rootless mode, and allowed fallbacks.
+A target profile describes the environment for which output must work. Examples include Podman
+and systemd version ranges, an exact Compose provider release, Kubernetes versions and API
+resources, rootless mode, and allowed fallbacks. Compose backend runtime identity is an additional
+explicit exporter input because it is distinct from the provider.
 
 Each adapter owns its relevant capability provider. The engine combines capability results but does not contain a global list of platform-specific keys.
 

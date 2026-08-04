@@ -64,7 +64,9 @@ pub use boxferry_model::{
 };
 
 #[cfg(feature = "compose")]
-pub use boxferry_compose::{ComposeImporter, ComposeSource};
+pub use boxferry_compose::{
+    ComposeExporter, ComposeImporter, ComposeRuntime, ComposeSource, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+};
 #[cfg(feature = "docker-runtime")]
 pub use boxferry_docker::{
     DockerAcquisitionError, DockerApiVersion, DockerCommandExecutor, DockerCommandOutput, DockerExpansionPolicy,
@@ -86,5 +88,6 @@ pub use boxferry_podman::{
 pub use boxferry_runtime::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation,
     OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeImporter,
-    RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
+    RuntimeResolutionError, RuntimeResolutions, RuntimeResourceKind, RuntimeSnapshot, RuntimeSnapshotError,
+    VolumeObservation,
 };

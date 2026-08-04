@@ -32,6 +32,12 @@ host mappings, deferred-address losses, required/optional dependency directives,
 restart/completion losses, missing services, and cycle rejection. Neutral-model tests separately preserve ordered host
 mappings, the literal `host-gateway` token, and bracketed IPv6 spelling.
 
+The Compose exporter contract suite covers exact provider selection, optional backend runtime
+selection, deterministic parse-back-validated YAML, every field in the first generated subset,
+application/external and unresolved runtime resource lifecycle, runtime-name preservation,
+provider/runtime-sensitive outcomes, strict/approximate/partial authorization, generation
+failures, and complete sensitive-document debug redaction.
+
 ### Golden conversion scenarios
 
 Each scenario contains source input, BoxFerry configuration, expected native output, and expected diagnostics. Golden updates require review of both file changes and semantic outcomes.
@@ -74,7 +80,11 @@ image comparison, retained and omitted command/environment/user-group/working-di
 direct read-only-root preservation, incomplete image evidence, ordered network
 aliases, volume relationships, uncertain lifecycle ownership, optional creation evidence, and
 ordered provenance-aware service groups. It also proves that contradictory or missing pod/member
-observations remain invalid or unsupported instead of being guessed. Native JSON and daemon
+observations remain invalid or unsupported instead of being guessed. Explicit lifecycle tests
+require application/external ownership plus user-override provenance, reject duplicates, retain
+observation and override origins, and cover a complete observed-group-to-Quadlet public flow.
+Podman and Docker native-import tests prove that both wrapper importers forward the resolutions
+instead of exposing the feature only to caller-built snapshots. Native JSON and daemon
 conformance fixtures begin with the
 Docker and Podman adapter crates; the shared crate deliberately does not invent a native JSON
 schema. `boxferry-podman` adds authored, secrets-reviewed 5.4.0 and 6.0.2 fixture sets. Its tests
@@ -99,8 +109,11 @@ the exact argument array, forced API version, isolated empty client configuratio
 ambient selection variables.
 
 All-feature public-facade integration tests convert complete resource-free Podman observations and
-Docker inspect documents into reviewed Quadlet bytes. They verify that the broad `BFR0001`
-uncertainty outcome must be authorized through the same engine path used by every other importer.
+Docker inspect documents into reviewed Quadlet bytes and convert a Docker observation into
+reviewed Compose YAML. They verify that the broad `BFR0001` uncertainty outcome must be authorized
+through the same engine path used by every other importer.
+The Podman observation slice additionally resolves one group explicitly and verifies its group-
+named `.pod`, container reference, `BFR0009`, and `BFQ0007` outcomes.
 
 ### Property and round-trip tests
 

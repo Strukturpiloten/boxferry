@@ -5,9 +5,11 @@
 //! each contributing source, and attach a [`compose_lens::profiles::ProfileSelection`] whenever a
 //! merged project contains profiled services.
 
+mod export;
 mod import;
 mod source;
 
+pub use export::{ComposeExporter, ComposeRuntime, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET};
 pub use import::ComposeImporter;
 pub use source::ComposeSource;
 

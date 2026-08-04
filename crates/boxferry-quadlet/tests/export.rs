@@ -1006,6 +1006,85 @@ fn reports_neutral_service_groups_until_the_caller_resolves_target_lifecycle() -
 }
 
 #[test]
+fn preserves_one_resolved_complete_service_group_as_its_named_pod() -> Result<(), Box<dyn Error>> {
+    let mut application = minimal_application()?;
+    let mut group = ServiceGroup::new(id("observed-pod")?, ResourceOwnership::Application);
+    group.add_member(sourced(id("web")?)?)?;
+    application.add_service_group(sourced(group)?)?;
+
+    let exporter = QuadletExporter::new()?.with_grouping_policy(QuadletGroupingPolicy::PreserveSingleGroup);
+    assert_eq!(exporter.grouping_policy(), QuadletGroupingPolicy::PreserveSingleGroup);
+    let plan = exporter.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "service_groups.observed-pod" && outcome.kind() == ConversionKind::Exact
+    }));
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "application.grouping" && outcome.kind() == ConversionKind::Approximate
+    }));
+    assert!(!plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "service_groups.observed-pod" && outcome.kind() == ConversionKind::Unsupported
+    }));
+
+    let result = plan.authorize(LossPolicy::AllowApproximate);
+    let output = result.output().ok_or("preserved group output expected")?;
+    assert_eq!(
+        output
+            .files()
+            .iter()
+            .map(|file| file.name().as_str())
+            .collect::<Vec<_>>(),
+        ["observed-pod.pod", "web.container"]
+    );
+    assert_eq!(
+        output.file("observed-pod.pod").map(boxferry_quadlet::QuadletFile::text),
+        Some("[Pod]\nPodName=observed-pod\n")
+    );
+    assert_eq!(
+        output.file("web.container").map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Container]\n",
+            "Image=example.invalid/web:1\n",
+            "Pod=observed-pod.pod\n",
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn preserve_single_group_rejects_missing_unresolved_and_incomplete_groups() -> Result<(), Box<dyn Error>> {
+    let exporter = QuadletExporter::new()?.with_grouping_policy(QuadletGroupingPolicy::PreserveSingleGroup);
+    let target = podman_target(Some(version(6, 0, 2)))?;
+
+    let missing = exporter.plan(&minimal_application()?, &target)?;
+    assert_grouping_rejected(&missing);
+
+    for ownership in [ResourceOwnership::Uncertain, ResourceOwnership::External] {
+        let mut application = minimal_application()?;
+        let mut group = ServiceGroup::new(id("observed-pod")?, ownership);
+        group.add_member(sourced(id("web")?)?)?;
+        application.add_service_group(sourced(group)?)?;
+        assert_grouping_rejected(&exporter.plan(&application, &target)?);
+    }
+
+    let mut incomplete = minimal_application()?;
+    incomplete.add_service(sourced(image_service("worker")?)?)?;
+    let mut group = ServiceGroup::new(id("observed-pod")?, ResourceOwnership::Application);
+    group.add_member(sourced(id("web")?)?)?;
+    incomplete.add_service_group(sourced(group)?)?;
+    assert_grouping_rejected(&exporter.plan(&incomplete, &target)?);
+
+    let mut multiple = minimal_application()?;
+    multiple.add_service(sourced(image_service("worker")?)?)?;
+    for (group_name, member_name) in [("web-pod", "web"), ("worker-pod", "worker")] {
+        let mut group = ServiceGroup::new(id(group_name)?, ResourceOwnership::Application);
+        group.add_member(sourced(id(member_name)?)?)?;
+        multiple.add_service_group(sourced(group)?)?;
+    }
+    assert_grouping_rejected(&exporter.plan(&multiple, &target)?);
+    Ok(())
+}
+
+#[test]
 fn fails_closed_outside_verified_podman_coverage() -> Result<(), Box<dyn Error>> {
     let application = minimal_application()?;
     let exporter = QuadletExporter::new()?;
@@ -1067,6 +1146,15 @@ fn exact_healthcheck() -> Result<Healthcheck, Box<dyn Error>> {
     healthcheck.set_retries(sourced(HealthcheckRetries::new("3")?)?);
     healthcheck.set_start_period(sourced(HealthcheckDuration::new("10s")?)?);
     Ok(healthcheck)
+}
+
+fn assert_grouping_rejected(plan: &boxferry_engine::ConversionPlan<boxferry_quadlet::QuadletOutput>) {
+    assert!(plan.candidate().is_none());
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "application.grouping"
+            && outcome.kind() == ConversionKind::Invalid
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0007")
+    }));
 }
 
 const fn exact_first_conversion_container() -> &'static str {

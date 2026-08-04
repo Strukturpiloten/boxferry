@@ -11,7 +11,10 @@ use boxferry_model::{
     Provenance, ResourceOwnership, Service, ServiceGroup, SourceId, Sourced, Volume,
 };
 
-use crate::{ContainerObservation, EffectiveCommand, ImageObservation, RuntimeEnvironmentVariable, RuntimeSnapshot};
+use crate::{
+    ContainerObservation, EffectiveCommand, ImageObservation, PodObservation, RuntimeEnvironmentVariable,
+    RuntimeResolutions, RuntimeSnapshot,
+};
 
 /// Caller-selected treatment of effective values that may originate from image defaults.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,6 +35,7 @@ pub enum OverrideReconstruction {
 #[derive(Clone, Debug)]
 pub struct RuntimeImporter {
     override_reconstruction: OverrideReconstruction,
+    resolutions: RuntimeResolutions,
     codes: Codes,
 }
 
@@ -44,6 +48,7 @@ impl RuntimeImporter {
     pub fn new(override_reconstruction: OverrideReconstruction) -> Result<Self, InvalidDiagnosticCode> {
         Ok(Self {
             override_reconstruction,
+            resolutions: RuntimeResolutions::new(),
             codes: Codes {
                 reconstruction_uncertain: DiagnosticCode::new("BFR0001")?,
                 inferred_override: DiagnosticCode::new("BFR0002")?,
@@ -53,6 +58,7 @@ impl RuntimeImporter {
                 image_missing: DiagnosticCode::new("BFR0006")?,
                 invalid_model: DiagnosticCode::new("BFR0007")?,
                 group_relationship_conflict: DiagnosticCode::new("BFR0008")?,
+                lifecycle_resolution: DiagnosticCode::new("BFR0009")?,
             },
         })
     }
@@ -62,13 +68,26 @@ impl RuntimeImporter {
     pub const fn override_reconstruction(&self) -> OverrideReconstruction {
         self.override_reconstruction
     }
+
+    /// Applies finite caller-owned lifecycle resolutions during reconstruction.
+    #[must_use]
+    pub fn with_resolutions(mut self, resolutions: RuntimeResolutions) -> Self {
+        self.resolutions = resolutions;
+        self
+    }
+
+    /// Returns the exact caller-owned lifecycle resolutions used by this importer.
+    #[must_use]
+    pub const fn resolutions(&self) -> &RuntimeResolutions {
+        &self.resolutions
+    }
 }
 
 impl ImportAdapter for RuntimeImporter {
     type Source = RuntimeSnapshot;
 
     fn import(&self, source: &Self::Source) -> ImportResult {
-        let mut mapping = Mapping::new(&self.codes, self.override_reconstruction, source);
+        let mut mapping = Mapping::new(&self.codes, self.override_reconstruction, &self.resolutions, source);
         let mut application = Application::new(source.application_name().clone());
 
         mapping.report_reconstruction_uncertainty();
@@ -92,6 +111,7 @@ struct Codes {
     image_missing: DiagnosticCode,
     invalid_model: DiagnosticCode,
     group_relationship_conflict: DiagnosticCode,
+    lifecycle_resolution: DiagnosticCode,
 }
 
 #[derive(Clone, Copy)]
@@ -114,6 +134,7 @@ impl<'a> LossExplanation<'a> {
 struct Mapping<'a> {
     codes: &'a Codes,
     override_reconstruction: OverrideReconstruction,
+    resolutions: &'a RuntimeResolutions,
     source: &'a RuntimeSnapshot,
     outcomes: Vec<ConversionOutcome>,
     diagnostics: Vec<Diagnostic>,
@@ -123,11 +144,13 @@ impl<'a> Mapping<'a> {
     const fn new(
         codes: &'a Codes,
         override_reconstruction: OverrideReconstruction,
+        resolutions: &'a RuntimeResolutions,
         source: &'a RuntimeSnapshot,
     ) -> Self {
         Self {
             codes,
             override_reconstruction,
+            resolutions,
             source,
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
@@ -218,9 +241,19 @@ impl<'a> Mapping<'a> {
         synthesized: bool,
     ) {
         let subject = format!("networks.{}", name.as_str());
-        let network = Sourced::from_source(Network::new(name, ResourceOwnership::Uncertain), origin.clone());
+        let resolution = self.resolutions.network_ownership(&name);
+        let ownership = resolution.map_or(ResourceOwnership::Uncertain, |value| *value.value());
+        let mut origins = vec![origin.clone()];
+        if let Some(resolution) = resolution {
+            origins.extend_from_slice(resolution.origins());
+        }
+        let network = sourced_with_origins(Network::new(name, ownership), origins.clone());
         if let Err(error) = application.add_network(network) {
-            self.invalid_model(&subject, &error, vec![origin]);
+            self.invalid_model(&subject, &error, origins);
+            return;
+        }
+        if resolution.is_some() {
+            self.lifecycle_resolution(subject, "network", synthesized, origins);
             return;
         }
         let reason = if synthesized {
@@ -249,9 +282,19 @@ impl<'a> Mapping<'a> {
         synthesized: bool,
     ) {
         let subject = format!("volumes.{}", name.as_str());
-        let volume = Sourced::from_source(Volume::new(name, ResourceOwnership::Uncertain), origin.clone());
+        let resolution = self.resolutions.volume_ownership(&name);
+        let ownership = resolution.map_or(ResourceOwnership::Uncertain, |value| *value.value());
+        let mut origins = vec![origin.clone()];
+        if let Some(resolution) = resolution {
+            origins.extend_from_slice(resolution.origins());
+        }
+        let volume = sourced_with_origins(Volume::new(name, ownership), origins.clone());
         if let Err(error) = application.add_volume(volume) {
-            self.invalid_model(&subject, &error, vec![origin]);
+            self.invalid_model(&subject, &error, origins);
+            return;
+        }
+        if resolution.is_some() {
+            self.lifecycle_resolution(subject, "volume", synthesized, origins);
             return;
         }
         let reason = if synthesized {
@@ -669,72 +712,7 @@ impl<'a> Mapping<'a> {
 
     fn map_service_groups(&mut self, application: &mut Application) {
         for pod in self.source.pods() {
-            let group_subject = format!("service_groups.{}", pod.name().as_str());
-            let group_origin = runtime_origin(pod.source_id());
-            let mut group = ServiceGroup::new(pod.name().clone(), ResourceOwnership::Uncertain);
-
-            for (index, member_source_id) in pod.members().iter().enumerate() {
-                let member_subject = format!("{group_subject}.members[{index}]");
-                let Some(container) = self
-                    .source
-                    .containers()
-                    .iter()
-                    .find(|container| container.source_id() == member_source_id)
-                else {
-                    self.loss(
-                        self.codes.pod_relationship.clone(),
-                        member_subject,
-                        ConversionKind::Unsupported,
-                        LossExplanation::new(
-                            "runtime service-group member is missing from the snapshot",
-                            "the pod observation references a container that was not supplied",
-                            "include the referenced container inspection or remove the stale pod relationship",
-                        ),
-                        vec![group_origin.clone()],
-                    );
-                    continue;
-                };
-
-                let member_origins = vec![group_origin.clone(), runtime_origin(container.source_id())];
-                let member = sourced_with_origins(container.name().clone(), member_origins.clone());
-                if let Err(error) = group.add_member(member) {
-                    self.invalid_model(&member_subject, &error, member_origins);
-                    continue;
-                }
-
-                match container.pod_source_id() {
-                    Some(container_pod) if container_pod == pod.source_id() => {
-                        self.exact(member_subject, member_origins);
-                    }
-                    Some(_) => self.group_relationship_conflict(
-                        member_subject,
-                        "the pod lists this container, but the container references a different pod",
-                        member_origins,
-                    ),
-                    None => self.group_relationship_conflict(
-                        member_subject,
-                        "the pod lists this container, but the container has no matching pod relationship",
-                        member_origins,
-                    ),
-                }
-            }
-
-            let sourced_group = Sourced::from_source(group, group_origin.clone());
-            if let Err(error) = application.add_service_group(sourced_group) {
-                self.invalid_model(&group_subject, &error, vec![group_origin.clone()]);
-                continue;
-            }
-            self.loss(
-                self.codes.pod_relationship.clone(),
-                format!("{group_subject}.lifecycle"),
-                ConversionKind::Approximate,
-                LossExplanation::new(
-                    "runtime service-group lifecycle and target semantics are uncertain",
-                    "inspection proves structural membership but not which namespaces or future definition should own the group",
-                    "review the group and select explicit lifecycle and target grouping policies",
-                ),
-                vec![group_origin],
-            );
+            self.map_service_group(application, pod);
         }
 
         for container in self.source.containers() {
@@ -766,6 +744,87 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn map_service_group(&mut self, application: &mut Application, pod: &PodObservation) {
+        let group_subject = format!("service_groups.{}", pod.name().as_str());
+        let group_origin = runtime_origin(pod.source_id());
+        let resolution = self.resolutions.service_group_ownership(pod.name());
+        let ownership = resolution.map_or(ResourceOwnership::Uncertain, |value| *value.value());
+        let mut group = ServiceGroup::new(pod.name().clone(), ownership);
+
+        for (index, member_source_id) in pod.members().iter().enumerate() {
+            let member_subject = format!("{group_subject}.members[{index}]");
+            let Some(container) = self
+                .source
+                .containers()
+                .iter()
+                .find(|container| container.source_id() == member_source_id)
+            else {
+                self.loss(
+                    self.codes.pod_relationship.clone(),
+                    member_subject,
+                    ConversionKind::Unsupported,
+                    LossExplanation::new(
+                        "runtime service-group member is missing from the snapshot",
+                        "the pod observation references a container that was not supplied",
+                        "include the referenced container inspection or remove the stale pod relationship",
+                    ),
+                    vec![group_origin.clone()],
+                );
+                continue;
+            };
+
+            let member_origins = vec![group_origin.clone(), runtime_origin(container.source_id())];
+            let member = sourced_with_origins(container.name().clone(), member_origins.clone());
+            if let Err(error) = group.add_member(member) {
+                self.invalid_model(&member_subject, &error, member_origins);
+                continue;
+            }
+            match container.pod_source_id() {
+                Some(container_pod) if container_pod == pod.source_id() => {
+                    self.exact(member_subject, member_origins);
+                }
+                Some(_) => self.group_relationship_conflict(
+                    member_subject,
+                    "the pod lists this container, but the container references a different pod",
+                    member_origins,
+                ),
+                None => self.group_relationship_conflict(
+                    member_subject,
+                    "the pod lists this container, but the container has no matching pod relationship",
+                    member_origins,
+                ),
+            }
+        }
+
+        let mut group_origins = vec![group_origin.clone()];
+        if let Some(resolution) = resolution {
+            group_origins.extend_from_slice(resolution.origins());
+        }
+        let sourced_group = sourced_with_origins(group, group_origins.clone());
+        if let Err(error) = application.add_service_group(sourced_group) {
+            self.invalid_model(&group_subject, &error, group_origins);
+        } else if resolution.is_some() {
+            self.lifecycle_resolution(
+                format!("{group_subject}.lifecycle"),
+                "service group",
+                false,
+                group_origins,
+            );
+        } else {
+            self.loss(
+                self.codes.pod_relationship.clone(),
+                format!("{group_subject}.lifecycle"),
+                ConversionKind::Approximate,
+                LossExplanation::new(
+                    "runtime service-group lifecycle and target semantics are uncertain",
+                    "inspection proves structural membership but not which namespaces or future definition should own the group",
+                    "review the group and select explicit lifecycle and target grouping policies",
+                ),
+                vec![group_origin],
+            );
+        }
+    }
+
     fn group_relationship_conflict(&mut self, subject: String, reason: &'static str, origins: Vec<Provenance>) {
         self.loss(
             self.codes.group_relationship_conflict.clone(),
@@ -775,6 +834,34 @@ impl<'a> Mapping<'a> {
                 "runtime service-group observations contradict each other",
                 reason,
                 "recapture a consistent pod and container inspection set before generating output",
+            ),
+            origins,
+        );
+    }
+
+    fn lifecycle_resolution(
+        &mut self,
+        subject: String,
+        resource_kind: &'static str,
+        synthesized: bool,
+        origins: Vec<Provenance>,
+    ) {
+        let reason = if synthesized {
+            "the resource was synthesized from a container relationship and its lifecycle was selected by an explicit caller override"
+        } else {
+            "runtime inspection established the resource and an explicit caller override selected its lifecycle ownership"
+        };
+        self.loss(
+            self.codes.lifecycle_resolution.clone(),
+            subject,
+            ConversionKind::Approximate,
+            LossExplanation::new(
+                "runtime resource lifecycle was resolved by the caller",
+                reason,
+                match resource_kind {
+                    "service group" => "review the selected service-group ownership and target grouping semantics",
+                    _ => "review the selected resource ownership before deploying generated output",
+                },
             ),
             origins,
         );

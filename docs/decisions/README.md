@@ -24,6 +24,8 @@ Architecture decision records capture choices that constrain future development.
 | [0009](0009-versioned-docker-inspection.md)                | accepted | Docker inspection follows an explicit Engine API version and daemon endpoint        |
 | [0010](0010-isolated-docker-runtime-conformance.md)        | accepted | Digest-pinned nested Docker conformance without a host runtime socket                |
 | [0011](0011-neutral-service-group-relationships.md)        | accepted | Structural service grouping without inferred namespace or lifecycle semantics       |
+| [0012](0012-explicit-runtime-lifecycle-resolution.md)      | accepted | Provenance-bearing runtime lifecycle choices and one preserved Quadlet group         |
+| [0013](0013-explicit-compose-provider-and-runtime.md)      | accepted | Exact Compose provider/runtime selection and ComposeLens-generated output             |
 
 ## Adding an ADR
 

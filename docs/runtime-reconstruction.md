@@ -186,33 +186,43 @@ could not classify true overrides. Optional creation evidence does not change th
 Every runtime import produces `BFR0001` because neither policy can recover the complete authored
 definition. `BFR0002` records image comparisons, `BFR0003` incomplete comparison evidence,
 `BFR0004` uncertain resource ownership, `BFR0005` pod/grouping limitations, `BFR0006` a missing
-reconstructable image, `BFR0007` an invalid neutral-model mapping, and `BFR0008` contradictory
-group membership evidence.
+reconstructable image, `BFR0007` an invalid neutral-model mapping, `BFR0008` contradictory group
+membership evidence, and `BFR0009` an explicit caller lifecycle resolution.
 
 ## Resource lifecycle and grouping
 
 Inspection proves that a network or volume exists, but not whether a reusable definition should
 create it or refer to it as external. Reconstructed resources therefore use
-`ResourceOwnership::Uncertain` and block target adapters that require a lifecycle choice. A future
-caller-owned resolution API will convert that uncertainty into an explicit user override.
+`ResourceOwnership::Uncertain` and block target adapters that require a lifecycle choice unless
+the caller supplies a matching `RuntimeResolutions` entry. A resolution selects only
+application-owned or external behavior, must carry `UserOverride` provenance, and is applied by
+exact resource name. It retains the observation and override origins and receives `BFR0009`; there
+are no ambient or blanket lifecycle defaults. `PodmanImporter` and `DockerImporter` forward the
+same resolution set after native decoding, so callers do not need to bypass the native adapters.
 
 Multiple network aliases and network/volume/mount relationships enter the application model.
 Consistent Podman pod membership becomes an ordered neutral `ServiceGroup`. Each member retains
 both pod- and container-observation provenance. The group asserts only structural co-membership:
 it does not infer shared namespaces, an infra container, lifecycle ownership, or a target workload
-kind. Reconstructed groups therefore use `ResourceOwnership::Uncertain`, while missing or
-contradictory pod/member fields remain explicit unsupported or invalid outcomes.
+kind. Reconstructed groups therefore use `ResourceOwnership::Uncertain` unless their exact
+lifecycle is resolved by the caller, while missing or contradictory pod/member fields remain
+explicit unsupported or invalid outcomes.
 
-Quadlet output currently reports every neutral service group as unsupported rather than silently
-flattening it. A later caller-owned resolution must decide whether to preserve, split, or flatten
-the group and whether generated output owns its lifecycle.
-See [ADR 0011](decisions/0011-neutral-service-group-relationships.md) for the deliberately narrow
-structural contract.
+Quadlet output reports unresolved groups as unsupported rather than silently flattening them.
+`QuadletGroupingPolicy::PreserveSingleGroup` can preserve exactly one application-owned group that
+covers every application service. The group name becomes the `.pod` name, and existing topology
+compatibility validation still applies. This explicitly selected structural-to-shared-namespace
+mapping is approximate; zero, multiple, external, uncertain, or partial groups fail closed.
+See [ADR 0011](decisions/0011-neutral-service-group-relationships.md) for the structural contract
+and [ADR 0012](decisions/0012-explicit-runtime-lifecycle-resolution.md) for its resolution boundary.
 
-The tested public vertical slices pass both a caller-built observation and pure Docker inspect
-documents through the appropriate importer, normal conversion engine, explicit
-`AllowApproximate` authorization, and `QuadletExporter`. Compose output and caller-owned
-lifecycle/grouping resolution remain open.
+The tested public vertical slices pass caller-built observations and pure Docker inspect documents
+through the appropriate importer, normal conversion engine, explicit loss authorization, and a
+native exporter. Quadlet slices cover ordinary container output plus explicit lifecycle resolution
+and one preserved observed pod. The Compose slice generates deterministic parse-back-validated
+YAML through `ComposeExporter`, retains sensitive-output redaction, and uses an exact provider plus
+optional backend runtime. Runtime-observed network and volume names receive explicit Compose
+resource names; unresolved lifecycle remains a visible partial loss.
 
 ## Native adapter requirements
 

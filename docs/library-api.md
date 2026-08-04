@@ -63,14 +63,15 @@ no-default core, every supported individual feature, and all features.
 
 The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-runtime`, and
 `docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
-current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `QuadletExporter`,
-`QuadletGroupingPolicy`, and `QuadletOutput`. It also exposes each adapter and matching native
+current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
+`ComposeRuntime`, Compose target constants, `QuadletExporter`, `QuadletGroupingPolicy`, and
+`QuadletOutput`. It also exposes each adapter and matching native
 dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
 `boxferry::docker`, so embedded callers do not need to guess a second crate version.
 
 The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types,
-`OverrideReconstruction`, and `RuntimeImporter`. It does not enable Docker or Podman clients and
-does not read a daemon, command, filesystem, or process environment.
+`OverrideReconstruction`, `RuntimeResolutions`, and `RuntimeImporter`. It does not enable Docker or
+Podman clients and does not read a daemon, command, filesystem, or process environment.
 
 The `podman-runtime` feature re-exports `PodmanInspectDocuments`, `PodmanInspectSource`,
 `PodmanSnapshotResult`, `PodmanImporter`, explicit resource-selection and command types,
@@ -125,7 +126,7 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.6;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.7;
 - an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.6;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
@@ -169,7 +170,11 @@ primary-user and primary-group fields. Explicit read-only-root state is preserve
 Both policies emit an application-level approximate outcome because neither
 can recover complete author intent. Runtime network and volume ownership is `Uncertain`; pod
 membership becomes an ordered `ServiceGroup` when pod and container observations agree. Group
-lifecycle and target semantics remain explicit non-exact decisions. See
+lifecycle and target semantics remain explicit non-exact decisions. Callers can supply exact-name
+`RuntimeResolutions` selecting application-owned or external lifecycle only when each choice has
+`UserOverride` provenance. Resolved values retain observation and override origins and receive
+`BFR0009`. `PodmanImporter::with_resolutions` and `DockerImporter::with_resolutions` forward this
+same configuration into shared reconstruction. See
 [Runtime reconstruction](runtime-reconstruction.md).
 
 ## Minimal embedded flow
@@ -202,10 +207,19 @@ The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A c
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
 replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
 
-The adapter consumes ComposeLens 0.1.6's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.1.7's native `build_project_view` boundary directly. Effective
 multi-file values retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
+
+The Compose exporter accepts a neutral `Application`, an exact `docker-compose` or
+`podman-compose` provider `TargetProfile`, and an optional exact Docker Engine or Podman backend
+through `ComposeRuntime`. It returns a policy-controlled
+`ConversionPlan<compose_lens::render::GeneratedComposeDocument>`. ComposeLens owns deterministic
+syntax selection and parse-back validation; BoxFerry owns semantic mapping, provider/runtime
+compatibility outcomes, provenance, and authorization. Runtime-observed resource names are emitted
+explicitly so Compose project scoping cannot rename them. See the
+[Compose exporter contract](compose-adapter.md).
 
 The Quadlet exporter accepts the neutral `Application` and an explicit Podman `TargetProfile`. It
 returns a policy-controlled `ConversionPlan<QuadletOutput>` whose files and native dependency graph
@@ -219,7 +233,10 @@ unless the caller supplies an exact absolute or systemd-specifier target through
 Separate containers remain the exact grouping default. Embedded callers may select
 `QuadletGroupingPolicy::SinglePod`; compatible declarations produce an approximate plan requiring
 `LossPolicy::AllowApproximate`, while incompatible declarations produce no candidate. Explicit
-host mappings, health checks, dependency/readiness directives, execution-context values, and
+`QuadletGroupingPolicy::PreserveSingleGroup` preserves one complete application-owned neutral
+group using the group name and rejects missing, multiple, unresolved, external, or partial groups.
+It remains approximate because structural membership does not itself assert shared namespaces.
+Explicit host mappings, health checks, dependency/readiness directives, execution-context values, and
 external secret grants convert through QuadletLens 0.1.6. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an
 identical explicit namespace emit once at pod scope; separate containers retain their own values.

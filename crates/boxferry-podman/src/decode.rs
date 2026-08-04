@@ -13,7 +13,7 @@ use boxferry_model::{
 use boxferry_runtime::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation,
     OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeImporter,
-    RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
+    RuntimeResolutions, RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -81,6 +81,19 @@ impl PodmanImporter {
                 missing_relationship: DiagnosticCode::new("BFP0004")?,
             },
         })
+    }
+
+    /// Applies finite caller-owned lifecycle resolutions during shared reconstruction.
+    #[must_use]
+    pub fn with_resolutions(mut self, resolutions: RuntimeResolutions) -> Self {
+        self.runtime = self.runtime.with_resolutions(resolutions);
+        self
+    }
+
+    /// Returns the exact lifecycle resolutions forwarded to shared reconstruction.
+    #[must_use]
+    pub const fn resolutions(&self) -> &RuntimeResolutions {
+        self.runtime.resolutions()
     }
 
     /// Decodes native documents without reconstructing a neutral application.

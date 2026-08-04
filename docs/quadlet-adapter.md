@@ -36,6 +36,13 @@ namespace that Compose normally keeps separate. It emits `BFQ0007`, retains ever
 service origin, and requires `LossPolicy::AllowApproximate`. An incompatible explicit request is
 invalid and produces no candidate; the adapter does not silently fall back to separate containers.
 
+Callers reconstructing an existing pod can instead select
+`QuadletGroupingPolicy::PreserveSingleGroup`. This requires exactly one application-owned neutral
+group containing every application service. It generates the group-named `.pod` and links each
+member to it after applying the same topology checks. Missing, multiple, uncertain, external, or
+partial groups are invalid. Preservation still emits `BFQ0007` as an approximation because a
+neutral structural group alone does not assert Podman shared-namespace behavior.
+
 It currently maps:
 
 - image references, including `name:tag@digest` spellings;
@@ -95,7 +102,8 @@ The adapter currently reports rather than guesses:
 - application-owned secret creation and file/environment materialization, because `Secret=` only
   consumes a Podman secret that already exists; and
 - secret names or options outside the reviewed unambiguous one-line Podman secret grammar; and
-- neutral service groups without a caller-selected target grouping and lifecycle resolution.
+- neutral service groups without a supported caller-selected target grouping and lifecycle
+  resolution.
 
 Missing required dependency services, dependency-ordering cycles, missing secret declarations,
 and incompatible explicit grouping requests are invalid. Optional absent services and unsupported

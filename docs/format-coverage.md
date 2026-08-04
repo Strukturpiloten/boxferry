@@ -40,7 +40,7 @@ field as a policy-controlled unsupported outcome.
 | Identity | `user`, `userns_mode`, `group_add` | `partial` | User, numeric primary group, user namespace, and ordered named or numeric supplementary groups retain provenance and sensitivity and emit capability-checked keys. Identical explicit namespaces on every grouped service move to pod `UserNS`; mixed or conflicting intent invalidates grouping. Named primary groups and unsafe values are explicit losses. |
 | Limits and deployment | `ulimits`, CPU/memory/PID fields, `deploy` | `native only` / `preserved` | ComposeLens types `ulimits` and field-level `deploy`; BoxFerry does not yet map resource policy. |
 | Build | `build`, `pull_policy` | `native only` / `preserved` | ComposeLens retains field-level build intent; `.build` generation and image/build policy remain open. |
-| Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.6 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
+| Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.7 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
 | Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `preserved` | No typed end-to-end lifecycle contract exists. Generic systemd directives alone are not a semantic mapping. |
 | Process | `entrypoint`, `working_dir`, `tty`, `stdin_open`, `read_only` | `partial` / `preserved` | Safely encodable working directories and explicit true/false read-only-root intent convert end to end. Values needing systemd encoding are reported. Entrypoint, TTY, and standard-input behavior remain preserved only. |
 | Names and DNS | `container_name`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search` | `preserved` | No end-to-end mapping exists beyond `extra_hosts`. |
@@ -80,13 +80,24 @@ Command, environment, `user[:group]`, and working-directory values can be preser
 with a linked image observation. A retained identity is split into neutral primary user and group
 fields with shared provenance. Read-only-root state is preserved directly.
 Every comparison is approximate and receives conversion-decision provenance. Network and volume
-lifecycle ownership remains uncertain. Consistent Podman pod membership becomes an ordered
-neutral `ServiceGroup` with pod and container provenance, but no inferred namespace or lifecycle
-semantics. Quadlet output reports unresolved groups rather than flattening them. Entrypoint, broader
+lifecycle ownership remains uncertain unless an exact-name caller resolution selects application-
+owned or external behavior with user-override provenance. Consistent Podman pod membership becomes
+an ordered neutral `ServiceGroup` with pod and container provenance, but no inferred namespace or
+lifecycle semantics. Quadlet output reports unresolved groups rather than flattening them and can
+preserve one resolved complete application group as a named pod after explicit approximation
+authorization. Entrypoint, broader
 runtime policy and security settings, labels, health configuration, and other inspect fields remain for the
 native adapter milestones. The Podman decoder reports each meaningful unmodeled native field by
 name as an unsupported outcome instead of discarding it. The Docker decoder applies the same rule
 with independent `BFD` diagnostics and additionally reports the lost entrypoint/command boundary.
+
+The Compose export path covers the same supported effective subset for images, commands,
+environment, identity/context, ports, mounts, networks, and volumes. It uses ComposeLens 0.1.7's
+deterministic generated-document boundary and requires an exact Docker Compose or
+`podman-compose` provider version; the optional exact Docker Engine or Podman backend remains a
+separate input. Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,
+unresolved lifecycle, structural pod grouping, and fields outside the generated subset remain
+policy-controlled non-exact outcomes rather than silent output changes.
 
 ## Promotion rule
 
