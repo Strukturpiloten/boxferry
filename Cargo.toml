@@ -3,9 +3,12 @@ resolver = "3"
 members = [
   "crates/boxferry",
   "crates/boxferry-compose",
+  "crates/boxferry-docker",
   "crates/boxferry-engine",
   "crates/boxferry-model",
   "crates/boxferry-quadlet",
+  "crates/boxferry-podman",
+  "crates/boxferry-runtime",
 ]
 default-members = ["crates/boxferry"]
 

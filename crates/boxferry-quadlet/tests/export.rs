@@ -8,7 +8,7 @@ use boxferry_model::{
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
     Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant,
     ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, SourceId, Sourced, Volume,
+    ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
 };
 use boxferry_quadlet::{QuadletExporter, QuadletGroupingPolicy};
 
@@ -544,6 +544,34 @@ fn rejects_a_secret_grant_without_a_declared_resource() -> Result<(), Box<dyn Er
 }
 
 #[test]
+fn reports_a_sensitive_external_secret_name_without_disclosing_it() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("sensitive-secret-name")?);
+    let mut secret = Secret::new(id("api-token")?, ResourceOwnership::External);
+    secret.set_runtime_name(sourced(ProtectedString::sensitive("production-api-token"))?);
+    application.add_secret(sourced(secret)?)?;
+    let mut service = image_service("web")?;
+    service.add_secret_grant(sourced(ResourceGrant::new(
+        ProtectedString::plain("api-token"),
+        ResourceGrantSyntax::Short,
+    )?)?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.secrets[0]" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(!format!("{plan:?}").contains("production-api-token"));
+    let result = plan.authorize(LossPolicy::AllowPartial);
+    let container = result
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("partial container expected")?;
+    assert!(!container.contains("Secret="));
+    Ok(())
+}
+
+#[test]
 fn groups_compatible_services_only_after_explicit_approximation_authorization() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("grouped")?);
     application.add_network(sourced(Network::new(id("frontend")?, ResourceOwnership::Application))?)?;
@@ -956,6 +984,24 @@ fn retains_a_partial_candidate_but_requires_authorization_for_unresolved_intent(
     assert!(!container.contains("HOST_ADDRESS"));
     assert!(!container.contains("./config"));
     assert!(container.contains("Network=frontend.network"));
+    Ok(())
+}
+
+#[test]
+fn reports_neutral_service_groups_until_the_caller_resolves_target_lifecycle() -> Result<(), Box<dyn Error>> {
+    let mut application = minimal_application()?;
+    let mut group = ServiceGroup::new(id("observed-pod")?, ResourceOwnership::Uncertain);
+    group.add_member(sourced(id("web")?)?)?;
+    application.add_service_group(sourced(group)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "service_groups.observed-pod"
+            && outcome.kind() == ConversionKind::Unsupported
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0003")
+    }));
+    assert!(plan.clone().authorize(LossPolicy::ExactOnly).is_blocked());
+    assert!(plan.authorize(LossPolicy::AllowPartial).output().is_some());
     Ok(())
 }
 

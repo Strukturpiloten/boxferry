@@ -114,6 +114,77 @@ fn facade_distinguishes_runtime_observation_provenance() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn facade_exposes_neutral_structural_service_groups() -> Result<(), String> {
+    use boxferry::{ResourceOwnership, Service, ServiceGroup, Sourced};
+
+    let mut application = Application::new(Identifier::new("example").map_err(|error| error.to_string())?);
+    application
+        .add_service(Sourced::generated(Service::new(
+            Identifier::new("web").map_err(|error| error.to_string())?,
+        )))
+        .map_err(|error| error.to_string())?;
+    let mut group = ServiceGroup::new(
+        Identifier::new("observed-group").map_err(|error| error.to_string())?,
+        ResourceOwnership::Uncertain,
+    );
+    group
+        .add_member(Sourced::generated(
+            Identifier::new("web").map_err(|error| error.to_string())?,
+        ))
+        .map_err(|error| error.to_string())?;
+    application
+        .add_service_group(Sourced::generated(group))
+        .map_err(|error| error.to_string())?;
+
+    assert_eq!(
+        application.service_groups()[0].value().members()[0].value().as_str(),
+        "web"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "runtime")]
+#[test]
+fn facade_exposes_runtime_reconstruction_additively() -> Result<(), String> {
+    use boxferry::{
+        ContainerObservation, EffectiveCommand, ImageReference, ImportAdapter, OverrideReconstruction,
+        RuntimeImplementation, RuntimeImporter, RuntimeSnapshot, SourceId,
+    };
+
+    let mut container = ContainerObservation::new(
+        SourceId::new("runtime:podman:container:web").map_err(|error| error.to_string())?,
+        Identifier::new("web").map_err(|error| error.to_string())?,
+    );
+    container.set_image(
+        ImageReference::parse("example.invalid/web:1").map_err(|error| error.to_string())?,
+        None,
+    );
+    container.set_command(EffectiveCommand::Empty);
+    container.set_environment(Vec::new());
+
+    let mut snapshot = RuntimeSnapshot::new(
+        Identifier::new("example").map_err(|error| error.to_string())?,
+        RuntimeImplementation::Podman,
+    );
+    snapshot.add_container(container).map_err(|error| error.to_string())?;
+    let importer =
+        RuntimeImporter::new(OverrideReconstruction::PreserveObservedState).map_err(|error| error.to_string())?;
+    let result = importer.import(&snapshot);
+
+    assert_eq!(
+        result.application().map(|application| application.services().len()),
+        Some(1)
+    );
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "application.reconstruction")
+    );
+    Ok(())
+}
+
 #[cfg(feature = "compose")]
 #[test]
 fn facade_exposes_the_compose_import_adapter_additively() -> Result<(), String> {

@@ -2,7 +2,7 @@
 
 This plan gives BoxFerry, ComposeLens, and QuadletLens one stable task numbering scheme. Repository roadmaps describe internal phases; this document describes delivery order across repositories.
 
-Last synchronized: 2026-08-03.
+Last synchronized: 2026-08-04.
 
 ## Status convention
 
@@ -104,31 +104,32 @@ network, profile, config, secret, and label forms. QuadletLens has completed its
 with ordered source-aware `.container`, `.pod`, `.network`, and `.volume` documents, generic systemd
 and unknown entry preservation, native key enums, conservative path/reference forms,
 separate syntax/model diagnostics, and exact document-set dependency resolution. BoxFerry now
-consumes ComposeLens 0.1.5 from crates.io through its independent `boxferry-compose` crate. The
-adapter maps images, commands, execution identity/context, health checks, environment, extra hosts, single ports, named
-volumes, bind mounts, networks, explicit profiles, provenance, and short/long SELinux relabel
-intent into the neutral model. Source omissions are structured outcomes governed by `LossPolicy`,
-not warning-only side effects. The neutral model retains ordered explicit hostname mappings,
-distinguishes `host-gateway` from ordinary IP address spellings, and keeps unsupported
-`start_interval` intent for target-specific reporting.
+consumes ComposeLens 0.1.6 from crates.io through its independent `boxferry-compose` crate. The
+adapter maps images, commands, execution identity/context, health checks, environment, extra
+hosts, single ports, named volumes, bind mounts, networks, explicit profiles, config/secret
+resources and grants, provenance, and short/long SELinux relabel intent into the neutral model.
+Source omissions are structured outcomes governed by `LossPolicy`, not warning-only side effects.
+The neutral model retains ordered explicit hostname mappings, distinguishes `host-gateway` from
+ordinary IP address spellings, and keeps unsupported `start_interval` intent for target-specific
+reporting.
 
-The implemented input boundary is ComposeLens 0.1.5's native `build_project_view` over a
+The implemented input boundary is ComposeLens 0.1.6's native `build_project_view` over a
 `MergedProject` and optional matching `ProfileSelection`. BoxFerry maps it without canonical
 rendering or reparsing and retains all contributing source origins in neutral values and outcomes.
 
-ComposeLens 0.1.5 is published on crates.io with a documented pre-1.0 compatibility contract.
-BoxFerry consumes ComposeLens 0.1.5 through a compatible crates.io requirement and commits its
+ComposeLens 0.1.6 is published on crates.io with a documented pre-1.0 compatibility contract.
+BoxFerry consumes ComposeLens 0.1.6 through a compatible crates.io requirement and commits its
 application lockfile. Commit-pinned Git dependencies remain an emergency-only fallback.
 
 The Compose adapter fixture also exposed a ComposeLens 0.1 YAML-backend defect: an unquoted short
 volume scalar with comma-separated options can truncate the document without a syntax diagnostic.
 The ComposeLens 0.1.1 parser correction accepts the complete valid scalar through its
 byte-preserving private parser adapter and retains `compose.yaml.unparsed-input` as a fail-safe for
-future backend omissions; that behavior remains present in the consumed 0.1.5 release.
+future backend omissions; that behavior remains present in the consumed 0.1.6 release.
 BoxFerry can now use the unquoted real-world spelling and the released source-aware merged-project
 view without a canonical render-and-reparse bridge.
 
-QuadletLens 0.1.5 is published on crates.io and BoxFerry consumes it through the independent
+QuadletLens 0.1.6 is published on crates.io and BoxFerry consumes it through the independent
 `boxferry-quadlet` crate. The exporter uses typed native construction and capability evaluation,
 generates exact separate container units or an explicitly authorized compatible pod plus
 application-owned network and volume units, references external resources directly, validates the
@@ -169,26 +170,26 @@ Adapter and public-facade golden tests cover separate containers and explicitly 
 
 ### Completed execution identity and context slice
 
-ComposeLens and QuadletLens 0.1.5 are published and consumed from crates.io. BoxFerry retains and
+ComposeLens and QuadletLens 0.1.6 are published and consumed from crates.io. BoxFerry retains and
 maps primary user/group, user namespace, ordered supplementary groups, working directory, and
 explicit read-only-root intent with field provenance and sensitivity. Separate containers use
 capability-checked `User`, `Group`, `UserNS`, repeated `GroupAdd`, `WorkingDir`, and `ReadOnly`
 entries across the verified Podman range. Unresolved booleans and unsafe encodings remain explicit
-losses. Pod-grouped container `UserNS` is intentionally omitted only with partial authorization
-because Podman uses the pod namespace. QuadletLens 0.1.6 is the tested release candidate for the
-pod-level key. After publication, BoxFerry will emit it only when every grouped service has the
-same explicit namespace intent; mixed absent/explicit or conflicting values will invalidate the
-grouping request.
+losses. For pod grouping, BoxFerry emits pod-level `UserNS` only when every service has the same
+explicit namespace intent. Mixed absent/explicit or conflicting values invalidate the grouping
+request.
 
-### Config and secret release gate
+### Completed config and secret slice
 
-ComposeLens and QuadletLens 0.1.6 are coordinated release candidates for the next integration
-gate. ComposeLens exposes effective service config/secret grants with short/long syntax and nested
+ComposeLens and QuadletLens 0.1.6 are published and consumed without sibling path dependencies.
+ComposeLens exposes effective service config/secret grants with short/long syntax and nested
 multi-file provenance. QuadletLens exposes repeatable container `Secret` plus pod `UserNS`, with
-real-generator evidence across every recorded Podman patch from 5.4.0 through 6.0.2. BoxFerry will
-not use sibling path dependencies: publication precedes adapter integration. The independent
-BoxFerry neutral slice is complete: resource ownership, runtime names, material origins, ordered
-short/long grants, per-option provenance, and redaction are represented without Lens types.
+real-generator evidence across every recorded Podman patch from 5.4.0 through 6.0.2. BoxFerry
+imports resource ownership, runtime names, material origins, and ordered grants without Lens types.
+It emits exact references to pre-existing external Podman secrets when target defaults and options
+are safe and equivalent. Application-owned secret materialization and Compose config lifecycle are
+explicit manual actions. Adapter and public-facade tests cover short/long, multi-file, custom-name,
+sensitive-value, strict/partial, and golden behavior.
 
 ## T6: First end-to-end milestone
 
@@ -196,7 +197,8 @@ Status: in progress. BoxFerry coordinates this task. Compose import, the first Q
 subset, their combined policy-controlled report, and explicit compatibility-checked pod grouping
 are implemented. Explicit project-root and host-specific bind path policies are also implemented.
 Explicit Compose-to-Quadlet host mappings, regular health checks, and dependency/readiness mapping
-are implemented. A first black-box-tested CLI exposes this same public conversion path with
+are implemented. Pod-level user namespaces and external-secret grants are also implemented with
+explicit compatibility and manual-action reporting. A first black-box-tested CLI exposes this same public conversion path with
 explicit file order, profile selection, target range, grouping, loss policy, and non-overwriting
 output. Broader value encoders and the TYPO3 showcase remain.
 
@@ -218,11 +220,31 @@ Exit criteria:
 ## T7: Expanded testing tiers
 
 Status: in progress. ComposeLens has delivered its repository tier. QuadletLens has an exact
-Podman 5.4-to-current generator matrix, and BoxFerry now has its first provenance-reviewed Compose
-adapter fixture; broader BoxFerry tiers remain.
+Podman 5.4-to-current generator matrix, and BoxFerry now has provenance-reviewed Compose, Docker
+Engine API 1.40/1.55, and Podman 5.4.0/6.0.2 inspection fixtures. Opt-in Podman live runtime lanes
+cover every official immutable 5.x minor image from 5.4 through 5.8; broader BoxFerry tiers remain.
 
 - Per pull request: unit, integration, golden, round-trip, and property tests.
 - Scheduled: Docker Compose, Podman Compose, and real Quadlet generator conformance.
 - Release validation: supported Podman matrices, rootless/rootful contexts, real-world projects, and eventually disposable Kubernetes clusters.
 
 Each harness becomes required only after its command, isolation model, version source, fixture provenance, and failure policy are documented.
+
+The first BoxFerry runtime tier is now implemented without daemon access: `boxferry-runtime`
+provides duplicate-safe observations, sensitive defaults, optional creation evidence, two explicit
+reconstruction policies, image comparison for command/environment/user-group/working-directory
+overrides, direct read-only-root preservation, relationship preservation for networks/volumes,
+provenance-aware structural service groups, uncertain lifecycle
+ownership, and fidelity outcomes. `boxferry-podman` adds deterministic native response decoding,
+structured unmodeled-field outcomes, relationship resolution, and sensitive/raw-ID redaction.
+Explicit read-only Podman acquisition is implemented through a closed command model and
+replaceable executor. Policy-controlled expansion now follows selected pod members and referenced
+container images, networks, and named volumes without ambient enumeration. A weekly/manual,
+digest-pinned nested-Podman matrix validates real 5.4.0, 5.5.2, 5.6.2, 5.7.1, and 5.8.2 response
+shapes on disposable runners without a host socket. An additional explicitly selected installed-
+current lane validates 6.0.2 with uniquely named resources and exact cleanup. Native Docker
+inspection now has independent versioned decoding, explicit-endpoint command acquisition, finite
+container-resource expansion, public facade tests, and a digest-pinned nested Docker Engine 29.7.1
+lane for forced API 1.40/1.55 responses. Reproducible scheduled-image evidence for Podman 6.0.2 and
+historical Docker 19.03 implementation evidence remain open T7 work; current-daemon downgrade
+responses and one installed runtime are not presented as equivalent to those missing tiers.

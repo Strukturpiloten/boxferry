@@ -1,0 +1,29 @@
+name: ferry-secrets
+services:
+  web:
+    image: example.invalid/web:1
+    configs:
+      - settings
+    secrets:
+      - database-password
+      - api-token
+      - source: certificate
+        target: /etc/example/certificate.pem
+        uid: "101"
+        gid: "102"
+        mode: "0440"
+      - local-password
+configs:
+  settings:
+    content: |
+      debug=true
+secrets:
+  database-password:
+    external: true
+  api-token:
+    external: true
+    name: company-api-token
+  certificate:
+    external: true
+  local-password:
+    environment: LOCAL_PASSWORD

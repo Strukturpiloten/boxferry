@@ -71,6 +71,44 @@ The `boxferry` crate is both the high-level library facade and the package that 
 APIs as the CLI. Applications with narrower requirements may depend on component crates such as
 `boxferry-model`, `boxferry-engine`, `boxferry-compose`, or `boxferry-quadlet`.
 
+The additive `runtime` feature exposes a pure runtime-neutral observation and reconstruction
+boundary. Embedded callers explicitly choose whether to preserve supported effective state or
+infer command, environment, user/group-identity, and working-directory overrides by comparing linked
+container and image observations. Effective read-only-root state is preserved directly.
+Every runtime reconstruction reports that original author intent is uncertain, inspected command
+and environment contents are sensitive by default, and optional creation commands contribute
+provenance without becoming a required source of truth. Consistent Podman pod membership becomes
+an ordered neutral `ServiceGroup`; it records structural membership without inventing shared-
+namespace or lifecycle semantics. Podman response parsing is available
+behind the non-default `podman-runtime` feature for explicit 5.4.0-through-6.0.2 inspect arrays.
+Embedded callers can acquire explicitly selected resources through a replaceable read-only Podman
+executor. An explicit finite policy can add selected pods' member containers and selected
+containers' images, networks, and named volumes without enumerating ambient resources. A
+runtime-migration CLI command remains open.
+
+Docker response parsing is available behind the non-default `docker-runtime` feature for the
+finite Engine API 1.40-through-1.55 range. Its pure decoder accepts explicit container, image,
+network, and volume inspect arrays. Its replaceable inspector requires an explicit executable,
+protected daemon endpoint, and exact API version; it never relies on Docker's ambient context or
+enumerates a resource family. Callers may explicitly authorize a bounded expansion from selected
+containers to referenced images, networks, and named volumes.
+
+A separate weekly/manual conformance workflow runs the digest-pinned official Docker Engine 29.7.1
+daemon inside an ephemeral privileged container and forces both reviewed API bounds. It mounts no
+host runtime socket or repository write path. This verifies current-daemon API 1.40 compatibility
+responses and API 1.55 responses; it does not claim to reproduce every historical Docker 19.03
+implementation detail.
+
+An opt-in, separately scheduled conformance workflow decodes real inspect output from exact,
+digest-pinned official Podman images for the available supported 5.4-through-5.8 minor lines. It
+runs nested Podman in an ephemeral privileged container without mounting a host runtime socket.
+The source-reviewed 6.0.2 decoder ceiling remains an explicit reproducible scheduled-image
+evidence gap until an exact immutable local-runtime image or reviewed build lane is available.
+
+Developers who already have the exact reviewed 6.0.2 ceiling may run a separate opt-in current-
+runtime test. It verifies the version first, creates only uniquely named temporary resources, and
+removes those resources after inspection; it is not enabled by normal tests or pull-request CI.
+
 The crates remain unpublished while their pre-1.0 contract is exercised. The current facade can
 already be used from a repository checkout to implement an [`ImportAdapter`](docs/library-api.md)
 and [`ExportAdapter`](docs/library-api.md), call `boxferry::convert`, and receive a typed
@@ -83,7 +121,7 @@ ComposeLens profile selection whenever profiles are present, retains SELinux rel
 reports unsupported source features as policy-controlled conversion outcomes.
 
 The additive `quadlet` feature exposes `QuadletExporter` and its validated file-set output. The
-exporter uses QuadletLens 0.1.5 for typed native construction and capability evidence, supports
+exporter uses QuadletLens 0.1.6 for typed native construction and capability evidence, supports
 Podman 5.4.0 through the finite current catalogue ceiling, keeps each service in its own container
 unit by default, distinguishes application-owned and external resources, preserves absolute and
 systemd-specifier bind paths, and reports every omitted target feature through the same loss policy.
@@ -106,7 +144,7 @@ durations, retries, startup grace period, and `start_interval` with field-level 
 Quadlet adapter emits the capability-checked regular health-check subset and reports
 `start_interval` as an explicit loss because Quadlet has no equivalent key.
 
-ComposeLens 0.1.5 service dependencies retain source order, short/long defaults, and field-level
+ComposeLens 0.1.6 service dependencies retain source order, short/long defaults, and field-level
 provenance in the neutral graph. Required and optional startup dependencies become capability-
 checked systemd `Requires`/`Wants` plus `After` directives. A healthy dependency additionally
 enables `Notify=healthy` only when BoxFerry can establish an explicit target health command.
@@ -115,17 +153,21 @@ partial losses; missing required services and ordering cycles are invalid.
 
 The neutral model and adapters retain provenance-aware primary user/group, user namespace, ordered
 supplementary groups, working directory, and read-only-root intent through ComposeLens and
-QuadletLens 0.1.5. Separate-container output maps numeric primary GIDs and named or numeric
+QuadletLens 0.1.6. Separate-container output maps numeric primary GIDs and named or numeric
 supplementary groups; named primary groups remain explicit losses because Quadlet's native
 `Group=` contract is numeric. Output is capability-checked across the supported Podman range.
-Explicit pod grouping reports container-level user namespaces as a loss because Podman uses the
-pod's namespace and BoxFerry cannot yet generate Quadlet's pod-level `UserNS=` key.
+Explicit pod grouping moves one identical namespace choice declared by every service to the pod's
+capability-checked `UserNS=` key. Mixed implicit/explicit or conflicting namespace choices
+invalidate the requested grouping rather than selecting a value by service order.
 
 The format-independent graph now also represents application-owned or external configuration and
 secret resources, optional runtime names and material origins, and ordered short/long service
 grants with per-option provenance. Sensitive material and grant values use the same redacting
-`ProtectedString` boundary as environment values. Compose and Quadlet adapter integration remains
-gated on the independent ComposeLens and QuadletLens 0.1.6 releases.
+`ProtectedString` boundary as environment values. ComposeLens 0.1.6 imports these definitions and
+grants. QuadletLens 0.1.6 emits exact mounted-file `Secret=` references for pre-existing external
+Podman secrets, including custom-name default preservation and validated target, UID, GID, and
+read-only mode options. Application-owned secret materialization and Compose config lifecycle are
+explicit manual actions because Quadlet container units cannot create those resources.
 
 The CLI remains a thin consumer of the public facade. It must not gain private conversion behavior
 that embedded users cannot call. See the [library API and publication policy](docs/library-api.md).
@@ -141,6 +183,7 @@ Start with the [documentation index](docs/README.md). Important design documents
 - [Conversion model and diagnostics](docs/conversion-model.md)
 - [Format coverage](docs/format-coverage.md)
 - [Quadlet exporter](docs/quadlet-adapter.md)
+- [Runtime reconstruction](docs/runtime-reconstruction.md)
 - [Testing strategy](docs/testing.md)
 - [Development environment](docs/development-environment.md)
 - [Release policy](docs/releasing.md)

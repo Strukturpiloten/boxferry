@@ -14,7 +14,7 @@ pub use application::{
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
     ModelError, Mount, MountSource, Network, NetworkAttachment, Port, Protocol, ResourceGrant, ResourceGrantSyntax,
     ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
-    Volume,
+    ServiceGroup, Volume,
 };
 pub use image::ImageReference;
 pub use provenance::{Provenance, ProvenanceKind, SourceId, SourceSpan, Sourced};

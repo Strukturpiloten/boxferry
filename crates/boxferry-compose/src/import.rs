@@ -1038,7 +1038,7 @@ impl<'a> Mapping<'a> {
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-        self.map_config_material(&subject, ownership, materials, &mut config, resource.definition());
+        self.map_config_material(&subject, ownership, &materials, &mut config, resource.definition());
 
         self.report_fields(&subject, "config definition extension", native.extension_fields());
         self.report_fields(&subject, "unknown config definition field", native.unknown_fields());
@@ -1050,11 +1050,11 @@ impl<'a> Mapping<'a> {
         &mut self,
         subject: &str,
         ownership: ResourceOwnership,
-        materials: Vec<(ConfigMaterial, ComposeSpan)>,
+        materials: &[(ConfigMaterial, ComposeSpan)],
         config: &mut Config,
         definition: &ProjectValue<ConfigDefinition>,
     ) {
-        match materials.as_slice() {
+        match materials {
             [(material, span)] => {
                 config.set_material(self.sourced_spans(material.clone(), &[*span]));
                 self.exact_spans(format!("{subject}.material"), &[*span]);
@@ -1112,7 +1112,7 @@ impl<'a> Mapping<'a> {
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-        self.map_secret_material(&subject, ownership, materials, &mut secret, resource.definition());
+        self.map_secret_material(&subject, ownership, &materials, &mut secret, resource.definition());
 
         self.report_fields(&subject, "secret definition extension", native.extension_fields());
         self.report_fields(&subject, "unknown secret definition field", native.unknown_fields());
@@ -1124,11 +1124,11 @@ impl<'a> Mapping<'a> {
         &mut self,
         subject: &str,
         ownership: ResourceOwnership,
-        materials: Vec<(SecretMaterial, ComposeSpan)>,
+        materials: &[(SecretMaterial, ComposeSpan)],
         secret: &mut Secret,
         definition: &ProjectValue<SecretDefinition>,
     ) {
-        match materials.as_slice() {
+        match materials {
             [(material, span)] => {
                 secret.set_material(self.sourced_spans(material.clone(), &[*span]));
                 self.exact_spans(format!("{subject}.material"), &[*span]);

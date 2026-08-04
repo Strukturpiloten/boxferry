@@ -43,9 +43,15 @@ provenance, native graph completeness, Compose sequence/mapping extra hosts, con
 `AddHost`, and strict-versus-partial policy behavior.
 
 The second public-facade scenario maps two compatible Compose services into one caller-selected
-`.pod`. It verifies reviewed bytes for the pod and both containers, pod-owned ports and networking,
-an identical pod-owned host mapping, the complete native dependency graph, retained source
+`.pod`. It verifies reviewed bytes for the pod and both containers, pod-owned user namespace,
+ports, networking, and host mapping, the complete native dependency graph, retained source
 provenance, and the required `AllowApproximate` authorization.
+
+The config/secret scenario imports application and external resources plus short and long grants.
+It verifies exact repeatable `Secret=` bytes, custom-name default-target preservation, UID/GID/mode
+options, stable manual-action diagnostics for config and application-owned secret material, and
+strict-versus-partial authorization. Focused tests add multi-file grant provenance and sensitive
+runtime-name redaction.
 
 The dependency scenarios prove long-form required, optional, and health-gated edges in exact
 separate-container output and short-form ordering inside an explicitly selected pod. Adapter tests
@@ -55,12 +61,46 @@ Neutral-model, adapter, and public-facade tests protect execution user/group val
 namespaces, ordered supplementary groups, working directories, explicit true/false read-only-root
 intent, field provenance, and sensitive debug redaction. Golden output protects the exact
 separate-container mapping. Focused regressions prove that named primary groups remain explicit
-losses while named supplementary groups are retained, and that container-level `UserNS` is
-reported and omitted because Podman would ignore it in favor of the pod namespace.
+losses while named supplementary groups are retained, identical grouped `UserNS` moves to pod
+scope, and mixed or conflicting namespace intent invalidates grouping.
 
 Runtime-migration tests must assert provenance category as well as value. Effective inspection
 fields use runtime-observation origins; inferred author intent uses conversion-decision origins and
 an explicit non-exact outcome.
+
+The pure `boxferry-runtime` suite currently covers duplicate snapshot identities, sensitive-by-
+default effective commands/environment/creation evidence, caller-selected preservation versus
+image comparison, retained and omitted command/environment/user-group/working-directory overrides,
+direct read-only-root preservation, incomplete image evidence, ordered network
+aliases, volume relationships, uncertain lifecycle ownership, optional creation evidence, and
+ordered provenance-aware service groups. It also proves that contradictory or missing pod/member
+observations remain invalid or unsupported instead of being guessed. Native JSON and daemon
+conformance fixtures begin with the
+Docker and Podman adapter crates; the shared crate deliberately does not invent a native JSON
+schema. `boxferry-podman` adds authored, secrets-reviewed 5.4.0 and 6.0.2 fixture sets. Its tests
+cover native casing, malformed JSON, finite version rejection, image links, pod membership,
+creation evidence, commands, environment, ports, network aliases, named/bind mounts, SELinux
+relabeling, unmodeled configuration, and raw-ID/debug redaction without an installed runtime.
+Fake-executor acquisition tests additionally prove fixed resource-family ordering, no execution
+for empty families, selector validation, finite pod-member and container-resource expansion,
+selector/response deduplication, bind-mount exclusion, malformed-response redaction, and
+selector/stdout/stderr redaction. They never invoke the process executor.
+
+`boxferry-docker` adds authored, secrets-reviewed Engine API 1.40 and 1.55 fixture sets. Its pure
+tests cover Docker-specific casing and leading-slash names, tolerant additive fields, malformed
+JSON, finite API rejection, tag-plus-digest references, effective `Path`/`Args`, image defaults,
+user/group-identity and working-directory overrides, read-only-root state, ports, network aliases, named/bind mounts,
+SELinux relabeling, missing relationships, unmodeled
+configuration, and raw-ID/debug redaction. Fake-executor tests prove the explicit protected daemon
+endpoint and forced API version are present on every request, empty families run no command, and
+container expansion follows only image, network, and named-volume references. One Unix-only test
+invokes the standard process executor against a temporary assertion script—not Docker—to verify
+the exact argument array, forced API version, isolated empty client configuration, and removed
+ambient selection variables.
+
+All-feature public-facade integration tests convert complete resource-free Podman observations and
+Docker inspect documents into reviewed Quadlet bytes. They verify that the broad `BFR0001`
+uncertainty outcome must be authorized through the same engine path used by every other importer.
 
 ### Property and round-trip tests
 
@@ -72,7 +112,66 @@ Docker, Podman, Compose implementations, Helm, Kustomize, and Kubernetes tools m
 
 ### Runtime integration tests
 
-Opt-in tests exercise real Docker, Podman, systemd/Quadlet, and Kubernetes environments. The initial supported Podman floor is 5.4. Test each supported minor version and the newest available version where CI infrastructure permits.
+Opt-in tests exercise real Docker, Podman, systemd/Quadlet, and Kubernetes environments. The
+initial supported Podman floor is 5.4. Test each supported minor version and the newest available
+version where CI infrastructure permits. Docker's reviewed range is Engine API 1.40 through 1.55.
+Its isolated live harness uses Podman or Docker only as an outer container engine and verifies the
+implementation inside the digest-pinned official Docker Engine 29.7.1 image. No Docker evidence is
+inferred from the local `podman-docker` command itself.
+
+The first live tier uses the exact digest-pinned images in
+[`../tools/podman-runtime-matrix.toml`](../tools/podman-runtime-matrix.toml). Pull requests validate
+that contract without starting a container. The weekly/manual `Podman runtime conformance`
+workflow runs one disposable job for each available 5.x minor lane. It gives an ephemeral outer
+container the privileges required for nested Podman, but does not mount a host runtime socket or
+repository write path. Podman 6.0.2 is the reviewed decoder ceiling and an explicit live-evidence
+gap for the reproducible scheduled-image tier because the official stable registry did not provide
+that exact local-runtime image when the matrix was reviewed. A separate installed-current test can
+exercise exactly 6.0.2 when a caller explicitly supplies that executable. It creates a unique
+resource prefix, inspects only those resources, and removes them before returning.
+
+Local live execution is optional and requires an explicitly selected outer engine:
+
+```shell
+BOXFERRY_CONTAINER_ENGINE=docker \
+BOXFERRY_PODMAN_RUNTIME_VERSION=5.4.0 \
+cargo ci-podman-conformance
+```
+
+Omit `BOXFERRY_PODMAN_RUNTIME_VERSION` to run every executable lane. Docker or Podman must already
+be able to start privileged Linux containers. The normal Dev Container deliberately does not
+mount an engine socket or request privileges; run the live command from an explicitly prepared
+disposable host/runner boundary.
+
+To verify the exact current patch through an already installed Podman:
+
+```shell
+BOXFERRY_CURRENT_PODMAN=/usr/bin/podman \
+cargo ci-podman-current-conformance
+```
+
+This command intentionally changes the selected runtime for the duration of the test: it imports
+an empty test image and creates one uniquely named pod, container, network, and volume. It checks
+the Podman version before creating them and its cleanup trap removes only that unique prefix. Do
+not point it at a production runtime.
+
+Docker live conformance uses the exact image and API bounds in
+[`../tools/docker-runtime-matrix.toml`](../tools/docker-runtime-matrix.toml). The weekly/manual
+`Docker runtime conformance` workflow starts a private nested daemon in an ephemeral privileged
+container, creates only its own prefixed resources, forces API 1.40 and 1.55 inspect responses, and
+removes the outer container. It mounts a read-only script and unique temporary evidence directory,
+not a host socket, home directory, credential store, or repository write path. API 1.40 here proves
+current-daemon downgrade behavior; it is not historical Docker 19.03 implementation evidence.
+
+To run it locally with the installed Podman outer engine:
+
+```shell
+BOXFERRY_CONTAINER_ENGINE=/usr/bin/podman \
+cargo ci-docker-conformance
+```
+
+The first run pulls the digest-pinned official Docker image. It requires permission to run a
+privileged container but does not require a local Docker Engine installation.
 
 ## Real-world corpus
 
@@ -117,7 +216,13 @@ cargo fmt --all -- --check
 cargo ci-check
 cargo ci-core
 cargo ci-compose
+cargo ci-docker
+cargo ci-docker-conformance # opt-in; starts an isolated privileged nested Docker daemon
 cargo ci-quadlet
+cargo ci-podman
+cargo ci-podman-conformance # opt-in; requires the explicit environment documented above
+cargo ci-podman-current-conformance # opt-in; creates temporary resources in installed Podman
+cargo ci-runtime
 cargo ci-policy
 cargo ci-clippy
 cargo ci-test
@@ -129,9 +234,11 @@ cargo deny check
 ```
 
 The main `ci-*` aliases use `--locked`, all workspace features, and all targets where the Cargo
-command supports them. The core, Compose-only, and Quadlet-only facade aliases protect additive
-feature boundaries independently. All-feature tests include black-box CLI checks for reviewed
+command supports them. The core, Compose-only, Docker-runtime-only, Podman-runtime-only, and
+Quadlet-only facade aliases protect additive feature boundaries independently. All-feature tests
+include black-box CLI checks for reviewed
 output, loss-policy blocking before writes, and refusal to overwrite an existing directory. CI
 also runs markdownlint and lychee over the documentation.
-Runtime and cross-platform/version matrices remain opt-in until their isolated harnesses exist;
-add their exact commands before enabling them in CI.
+The Docker and Podman runtime matrices are isolated, opt-in locally, and scheduled separately from
+pull-request CI. Other runtime and cross-platform/version matrices remain opt-in until their
+isolated harnesses and exact commands exist.

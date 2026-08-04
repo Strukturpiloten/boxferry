@@ -37,10 +37,10 @@ field as a policy-controlled unsupported outcome.
 | Profile selection | `profiles` | `not applicable` | The caller must explicitly select profiles before import; profiles do not become Quadlet fields. |
 | Health checks | `healthcheck` | `partial` | `CMD`, `CMD-SHELL`, `NONE`/`disable`, interval, timeout, retries, and start period are source-aware and version-checked end to end. Compose `start_interval`, deferred/invalid scalars, conflicting disable/command intent, and systemd-percent-bearing commands produce explicit non-exact outcomes. |
 | Dependencies | `depends_on` | `partial` | Ordered required/optional `service_started` edges map to `Requires`/`Wants` plus `After`. `service_healthy` also maps through `Notify=healthy` when the target has an explicit encodable health command. Restart propagation, successful completion, provider-specific conditions, absent optional services, missing required services, and cycles produce explicit unsupported or invalid outcomes. |
-| Identity | `user`, `userns_mode`, `group_add` | `partial` | User, numeric primary group, user namespace, and ordered named or numeric supplementary groups retain provenance and sensitivity and emit capability-checked container keys. Named primary groups and unsafe values are explicit losses. Pod grouping cannot yet move `userns_mode` to pod-level `UserNS=`, so it is omitted only after partial authorization. |
+| Identity | `user`, `userns_mode`, `group_add` | `partial` | User, numeric primary group, user namespace, and ordered named or numeric supplementary groups retain provenance and sensitivity and emit capability-checked keys. Identical explicit namespaces on every grouped service move to pod `UserNS`; mixed or conflicting intent invalidates grouping. Named primary groups and unsafe values are explicit losses. |
 | Limits and deployment | `ulimits`, CPU/memory/PID fields, `deploy` | `native only` / `preserved` | ComposeLens types `ulimits` and field-level `deploy`; BoxFerry does not yet map resource policy. |
 | Build | `build`, `pull_policy` | `native only` / `preserved` | ComposeLens retains field-level build intent; `.build` generation and image/build policy remain open. |
-| Config and secret grants | `configs`, `secrets` | `neutral only` | The neutral graph retains resource ownership, runtime names, material origins, ordered short/long grants, per-option provenance, and redaction. ComposeLens 0.1.6 and QuadletLens 0.1.6 are release candidates for effective grants and repeatable Podman `Secret=` output. Adapter mapping remains release-gated; Quadlet has no equivalent managed config resource. |
+| Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.6 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
 | Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `preserved` | No typed end-to-end lifecycle contract exists. Generic systemd directives alone are not a semantic mapping. |
 | Process | `entrypoint`, `working_dir`, `tty`, `stdin_open`, `read_only` | `partial` / `preserved` | Safely encodable working directories and explicit true/false read-only-root intent convert end to end. Values needing systemd encoding are reported. Entrypoint, TTY, and standard-input behavior remain preserved only. |
 | Names and DNS | `container_name`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search` | `preserved` | No end-to-end mapping exists beyond `extra_hosts`. |
@@ -60,6 +60,33 @@ unknown native entries and generic systemd sections loss-aware, but that does no
 BoxFerry to synthesize them. `.image`, `.build`, `.kube`, and experimental `.artifact` generation
 are open work. Native Podman-only keys are added when they support a defined migration scenario,
 not merely because the key exists.
+
+## Runtime reconstruction foundation
+
+The additive `runtime` feature accepts caller-constructed, runtime-neutral observations. The
+non-default `podman-runtime` feature additionally decodes explicit container, image, network,
+volume, and pod inspect arrays for Podman 5.4.0 through the reviewed 6.0.2 ceiling. A replaceable
+executor can acquire explicitly selected resources through fixed read-only Podman commands and a
+finite policy may add selected pod members plus referenced container resources. The non-default
+`docker-runtime` feature independently decodes Engine API 1.40-through-1.55 container, image,
+network, and volume inspect arrays. Its replaceable command boundary requires an explicit daemon
+endpoint and API version; a finite policy may add selected containers' referenced resources. No
+policy enumerates an ambient resource family. The supported effective subset is image reference,
+command, environment, non-empty `user[:group]`, non-empty working directory, explicit read-only-root
+state, ports, mounts, network relationships and ordered aliases, inspected
+network/volume existence, optional creation-command evidence, and Podman pod membership evidence.
+
+Command, environment, `user[:group]`, and working-directory values can be preserved or compared
+with a linked image observation. A retained identity is split into neutral primary user and group
+fields with shared provenance. Read-only-root state is preserved directly.
+Every comparison is approximate and receives conversion-decision provenance. Network and volume
+lifecycle ownership remains uncertain. Consistent Podman pod membership becomes an ordered
+neutral `ServiceGroup` with pod and container provenance, but no inferred namespace or lifecycle
+semantics. Quadlet output reports unresolved groups rather than flattening them. Entrypoint, broader
+runtime policy and security settings, labels, health configuration, and other inspect fields remain for the
+native adapter milestones. The Podman decoder reports each meaningful unmodeled native field by
+name as an unsupported outcome instead of discarding it. The Docker decoder applies the same rule
+with independent `BFD` diagnostics and additionally reports the lost entrypoint/command boundary.
 
 ## Promotion rule
 

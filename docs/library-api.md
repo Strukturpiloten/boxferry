@@ -28,7 +28,8 @@ a single “magic conversion” function that reads ambient state.
   and diagnostics.
 - `boxferry-compose`, `boxferry-quadlet`, and later format adapters provide native mappings and
   depend on their corresponding native libraries.
-- Runtime adapter crates provide replaceable inspection interfaces and implementations.
+- `boxferry-runtime` provides pure runtime-neutral observation and reconstruction contracts.
+- Runtime-specific adapter crates provide replaceable inspection interfaces and implementations.
 
 Direct component dependencies are supported for applications building custom adapters, services,
 editor integrations, language bindings, or their own user interface. Component APIs receive the
@@ -50,20 +51,46 @@ exercise the same orchestration path used by the executable.
 
 ## Feature policy
 
-Format and runtime features are additive and named for the integration they enable, such as
-`compose`, `quadlet`, `kubernetes`, `docker-runtime`, and `podman-runtime`. Enabling one feature
-must not disable or change another adapter's public behavior.
+Format and runtime features are additive. The implemented `runtime` feature exposes the pure
+shared reconstruction layer. The implemented non-default `podman-runtime` and `docker-runtime`
+features add their independent native inspect decoders and enable `runtime` transitively. Enabling
+one feature must not disable or change another adapter's public behavior.
 
 The first release candidate enables `cli`, `compose`, and `quadlet` by default so
 `cargo install boxferry` builds a useful command. Embedded callers can select a smaller dependency
 surface with `default-features = false` and explicit format features. CI tests the default set,
 no-default core, every supported individual feature, and all features.
 
-The implemented adapter features are `compose` and `quadlet`; `cli` enables the argument parser and
-requires both for the current executable. The facade re-exports `ComposeImporter`,
-`ComposeSource`, `QuadletExporter`, `QuadletGroupingPolicy`, and `QuadletOutput`. It also exposes
-each adapter and matching Lens dependency through `boxferry::compose` and `boxferry::quadlet`, so
-embedded callers do not need to guess a second native-crate version.
+The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-runtime`, and
+`docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
+current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `QuadletExporter`,
+`QuadletGroupingPolicy`, and `QuadletOutput`. It also exposes each adapter and matching native
+dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
+`boxferry::docker`, so embedded callers do not need to guess a second crate version.
+
+The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types,
+`OverrideReconstruction`, and `RuntimeImporter`. It does not enable Docker or Podman clients and
+does not read a daemon, command, filesystem, or process environment.
+
+The `podman-runtime` feature re-exports `PodmanInspectDocuments`, `PodmanInspectSource`,
+`PodmanSnapshotResult`, `PodmanImporter`, explicit resource-selection and command types,
+`PodmanInspector`, the replaceable `PodmanCommandExecutor`, and
+`ProcessPodmanCommandExecutor`. Decoding performs no I/O. The inspector runs only fixed read-only
+inspect commands for caller-selected resources and a caller-supplied producing version.
+`PodmanExpansionPolicy` lets callers opt into finite container-resource discovery or selected-pod
+member discovery; explicit-only acquisition remains the default and the original `inspect`
+contract.
+
+The `docker-runtime` feature re-exports `DockerApiVersion`, `DockerInspectDocuments`,
+`DockerInspectSource`, `DockerSnapshotResult`, `DockerImporter`, explicit resource-selection and
+closed command types, `DockerInspector`, the replaceable `DockerCommandExecutor`, and
+`ProcessDockerCommandExecutor`. Decoding performs no I/O and accepts only the finite reviewed
+Engine API 1.40-through-1.55 range. The process inspector requires a caller-selected executable,
+protected daemon endpoint, and exact API version. It uses an isolated empty client configuration,
+removes ambient Docker daemon/context/custom-header/TLS selection variables, sets
+`DOCKER_API_VERSION`, and never enumerates empty resource families.
+`DockerExpansionPolicy::ContainerResources` follows only selected containers' image, network, and
+named-volume references; explicit-only acquisition remains the default.
 
 ## Versioning and publication
 
@@ -94,12 +121,15 @@ T4 provides the first tested public surface:
   output;
 - inclusive `PlatformVersion` and `TargetProfile` minimum/optional-maximum ranges;
 - exact, approximate, unsupported, and invalid `ConversionOutcome` values;
-- `LossPolicy`, validated `ConversionPlan`, and policy-authorized `ConversionResult` values; and
-- public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests.
+- `LossPolicy`, validated `ConversionPlan`, and policy-authorized `ConversionResult` values;
+- public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
-  target-side mapping decisions; and
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.5; and
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.5.
+  target-side mapping decisions;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.6;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.6;
+- an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
+- an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
+- an optional `docker-runtime` facade feature backed by `boxferry-docker`.
 
 The crates are still `publish = false`; this is a usable development API, not a crates.io release
 promise. Broader native value encoders and the final default feature set remain T5/T6 work.
@@ -122,10 +152,25 @@ separate ordered grant collections whose shared `ResourceGrant` retains authored
 syntax and separately sourced target, UID, GID, and mode values. File and environment access stay
 outside the model; material and sensitive grant values retain `ProtectedString` redaction.
 
+`Application::service_groups` exposes ordered `ServiceGroup` values. Each group has a neutral
+name, lifecycle ownership, and ordered provenance-bearing service identifiers. Membership does
+not imply a particular source pod type, shared namespace set, infra container, or target workload.
+
 `ProvenanceKind` distinguishes source documents, runtime observations, user overrides,
 implementation defaults, and conversion decisions. Embedded runtime adapters should attach
 `RuntimeObservation` only to effective inspected state and use `ConversionDecision` for inferred
 author intent.
+
+`RuntimeImporter` requires an explicit `OverrideReconstruction` policy. `PreserveObservedState`
+materializes supported effective command, environment, `user[:group]`, and working-directory values.
+`InferImageOverrides` omits values equal to linked image defaults and retains differing values with
+both observation and decision provenance. Retained combined identities split into the neutral
+primary-user and primary-group fields. Explicit read-only-root state is preserved directly.
+Both policies emit an application-level approximate outcome because neither
+can recover complete author intent. Runtime network and volume ownership is `Uncertain`; pod
+membership becomes an ordered `ServiceGroup` when pod and container observations agree. Group
+lifecycle and target semantics remain explicit non-exact decisions. See
+[Runtime reconstruction](runtime-reconstruction.md).
 
 ## Minimal embedded flow
 
@@ -157,7 +202,7 @@ The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A c
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
 replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
 
-The adapter consumes ComposeLens 0.1.5's native `build_project_view` boundary directly. Effective
+The adapter consumes ComposeLens 0.1.6's native `build_project_view` boundary directly. Effective
 multi-file values retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
@@ -174,8 +219,9 @@ unless the caller supplies an exact absolute or systemd-specifier target through
 Separate containers remain the exact grouping default. Embedded callers may select
 `QuadletGroupingPolicy::SinglePod`; compatible declarations produce an approximate plan requiring
 `LossPolicy::AllowApproximate`, while incompatible declarations produce no candidate. Explicit
-host mappings, health checks, dependency/readiness directives, and execution-context values convert through QuadletLens 0.1.5. A single-pod request requires identical ordered
-mappings on every service and emits them once at pod scope; separate containers retain their own
-mappings. Container-level user namespaces remain exact for separate containers but become an
-explicit partial loss for grouped output until pod-level `UserNS=` is available through the typed
-Quadlet boundary.
+host mappings, health checks, dependency/readiness directives, execution-context values, and
+external secret grants convert through QuadletLens 0.1.6. A single-pod request requires identical
+ordered mappings and compatible user-namespace intent on every service. Common mappings and an
+identical explicit namespace emit once at pod scope; separate containers retain their own values.
+Compose config lifecycle and application-owned secret materialization remain explicit target-side
+manual actions.

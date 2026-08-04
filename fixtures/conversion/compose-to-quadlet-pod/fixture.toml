@@ -1,7 +1,7 @@
 schema = 1
 id = "compose-to-quadlet-pod"
 suite = "conversion"
-description = "Protects explicit compatible Compose-to-Quadlet single-pod conversion with shared host mappings and service ordering."
+description = "Protects explicit compatible Compose-to-Quadlet single-pod conversion with a shared user namespace, host mappings, and service ordering."
 secrets_reviewed = true
 files = [
   "compose.yaml",
@@ -21,7 +21,7 @@ modifications = "none"
 description = "No Compose profiles are active; explicit single-pod grouping targets Podman 5.4.0 through 6.0.2 and requires AllowApproximate."
 
 [expectations]
-summary = "Compatible services share one generated pod only by caller request; identical host mappings, ports, and networks move to pod scope, while a short Compose dependency remains a systemd Requires/After relationship between generated container services."
+summary = "Compatible services share one generated pod only by caller request; their identical user namespace and host mappings plus ports and networks move to pod scope, while a short Compose dependency remains a systemd Requires/After relationship between generated container services."
 
 [extensions.compose]
 source-ids = [93]

@@ -34,6 +34,18 @@ requirement and committed lock file let Renovate propose normal updates while CI
 resolved graph. [ADR 0004](decisions/0004-first-cli-feature-and-write-safety.md) records the default
 feature and command-safety decision.
 
+`boxferry-podman` uses Serde 1.0.229 derive support and `serde_json` 1.0.151 to decode private,
+tolerant subsets of caller-supplied Podman response arrays. These types do not cross the public
+native-adapter boundary, unknown fields are retained for structured loss reporting, and malformed
+payload diagnostics do not echo input values. The committed lockfile fixes the reviewed transitive
+graph while Renovate proposes compatible updates.
+
+`boxferry-docker` uses the same Serde and `serde_json` versions for an independent private subset
+of versioned Docker Engine inspect responses. Sharing the serialization dependencies does not
+share Podman and Docker native types: their version, casing, relationship, and command contracts
+remain separate. Unknown meaningful Docker fields receive structured loss reports, and malformed
+payload diagnostics do not echo input values.
+
 ## Automation
 
 Run `cargo deny check` after installing `cargo-deny`. CI checks advisories, licenses, bans, and sources. Renovate proposes Cargo, lockfile, Rust toolchain, and GitHub Actions updates; updates still require the same tests and review as human-authored dependency changes.

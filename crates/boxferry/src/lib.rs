@@ -32,13 +32,22 @@
 /// Compose native-model adapter APIs, enabled by the additive `compose` feature.
 #[cfg(feature = "compose")]
 pub use boxferry_compose as compose;
+/// Docker Engine inspection adapter APIs, enabled by the additive `docker-runtime` feature.
+#[cfg(feature = "docker-runtime")]
+pub use boxferry_docker as docker;
 /// Conversion planning, policy, capability, and diagnostic APIs.
 pub use boxferry_engine as engine;
 /// Format-independent container application model APIs.
 pub use boxferry_model as model;
+/// Podman inspection adapter APIs, enabled by the additive `podman-runtime` feature.
+#[cfg(feature = "podman-runtime")]
+pub use boxferry_podman as podman;
 /// Quadlet native-model adapter APIs, enabled by the additive `quadlet` feature.
 #[cfg(feature = "quadlet")]
 pub use boxferry_quadlet as quadlet;
+/// Runtime observation and reconstruction APIs, enabled by the additive `runtime` feature.
+#[cfg(feature = "runtime")]
+pub use boxferry_runtime as runtime;
 
 pub use boxferry_engine::{
     ConversionError, ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, Diagnostic, DiagnosticCode,
@@ -50,10 +59,32 @@ pub use boxferry_model::{
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
     ImageReference, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
     Provenance, ProvenanceKind, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial,
-    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, SourceId, SourceSpan, Sourced, Volume,
+    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, SourceSpan,
+    Sourced, Volume,
 };
 
 #[cfg(feature = "compose")]
 pub use boxferry_compose::{ComposeImporter, ComposeSource};
+#[cfg(feature = "docker-runtime")]
+pub use boxferry_docker::{
+    DockerAcquisitionError, DockerApiVersion, DockerCommandExecutor, DockerCommandOutput, DockerExpansionPolicy,
+    DockerImporter, DockerInspectCommand, DockerInspectDocuments, DockerInspectSource, DockerInspector,
+    DockerResourceKind, DockerResourceSelection, DockerSelectionError, DockerSnapshotResult,
+    MAXIMUM_DOCKER_API_VERSION, MINIMUM_DOCKER_API_VERSION, ParseDockerApiVersionError, ProcessDockerCommandExecutor,
+};
 #[cfg(feature = "quadlet")]
 pub use boxferry_quadlet::{QuadletExporter, QuadletExporterError, QuadletFile, QuadletGroupingPolicy, QuadletOutput};
+
+#[cfg(feature = "podman-runtime")]
+pub use boxferry_podman::{
+    PodmanAcquisitionError, PodmanCommandExecutor, PodmanCommandOutput, PodmanExpansionPolicy, PodmanImporter,
+    PodmanInspectCommand, PodmanInspectDocuments, PodmanInspectSource, PodmanInspector, PodmanResourceKind,
+    PodmanResourceSelection, PodmanSelectionError, PodmanSnapshotResult, ProcessPodmanCommandExecutor,
+};
+
+#[cfg(feature = "runtime")]
+pub use boxferry_runtime::{
+    ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation,
+    OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeImporter,
+    RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
+};

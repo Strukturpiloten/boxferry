@@ -152,38 +152,7 @@ fn imports_mapping_extra_hosts_without_requiring_ip_only_values() -> Result<(), 
 
 #[test]
 fn imports_config_and_secret_definitions_and_ordered_service_grants() -> Result<(), Box<dyn Error>> {
-    let text = concat!(
-        "services:\n",
-        "  web:\n",
-        "    image: example.invalid/web:1\n",
-        "    configs:\n",
-        "      - app-config\n",
-        "      - source: external-config\n",
-        "        target: /etc/example.conf\n",
-        "        uid: \"101\"\n",
-        "        gid: \"102\"\n",
-        "        mode: \"0440\"\n",
-        "    secrets:\n",
-        "      - app-secret\n",
-        "      - source: external-secret\n",
-        "        target: api-token\n",
-        "        uid: \"201\"\n",
-        "        gid: \"202\"\n",
-        "        mode: \"0400\"\n",
-        "configs:\n",
-        "  app-config:\n",
-        "    content: |\n",
-        "      debug=true\n",
-        "  external-config:\n",
-        "    external: true\n",
-        "    name: runtime-config\n",
-        "secrets:\n",
-        "  app-secret:\n",
-        "    environment: APP_SECRET\n",
-        "  external-secret:\n",
-        "    external: true\n",
-        "    name: runtime-secret\n",
-    );
+    let text = config_and_secret_compose();
     let compose_source_id = ComposeSourceId::new(75);
     let project = merged_project([(compose_source_id, "resources.compose.yaml", text)])?;
     let source = ComposeSource::new(project, Identifier::new("resources")?)?
@@ -267,6 +236,73 @@ fn imports_config_and_secret_definitions_and_ordered_service_grants() -> Result<
             .iter()
             .chain(web.secret_grants())
             .all(|grant| !grant.origins().is_empty())
+    );
+    Ok(())
+}
+
+#[test]
+fn imports_multifile_secret_grants_and_redacts_a_sensitive_runtime_name() -> Result<(), Box<dyn Error>> {
+    let base = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    secrets:\n",
+        "      - source: token\n",
+        "        target: primary-token\n",
+        "secrets:\n",
+        "  token:\n",
+        "    external: true\n",
+        "    name: ${PRIVATE_SECRET_NAME}\n",
+    );
+    let overlay = concat!(
+        "services:\n",
+        "  web:\n",
+        "    secrets:\n",
+        "      - source: token\n",
+        "        target: primary-token\n",
+        "        mode: \"0400\"\n",
+        "      - source: token\n",
+        "        target: secondary-token\n",
+    );
+    let base_id = ComposeSourceId::new(82);
+    let overlay_id = ComposeSourceId::new(83);
+    let loaded = LoadedProject::load([
+        DocumentInput::new(base_id, DocumentOrigin::new("base.compose.yaml", "."), base),
+        DocumentInput::new(overlay_id, DocumentOrigin::new("override.compose.yaml", "."), overlay),
+    ])?;
+    let mut environment = MapEnvironment::new();
+    let _ = environment.insert_sensitive("PRIVATE_SECRET_NAME", "production-token");
+    let interpolation = loaded.interpolate(&environment);
+    let merged = merge_project(&loaded, Some(&interpolation));
+    assert!(merged.is_valid(), "{:#?}", merged.diagnostics());
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("multifile-secret")?,
+    )?
+    .with_source_id(base_id, SourceId::new("base.compose.yaml")?)
+    .with_source_id(overlay_id, SourceId::new("override.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let application = result.application().ok_or("application expected")?;
+    let runtime_name = application.secrets()[0]
+        .value()
+        .runtime_name()
+        .ok_or("runtime name expected")?;
+    assert!(runtime_name.value().is_sensitive());
+    assert_eq!(runtime_name.value().expose(), "production-token");
+    assert!(!format!("{application:?}").contains("production-token"));
+
+    let grants = application.services()[0].value().secret_grants();
+    assert_eq!(grants.len(), 2);
+    assert_eq!(grants[0].origins().len(), 2);
+    assert_eq!(
+        grants[0].value().mode().map(|value| value.value().expose()),
+        Some("0400")
+    );
+    assert_eq!(
+        grants[1].value().target().map(|value| value.value().expose()),
+        Some("secondary-token")
     );
     Ok(())
 }
@@ -727,6 +763,41 @@ fn fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
         .join("../../fixtures/adapter-contract/compose-import-core")
         .join(name);
     Ok(fs::read_to_string(path)?)
+}
+
+const fn config_and_secret_compose() -> &'static str {
+    concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    configs:\n",
+        "      - app-config\n",
+        "      - source: external-config\n",
+        "        target: /etc/example.conf\n",
+        "        uid: \"101\"\n",
+        "        gid: \"102\"\n",
+        "        mode: \"0440\"\n",
+        "    secrets:\n",
+        "      - app-secret\n",
+        "      - source: external-secret\n",
+        "        target: api-token\n",
+        "        uid: \"201\"\n",
+        "        gid: \"202\"\n",
+        "        mode: \"0400\"\n",
+        "configs:\n",
+        "  app-config:\n",
+        "    content: |\n",
+        "      debug=true\n",
+        "  external-config:\n",
+        "    external: true\n",
+        "    name: runtime-config\n",
+        "secrets:\n",
+        "  app-secret:\n",
+        "    environment: APP_SECRET\n",
+        "  external-secret:\n",
+        "    external: true\n",
+        "    name: runtime-secret\n",
+    )
 }
 
 fn assert_core_healthcheck(service: &Service) -> Result<(), Box<dyn Error>> {

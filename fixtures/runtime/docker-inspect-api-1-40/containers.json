@@ -1,0 +1,59 @@
+[
+  {
+    "Id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "Image": "sha256:image-runtime-id-web",
+    "Name": "/web",
+    "Path": "/usr/local/bin/entrypoint",
+    "Args": ["server", "--production"],
+    "Config": {
+      "Image": "registry.example.invalid/team/web:1.2@sha256:abcd",
+      "Env": ["MODE=production"],
+      "Cmd": ["server", "--production"],
+      "Entrypoint": ["/usr/local/bin/entrypoint"],
+      "User": "1001:1002",
+      "WorkingDir": "/srv/app",
+      "Labels": {"com.example.purpose": "fixture"}
+    },
+    "HostConfig": {
+      "ReadonlyRootfs": true
+    },
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Name": "data",
+        "Source": "/var/lib/docker/volumes/data/_data",
+        "Destination": "/var/lib/example",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": "",
+        "SubPath": ""
+      },
+      {
+        "Type": "bind",
+        "Name": "",
+        "Source": "/srv/example",
+        "Destination": "/srv/example",
+        "Driver": "",
+        "Mode": "ro,Z",
+        "RW": false,
+        "Propagation": "",
+        "SubPath": ""
+      }
+    ],
+    "NetworkSettings": {
+      "Ports": {
+        "8080/tcp": [
+          {"HostIp": "127.0.0.1", "HostPort": "18080"}
+        ]
+      },
+      "Networks": {
+        "frontend": {
+          "Aliases": ["0123456789ab", "web", "public-api"],
+          "DNSNames": ["web", "0123456789ab"],
+          "IPAddress": "172.20.0.2"
+        }
+      }
+    }
+  }
+]

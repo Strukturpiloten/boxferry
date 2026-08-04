@@ -26,6 +26,29 @@ pub enum ModelError {
         /// Duplicated name.
         name: String,
     },
+    /// A service was added to the same group more than once.
+    DuplicateServiceGroupMember {
+        /// Service-group name.
+        group: String,
+        /// Duplicate service name.
+        service: String,
+    },
+    /// A service group referenced a service absent from the application.
+    UnknownServiceGroupMember {
+        /// Service-group name.
+        group: String,
+        /// Missing service name.
+        service: String,
+    },
+    /// A service was assigned to more than one application group.
+    ServiceInMultipleGroups {
+        /// Service name.
+        service: String,
+        /// Existing service-group name.
+        existing: String,
+        /// Conflicting service-group name.
+        replacement: String,
+    },
     /// An image reference had invalid component structure.
     InvalidImageReference(&'static str),
     /// A container port was zero.
@@ -45,6 +68,26 @@ impl fmt::Display for ModelError {
             Self::DuplicateResource { kind, name } => {
                 write!(formatter, "duplicate {kind} `{name}`")
             }
+            Self::DuplicateServiceGroupMember { group, service } => {
+                write!(
+                    formatter,
+                    "service group `{group}` contains duplicate member `{service}`"
+                )
+            }
+            Self::UnknownServiceGroupMember { group, service } => {
+                write!(
+                    formatter,
+                    "service group `{group}` references unknown service `{service}`"
+                )
+            }
+            Self::ServiceInMultipleGroups {
+                service,
+                existing,
+                replacement,
+            } => write!(
+                formatter,
+                "service `{service}` belongs to both service groups `{existing}` and `{replacement}`"
+            ),
             Self::InvalidImageReference(reason) => write!(formatter, "invalid image reference: {reason}"),
             Self::ZeroContainerPort => formatter.write_str("container port must not be zero"),
             Self::InvalidHealthcheckRetries => {
@@ -89,6 +132,8 @@ pub enum ResourceOwnership {
     External,
     /// A source implementation supplied the resource implicitly.
     Implicit,
+    /// Runtime inspection established the resource but not who should manage its lifecycle.
+    Uncertain,
 }
 
 /// One application-level volume declaration.
@@ -376,6 +421,63 @@ impl Network {
     #[must_use]
     pub const fn ownership(&self) -> ResourceOwnership {
         self.ownership
+    }
+}
+
+/// One structural group of application services.
+///
+/// Membership alone does not imply shared Linux namespaces, an infra container, or a target
+/// workload kind. Source and target adapters must model or report those semantics separately.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceGroup {
+    name: Identifier,
+    ownership: ResourceOwnership,
+    members: Vec<Sourced<Identifier>>,
+}
+
+impl ServiceGroup {
+    /// Creates an empty structural service group.
+    #[must_use]
+    pub const fn new(name: Identifier, ownership: ResourceOwnership) -> Self {
+        Self {
+            name,
+            ownership,
+            members: Vec::new(),
+        }
+    }
+
+    /// Returns the neutral group name.
+    #[must_use]
+    pub const fn name(&self) -> &Identifier {
+        &self.name
+    }
+
+    /// Returns the group lifecycle owner.
+    #[must_use]
+    pub const fn ownership(&self) -> ResourceOwnership {
+        self.ownership
+    }
+
+    /// Appends one uniquely named member in source order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DuplicateServiceGroupMember`] when the service was already added.
+    pub fn add_member(&mut self, member: Sourced<Identifier>) -> Result<(), ModelError> {
+        if self.members.iter().any(|candidate| candidate.value() == member.value()) {
+            return Err(ModelError::DuplicateServiceGroupMember {
+                group: self.name.as_str().to_owned(),
+                service: member.value().as_str().to_owned(),
+            });
+        }
+        self.members.push(member);
+        Ok(())
+    }
+
+    /// Returns member service names in source order with relationship provenance.
+    #[must_use]
+    pub fn members(&self) -> &[Sourced<Identifier>] {
+        &self.members
     }
 }
 
@@ -1199,6 +1301,7 @@ impl Service {
 pub struct Application {
     name: Identifier,
     services: Vec<Sourced<Service>>,
+    service_groups: Vec<Sourced<ServiceGroup>>,
     volumes: Vec<Sourced<Volume>>,
     networks: Vec<Sourced<Network>>,
     configs: Vec<Sourced<Config>>,
@@ -1212,6 +1315,7 @@ impl Application {
         Self {
             name,
             services: Vec::new(),
+            service_groups: Vec::new(),
             volumes: Vec::new(),
             networks: Vec::new(),
             configs: Vec::new(),
@@ -1244,6 +1348,56 @@ impl Application {
     #[must_use]
     pub fn services(&self) -> &[Sourced<Service>] {
         &self.services
+    }
+
+    /// Adds a uniquely named structural service group.
+    ///
+    /// Every referenced service must already exist in the application, and one service may belong
+    /// to at most one group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DuplicateResource`], [`ModelError::UnknownServiceGroupMember`], or
+    /// [`ModelError::ServiceInMultipleGroups`] when a relationship is ambiguous.
+    pub fn add_service_group(&mut self, group: Sourced<ServiceGroup>) -> Result<(), ModelError> {
+        ensure_unique(
+            "service group",
+            group.value().name(),
+            self.service_groups.iter().map(|candidate| candidate.value().name()),
+        )?;
+        for member in group.value().members() {
+            if !self
+                .services
+                .iter()
+                .any(|service| service.value().name() == member.value())
+            {
+                return Err(ModelError::UnknownServiceGroupMember {
+                    group: group.value().name().as_str().to_owned(),
+                    service: member.value().as_str().to_owned(),
+                });
+            }
+            if let Some(existing) = self.service_groups.iter().find(|candidate| {
+                candidate
+                    .value()
+                    .members()
+                    .iter()
+                    .any(|candidate_member| candidate_member.value() == member.value())
+            }) {
+                return Err(ModelError::ServiceInMultipleGroups {
+                    service: member.value().as_str().to_owned(),
+                    existing: existing.value().name().as_str().to_owned(),
+                    replacement: group.value().name().as_str().to_owned(),
+                });
+            }
+        }
+        self.service_groups.push(group);
+        Ok(())
+    }
+
+    /// Returns structural service groups in source order.
+    #[must_use]
+    pub fn service_groups(&self) -> &[Sourced<ServiceGroup>] {
+        &self.service_groups
     }
 
     /// Adds a uniquely named volume while preserving declaration order.
@@ -1360,7 +1514,7 @@ mod tests {
     use super::{
         Application, Config, ConfigMaterial, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind,
         HostMapping, Identifier, ModelError, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret,
-        SecretMaterial, Service, ServiceDependency, ServiceDependencyCondition,
+        SecretMaterial, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
     };
     use crate::{ProtectedString, Sourced};
 
@@ -1383,6 +1537,53 @@ mod tests {
 
         let duplicate = application.add_service(Sourced::generated(Service::new(id("web")?)));
         assert!(matches!(duplicate, Err(ModelError::DuplicateResource { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn service_groups_preserve_order_and_reject_ambiguous_membership() -> Result<(), String> {
+        let mut application = Application::new(id("example")?);
+        for name in ["web", "worker"] {
+            application
+                .add_service(Sourced::generated(Service::new(id(name)?)))
+                .map_err(|error| error.to_string())?;
+        }
+
+        let mut frontend = ServiceGroup::new(id("frontend")?, ResourceOwnership::Uncertain);
+        frontend
+            .add_member(Sourced::generated(id("web")?))
+            .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            frontend.add_member(Sourced::generated(id("web")?)),
+            Err(ModelError::DuplicateServiceGroupMember { .. })
+        ));
+        application
+            .add_service_group(Sourced::generated(frontend))
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(application.service_groups()[0].value().name().as_str(), "frontend");
+        assert_eq!(
+            application.service_groups()[0].value().members()[0].value().as_str(),
+            "web"
+        );
+
+        let mut conflicting = ServiceGroup::new(id("backend")?, ResourceOwnership::Application);
+        conflicting
+            .add_member(Sourced::generated(id("web")?))
+            .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            application.add_service_group(Sourced::generated(conflicting)),
+            Err(ModelError::ServiceInMultipleGroups { .. })
+        ));
+
+        let mut missing = ServiceGroup::new(id("missing")?, ResourceOwnership::External);
+        missing
+            .add_member(Sourced::generated(id("database")?))
+            .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            application.add_service_group(Sourced::generated(missing)),
+            Err(ModelError::UnknownServiceGroupMember { .. })
+        ));
         Ok(())
     }
 

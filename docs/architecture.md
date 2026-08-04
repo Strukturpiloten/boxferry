@@ -32,6 +32,11 @@ commands, environment values, explicit hostname mappings, ports, storage, networ
 service dependencies, execution identity and container context,
 resources, secrets, configuration, replicas, and grouping.
 
+`ServiceGroup` retains ordered structural co-membership and lifecycle ownership without implying
+which Linux namespaces are shared or which target workload kind should implement it. Runtime
+group members can therefore carry both group- and container-observation provenance while target
+policy remains explicit.
+
 Configuration and secret declarations retain lifecycle ownership, an optional provider/runtime
 name, and an optional caller-supplied material origin. Services hold separate ordered config and
 secret grant collections. A grant retains its authored short/long syntax and separately sourced
@@ -66,19 +71,42 @@ separate container units for the first slice, resolves generated network and vol
 a document set, and returns structured losses for value forms it cannot encode safely. It never
 reads an installed Podman version or writes unit files.
 
-Execution identity stays container-scoped for separate units. An explicitly grouped pod cannot
-retain container-level user-namespace selection because Podman uses the pod namespace; until the
-typed Quadlet adapter can generate pod-level `UserNS=`, that field is a reported partial loss.
+Execution identity stays container-scoped for separate units. An explicitly grouped pod moves one
+identical user-namespace choice declared by every service to the capability-checked pod-level
+`UserNS=` key; mixed or conflicting choices invalidate grouping.
 
 ### Runtime inspectors
 
-Runtime inspectors read deployed Docker or Podman resources into observations and then map those observations to application intent. Inspection is lossy by nature: a running container does not retain every choice from its original source definition.
+Runtime inspectors read deployed Docker or Podman resources into observations and then map those
+observations to application intent. Inspection is lossy by nature: a running container does not
+retain every choice from its original source definition.
+
+The implemented `boxferry-runtime` crate owns runtime-neutral observation DTOs and a pure
+reconstructor. Its caller-selected policy either preserves supported effective state or compares
+linked container and image observations to infer command, environment, combined user/group, and
+working-directory overrides. Retained identities split into the neutral fields with shared
+provenance. Explicit read-only-root state is preserved directly. The
+implemented `boxferry-podman` and `boxferry-docker` crates decode explicit native response
+documents and acquire caller-selected resources through closed, replaceable command boundaries.
+Finite policies may expand only directly evidenced relationships without ambient enumeration.
+Docker acquisition additionally requires an explicit daemon endpoint and forced Engine API
+version. Separate opt-in conformance harnesses run digest-pinned nested runtimes without host
+runtime sockets. Native response types never cross into the shared runtime crate or application
+model.
 
 Neutral provenance distinguishes effective runtime observations from authored documents,
 implementation defaults, caller overrides, and BoxFerry conversion decisions. Optional creation
 commands may support an inference, but effective inspection data remains the primary observation.
 
-External commands and APIs are behind traits so tests can supply deterministic implementations.
+Optional creation-command arguments are sensitive by default and can add provenance to the broad
+reconstruction decision, but cannot change an effective value. Resource inspection establishes
+network and volume existence and relationships, not lifecycle ownership; the neutral model records
+that ownership as uncertain until a caller chooses application-owned or external behavior.
+Consistent Podman pod membership enters the neutral graph as a structural service group; response
+disagreement is invalid and target grouping/lifecycle resolution remains caller-owned.
+
+External commands and APIs are behind runtime-specific replaceable interfaces so tests can supply
+deterministic implementations.
 
 ### Target profiles and capability providers
 
@@ -100,12 +128,13 @@ that can only be reached through private CLI code is an architectural defect.
 ## Dependency rules
 
 ```text
-compose-lens ───▶ boxferry-compose ────┐
-quadlet-lens ───▶ boxferry-quadlet ────┤
-k8s libraries ──▶ boxferry-kubernetes ─┤──▶ boxferry facade ──▶ boxferry CLI
-runtime APIs ───▶ runtime adapters ────┘            ▲
-                                                    │
-                                       model and engine crates
+compose-lens ───▶ boxferry-compose ──────────────────┐
+quadlet-lens ───▶ boxferry-quadlet ──────────────────┤
+k8s libraries ──▶ boxferry-kubernetes ───────────────┤──▶ boxferry facade ──▶ boxferry CLI
+runtime APIs ───┐                                    │
+                ├──▶ Docker/Podman adapters ─────────┤
+boxferry-runtime┘                                    │
+model and engine crates ─────────────────────────────┘
 ```
 
 - Lens libraries never depend on BoxFerry.

@@ -7,7 +7,8 @@ early integration, but a Git revision—not a branch—is the compatibility boun
 crates.io release. The repository does not promise source compatibility between arbitrary
 unreleased commits.
 
-The additive `compose` and `quadlet` facade features are exercised as external callers use them,
+The additive `compose`, `quadlet`, pure `runtime`, `podman-runtime`, and `docker-runtime` facade
+features are exercised as external callers use them,
 but remain part of this unpublished development contract. Generated Quadlet file contents require
 an explicit `QuadletFile::text` call and are redacted from adapter `Debug` output.
 
@@ -25,6 +26,10 @@ Public enums are non-exhaustive where future format and policy variants are expe
 retain a fallback match arm. New trait methods require a compatibility-safe default or a minor
 release. The facade is the preferred compatibility boundary; component crates are supported for
 callers that deliberately need lower-level model, engine, or adapter APIs.
+
+The initial `ServiceGroup` contract guarantees ordered structural membership and provenance only.
+Adding portable namespace or target-workload semantics requires new additive fields or types; it
+must not silently reinterpret existing groups.
 
 ## Features and dependencies
 

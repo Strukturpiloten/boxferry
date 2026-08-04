@@ -137,40 +137,39 @@ feature family.
 - [x] Add strict/partial, multi-file, sensitive-value, separate-container, pod-grouped, and golden
   end-to-end tests.
 
-Separate-container output now maps the complete slice exactly when its values fit the reviewed
-one-line encoding subset. Podman ignores a container-level user namespace when the container joins
-a pod, so grouped output reports that field as unsupported instead of emitting misleading
-`UserNS=` content. QuadletLens 0.1.6 now prepares the pod-level `UserNS=` capability needed to
-close this gap when all grouped services request compatible namespace intent. It also prepares the
-repeatable container `Secret=` boundary used by the next resource slice.
+Separate-container output maps the complete identity slice exactly when its values fit the
+reviewed one-line encoding subset. Because Podman uses the pod namespace for grouped containers,
+the completed 0.1.6 integration moves identical explicit namespace intent to pod `UserNS=` and
+rejects mixed or conflicting intent. It also implements the repeatable container `Secret=`
+boundary for pre-existing external Podman secrets.
 
-## Pod-grouped user namespace follow-up — release gated
+## Pod-grouped user namespace follow-up — completed
 
 - [x] Prepare QuadletLens 0.1.6 with singleton pod `UserNS`, capability evidence, and the complete
   Podman 5.4.0-through-6.0.2 generator matrix.
-- [ ] Publish QuadletLens 0.1.6 through its protected trusted-publishing workflow.
-- [ ] Consume released QuadletLens 0.1.6 without a sibling path or Git dependency.
-- [ ] Move one identical explicit namespace choice from every grouped service to pod `UserNS`.
-- [ ] Reject mixed absent/explicit or conflicting grouped namespace intent instead of choosing a
+- [x] Publish QuadletLens 0.1.6 through its protected trusted-publishing workflow.
+- [x] Consume released QuadletLens 0.1.6 without a sibling path or Git dependency.
+- [x] Move one identical explicit namespace choice from every grouped service to pod `UserNS`.
+- [x] Reject mixed absent/explicit or conflicting grouped namespace intent instead of choosing a
   value by service order.
-- [ ] Extend grouped golden output and strict/partial/invalid policy tests.
+- [x] Extend grouped golden output and strict/partial/invalid policy tests.
 
-## Config and secret grants — release gated
+## Config and secret grants — completed
 
 - [x] Prepare ComposeLens 0.1.6 with effective short/long service config and secret grants,
   field-level provenance, unique-by-target merge behavior, and malformed-form recovery.
 - [x] Extend the QuadletLens 0.1.6 candidate with repeatable container `Secret`, capability
   evidence, and mounted-file/environment option fixtures across Podman 5.4.0 through 6.0.2.
-- [ ] Publish ComposeLens 0.1.6 and QuadletLens 0.1.6 through their protected trusted-publishing
+- [x] Publish ComposeLens 0.1.6 and QuadletLens 0.1.6 through their protected trusted-publishing
   workflows.
-- [ ] Consume both released crates without sibling path or Git dependencies.
+- [x] Consume both released crates without sibling path or Git dependencies.
 - [x] Add neutral config/secret definitions and ordered service grants without carrying Lens
   types into the model.
-- [ ] Map externally managed Podman secrets and their target/UID/GID/mode options exactly when
+- [x] Map externally managed Podman secrets and their target/UID/GID/mode options exactly when
   source and target defaults remain equivalent.
-- [ ] Report application-owned secret creation, file/environment materialization, config
+- [x] Report application-owned secret creation, file/environment materialization, config
   lifecycle, and unsupported ownership/default differences as explicit manual actions.
-- [ ] Add short/long, multi-file, custom-name, sensitive-value, strict/partial, and golden tests.
+- [x] Add short/long, multi-file, custom-name, sensitive-value, strict/partial, and golden tests.
 
 ## First usable command-line path — completed
 
@@ -183,17 +182,52 @@ repeatable container `Secret=` boundary used by the next resource slice.
 - [x] Refuse existing output directories and block unauthorized output before performing writes.
 - [x] Add black-box tests for exact reviewed bytes, write safety, and loss-policy exit status.
 
-## Phase 3: runtime migration — open
+## Phase 3: runtime migration — in progress
 
 - [x] Distinguish runtime observations, authored sources, defaults, overrides, and conversion
   decisions in neutral provenance.
-- [ ] Inspect existing Podman containers, pods, networks, volumes, and images.
-- [ ] Inspect equivalent Docker resources.
-- [ ] Treat runtime `CreateCommand` data as optional provenance rather than a required source of truth.
-- [ ] Reconstruct overrides by comparing effective container and image inspection data.
-- [ ] Preserve multiple network aliases and resource relationships from observations.
-- [ ] Reconstruct application intent with explicit uncertainty.
-- [ ] Generate Compose and Quadlet definitions from observations.
+- [x] Establish a pure shared observation/reconstruction crate without Docker or Podman response
+  types, daemon access, command execution, or ambient discovery.
+- [x] Decode caller-supplied Podman container, pod, network, volume, and image inspect arrays for
+  the finite 5.4.0-through-6.0.2 range without daemon or command access.
+- [x] Report malformed input, meaningful unmodeled configuration, missing relationships, and
+  out-of-range Podman versions through stable native diagnostics.
+- [x] Acquire explicitly selected existing Podman resources through a replaceable, shell-free,
+  read-only CLI boundary without running commands for empty resource families.
+- [x] Expand a container/pod selection to related images, networks, and named volumes under an
+  explicit finite caller policy without ambient resource enumeration.
+- [x] Do not auto-follow Podman's mixed namespace/generic container dependency IDs; retain their
+  unsupported diagnostic instead of importing infra containers or guessing portable intent.
+- [x] Add isolated, digest-pinned runtime conformance for every supported minor line with an
+  official immutable local-runtime image: 5.4.0, 5.5.2, 5.6.2, 5.7.1, and 5.8.2.
+- [x] Add an opt-in exact-current-patch lane for an explicitly selected installed Podman 6.0.2;
+  create only uniquely named test resources and remove them after inspection.
+- [ ] Add reproducible scheduled-image conformance for the exact current patch. The official
+  stable registry had no immutable Podman 6.0.2 local-runtime image on 2026-08-04.
+- [x] Decode explicit Docker container, image, network, and volume inspect arrays across the finite
+  Engine API 1.40-through-1.55 range, with closed explicit-endpoint acquisition and bounded
+  container-resource expansion.
+- [x] Add isolated, digest-pinned Docker Engine 29.7.1 conformance with forced API 1.40 and 1.55
+  responses, no host runtime socket, and an explicit historical-19.03 evidence limitation.
+- [x] Treat runtime `CreateCommand` data as optional, sensitive provenance rather than a required
+  source of truth.
+- [x] Reconstruct command and environment overrides by comparing effective container and image
+  observations under an explicit caller-selected policy.
+- [x] Extend container/image comparison to non-empty `user[:group]` and working-directory values,
+  split retained identities into neutral user/group fields, and preserve explicit container
+  read-only-root state directly.
+- [ ] Extend the broader effective-state model with reviewed health, restart, label, and security
+  slices as their native and neutral semantics are defined.
+- [x] Preserve multiple network aliases plus network, volume, mount, and container relationships
+  in observations and the supported neutral subset.
+- [x] Add an ordered neutral service-group relationship with member provenance; consistent Podman
+  membership enters the application graph without inferring namespace or lifecycle semantics.
+- [x] Reconstruct the supported application subset with application-level and field-level
+  uncertainty, provenance, redaction, and policy-controlled outcomes.
+- [x] Generate first-slice Quadlet definitions from caller-supplied observations through the
+  public importer, engine, loss policy, and exporter path.
+- [ ] Generate Compose definitions from observations and extend Quadlet generation with explicit
+  lifecycle/grouping resolutions.
 
 ## Phase 4: Kubernetes — open
 

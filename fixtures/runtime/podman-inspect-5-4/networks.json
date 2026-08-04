@@ -1,0 +1,8 @@
+[
+  {
+    "name": "frontend",
+    "id": "network-runtime-id-frontend",
+    "created": "2026-08-04T00:00:00Z",
+    "driver": "bridge"
+  }
+]

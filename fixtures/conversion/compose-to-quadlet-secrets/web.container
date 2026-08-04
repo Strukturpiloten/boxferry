@@ -1,0 +1,5 @@
+[Container]
+Image=example.invalid/web:1
+Secret=database-password
+Secret=company-api-token,target=api-token
+Secret=certificate,target=/etc/example/certificate.pem,uid=101,gid=102,mode=0440

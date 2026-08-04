@@ -67,6 +67,8 @@ cargo ci-check
 cargo ci-core
 cargo ci-compose
 cargo ci-quadlet
+cargo ci-podman
+cargo ci-runtime
 cargo ci-policy
 cargo ci-clippy
 cargo ci-test

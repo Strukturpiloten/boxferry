@@ -1,0 +1,63 @@
+[
+  {
+    "Id": "container-runtime-id-web",
+    "Image": "image-runtime-id-web",
+    "ImageName": "registry.example.invalid/team/web:1.2@sha256:abcd",
+    "Name": "web",
+    "Pod": "pod-runtime-id-app",
+    "Dependencies": ["database-runtime-id"],
+    "Config": {
+      "Image": "registry.example.invalid/team/web:1.2@sha256:abcd",
+      "Env": ["BASE=image", "MODE=production"],
+      "Cmd": ["server", "--production"],
+      "User": "1001:1002",
+      "WorkingDir": "/srv/app",
+      "CreateCommand": ["podman", "run", "--name", "web"],
+      "Entrypoint": ["/usr/local/bin/entrypoint"]
+    },
+    "HostConfig": {
+      "ReadonlyRootfs": true
+    },
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Name": "data",
+        "Source": "/var/lib/containers/storage/volumes/data/_data",
+        "Destination": "/var/lib/example",
+        "Driver": "local",
+        "Mode": "rw",
+        "Options": ["rw"],
+        "RW": true,
+        "Propagation": "",
+        "SubPath": ""
+      },
+      {
+        "Type": "bind",
+        "Name": "",
+        "Source": "/srv/example",
+        "Destination": "/srv/example",
+        "Mode": "Z,ro",
+        "Options": ["ro", "Z"],
+        "RW": false,
+        "Propagation": "",
+        "SubPath": ""
+      }
+    ],
+    "NetworkSettings": {
+      "Ports": {
+        "8080/tcp": [
+          {
+            "HostIp": "127.0.0.1",
+            "HostPort": "18080"
+          }
+        ]
+      },
+      "Networks": {
+        "frontend": {
+          "Aliases": ["web", "public-api"],
+          "IPAddress": "10.89.0.12"
+        }
+      }
+    }
+  }
+]

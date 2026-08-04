@@ -1,7 +1,7 @@
 # Quadlet exporter
 
 The `boxferry-quadlet` crate maps BoxFerry's neutral application model into a deterministic set of
-Quadlet files through `quadlet-lens` 0.1.5. The `boxferry` facade exposes it through the additive
+Quadlet files through `quadlet-lens` 0.1.6. The `boxferry` facade exposes it through the additive
 `quadlet` feature.
 
 ## Planning boundary
@@ -24,11 +24,12 @@ The exporter generates one `.container` file per service by default, so publishe
 network attachments remain owned by their declaring service. It never infers pod grouping.
 
 Callers can explicitly select `QuadletGroupingPolicy::SinglePod`. The adapter accepts that request
-only when every service has the same ordered network attachments and host mappings, no per-service
-aliases, and no overlapping declared container or published host port/protocol pair. It then
-generates one application-named `.pod`, moves common host mappings, networks, and published ports
-to `[Pod]`, and links every container through `Pod=application.pod`. The document-set graph
-validates all resulting native references.
+only when every service has the same ordered network attachments, host mappings, and user-
+namespace intent, no per-service aliases, and no overlapping declared container or published host
+port/protocol pair. It then generates one application-named `.pod`, moves a shared explicit user
+namespace, common host mappings, networks, and published ports to `[Pod]`, and links every
+container through `Pod=application.pod`. Mixed implicit/explicit or conflicting user namespaces
+invalidate grouping. The document-set graph validates all resulting native references.
 
 Even a compatible pod request is an approximation because the target services share a network
 namespace that Compose normally keeps separate. It emits `BFQ0007`, retains every contributing
@@ -60,6 +61,9 @@ It currently maps:
 - read-only and `z`/`Z` SELinux mount options;
 - application-owned networks through generated `.network` files; and
 - external networks through direct runtime-name references.
+- pre-existing external Podman secrets through repeatable `Secret=` entries, preserving Compose's
+  default target filename when a custom runtime name differs and mapping safe target, numeric UID,
+  numeric GID, and read-only octal mode options.
 
 Application-owned resource references are resolved through QuadletLens's document-set graph.
 External resources deliberately produce no lifecycle file.
@@ -86,15 +90,19 @@ The adapter currently reports rather than guesses:
   dependency conditions;
 - optional dependencies whose service is absent from the converted application;
 - named primary groups, because Quadlet's native `Group=` contract requires a numeric GID;
-- execution-context values that require systemd quoting or target-specific validation; and
-- container-level user namespaces during explicit pod grouping, because Podman uses the pod's
-  user namespace and the current typed pod generator has no `UserNS=` key.
+- execution-context values that require systemd quoting or target-specific validation;
+- Compose config resources and grants, because Quadlet has no managed config-resource lifecycle;
+- application-owned secret creation and file/environment materialization, because `Secret=` only
+  consumes a Podman secret that already exists; and
+- secret names or options outside the reviewed unambiguous one-line Podman secret grammar; and
+- neutral service groups without a caller-selected target grouping and lifecycle resolution.
 
-Missing required dependency services and dependency-ordering cycles are invalid and produce no
-candidate. Optional absent services and unsupported conditions retain the remaining candidate but
-require `LossPolicy::AllowPartial`. Dependency directives are generated between container service
-units in both separate-container and explicitly selected single-pod layouts; pod membership does
-not erase service startup order.
+Missing required dependency services, dependency-ordering cycles, missing secret declarations,
+and incompatible explicit grouping requests are invalid. Optional absent services and unsupported
+conditions or resource materialization retain the remaining candidate but require
+`LossPolicy::AllowPartial`. Dependency directives are generated between container service units
+in both separate-container and explicitly selected single-pod layouts; pod membership does not
+erase service startup order.
 
 Unsupported fields remain in the conversion report and require `LossPolicy::AllowPartial` before
 the remaining candidate can be released. Invalid required values and target profiles always block

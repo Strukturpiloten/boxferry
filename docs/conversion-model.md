@@ -25,13 +25,17 @@ nodes and attachments include:
 - environment value
 - explicit hostname mapping
 - published port
+- ordered structural service groups with lifecycle ownership and relationship provenance
 
 Service collections express network and storage attachment, exposure, lifecycle ownership, and
-provenance. Config and secret material values use `ProtectedString`; their presence in the model
+provenance. Runtime imports can mark network and volume lifecycle ownership as `Uncertain` when
+inspection establishes existence but cannot prove whether a future definition should create or
+reuse the resource. Config and secret material values use `ProtectedString`; their presence in the model
 does not authorize BoxFerry to read files or process environment variables. Adapters must report
 conflicts such as external ownership combined with managed material rather than silently choosing
-one interpretation. Workload grouping and build input are added with their native vertical
-slices. This permits a single-host Compose project,
+one interpretation. A service group records co-membership without implying namespace-sharing or
+a target workload kind. Build input and richer workload semantics are added with their native
+vertical slices. This permits a single-host Compose project,
 a Quadlet pod, and a multi-node Kubernetes workload to be compared without treating them as
 identical.
 

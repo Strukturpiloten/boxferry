@@ -19,6 +19,7 @@ const BASE_SOURCE_ID: u32 = 91;
 const OVERRIDE_SOURCE_ID: u32 = 92;
 const POD_SOURCE_ID: u32 = 93;
 const DEPENDENCY_SOURCE_ID: u32 = 94;
+const SECRET_SOURCE_ID: u32 = 95;
 
 #[test]
 fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(), Box<dyn Error>> {
@@ -169,6 +170,13 @@ fn converts_a_compatible_project_into_an_explicitly_authorized_pod() -> Result<(
         .ok_or("pod host-mapping outcome expected")?;
     assert_eq!(pod_host_mapping.kind(), ConversionKind::Exact);
     assert_eq!(pod_host_mapping.origins().len(), 2);
+    let pod_user_namespace = approximate
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "application.pod.user_namespace")
+        .ok_or("pod user-namespace outcome expected")?;
+    assert_eq!(pod_user_namespace.kind(), ConversionKind::Exact);
+    assert_eq!(pod_user_namespace.origins().len(), 2);
     let grouping = approximate
         .outcomes()
         .iter()
@@ -256,6 +264,96 @@ fn converts_required_optional_and_healthy_dependencies_exactly() -> Result<(), B
     Ok(())
 }
 
+#[test]
+fn converts_external_secrets_and_reports_materialization_actions() -> Result<(), Box<dyn Error>> {
+    let directory = secret_fixture_directory();
+    let compose = secret_fixture_text("compose.yaml")?;
+    let compose_id = ComposeSourceId::new(SECRET_SOURCE_ID);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        compose_id,
+        DocumentOrigin::new("compose.yaml", directory.display().to_string()),
+        compose,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    if !merged.is_valid() {
+        return Err(format!("merge diagnostics: {:#?}", merged.diagnostics()).into());
+    }
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("fallback")?,
+    )?
+    .with_source_id(compose_id, SourceId::new("compose.yaml")?);
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+
+    let strict = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    assert!(strict.is_blocked());
+
+    let partial = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    let output = partial.output().ok_or("partial secret output expected")?;
+    assert_eq!(output.files().len(), 1);
+    assert_eq!(
+        output.file("web.container").map(boxferry::QuadletFile::text),
+        Some(secret_fixture_text("web.container")?.as_str())
+    );
+
+    let diagnostics = partial
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code().as_str() == "BFQ0003")
+        .map(|diagnostic| {
+            let subject = diagnostic
+                .fields()
+                .iter()
+                .find(|field| field.name() == "subject")
+                .map_or("missing-subject", |field| field.value().expose());
+            format!("{} {subject}", diagnostic.code().as_str())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics,
+        secret_fixture_text("expected-diagnostics.txt")?
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    );
+    let unsupported = partial
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
+        .collect::<Vec<_>>();
+    assert_eq!(unsupported.len(), 4);
+    assert!(unsupported.iter().all(|outcome| !outcome.origins().is_empty()));
+    for subject in [
+        "services.web.secrets[0]",
+        "services.web.secrets[1]",
+        "services.web.secrets[2]",
+    ] {
+        assert!(
+            partial
+                .outcomes()
+                .iter()
+                .any(|outcome| { outcome.subject() == subject && outcome.kind() == ConversionKind::Exact })
+        );
+    }
+    Ok(())
+}
+
 fn fixture_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/conversion/compose-to-quadlet-core")
 }
@@ -268,6 +366,10 @@ fn dependency_fixture_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/conversion/compose-to-quadlet-dependencies")
 }
 
+fn secret_fixture_directory() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/conversion/compose-to-quadlet-secrets")
+}
+
 fn fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(fixture_directory().join(name))?)
 }
@@ -278,4 +380,8 @@ fn pod_fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
 
 fn dependency_fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(dependency_fixture_directory().join(name))?)
+}
+
+fn secret_fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
+    Ok(fs::read_to_string(secret_fixture_directory().join(name))?)
 }

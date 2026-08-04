@@ -378,6 +378,9 @@ impl<'a> Mapping<'a> {
                 true
             }
         };
+        for group in self.application.service_groups() {
+            self.map_service_group(group);
+        }
         for network in self.application.networks() {
             self.map_network(network);
         }
@@ -539,28 +542,7 @@ impl<'a> Mapping<'a> {
             }
         }
 
-        let first_user_namespace = first.value().user_namespace().map(|value| value.value().expose());
-        for service in services {
-            let user_namespace = service.value().user_namespace().map(|value| value.value().expose());
-            if user_namespace != first_user_namespace {
-                self.invalid(
-                    self.exporter.codes.grouping.clone(),
-                    "application.grouping",
-                    "single-pod grouping cannot preserve different per-service user namespaces",
-                    "all services must declare the same user namespace, or every service must leave it implicit",
-                    &origins,
-                );
-                return false;
-            }
-        }
-        if first_user_namespace.is_some_and(|value| !is_safe_word(value, false)) {
-            self.invalid(
-                self.exporter.codes.grouping.clone(),
-                "application.grouping",
-                "single-pod grouping cannot encode the shared user namespace safely",
-                "the shared user namespace contains unsupported whitespace or control syntax",
-                &origins,
-            );
+        if !self.validate_grouped_user_namespace(services, &origins) {
             return false;
         }
 
@@ -610,6 +592,34 @@ impl<'a> Mapping<'a> {
             }
             container_ports.extend(service_container_ports);
             published_ports.extend(service_published_ports);
+        }
+        true
+    }
+
+    fn validate_grouped_user_namespace(&mut self, services: &[Sourced<Service>], origins: &[Provenance]) -> bool {
+        let first_user_namespace = services[0].value().user_namespace().map(|value| value.value().expose());
+        if services
+            .iter()
+            .any(|service| service.value().user_namespace().map(|value| value.value().expose()) != first_user_namespace)
+        {
+            self.invalid(
+                self.exporter.codes.grouping.clone(),
+                "application.grouping",
+                "single-pod grouping cannot preserve different per-service user namespaces",
+                "all services must declare the same user namespace, or every service must leave it implicit",
+                origins,
+            );
+            return false;
+        }
+        if first_user_namespace.is_some_and(|value| !is_safe_word(value, false)) {
+            self.invalid(
+                self.exporter.codes.grouping.clone(),
+                "application.grouping",
+                "single-pod grouping cannot encode the shared user namespace safely",
+                "the shared user namespace contains unsupported whitespace or control syntax",
+                origins,
+            );
+            return false;
         }
         true
     }
@@ -690,6 +700,15 @@ impl<'a> Mapping<'a> {
             &subject,
             "Quadlet has no native configuration-resource lifecycle; create and mount this config through an explicit target policy",
             config.origins(),
+        );
+    }
+
+    fn map_service_group(&mut self, group: &Sourced<boxferry_model::ServiceGroup>) {
+        let subject = format!("service_groups.{}", group.value().name().as_str());
+        self.unsupported(
+            &subject,
+            "neutral service-group membership requires an explicit Quadlet grouping and lifecycle resolution policy",
+            group.origins(),
         );
     }
 
@@ -944,48 +963,13 @@ impl<'a> Mapping<'a> {
             return;
         }
 
-        let mut options = Vec::new();
-        match grant.value().target() {
-            Some(target) => {
-                if !is_safe_secret_component(target.value().expose()) {
-                    self.unsupported(
-                        &subject,
-                        "secret target cannot be encoded in the reviewed Quadlet Secret grammar",
-                        &secret_grant_origins(grant, secret),
-                    );
-                    return;
-                }
-                options.push(format!("target={}", target.value().expose()));
-            }
-            None if runtime_name != source => options.push(format!("target={source}")),
-            None => {}
-        }
-        for (name, value) in [("uid", grant.value().uid()), ("gid", grant.value().gid())] {
-            if let Some(value) = value {
-                if value.value().expose().is_empty()
-                    || !value.value().expose().bytes().all(|byte| byte.is_ascii_digit())
-                {
-                    self.unsupported(
-                        &subject,
-                        "secret UID and GID options require non-negative decimal integers",
-                        &secret_grant_origins(grant, secret),
-                    );
-                    return;
-                }
-                options.push(format!("{name}={}", value.value().expose()));
-            }
-        }
-        if let Some(mode) = grant.value().mode() {
-            let Some(mode) = normalize_secret_mode(mode.value().expose()) else {
-                self.unsupported(
-                    &subject,
-                    "secret mode must be a one-to-four-digit octal value without writable bits",
-                    &secret_grant_origins(grant, secret),
-                );
+        let options = match podman_secret_options(grant.value(), runtime_name, source) {
+            Ok(options) => options,
+            Err(reason) => {
+                self.unsupported(&subject, reason, &secret_grant_origins(grant, secret));
                 return;
-            };
-            options.push(format!("mode={mode}"));
-        }
+            }
+        };
 
         let value = if options.is_empty() {
             runtime_name.to_owned()
@@ -2255,12 +2239,13 @@ fn secret_grant_origins(grant: &Sourced<ResourceGrant>, secret: &Sourced<Secret>
         grant.value().gid(),
         grant.value().mode(),
         secret.value().runtime_name(),
-    ] {
-        if let Some(sourced) = sourced {
-            for origin in sourced.origins() {
-                if !origins.contains(origin) {
-                    origins.push(origin.clone());
-                }
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for origin in sourced.origins() {
+            if !origins.contains(origin) {
+                origins.push(origin.clone());
             }
         }
     }
@@ -2367,6 +2352,33 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
 
 fn is_safe_secret_component(value: &str) -> bool {
     is_safe_word(value, false) && !value.contains([',', '='])
+}
+
+fn podman_secret_options(grant: &ResourceGrant, runtime_name: &str, source: &str) -> Result<Vec<String>, &'static str> {
+    let mut options = Vec::new();
+    match grant.target() {
+        Some(target) if is_safe_secret_component(target.value().expose()) => {
+            options.push(format!("target={}", target.value().expose()));
+        }
+        Some(_) => return Err("secret target cannot be encoded in the reviewed Quadlet Secret grammar"),
+        None if runtime_name != source => options.push(format!("target={source}")),
+        None => {}
+    }
+    for (name, value) in [("uid", grant.uid()), ("gid", grant.gid())] {
+        if let Some(value) = value {
+            if value.value().expose().is_empty() || !value.value().expose().bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err("secret UID and GID options require non-negative decimal integers");
+            }
+            options.push(format!("{name}={}", value.value().expose()));
+        }
+    }
+    if let Some(mode) = grant.mode() {
+        let Some(mode) = normalize_secret_mode(mode.value().expose()) else {
+            return Err("secret mode must be a one-to-four-digit octal value without writable bits");
+        };
+        options.push(format!("mode={mode}"));
+    }
+    Ok(options)
 }
 
 fn normalize_secret_mode(value: &str) -> Option<String> {

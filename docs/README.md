@@ -12,6 +12,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Conversion model](conversion-model.md) — application model, conversion outcomes, and diagnostics
 - [Format coverage](format-coverage.md) — field-by-field pipeline coverage and promotion rules
 - [Quadlet exporter](quadlet-adapter.md) — supported mappings, version evidence, and explicit limits
+- [Runtime reconstruction](runtime-reconstruction.md) — observation contract, inference policy, Docker/Podman decoding, finite acquisition, and live evidence
 - [Testing strategy](testing.md) — unit, fixture, compatibility, and runtime testing
 - [Development environment](development-environment.md) — reproducible VS Code tooling and update policy
 - [Release policy](releasing.md) — library publication order and future binary automation boundary

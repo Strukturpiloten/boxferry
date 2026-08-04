@@ -36,7 +36,10 @@ jobs:
         run: |
           cargo ci-core
           cargo ci-compose
+          cargo ci-docker
           cargo ci-quadlet
+          cargo ci-podman
+          cargo ci-runtime
       - name: Check repository policies
         run: cargo ci-policy
       - name: Run Clippy

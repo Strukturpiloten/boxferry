@@ -11,7 +11,8 @@ intended publication order is:
 
 1. `boxferry-model` and `boxferry-engine` after T4.
 2. `boxferry-compose` and `boxferry-quadlet` with the supported T5/T6 mappings.
-3. The `boxferry` facade and executable with the first useful end-to-end conversion.
+3. `boxferry-runtime` after both native runtime adapters have exercised its public contract.
+4. The `boxferry` facade and executable with the first useful end-to-end conversion.
 
 Workspace dependencies use both a local `path` and the matching released `version`, so packaged
 crates resolve through crates.io. Publication automation must respect dependency order and verify
