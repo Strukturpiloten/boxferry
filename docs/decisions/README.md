@@ -11,10 +11,12 @@ Architecture decision records capture choices that constrain future development.
 
 ## Index
 
-| ADR                                           | Status   | Decision                                                                        |
-| --------------------------------------------- | -------- | ------------------------------------------------------------------------------- |
-| [0001](0001-project-boundaries-and-origin.md) | accepted | Independent repositories, dependency direction, and from-scratch implementation |
-| [0002](0002-public-library-facade.md)         | accepted | Public library facade, reusable component crates, and CLI parity                |
+| ADR                                                        | Status   | Decision                                                                           |
+| ---------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| [0001](0001-project-boundaries-and-origin.md)              | accepted | Independent repositories, dependency direction, and from-scratch implementation    |
+| [0002](0002-public-library-facade.md)                      | accepted | Public library facade, reusable component crates, and CLI parity                   |
+| [0003](0003-explicit-runtime-observation-provenance.md)    | accepted | Runtime observations remain distinct from authored intent and conversion decisions |
+| [0004](0004-first-cli-feature-and-write-safety.md)         | accepted | Useful default CLI features with fail-closed, non-overwriting output               |
 
 ## Adding an ADR
 

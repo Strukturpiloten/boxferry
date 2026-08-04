@@ -1,7 +1,7 @@
 # Quadlet exporter
 
 The `boxferry-quadlet` crate maps BoxFerry's neutral application model into a deterministic set of
-Quadlet files through `quadlet-lens` 0.1.1. The `boxferry` facade exposes it through the additive
+Quadlet files through `quadlet-lens` 0.1.5. The `boxferry` facade exposes it through the additive
 `quadlet` feature.
 
 ## Planning boundary
@@ -24,11 +24,11 @@ The exporter generates one `.container` file per service by default, so publishe
 network attachments remain owned by their declaring service. It never infers pod grouping.
 
 Callers can explicitly select `QuadletGroupingPolicy::SinglePod`. The adapter accepts that request
-only when every service has the same ordered network attachments, no per-service aliases, and no
-overlapping declared container or published host port/protocol pair. It then generates one
-application-named `.pod`, moves common networks and published ports to `[Pod]`, and links every
-container through `Pod=application.pod`. The document-set graph validates all resulting native
-references.
+only when every service has the same ordered network attachments and host mappings, no per-service
+aliases, and no overlapping declared container or published host port/protocol pair. It then
+generates one application-named `.pod`, moves common host mappings, networks, and published ports
+to `[Pod]`, and links every container through `Pod=application.pod`. The document-set graph
+validates all resulting native references.
 
 Even a compatible pod request is an approximation because the target services share a network
 namespace that Compose normally keeps separate. It emits `BFQ0007`, retains every contributing
@@ -41,11 +41,22 @@ It currently maps:
 - exec-form commands whose individual arguments need no systemd quoting;
 - literal environment assignments whose names and values need no systemd quoting or specifier
   escaping;
+- health checks using JSON-preserved `CMD` or `CMD-SHELL` commands, explicit disable intent,
+  regular interval, timeout, retries, and start period;
+- required and optional service-start dependencies through `[Unit]` `Requires`/`Wants` plus
+  `After`, including health-gated activation through `Notify=healthy` when target readiness can be
+  established from an explicit encodable health command;
+- primary user and numeric primary GID, user namespace, ordered named or numeric supplementary
+  groups, working directory, and explicit read-only-root choice through capability-checked
+  container keys;
+- explicit host mappings with IPv4, bracketed or unbracketed IPv6, or the `host-gateway` token;
 - single published TCP, UDP, and SCTP ports, with an optional IPv4 host address;
 - application-owned named volumes through generated `.volume` files;
 - external named volumes through direct runtime-name references;
 - anonymous mounts, absolute bind sources, and systemd-specifier sources such as `%h/data`;
 - `./` and `../` bind sources when the caller configures the exact absolute Compose project root;
+- source-machine-specific bind forms such as `~/data` or `C:\data` when the caller provides an
+  exact target mapping;
 - read-only and `z`/`Z` SELinux mount options;
 - application-owned networks through generated `.network` files; and
 - external networks through direct runtime-name references.
@@ -58,24 +69,48 @@ External resources deliberately produce no lifecycle file.
 The adapter currently reports rather than guesses:
 
 - host-resolved or explicitly unset environment variables;
+- deferred or implementation-specific host-mapping addresses;
 - shell-form, empty, or quoting-dependent commands;
 - quoting-dependent environment values;
 - relative bind sources when the caller does not provide their Compose project root;
+- tilde, non-POSIX, and other host-specific bind sources without an exact caller-provided mapping;
 - IPv6 or otherwise non-simple host-address port spellings;
 - container-only exposed ports without host publication;
 - implicit resource lifecycles;
-- per-network aliases; and
-- identifiers requiring systemd unit-name escaping.
+- per-network aliases;
+- identifiers requiring systemd unit-name escaping;
+- Compose `start_interval`, which has no native Quadlet key and is not silently mapped to Podman's
+  semantically different startup-healthcheck feature family;
+- health commands containing unresolved systemd percent specifiers;
+- Compose-controlled dependency restart propagation and successful-completion or provider-specific
+  dependency conditions;
+- optional dependencies whose service is absent from the converted application;
+- named primary groups, because Quadlet's native `Group=` contract requires a numeric GID;
+- execution-context values that require systemd quoting or target-specific validation; and
+- container-level user namespaces during explicit pod grouping, because Podman uses the pod's
+  user namespace and the current typed pod generator has no `UserNS=` key.
+
+Missing required dependency services and dependency-ordering cycles are invalid and produce no
+candidate. Optional absent services and unsupported conditions retain the remaining candidate but
+require `LossPolicy::AllowPartial`. Dependency directives are generated between container service
+units in both separate-container and explicitly selected single-pod layouts; pod membership does
+not erase service startup order.
 
 Unsupported fields remain in the conversion report and require `LossPolicy::AllowPartial` before
 the remaining candidate can be released. Invalid required values and target profiles always block
 output.
 
-`QuadletExporter::with_relative_bind_root` supplies the path context explicitly. Resolution is
-lexical, does not require the path to exist, and never reads the filesystem. It produces an
+`QuadletExporter::with_relative_bind_root` supplies Compose project context explicitly. Resolution
+is lexical, does not require the path to exist, and never reads the filesystem. It produces an
 absolute Quadlet bind source and rejects roots or traversals that would escape the filesystem root.
-Tilde/home and non-POSIX source forms remain explicit losses rather than being treated as the same
-thing as systemd `%h`.
+
+`QuadletExporter::with_bind_source_mapping` is the separate policy boundary for host-specific
+forms. It matches the authored source spelling exactly and requires a safely encodable absolute
+POSIX or systemd-specifier target. For example, a caller may assert `~/data` maps to `%h/data` or a
+Windows source maps to a deployment-specific absolute Linux path. Mappings take precedence over
+project-root resolution. Empty, unsafe, or conflicting mappings fail when the exporter is
+configured. BoxFerry never assumes that `~`, `%h`, Windows paths, and target-host paths are
+interchangeable.
 
 ## Version evidence
 
@@ -95,6 +130,7 @@ note that later releases remain an assumption.
 | `BFQ0005` | error         | QuadletLens rejected a generated document or document set.               |
 | `BFQ0006` | warning/note  | A required capability is unavailable or deprecated for the target range. |
 | `BFQ0007` | warning/error | Explicit pod grouping is approximate or incompatible with source intent. |
+| `BFQ0008` | warning/error | Dependency semantics are partial, missing, cyclic, or otherwise unsafe.  |
 
 Every warning/error fidelity decision carries the contributing neutral-model provenance. Sensitive
 values are not copied into diagnostic fields.

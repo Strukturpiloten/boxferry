@@ -1,6 +1,6 @@
 //! Ordered neutral application graph and resource attachments.
 
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, net::IpAddr};
 
 use crate::{ImageReference, ProtectedString, Sourced};
 
@@ -30,6 +30,8 @@ pub enum ModelError {
     InvalidImageReference(&'static str),
     /// A container port was zero.
     ZeroContainerPort,
+    /// A health-check retry count was not a non-negative decimal integer.
+    InvalidHealthcheckRetries,
 }
 
 impl fmt::Display for ModelError {
@@ -45,6 +47,9 @@ impl fmt::Display for ModelError {
             }
             Self::InvalidImageReference(reason) => write!(formatter, "invalid image reference: {reason}"),
             Self::ZeroContainerPort => formatter.write_str("container port must not be zero"),
+            Self::InvalidHealthcheckRetries => {
+                formatter.write_str("health-check retries must be a non-negative decimal integer")
+            }
         }
     }
 }
@@ -74,7 +79,7 @@ impl Identifier {
     }
 }
 
-/// Who owns a named network or volume lifecycle.
+/// Who owns a named application resource lifecycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ResourceOwnership {
@@ -120,6 +125,240 @@ pub struct Network {
     ownership: ResourceOwnership,
 }
 
+/// Material source for an application-managed configuration resource.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ConfigMaterial {
+    /// Read configuration bytes from a caller-resolved file source.
+    File(ProtectedString),
+    /// Read configuration bytes from an explicitly supplied environment value.
+    Environment(ProtectedString),
+    /// Use source-authored inline configuration content.
+    Content(ProtectedString),
+}
+
+/// One application-level configuration declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Config {
+    name: Identifier,
+    ownership: ResourceOwnership,
+    runtime_name: Option<Sourced<ProtectedString>>,
+    material: Option<Sourced<ConfigMaterial>>,
+}
+
+impl Config {
+    /// Creates a configuration declaration without guessing material or a runtime name.
+    #[must_use]
+    pub const fn new(name: Identifier, ownership: ResourceOwnership) -> Self {
+        Self {
+            name,
+            ownership,
+            runtime_name: None,
+            material: None,
+        }
+    }
+
+    /// Returns the neutral resource name.
+    #[must_use]
+    pub const fn name(&self) -> &Identifier {
+        &self.name
+    }
+
+    /// Returns the resource lifecycle owner.
+    #[must_use]
+    pub const fn ownership(&self) -> ResourceOwnership {
+        self.ownership
+    }
+
+    /// Sets a provider/runtime-level name distinct from the neutral resource key.
+    pub fn set_runtime_name(&mut self, name: Sourced<ProtectedString>) {
+        self.runtime_name = Some(name);
+    }
+
+    /// Returns the explicit provider/runtime-level name.
+    #[must_use]
+    pub const fn runtime_name(&self) -> Option<&Sourced<ProtectedString>> {
+        self.runtime_name.as_ref()
+    }
+
+    /// Sets the application-managed material source.
+    pub fn set_material(&mut self, material: Sourced<ConfigMaterial>) {
+        self.material = Some(material);
+    }
+
+    /// Returns the optional material source.
+    #[must_use]
+    pub const fn material(&self) -> Option<&Sourced<ConfigMaterial>> {
+        self.material.as_ref()
+    }
+}
+
+/// Material source for an application-managed secret resource.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum SecretMaterial {
+    /// Read secret bytes from a caller-resolved file source.
+    File(ProtectedString),
+    /// Read secret bytes from an explicitly supplied environment value.
+    Environment(ProtectedString),
+}
+
+/// One application-level secret declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Secret {
+    name: Identifier,
+    ownership: ResourceOwnership,
+    runtime_name: Option<Sourced<ProtectedString>>,
+    material: Option<Sourced<SecretMaterial>>,
+}
+
+impl Secret {
+    /// Creates a secret declaration without guessing material or a runtime name.
+    #[must_use]
+    pub const fn new(name: Identifier, ownership: ResourceOwnership) -> Self {
+        Self {
+            name,
+            ownership,
+            runtime_name: None,
+            material: None,
+        }
+    }
+
+    /// Returns the neutral resource name.
+    #[must_use]
+    pub const fn name(&self) -> &Identifier {
+        &self.name
+    }
+
+    /// Returns the resource lifecycle owner.
+    #[must_use]
+    pub const fn ownership(&self) -> ResourceOwnership {
+        self.ownership
+    }
+
+    /// Sets a provider/runtime-level name distinct from the neutral resource key.
+    pub fn set_runtime_name(&mut self, name: Sourced<ProtectedString>) {
+        self.runtime_name = Some(name);
+    }
+
+    /// Returns the explicit provider/runtime-level name.
+    #[must_use]
+    pub const fn runtime_name(&self) -> Option<&Sourced<ProtectedString>> {
+        self.runtime_name.as_ref()
+    }
+
+    /// Sets the application-managed material source.
+    pub fn set_material(&mut self, material: Sourced<SecretMaterial>) {
+        self.material = Some(material);
+    }
+
+    /// Returns the optional material source.
+    #[must_use]
+    pub const fn material(&self) -> Option<&Sourced<SecretMaterial>> {
+        self.material.as_ref()
+    }
+}
+
+/// Authored syntax family retained for a config or secret grant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ResourceGrantSyntax {
+    /// Resource-name short syntax with source-format defaults.
+    Short,
+    /// Mapping-based syntax with separately authored options.
+    Long,
+}
+
+/// One ordered service grant of a configuration or secret resource.
+///
+/// The containing service collection determines whether this grants a config or secret. Keeping
+/// one shared shape avoids inventing differences between the common source/target/ownership
+/// options while preserving the short/long syntax decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceGrant {
+    source: ProtectedString,
+    syntax: ResourceGrantSyntax,
+    target: Option<Sourced<ProtectedString>>,
+    uid: Option<Sourced<ProtectedString>>,
+    gid: Option<Sourced<ProtectedString>>,
+    mode: Option<Sourced<ProtectedString>>,
+}
+
+impl ResourceGrant {
+    /// Creates a grant with a non-empty source resource name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::EmptyValue`] or [`ModelError::ContainsNul`].
+    pub fn new(source: ProtectedString, syntax: ResourceGrantSyntax) -> Result<Self, ModelError> {
+        validate_text("resource grant source", source.expose())?;
+        Ok(Self {
+            source,
+            syntax,
+            target: None,
+            uid: None,
+            gid: None,
+            mode: None,
+        })
+    }
+
+    /// Returns the referenced neutral resource name.
+    #[must_use]
+    pub const fn source(&self) -> &ProtectedString {
+        &self.source
+    }
+
+    /// Returns the authored short/long syntax family.
+    #[must_use]
+    pub const fn syntax(&self) -> ResourceGrantSyntax {
+        self.syntax
+    }
+
+    /// Sets the requested container path or environment-variable name.
+    pub fn set_target(&mut self, target: Sourced<ProtectedString>) {
+        self.target = Some(target);
+    }
+
+    /// Returns the explicitly authored target.
+    #[must_use]
+    pub const fn target(&self) -> Option<&Sourced<ProtectedString>> {
+        self.target.as_ref()
+    }
+
+    /// Sets the requested container user-ID spelling.
+    pub fn set_uid(&mut self, uid: Sourced<ProtectedString>) {
+        self.uid = Some(uid);
+    }
+
+    /// Returns the explicitly authored user-ID spelling.
+    #[must_use]
+    pub const fn uid(&self) -> Option<&Sourced<ProtectedString>> {
+        self.uid.as_ref()
+    }
+
+    /// Sets the requested container group-ID spelling.
+    pub fn set_gid(&mut self, gid: Sourced<ProtectedString>) {
+        self.gid = Some(gid);
+    }
+
+    /// Returns the explicitly authored group-ID spelling.
+    #[must_use]
+    pub const fn gid(&self) -> Option<&Sourced<ProtectedString>> {
+        self.gid.as_ref()
+    }
+
+    /// Sets the requested permission-mode spelling.
+    pub fn set_mode(&mut self, mode: Sourced<ProtectedString>) {
+        self.mode = Some(mode);
+    }
+
+    /// Returns the explicitly authored permission-mode spelling.
+    #[must_use]
+    pub const fn mode(&self) -> Option<&Sourced<ProtectedString>> {
+        self.mode.as_ref()
+    }
+}
+
 impl Network {
     /// Creates a network declaration.
     #[must_use]
@@ -150,6 +389,174 @@ pub enum Command {
     Shell(ProtectedString),
     /// Explicitly clear the image command.
     Empty,
+}
+
+/// How a container runtime executes one service health check.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum HealthcheckCommand {
+    /// Execute an argument vector without a container shell.
+    Exec(Vec<ProtectedString>),
+    /// Execute authored command text through the container shell.
+    Shell(ProtectedString),
+}
+
+/// Raw-preserving duration shared by container health-check implementations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HealthcheckDuration(String);
+
+impl HealthcheckDuration {
+    /// Creates a non-empty duration spelling without imposing one source format's grammar.
+    ///
+    /// Source adapters remain responsible for validating native duration syntax. Target adapters
+    /// must report spellings that their selected implementation cannot represent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::EmptyValue`] or [`ModelError::ContainsNul`].
+    pub fn new(value: impl Into<String>) -> Result<Self, ModelError> {
+        let value = value.into();
+        validate_text("health-check duration", &value)?;
+        Ok(Self(value))
+    }
+
+    /// Returns the source adapter's retained duration spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Raw-preserving non-negative health-check retry count.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HealthcheckRetries(String);
+
+impl HealthcheckRetries {
+    /// Creates a retry count while retaining its authored decimal spelling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::EmptyValue`], [`ModelError::ContainsNul`], or
+    /// [`ModelError::InvalidHealthcheckRetries`].
+    pub fn new(value: impl Into<String>) -> Result<Self, ModelError> {
+        let value = value.into();
+        validate_text("health-check retries", &value)?;
+        if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(ModelError::InvalidHealthcheckRetries);
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the source adapter's retained decimal spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Format-independent service health-check intent with field-level provenance.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Healthcheck {
+    command: Option<Sourced<HealthcheckCommand>>,
+    disabled: Option<Sourced<bool>>,
+    interval: Option<Sourced<HealthcheckDuration>>,
+    timeout: Option<Sourced<HealthcheckDuration>>,
+    retries: Option<Sourced<HealthcheckRetries>>,
+    start_period: Option<Sourced<HealthcheckDuration>>,
+    start_interval: Option<Sourced<HealthcheckDuration>>,
+}
+
+impl Healthcheck {
+    /// Creates an empty health-check definition for incremental source-adapter mapping.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            command: None,
+            disabled: None,
+            interval: None,
+            timeout: None,
+            retries: None,
+            start_period: None,
+            start_interval: None,
+        }
+    }
+
+    /// Sets the command executed by the runtime.
+    pub fn set_command(&mut self, command: Sourced<HealthcheckCommand>) {
+        self.command = Some(command);
+    }
+
+    /// Returns the optional health command.
+    #[must_use]
+    pub const fn command(&self) -> Option<&Sourced<HealthcheckCommand>> {
+        self.command.as_ref()
+    }
+
+    /// Retains an explicit enable/disable decision.
+    pub fn set_disabled(&mut self, disabled: Sourced<bool>) {
+        self.disabled = Some(disabled);
+    }
+
+    /// Returns the explicit disable decision, if the source supplied one.
+    #[must_use]
+    pub const fn disabled(&self) -> Option<&Sourced<bool>> {
+        self.disabled.as_ref()
+    }
+
+    /// Sets the interval between regular checks.
+    pub fn set_interval(&mut self, interval: Sourced<HealthcheckDuration>) {
+        self.interval = Some(interval);
+    }
+
+    /// Returns the interval between regular checks.
+    #[must_use]
+    pub const fn interval(&self) -> Option<&Sourced<HealthcheckDuration>> {
+        self.interval.as_ref()
+    }
+
+    /// Sets the maximum duration of one check.
+    pub fn set_timeout(&mut self, timeout: Sourced<HealthcheckDuration>) {
+        self.timeout = Some(timeout);
+    }
+
+    /// Returns the maximum duration of one check.
+    #[must_use]
+    pub const fn timeout(&self) -> Option<&Sourced<HealthcheckDuration>> {
+        self.timeout.as_ref()
+    }
+
+    /// Sets the number of failures required before becoming unhealthy.
+    pub fn set_retries(&mut self, retries: Sourced<HealthcheckRetries>) {
+        self.retries = Some(retries);
+    }
+
+    /// Returns the failure threshold.
+    #[must_use]
+    pub const fn retries(&self) -> Option<&Sourced<HealthcheckRetries>> {
+        self.retries.as_ref()
+    }
+
+    /// Sets the startup grace period.
+    pub fn set_start_period(&mut self, start_period: Sourced<HealthcheckDuration>) {
+        self.start_period = Some(start_period);
+    }
+
+    /// Returns the startup grace period.
+    #[must_use]
+    pub const fn start_period(&self) -> Option<&Sourced<HealthcheckDuration>> {
+        self.start_period.as_ref()
+    }
+
+    /// Sets the check interval used during the startup grace period.
+    pub fn set_start_interval(&mut self, start_interval: Sourced<HealthcheckDuration>) {
+        self.start_interval = Some(start_interval);
+    }
+
+    /// Returns the check interval used during the startup grace period.
+    #[must_use]
+    pub const fn start_interval(&self) -> Option<&Sourced<HealthcheckDuration>> {
+        self.start_interval.as_ref()
+    }
 }
 
 /// Source of an environment variable's value.
@@ -188,6 +595,97 @@ impl EnvironmentVariable {
     #[must_use]
     pub const fn value(&self) -> &EnvironmentValue {
         &self.value
+    }
+}
+
+/// One raw-preserving address or runtime token used by a service host mapping.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostAddress {
+    raw: String,
+    kind: HostAddressKind,
+}
+
+impl HostAddress {
+    /// Classifies an authored host-mapping address without normalizing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::EmptyValue`] or [`ModelError::ContainsNul`].
+    pub fn new(raw: impl Into<String>) -> Result<Self, ModelError> {
+        let raw = raw.into();
+        validate_text("host mapping address", &raw)?;
+        let unbracketed = raw
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(&raw);
+        let kind = if raw == "host-gateway" {
+            HostAddressKind::HostGateway
+        } else {
+            match unbracketed.parse::<IpAddr>() {
+                Ok(IpAddr::V4(_)) => HostAddressKind::Ipv4,
+                Ok(IpAddr::V6(_)) => HostAddressKind::Ipv6 {
+                    bracketed: raw.starts_with('[') && raw.ends_with(']'),
+                },
+                Err(_) => HostAddressKind::Other,
+            }
+        };
+        Ok(Self { raw, kind })
+    }
+
+    /// Returns the address or runtime token exactly as supplied by the source adapter.
+    #[must_use]
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// Returns the conservative lexical classification.
+    #[must_use]
+    pub const fn kind(&self) -> HostAddressKind {
+        self.kind
+    }
+}
+
+/// Conservative kind of one service host-mapping address.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum HostAddressKind {
+    /// An IPv4 address.
+    Ipv4,
+    /// An IPv6 address, retaining whether its source spelling used brackets.
+    Ipv6 {
+        /// Whether the source adapter observed `[::1]` rather than `::1`.
+        bracketed: bool,
+    },
+    /// The runtime-specific `host-gateway` token.
+    HostGateway,
+    /// A deferred or implementation-specific value.
+    Other,
+}
+
+/// One ordered service hostname-to-address mapping.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostMapping {
+    hostname: Identifier,
+    address: HostAddress,
+}
+
+impl HostMapping {
+    /// Creates a service host mapping.
+    #[must_use]
+    pub const fn new(hostname: Identifier, address: HostAddress) -> Self {
+        Self { hostname, address }
+    }
+
+    /// Returns the hostname written into the target hosts file.
+    #[must_use]
+    pub const fn hostname(&self) -> &Identifier {
+        &self.hostname
+    }
+
+    /// Returns the raw-preserving address or runtime token.
+    #[must_use]
+    pub const fn address(&self) -> &HostAddress {
+        &self.address
     }
 }
 
@@ -367,16 +865,113 @@ impl NetworkAttachment {
     }
 }
 
+/// Readiness state a service dependency must reach before its dependent starts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ServiceDependencyCondition {
+    /// The dependency's service startup completed.
+    Started,
+    /// The dependency reported healthy readiness.
+    Healthy,
+    /// The dependency exited successfully.
+    CompletedSuccessfully,
+    /// A source-specific condition retained for explicit target-side reporting.
+    Other(ProtectedString),
+}
+
+/// One ordered dependency edge from a service to another application service.
+///
+/// Optional fields distinguish source defaults from explicitly authored values. The surrounding
+/// [`Sourced`] value carries the referenced service-name provenance, while each option retains its
+/// own field-level provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceDependency {
+    service: Identifier,
+    condition: Option<Sourced<ServiceDependencyCondition>>,
+    restart: Option<Sourced<bool>>,
+    required: Option<Sourced<bool>>,
+}
+
+impl ServiceDependency {
+    /// Creates an edge using source-format defaults for readiness, restart propagation, and
+    /// requirement strength.
+    #[must_use]
+    pub const fn new(service: Identifier) -> Self {
+        Self {
+            service,
+            condition: None,
+            restart: None,
+            required: None,
+        }
+    }
+
+    /// Returns the referenced application service.
+    #[must_use]
+    pub const fn service(&self) -> &Identifier {
+        &self.service
+    }
+
+    /// Sets the explicitly authored readiness condition.
+    pub fn set_condition(&mut self, condition: Sourced<ServiceDependencyCondition>) {
+        self.condition = Some(condition);
+    }
+
+    /// Returns the explicitly authored readiness condition, if any.
+    #[must_use]
+    pub const fn condition(&self) -> Option<&Sourced<ServiceDependencyCondition>> {
+        self.condition.as_ref()
+    }
+
+    /// Retains whether source-controlled dependency updates restart the dependent service.
+    pub fn set_restart(&mut self, restart: Sourced<bool>) {
+        self.restart = Some(restart);
+    }
+
+    /// Returns the explicit restart-propagation choice, if any.
+    #[must_use]
+    pub const fn restart(&self) -> Option<&Sourced<bool>> {
+        self.restart.as_ref()
+    }
+
+    /// Retains whether absence or failure of the dependency blocks the dependent service.
+    pub fn set_required(&mut self, required: Sourced<bool>) {
+        self.required = Some(required);
+    }
+
+    /// Returns the explicit requirement-strength choice, if any.
+    #[must_use]
+    pub const fn required(&self) -> Option<&Sourced<bool>> {
+        self.required.as_ref()
+    }
+
+    /// Returns the effective source requirement, including the default of `true`.
+    #[must_use]
+    pub fn is_required(&self) -> bool {
+        self.required.as_ref().is_none_or(|required| *required.value())
+    }
+}
+
 /// One application service with ordered attachments and source provenance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Service {
     name: Identifier,
     image: Option<Sourced<ImageReference>>,
     command: Option<Sourced<Command>>,
+    healthcheck: Option<Sourced<Healthcheck>>,
+    user: Option<Sourced<ProtectedString>>,
+    group: Option<Sourced<ProtectedString>>,
+    user_namespace: Option<Sourced<ProtectedString>>,
+    supplementary_groups: Vec<Sourced<ProtectedString>>,
+    working_directory: Option<Sourced<ProtectedString>>,
+    read_only_root_filesystem: Option<Sourced<bool>>,
     environment: Vec<Sourced<EnvironmentVariable>>,
+    host_mappings: Vec<Sourced<HostMapping>>,
     ports: Vec<Sourced<Port>>,
     mounts: Vec<Sourced<Mount>>,
+    config_grants: Vec<Sourced<ResourceGrant>>,
+    secret_grants: Vec<Sourced<ResourceGrant>>,
     networks: Vec<Sourced<NetworkAttachment>>,
+    dependencies: Vec<Sourced<ServiceDependency>>,
 }
 
 impl Service {
@@ -387,10 +982,21 @@ impl Service {
             name,
             image: None,
             command: None,
+            healthcheck: None,
+            user: None,
+            group: None,
+            user_namespace: None,
+            supplementary_groups: Vec::new(),
+            working_directory: None,
+            read_only_root_filesystem: None,
             environment: Vec::new(),
+            host_mappings: Vec::new(),
             ports: Vec::new(),
             mounts: Vec::new(),
+            config_grants: Vec::new(),
+            secret_grants: Vec::new(),
             networks: Vec::new(),
+            dependencies: Vec::new(),
         }
     }
 
@@ -422,6 +1028,83 @@ impl Service {
         self.command.as_ref()
     }
 
+    /// Sets the service health-check definition.
+    pub fn set_healthcheck(&mut self, healthcheck: Sourced<Healthcheck>) {
+        self.healthcheck = Some(healthcheck);
+    }
+
+    /// Returns the optional service health-check definition.
+    #[must_use]
+    pub const fn healthcheck(&self) -> Option<&Sourced<Healthcheck>> {
+        self.healthcheck.as_ref()
+    }
+
+    /// Sets the primary identity used inside the service container.
+    pub fn set_user(&mut self, user: Sourced<ProtectedString>) {
+        self.user = Some(user);
+    }
+
+    /// Returns the primary identity used inside the service container.
+    #[must_use]
+    pub const fn user(&self) -> Option<&Sourced<ProtectedString>> {
+        self.user.as_ref()
+    }
+
+    /// Sets the primary group used inside the service container.
+    pub fn set_group(&mut self, group: Sourced<ProtectedString>) {
+        self.group = Some(group);
+    }
+
+    /// Returns the primary group used inside the service container.
+    #[must_use]
+    pub const fn group(&self) -> Option<&Sourced<ProtectedString>> {
+        self.group.as_ref()
+    }
+
+    /// Sets the requested user-namespace mode without imposing one runtime's grammar.
+    pub fn set_user_namespace(&mut self, user_namespace: Sourced<ProtectedString>) {
+        self.user_namespace = Some(user_namespace);
+    }
+
+    /// Returns the raw-preserving user-namespace mode.
+    #[must_use]
+    pub const fn user_namespace(&self) -> Option<&Sourced<ProtectedString>> {
+        self.user_namespace.as_ref()
+    }
+
+    /// Appends one supplementary group in source order.
+    pub fn add_supplementary_group(&mut self, group: Sourced<ProtectedString>) {
+        self.supplementary_groups.push(group);
+    }
+
+    /// Returns supplementary groups in source order.
+    #[must_use]
+    pub fn supplementary_groups(&self) -> &[Sourced<ProtectedString>] {
+        &self.supplementary_groups
+    }
+
+    /// Sets the working directory inside the service container.
+    pub fn set_working_directory(&mut self, working_directory: Sourced<ProtectedString>) {
+        self.working_directory = Some(working_directory);
+    }
+
+    /// Returns the working directory inside the service container.
+    #[must_use]
+    pub const fn working_directory(&self) -> Option<&Sourced<ProtectedString>> {
+        self.working_directory.as_ref()
+    }
+
+    /// Sets the explicit read-only root-filesystem choice.
+    pub fn set_read_only_root_filesystem(&mut self, read_only: Sourced<bool>) {
+        self.read_only_root_filesystem = Some(read_only);
+    }
+
+    /// Returns the explicit read-only root-filesystem choice.
+    #[must_use]
+    pub const fn read_only_root_filesystem(&self) -> Option<&Sourced<bool>> {
+        self.read_only_root_filesystem.as_ref()
+    }
+
     /// Appends an environment entry.
     pub fn add_environment(&mut self, value: Sourced<EnvironmentVariable>) {
         self.environment.push(value);
@@ -431,6 +1114,17 @@ impl Service {
     #[must_use]
     pub fn environment(&self) -> &[Sourced<EnvironmentVariable>] {
         &self.environment
+    }
+
+    /// Appends an explicit hostname-to-address mapping.
+    pub fn add_host_mapping(&mut self, value: Sourced<HostMapping>) {
+        self.host_mappings.push(value);
+    }
+
+    /// Returns explicit host mappings in authored order.
+    #[must_use]
+    pub fn host_mappings(&self) -> &[Sourced<HostMapping>] {
+        &self.host_mappings
     }
 
     /// Appends a port.
@@ -455,6 +1149,28 @@ impl Service {
         &self.mounts
     }
 
+    /// Appends a configuration grant in source order.
+    pub fn add_config_grant(&mut self, value: Sourced<ResourceGrant>) {
+        self.config_grants.push(value);
+    }
+
+    /// Returns configuration grants in source order.
+    #[must_use]
+    pub fn config_grants(&self) -> &[Sourced<ResourceGrant>] {
+        &self.config_grants
+    }
+
+    /// Appends a secret grant in source order.
+    pub fn add_secret_grant(&mut self, value: Sourced<ResourceGrant>) {
+        self.secret_grants.push(value);
+    }
+
+    /// Returns secret grants in source order.
+    #[must_use]
+    pub fn secret_grants(&self) -> &[Sourced<ResourceGrant>] {
+        &self.secret_grants
+    }
+
     /// Appends a network attachment.
     pub fn add_network(&mut self, value: Sourced<NetworkAttachment>) {
         self.networks.push(value);
@@ -465,6 +1181,17 @@ impl Service {
     pub fn networks(&self) -> &[Sourced<NetworkAttachment>] {
         &self.networks
     }
+
+    /// Appends a service dependency in source order.
+    pub fn add_dependency(&mut self, value: Sourced<ServiceDependency>) {
+        self.dependencies.push(value);
+    }
+
+    /// Returns service dependencies in source order.
+    #[must_use]
+    pub fn dependencies(&self) -> &[Sourced<ServiceDependency>] {
+        &self.dependencies
+    }
 }
 
 /// One ordered multi-service application graph.
@@ -474,6 +1201,8 @@ pub struct Application {
     services: Vec<Sourced<Service>>,
     volumes: Vec<Sourced<Volume>>,
     networks: Vec<Sourced<Network>>,
+    configs: Vec<Sourced<Config>>,
+    secrets: Vec<Sourced<Secret>>,
 }
 
 impl Application {
@@ -485,6 +1214,8 @@ impl Application {
             services: Vec::new(),
             volumes: Vec::new(),
             networks: Vec::new(),
+            configs: Vec::new(),
+            secrets: Vec::new(),
         }
     }
 
@@ -556,6 +1287,48 @@ impl Application {
     pub fn networks(&self) -> &[Sourced<Network>] {
         &self.networks
     }
+
+    /// Adds a uniquely named configuration while preserving declaration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DuplicateResource`] for a duplicate configuration name.
+    pub fn add_config(&mut self, config: Sourced<Config>) -> Result<(), ModelError> {
+        ensure_unique(
+            "config",
+            config.value().name(),
+            self.configs.iter().map(|candidate| candidate.value().name()),
+        )?;
+        self.configs.push(config);
+        Ok(())
+    }
+
+    /// Returns configuration resources in declaration order.
+    #[must_use]
+    pub fn configs(&self) -> &[Sourced<Config>] {
+        &self.configs
+    }
+
+    /// Adds a uniquely named secret while preserving declaration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DuplicateResource`] for a duplicate secret name.
+    pub fn add_secret(&mut self, secret: Sourced<Secret>) -> Result<(), ModelError> {
+        ensure_unique(
+            "secret",
+            secret.value().name(),
+            self.secrets.iter().map(|candidate| candidate.value().name()),
+        )?;
+        self.secrets.push(secret);
+        Ok(())
+    }
+
+    /// Returns secret resources in declaration order.
+    #[must_use]
+    pub fn secrets(&self) -> &[Sourced<Secret>] {
+        &self.secrets
+    }
 }
 
 fn ensure_unique<'a>(
@@ -584,8 +1357,12 @@ fn validate_text(kind: &'static str, value: &str) -> Result<(), ModelError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Application, Identifier, ModelError, Service};
-    use crate::Sourced;
+    use super::{
+        Application, Config, ConfigMaterial, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind,
+        HostMapping, Identifier, ModelError, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret,
+        SecretMaterial, Service, ServiceDependency, ServiceDependencyCondition,
+    };
+    use crate::{ProtectedString, Sourced};
 
     #[test]
     fn preserves_service_order_and_rejects_duplicate_names() -> Result<(), String> {
@@ -606,6 +1383,219 @@ mod tests {
 
         let duplicate = application.add_service(Sourced::generated(Service::new(id("web")?)));
         assert!(matches!(duplicate, Err(ModelError::DuplicateResource { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn validates_raw_preserving_healthcheck_scalars() -> Result<(), String> {
+        let duration = HealthcheckDuration::new("1m30s").map_err(|error| error.to_string())?;
+        let retries = HealthcheckRetries::new("003").map_err(|error| error.to_string())?;
+        assert_eq!(duration.as_str(), "1m30s");
+        assert_eq!(retries.as_str(), "003");
+        assert_eq!(
+            HealthcheckRetries::new("three"),
+            Err(ModelError::InvalidHealthcheckRetries)
+        );
+        assert!(matches!(
+            HealthcheckDuration::new(""),
+            Err(ModelError::EmptyValue("health-check duration"))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_ordered_dependency_edges_and_field_provenance() -> Result<(), String> {
+        let source = crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?;
+        let origin = crate::Provenance::source(source);
+        let mut service = Service::new(id("web")?);
+
+        let mut database = ServiceDependency::new(id("database")?);
+        database.set_condition(Sourced::from_source(
+            ServiceDependencyCondition::Healthy,
+            origin.clone(),
+        ));
+        database.set_required(Sourced::from_source(true, origin.clone()));
+        service.add_dependency(Sourced::from_source(database, origin.clone()));
+
+        let cache = ServiceDependency::new(id("cache")?);
+        assert!(cache.is_required());
+        service.add_dependency(Sourced::from_source(cache, origin));
+
+        assert_eq!(
+            service
+                .dependencies()
+                .iter()
+                .map(|dependency| dependency.value().service().as_str())
+                .collect::<Vec<_>>(),
+            ["database", "cache"]
+        );
+        assert!(matches!(
+            service.dependencies()[0].value().condition().map(Sourced::value),
+            Some(ServiceDependencyCondition::Healthy)
+        ));
+        assert_eq!(service.dependencies()[0].origins().len(), 1);
+        assert_eq!(
+            service.dependencies()[0]
+                .value()
+                .condition()
+                .map_or(0, |condition| condition.origins().len()),
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retains_execution_identity_context_order_provenance_and_redaction() -> Result<(), String> {
+        let source = crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?;
+        let origin = crate::Provenance::source(source);
+        let mut service = Service::new(id("web")?);
+
+        service.set_user(Sourced::from_source(ProtectedString::sensitive("1001"), origin.clone()));
+        service.set_group(Sourced::from_source(ProtectedString::plain("1002"), origin.clone()));
+        service.set_user_namespace(Sourced::from_source(ProtectedString::plain("keep-id"), origin.clone()));
+        service.add_supplementary_group(Sourced::from_source(ProtectedString::plain("audio"), origin.clone()));
+        service.add_supplementary_group(Sourced::from_source(ProtectedString::plain("44"), origin.clone()));
+        service.set_working_directory(Sourced::from_source(ProtectedString::plain("/srv/app"), origin.clone()));
+        service.set_read_only_root_filesystem(Sourced::from_source(true, origin));
+
+        assert_eq!(service.user().map(|value| value.value().expose()), Some("1001"));
+        assert_eq!(service.group().map(|value| value.value().expose()), Some("1002"));
+        assert_eq!(
+            service.user_namespace().map(|value| value.value().expose()),
+            Some("keep-id")
+        );
+        assert_eq!(
+            service
+                .supplementary_groups()
+                .iter()
+                .map(|group| group.value().expose())
+                .collect::<Vec<_>>(),
+            ["audio", "44"]
+        );
+        assert_eq!(
+            service.working_directory().map(|value| value.value().expose()),
+            Some("/srv/app")
+        );
+        assert_eq!(service.read_only_root_filesystem().map(Sourced::value), Some(&true));
+        assert_eq!(service.user().map_or(0, |value| value.origins().len()), 1);
+        let debug = format!("{service:?}");
+        assert!(!debug.contains("1001"));
+        assert!(debug.contains("[REDACTED]"));
+        Ok(())
+    }
+
+    #[test]
+    fn retains_config_secret_resources_grants_provenance_and_redaction() -> Result<(), String> {
+        let source = crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?;
+        let origin = crate::Provenance::source(source);
+        let mut application = Application::new(id("example")?);
+
+        let mut config = Config::new(id("settings")?, ResourceOwnership::Application);
+        config.set_material(Sourced::from_source(
+            ConfigMaterial::Content(ProtectedString::sensitive("private-config")),
+            origin.clone(),
+        ));
+        application
+            .add_config(Sourced::from_source(config, origin.clone()))
+            .map_err(|error| error.to_string())?;
+
+        let mut secret = Secret::new(id("password")?, ResourceOwnership::External);
+        secret.set_runtime_name(Sourced::from_source(
+            ProtectedString::plain("production-password"),
+            origin.clone(),
+        ));
+        secret.set_material(Sourced::from_source(
+            SecretMaterial::Environment(ProtectedString::sensitive("private-environment-name")),
+            origin.clone(),
+        ));
+        application
+            .add_secret(Sourced::from_source(secret, origin.clone()))
+            .map_err(|error| error.to_string())?;
+
+        let mut service = Service::new(id("web")?);
+        service.add_config_grant(Sourced::from_source(
+            ResourceGrant::new(ProtectedString::plain("settings"), ResourceGrantSyntax::Short)
+                .map_err(|error| error.to_string())?,
+            origin.clone(),
+        ));
+        let mut secret_grant = ResourceGrant::new(
+            ProtectedString::sensitive("private-grant-source"),
+            ResourceGrantSyntax::Long,
+        )
+        .map_err(|error| error.to_string())?;
+        secret_grant.set_target(Sourced::from_source(
+            ProtectedString::plain("database-password"),
+            origin.clone(),
+        ));
+        secret_grant.set_uid(Sourced::from_source(ProtectedString::plain("1001"), origin.clone()));
+        secret_grant.set_gid(Sourced::from_source(ProtectedString::plain("1002"), origin.clone()));
+        secret_grant.set_mode(Sourced::from_source(ProtectedString::plain("0440"), origin.clone()));
+        service.add_secret_grant(Sourced::from_source(secret_grant, origin.clone()));
+        application
+            .add_service(Sourced::from_source(service, origin))
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(application.configs().len(), 1);
+        assert_eq!(application.secrets().len(), 1);
+        assert_eq!(application.services()[0].value().config_grants().len(), 1);
+        let grant = &application.services()[0].value().secret_grants()[0];
+        assert_eq!(grant.value().syntax(), ResourceGrantSyntax::Long);
+        assert_eq!(
+            grant.value().target().map(|value| value.value().expose()),
+            Some("database-password")
+        );
+        assert_eq!(grant.value().uid().map_or(0, |value| value.origins().len()), 1);
+        assert_eq!(grant.origins().len(), 1);
+        let debug = format!("{application:?}");
+        for secret in ["private-config", "private-environment-name", "private-grant-source"] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("[REDACTED]"));
+
+        assert!(matches!(
+            ResourceGrant::new(ProtectedString::plain(""), ResourceGrantSyntax::Short),
+            Err(ModelError::EmptyValue("resource grant source"))
+        ));
+        assert!(matches!(
+            application.add_config(Sourced::generated(Config::new(
+                id("settings")?,
+                ResourceOwnership::External,
+            ))),
+            Err(ModelError::DuplicateResource { kind: "config", .. })
+        ));
+        assert!(matches!(
+            application.add_secret(Sourced::generated(Secret::new(
+                id("password")?,
+                ResourceOwnership::External,
+            ))),
+            Err(ModelError::DuplicateResource { kind: "secret", .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn host_mappings_preserve_order_spelling_and_runtime_tokens() -> Result<(), String> {
+        let mut service = Service::new(id("web")?);
+        service.add_host_mapping(Sourced::generated(HostMapping::new(
+            id("host.docker.internal")?,
+            HostAddress::new("host-gateway").map_err(|error| error.to_string())?,
+        )));
+        service.add_host_mapping(Sourced::generated(HostMapping::new(
+            id("ipv6")?,
+            HostAddress::new("[::1]").map_err(|error| error.to_string())?,
+        )));
+
+        assert_eq!(service.host_mappings().len(), 2);
+        assert_eq!(
+            service.host_mappings()[0].value().address().kind(),
+            HostAddressKind::HostGateway
+        );
+        assert_eq!(service.host_mappings()[1].value().address().raw(), "[::1]");
+        assert_eq!(
+            service.host_mappings()[1].value().address().kind(),
+            HostAddressKind::Ipv6 { bracketed: true }
+        );
+        assert!(matches!(HostAddress::new(""), Err(ModelError::EmptyValue(_))));
         Ok(())
     }
 

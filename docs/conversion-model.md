@@ -12,14 +12,26 @@ nodes and attachments include:
 - application
 - service
 - image and command
+- health-check command, disable intent, timing, retries, and startup timing
+- ordered service dependencies with readiness, strength, restart intent, and field provenance
+- primary user/group, user namespace, ordered supplementary groups, working directory, and
+  read-only root-filesystem intent with field provenance
 - network
 - storage
+- application-owned or external configuration and secret resources with optional runtime names
+  and explicit file, environment, or inline material origins
+- ordered service config/secret grants retaining short/long syntax plus source, target, UID, GID,
+  mode, and field provenance
 - environment value
+- explicit hostname mapping
 - published port
 
 Service collections express network and storage attachment, exposure, lifecycle ownership, and
-provenance. Workload grouping, health checks, build input, secrets, configuration objects, and
-dependencies are added with the native vertical slices. This permits a single-host Compose project,
+provenance. Config and secret material values use `ProtectedString`; their presence in the model
+does not authorize BoxFerry to read files or process environment variables. Adapters must report
+conflicts such as external ownership combined with managed material rather than silently choosing
+one interpretation. Workload grouping and build input are added with their native vertical
+slices. This permits a single-host Compose project,
 a Quadlet pod, and a multi-node Kubernetes workload to be compared without treating them as
 identical.
 
@@ -32,6 +44,10 @@ Every significant model value should be traceable to one of:
 - a user override
 - a default introduced by a named implementation profile
 - a conversion decision
+
+`ProvenanceKind` makes these categories machine-readable. In particular, a runtime observation is
+not silently promoted to authored intent; reconstruction inferences remain separate conversion
+decisions and participate in fidelity reporting.
 
 Provenance is necessary for useful diagnostics and for distinguishing explicit values from defaults.
 
@@ -66,9 +82,9 @@ fields without changing the redaction contract.
 
 Human and machine-readable renderers consume the same diagnostic objects. JSON output must not be reconstructed from terminal text.
 
-The first target adapter assigns `BFQ0001` through `BFQ0007` to invalid target ranges, finite
-evidence notes, unsupported target mappings, invalid values, native generation failures, and
-capability or explicit grouping decisions. Its warning/error outcomes retain neutral-model
+The first target adapter assigns `BFQ0001` through `BFQ0008` to invalid target ranges, finite
+evidence notes, unsupported target mappings, invalid values, native generation failures,
+capability decisions, explicit grouping decisions, and dependency semantics. Its warning/error outcomes retain neutral-model
 provenance, while sensitive environment contents remain absent from diagnostic fields. The
 complete boundary is documented in the [Quadlet exporter](quadlet-adapter.md).
 

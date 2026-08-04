@@ -15,7 +15,7 @@ modifications = "none"
 description = "No process environment is read; the default empty profile request excludes the worker service."
 
 [expectations]
-summary = "Merged service, resource, port, network, mount, SELinux, image, profile, and provenance intent imports exactly."
+summary = "Merged service, execution-context, health-check, host mapping, resource, port, network, mount, SELinux, image, profile, and provenance intent imports exactly."
 
 [extensions.compose]
 source-id = 71

@@ -10,7 +10,8 @@ repository.workspace = true
 publish = false
 
 [features]
-default = []
+default = ["cli", "compose", "quadlet"]
+cli = ["dep:clap"]
 compose = ["dep:boxferry-compose"]
 quadlet = ["dep:boxferry-quadlet"]
 
@@ -19,9 +20,15 @@ boxferry-compose = { path = "../boxferry-compose", version = "0.1.0", optional =
 boxferry-engine = { path = "../boxferry-engine", version = "0.1.0" }
 boxferry-model = { path = "../boxferry-model", version = "0.1.0" }
 boxferry-quadlet = { path = "../boxferry-quadlet", version = "0.1.0", optional = true }
+clap = { version = "4.6.5", features = ["derive"], optional = true }
 
 [dev-dependencies]
 toml = "1.1.4"
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "boxferry"
+path = "src/main.rs"
+required-features = ["cli", "compose", "quadlet"]

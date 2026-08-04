@@ -22,6 +22,8 @@ Cross-repository delivery uses the stable task numbers in the [implementation pl
 ## Phase 1: application model and engine — completed
 
 - [x] Implement the minimal application graph for one multi-service application.
+- [x] Represent explicit ordered hostname mappings with raw-preserving IPv4, IPv6,
+  implementation-token, and deferred-value classification.
 - [x] Represent resource ownership, lifecycle, service attachment, and declared-source provenance.
 - [x] Implement provenance and structured diagnostics.
 - [x] Implement target profiles and conversion outcome policies.
@@ -30,8 +32,8 @@ Cross-repository delivery uses the stable task numbers in the [implementation pl
 
 ## Phase 2: Compose to Quadlet vertical slice — completed
 
-- [x] Consume released ComposeLens 0.1 as an independent crates.io dependency.
-- [x] Consume QuadletLens 0.1.1 as an independent crates.io dependency.
+- [x] Consume released ComposeLens 0.1.3 as an independent crates.io dependency.
+- [x] Consume QuadletLens 0.1.3 as an independent crates.io dependency.
 - [x] Import Compose images, commands, environment, single ports, named volumes, bind mounts,
   networks, explicit profiles, source provenance, and SELinux relabel intent.
 - [x] Consume a loss-aware typed ComposeLens merged-project view for multi-file projects without
@@ -46,10 +48,10 @@ Cross-repository delivery uses the stable task numbers in the [implementation pl
 
 Current dependency gates:
 
-- ComposeLens 0.1.1 is published and consumed through its native merged-project view. The adapter
+- ComposeLens 0.1.3 is published and consumed through its native merged-project view. The adapter
   regression imports complete unquoted short-volume scalars such as `./data:/data:Z,ro` and retains
   all contributing multi-file source origins.
-- QuadletLens 0.1.1 is published and consumed through its validated document builder and finite
+- QuadletLens 0.1.3 is published and consumed through its validated document builder and finite
   capability catalogue. The exporter generates container, optional explicitly selected pod,
   application-owned network, and application-owned volume units; retains external resources as
   direct references; validates its native dependency graph; and redacts generated contents from
@@ -59,11 +61,132 @@ Current dependency gates:
   strict/partial/approximate authorization, exact separate-container and pod-grouped file bytes,
   stable diagnostics, dependency graphs, and provenance.
 - Relative bind paths resolve lexically when the caller supplies their absolute Compose project
-  root; otherwise they remain explicit losses. Tilde/home and non-POSIX forms, per-network aliases,
-  and quoting-dependent values remain documented target-side losses.
+  root; otherwise they remain explicit losses. Tilde/home, Windows, and other host-specific forms
+  resolve only through an exact caller-supplied source-to-target mapping. Per-network aliases and
+  quoting-dependent values remain documented target-side losses.
+
+## Additive explicit host mappings — completed
+
+- [x] Add neutral ordered host mappings with explicit `host-gateway` classification.
+- [x] Prevent the Quadlet exporter from silently omitting unrecognized host-mapping address forms.
+- [x] Consume released ComposeLens 0.1.3 and map merged Compose `extra_hosts` with provenance.
+- [x] Consume released QuadletLens 0.1.3 and emit capability-checked container or pod `AddHost`
+  entries.
+- [x] Add adapter and end-to-end cases that collectively cover sequence/mapping Compose syntax,
+  IPv4, bracketed/unbracketed IPv6, arbitrary `name:host-gateway`, and
+  `host.docker.internal:host-gateway`.
+
+Separate containers retain their service mappings. Single-pod grouping requires identical ordered
+mappings on every service and emits them once on the generated pod; differences reject the
+explicit grouping request. BoxFerry consumes both Lens libraries from crates.io without sibling
+paths or Git dependencies.
+
+## Coverage audit and additive health checks — completed
+
+- [x] Document separate syntax, native-model, merged-view, neutral-model, target, and end-to-end
+  coverage stages across all three repositories.
+- [x] Prepare ComposeLens 0.1.3 with source-aware merged health checks and field-level provenance.
+- [x] Prepare QuadletLens 0.1.3 with regular health timing keys and full Podman 5.4.0-through-6.0.2
+  generator evidence.
+- [x] Publish ComposeLens 0.1.3 and QuadletLens 0.1.3 through their protected release workflows.
+- [x] Add the neutral health-check model and Compose-to-Quadlet adapters without treating Compose
+  `start_interval` as Podman startup-healthcheck configuration.
+- [x] Add strict, partial, disabled, malformed, and golden end-to-end scenarios.
+
+BoxFerry now retains field-level health-check provenance, preserves `CMD` versus `CMD-SHELL`, emits
+capability-checked `HealthCmd`, `HealthInterval`, `HealthTimeout`, `HealthRetries`, and
+`HealthStartPeriod` entries across the verified Podman range, and maps explicit disable intent to
+`HealthCmd=none`. `start_interval` remains in the neutral model and blocks exact output with an
+actionable unsupported outcome because it is not equivalent to Podman's startup-healthcheck
+feature family.
+
+## Dependency ordering and readiness — completed
+
+- [x] Prepare ComposeLens 0.1.4 with effective short/long `depends_on` entries and nested
+  condition/restart/required provenance.
+- [x] Prepare QuadletLens 0.1.4 with `Notify=healthy`, typed `Requires`/`Wants`/`After`, capability
+  records, and full Podman 5.4.0-through-6.0.2 generator evidence.
+- [x] Publish ComposeLens 0.1.4 and QuadletLens 0.1.4 through their protected release workflows.
+- [x] Consume both released crates without sibling path or Git dependencies.
+- [x] Add ordered neutral service dependency edges with field-level provenance.
+- [x] Map required and optional `service_started` dependencies to separately capability-checked
+  systemd activation and ordering directives.
+- [x] Map `service_healthy` only when target readiness and source health intent can be established.
+- [x] Report Compose-managed restart propagation and successful-completion conditions explicitly
+  until an equivalent target contract is proven.
+- [x] Add missing-target, cycle, strict/partial, separate-container, pod-grouped, and golden
+  end-to-end tests.
+
+## Execution identity and container context — completed
+
+- [x] Prepare ComposeLens 0.1.5 with effective `user`, `userns_mode`, `group_add`, `working_dir`,
+  and `read_only` values plus multi-file provenance.
+- [x] Prepare QuadletLens 0.1.5 with typed `User`, `Group`, `UserNS`, repeatable `GroupAdd`,
+  `WorkingDir`, and `ReadOnly` keys plus full Podman 5.4.0-through-6.0.2 generator evidence.
+- [x] Add neutral primary user/group, user namespace, ordered supplementary groups, working
+  directory, and read-only-root-filesystem intent with provenance and redaction.
+- [x] Publish ComposeLens 0.1.5 and QuadletLens 0.1.5 through their protected release workflows.
+- [x] Consume both released crates without sibling path or Git dependencies.
+- [x] Map Compose identity/context values into the neutral model with source and sensitivity
+  provenance.
+- [x] Map the supported neutral subset to separately capability-checked Quadlet keys.
+- [x] Preserve numeric and named identity/group spellings in the neutral model; map numeric primary
+  GIDs and named or numeric supplementary groups exactly; define explicit losses for named primary
+  groups, unresolved values, pod/user-namespace conflicts, unsafe target values, and unsupported
+  encodings; and emit both explicit true and false read-only choices.
+- [x] Add strict/partial, multi-file, sensitive-value, separate-container, pod-grouped, and golden
+  end-to-end tests.
+
+Separate-container output now maps the complete slice exactly when its values fit the reviewed
+one-line encoding subset. Podman ignores a container-level user namespace when the container joins
+a pod, so grouped output reports that field as unsupported instead of emitting misleading
+`UserNS=` content. QuadletLens 0.1.6 now prepares the pod-level `UserNS=` capability needed to
+close this gap when all grouped services request compatible namespace intent. It also prepares the
+repeatable container `Secret=` boundary used by the next resource slice.
+
+## Pod-grouped user namespace follow-up — release gated
+
+- [x] Prepare QuadletLens 0.1.6 with singleton pod `UserNS`, capability evidence, and the complete
+  Podman 5.4.0-through-6.0.2 generator matrix.
+- [ ] Publish QuadletLens 0.1.6 through its protected trusted-publishing workflow.
+- [ ] Consume released QuadletLens 0.1.6 without a sibling path or Git dependency.
+- [ ] Move one identical explicit namespace choice from every grouped service to pod `UserNS`.
+- [ ] Reject mixed absent/explicit or conflicting grouped namespace intent instead of choosing a
+  value by service order.
+- [ ] Extend grouped golden output and strict/partial/invalid policy tests.
+
+## Config and secret grants — release gated
+
+- [x] Prepare ComposeLens 0.1.6 with effective short/long service config and secret grants,
+  field-level provenance, unique-by-target merge behavior, and malformed-form recovery.
+- [x] Extend the QuadletLens 0.1.6 candidate with repeatable container `Secret`, capability
+  evidence, and mounted-file/environment option fixtures across Podman 5.4.0 through 6.0.2.
+- [ ] Publish ComposeLens 0.1.6 and QuadletLens 0.1.6 through their protected trusted-publishing
+  workflows.
+- [ ] Consume both released crates without sibling path or Git dependencies.
+- [x] Add neutral config/secret definitions and ordered service grants without carrying Lens
+  types into the model.
+- [ ] Map externally managed Podman secrets and their target/UID/GID/mode options exactly when
+  source and target defaults remain equivalent.
+- [ ] Report application-owned secret creation, file/environment materialization, config
+  lifecycle, and unsupported ownership/default differences as explicit manual actions.
+- [ ] Add short/long, multi-file, custom-name, sensitive-value, strict/partial, and golden tests.
+
+## First usable command-line path — completed
+
+- [x] Enable the `cli`, `compose`, and `quadlet` features by default while preserving
+  no-default and individual-adapter library builds.
+- [x] Convert explicitly ordered Compose files through the same public importer, engine, and
+  exporter APIs available to embedded callers.
+- [x] Expose project naming, profile input, Podman range, grouping, loss policy, and output
+  location explicitly, with documented conservative defaults and no ambient runtime discovery.
+- [x] Refuse existing output directories and block unauthorized output before performing writes.
+- [x] Add black-box tests for exact reviewed bytes, write safety, and loss-policy exit status.
 
 ## Phase 3: runtime migration — open
 
+- [x] Distinguish runtime observations, authored sources, defaults, overrides, and conversion
+  decisions in neutral provenance.
 - [ ] Inspect existing Podman containers, pods, networks, volumes, and images.
 - [ ] Inspect equivalent Docker resources.
 - [ ] Treat runtime `CreateCommand` data as optional provenance rather than a required source of truth.

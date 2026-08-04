@@ -42,6 +42,28 @@ Helm chart and Kustomize overlay generation are later capabilities. Their render
 
 BoxFerry owns the application model, conversion planning, runtime adapters, and mappings between native formats. The Lens libraries do not depend on BoxFerry.
 
+## Command-line use
+
+The first command converts explicitly ordered Compose files into a new directory of validated
+Quadlet files:
+
+```shell
+cargo run -p boxferry -- compose-to-quadlet \
+  --file compose.yaml \
+  --file compose.production.yaml \
+  --project-name example \
+  --profile production \
+  --podman-minimum-version 5.4.0 \
+  --podman-maximum-version 6.0.2 \
+  --loss-policy exact \
+  --output-directory ./quadlet-output
+```
+
+The output directory must not already exist. `exact` is the default policy; `approximate` and
+`partial` authorize their corresponding documented losses. The command does not read the process
+environment, so Compose variable expressions remain unresolved and may block output instead of
+silently capturing workstation values. See the [CLI contract](docs/cli.md).
+
 ## Library use
 
 The `boxferry` crate is both the high-level library facade and the package that provides the
@@ -61,15 +83,49 @@ ComposeLens profile selection whenever profiles are present, retains SELinux rel
 reports unsupported source features as policy-controlled conversion outcomes.
 
 The additive `quadlet` feature exposes `QuadletExporter` and its validated file-set output. The
-exporter uses QuadletLens 0.1.1 for typed native construction and capability evidence, supports
+exporter uses QuadletLens 0.1.5 for typed native construction and capability evidence, supports
 Podman 5.4.0 through the finite current catalogue ceiling, keeps each service in its own container
 unit by default, distinguishes application-owned and external resources, preserves absolute and
 systemd-specifier bind paths, and reports every omitted target feature through the same loss policy.
 Callers can also provide an explicit absolute Compose project root to resolve `./` and `../` bind
 sources lexically without filesystem access.
-Explicit single-pod grouping is available only for compatible declared networks and ports. It is
+Tilde, Windows, and other host-specific bind spellings are never guessed; embedded callers can map
+an exact source spelling to an absolute or systemd-specifier target explicitly.
+Explicit single-pod grouping is available only for compatible declared networks, ports, and
+ordered host mappings. It is
 reported as an approximation because sharing a network namespace changes Compose service
 isolation, and incompatible requests fail without an automatic fallback.
+
+The neutral model preserves explicit service host mappings, including the `host-gateway` runtime
+token and IPv4/IPv6 addresses. Compose `extra_hosts` convert to capability-checked Quadlet
+`AddHost` entries. Separate services retain container-level mappings; explicitly grouped services
+must declare identical ordered mappings, which move to the generated pod.
+
+The neutral model also preserves Compose health-check command form, explicit disable intent,
+durations, retries, startup grace period, and `start_interval` with field-level provenance. The
+Quadlet adapter emits the capability-checked regular health-check subset and reports
+`start_interval` as an explicit loss because Quadlet has no equivalent key.
+
+ComposeLens 0.1.5 service dependencies retain source order, short/long defaults, and field-level
+provenance in the neutral graph. Required and optional startup dependencies become capability-
+checked systemd `Requires`/`Wants` plus `After` directives. A healthy dependency additionally
+enables `Notify=healthy` only when BoxFerry can establish an explicit target health command.
+Compose-controlled restart propagation and successful-completion conditions remain explicit
+partial losses; missing required services and ordering cycles are invalid.
+
+The neutral model and adapters retain provenance-aware primary user/group, user namespace, ordered
+supplementary groups, working directory, and read-only-root intent through ComposeLens and
+QuadletLens 0.1.5. Separate-container output maps numeric primary GIDs and named or numeric
+supplementary groups; named primary groups remain explicit losses because Quadlet's native
+`Group=` contract is numeric. Output is capability-checked across the supported Podman range.
+Explicit pod grouping reports container-level user namespaces as a loss because Podman uses the
+pod's namespace and BoxFerry cannot yet generate Quadlet's pod-level `UserNS=` key.
+
+The format-independent graph now also represents application-owned or external configuration and
+secret resources, optional runtime names and material origins, and ordered short/long service
+grants with per-option provenance. Sensitive material and grant values use the same redacting
+`ProtectedString` boundary as environment values. Compose and Quadlet adapter integration remains
+gated on the independent ComposeLens and QuadletLens 0.1.6 releases.
 
 The CLI remains a thin consumer of the public facade. It must not gain private conversion behavior
 that embedded users cannot call. See the [library API and publication policy](docs/library-api.md).
@@ -83,6 +139,7 @@ Start with the [documentation index](docs/README.md). Important design documents
 - [Library API and publication policy](docs/library-api.md)
 - [API stability](docs/api-stability.md)
 - [Conversion model and diagnostics](docs/conversion-model.md)
+- [Format coverage](docs/format-coverage.md)
 - [Quadlet exporter](docs/quadlet-adapter.md)
 - [Testing strategy](docs/testing.md)
 - [Development environment](docs/development-environment.md)

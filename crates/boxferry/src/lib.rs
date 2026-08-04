@@ -43,12 +43,14 @@ pub use boxferry_quadlet as quadlet;
 pub use boxferry_engine::{
     ConversionError, ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, Diagnostic, DiagnosticCode,
     DiagnosticField, DiagnosticValue, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter, LossPolicy,
-    PlatformVersion, Severity, TargetProfile, VersionRange, convert,
+    ParsePlatformVersionError, PlatformVersion, Severity, TargetProfile, VersionRange, convert,
 };
 pub use boxferry_model::{
-    Application, Command, EnvironmentValue, EnvironmentVariable, Identifier, ImageReference, ModelError, Mount,
-    MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceOwnership,
-    SelinuxRelabel, Service, SourceId, SourceSpan, Sourced, Volume,
+    Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
+    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
+    ImageReference, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
+    Provenance, ProvenanceKind, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial,
+    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, SourceId, SourceSpan, Sourced, Volume,
 };
 
 #[cfg(feature = "compose")]

@@ -14,13 +14,25 @@ Dependencies are design decisions, not incidental implementation details. Prefer
 
 ## License allowlist
 
-`deny.toml` is the machine-readable source of truth. The initial allowlist is deliberately narrow: Apache-2.0, Apache-2.0 with LLVM exception, BSD-2-Clause, BSD-3-Clause, ISC, MIT, MPL-2.0, Unicode-3.0, Unicode-DFS-2016, and Zlib.
+`deny.toml` is the machine-readable source of truth. The current allowlist is deliberately narrow:
+Apache-2.0, MIT, MPL-2.0, and Unicode-3.0. Add another license only when an actual reviewed
+dependency requires it; unused allowances are removed so the audit remains intentional and
+warning-free.
 
 Adding a license is a compatibility and distribution decision. Review its obligations before changing the allowlist. This policy records project intent and is not legal advice.
 
 ## Exceptions
 
 Do not silence an advisory, allow a Git source, clarify a license, or skip a duplicate merely to make CI pass. An exception must be narrowly versioned, include a reason in `deny.toml`, and be explained in the change that introduces it. Use an ADR when the exception has lasting architectural or distribution consequences.
+
+## Reviewed direct dependencies
+
+The `boxferry` facade uses optional Clap 4.6 for the installable command's typed subcommands,
+value enums, version/help output, and consistent argument errors. The dependency is enabled only
+by the `cli` feature; embedded users can disable default features. Cargo's compatible version
+requirement and committed lock file let Renovate propose normal updates while CI verifies the exact
+resolved graph. [ADR 0004](decisions/0004-first-cli-feature-and-write-safety.md) records the default
+feature and command-safety decision.
 
 ## Automation
 

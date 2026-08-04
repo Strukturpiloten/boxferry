@@ -3,10 +3,27 @@ services:
   web:
     image: registry.example:5000/team/web:1.2@sha256:abcdef
     command: ["php", "-v"]
+    user: "1001:1002"
+    userns_mode: keep-id
+    group_add:
+      - audio
+      - "44"
+    working_dir: /srv/app
+    read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://127.0.0.1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
     environment:
       EMPTY: ""
       FROM_HOST:
       PORT: 8080
+    extra_hosts:
+      - host.docker.internal=host-gateway
+      - ipv6=[::1]
     ports:
       - "127.0.0.1:8080:80/tcp"
       - target: 8443

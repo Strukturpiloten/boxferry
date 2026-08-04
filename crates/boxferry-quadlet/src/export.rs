@@ -1,20 +1,25 @@
 //! Neutral-model-to-Quadlet planning.
 
-use std::{collections::BTreeSet, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue,
     ExportAdapter, InvalidDiagnosticCode, PlanError, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, EnvironmentValue, Mount, MountSource, NetworkAttachment, Port, Protocol, Provenance,
-    ResourceOwnership, SelinuxRelabel, Service, Sourced,
+    Application, Command, Config, EnvironmentValue, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping,
+    Mount, MountSource, NetworkAttachment, Port, Protocol, Provenance, ResourceGrant, ResourceOwnership, Secret,
+    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, Sourced,
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
     model::{ContainerKey, NetworkKey, PodKey, QuadletUnitType, VolumeKey},
     path::{PathForm, classify_path},
-    render::{EntryValue, QuadletDocumentBuilder, RenderError},
+    render::{EntryValue, QuadletDocumentBuilder, RenderError, SystemdUnitKey},
     source::SourceId,
 };
 
@@ -42,6 +47,7 @@ pub struct QuadletExporter {
     catalogue: CapabilityCatalogue,
     codes: Codes,
     relative_bind_root: Option<String>,
+    bind_source_mappings: BTreeMap<String, String>,
     grouping_policy: QuadletGroupingPolicy,
 }
 
@@ -63,8 +69,10 @@ impl QuadletExporter {
                 generation: DiagnosticCode::new("BFQ0005")?,
                 capability: DiagnosticCode::new("BFQ0006")?,
                 grouping: DiagnosticCode::new("BFQ0007")?,
+                dependency: DiagnosticCode::new("BFQ0008")?,
             },
             relative_bind_root: None,
+            bind_source_mappings: BTreeMap::new(),
             grouping_policy: QuadletGroupingPolicy::SeparateContainers,
         })
     }
@@ -97,6 +105,48 @@ impl QuadletExporter {
     #[must_use]
     pub fn relative_bind_root(&self) -> Option<&str> {
         self.relative_bind_root.as_deref()
+    }
+
+    /// Adds one explicit authored bind-source to target-path mapping.
+    ///
+    /// This is the opt-in boundary for source-machine-specific forms such as `~/data`, Windows
+    /// paths, or environment-derived spellings. The source is matched exactly. The target must be
+    /// either an absolute safely encodable POSIX path or a systemd-specifier path such as
+    /// `%h/data`. Explicit mappings take precedence over relative-project-root resolution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QuadletExporterError::InvalidBindSourceMapping`] for an empty/control-bearing
+    /// source or unsafe target. Returns [`QuadletExporterError::ConflictingBindSourceMapping`] if
+    /// the same source was already assigned a different target.
+    pub fn with_bind_source_mapping(
+        mut self,
+        source: impl Into<String>,
+        target: impl Into<String>,
+    ) -> Result<Self, QuadletExporterError> {
+        let source = source.into();
+        let target = target.into();
+        if !is_valid_mapping_source(&source) || !is_valid_quadlet_bind_source(&target) {
+            return Err(QuadletExporterError::InvalidBindSourceMapping { source, target });
+        }
+        if let Some(existing) = self.bind_source_mappings.get(&source) {
+            if existing != &target {
+                return Err(QuadletExporterError::ConflictingBindSourceMapping {
+                    source,
+                    existing: existing.clone(),
+                    replacement: target,
+                });
+            }
+            return Ok(self);
+        }
+        self.bind_source_mappings.insert(source, target);
+        Ok(self)
+    }
+
+    /// Returns the exact target selected for an authored bind-source spelling.
+    #[must_use]
+    pub fn bind_source_mapping(&self, source: &str) -> Option<&str> {
+        self.bind_source_mappings.get(source).map(String::as_str)
     }
 
     /// Selects how services are grouped into native Quadlet units.
@@ -140,6 +190,22 @@ pub enum QuadletExporterError {
     DiagnosticCode(InvalidDiagnosticCode),
     /// A caller-selected relative bind root was not a safe absolute POSIX path.
     InvalidRelativeBindRoot(String),
+    /// An explicit bind-source mapping contained an invalid source or target spelling.
+    InvalidBindSourceMapping {
+        /// Exact source spelling supplied by the caller.
+        source: String,
+        /// Requested Quadlet target spelling.
+        target: String,
+    },
+    /// One source spelling was assigned two different target paths.
+    ConflictingBindSourceMapping {
+        /// Exact source spelling supplied by the caller.
+        source: String,
+        /// Previously configured target spelling.
+        existing: String,
+        /// Conflicting replacement target spelling.
+        replacement: String,
+    },
 }
 
 impl fmt::Display for QuadletExporterError {
@@ -150,6 +216,20 @@ impl fmt::Display for QuadletExporterError {
             Self::InvalidRelativeBindRoot(root) => {
                 write!(formatter, "invalid absolute relative-bind root `{root}`")
             }
+            Self::InvalidBindSourceMapping { source, target } => {
+                write!(
+                    formatter,
+                    "invalid explicit bind-source mapping `{source}` to `{target}`"
+                )
+            }
+            Self::ConflictingBindSourceMapping {
+                source,
+                existing,
+                replacement,
+            } => write!(
+                formatter,
+                "conflicting bind-source mapping for `{source}`: `{existing}` versus `{replacement}`"
+            ),
         }
     }
 }
@@ -159,7 +239,9 @@ impl Error for QuadletExporterError {
         match self {
             Self::Catalogue(error) => Some(error),
             Self::DiagnosticCode(error) => Some(error),
-            Self::InvalidRelativeBindRoot(_) => None,
+            Self::InvalidRelativeBindRoot(_)
+            | Self::InvalidBindSourceMapping { .. }
+            | Self::ConflictingBindSourceMapping { .. } => None,
         }
     }
 }
@@ -185,6 +267,7 @@ struct Codes {
     generation: DiagnosticCode,
     capability: DiagnosticCode,
     grouping: DiagnosticCode,
+    dependency: DiagnosticCode,
 }
 
 struct Mapping<'a> {
@@ -197,6 +280,12 @@ struct Mapping<'a> {
     diagnostics: Vec<Diagnostic>,
     next_source_id: u32,
     generation_failed: bool,
+}
+
+#[derive(Clone, Copy)]
+enum HealthcheckScalarKind {
+    Duration,
+    RetryCount,
 }
 
 impl<'a> Mapping<'a> {
@@ -275,6 +364,10 @@ impl<'a> Mapping<'a> {
     }
 
     fn map_application(&mut self) {
+        if !self.validate_dependency_graph() {
+            self.generation_failed = true;
+            return;
+        }
         let grouped = match self.exporter.grouping_policy {
             QuadletGroupingPolicy::SeparateContainers => false,
             QuadletGroupingPolicy::SinglePod => {
@@ -291,12 +384,107 @@ impl<'a> Mapping<'a> {
         for volume in self.application.volumes() {
             self.map_volume(volume);
         }
+        for config in self.application.configs() {
+            self.map_config(config);
+        }
+        for secret in self.application.secrets() {
+            self.map_secret(secret);
+        }
         if grouped {
             self.map_pod();
         }
         for service in self.application.services() {
             self.map_service(service, grouped);
         }
+    }
+
+    fn validate_dependency_graph(&mut self) -> bool {
+        let service_names = self
+            .application
+            .services()
+            .iter()
+            .map(|service| service.value().name().as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        let mut valid = true;
+        let mut indegree = service_names
+            .iter()
+            .map(|name| (name.clone(), 0_usize))
+            .collect::<BTreeMap<_, _>>();
+        let mut outgoing = BTreeMap::<String, Vec<String>>::new();
+
+        for service in self.application.services() {
+            let dependent = service.value().name().as_str();
+            for (index, dependency) in service.value().dependencies().iter().enumerate() {
+                let target = dependency.value().service().as_str();
+                if !service_names.contains(target) {
+                    if dependency.value().is_required() {
+                        self.invalid(
+                            self.exporter.codes.dependency.clone(),
+                            &format!("services.{dependent}.dependencies[{index}]"),
+                            "required service dependency does not exist in the application",
+                            &format!("referenced service `{target}` is missing"),
+                            dependency.origins(),
+                        );
+                        valid = false;
+                    }
+                    continue;
+                }
+                if let Some(count) = indegree.get_mut(dependent) {
+                    *count = count.saturating_add(1);
+                }
+                outgoing
+                    .entry(target.to_owned())
+                    .or_default()
+                    .push(dependent.to_owned());
+            }
+        }
+        if !valid {
+            return false;
+        }
+
+        let mut ready = indegree
+            .iter()
+            .filter_map(|(name, count)| (*count == 0).then_some(name.clone()))
+            .collect::<Vec<_>>();
+        let mut visited = 0_usize;
+        while let Some(name) = ready.pop() {
+            visited = visited.saturating_add(1);
+            if let Some(dependents) = outgoing.get(&name) {
+                for dependent in dependents {
+                    if let Some(count) = indegree.get_mut(dependent) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            ready.push(dependent.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if visited == service_names.len() {
+            return true;
+        }
+
+        let cycle_services = indegree
+            .iter()
+            .filter_map(|(name, count)| (*count > 0).then_some(name.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let origins = self
+            .application
+            .services()
+            .iter()
+            .flat_map(|service| service.value().dependencies())
+            .flat_map(Sourced::origins)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.invalid(
+            self.exporter.codes.dependency.clone(),
+            "application.dependencies",
+            "service dependency graph contains an ordering cycle",
+            &format!("cycle includes: {cycle_services}"),
+            &origins,
+        );
+        false
     }
 
     fn validate_single_pod_grouping(&mut self) -> bool {
@@ -339,6 +527,41 @@ impl<'a> Mapping<'a> {
                 );
                 return false;
             }
+            if !same_host_mappings(service.value().host_mappings(), first.value().host_mappings()) {
+                self.invalid(
+                    self.exporter.codes.grouping.clone(),
+                    "application.grouping",
+                    "single-pod grouping cannot preserve different per-service host mappings",
+                    "all services must have the same ordered host mappings or retain separate containers",
+                    &origins,
+                );
+                return false;
+            }
+        }
+
+        let first_user_namespace = first.value().user_namespace().map(|value| value.value().expose());
+        for service in services {
+            let user_namespace = service.value().user_namespace().map(|value| value.value().expose());
+            if user_namespace != first_user_namespace {
+                self.invalid(
+                    self.exporter.codes.grouping.clone(),
+                    "application.grouping",
+                    "single-pod grouping cannot preserve different per-service user namespaces",
+                    "all services must declare the same user namespace, or every service must leave it implicit",
+                    &origins,
+                );
+                return false;
+            }
+        }
+        if first_user_namespace.is_some_and(|value| !is_safe_word(value, false)) {
+            self.invalid(
+                self.exporter.codes.grouping.clone(),
+                "application.grouping",
+                "single-pod grouping cannot encode the shared user namespace safely",
+                "the shared user namespace contains unsupported whitespace or control syntax",
+                &origins,
+            );
+            return false;
         }
 
         let mut container_ports = BTreeSet::new();
@@ -461,6 +684,40 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn map_config(&mut self, config: &Sourced<Config>) {
+        let subject = format!("configs.{}", config.value().name().as_str());
+        self.unsupported(
+            &subject,
+            "Quadlet has no native configuration-resource lifecycle; create and mount this config through an explicit target policy",
+            config.origins(),
+        );
+    }
+
+    fn map_secret(&mut self, secret: &Sourced<Secret>) {
+        let subject = format!("secrets.{}", secret.value().name().as_str());
+        match secret.value().ownership() {
+            ResourceOwnership::External if secret.value().material().is_none() => self.exact(subject, secret.origins()),
+            ResourceOwnership::External => self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &subject,
+                "external secret cannot also request application-managed materialization",
+                "remove the material source or make the secret application-owned",
+                secret.origins(),
+            ),
+            ResourceOwnership::Application => self.unsupported(
+                &subject,
+                "Quadlet container units can consume Podman secrets but cannot create or update their material",
+                secret.origins(),
+            ),
+            ResourceOwnership::Implicit => self.unsupported(
+                &subject,
+                "implicit source secret lifecycle cannot be reproduced safely",
+                secret.origins(),
+            ),
+            _ => self.unsupported(&subject, "unknown secret ownership", secret.origins()),
+        }
+    }
+
     fn map_pod(&mut self) {
         let subject = "application.pod";
         let name = self.application.name().as_str();
@@ -477,6 +734,34 @@ impl<'a> Mapping<'a> {
         let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Pod);
         if !self.push_pod(&mut builder, PodKey::PodName, name, subject, &origins) {
             return;
+        }
+
+        if let Some(user_namespace) = self
+            .application
+            .services()
+            .first()
+            .and_then(|service| service.value().user_namespace())
+        {
+            let namespace_subject = "application.pod.user_namespace";
+            let namespace_origins = shared_user_namespace_origins(self.application.services());
+            if self.capability("quadlet.pod.userns", namespace_subject, &namespace_origins)
+                && self.push_pod(
+                    &mut builder,
+                    PodKey::UserNS,
+                    user_namespace.value().expose(),
+                    namespace_subject,
+                    &namespace_origins,
+                )
+            {
+                self.exact(namespace_subject, &namespace_origins);
+            }
+        }
+
+        if let Some(service) = self.application.services().first() {
+            for (index, mapping) in service.value().host_mappings().iter().enumerate() {
+                let mapping_origins = shared_host_mapping_origins(self.application.services(), index);
+                self.map_pod_host_mapping(index, mapping.value(), &mapping_origins, &mut builder);
+            }
         }
 
         for service in self.application.services() {
@@ -509,6 +794,7 @@ impl<'a> Mapping<'a> {
             return;
         }
         let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Container);
+        self.map_service_dependencies(service, &mut builder);
         let Some(image) = service.value().image() else {
             self.invalid(
                 self.exporter.codes.invalid_value.clone(),
@@ -545,8 +831,28 @@ impl<'a> Mapping<'a> {
         if let Some(command) = service.value().command() {
             self.map_command(&subject, command, &mut builder);
         }
+        self.map_execution_context(&subject, service.value(), grouped, &mut builder);
+        if let Some(healthcheck) = service.value().healthcheck() {
+            self.map_healthcheck(&subject, healthcheck, &mut builder);
+        }
+        self.map_healthy_readiness(service, &mut builder);
         for environment in service.value().environment() {
             self.map_environment(&subject, environment, &mut builder);
+        }
+        for (index, grant) in service.value().config_grants().iter().enumerate() {
+            self.unsupported(
+                &format!("{subject}.configs[{index}]"),
+                "Quadlet has no native Compose-compatible config grant; define an explicit bind or target-specific materialization policy",
+                grant.origins(),
+            );
+        }
+        for (index, grant) in service.value().secret_grants().iter().enumerate() {
+            self.map_secret_grant(&subject, index, grant, &mut builder);
+        }
+        if !grouped {
+            for (index, mapping) in service.value().host_mappings().iter().enumerate() {
+                self.map_container_host_mapping(&subject, index, mapping, &mut builder);
+            }
         }
         if !grouped {
             for (index, port) in service.value().ports().iter().enumerate() {
@@ -577,6 +883,398 @@ impl<'a> Mapping<'a> {
         }
 
         self.finish_document(file_name, &builder, &subject, service.origins());
+    }
+
+    fn map_secret_grant(
+        &mut self,
+        service_subject: &str,
+        index: usize,
+        grant: &Sourced<ResourceGrant>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.secrets[{index}]");
+        if grant.value().source().is_sensitive() {
+            self.unsupported(
+                &subject,
+                "a sensitive interpolated secret identifier cannot be emitted into a unit file safely",
+                grant.origins(),
+            );
+            return;
+        }
+        let source = grant.value().source().expose();
+        let Some(secret) = self
+            .application
+            .secrets()
+            .iter()
+            .find(|secret| secret.value().name().as_str() == source)
+        else {
+            self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &subject,
+                "secret grant references a missing application resource",
+                "declare the referenced secret before converting the service grant",
+                grant.origins(),
+            );
+            return;
+        };
+        if secret.value().ownership() != ResourceOwnership::External || secret.value().material().is_some() {
+            self.unsupported(
+                &subject,
+                "only pre-existing external Podman secrets can be consumed without an out-of-band creation step",
+                &secret_grant_origins(grant, secret),
+            );
+            return;
+        }
+
+        let runtime_name = secret
+            .value()
+            .runtime_name()
+            .map_or(secret.value().name().as_str(), |name| name.value().expose());
+        if secret
+            .value()
+            .runtime_name()
+            .is_some_and(|name| name.value().is_sensitive())
+            || !is_safe_secret_component(runtime_name)
+        {
+            self.unsupported(
+                &subject,
+                "external secret runtime name cannot be encoded in the reviewed Quadlet Secret grammar",
+                &secret_grant_origins(grant, secret),
+            );
+            return;
+        }
+
+        let mut options = Vec::new();
+        match grant.value().target() {
+            Some(target) => {
+                if !is_safe_secret_component(target.value().expose()) {
+                    self.unsupported(
+                        &subject,
+                        "secret target cannot be encoded in the reviewed Quadlet Secret grammar",
+                        &secret_grant_origins(grant, secret),
+                    );
+                    return;
+                }
+                options.push(format!("target={}", target.value().expose()));
+            }
+            None if runtime_name != source => options.push(format!("target={source}")),
+            None => {}
+        }
+        for (name, value) in [("uid", grant.value().uid()), ("gid", grant.value().gid())] {
+            if let Some(value) = value {
+                if value.value().expose().is_empty()
+                    || !value.value().expose().bytes().all(|byte| byte.is_ascii_digit())
+                {
+                    self.unsupported(
+                        &subject,
+                        "secret UID and GID options require non-negative decimal integers",
+                        &secret_grant_origins(grant, secret),
+                    );
+                    return;
+                }
+                options.push(format!("{name}={}", value.value().expose()));
+            }
+        }
+        if let Some(mode) = grant.value().mode() {
+            let Some(mode) = normalize_secret_mode(mode.value().expose()) else {
+                self.unsupported(
+                    &subject,
+                    "secret mode must be a one-to-four-digit octal value without writable bits",
+                    &secret_grant_origins(grant, secret),
+                );
+                return;
+            };
+            options.push(format!("mode={mode}"));
+        }
+
+        let value = if options.is_empty() {
+            runtime_name.to_owned()
+        } else {
+            format!("{runtime_name},{}", options.join(","))
+        };
+        let origins = secret_grant_origins(grant, secret);
+        if self.capability("quadlet.container.secret", &subject, &origins)
+            && self.push_container(builder, ContainerKey::Secret, value, &subject, &origins)
+        {
+            self.exact(subject, &origins);
+        }
+    }
+
+    fn map_execution_context(
+        &mut self,
+        service_subject: &str,
+        service: &Service,
+        grouped: bool,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        if let Some(user) = service.user() {
+            self.map_protected_container_value(
+                service_subject,
+                "user",
+                user,
+                "quadlet.container.user",
+                ContainerKey::User,
+                builder,
+            );
+        }
+        if let Some(group) = service.group() {
+            let subject = format!("{service_subject}.group");
+            if group.value().expose().bytes().all(|byte| byte.is_ascii_digit()) && !group.value().expose().is_empty() {
+                self.map_protected_container_value(
+                    service_subject,
+                    "group",
+                    group,
+                    "quadlet.container.group",
+                    ContainerKey::Group,
+                    builder,
+                );
+            } else {
+                self.unsupported(
+                    &subject,
+                    "Quadlet Group requires a numeric GID in the supported native contract",
+                    group.origins(),
+                );
+            }
+        }
+        if let Some(user_namespace) = service.user_namespace() {
+            if !grouped {
+                self.map_protected_container_value(
+                    service_subject,
+                    "user_namespace",
+                    user_namespace,
+                    "quadlet.container.userns",
+                    ContainerKey::UserNS,
+                    builder,
+                );
+            }
+        }
+        for (index, group) in service.supplementary_groups().iter().enumerate() {
+            self.map_protected_container_value(
+                service_subject,
+                &format!("supplementary_groups[{index}]"),
+                group,
+                "quadlet.container.group-add",
+                ContainerKey::GroupAdd,
+                builder,
+            );
+        }
+        if let Some(working_directory) = service.working_directory() {
+            self.map_protected_container_value(
+                service_subject,
+                "working_directory",
+                working_directory,
+                "quadlet.container.working-dir",
+                ContainerKey::WorkingDir,
+                builder,
+            );
+        }
+        if let Some(read_only) = service.read_only_root_filesystem() {
+            let subject = format!("{service_subject}.read_only_root_filesystem");
+            let value = if *read_only.value() { "true" } else { "false" };
+            if self.capability("quadlet.container.read-only", &subject, read_only.origins())
+                && self.push_container(builder, ContainerKey::ReadOnly, value, &subject, read_only.origins())
+            {
+                self.exact(subject, read_only.origins());
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn map_protected_container_value(
+        &mut self,
+        service_subject: &str,
+        field: &str,
+        value: &Sourced<boxferry_model::ProtectedString>,
+        capability: &str,
+        key: ContainerKey,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.{field}");
+        if !is_safe_word(value.value().expose(), false) {
+            self.unsupported(
+                &subject,
+                "execution-context value requires systemd quoting or target-specific validation not yet encoded",
+                value.origins(),
+            );
+            return;
+        }
+        if self.capability(capability, &subject, value.origins())
+            && self.push_container(builder, key, value.value().expose(), &subject, value.origins())
+        {
+            self.exact(subject, value.origins());
+        }
+    }
+
+    fn map_service_dependencies(&mut self, service: &Sourced<Service>, builder: &mut QuadletDocumentBuilder) {
+        let service_name = service.value().name().as_str();
+        for (index, dependency) in service.value().dependencies().iter().enumerate() {
+            self.map_service_dependency(service_name, index, dependency, builder);
+        }
+    }
+
+    fn map_service_dependency(
+        &mut self,
+        service_name: &str,
+        index: usize,
+        dependency: &Sourced<ServiceDependency>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("services.{service_name}.dependencies[{index}]");
+        let target_name = dependency.value().service().as_str();
+        let origins = dependency_mapping_origins(dependency);
+        let Some(target) = self
+            .application
+            .services()
+            .iter()
+            .find(|candidate| candidate.value().name().as_str() == target_name)
+        else {
+            self.loss(
+                self.exporter.codes.dependency.clone(),
+                &subject,
+                ConversionKind::Unsupported,
+                "optional service dependency is absent from the application",
+                &format!("optional service `{target_name}` cannot be ordered or activated"),
+                &origins,
+            );
+            return;
+        };
+        if !self.dependency_condition_supported(&subject, dependency, target.value(), &origins) {
+            return;
+        }
+
+        let target_unit = format!("{target_name}.service");
+        let activation = if dependency.value().is_required() {
+            ("systemd.unit.requires", SystemdUnitKey::Requires)
+        } else {
+            ("systemd.unit.wants", SystemdUnitKey::Wants)
+        };
+        let activation_supported = self.capability(activation.0, &subject, &origins);
+        let ordering_supported = self.capability("systemd.unit.after", &subject, &origins);
+        if activation_supported
+            && ordering_supported
+            && self.push_systemd_unit(builder, activation.1, &target_unit, &subject, &origins)
+            && self.push_systemd_unit(builder, SystemdUnitKey::After, target_unit, &subject, &origins)
+        {
+            self.exact(&subject, &origins);
+        }
+        self.map_dependency_restart(&subject, dependency);
+    }
+
+    fn dependency_condition_supported(
+        &mut self,
+        subject: &str,
+        dependency: &Sourced<ServiceDependency>,
+        target: &Service,
+        origins: &[Provenance],
+    ) -> bool {
+        match dependency
+            .value()
+            .condition()
+            .map_or(&ServiceDependencyCondition::Started, Sourced::value)
+        {
+            ServiceDependencyCondition::Started => true,
+            ServiceDependencyCondition::Healthy if service_has_renderable_healthcheck(target) => true,
+            ServiceDependencyCondition::Healthy => {
+                self.loss(
+                    self.exporter.codes.dependency.clone(),
+                    subject,
+                    ConversionKind::Unsupported,
+                    "healthy service dependency cannot be established for the target",
+                    "referenced service has no explicit, enabled, safely encodable health command",
+                    origins,
+                );
+                false
+            }
+            ServiceDependencyCondition::CompletedSuccessfully => {
+                self.loss(
+                    self.exporter.codes.dependency.clone(),
+                    subject,
+                    ConversionKind::Unsupported,
+                    "successful-completion dependency has no verified Quadlet mapping",
+                    "ordinary Quadlet container services do not provide the required one-shot completion contract",
+                    origins,
+                );
+                false
+            }
+            ServiceDependencyCondition::Other(_) => {
+                self.loss(
+                    self.exporter.codes.dependency.clone(),
+                    subject,
+                    ConversionKind::Unsupported,
+                    "source-specific dependency condition has no verified Quadlet mapping",
+                    "retain or replace the provider-specific condition manually",
+                    origins,
+                );
+                false
+            }
+            _ => {
+                self.loss(
+                    self.exporter.codes.dependency.clone(),
+                    subject,
+                    ConversionKind::Unsupported,
+                    "unknown dependency condition has no verified Quadlet mapping",
+                    "upgrade BoxFerry or select a supported condition",
+                    origins,
+                );
+                false
+            }
+        }
+    }
+
+    fn map_dependency_restart(&mut self, subject: &str, dependency: &Sourced<ServiceDependency>) {
+        let Some(restart) = dependency.value().restart() else {
+            return;
+        };
+        let restart_subject = format!("{subject}.restart");
+        if *restart.value() {
+            self.loss(
+                self.exporter.codes.dependency.clone(),
+                &restart_subject,
+                ConversionKind::Unsupported,
+                "Compose-controlled dependency restart propagation has no verified Quadlet mapping",
+                "systemd runtime restart relationships are not equivalent to explicit Compose update operations",
+                restart.origins(),
+            );
+        } else {
+            self.exact(restart_subject, restart.origins());
+        }
+    }
+
+    fn map_healthy_readiness(&mut self, service: &Sourced<Service>, builder: &mut QuadletDocumentBuilder) {
+        let name = service.value().name().as_str();
+        if !service_has_renderable_healthcheck(service.value()) {
+            return;
+        }
+        let mut origins = self
+            .application
+            .services()
+            .iter()
+            .flat_map(|dependent| dependent.value().dependencies())
+            .filter(|dependency| {
+                dependency.value().service().as_str() == name
+                    && matches!(
+                        dependency.value().condition().map(Sourced::value),
+                        Some(ServiceDependencyCondition::Healthy)
+                    )
+            })
+            .flat_map(dependency_mapping_origins)
+            .collect::<Vec<_>>();
+        if origins.is_empty() {
+            return;
+        }
+        if let Some(healthcheck) = service.value().healthcheck() {
+            for origin in healthcheck.origins() {
+                if !origins.contains(origin) {
+                    origins.push(origin.clone());
+                }
+            }
+        }
+        let subject = format!("services.{name}.readiness");
+        if self.capability("quadlet.container.notify-healthy", &subject, &origins)
+            && self.push_container(builder, ContainerKey::Notify, "healthy", &subject, &origins)
+        {
+            self.exact(subject, &origins);
+        }
     }
 
     fn map_command(&mut self, service_subject: &str, command: &Sourced<Command>, builder: &mut QuadletDocumentBuilder) {
@@ -631,6 +1329,192 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn map_healthcheck(
+        &mut self,
+        service_subject: &str,
+        healthcheck: &Sourced<Healthcheck>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let disabled = healthcheck.value().disabled().is_some_and(|value| *value.value());
+        if disabled && healthcheck.value().command().is_some() {
+            self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &format!("{service_subject}.healthcheck"),
+                "health check cannot be both disabled and assigned a command",
+                "resolve the conflicting neutral health-check intent before target planning",
+                healthcheck.origins(),
+            );
+            return;
+        }
+
+        if let Some(disable) = healthcheck.value().disabled() {
+            let subject = format!("{service_subject}.healthcheck.disable");
+            if *disable.value() {
+                if self.capability("quadlet.container.health-command", &subject, disable.origins())
+                    && self.push_container(builder, ContainerKey::HealthCmd, "none", &subject, disable.origins())
+                {
+                    self.exact(subject, disable.origins());
+                }
+            } else {
+                self.exact(subject, disable.origins());
+            }
+        }
+
+        if !disabled {
+            if let Some(command) = healthcheck.value().command() {
+                self.map_healthcheck_command(service_subject, command, builder);
+            }
+        }
+        if let Some(interval) = healthcheck.value().interval() {
+            self.map_healthcheck_scalar(
+                service_subject,
+                "interval",
+                interval.value().as_str(),
+                interval.origins(),
+                "quadlet.container.health-interval",
+                ContainerKey::HealthInterval,
+                HealthcheckScalarKind::Duration,
+                builder,
+            );
+        }
+        if let Some(timeout) = healthcheck.value().timeout() {
+            self.map_healthcheck_scalar(
+                service_subject,
+                "timeout",
+                timeout.value().as_str(),
+                timeout.origins(),
+                "quadlet.container.health-timeout",
+                ContainerKey::HealthTimeout,
+                HealthcheckScalarKind::Duration,
+                builder,
+            );
+        }
+        if let Some(retries) = healthcheck.value().retries() {
+            self.map_healthcheck_scalar(
+                service_subject,
+                "retries",
+                retries.value().as_str(),
+                retries.origins(),
+                "quadlet.container.health-retries",
+                ContainerKey::HealthRetries,
+                HealthcheckScalarKind::RetryCount,
+                builder,
+            );
+        }
+        if let Some(start_period) = healthcheck.value().start_period() {
+            self.map_healthcheck_scalar(
+                service_subject,
+                "start_period",
+                start_period.value().as_str(),
+                start_period.origins(),
+                "quadlet.container.health-start-period",
+                ContainerKey::HealthStartPeriod,
+                HealthcheckScalarKind::Duration,
+                builder,
+            );
+        }
+        if let Some(start_interval) = healthcheck.value().start_interval() {
+            self.unsupported(
+                &format!("{service_subject}.healthcheck.start_interval"),
+                "Quadlet has no native HealthStartInterval key and no verified fallback is enabled",
+                start_interval.origins(),
+            );
+        }
+    }
+
+    fn map_healthcheck_command(
+        &mut self,
+        service_subject: &str,
+        command: &Sourced<HealthcheckCommand>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.healthcheck.test");
+        let arguments = match command.value() {
+            HealthcheckCommand::Exec(arguments) if !arguments.is_empty() => {
+                let mut values = Vec::with_capacity(arguments.len() + 1);
+                values.push("CMD");
+                values.extend(arguments.iter().map(boxferry_model::ProtectedString::expose));
+                values
+            }
+            HealthcheckCommand::Shell(value) if !value.expose().is_empty() => {
+                vec!["CMD-SHELL", value.expose()]
+            }
+            HealthcheckCommand::Exec(_) => {
+                self.invalid(
+                    self.exporter.codes.invalid_value.clone(),
+                    &subject,
+                    "health-check exec command requires at least one argument",
+                    "supply a command or explicitly disable the health check",
+                    command.origins(),
+                );
+                return;
+            }
+            HealthcheckCommand::Shell(_) => {
+                self.invalid(
+                    self.exporter.codes.invalid_value.clone(),
+                    &subject,
+                    "health-check shell command must not be empty",
+                    "supply shell command text or explicitly disable the health check",
+                    command.origins(),
+                );
+                return;
+            }
+            _ => {
+                self.unsupported(&subject, "unknown health-check command form", command.origins());
+                return;
+            }
+        };
+        if arguments
+            .iter()
+            .any(|argument| argument.contains('\0') || argument.contains('%'))
+        {
+            self.unsupported(
+                &subject,
+                "health command contains a NUL byte or unresolved systemd percent specifier",
+                command.origins(),
+            );
+            return;
+        }
+        let encoded = encode_json_array(&arguments);
+        if self.capability("quadlet.container.health-command", &subject, command.origins())
+            && self.push_container(builder, ContainerKey::HealthCmd, encoded, &subject, command.origins())
+        {
+            self.exact(subject, command.origins());
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn map_healthcheck_scalar(
+        &mut self,
+        service_subject: &str,
+        field: &str,
+        value: &str,
+        origins: &[Provenance],
+        capability: &str,
+        key: ContainerKey,
+        kind: HealthcheckScalarKind,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.healthcheck.{field}");
+        let valid = is_safe_health_scalar(value)
+            && match kind {
+                HealthcheckScalarKind::Duration => is_podman_health_duration(value),
+                HealthcheckScalarKind::RetryCount => value.bytes().all(|byte| byte.is_ascii_digit()),
+            };
+        if !valid {
+            self.unsupported(
+                &subject,
+                "health-check scalar is not valid for the selected Podman target",
+                origins,
+            );
+            return;
+        }
+        if self.capability(capability, &subject, origins) && self.push_container(builder, key, value, &subject, origins)
+        {
+            self.exact(subject, origins);
+        }
+    }
+
     fn map_environment(
         &mut self,
         service_subject: &str,
@@ -676,6 +1560,69 @@ impl<'a> Mapping<'a> {
         {
             self.exact(subject, environment.origins());
         }
+    }
+
+    fn map_container_host_mapping(
+        &mut self,
+        service_subject: &str,
+        index: usize,
+        mapping: &Sourced<HostMapping>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.host_mappings[{index}]");
+        let Some(encoded) = self.encode_host_mapping(&subject, mapping.value(), mapping.origins()) else {
+            return;
+        };
+        if self.capability("quadlet.container.add-host", &subject, mapping.origins())
+            && self.push_container(builder, ContainerKey::AddHost, encoded, &subject, mapping.origins())
+        {
+            self.exact(subject, mapping.origins());
+        }
+    }
+
+    fn map_pod_host_mapping(
+        &mut self,
+        index: usize,
+        mapping: &HostMapping,
+        origins: &[Provenance],
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("application.pod.host_mappings[{index}]");
+        let Some(encoded) = self.encode_host_mapping(&subject, mapping, origins) else {
+            return;
+        };
+        if self.capability("quadlet.pod.add-host", &subject, origins)
+            && self.push_pod(builder, PodKey::AddHost, encoded, &subject, origins)
+        {
+            self.exact(subject, origins);
+        }
+    }
+
+    fn encode_host_mapping(&mut self, subject: &str, mapping: &HostMapping, origins: &[Provenance]) -> Option<String> {
+        let hostname = mapping.hostname().as_str();
+        if !is_native_atom(hostname) {
+            self.unsupported(subject, "host mapping name requires target-specific encoding", origins);
+            return None;
+        }
+        let address = match mapping.address().kind() {
+            HostAddressKind::Ipv4 | HostAddressKind::HostGateway | HostAddressKind::Ipv6 { bracketed: true } => {
+                mapping.address().raw().to_owned()
+            }
+            HostAddressKind::Ipv6 { bracketed: false } => format!("[{}]", mapping.address().raw()),
+            HostAddressKind::Other => {
+                self.unsupported(
+                    subject,
+                    "host mapping address is deferred or implementation-specific",
+                    origins,
+                );
+                return None;
+            }
+            _ => {
+                self.unsupported(subject, "unknown host mapping address kind", origins);
+                return None;
+            }
+        };
+        Some(format!("{hostname}:{address}"))
     }
 
     fn map_port(
@@ -760,48 +1707,54 @@ impl<'a> Mapping<'a> {
         }
         let source = match mount.value().source() {
             MountSource::Volume(name) => self.volume_source(&subject, name.as_str(), mount.origins()),
-            MountSource::HostPath(path) => match classify_path(path) {
-                PathForm::AbsoluteLiteral | PathForm::SystemdSpecifier if is_safe_mount_part(path) => {
-                    Some(path.clone())
-                }
-                PathForm::UnitRelativeLiteral => {
-                    if let Some(root) = self.exporter.relative_bind_root.as_deref() {
-                        if let Some(resolved) = resolve_relative_path(root, path) {
-                            Some(resolved)
-                        } else {
+            MountSource::HostPath(path) => {
+                if let Some(mapped) = self.exporter.bind_source_mappings.get(path) {
+                    Some(mapped.clone())
+                } else {
+                    match classify_path(path) {
+                        PathForm::AbsoluteLiteral | PathForm::SystemdSpecifier if is_safe_mount_part(path) => {
+                            Some(path.clone())
+                        }
+                        PathForm::UnitRelativeLiteral => {
+                            if let Some(root) = self.exporter.relative_bind_root.as_deref() {
+                                if let Some(resolved) = resolve_relative_path(root, path) {
+                                    Some(resolved)
+                                } else {
+                                    self.unsupported(
+                                        &subject,
+                                        "relative bind source traverses above the filesystem root",
+                                        mount.origins(),
+                                    );
+                                    None
+                                }
+                            } else {
+                                self.unsupported(
+                                    &subject,
+                                    "relative bind source needs an explicit Compose project root",
+                                    mount.origins(),
+                                );
+                                None
+                            }
+                        }
+                        PathForm::RelativeLiteral => {
                             self.unsupported(
                                 &subject,
-                                "relative bind source traverses above the filesystem root",
+                                "relative bind form needs an explicit source-to-target mapping",
                                 mount.origins(),
                             );
                             None
                         }
-                    } else {
-                        self.unsupported(
-                            &subject,
-                            "relative bind source needs an explicit Compose project root",
-                            mount.origins(),
-                        );
-                        None
+                        _ => {
+                            self.unsupported(
+                                &subject,
+                                "bind source needs an explicit source-to-target mapping for Quadlet",
+                                mount.origins(),
+                            );
+                            None
+                        }
                     }
                 }
-                PathForm::RelativeLiteral => {
-                    self.unsupported(
-                        &subject,
-                        "relative bind form is not resolved by the configured POSIX path policy",
-                        mount.origins(),
-                    );
-                    None
-                }
-                _ => {
-                    self.unsupported(
-                        &subject,
-                        "bind source is outside the safely encoded Quadlet path subset",
-                        mount.origins(),
-                    );
-                    None
-                }
-            },
+            }
             MountSource::Anonymous => Some(String::new()),
             _ => {
                 self.unsupported(&subject, "unknown mount source", mount.origins());
@@ -987,6 +1940,23 @@ impl<'a> Mapping<'a> {
         origins: &[Provenance],
     ) -> bool {
         match EntryValue::new(value).and_then(|value| builder.push_container(key, value)) {
+            Ok(()) => true,
+            Err(error) => {
+                self.generation_error(subject, &error, origins);
+                false
+            }
+        }
+    }
+
+    fn push_systemd_unit(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: SystemdUnitKey,
+        value: impl Into<String>,
+        subject: &str,
+        origins: &[Provenance],
+    ) -> bool {
+        match EntryValue::new(value).and_then(|value| builder.push_systemd_unit(key, value)) {
             Ok(()) => true,
             Err(error) => {
                 self.generation_error(subject, &error, origins);
@@ -1201,11 +2171,105 @@ fn same_network_attachments(left: &[Sourced<NetworkAttachment>], right: &[Source
             .all(|(left, right)| left.value() == right.value())
 }
 
+fn service_has_renderable_healthcheck(service: &Service) -> bool {
+    let Some(healthcheck) = service.healthcheck() else {
+        return false;
+    };
+    if healthcheck.value().disabled().is_some_and(|disabled| *disabled.value()) {
+        return false;
+    }
+    match healthcheck.value().command().map(Sourced::value) {
+        Some(HealthcheckCommand::Exec(arguments)) => {
+            !arguments.is_empty()
+                && arguments
+                    .iter()
+                    .all(|argument| !argument.expose().contains(['\0', '%']))
+        }
+        Some(HealthcheckCommand::Shell(value)) => !value.expose().is_empty() && !value.expose().contains(['\0', '%']),
+        _ => false,
+    }
+}
+
+fn dependency_mapping_origins(dependency: &Sourced<ServiceDependency>) -> Vec<Provenance> {
+    let mut origins = dependency.origins().to_vec();
+    if let Some(condition) = dependency.value().condition() {
+        for origin in condition.origins() {
+            if !origins.contains(origin) {
+                origins.push(origin.clone());
+            }
+        }
+    }
+    if let Some(required) = dependency.value().required() {
+        for origin in required.origins() {
+            if !origins.contains(origin) {
+                origins.push(origin.clone());
+            }
+        }
+    }
+    origins
+}
+
+fn same_host_mappings(left: &[Sourced<HostMapping>], right: &[Sourced<HostMapping>]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| left.value() == right.value())
+}
+
+fn shared_host_mapping_origins(services: &[Sourced<Service>], index: usize) -> Vec<Provenance> {
+    let mut origins = Vec::new();
+    for origin in services
+        .iter()
+        .filter_map(|service| service.value().host_mappings().get(index))
+        .flat_map(Sourced::origins)
+    {
+        if !origins.contains(origin) {
+            origins.push(origin.clone());
+        }
+    }
+    origins
+}
+
+fn shared_user_namespace_origins(services: &[Sourced<Service>]) -> Vec<Provenance> {
+    services
+        .iter()
+        .filter_map(|service| service.value().user_namespace())
+        .flat_map(Sourced::origins)
+        .cloned()
+        .collect()
+}
+
 fn service_origins(services: &[Sourced<Service>]) -> Vec<Provenance> {
     services
         .iter()
         .flat_map(|service| service.origins().iter().cloned())
         .collect()
+}
+
+fn secret_grant_origins(grant: &Sourced<ResourceGrant>, secret: &Sourced<Secret>) -> Vec<Provenance> {
+    let mut origins = grant.origins().to_vec();
+    for sourced in [
+        grant.value().target(),
+        grant.value().uid(),
+        grant.value().gid(),
+        grant.value().mode(),
+        secret.value().runtime_name(),
+    ] {
+        if let Some(sourced) = sourced {
+            for origin in sourced.origins() {
+                if !origins.contains(origin) {
+                    origins.push(origin.clone());
+                }
+            }
+        }
+    }
+    for origin in secret.origins() {
+        if !origins.contains(origin) {
+            origins.push(origin.clone());
+        }
+    }
+    origins
 }
 
 fn is_native_atom(value: &str) -> bool {
@@ -1224,6 +2288,76 @@ fn is_environment_name(value: &str) -> bool {
         && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
+fn encode_json_array(values: &[&str]) -> String {
+    let mut encoded = String::from("[");
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            encoded.push(',');
+        }
+        encoded.push('"');
+        for character in value.chars() {
+            match character {
+                '"' => encoded.push_str("\\\""),
+                '\\' => encoded.push_str("\\\\"),
+                '\u{08}' => encoded.push_str("\\b"),
+                '\u{0c}' => encoded.push_str("\\f"),
+                '\n' => encoded.push_str("\\n"),
+                '\r' => encoded.push_str("\\r"),
+                '\t' => encoded.push_str("\\t"),
+                character if character <= '\u{1f}' => {
+                    const HEX: &[u8; 16] = b"0123456789abcdef";
+                    let value = usize::try_from(u32::from(character)).unwrap_or_default();
+                    encoded.push_str("\\u00");
+                    encoded.push(char::from(HEX[(value >> 4) & 0x0f]));
+                    encoded.push(char::from(HEX[value & 0x0f]));
+                }
+                character => encoded.push(character),
+            }
+        }
+        encoded.push('"');
+    }
+    encoded.push(']');
+    encoded
+}
+
+fn is_safe_health_scalar(value: &str) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && !value.bytes().any(|byte| matches!(byte, b'\0' | b'\n' | b'\r' | b'%'))
+}
+
+fn is_podman_health_duration(mut value: &str) -> bool {
+    if value == "0" {
+        return true;
+    }
+    let mut found = false;
+    while !value.is_empty() {
+        let number_end = value
+            .char_indices()
+            .take_while(|(_, character)| character.is_ascii_digit() || *character == '.')
+            .map(|(index, character)| index + character.len_utf8())
+            .last()
+            .unwrap_or(0);
+        if number_end == 0 {
+            return false;
+        }
+        let number = &value[..number_end];
+        if number.matches('.').count() > 1 || number == "." {
+            return false;
+        }
+        value = &value[number_end..];
+        let Some(unit) = ["ns", "us", "µs", "μs", "ms", "s", "m", "h"]
+            .into_iter()
+            .find(|unit| value.starts_with(unit))
+        else {
+            return false;
+        };
+        value = &value[unit.len()..];
+        found = true;
+    }
+    found
+}
+
 fn is_safe_word(value: &str, allow_empty: bool) -> bool {
     (allow_empty || !value.is_empty())
         && value.bytes().all(|byte| {
@@ -1231,11 +2365,38 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         })
 }
 
+fn is_safe_secret_component(value: &str) -> bool {
+    is_safe_word(value, false) && !value.contains([',', '='])
+}
+
+fn normalize_secret_mode(value: &str) -> Option<String> {
+    let digits = value.strip_prefix("0o").unwrap_or(value);
+    if digits.is_empty() || digits.len() > 4 || !digits.bytes().all(|byte| matches!(byte, b'0'..=b'7')) {
+        return None;
+    }
+    let mode = u16::from_str_radix(digits, 8).ok()?;
+    if mode > 0o777 || mode & 0o222 != 0 {
+        return None;
+    }
+    Some(format!("{mode:04o}"))
+}
+
 fn is_safe_mount_part(value: &str) -> bool {
     !value.is_empty()
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b'@' | b'+' | b'=' | b'%')
         })
+}
+
+fn is_valid_mapping_source(value: &str) -> bool {
+    !value.is_empty() && !value.bytes().any(|byte| matches!(byte, b'\0' | b'\n' | b'\r'))
+}
+
+fn is_valid_quadlet_bind_source(value: &str) -> bool {
+    matches!(
+        classify_path(value),
+        PathForm::AbsoluteLiteral | PathForm::SystemdSpecifier
+    ) && is_safe_mount_part(value)
 }
 
 fn is_ipv4_spelling(value: &str) -> bool {

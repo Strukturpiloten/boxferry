@@ -62,24 +62,92 @@ impl SourceSpan {
 /// Location from which a neutral-model value was derived.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Provenance {
+    kind: ProvenanceKind,
     source: SourceId,
     span: Option<SourceSpan>,
+}
+
+/// How a neutral-model value entered a conversion plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ProvenanceKind {
+    /// Authored source document or native definition.
+    SourceDocument,
+    /// Effective state read from a running container environment.
+    RuntimeObservation,
+    /// Explicit caller or user override.
+    UserOverride,
+    /// Default introduced by a named implementation profile.
+    ImplementationDefault,
+    /// Value selected by an explicit conversion decision.
+    ConversionDecision,
 }
 
 impl Provenance {
     /// Creates provenance for an entire source.
     #[must_use]
     pub const fn source(source: SourceId) -> Self {
-        Self { source, span: None }
+        Self {
+            kind: ProvenanceKind::SourceDocument,
+            source,
+            span: None,
+        }
     }
 
     /// Creates provenance for one byte range in a source.
     #[must_use]
     pub const fn spanned(source: SourceId, span: SourceSpan) -> Self {
         Self {
+            kind: ProvenanceKind::SourceDocument,
             source,
             span: Some(span),
         }
+    }
+
+    /// Creates provenance for effective state observed from a runtime resource.
+    #[must_use]
+    pub const fn runtime_observation(source: SourceId) -> Self {
+        Self {
+            kind: ProvenanceKind::RuntimeObservation,
+            source,
+            span: None,
+        }
+    }
+
+    /// Creates provenance for an explicit caller or user override.
+    #[must_use]
+    pub const fn user_override(source: SourceId) -> Self {
+        Self {
+            kind: ProvenanceKind::UserOverride,
+            source,
+            span: None,
+        }
+    }
+
+    /// Creates provenance for a default introduced by a named implementation profile.
+    #[must_use]
+    pub const fn implementation_default(source: SourceId) -> Self {
+        Self {
+            kind: ProvenanceKind::ImplementationDefault,
+            source,
+            span: None,
+        }
+    }
+
+    /// Creates provenance for a value chosen by an explicit conversion decision.
+    #[must_use]
+    pub const fn conversion_decision(source: SourceId) -> Self {
+        Self {
+            kind: ProvenanceKind::ConversionDecision,
+            source,
+            span: None,
+        }
+    }
+
+    /// Returns how this origin entered the conversion plan.
+    #[must_use]
+    pub const fn kind(&self) -> ProvenanceKind {
+        self.kind
     }
 
     /// Returns the source identity.
@@ -157,7 +225,7 @@ fn validate_text(kind: &'static str, value: &str) -> Result<(), ModelError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Provenance, SourceId, SourceSpan, Sourced};
+    use super::{Provenance, ProvenanceKind, SourceId, SourceSpan, Sourced};
     use crate::ModelError;
 
     #[test]
@@ -180,5 +248,18 @@ mod tests {
             SourceSpan::new(20, 10),
             Err(ModelError::ReversedSpan { start: 20, end: 10 })
         ));
+    }
+
+    #[test]
+    fn distinguishes_runtime_observations_from_authored_sources_and_decisions() -> Result<(), String> {
+        let runtime = SourceId::new("runtime:container/web").map_err(|error| error.to_string())?;
+        let decision = SourceId::new("decision:working-directory").map_err(|error| error.to_string())?;
+        let runtime = Provenance::runtime_observation(runtime);
+        let decision = Provenance::conversion_decision(decision);
+
+        assert_eq!(runtime.kind(), ProvenanceKind::RuntimeObservation);
+        assert_eq!(runtime.span(), None);
+        assert_eq!(decision.kind(), ProvenanceKind::ConversionDecision);
+        Ok(())
     }
 }

@@ -1,7 +1,7 @@
 schema = 1
 id = "compose-to-quadlet-core"
 suite = "conversion"
-description = "Protects the first policy-controlled Compose-to-Quadlet multi-file conversion."
+description = "Protects the first policy-controlled Compose-to-Quadlet multi-file conversion, including execution context, health checks, and explicit host mappings."
 secrets_reviewed = true
 files = [
   "compose.yaml",
@@ -22,7 +22,7 @@ modifications = "none"
 description = "The empty Compose profile selection excludes worker; Podman target is 5.4.0 through 6.0.2; no host environment or relative-path base is supplied."
 
 [expectations]
-summary = "Supported intent produces three validated Quadlet files; host environment resolution, relative bind sources, and a network alias require AllowPartial and stable diagnostics."
+summary = "Supported execution-context, health-check, and host-mapping intent produces three validated Quadlet files; start_interval, host environment resolution, relative bind sources, and a network alias require AllowPartial and stable diagnostics."
 
 [extensions.compose]
 source-ids = [91, 92]

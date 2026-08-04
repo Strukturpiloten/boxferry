@@ -54,13 +54,13 @@ Format and runtime features are additive and named for the integration they enab
 `compose`, `quadlet`, `kubernetes`, `docker-runtime`, and `podman-runtime`. Enabling one feature
 must not disable or change another adapter's public behavior.
 
-The exact default feature set will be frozen before the first BoxFerry release. It must keep
-`cargo install boxferry` useful while documenting how embedded callers select a smaller dependency
-surface with `default-features = false`. CI will test the default set, no-default core, every
-supported individual feature, and all features once adapters exist.
+The first release candidate enables `cli`, `compose`, and `quadlet` by default so
+`cargo install boxferry` builds a useful command. Embedded callers can select a smaller dependency
+surface with `default-features = false` and explicit format features. CI tests the default set,
+no-default core, every supported individual feature, and all features.
 
-The implemented adapter features are `compose` and `quadlet`. They are additive and disabled by
-default while the facade remains unpublished. The facade re-exports `ComposeImporter`,
+The implemented adapter features are `compose` and `quadlet`; `cli` enables the argument parser and
+requires both for the current executable. The facade re-exports `ComposeImporter`,
 `ComposeSource`, `QuadletExporter`, `QuadletGroupingPolicy`, and `QuadletOutput`. It also exposes
 each adapter and matching Lens dependency through `boxferry::compose` and `boxferry::quadlet`, so
 embedded callers do not need to guess a second native-crate version.
@@ -86,8 +86,9 @@ or deploying its output.
 
 T4 provides the first tested public surface:
 
-- an ordered multi-service `Application` with images, commands, environment, ports, mounts,
-  networks, volumes, lifecycle ownership, and source provenance;
+- an ordered multi-service `Application` with images, commands, health checks, service dependencies,
+  environment, explicit host mappings, ports, mounts, networks, volumes, config and secret
+  declarations, ordered service grants, lifecycle ownership, and source provenance;
 - tolerant `ImageReference` parsing that retains `name:tag@digest` forms;
 - `ProtectedString` and structured diagnostics whose sensitive fields redact debug and display
   output;
@@ -97,11 +98,34 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests.
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions; and
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.1; and
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.1.
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.5; and
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.5.
 
 The crates are still `publish = false`; this is a usable development API, not a crates.io release
 promise. Broader native value encoders and the final default feature set remain T5/T6 work.
+
+`HostMapping` retains an ordered hostname and raw-preserving `HostAddress`. Its conservative
+classification distinguishes IPv4, bracketed or unbracketed IPv6, the runtime-specific
+`host-gateway` token, and other deferred or implementation-specific values. The neutral model does
+not assume that every address is an IP or that a runtime-generated alias replaces explicit source
+intent.
+
+`Service` also exposes format-independent execution identity and context: provenance-bearing
+primary user/group values, a user-namespace mode, ordered supplementary groups, a working
+directory, and an explicit read-only-root-filesystem choice. Text values use `ProtectedString`, so
+sensitive interpolation remains redacted from debug output while authorized adapters can expose
+it for native encoding.
+
+`Application` exposes separate config and secret resource collections with application/external
+ownership, optional provider/runtime names, and optional material origins. `Service` exposes
+separate ordered grant collections whose shared `ResourceGrant` retains authored short/long
+syntax and separately sourced target, UID, GID, and mode values. File and environment access stay
+outside the model; material and sensitive grant values retain `ProtectedString` redaction.
+
+`ProvenanceKind` distinguishes source documents, runtime observations, user overrides,
+implementation defaults, and conversion decisions. Embedded runtime adapters should attach
+`RuntimeObservation` only to effective inspected state and use `ConversionDecision` for inferred
+author intent.
 
 ## Minimal embedded flow
 
@@ -133,7 +157,7 @@ The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A c
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
 replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
 
-The adapter consumes ComposeLens 0.1.1's native `build_project_view` boundary directly. Effective
+The adapter consumes ComposeLens 0.1.5's native `build_project_view` boundary directly. Effective
 multi-file values retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
@@ -144,6 +168,14 @@ have passed QuadletLens construction and parse-back validation. It reads no inst
 version, environment, or filesystem state. See the [Quadlet exporter contract](quadlet-adapter.md).
 Relative Compose bind paths remain unsupported by default; callers opt into exact lexical
 resolution with `QuadletExporter::with_relative_bind_root` and the real Compose project directory.
+Host-specific forms such as tilde, Windows, or environment-derived source spellings remain losses
+unless the caller supplies an exact absolute or systemd-specifier target through
+`QuadletExporter::with_bind_source_mapping`. Neither API reads the host environment or filesystem.
 Separate containers remain the exact grouping default. Embedded callers may select
 `QuadletGroupingPolicy::SinglePod`; compatible declarations produce an approximate plan requiring
-`LossPolicy::AllowApproximate`, while incompatible declarations produce no candidate.
+`LossPolicy::AllowApproximate`, while incompatible declarations produce no candidate. Explicit
+host mappings, health checks, dependency/readiness directives, and execution-context values convert through QuadletLens 0.1.5. A single-pod request requires identical ordered
+mappings on every service and emits them once at pod scope; separate containers retain their own
+mappings. Container-level user namespaces remain exact for separate containers but become an
+explicit partial loss for grouped output until pod-level `UserNS=` is available through the typed
+Quadlet boundary.

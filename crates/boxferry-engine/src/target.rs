@@ -1,6 +1,18 @@
 //! Target implementation version ranges.
 
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, str::FromStr};
+
+/// Error returned when a platform version is not exactly `major.minor.patch`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParsePlatformVersionError;
+
+impl fmt::Display for ParsePlatformVersionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("platform version must contain exactly three unsigned numbers: major.minor.patch")
+    }
+}
+
+impl Error for ParsePlatformVersionError {}
 
 /// Numeric target implementation version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -39,6 +51,21 @@ impl PlatformVersion {
 impl fmt::Display for PlatformVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+impl FromStr for PlatformVersion {
+    type Err = ParsePlatformVersionError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let mut components = value.split('.');
+        let major = parse_component(components.next())?;
+        let minor = parse_component(components.next())?;
+        let patch = parse_component(components.next())?;
+        if components.next().is_some() {
+            return Err(ParsePlatformVersionError);
+        }
+        Ok(Self::new(major, minor, patch))
     }
 }
 
@@ -164,9 +191,26 @@ const fn version_is_before(left: PlatformVersion, right: PlatformVersion) -> boo
         || (left.major == right.major && left.minor == right.minor && left.patch < right.patch)
 }
 
+fn parse_component(value: Option<&str>) -> Result<u64, ParsePlatformVersionError> {
+    value
+        .filter(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|component| component.parse().ok())
+        .ok_or(ParsePlatformVersionError)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PlatformVersion, TargetProfile, TargetProfileError};
+    use std::str::FromStr;
+
+    use super::{ParsePlatformVersionError, PlatformVersion, TargetProfile, TargetProfileError};
+
+    #[test]
+    fn parses_exact_numeric_platform_versions() {
+        assert_eq!(PlatformVersion::from_str("5.4.0"), Ok(PlatformVersion::new(5, 4, 0)));
+        for value in ["5.4", "5.4.0.1", "5.4.x", "v5.4.0", "5..0", ""] {
+            assert_eq!(PlatformVersion::from_str(value), Err(ParsePlatformVersionError));
+        }
+    }
 
     #[test]
     fn minimum_and_maximum_are_inclusive() -> Result<(), String> {

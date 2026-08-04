@@ -8,7 +8,7 @@ mod target;
 pub use adapter::{ConversionError, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter, convert};
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, InvalidDiagnosticCode, Severity};
 pub use outcome::{ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, LossPolicy, PlanError};
-pub use target::{PlatformVersion, TargetProfile, TargetProfileError, VersionRange};
+pub use target::{ParsePlatformVersionError, PlatformVersion, TargetProfile, TargetProfileError, VersionRange};
 
 #[cfg(test)]
 mod integration_tests {

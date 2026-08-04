@@ -18,6 +18,7 @@ use boxferry::{
 const BASE_SOURCE_ID: u32 = 91;
 const OVERRIDE_SOURCE_ID: u32 = 92;
 const POD_SOURCE_ID: u32 = 93;
+const DEPENDENCY_SOURCE_ID: u32 = 94;
 
 #[test]
 fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(), Box<dyn Error>> {
@@ -81,6 +82,18 @@ fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(
     assert!(output.document_set().is_valid());
     assert_eq!(output.document_set().graph().edges().len(), 2);
 
+    let host_mapping_outcomes = partial
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject().contains("extra_hosts") || outcome.subject().contains("host_mappings"))
+        .collect::<Vec<_>>();
+    assert_eq!(host_mapping_outcomes.len(), 6);
+    assert!(
+        host_mapping_outcomes
+            .iter()
+            .all(|outcome| { outcome.kind() == ConversionKind::Exact && !outcome.origins().is_empty() })
+    );
+
     let diagnostics = partial
         .diagnostics()
         .iter()
@@ -105,7 +118,7 @@ fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(
         .iter()
         .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
         .collect::<Vec<_>>();
-    assert_eq!(unsupported.len(), 5);
+    assert_eq!(unsupported.len(), 6);
     assert!(unsupported.iter().all(|outcome| !outcome.origins().is_empty()));
     Ok(())
 }
@@ -149,6 +162,13 @@ fn converts_a_compatible_project_into_an_explicitly_authorized_pod() -> Result<(
         );
     }
     assert_eq!(output.document_set().graph().edges().len(), 3);
+    let pod_host_mapping = approximate
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "application.pod.host_mappings[0]")
+        .ok_or("pod host-mapping outcome expected")?;
+    assert_eq!(pod_host_mapping.kind(), ConversionKind::Exact);
+    assert_eq!(pod_host_mapping.origins().len(), 2);
     let grouping = approximate
         .outcomes()
         .iter()
@@ -164,6 +184,75 @@ fn converts_a_compatible_project_into_an_explicitly_authorized_pod() -> Result<(
             .count(),
         1
     );
+    let dependency = approximate
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.worker.dependencies[0]")
+        .ok_or("pod-grouped dependency outcome expected")?;
+    assert_eq!(dependency.kind(), ConversionKind::Exact);
+    assert!(!dependency.origins().is_empty());
+    Ok(())
+}
+
+#[test]
+fn converts_required_optional_and_healthy_dependencies_exactly() -> Result<(), Box<dyn Error>> {
+    let directory = dependency_fixture_directory();
+    let compose = dependency_fixture_text("compose.yaml")?;
+    let compose_id = ComposeSourceId::new(DEPENDENCY_SOURCE_ID);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        compose_id,
+        DocumentOrigin::new("compose.yaml", directory.display().to_string()),
+        compose,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    if !merged.is_valid() {
+        return Err(format!("merge diagnostics: {:#?}", merged.diagnostics()).into());
+    }
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("fallback")?,
+    )?
+    .with_source_id(compose_id, SourceId::new("compose.yaml")?);
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+
+    let result = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    assert!(!result.is_blocked(), "{:#?}", result.diagnostics());
+    let output = result.output().ok_or("exact dependency output expected")?;
+    assert_eq!(
+        output
+            .files()
+            .iter()
+            .map(|file| file.name().as_str())
+            .collect::<Vec<_>>(),
+        ["database.container", "cache.container", "web.container"]
+    );
+    for name in ["database.container", "cache.container", "web.container"] {
+        assert_eq!(
+            output.file(name).map(boxferry::QuadletFile::text),
+            Some(dependency_fixture_text(name)?.as_str()),
+            "{name} differs from its reviewed dependency output"
+        );
+    }
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.database.readiness"
+            && outcome.kind() == ConversionKind::Exact
+            && !outcome.origins().is_empty()
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.dependencies[1]"
+            && outcome.kind() == ConversionKind::Exact
+            && outcome.origins().len() >= 2
+    }));
     Ok(())
 }
 
@@ -175,10 +264,18 @@ fn pod_fixture_directory() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/conversion/compose-to-quadlet-pod")
 }
 
+fn dependency_fixture_directory() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/conversion/compose-to-quadlet-dependencies")
+}
+
 fn fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(fixture_directory().join(name))?)
 }
 
 fn pod_fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(pod_fixture_directory().join(name))?)
+}
+
+fn dependency_fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
+    Ok(fs::read_to_string(dependency_fixture_directory().join(name))?)
 }

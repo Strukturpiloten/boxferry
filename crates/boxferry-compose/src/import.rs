@@ -5,18 +5,24 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Application, Command, EnvironmentValue, EnvironmentVariable, Identifier, ImageReference, ModelError, Mount,
-    MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceOwnership,
-    SelinuxRelabel, Service, SourceSpan, Sourced, Volume,
+    Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
+    HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
+    HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference, ModelError,
+    Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant,
+    ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
+    ServiceDependencyCondition, SourceSpan, Sourced, Volume,
 };
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
-    BooleanValue, ComposeScalar, LongPort, LongVolumeMount, MountType, NetworkDefinition, Port as ComposePort,
-    SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShortPort, ShortVolumeMount,
-    VolumeDefinition, VolumeMount,
+    BooleanValue, ComposeScalar, ConfigDefinition, DependencyCondition as ComposeDependencyCondition,
+    HealthcheckDuration as ComposeHealthcheckDuration, HealthcheckRetries as ComposeHealthcheckRetries,
+    HealthcheckTest, HealthcheckTestKind, LongPort, LongVolumeMount, MountType, NetworkDefinition, Port as ComposePort,
+    SecretDefinition, SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShortPort,
+    ShortVolumeMount, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
-    ProjectEnvironment, ProjectFieldReference, ProjectResource, ProjectService, ProjectView, build_project_view,
+    ProjectDependsOn, ProjectEnvironment, ProjectFieldReference, ProjectGrant, ProjectHealthcheck, ProjectResource,
+    ProjectService, ProjectValue, ProjectView, build_project_view,
 };
 use compose_lens::source::SourceSpan as ComposeSpan;
 
@@ -90,6 +96,20 @@ impl ImportAdapter for ComposeImporter {
             if let Some(network) = mapping.map_network_definition(definition) {
                 if let Err(error) = application.add_network(network) {
                     mapping.invalid_model_optional("networks", &error, definition.definition().effective_source());
+                }
+            }
+        }
+        for definition in view.configs() {
+            if let Some(config) = mapping.map_config_definition(definition) {
+                if let Err(error) = application.add_config(config) {
+                    mapping.invalid_model_optional("configs", &error, definition.definition().effective_source());
+                }
+            }
+        }
+        for definition in view.secrets() {
+            if let Some(secret) = mapping.map_secret_definition(definition) {
+                if let Err(error) = application.add_secret(secret) {
+                    mapping.invalid_model_optional("secrets", &error, definition.definition().effective_source());
                 }
             }
         }
@@ -200,8 +220,38 @@ impl<'a> Mapping<'a> {
                 self.exact_provenance(format!("{subject}.command"), command.provenance());
             }
         }
+        if let Some(healthcheck) = native.healthcheck() {
+            service.set_healthcheck(self.map_healthcheck(&subject, healthcheck));
+        }
+        self.map_execution_context(&subject, native, &mut service);
         if let Some(environment) = native.environment() {
             self.map_environment(&subject, environment.value(), &mut service);
+        }
+        if let Some(extra_hosts) = native.extra_hosts() {
+            for (index, entry) in extra_hosts.value().entries().iter().enumerate() {
+                let host_subject = format!("{subject}.extra_hosts[{index}]");
+                let Some(hostname) = self.identifier_optional(
+                    &host_subject,
+                    entry.hostname().value(),
+                    entry.hostname().effective_source(),
+                ) else {
+                    continue;
+                };
+                let address = match HostAddress::new(entry.address().value().raw()) {
+                    Ok(address) => address,
+                    Err(error) => {
+                        self.invalid_model_optional(&host_subject, &error, entry.address().effective_source());
+                        continue;
+                    }
+                };
+                let mapping = self.sourced_host_mapping(
+                    HostMapping::new(hostname, address),
+                    entry.hostname().sources(),
+                    entry.address().provenance(),
+                );
+                self.exact_origins(host_subject, mapping.origins());
+                service.add_host_mapping(mapping);
+            }
         }
         if let Some(ports) = native.ports() {
             for (index, port) in ports.value().iter().enumerate() {
@@ -221,6 +271,12 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
+        if let Some(configs) = native.configs() {
+            self.map_service_grants(&subject, "configs", configs, false, &mut service);
+        }
+        if let Some(secrets) = native.secrets() {
+            self.map_service_grants(&subject, "secrets", secrets, true, &mut service);
+        }
         if let Some(networks) = native.networks() {
             self.map_service_networks(&subject, networks.value(), networks.provenance(), &mut service);
         }
@@ -229,10 +285,163 @@ impl<'a> Mapping<'a> {
                 self.exact_provenance(format!("{subject}.profiles"), profiles.provenance());
             }
         }
+        if let Some(dependencies) = native.depends_on() {
+            self.map_service_dependencies(&subject, dependencies, &mut service);
+        }
 
         self.report_service_unsupported(&subject, native);
         self.exact_provenance(&subject, native.provenance());
         Some(self.sourced_provenance(service, native.provenance()))
+    }
+
+    fn map_execution_context(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(user) = native.user() {
+            let sensitive = user.is_sensitive();
+            let primary = Self::protected(user.value().user().raw(), sensitive);
+            service.set_user(self.sourced_provenance(primary, user.provenance()));
+            self.exact_provenance(format!("{service_subject}.user"), user.provenance());
+
+            if let Some(group) = user.value().group() {
+                service.set_group(self.sourced_provenance(Self::protected(group.raw(), sensitive), user.provenance()));
+                self.exact_provenance(format!("{service_subject}.group"), user.provenance());
+            }
+        }
+        if let Some(user_namespace) = native.userns_mode() {
+            service.set_user_namespace(self.sourced_provenance(
+                Self::protected(user_namespace.value().raw().value(), user_namespace.is_sensitive()),
+                user_namespace.provenance(),
+            ));
+            self.exact_provenance(format!("{service_subject}.user_namespace"), user_namespace.provenance());
+        }
+        if let Some(groups) = native.group_add() {
+            for (index, group) in groups.value().iter().enumerate() {
+                service.add_supplementary_group(
+                    self.sourced_provenance(Self::protected(group.value(), group.is_sensitive()), group.provenance()),
+                );
+                self.exact_provenance(
+                    format!("{service_subject}.supplementary_groups[{index}]"),
+                    group.provenance(),
+                );
+            }
+        }
+        if let Some(working_directory) = native.working_dir() {
+            service.set_working_directory(self.sourced_provenance(
+                Self::protected(working_directory.value(), working_directory.is_sensitive()),
+                working_directory.provenance(),
+            ));
+            self.exact_provenance(
+                format!("{service_subject}.working_directory"),
+                working_directory.provenance(),
+            );
+        }
+        if let Some(read_only) = native.read_only() {
+            let subject = format!("{service_subject}.read_only_root_filesystem");
+            match read_only.value() {
+                BooleanValue::Literal(value) => {
+                    service.set_read_only_root_filesystem(self.sourced_provenance(*value, read_only.provenance()));
+                    self.exact_provenance(subject, read_only.provenance());
+                }
+                BooleanValue::Expression(_) => self.invalid_value_optional(
+                    &subject,
+                    "read-only root-filesystem expression was not resolved",
+                    read_only.effective_source(),
+                ),
+            }
+        }
+    }
+
+    fn protected(value: &str, sensitive: bool) -> ProtectedString {
+        if sensitive {
+            ProtectedString::sensitive(value)
+        } else {
+            ProtectedString::plain(value)
+        }
+    }
+
+    fn map_service_dependencies(
+        &mut self,
+        service_subject: &str,
+        dependencies: &ProjectValue<ProjectDependsOn>,
+        service: &mut Service,
+    ) {
+        for (index, native) in dependencies.value().services().iter().enumerate() {
+            let dependency_subject = format!("{service_subject}.depends_on[{index}]");
+            let key = native.value().service();
+            if key.is_sensitive() {
+                self.invalid_value_optional(
+                    &dependency_subject,
+                    "dependency service name contains sensitive interpolated content",
+                    key.effective_source(),
+                );
+                continue;
+            }
+            let Some(name) = self.identifier_optional(&dependency_subject, key.value(), key.effective_source()) else {
+                continue;
+            };
+            let mut dependency = ServiceDependency::new(name);
+
+            if let Some(condition) = native.value().condition() {
+                if condition.is_sensitive() {
+                    self.invalid_value_optional(
+                        &format!("{dependency_subject}.condition"),
+                        "dependency condition contains sensitive interpolated content",
+                        condition.effective_source(),
+                    );
+                } else {
+                    let value = match condition.value() {
+                        ComposeDependencyCondition::ServiceStarted => ServiceDependencyCondition::Started,
+                        ComposeDependencyCondition::ServiceHealthy => ServiceDependencyCondition::Healthy,
+                        ComposeDependencyCondition::ServiceCompletedSuccessfully => {
+                            ServiceDependencyCondition::CompletedSuccessfully
+                        }
+                        ComposeDependencyCondition::Other(value) => {
+                            ServiceDependencyCondition::Other(ProtectedString::plain(value.clone()))
+                        }
+                    };
+                    dependency.set_condition(self.sourced_provenance(value, condition.provenance()));
+                    self.exact_provenance(format!("{dependency_subject}.condition"), condition.provenance());
+                }
+            }
+
+            if let Some(restart) = native.value().restart() {
+                self.map_dependency_boolean(&format!("{dependency_subject}.restart"), restart, |value| {
+                    dependency.set_restart(value);
+                });
+            }
+            if let Some(required) = native.value().required() {
+                self.map_dependency_boolean(&format!("{dependency_subject}.required"), required, |value| {
+                    dependency.set_required(value);
+                });
+            }
+            self.report_project_fields(
+                &dependency_subject,
+                "dependency option",
+                native.value().unmodeled_fields(),
+            );
+
+            let dependency = self.sourced_spans(dependency, key.sources());
+            self.exact_origins(dependency_subject, dependency.origins());
+            service.add_dependency(dependency);
+        }
+    }
+
+    fn map_dependency_boolean(
+        &mut self,
+        subject: &str,
+        native: &ProjectValue<BooleanValue>,
+        set: impl FnOnce(Sourced<bool>),
+    ) {
+        match native.value() {
+            BooleanValue::Literal(value) => {
+                set(self.sourced_provenance(*value, native.provenance()));
+                self.exact_provenance(subject, native.provenance());
+            }
+            BooleanValue::Expression(_) => self.invalid_value_optional(
+                subject,
+                "dependency boolean expression was not resolved",
+                native.effective_source(),
+            ),
+        }
     }
 
     fn map_command(command: &compose_lens::model::Command, sensitive: bool) -> Option<Command> {
@@ -251,6 +460,208 @@ impl<'a> Mapping<'a> {
             compose_lens::model::Command::List { values, .. } => Some(Command::Exec(
                 values.iter().map(|value| protect(value.value().clone())).collect(),
             )),
+        }
+    }
+
+    fn map_healthcheck(
+        &mut self,
+        service_subject: &str,
+        native: &ProjectValue<ProjectHealthcheck>,
+    ) -> Sourced<Healthcheck> {
+        let mut healthcheck = Healthcheck::new();
+
+        if let Some(disable) = native.value().disable() {
+            let subject = format!("{service_subject}.healthcheck.disable");
+            match disable.value() {
+                BooleanValue::Literal(value) => {
+                    healthcheck.set_disabled(self.sourced_provenance(*value, disable.provenance()));
+                    self.exact_provenance(subject, disable.provenance());
+                }
+                BooleanValue::Expression(_) => self.invalid_value_optional(
+                    &subject,
+                    "health-check disable expression was not resolved",
+                    disable.effective_source(),
+                ),
+            }
+        }
+
+        if let Some(test) = native.value().test() {
+            self.map_healthcheck_test(service_subject, test, &mut healthcheck);
+        }
+        if let Some(interval) = native.value().interval() {
+            let subject = format!("{service_subject}.healthcheck.interval");
+            if let Some(value) = self.map_healthcheck_duration(&subject, interval) {
+                healthcheck.set_interval(value);
+            }
+        }
+        if let Some(timeout) = native.value().timeout() {
+            let subject = format!("{service_subject}.healthcheck.timeout");
+            if let Some(value) = self.map_healthcheck_duration(&subject, timeout) {
+                healthcheck.set_timeout(value);
+            }
+        }
+        if let Some(retries) = native.value().retries() {
+            let subject = format!("{service_subject}.healthcheck.retries");
+            match retries.value() {
+                ComposeHealthcheckRetries::Count(value) => match NeutralHealthcheckRetries::new(value.clone()) {
+                    Ok(value) => {
+                        healthcheck.set_retries(self.sourced_provenance(value, retries.provenance()));
+                        self.exact_provenance(subject, retries.provenance());
+                    }
+                    Err(error) => self.invalid_model_optional(&subject, &error, retries.effective_source()),
+                },
+                ComposeHealthcheckRetries::Expression(_) => self.invalid_value_optional(
+                    &subject,
+                    "health-check retry expression was not resolved",
+                    retries.effective_source(),
+                ),
+                ComposeHealthcheckRetries::Other(value) => self.invalid_value_optional(
+                    &subject,
+                    &format!("invalid health-check retry count `{value}`"),
+                    retries.effective_source(),
+                ),
+            }
+        }
+        if let Some(start_period) = native.value().start_period() {
+            let subject = format!("{service_subject}.healthcheck.start_period");
+            if let Some(value) = self.map_healthcheck_duration(&subject, start_period) {
+                healthcheck.set_start_period(value);
+            }
+        }
+        if let Some(start_interval) = native.value().start_interval() {
+            let subject = format!("{service_subject}.healthcheck.start_interval");
+            if let Some(value) = self.map_healthcheck_duration(&subject, start_interval) {
+                healthcheck.set_start_interval(value);
+            }
+        }
+        self.report_project_fields(
+            &format!("{service_subject}.healthcheck"),
+            "health-check field",
+            native.value().unmodeled_fields(),
+        );
+
+        self.sourced_provenance(healthcheck, native.provenance())
+    }
+
+    fn map_healthcheck_test(
+        &mut self,
+        service_subject: &str,
+        test: &ProjectValue<HealthcheckTest>,
+        healthcheck: &mut Healthcheck,
+    ) {
+        let subject = format!("{service_subject}.healthcheck.test");
+        let protect = |value: String| {
+            if test.is_sensitive() {
+                ProtectedString::sensitive(value)
+            } else {
+                ProtectedString::plain(value)
+            }
+        };
+        match test.value() {
+            HealthcheckTest::String(value) => {
+                healthcheck.set_command(self.sourced_provenance(
+                    HealthcheckCommand::Shell(protect(value.value().clone())),
+                    test.provenance(),
+                ));
+                self.exact_provenance(subject, test.provenance());
+            }
+            HealthcheckTest::List {
+                kind: Some(HealthcheckTestKind::Cmd),
+                values,
+                ..
+            } if values.len() > 1 => {
+                healthcheck.set_command(self.sourced_provenance(
+                    HealthcheckCommand::Exec(values[1..].iter().map(|value| protect(value.value().clone())).collect()),
+                    test.provenance(),
+                ));
+                self.exact_provenance(subject, test.provenance());
+            }
+            HealthcheckTest::List {
+                kind: Some(HealthcheckTestKind::CmdShell),
+                values,
+                ..
+            } if values.len() == 2 => {
+                healthcheck.set_command(self.sourced_provenance(
+                    HealthcheckCommand::Shell(protect(values[1].value().clone())),
+                    test.provenance(),
+                ));
+                self.exact_provenance(subject, test.provenance());
+            }
+            HealthcheckTest::List {
+                kind: Some(HealthcheckTestKind::None),
+                values,
+                ..
+            } if values.len() == 1 => {
+                healthcheck.set_disabled(self.sourced_provenance(true, test.provenance()));
+                self.exact_provenance(subject, test.provenance());
+            }
+            HealthcheckTest::List {
+                kind: Some(HealthcheckTestKind::Cmd),
+                ..
+            } => self.invalid_value_optional(
+                &subject,
+                "CMD health check requires at least one command argument",
+                test.effective_source(),
+            ),
+            HealthcheckTest::List {
+                kind: Some(HealthcheckTestKind::CmdShell),
+                ..
+            } => self.unsupported_optional(
+                &subject,
+                "CMD-SHELL health check must contain exactly one shell string",
+                test.effective_source(),
+            ),
+            HealthcheckTest::List {
+                kind: Some(HealthcheckTestKind::None),
+                ..
+            } => self.invalid_value_optional(
+                &subject,
+                "NONE health check cannot contain command arguments",
+                test.effective_source(),
+            ),
+            HealthcheckTest::List { kind: None, .. } => {
+                self.invalid_value_optional(&subject, "health-check test list is empty", test.effective_source());
+            }
+            HealthcheckTest::List {
+                kind: Some(HealthcheckTestKind::Other),
+                ..
+            } => self.unsupported_optional(&subject, "unknown health-check command mode", test.effective_source()),
+        }
+    }
+
+    fn map_healthcheck_duration(
+        &mut self,
+        subject: &str,
+        duration: &ProjectValue<ComposeHealthcheckDuration>,
+    ) -> Option<Sourced<NeutralHealthcheckDuration>> {
+        match duration.value() {
+            ComposeHealthcheckDuration::Value(value) => match NeutralHealthcheckDuration::new(value.clone()) {
+                Ok(value) => {
+                    let value = self.sourced_provenance(value, duration.provenance());
+                    self.exact_provenance(subject, duration.provenance());
+                    Some(value)
+                }
+                Err(error) => {
+                    self.invalid_model_optional(subject, &error, duration.effective_source());
+                    None
+                }
+            },
+            ComposeHealthcheckDuration::Expression(_) => {
+                self.invalid_value_optional(
+                    subject,
+                    "health-check duration expression was not resolved",
+                    duration.effective_source(),
+                );
+                None
+            }
+            ComposeHealthcheckDuration::Other(value) => {
+                self.invalid_value_optional(
+                    subject,
+                    &format!("invalid health-check duration `{value}`"),
+                    duration.effective_source(),
+                );
+                None
+            }
         }
     }
 
@@ -589,6 +1000,231 @@ impl<'a> Mapping<'a> {
         Some(self.sourced_provenance(Network::new(name, ownership), resource.definition().provenance()))
     }
 
+    fn map_config_definition(&mut self, resource: &ProjectResource<ConfigDefinition>) -> Option<Sourced<Config>> {
+        let native = resource.definition().value();
+        let subject = format!("configs.{}", resource.name().value());
+        let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
+        let ownership = self.resource_ownership(&subject, native.external(), native.span());
+        let mut config = Config::new(name, ownership);
+
+        if let Some(runtime_name) = native.custom_name() {
+            config.set_runtime_name(self.sourced_spans(
+                Self::protected(runtime_name.value(), resource.definition().is_sensitive()),
+                &[runtime_name.span()],
+            ));
+            self.exact_spans(format!("{subject}.runtime_name"), &[runtime_name.span()]);
+        }
+
+        let materials = [
+            native.file().map(|value| {
+                (
+                    ConfigMaterial::File(Self::protected(value.value(), resource.definition().is_sensitive())),
+                    value.span(),
+                )
+            }),
+            native.environment().map(|value| {
+                (
+                    ConfigMaterial::Environment(Self::protected(value.value(), resource.definition().is_sensitive())),
+                    value.span(),
+                )
+            }),
+            native.content().map(|value| {
+                (
+                    ConfigMaterial::Content(Self::protected(value.value(), resource.definition().is_sensitive())),
+                    value.span(),
+                )
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        self.map_config_material(&subject, ownership, materials, &mut config, resource.definition());
+
+        self.report_fields(&subject, "config definition extension", native.extension_fields());
+        self.report_fields(&subject, "unknown config definition field", native.unknown_fields());
+        self.exact_provenance(&subject, resource.definition().provenance());
+        Some(self.sourced_provenance(config, resource.definition().provenance()))
+    }
+
+    fn map_config_material(
+        &mut self,
+        subject: &str,
+        ownership: ResourceOwnership,
+        materials: Vec<(ConfigMaterial, ComposeSpan)>,
+        config: &mut Config,
+        definition: &ProjectValue<ConfigDefinition>,
+    ) {
+        match materials.as_slice() {
+            [(material, span)] => {
+                config.set_material(self.sourced_spans(material.clone(), &[*span]));
+                self.exact_spans(format!("{subject}.material"), &[*span]);
+                if ownership == ResourceOwnership::External {
+                    self.invalid_value_optional(
+                        subject,
+                        "external config cannot also declare application-managed material",
+                        Some(*span),
+                    );
+                }
+            }
+            [] if ownership != ResourceOwnership::External => self.invalid_value_optional(
+                subject,
+                "application-managed config requires exactly one of file, environment, or content",
+                definition.effective_source(),
+            ),
+            [] => {}
+            _ => self.invalid_value_optional(
+                subject,
+                "config declares multiple material sources; exactly one of file, environment, or content is allowed",
+                definition.effective_source(),
+            ),
+        }
+    }
+
+    fn map_secret_definition(&mut self, resource: &ProjectResource<SecretDefinition>) -> Option<Sourced<Secret>> {
+        let native = resource.definition().value();
+        let subject = format!("secrets.{}", resource.name().value());
+        let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
+        let ownership = self.resource_ownership(&subject, native.external(), native.span());
+        let mut secret = Secret::new(name, ownership);
+
+        if let Some(runtime_name) = native.custom_name() {
+            secret.set_runtime_name(self.sourced_spans(
+                Self::protected(runtime_name.value(), resource.definition().is_sensitive()),
+                &[runtime_name.span()],
+            ));
+            self.exact_spans(format!("{subject}.runtime_name"), &[runtime_name.span()]);
+        }
+
+        let materials = [
+            native.file().map(|value| {
+                (
+                    SecretMaterial::File(Self::protected(value.value(), resource.definition().is_sensitive())),
+                    value.span(),
+                )
+            }),
+            native.environment().map(|value| {
+                (
+                    SecretMaterial::Environment(Self::protected(value.value(), resource.definition().is_sensitive())),
+                    value.span(),
+                )
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        self.map_secret_material(&subject, ownership, materials, &mut secret, resource.definition());
+
+        self.report_fields(&subject, "secret definition extension", native.extension_fields());
+        self.report_fields(&subject, "unknown secret definition field", native.unknown_fields());
+        self.exact_provenance(&subject, resource.definition().provenance());
+        Some(self.sourced_provenance(secret, resource.definition().provenance()))
+    }
+
+    fn map_secret_material(
+        &mut self,
+        subject: &str,
+        ownership: ResourceOwnership,
+        materials: Vec<(SecretMaterial, ComposeSpan)>,
+        secret: &mut Secret,
+        definition: &ProjectValue<SecretDefinition>,
+    ) {
+        match materials.as_slice() {
+            [(material, span)] => {
+                secret.set_material(self.sourced_spans(material.clone(), &[*span]));
+                self.exact_spans(format!("{subject}.material"), &[*span]);
+                if ownership == ResourceOwnership::External {
+                    self.invalid_value_optional(
+                        subject,
+                        "external secret cannot also declare application-managed material",
+                        Some(*span),
+                    );
+                }
+            }
+            [] if ownership != ResourceOwnership::External => self.invalid_value_optional(
+                subject,
+                "application-managed secret requires exactly one of file or environment",
+                definition.effective_source(),
+            ),
+            [] => {}
+            _ => self.invalid_value_optional(
+                subject,
+                "secret declares multiple material sources; exactly one of file or environment is allowed",
+                definition.effective_source(),
+            ),
+        }
+    }
+
+    fn map_service_grants(
+        &mut self,
+        service_subject: &str,
+        field: &str,
+        grants: &ProjectValue<Vec<ProjectValue<ProjectGrant>>>,
+        secret: bool,
+        service: &mut Service,
+    ) {
+        for (index, native) in grants.value().iter().enumerate() {
+            let subject = format!("{service_subject}.{field}[{index}]");
+            let grant = match native.value() {
+                ProjectGrant::Short(source) => ResourceGrant::new(
+                    Self::protected(source, native.is_sensitive()),
+                    ResourceGrantSyntax::Short,
+                ),
+                ProjectGrant::Long(long) => {
+                    let Some(source) = long.source() else {
+                        self.invalid_value_optional(
+                            &subject,
+                            "long-syntax resource grant requires source",
+                            native.effective_source(),
+                        );
+                        continue;
+                    };
+                    let mut grant = match ResourceGrant::new(
+                        Self::protected(source.value(), source.is_sensitive()),
+                        ResourceGrantSyntax::Long,
+                    ) {
+                        Ok(grant) => grant,
+                        Err(error) => {
+                            self.invalid_model_optional(&subject, &error, source.effective_source());
+                            continue;
+                        }
+                    };
+                    Self::set_grant_field(&mut grant, long.target(), ResourceGrant::set_target, self);
+                    Self::set_grant_field(&mut grant, long.uid(), ResourceGrant::set_uid, self);
+                    Self::set_grant_field(&mut grant, long.gid(), ResourceGrant::set_gid, self);
+                    Self::set_grant_field(&mut grant, long.mode(), ResourceGrant::set_mode, self);
+                    self.report_project_fields(&subject, "resource-grant field", long.unmodeled_fields());
+                    Ok(grant)
+                }
+            };
+            match grant {
+                Ok(grant) => {
+                    let grant = self.sourced_provenance(grant, native.provenance());
+                    self.exact_origins(&subject, grant.origins());
+                    if secret {
+                        service.add_secret_grant(grant);
+                    } else {
+                        service.add_config_grant(grant);
+                    }
+                }
+                Err(error) => self.invalid_model_optional(&subject, &error, native.effective_source()),
+            }
+        }
+    }
+
+    fn set_grant_field(
+        grant: &mut ResourceGrant,
+        value: Option<&ProjectValue<String>>,
+        setter: fn(&mut ResourceGrant, Sourced<ProtectedString>),
+        mapping: &Self,
+    ) {
+        if let Some(value) = value {
+            setter(
+                grant,
+                mapping.sourced_provenance(Self::protected(value.value(), value.is_sensitive()), value.provenance()),
+            );
+        }
+    }
+
     fn resource_ownership(
         &mut self,
         subject: &str,
@@ -610,20 +1246,6 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_document_unsupported(&mut self, view: &ProjectView) {
-        for config in view.configs() {
-            self.unsupported_optional(
-                &format!("configs.{}", config.name().value()),
-                "top-level config",
-                config.definition().effective_source(),
-            );
-        }
-        for secret in view.secrets() {
-            self.unsupported_optional(
-                &format!("secrets.{}", secret.name().value()),
-                "top-level secret",
-                secret.definition().effective_source(),
-            );
-        }
         self.report_project_fields("application", "document field", view.unmodeled_fields());
     }
 
@@ -669,10 +1291,52 @@ impl<'a> Mapping<'a> {
         sourced
     }
 
+    fn sourced_spans<T>(&self, value: T, source_spans: &[ComposeSpan]) -> Sourced<T> {
+        let mut result = Sourced::generated(value);
+        for origin in source_spans.iter().filter_map(|span| self.origin(*span)) {
+            if !result.origins().contains(&origin) {
+                result.add_origin(origin);
+            }
+        }
+        result
+    }
+
+    fn sourced_host_mapping(
+        &self,
+        value: HostMapping,
+        hostname_sources: &[ComposeSpan],
+        address_provenance: &MergeProvenance,
+    ) -> Sourced<HostMapping> {
+        let mut sourced = Sourced::generated(value);
+        for origin in hostname_sources
+            .iter()
+            .chain(address_provenance.sources())
+            .filter_map(|span| self.origin(*span))
+        {
+            if !sourced.origins().contains(&origin) {
+                sourced.add_origin(origin);
+            }
+        }
+        sourced
+    }
+
     fn exact_provenance(&mut self, subject: impl Into<String>, provenance: &MergeProvenance) {
         let outcome = ConversionOutcome::exact(subject);
         let outcome = self.with_provenance(outcome, provenance);
         self.outcomes.push(outcome);
+    }
+
+    fn exact_origins(&mut self, subject: impl Into<String>, origins: &[Provenance]) {
+        let mut outcome = ConversionOutcome::exact(subject);
+        for origin in origins {
+            outcome = outcome.with_origin(origin.clone());
+        }
+        self.outcomes.push(outcome);
+    }
+
+    fn exact_spans(&mut self, subject: impl Into<String>, spans: &[ComposeSpan]) {
+        let value = self.sourced_spans((), spans);
+        self.exact_origins(subject, value.origins());
     }
 
     fn unsupported(&mut self, subject: &str, feature: &str, span: ComposeSpan) {
@@ -711,6 +1375,16 @@ impl<'a> Mapping<'a> {
 
     fn invalid_value(&mut self, subject: &str, reason: &str, span: ComposeSpan) {
         self.invalid_with_code(
+            self.codes.invalid_value.clone(),
+            subject,
+            "Compose value must be resolved or corrected before conversion",
+            reason,
+            span,
+        );
+    }
+
+    fn invalid_value_optional(&mut self, subject: &str, reason: &str, span: Option<ComposeSpan>) {
+        self.invalid_optional_span(
             self.codes.invalid_value.clone(),
             subject,
             "Compose value must be resolved or corrected before conversion",

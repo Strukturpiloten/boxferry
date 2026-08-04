@@ -20,7 +20,7 @@ boxferry/
 ├── crates/
 │   ├── boxferry/                 # public library facade and CLI executable
 │   │   ├── src/lib.rs            # re-exports supported core and optional adapter APIs
-│   │   ├── src/main.rs           # argument parsing and presentation only
+│   │   ├── src/main.rs           # implemented Compose-to-Quadlet CLI and presentation
 │   │   └── tests/                # facade contracts and repository-policy tests
 │   ├── boxferry-model/           # ordered application graph, provenance, protected values
 │   ├── boxferry-engine/          # adapters, planning, loss policy, targets, diagnostics

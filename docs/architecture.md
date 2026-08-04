@@ -27,7 +27,15 @@ Each native format is parsed into its own native model before mapping to BoxFerr
 
 ### Application model
 
-The application model represents the concepts BoxFerry needs to reason about: workloads, images, commands, environment values, ports, storage, networks, health checks, resources, secrets, configuration, replicas, and grouping.
+The application model represents the concepts BoxFerry needs to reason about: workloads, images,
+commands, environment values, explicit hostname mappings, ports, storage, networks, health checks,
+service dependencies, execution identity and container context,
+resources, secrets, configuration, replicas, and grouping.
+
+Configuration and secret declarations retain lifecycle ownership, an optional provider/runtime
+name, and an optional caller-supplied material origin. Services hold separate ordered config and
+secret grant collections. A grant retains its authored short/long syntax and separately sourced
+target, UID, GID, and mode values; native Lens types do not cross this boundary.
 
 It is deliberately not a new container specification. It may carry source provenance and opaque source-specific data, but it must not expose native library types in its public fields.
 
@@ -58,9 +66,17 @@ separate container units for the first slice, resolves generated network and vol
 a document set, and returns structured losses for value forms it cannot encode safely. It never
 reads an installed Podman version or writes unit files.
 
+Execution identity stays container-scoped for separate units. An explicitly grouped pod cannot
+retain container-level user-namespace selection because Podman uses the pod namespace; until the
+typed Quadlet adapter can generate pod-level `UserNS=`, that field is a reported partial loss.
+
 ### Runtime inspectors
 
 Runtime inspectors read deployed Docker or Podman resources into observations and then map those observations to application intent. Inspection is lossy by nature: a running container does not retain every choice from its original source definition.
+
+Neutral provenance distinguishes effective runtime observations from authored documents,
+implementation defaults, caller overrides, and BoxFerry conversion decisions. Optional creation
+commands may support an inference, but effective inspection data remains the primary observation.
 
 External commands and APIs are behind traits so tests can supply deterministic implementations.
 
