@@ -229,6 +229,9 @@ boundary for pre-existing external Podman secrets.
   retaining mapping/list scalar behavior, multi-file provenance, protected values, empty values,
   systemd quoting, literal-specifier escaping, and reserved-provider diagnostics in adapter and
   Compose-to-Quadlet golden tests.
+- [x] Preserve explicit service runtime names from Compose and runtime observations, keep them
+  distinct from neutral service identifiers, and emit validated Compose `container_name` or
+  capability-checked Quadlet `ContainerName=` through ComposeLens 0.1.10 and QuadletLens 0.1.9.
 - [ ] Define resource-label ownership separately for networks, volumes, pods, and build/image
   artifacts before adding neutral resource-label fields or native generation.
 - [ ] Extend the broader effective-state model with reviewed security slices as their native and
@@ -247,6 +250,37 @@ boundary for pre-existing external Podman secrets.
   an exact provider target, optional exact backend runtime, compatibility diagnostics, explicit
   loss authorization, resource-name preservation, and the public facade.
 
+## Additive explicit container names — completed
+
+- [x] Consume released ComposeLens 0.1.10 and QuadletLens 0.1.9 from crates.io.
+- [x] Add a provenance-bearing neutral service runtime name distinct from its service key.
+- [x] Import effective multi-file Compose `container_name` values without losing replacement
+  provenance.
+- [x] Generate validated Compose `container_name` and capability-checked Quadlet
+  `ContainerName=` values.
+- [x] Preserve inspected Docker and Podman container names during runtime reconstruction.
+- [x] Reject names outside each target runtime's grammar instead of silently reverting to a
+  provider-generated name.
+- [x] Add neutral-model, adapter, runtime, invalid-value, and golden end-to-end tests.
+
+## Additive authored Compose restart policies — completed
+
+- [x] Consume released ComposeLens 0.1.11 from crates.io.
+- [x] Import `no`, `always`, unbounded or positive retry-limited `on-failure`, and
+  `unless-stopped` into the distinct neutral container restart policy with complete merge
+  provenance.
+- [x] Reject unresolved expressions, explicit zero retry limits, and retry counts outside the
+  neutral `u64` range without erasing their services.
+- [x] Generate every neutral restart policy exactly back to Compose through ComposeLens's
+  parse-back-validated document boundary.
+- [x] Convert authored Compose `restart: "no"` exactly into Quadlet `[Service] Restart=no` and
+  retain explicit approximation/unsupported outcomes for the non-equivalent systemd policies.
+- [x] Add offline import/export boundary tests, an end-to-end golden assertion, installed Podman
+  6.0.2 generator validation, and a pinned real-world-corpus regression run.
+- [x] Promote 73 literal corpus policies from unsupported to exact; keep Mattermost's two
+  unresolved `${RESTART_POLICY}` values explicitly invalid until caller-supplied processing
+  context exists.
+
 ## Phase 4: Kubernetes — open
 
 - [ ] Read and write core Kubernetes resources.
@@ -262,7 +296,11 @@ boundary for pre-existing external Podman secrets.
 
 ## Phase 6: ecosystem hardening — open
 
-- [ ] Expand the real-world corpus.
+- [x] Establish the first pinned, licensed real-world Compose corpus and an opt-in ingestion test.
+- [x] Use QuadletLens's first pinned, licensed real-world Quadlet corpus as target-format evidence,
+  while keeping its parser result distinct from BoxFerry's end-to-end conversion coverage.
+- [ ] Promote corpus-derived gaps into minimal offline conversion and golden fixtures as features
+  are implemented.
 - [ ] Stabilize selected library APIs.
 - [ ] Add packaging and signed releases.
 - [ ] Publish compatibility matrices and migration guides.

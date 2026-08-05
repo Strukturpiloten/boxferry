@@ -1126,6 +1126,7 @@ impl ServiceDependency {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Service {
     name: Identifier,
+    runtime_name: Option<Sourced<ProtectedString>>,
     image: Option<Sourced<ImageReference>>,
     command: Option<Sourced<Command>>,
     restart_policy: Option<Sourced<RestartPolicy>>,
@@ -1153,6 +1154,7 @@ impl Service {
     pub const fn new(name: Identifier) -> Self {
         Self {
             name,
+            runtime_name: None,
             image: None,
             command: None,
             restart_policy: None,
@@ -1179,6 +1181,17 @@ impl Service {
     #[must_use]
     pub const fn name(&self) -> &Identifier {
         &self.name
+    }
+
+    /// Sets an explicit provider/runtime-level container name distinct from the service key.
+    pub fn set_runtime_name(&mut self, name: Sourced<ProtectedString>) {
+        self.runtime_name = Some(name);
+    }
+
+    /// Returns the explicit provider/runtime-level container name.
+    #[must_use]
+    pub const fn runtime_name(&self) -> Option<&Sourced<ProtectedString>> {
+        self.runtime_name.as_ref()
     }
 
     /// Sets the optional image reference.
@@ -1632,6 +1645,19 @@ mod tests {
 
         let duplicate = application.add_service(Sourced::generated(Service::new(id("web")?)));
         assert!(matches!(duplicate, Err(ModelError::DuplicateResource { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn keeps_the_service_key_and_explicit_runtime_name_distinct() -> Result<(), String> {
+        let mut service = Service::new(id("web")?);
+        service.set_runtime_name(Sourced::generated(ProtectedString::plain("production-web")));
+
+        assert_eq!(service.name().as_str(), "web");
+        assert_eq!(
+            service.runtime_name().map(|name| name.value().expose()),
+            Some("production-web")
+        );
         Ok(())
     }
 

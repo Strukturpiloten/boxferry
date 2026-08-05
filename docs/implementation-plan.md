@@ -88,8 +88,8 @@ workspace gates pass without Lens dependencies.
 
 Status: in progress. Each repository owns its native types; BoxFerry owns mappings.
 
-- ComposeLens (completed): services, images, commands, health checks, environment, extra hosts,
-  ports, volumes, networks, profiles, configs, and secrets.
+- ComposeLens (completed): services, images, commands, health checks, restart policies,
+  environment, extra hosts, ports, volumes, networks, profiles, configs, and secrets.
 - QuadletLens (completed): `.container`, `.pod`, `.volume`, `.network`, required generic systemd
   sections, repeatable container/pod host mappings, regular health-check keys, and exact
   document-set relationships.
@@ -104,32 +104,33 @@ network, profile, config, secret, and label forms. QuadletLens has completed its
 with ordered source-aware `.container`, `.pod`, `.network`, and `.volume` documents, generic systemd
 and unknown entry preservation, native key enums, conservative path/reference forms,
 separate syntax/model diagnostics, and exact document-set dependency resolution. BoxFerry now
-consumes ComposeLens 0.1.8 from crates.io through its independent `boxferry-compose` crate. The
+consumes ComposeLens 0.1.11 from crates.io through its independent `boxferry-compose` crate. The
 adapter maps images, commands, execution identity/context, health checks, environment, extra
 hosts, single ports, named volumes, bind mounts, networks, explicit profiles, config/secret
-resources and grants, service labels, provenance, and short/long SELinux relabel intent into the neutral model.
+resources and grants, service labels, container restart policies, provenance, and short/long
+SELinux relabel intent into the neutral model.
 Source omissions are structured outcomes governed by `LossPolicy`, not warning-only side effects.
 The neutral model retains ordered explicit hostname mappings, distinguishes `host-gateway` from
 ordinary IP address spellings, and keeps unsupported `start_interval` intent for target-specific
 reporting.
 
-The implemented input boundary is ComposeLens 0.1.8's native `build_project_view` over a
+The implemented input boundary is ComposeLens 0.1.11's native `build_project_view` over a
 `MergedProject` and optional matching `ProfileSelection`. BoxFerry maps it without canonical
 rendering or reparsing and retains all contributing source origins in neutral values and outcomes.
 
-ComposeLens 0.1.8 is published on crates.io with a documented pre-1.0 compatibility contract.
-BoxFerry consumes ComposeLens 0.1.8 through a compatible crates.io requirement and commits its
+ComposeLens 0.1.11 is published on crates.io with a documented pre-1.0 compatibility contract.
+BoxFerry consumes ComposeLens 0.1.11 through a compatible crates.io requirement and commits its
 application lockfile. Commit-pinned Git dependencies remain an emergency-only fallback.
 
 The Compose adapter fixture also exposed a ComposeLens 0.1 YAML-backend defect: an unquoted short
 volume scalar with comma-separated options can truncate the document without a syntax diagnostic.
 The ComposeLens 0.1.1 parser correction accepts the complete valid scalar through its
 byte-preserving private parser adapter and retains `compose.yaml.unparsed-input` as a fail-safe for
-future backend omissions; that behavior remains present in the consumed 0.1.8 release.
+future backend omissions; that behavior remains present in the consumed 0.1.11 release.
 BoxFerry can now use the unquoted real-world spelling and the released source-aware merged-project
 view without a canonical render-and-reparse bridge.
 
-QuadletLens 0.1.7 is published on crates.io and BoxFerry consumes it through the independent
+QuadletLens 0.1.9 is published on crates.io and BoxFerry consumes it through the independent
 `boxferry-quadlet` crate. The exporter uses typed native construction and capability evaluation,
 generates exact separate container units or an explicitly authorized compatible pod plus
 application-owned network and volume units, references external resources directly, validates the
@@ -170,7 +171,7 @@ Adapter and public-facade golden tests cover separate containers and explicitly 
 
 ### Completed execution identity and context slice
 
-ComposeLens 0.1.8 and QuadletLens 0.1.7 are published and consumed from crates.io. BoxFerry retains and
+ComposeLens 0.1.9 and QuadletLens 0.1.7 are published and consumed from crates.io. BoxFerry retains and
 maps primary user/group, user namespace, ordered supplementary groups, working directory, and
 explicit read-only-root intent with field provenance and sensitivity. Separate containers use
 capability-checked `User`, `Group`, `UserNS`, repeated `GroupAdd`, `WorkingDir`, and `ReadOnly`
@@ -181,7 +182,7 @@ request.
 
 ### Completed config and secret slice
 
-ComposeLens 0.1.8 and QuadletLens 0.1.7 are published and consumed without sibling path dependencies.
+ComposeLens 0.1.9 and QuadletLens 0.1.7 are published and consumed without sibling path dependencies.
 ComposeLens exposes effective service config/secret grants with short/long syntax and nested
 multi-file provenance. QuadletLens exposes repeatable container `Secret` plus pod `UserNS`, with
 real-generator evidence across every recorded Podman patch from 5.4.0 through 6.0.2. BoxFerry
@@ -191,7 +192,7 @@ are safe and equivalent. Application-owned secret materialization and Compose co
 explicit manual actions. Adapter and public-facade tests cover short/long, multi-file, custom-name,
 sensitive-value, strict/partial, and golden behavior.
 
-### Completed runtime container restart slice
+### Completed container restart-policy slice
 
 Docker Engine API 1.40-through-1.55 and Podman 5.4.0-through-6.0.2 inspection decode the native
 container restart-policy object independently and fail closed on malformed or contradictory
@@ -199,8 +200,13 @@ values. The neutral `RestartPolicy` keeps never, always, unlimited or finite on-
 unless-stopped intent separate from dependency and deployment restart concepts. Runtime
 reconstruction preserves the host setting directly with observation provenance. Quadlet emits
 exact `Restart=no`, explicit systemd approximations for unbounded policies, and no unsafe
-substitute for finite retry counts. Authored Compose `restart` remains open until the source Lens
-has a typed project value.
+substitute for finite retry counts. ComposeLens 0.1.11 provides a source-aware Compose `restart`
+project value and a parse-back-validated generated value. BoxFerry maps every literal policy with
+complete merge
+provenance, generates every neutral variant exactly back to Compose, and rejects unresolved,
+explicit-zero, and out-of-range authored retry limits without erasing the service. The
+Compose-to-Quadlet golden path proves exact `restart: "no"` to `Restart=no`; the other Quadlet
+fidelity classifications remain unchanged.
 
 ### Completed runtime metadata-label slice
 
@@ -209,12 +215,23 @@ container and image label maps as deterministic protected runtime observations. 
 preserve the effective map or omit matching image defaults and retain only changed/runtime-added
 values with conversion-decision provenance. Compose's reserved `com.docker.compose.*` provider
 namespace receives a dedicated unsafe-to-reauthor outcome while remaining reviewable evidence.
-ComposeLens 0.1.8 service-label project/generation boundaries and QuadletLens 0.1.7's native
+ComposeLens 0.1.9 service-label project/generation boundaries and QuadletLens 0.1.7's native
 repeatable container `Label=` key now complete the typed output gate. BoxFerry imports mapping and
 sequence forms with scalar normalization and multi-file provenance, generates protected Compose
 values, and emits systemd-quoted Quadlet labels with literal `%` escaping. Reserved
 `com.docker.compose.*` provider metadata remains diagnostic-only. Resource, image-build,
 annotation, and label-file ownership remain separate work.
+
+### Completed explicit container-name slice
+
+ComposeLens 0.1.10 and QuadletLens 0.1.9 are published and consumed from crates.io. BoxFerry keeps
+an optional provenance-bearing service runtime name separate from its neutral service identifier.
+Effective multi-file Compose `container_name` values map into that field and emit as
+capability-checked Quadlet `ContainerName=`. Runtime reconstruction explicitly preserves the
+inspected Docker or Podman name so regenerated Compose and Quadlet definitions do not acquire a
+provider-generated replacement. Both output adapters validate their target runtime grammar and
+produce an invalid outcome rather than omitting an unsafe name. Model, adapter, runtime,
+invalid-value, and public-facade golden tests cover the complete boundary.
 
 ## T6: First end-to-end milestone
 
@@ -228,10 +245,11 @@ explicit file order, profile selection, target range, grouping, loss policy, and
 output. Broader value encoders and the TYPO3 showcase remain.
 
 Runtime observations can also flow through the public engine into deterministic Compose output.
-The exporter consumes ComposeLens 0.1.8's parse-back-validated generated-document API, requires one
+The exporter consumes ComposeLens 0.1.11's parse-back-validated generated-document API, requires one
 exact Docker Compose or `podman-compose` provider release, keeps an optional exact Docker Engine or
-Podman backend separate, preserves observed resource names, and reports every compatibility or
-unsupported field decision before authorization. Health checks, dependencies, configs, secrets,
+Podman backend separate, preserves observed resource names and container restart policies, and
+reports every compatibility or unsupported field decision before authorization. Health checks,
+dependencies, configs, secrets,
 and structural groups remain explicit partial losses until the native generated subset expands.
 
 Deliver tested Compose-to-Quadlet conversion for images, commands, execution identity/context,

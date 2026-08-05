@@ -9,16 +9,17 @@ use boxferry_model::{
     HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
     HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
     MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
-    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, SourceSpan, Sourced, Volume,
+    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy as NeutralRestartPolicy, Secret,
+    SecretMaterial, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, SourceSpan, Sourced,
+    Volume,
 };
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
     BooleanValue, ComposeScalar, ConfigDefinition, DependencyCondition as ComposeDependencyCondition,
     HealthcheckDuration as ComposeHealthcheckDuration, HealthcheckRetries as ComposeHealthcheckRetries,
     HealthcheckTest, HealthcheckTestKind, LongPort, LongVolumeMount, MountType, NetworkDefinition, Port as ComposePort,
-    SecretDefinition, SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShortPort,
-    ShortVolumeMount, VolumeDefinition, VolumeMount,
+    RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SelinuxRelabel as ComposeSelinuxRelabel,
+    ServiceNetwork, ServiceNetworks, ShortPort, ShortVolumeMount, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
     ProjectDependsOn, ProjectEnvironment, ProjectFieldReference, ProjectGrant, ProjectHealthcheck, ProjectLabels,
@@ -203,6 +204,8 @@ impl<'a> Mapping<'a> {
         )?;
         let mut service = Service::new(name);
 
+        self.map_runtime_name(&subject, native, &mut service);
+        self.map_restart_policy(&subject, native, &mut service);
         if let Some(image) = native.image() {
             match ImageReference::parse(image.value().raw()) {
                 Ok(value) => {
@@ -295,6 +298,77 @@ impl<'a> Mapping<'a> {
         self.report_service_unsupported(&subject, native);
         self.exact_provenance(&subject, native.provenance());
         Some(self.sourced_provenance(service, native.provenance()))
+    }
+
+    fn map_runtime_name(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
+        let Some(container_name) = native.container_name() else {
+            return;
+        };
+        service.set_runtime_name(self.sourced_provenance(
+            ProtectedString::plain(container_name.value()),
+            container_name.provenance(),
+        ));
+        self.exact_provenance(format!("{subject}.container_name"), container_name.provenance());
+    }
+
+    fn map_restart_policy(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
+        let Some(restart) = native.restart() else {
+            return;
+        };
+        let restart_subject = format!("{subject}.restart_policy");
+        let policy = match restart.value().kind() {
+            ComposeRestartPolicyKind::No => NeutralRestartPolicy::Never,
+            ComposeRestartPolicyKind::Always => NeutralRestartPolicy::Always,
+            ComposeRestartPolicyKind::OnFailure { maximum_retries: None } => NeutralRestartPolicy::on_failure(None),
+            ComposeRestartPolicyKind::OnFailure {
+                maximum_retries: Some(maximum_retries),
+            } => {
+                let Ok(maximum_retries) = maximum_retries.parse::<u64>() else {
+                    self.invalid_value_optional(
+                        &restart_subject,
+                        "restart maximum retry count exceeds the neutral model's unsigned 64-bit range",
+                        restart.effective_source(),
+                    );
+                    return;
+                };
+                let Some(maximum_retries) = std::num::NonZeroU64::new(maximum_retries) else {
+                    self.invalid_value_optional(
+                        &restart_subject,
+                        "an explicitly authored restart maximum retry count must be greater than zero",
+                        restart.effective_source(),
+                    );
+                    return;
+                };
+                NeutralRestartPolicy::on_failure(Some(maximum_retries))
+            }
+            ComposeRestartPolicyKind::UnlessStopped => NeutralRestartPolicy::UnlessStopped,
+            ComposeRestartPolicyKind::Expression => {
+                self.invalid_value_optional(
+                    &restart_subject,
+                    "restart policy expression was not resolved before conversion",
+                    restart.effective_source(),
+                );
+                return;
+            }
+            ComposeRestartPolicyKind::Other => {
+                self.invalid_value_optional(
+                    &restart_subject,
+                    "restart policy is not a Compose-defined service-level policy",
+                    restart.effective_source(),
+                );
+                return;
+            }
+            _ => {
+                self.unsupported_optional(
+                    &restart_subject,
+                    "restart policy variant is newer than this Compose adapter",
+                    restart.effective_source(),
+                );
+                return;
+            }
+        };
+        service.set_restart_policy(self.sourced_provenance(policy, restart.provenance()));
+        self.exact_provenance(restart_subject, restart.provenance());
     }
 
     fn map_execution_context(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {

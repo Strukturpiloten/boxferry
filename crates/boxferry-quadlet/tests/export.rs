@@ -19,6 +19,7 @@ fn exports_the_exact_first_conversion_subset_and_resolves_native_references() ->
     application.add_volume(sourced(Volume::new(id("data")?, ResourceOwnership::Application))?)?;
 
     let mut service = Service::new(id("web")?);
+    service.set_runtime_name(sourced(ProtectedString::plain("ferry-web"))?);
     service.set_image(sourced(ImageReference::parse(
         "registry.example:5000/team/web:1.3@sha256:fedcba",
     )?)?);
@@ -130,6 +131,23 @@ fn emits_explicit_false_read_only_and_reports_unsafe_working_directory() -> Resu
             "ReadOnly=false\n",
         ))
     );
+    Ok(())
+}
+
+#[test]
+fn rejects_an_explicit_container_name_outside_the_podman_grammar() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("invalid-name")?);
+    let mut service = image_service("web")?;
+    service.set_runtime_name(sourced(ProtectedString::plain("invalid name"))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.container_name"
+            && outcome.kind() == ConversionKind::Invalid
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0004")
+    }));
+    assert!(plan.authorize(LossPolicy::AllowPartial).is_blocked());
     Ok(())
 }
 
@@ -1316,6 +1334,7 @@ const fn exact_first_conversion_container() -> &'static str {
     concat!(
         "[Container]\n",
         "Image=registry.example:5000/team/web:1.3@sha256:fedcba\n",
+        "ContainerName=ferry-web\n",
         "Exec=php -v\n",
         "User=1001\n",
         "Group=1002\n",

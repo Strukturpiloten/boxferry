@@ -8,13 +8,14 @@ use boxferry_engine::{
 };
 use boxferry_model::{
     Application, Command, EnvironmentValue, HostAddressKind, MountSource, ProtectedString, Protocol, Provenance,
-    ProvenanceKind, ResourceOwnership, SelinuxRelabel, Service, Sourced,
+    ProvenanceKind, ResourceOwnership, RestartPolicy, SelinuxRelabel, Service, Sourced,
 };
 use compose_lens::{
     render::{
         ComposeDocumentBuilder, GeneratedCommand, GeneratedComposeDocument, GeneratedEnvironment, GeneratedExtraHost,
         GeneratedLabel, GeneratedMount, GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol,
-        GeneratedResource, GeneratedSelinux, GeneratedService, GeneratedString, GenerationError,
+        GeneratedResource, GeneratedRestartPolicy, GeneratedSelinux, GeneratedService, GeneratedString,
+        GenerationError,
     },
     source::SourceId,
     validation::{
@@ -241,14 +242,14 @@ impl<'a> Mapping<'a> {
         for config in self.application.configs() {
             self.unsupported(
                 &format!("configs.{}", config.value().name().as_str()),
-                "ComposeLens 0.1.8 generation does not yet expose top-level config definitions",
+                "ComposeLens 0.1.11 generation does not yet expose top-level config definitions",
                 config.origins(),
             );
         }
         for secret in self.application.secrets() {
             self.unsupported(
                 &format!("secrets.{}", secret.value().name().as_str()),
-                "ComposeLens 0.1.8 generation does not yet expose top-level secret definitions",
+                "ComposeLens 0.1.11 generation does not yet expose top-level secret definitions",
                 secret.origins(),
             );
         }
@@ -339,9 +340,22 @@ impl<'a> Mapping<'a> {
                 return None;
             }
         };
+        if let Some(runtime_name) = service.runtime_name() {
+            match generated_string(runtime_name.value()).and_then(|name| generated.set_container_name(name)) {
+                Ok(()) => self.exact(format!("{service_subject}.container_name"), runtime_name.origins()),
+                Err(error) => {
+                    self.generation_error(
+                        &format!("{service_subject}.container_name"),
+                        &error,
+                        runtime_name.origins(),
+                    );
+                }
+            }
+        }
         if !self.map_image(service, sourced.origins(), &mut generated, &service_subject) {
             return None;
         }
+        self.map_restart_policy(service, &mut generated, &service_subject);
         self.map_command(service, &mut generated, &service_subject);
         self.map_identity(service, &mut generated, &service_subject);
         self.map_execution_context(service, &mut generated, &service_subject);
@@ -353,6 +367,33 @@ impl<'a> Mapping<'a> {
         self.map_network_attachments(service, &mut generated, &service_subject);
         self.report_unimplemented_service_fields(service, &service_subject);
         Some(generated)
+    }
+
+    fn map_restart_policy(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
+        let Some(restart) = service.restart_policy() else {
+            return;
+        };
+        let subject = format!("{service_subject}.restart_policy");
+        let policy = match restart.value() {
+            RestartPolicy::Never => GeneratedRestartPolicy::No,
+            RestartPolicy::Always => GeneratedRestartPolicy::Always,
+            RestartPolicy::OnFailure { maximum_retries } => GeneratedRestartPolicy::OnFailure {
+                maximum_retries: maximum_retries.map(std::num::NonZeroU64::get),
+            },
+            RestartPolicy::UnlessStopped => GeneratedRestartPolicy::UnlessStopped,
+            _ => {
+                self.unsupported(
+                    &subject,
+                    "restart-policy variant is newer than this Compose adapter",
+                    restart.origins(),
+                );
+                return;
+            }
+        };
+        match generated.set_restart(policy) {
+            Ok(()) => self.exact(subject, restart.origins()),
+            Err(error) => self.generation_error(&subject, &error, restart.origins()),
+        }
     }
 
     fn map_image(
@@ -631,38 +672,31 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_unimplemented_service_fields(&mut self, service: &Service, service_subject: &str) {
-        if let Some(restart_policy) = service.restart_policy() {
-            self.unsupported(
-                &format!("{service_subject}.restart_policy"),
-                "ComposeLens 0.1.8 generation does not yet expose container restart policies",
-                restart_policy.origins(),
-            );
-        }
         if let Some(healthcheck) = service.healthcheck() {
             self.unsupported(
                 &format!("{service_subject}.healthcheck"),
-                "ComposeLens 0.1.8 generation does not yet expose health-check fields",
+                "ComposeLens 0.1.11 generation does not yet expose health-check fields",
                 healthcheck.origins(),
             );
         }
         for (index, dependency) in service.dependencies().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.dependencies[{index}]"),
-                "ComposeLens 0.1.8 generation does not yet expose service dependencies",
+                "ComposeLens 0.1.11 generation does not yet expose service dependencies",
                 dependency.origins(),
             );
         }
         for (index, grant) in service.config_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.config_grants[{index}]"),
-                "ComposeLens 0.1.8 generation does not yet expose service config grants",
+                "ComposeLens 0.1.11 generation does not yet expose service config grants",
                 grant.origins(),
             );
         }
         for (index, grant) in service.secret_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.secret_grants[{index}]"),
-                "ComposeLens 0.1.8 generation does not yet expose service secret grants",
+                "ComposeLens 0.1.11 generation does not yet expose service secret grants",
                 grant.origins(),
             );
         }

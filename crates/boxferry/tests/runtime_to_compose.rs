@@ -56,6 +56,7 @@ fn observed_container_generates_reviewable_compose_through_public_api() -> Resul
             "name: \"example\"\n",
             "services:\n",
             "  \"web\":\n",
+            "    container_name: \"web\"\n",
             "    image: \"example.invalid/web:1\"\n",
             "    command:\n",
             "      - \"server\"\n",

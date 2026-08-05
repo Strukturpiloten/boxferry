@@ -944,6 +944,7 @@ impl<'a> Mapping<'a> {
         }
         self.exact(format!("{subject}.image"), image.origins());
 
+        self.map_container_name(&subject, service.value(), &mut builder);
         if let Some(command) = service.value().command() {
             self.map_command(&subject, command, &mut builder);
         }
@@ -985,6 +986,34 @@ impl<'a> Mapping<'a> {
         self.map_pod_or_networks(&subject, service, pod_name, &mut builder);
 
         self.finish_document(file_name, &builder, &subject, service.origins());
+    }
+
+    fn map_container_name(&mut self, subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        let Some(runtime_name) = service.runtime_name() else {
+            return;
+        };
+        let runtime_subject = format!("{subject}.container_name");
+        if !valid_podman_container_name(runtime_name.value().expose()) {
+            self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &runtime_subject,
+                "explicit container name does not satisfy Podman's runtime name grammar",
+                "container names must match `[a-zA-Z0-9][a-zA-Z0-9_.-]*`",
+                runtime_name.origins(),
+            );
+        } else if self.capability(
+            "quadlet.container.container-name",
+            &runtime_subject,
+            runtime_name.origins(),
+        ) && self.push_container(
+            builder,
+            ContainerKey::ContainerName,
+            runtime_name.value().expose(),
+            &runtime_subject,
+            runtime_name.origins(),
+        ) {
+            self.exact(runtime_subject, runtime_name.origins());
+        }
     }
 
     fn map_restart_policy(
@@ -2597,6 +2626,12 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',')
         })
+}
+
+fn valid_podman_container_name(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
 }
 
 fn encode_quadlet_label(name: &str, value: &str) -> Option<String> {

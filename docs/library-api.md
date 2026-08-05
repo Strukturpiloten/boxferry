@@ -128,8 +128,8 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.8;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.7;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.11;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.9;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
 - an optional `docker-runtime` facade feature backed by `boxferry-docker`.
@@ -149,9 +149,16 @@ directory, and an explicit read-only-root-filesystem choice. Text values use `Pr
 sensitive interpolation remains redacted from debug output while authorized adapters can expose
 it for native encoding.
 
+`Service::runtime_name` is an optional provenance-bearing container name distinct from the
+neutral service identifier. Source adapters preserve explicit names; runtime reconstruction uses
+the inspected name; Compose and Quadlet exporters validate their respective target grammars before
+emitting `container_name` or `ContainerName=`.
+
 `RestartPolicy` is the container-level automatic restart contract. It keeps `Never`, `Always`,
 unlimited or non-zero retry-limited `OnFailure`, and `UnlessStopped` distinct from service-
-dependency restart propagation and deployment-orchestrator policy.
+dependency restart propagation and deployment-orchestrator policy. Compose service `restart` and
+runtime observations map into this contract; Compose generation preserves every variant exactly.
+Quadlet generation keeps the separate systemd fidelity rules documented below.
 
 `MetadataLabel` retains an opaque non-empty name and a `ProtectedString` value. Runtime adapters
 construct sensitive `RuntimeMetadataLabel` values. The runtime importer can preserve them or
@@ -228,7 +235,7 @@ The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A c
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
 replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
 
-The importer consumes ComposeLens 0.1.8's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.1.11's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
@@ -258,8 +265,8 @@ Separate containers remain the exact grouping default. Embedded callers may sele
 group using the group name and rejects missing, multiple, unresolved, external, or partial groups.
 It remains approximate because structural membership does not itself assert shared namespaces.
 Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
-container restart policies, external secret grants, and service metadata labels convert through
-QuadletLens 0.1.7. `Never`
+container restart policies, explicit container names, external secret grants, and service
+metadata labels convert through QuadletLens 0.1.9. `Never`
 maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
 limits remain manual actions. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an

@@ -322,6 +322,14 @@ impl<'a> Mapping<'a> {
         let service_subject = format!("services.{service_name}");
         let container_origin = runtime_origin(container.source_id());
         let mut service = Service::new(container.name().clone());
+        service.set_runtime_name(Sourced::from_source(
+            ProtectedString::plain(service_name),
+            container_origin.clone(),
+        ));
+        self.exact(
+            format!("{service_subject}.runtime_name"),
+            vec![container_origin.clone()],
+        );
 
         if let Some(image) = container.image() {
             service.set_image(Sourced::from_source(image.clone(), container_origin.clone()));

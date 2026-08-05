@@ -237,6 +237,13 @@ fn image_comparison_retains_only_inferred_overrides_with_decision_provenance() -
     let application = result.application().ok_or("application expected")?;
     let service = application.services().first().ok_or("service expected")?.value();
 
+    assert_eq!(service.name().as_str(), "web");
+    assert_eq!(service.runtime_name().map(|name| name.value().expose()), Some("web"));
+    assert_eq!(
+        origin_kinds(service.runtime_name().ok_or("runtime name expected")?.origins()),
+        vec![ProvenanceKind::RuntimeObservation]
+    );
+
     let command = service.command().ok_or("inferred command override expected")?;
     assert_eq!(origin_kinds(command.origins()), expected_inferred_origins());
     match command.value() {

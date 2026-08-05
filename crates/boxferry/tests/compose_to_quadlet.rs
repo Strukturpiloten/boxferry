@@ -83,6 +83,13 @@ fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(
     assert!(output.document_set().is_valid());
     assert_eq!(output.document_set().graph().edges().len(), 2);
 
+    let restart_outcome = partial
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.restart_policy")
+        .ok_or("restart-policy outcome expected")?;
+    assert!(restart_outcome.kind() == ConversionKind::Exact && !restart_outcome.origins().is_empty());
+
     let host_mapping_outcomes = partial
         .outcomes()
         .iter()

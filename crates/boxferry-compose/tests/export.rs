@@ -25,6 +25,10 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
     ))?;
 
     let mut service = Service::new(Identifier::new("web")?);
+    service.set_runtime_name(Sourced::from_source(
+        ProtectedString::plain("ferry-web"),
+        origin.clone(),
+    ));
     service.set_image(Sourced::from_source(
         ImageReference::parse("example.invalid/web:1")?,
         origin.clone(),
@@ -42,6 +46,10 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
     service.add_supplementary_group(Sourced::from_source(ProtectedString::plain("44"), origin.clone()));
     service.set_working_directory(Sourced::from_source(ProtectedString::plain("/srv/app"), origin.clone()));
     service.set_read_only_root_filesystem(Sourced::from_source(true, origin.clone()));
+    service.set_restart_policy(Sourced::from_source(
+        RestartPolicy::on_failure(std::num::NonZeroU64::new(3)),
+        origin.clone(),
+    ));
     service.add_environment(Sourced::from_source(
         EnvironmentVariable::new(
             Identifier::new("TOKEN")?,
@@ -105,6 +113,89 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("production-secret"));
     assert!(!debug.contains("1001:1002"));
+    Ok(())
+}
+
+#[test]
+fn reports_an_explicit_container_name_outside_the_compose_grammar() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("invalid-name.yaml")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_runtime_name(Sourced::from_source(
+        ProtectedString::plain("invalid name"),
+        origin.clone(),
+    ));
+    service.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/web:1")?,
+        origin.clone(),
+    ));
+    let mut application = Application::new(Identifier::new("invalid-name")?);
+    application.add_service(Sourced::from_source(service, origin))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    assert!(plan.candidate().is_none());
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.container_name"
+            && outcome.kind() == ConversionKind::Invalid
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFC0008")
+    }));
+    Ok(())
+}
+
+#[test]
+fn exports_every_neutral_restart_policy_to_compose() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("restart.yaml")?);
+    let policies = [
+        ("disabled", RestartPolicy::Never, "restart: \"no\""),
+        ("always", RestartPolicy::Always, "restart: \"always\""),
+        ("failure", RestartPolicy::on_failure(None), "restart: \"on-failure\""),
+        (
+            "limited",
+            RestartPolicy::on_failure(std::num::NonZeroU64::new(7)),
+            "restart: \"on-failure:7\"",
+        ),
+        ("stopped", RestartPolicy::UnlessStopped, "restart: \"unless-stopped\""),
+    ];
+    let mut application = Application::new(Identifier::new("restart")?);
+    for (name, policy, _) in policies {
+        let mut service = Service::new(Identifier::new(name)?);
+        service.set_image(Sourced::from_source(
+            ImageReference::parse(format!("example.invalid/{name}:1"))?,
+            origin.clone(),
+        ));
+        service.set_restart_policy(Sourced::from_source(policy, origin.clone()));
+        application.add_service(Sourced::from_source(service, origin.clone()))?;
+    }
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    assert!(
+        plan.outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+    let output = plan.candidate().ok_or("generated Compose expected")?;
+    assert_eq!(
+        output.text(),
+        concat!(
+            "name: \"restart\"\n",
+            "services:\n",
+            "  \"disabled\":\n",
+            "    image: \"example.invalid/disabled:1\"\n",
+            "    restart: \"no\"\n",
+            "  \"always\":\n",
+            "    image: \"example.invalid/always:1\"\n",
+            "    restart: \"always\"\n",
+            "  \"failure\":\n",
+            "    image: \"example.invalid/failure:1\"\n",
+            "    restart: \"on-failure\"\n",
+            "  \"limited\":\n",
+            "    image: \"example.invalid/limited:1\"\n",
+            "    restart: \"on-failure:7\"\n",
+            "  \"stopped\":\n",
+            "    image: \"example.invalid/stopped:1\"\n",
+            "    restart: \"unless-stopped\"\n",
+        )
+    );
     Ok(())
 }
 
@@ -246,7 +337,6 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
         "secrets.token",
         "service_groups.observed-pod",
         "services.web.environment.ABSENT",
-        "services.web.restart_policy",
         "services.web.healthcheck",
     ] {
         assert!(plan.outcomes().iter().any(|outcome| {
@@ -263,6 +353,7 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
                 "services:\n",
                 "  \"web\":\n",
                 "    image: \"example.invalid/web:1\"\n",
+                "    restart: \"unless-stopped\"\n",
             )
     }));
     Ok(())
@@ -313,6 +404,7 @@ const fn expected_supported_document() -> &'static str {
         "name: \"demo\"\n",
         "services:\n",
         "  \"web\":\n",
+        "    container_name: \"ferry-web\"\n",
         "    image: \"example.invalid/web:1\"\n",
         "    command:\n",
         "      - \"server\"\n",
@@ -329,6 +421,7 @@ const fn expected_supported_document() -> &'static str {
         "      - \"44\"\n",
         "    working_dir: \"/srv/app\"\n",
         "    read_only: true\n",
+        "    restart: \"on-failure:3\"\n",
         "    extra_hosts:\n",
         "      - \"database=192.0.2.10\"\n",
         "    ports:\n",

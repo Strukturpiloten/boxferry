@@ -40,9 +40,11 @@ policy, and cannot reconstruct a retry limit.
 5. A finite `OnFailure` retry limit remains unsupported and emits no restart directive. BoxFerry
    does not widen a bounded policy to infinite retries or pretend systemd rate limiting is
    equivalent.
-6. Compose service `restart` remains syntax-preserved until ComposeLens provides a source-aware
-   typed value and BoxFerry implements a separately tested Compose mapping. Dependency restart
-   propagation and deployment restart policy remain separate model concepts.
+6. Compose service `restart` maps through a separately tested, source-aware ComposeLens value into
+   the same neutral contract and generates exactly back to Compose. An explicitly authored zero
+   retry limit is invalid rather than reinterpreted as an omitted limit; native runtime APIs keep
+   their independently documented zero-as-default decoding. Dependency restart propagation and
+   deployment restart policy remain separate model concepts.
 
 ## Consequences
 
@@ -51,7 +53,8 @@ policy, and cannot reconstruct a retry limit.
 - Runtime-to-Quadlet output is useful but honest about lifecycle-manager differences.
 - `LossPolicy::ExactOnly` accepts only `Never`; approximate policies require
   `AllowApproximate`, while finite retry limits require `AllowPartial` and manual completion.
-- Runtime-to-Compose currently reports the retained policy instead of silently dropping it.
+- Authored Compose and runtime-observed policies generate exactly back to Compose. Their Quadlet
+  fidelity remains governed by the systemd distinctions above.
 - Live Docker and Podman conformance create a test container with `on-failure:4` and verify the
   native object shape across the reviewed runtime lanes.
 

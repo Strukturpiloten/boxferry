@@ -1,7 +1,7 @@
 # Quadlet exporter
 
 The `boxferry-quadlet` crate maps BoxFerry's neutral application model into a deterministic set of
-Quadlet files through `quadlet-lens` 0.1.7. The `boxferry` facade exposes it through the additive
+Quadlet files through `quadlet-lens` 0.1.9. The `boxferry` facade exposes it through the additive
 `quadlet` feature.
 
 ## Planning boundary
@@ -45,6 +45,8 @@ neutral structural group alone does not assert Podman shared-namespace behavior.
 
 It currently maps:
 
+- explicit runtime container names through capability-checked `ContainerName=`, independently of
+  service keys, unit filenames, and systemd service names;
 - image references, including `name:tag@digest` spellings;
 - exec-form commands whose individual arguments need no systemd quoting;
 - literal environment assignments whose names and values need no systemd quoting or specifier
@@ -104,6 +106,7 @@ The adapter currently reports rather than guesses:
 - application-owned secret creation and file/environment materialization, because `Secret=` only
   consumes a Podman secret that already exists; and
 - secret names or options outside the reviewed unambiguous one-line Podman secret grammar;
+- explicit container names outside Podman's `[a-zA-Z0-9][a-zA-Z0-9_.-]*` grammar;
 - reserved `com.docker.compose.*` metadata plus resource, build/image, annotation, and label-file
   label ownership that is not equivalent to service/container metadata; and
 - neutral service groups without a supported caller-selected target grouping and lifecycle

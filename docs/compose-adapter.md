@@ -1,7 +1,7 @@
 # Compose exporter
 
 `boxferry-compose` maps a neutral `Application` into deterministic Compose YAML through
-ComposeLens 0.1.8. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
+ComposeLens 0.1.11. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
 `DOCKER_COMPOSE_TARGET`, and `PODMAN_COMPOSE_TARGET` through the additive `compose` feature.
 
 ## Target selection
@@ -36,12 +36,15 @@ an unsupported compatibility claim.
 The first slice generates:
 
 - the project name and ordered services;
+- optional explicit runtime container names, kept distinct from service keys;
 - image references, including tolerant `name:tag@digest` spellings;
 - exec, shell, and explicit empty commands;
 - literal and host-resolved environment entries;
 - ordered service-label mappings with empty and protected values;
 - combined `user[:group]`, `userns_mode`, supplementary groups, working directory, and read-only
   root intent;
+- container restart policies: `no`, `always`, unbounded or finite `on-failure`, and
+  `unless-stopped`;
 - ordered `extra_hosts`, including the literal `host-gateway` token;
 - TCP, UDP, and syntax-preserved SCTP ports;
 - named, bind, and anonymous mounts, with deliberate short syntax for SELinux relabeling;
@@ -70,7 +73,7 @@ Current compatibility-sensitive constructs are tag-plus-digest images, `host-gat
 user-namespace values, and short-form SELinux relabeling. SCTP syntax is generated but remains an
 unsupported outcome until the selected provider/runtime pair has reviewed execution evidence.
 
-The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.8 output:
+The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.11 output:
 
 - a primary group without a primary user;
 - environment values that must be absent;
@@ -83,10 +86,30 @@ The following neutral intent remains explicit `BFC0007` partial loss in ComposeL
 Generation errors and invalid target profiles use `BFC0008` and `BFC0006` respectively and never
 produce an authorizable candidate.
 
+## Restart-policy boundary
+
+The importer maps authored Compose service `restart` values into the container-level neutral
+`RestartPolicy`; this remains separate from long-form `depends_on.restart` and the Deploy
+Specification's `restart_policy`. `no`, `always`, unbounded or positive retry-limited
+`on-failure`, and `unless-stopped` retain complete merge provenance. The exporter emits every
+neutral variant exactly through ComposeLens's parse-back-validated generator.
+
+An unresolved expression, `on-failure:0`, or a retry count outside the neutral `u64` range is a
+field-specific `BFC0005` invalid outcome. BoxFerry does not reinterpret an explicitly authored
+zero as an omitted retry limit. Runtime API decoders may independently interpret a native zero
+counter as the provider's absent/default representation because that is runtime observation, not
+authored Compose syntax.
+
+Explicit runtime names use Compose's documented portable container-name grammar. A value outside
+that grammar is a `BFC0008` invalid generation outcome; BoxFerry does not silently fall back to a
+provider-generated name.
+
 ## Runtime observations and resource names
 
 Runtime reconstruction feeds the same neutral application into this exporter. A runtime-observed
-network or volume gets an explicit top-level Compose `name` so project scoping cannot change the
+container gets an explicit `container_name`, while its neutral service key remains independently
+available for application relationships. A runtime-observed network or volume gets an explicit
+top-level Compose `name` so project scoping cannot change the
 reviewed platform resource name. Application/external lifecycle selected through
 `RuntimeResolutions` is retained. Uncertain or implicit ownership is emitted conservatively as an
 external reference with `BFC0007`; only `AllowPartial` releases that candidate.

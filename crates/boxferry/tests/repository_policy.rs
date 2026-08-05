@@ -30,6 +30,11 @@ fn fixture_manifests_follow_the_common_contract() -> Result<(), String> {
 }
 
 #[test]
+fn real_world_compose_catalog_is_immutable_and_reviewed() -> Result<(), String> {
+    support::validate_real_world_compose_catalog(&repository_root())
+}
+
+#[test]
 fn fixture_contract_accepts_authored_metadata() {
     let errors = support::validate_fixture_manifest_text(
         "valid fixture",

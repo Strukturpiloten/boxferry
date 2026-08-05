@@ -65,6 +65,7 @@ fn observed_container_generates_reviewable_quadlet_through_public_api() -> Resul
         Some(concat!(
             "[Container]\n",
             "Image=example.invalid/web:1\n",
+            "ContainerName=web\n",
             "Exec=server --foreground\n",
             "User=1001\n",
             "Group=1002\n",
@@ -156,6 +157,7 @@ fn resolved_observed_pod_is_preserved_as_a_named_quadlet_pod() -> Result<(), Str
         Some(concat!(
             "[Container]\n",
             "Image=example.invalid/web:1\n",
+            "ContainerName=web\n",
             "Exec=server\n",
             "Pod=observed-pod.pod\n",
         ))
@@ -213,6 +215,7 @@ fn docker_inspection_generates_reviewable_quadlet_through_public_api() -> Result
         Some(concat!(
             "[Container]\n",
             "Image=example.invalid/web:1\n",
+            "ContainerName=web\n",
             "Exec=server --foreground\n",
             "User=1001\n",
             "Group=1002\n",

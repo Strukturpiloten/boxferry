@@ -4,6 +4,13 @@ This document is the end-to-end coverage source of truth for BoxFerry. Native pa
 belongs to ComposeLens and QuadletLens; this matrix records whether a value can travel through the
 complete conversion pipeline.
 
+The [real-world Compose corpus](real-world-compose-corpus.md) turns source-side field boundaries
+into pinned application-level tests and an ordered compatibility backlog. The separate
+[QuadletLens real-world corpus](https://github.com/Strukturpiloten/quadlet-lens/blob/main/docs/real-world-quadlet-corpus.md)
+provides target-format pressure from public Quadlet deployments. Passing that corpus proves
+loss-aware Quadlet ingestion; it does not mean BoxFerry can yet import Quadlet or generate every
+typed and untyped native key found there.
+
 Coverage was audited against the current official
 [Compose service reference](https://docs.docker.com/reference/compose-file/services/) and the
 [Podman Quadlet manual](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html) on
@@ -28,6 +35,7 @@ field as a policy-controlled unsupported outcome.
 | Intent | Compose fields | Current status | Current boundary |
 | --- | --- | --- | --- |
 | Image | `image` | `end to end` | Tolerant tags plus digests are retained; unsafe one-line target spellings fail explicitly. |
+| Runtime container name | `container_name` | `end to end` | The name remains distinct from the service key and emits as capability-checked `ContainerName=`. Compose and Podman target grammars are validated independently; invalid values block output. |
 | Command | `command` | `partial` | Safe exec-form arguments emit `Exec=`; shell form, clearing, and values needing target quoting are reported. |
 | Environment | `environment` | `partial` | Literal safe values emit `Environment=`; host lookup, unset intent, and values needing target encoding are reported. |
 | Host mappings | `extra_hosts` | `end to end` | Sequence/mapping syntax, IPv4, IPv6, and `host-gateway` reach container or compatible pod `AddHost=` entries. |
@@ -40,10 +48,10 @@ field as a policy-controlled unsupported outcome.
 | Identity | `user`, `userns_mode`, `group_add` | `partial` | User, numeric primary group, user namespace, and ordered named or numeric supplementary groups retain provenance and sensitivity and emit capability-checked keys. Identical explicit namespaces on every grouped service move to pod `UserNS`; mixed or conflicting intent invalidates grouping. Named primary groups and unsafe values are explicit losses. |
 | Limits and deployment | `ulimits`, CPU/memory/PID fields, `deploy` | `native only` / `preserved` | ComposeLens types `ulimits` and field-level `deploy`; BoxFerry does not yet map resource policy. |
 | Build | `build`, `pull_policy` | `native only` / `preserved` | ComposeLens retains field-level build intent; `.build` generation and image/build policy remain open. |
-| Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.8 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
-| Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `preserved` for Compose / `partial` for runtime | Compose `restart` has no typed source mapping yet. Runtime inspection retains container `Never`, `Always`, `OnFailure`, finite retry limits, and `UnlessStopped`; Quadlet emits exact `Restart=no`, explicit approximations for unbounded policies, and no unsafe substitute for finite retry limits. Other lifecycle fields remain preserved only. |
+| Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.11 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
+| Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `partial` | Authored Compose and runtime inspection both retain container `Never`, `Always`, `OnFailure`, finite positive retry limits, and `UnlessStopped`; Compose output is exact for every neutral variant. Quadlet emits exact `Restart=no`, explicit approximations for unbounded policies, and no unsafe substitute for finite retry limits. Unresolved, zero, and out-of-range authored retry limits are invalid. Other lifecycle fields remain preserved only. |
 | Process | `entrypoint`, `working_dir`, `tty`, `stdin_open`, `read_only` | `partial` / `preserved` | Safely encodable working directories and explicit true/false read-only-root intent convert end to end. Values needing systemd encoding are reported. Entrypoint, TTY, and standard-input behavior remain preserved only. |
-| Names and DNS | `container_name`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search` | `preserved` | No end-to-end mapping exists beyond `extra_hosts`. |
+| Hostname and DNS | `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search` | `preserved` | No end-to-end mapping exists beyond `extra_hosts`; runtime container names do not imply container hostnames. |
 | Security and devices | capabilities, devices, CDI/GPU, namespaces, privileged, security options, sysctls | `preserved` | These require target-, rootless-, platform-, and pod-aware compatibility decisions. |
 | Metadata and logging | annotations, labels, label files, logging | `end to end` for service labels / `partial` otherwise | Compose mapping and sequence labels import with value-scalar normalization and multi-file provenance. Protected neutral service labels generate deterministic Compose mappings and native repeatable Quadlet `Label=` entries; empty, quoted, control, and literal systemd-specifier values are encoded. Runtime container/image maps support image-default comparison. Reserved Compose-managed labels remain reviewable but are never re-authored. Annotations, label files, image-build labels, resource labels, and logging remain open. |
 | Compose orchestration extensions | `extends`, `develop`, `provider`, `models`, links, scaling | `preserved` | These have no direct first-slice Quadlet equivalent and require separate processing or explicit diagnostics. |
@@ -73,7 +81,7 @@ network, and volume inspect arrays. Its replaceable command boundary requires an
 endpoint and API version; a finite policy may add selected containers' referenced resources. No
 policy enumerates an ambient resource family. The supported effective subset is image reference,
 command, environment, non-empty `user[:group]`, non-empty working directory, explicit read-only-root
-state, container restart policy, protected effective metadata labels, regular health command/disable/timing/retry configuration, ports, mounts, network
+state, explicit runtime container name, container restart policy, protected effective metadata labels, regular health command/disable/timing/retry configuration, ports, mounts, network
 relationships and ordered aliases, inspected
 network/volume existence, optional creation-command evidence, and Podman pod membership evidence.
 
@@ -99,7 +107,8 @@ name as an unsupported outcome instead of discarding it. The Docker decoder appl
 with independent `BFD` diagnostics and additionally reports the lost entrypoint/command boundary.
 
 The Compose export path covers the same supported effective subset for images, commands,
-environment, service labels, identity/context, ports, mounts, networks, and volumes. It uses ComposeLens 0.1.8's
+environment, explicit runtime names, service labels, identity/context, container restart policies,
+ports, mounts, networks, and volumes. It uses ComposeLens 0.1.11's
 deterministic generated-document boundary and requires an exact Docker Compose or
 `podman-compose` provider version; the optional exact Docker Engine or Podman backend remains a
 separate input. Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,

@@ -6,8 +6,8 @@ use boxferry_compose::{ComposeImporter, ComposeSource};
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
     Command, ConfigMaterial, EnvironmentValue, HealthcheckCommand, HostAddressKind, Identifier, MountSource, Protocol,
-    ResourceGrantSyntax, ResourceOwnership, SecretMaterial, SelinuxRelabel, Service, ServiceDependencyCondition,
-    SourceId,
+    ResourceGrantSyntax, ResourceOwnership, RestartPolicy, SecretMaterial, SelinuxRelabel, Service,
+    ServiceDependencyCondition, SourceId,
 };
 use compose_lens::{
     interpolation::MapEnvironment,
@@ -51,6 +51,7 @@ fn imports_the_core_fixture_without_loss_and_excludes_inactive_profiles() -> Res
 
     let web = application.services()[0].value();
     assert_eq!(web.name().as_str(), "web");
+    assert_core_runtime_name(web);
     assert_eq!(
         web.image().map(|image| image.value().as_str()),
         Some("registry.example:5000/team/web:1.3@sha256:fedcba")
@@ -64,6 +65,7 @@ fn imports_the_core_fixture_without_loss_and_excludes_inactive_profiles() -> Res
                 .eq(["php", "-v"])
     ));
     assert_core_execution_context(web);
+    assert_core_restart_policy(web);
     assert_eq!(web.environment().len(), 4);
     assert!(matches!(web.environment()[1].value().value(), EnvironmentValue::Host));
     assert_core_healthcheck(web)?;
@@ -147,6 +149,108 @@ fn imports_mapping_extra_hosts_without_requiring_ip_only_values() -> Result<(), 
     assert_eq!(mappings[0].value().address().kind(), HostAddressKind::Ipv4);
     assert_eq!(mappings[1].value().address().kind(), HostAddressKind::HostGateway);
     assert!(mappings.iter().all(|mapping| !mapping.origins().is_empty()));
+    Ok(())
+}
+
+#[test]
+fn imports_every_compose_service_restart_policy() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  disabled:\n",
+        "    image: example.invalid/disabled:1\n",
+        "    restart: \"no\"\n",
+        "  always:\n",
+        "    image: example.invalid/always:1\n",
+        "    restart: always\n",
+        "  failure:\n",
+        "    image: example.invalid/failure:1\n",
+        "    restart: on-failure\n",
+        "  limited:\n",
+        "    image: example.invalid/limited:1\n",
+        "    restart: on-failure:7\n",
+        "  stopped:\n",
+        "    image: example.invalid/stopped:1\n",
+        "    restart: unless-stopped\n",
+    );
+    let compose_source_id = ComposeSourceId::new(82);
+    let project = merged_project([(compose_source_id, "restart.compose.yaml", text)])?;
+    let source = ComposeSource::new(project, Identifier::new("restart")?)?
+        .with_source_id(compose_source_id, SourceId::new("restart.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact),
+        "{:#?}",
+        result.outcomes()
+    );
+    let application = result.application().ok_or("application expected")?;
+    let policies = application
+        .services()
+        .iter()
+        .map(|service| service.value().restart_policy().map(boxferry_model::Sourced::value))
+        .collect::<Vec<_>>();
+    assert!(matches!(policies[0], Some(RestartPolicy::Never)));
+    assert!(matches!(policies[1], Some(RestartPolicy::Always)));
+    assert!(matches!(
+        policies[2],
+        Some(RestartPolicy::OnFailure { maximum_retries: None })
+    ));
+    assert!(matches!(
+        policies[3],
+        Some(RestartPolicy::OnFailure {
+            maximum_retries: Some(maximum_retries),
+        }) if maximum_retries.get() == 7
+    ));
+    assert!(matches!(policies[4], Some(RestartPolicy::UnlessStopped)));
+    assert!(application.services().iter().all(|service| {
+        service
+            .value()
+            .restart_policy()
+            .is_some_and(|restart| !restart.origins().is_empty())
+    }));
+    Ok(())
+}
+
+#[test]
+fn rejects_unresolved_zero_and_unrepresentable_restart_limits_without_erasing_services() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  unresolved:\n",
+        "    image: example.invalid/unresolved:1\n",
+        "    restart: ${RESTART_POLICY}\n",
+        "  zero:\n",
+        "    image: example.invalid/zero:1\n",
+        "    restart: on-failure:0\n",
+        "  overflow:\n",
+        "    image: example.invalid/overflow:1\n",
+        "    restart: on-failure:18446744073709551616\n",
+    );
+    let compose_source_id = ComposeSourceId::new(83);
+    let project = merged_project([(compose_source_id, "invalid-restart.compose.yaml", text)])?;
+    let source = ComposeSource::new(project, Identifier::new("invalid-restart")?)?
+        .with_source_id(compose_source_id, SourceId::new("invalid-restart.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    let application = result.application().ok_or("partial application expected")?;
+    assert_eq!(application.services().len(), 3);
+    assert!(
+        application
+            .services()
+            .iter()
+            .all(|service| service.value().restart_policy().is_none())
+    );
+    for service in ["unresolved", "zero", "overflow"] {
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.{service}.restart_policy")
+                && outcome.kind() == ConversionKind::Invalid
+                && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFC0005")
+                && !outcome.origins().is_empty()
+        }));
+    }
     Ok(())
 }
 
@@ -963,6 +1067,44 @@ fn assert_core_healthcheck(service: &Service) -> Result<(), Box<dyn Error>> {
         Some("10s")
     );
     Ok(())
+}
+
+fn assert_core_runtime_name(service: &Service) {
+    let runtime_name = service.runtime_name();
+    assert_eq!(runtime_name.map(|name| name.value().expose()), Some("ferry-web"));
+    assert_eq!(
+        runtime_name
+            .map(|name| {
+                name.origins()
+                    .iter()
+                    .map(|origin| origin.source_id().as_str())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        ["compose.yaml", "compose.override.yaml"]
+    );
+}
+
+fn assert_core_restart_policy(service: &Service) {
+    assert!(matches!(
+        service.restart_policy().map(boxferry_model::Sourced::value),
+        Some(RestartPolicy::OnFailure {
+            maximum_retries: Some(maximum_retries),
+        }) if maximum_retries.get() == 3
+    ));
+    assert_eq!(
+        service
+            .restart_policy()
+            .map(|restart| {
+                restart
+                    .origins()
+                    .iter()
+                    .map(|origin| origin.source_id().as_str())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        ["compose.yaml", "compose.override.yaml"]
+    );
 }
 
 fn assert_core_execution_context(service: &Service) {
