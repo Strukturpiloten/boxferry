@@ -10,11 +10,11 @@ mod provenance;
 mod value;
 
 pub use application::{
-    Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
-    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
-    MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, Protocol, ResourceGrant,
-    ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, ServiceGroup, Volume,
+    Application, Command, Config, ConfigMaterial, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
+    EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries,
+    HostAddress, HostAddressKind, HostMapping, Identifier, MetadataLabel, ModelError, Mount, MountSource, Network,
+    NetworkAttachment, Port, Protocol, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret,
+    SecretMaterial, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, Volume,
 };
 pub use image::ImageReference;
 pub use provenance::{Provenance, ProvenanceKind, SourceId, SourceSpan, Sourced};

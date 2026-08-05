@@ -281,6 +281,32 @@ boundary for pre-existing external Podman secrets.
   unresolved `${RESTART_POLICY}` values explicitly invalid until caller-supplied processing
   context exists.
 
+## Explicit Compose interpolation inputs — completed
+
+- [x] Keep interpolation disabled by default and preserve the no-ambient-access CLI contract.
+- [x] Add opt-in per-file ComposeLens interpolation before merge through `--interpolate`.
+- [x] Accept repeatable non-sensitive `--variable NAME=VALUE` values without reading the process
+  environment.
+- [x] Read only individually authorized `--variable-from-environment NAME` values and mark them
+  sensitive before interpolation.
+- [x] Reject invalid names, missing/non-Unicode authorized values, and duplicate sources without
+  implicit precedence or output creation.
+- [x] Add an authored fixture and black-box tests proving defaults ignore unauthorized ambient
+  values, sensitive named input reaches exact output, and interpolation never occurs without
+  opt-in.
+- [x] Prepare ComposeLens 0.1.12's reviewed native service `env_file` declarations, including
+  short/long forms, merge order, nested provenance, required flags, raw-format classification,
+  malformed recovery, and sensitive interpolation redaction without file I/O.
+- [x] Release ComposeLens 0.1.12, update the crates.io dependency, and add a neutral
+  environment-file declaration model before mapping supported semantics to Quadlet
+  `EnvironmentFile=`.
+- [x] Preserve short/long declaration syntax, order, `required`, `format`, sensitivity, and nested
+  provenance without reading referenced files; resolve safe relative paths only from an explicit
+  project root, emit required files as capability-checked `EnvironmentFile=`, classify parser
+  parity as `BFQ0010` approximate, and report optional files or unsafe paths explicitly.
+- [ ] Define separate caller-authorized project `.env` and environment-file content processing;
+  declaration conversion must not imply file reads or silently merge file contents.
+
 ## Phase 4: Kubernetes — open
 
 - [ ] Read and write core Kubernetes resources.

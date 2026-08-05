@@ -98,6 +98,182 @@ fn cli_blocks_partial_output_before_creating_the_directory() -> Result<(), Box<d
     Ok(())
 }
 
+#[test]
+fn cli_interpolates_only_explicitly_authorized_values() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-interpolation");
+    let output = TemporaryOutput::new("interpolation");
+    let compose = fixture.join("compose.yaml");
+    let result = boxferry_command()
+        .env("TOKEN", "explicit-secret")
+        .env("UNAUTHORIZED", "ambient-secret-must-not-be-used")
+        .args([
+            "compose-to-quadlet",
+            "--file",
+            path_text(&compose)?,
+            "--project-name",
+            "interpolation",
+            "--interpolate",
+            "--variable",
+            "TAG=2.1",
+            "--variable-from-environment",
+            "TOKEN",
+            "--podman-maximum-version",
+            "6.0.2",
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(
+        fs::read(output.path().join("app.container"))?,
+        fs::read(fixture.join("app.container"))?
+    );
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("ambient-secret-must-not-be-used"));
+    Ok(())
+}
+
+#[test]
+fn cli_never_interpolates_ambient_values_without_opt_in() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-interpolation");
+    let output = TemporaryOutput::new("no-ambient-interpolation");
+    let compose = fixture.join("compose.yaml");
+    let result = boxferry_command()
+        .env("TAG", "ambient-tag-must-not-be-used")
+        .env("TOKEN", "ambient-token-must-not-be-used")
+        .env("RESTART_POLICY", "always")
+        .args([
+            "compose-to-quadlet",
+            "--file",
+            path_text(&compose)?,
+            "--project-name",
+            "interpolation",
+            "--podman-maximum-version",
+            "6.0.2",
+            "--loss-policy",
+            "partial",
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!stderr.contains("ambient-tag-must-not-be-used"));
+    assert!(!stderr.contains("ambient-token-must-not-be-used"));
+    assert!(!output.path().exists());
+    Ok(())
+}
+
+#[test]
+fn cli_fails_closed_when_an_authorized_process_variable_is_missing() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-interpolation");
+    let output = TemporaryOutput::new("missing-interpolation-variable");
+    let compose = fixture.join("compose.yaml");
+    let variable = "BOXFERRY_TEST_MISSING_INTERPOLATION_VALUE";
+    let result = boxferry_command()
+        .env_remove(variable)
+        .args([
+            "compose-to-quadlet",
+            "--file",
+            path_text(&compose)?,
+            "--project-name",
+            "interpolation",
+            "--interpolate",
+            "--variable",
+            "TAG=2.1",
+            "--variable-from-environment",
+            variable,
+            "--podman-maximum-version",
+            "6.0.2",
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains(variable));
+    assert!(!output.path().exists());
+    Ok(())
+}
+
+#[test]
+fn cli_rejects_duplicate_interpolation_sources() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-interpolation");
+    let output = TemporaryOutput::new("duplicate-interpolation-variable");
+    let compose = fixture.join("compose.yaml");
+    let result = boxferry_command()
+        .env("TAG", "ignored")
+        .args([
+            "compose-to-quadlet",
+            "--file",
+            path_text(&compose)?,
+            "--project-name",
+            "interpolation",
+            "--interpolate",
+            "--variable",
+            "TAG=2.1",
+            "--variable-from-environment",
+            "TAG",
+            "--podman-maximum-version",
+            "6.0.2",
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("`TAG` was supplied more than once"));
+    assert!(!output.path().exists());
+    Ok(())
+}
+
+#[test]
+fn cli_converts_environment_file_declarations_without_reading_missing_files() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("environment-file-project");
+    let output = TemporaryOutput::new("environment-file-output");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    fs::write(
+        &compose,
+        concat!(
+            "services:\n",
+            "  web:\n",
+            "    image: example.invalid/web:1\n",
+            "    env_file:\n",
+            "      - ./missing-but-declared.env\n",
+        ),
+    )?;
+
+    let result = boxferry_command()
+        .args([
+            "compose-to-quadlet",
+            "--file",
+            path_text(&compose)?,
+            "--project-name",
+            "environment-files",
+            "--podman-maximum-version",
+            "6.0.2",
+            "--loss-policy",
+            "approximate",
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let container = fs::read_to_string(output.path().join("web.container"))?;
+    assert_eq!(
+        container,
+        format!(
+            "[Container]\nImage=example.invalid/web:1\nEnvironmentFile={}/missing-but-declared.env\n",
+            path_text(project.path())?,
+        )
+    );
+    assert!(!project.path().join("missing-but-declared.env").exists());
+    Ok(())
+}
+
 fn boxferry_command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_boxferry"))
 }

@@ -20,6 +20,7 @@ const OVERRIDE_SOURCE_ID: u32 = 92;
 const POD_SOURCE_ID: u32 = 93;
 const DEPENDENCY_SOURCE_ID: u32 = 94;
 const SECRET_SOURCE_ID: u32 = 95;
+const ENVIRONMENT_FILE_SOURCE_ID: u32 = 96;
 
 #[test]
 fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(), Box<dyn Error>> {
@@ -358,6 +359,84 @@ fn converts_external_secrets_and_reports_materialization_actions() -> Result<(),
                 .any(|outcome| { outcome.subject() == subject && outcome.kind() == ConversionKind::Exact })
         );
     }
+    Ok(())
+}
+
+#[test]
+fn converts_compose_environment_files_without_implicitly_reading_them() -> Result<(), Box<dyn Error>> {
+    let compose = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    environment:\n",
+        "      APP_ENV: production\n",
+        "    env_file:\n",
+        "      - ./base.env\n",
+        "      - path: config/raw.env\n",
+        "        required: true\n",
+        "        format: raw\n",
+    );
+    let compose_id = ComposeSourceId::new(ENVIRONMENT_FILE_SOURCE_ID);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        compose_id,
+        DocumentOrigin::new("compose.yaml", "/srv/project"),
+        compose,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    if !merged.is_valid() {
+        return Err(format!("merge diagnostics: {:#?}", merged.diagnostics()).into());
+    }
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("environment-files")?,
+    )?
+    .with_source_id(compose_id, SourceId::new("compose.yaml")?);
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+    let exporter = QuadletExporter::new()?.with_relative_host_path_root("/srv/project")?;
+
+    let strict = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &exporter,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    assert!(strict.is_blocked());
+    let approximate = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &exporter,
+        &target,
+        LossPolicy::AllowApproximate,
+    )?;
+    assert_eq!(
+        approximate
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry::QuadletFile::text),
+        Some(concat!(
+            "[Container]\n",
+            "Image=example.invalid/web:1\n",
+            "Environment=APP_ENV=production\n",
+            "EnvironmentFile=/srv/project/base.env\n",
+            "EnvironmentFile=/srv/project/config/raw.env\n",
+        ))
+    );
+    assert_eq!(
+        approximate
+            .outcomes()
+            .iter()
+            .filter(|outcome| {
+                outcome.kind() == ConversionKind::Approximate
+                    && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0010")
+            })
+            .count(),
+        2
+    );
     Ok(())
 }
 

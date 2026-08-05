@@ -242,14 +242,14 @@ impl<'a> Mapping<'a> {
         for config in self.application.configs() {
             self.unsupported(
                 &format!("configs.{}", config.value().name().as_str()),
-                "ComposeLens 0.1.11 generation does not yet expose top-level config definitions",
+                "ComposeLens 0.1.12 generation does not yet expose top-level config definitions",
                 config.origins(),
             );
         }
         for secret in self.application.secrets() {
             self.unsupported(
                 &format!("secrets.{}", secret.value().name().as_str()),
-                "ComposeLens 0.1.11 generation does not yet expose top-level secret definitions",
+                "ComposeLens 0.1.12 generation does not yet expose top-level secret definitions",
                 secret.origins(),
             );
         }
@@ -672,31 +672,38 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_unimplemented_service_fields(&mut self, service: &Service, service_subject: &str) {
+        for (index, environment_file) in service.environment_files().iter().enumerate() {
+            self.unsupported(
+                &format!("{service_subject}.environment_files[{index}]"),
+                "ComposeLens 0.1.12 generation does not yet expose service environment files",
+                environment_file.origins(),
+            );
+        }
         if let Some(healthcheck) = service.healthcheck() {
             self.unsupported(
                 &format!("{service_subject}.healthcheck"),
-                "ComposeLens 0.1.11 generation does not yet expose health-check fields",
+                "ComposeLens 0.1.12 generation does not yet expose health-check fields",
                 healthcheck.origins(),
             );
         }
         for (index, dependency) in service.dependencies().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.dependencies[{index}]"),
-                "ComposeLens 0.1.11 generation does not yet expose service dependencies",
+                "ComposeLens 0.1.12 generation does not yet expose service dependencies",
                 dependency.origins(),
             );
         }
         for (index, grant) in service.config_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.config_grants[{index}]"),
-                "ComposeLens 0.1.11 generation does not yet expose service config grants",
+                "ComposeLens 0.1.12 generation does not yet expose service config grants",
                 grant.origins(),
             );
         }
         for (index, grant) in service.secret_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.secret_grants[{index}]"),
-                "ComposeLens 0.1.11 generation does not yet expose service secret grants",
+                "ComposeLens 0.1.12 generation does not yet expose service secret grants",
                 grant.origins(),
             );
         }

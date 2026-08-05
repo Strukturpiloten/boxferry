@@ -11,9 +11,10 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, Config, EnvironmentValue, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping,
-    Mount, MountSource, NetworkAttachment, Port, Protocol, Provenance, ResourceGrant, ResourceOwnership, RestartPolicy,
-    Secret, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, Sourced,
+    Application, Command, Config, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, Healthcheck,
+    HealthcheckCommand, HostAddressKind, HostMapping, Mount, MountSource, NetworkAttachment, Port, Protocol,
+    Provenance, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SelinuxRelabel, Service, ServiceDependency,
+    ServiceDependencyCondition, Sourced,
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
@@ -76,6 +77,7 @@ impl QuadletExporter {
                 grouping: DiagnosticCode::new("BFQ0007")?,
                 dependency: DiagnosticCode::new("BFQ0008")?,
                 restart: DiagnosticCode::new("BFQ0009")?,
+                environment_file: DiagnosticCode::new("BFQ0010")?,
             },
             relative_bind_root: None,
             bind_source_mappings: BTreeMap::new(),
@@ -107,10 +109,29 @@ impl QuadletExporter {
         Ok(self)
     }
 
+    /// Resolves Compose-relative host paths against an explicit absolute project root.
+    ///
+    /// This is the general form of [`Self::with_relative_bind_root`]. It applies to bind sources
+    /// and environment-file declarations. Resolution is lexical and performs no filesystem access.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QuadletExporterError::InvalidRelativeBindRoot`] when the root is not an absolute,
+    /// safely encodable POSIX path or lexically traverses above `/`.
+    pub fn with_relative_host_path_root(self, root: impl Into<String>) -> Result<Self, QuadletExporterError> {
+        self.with_relative_bind_root(root)
+    }
+
     /// Returns the normalized caller-selected Compose project root, when configured.
     #[must_use]
     pub fn relative_bind_root(&self) -> Option<&str> {
         self.relative_bind_root.as_deref()
+    }
+
+    /// Returns the normalized caller-selected Compose project root, when configured.
+    #[must_use]
+    pub fn relative_host_path_root(&self) -> Option<&str> {
+        self.relative_bind_root()
     }
 
     /// Adds one explicit authored bind-source to target-path mapping.
@@ -275,6 +296,7 @@ struct Codes {
     grouping: DiagnosticCode,
     dependency: DiagnosticCode,
     restart: DiagnosticCode,
+    environment_file: DiagnosticCode,
 }
 
 struct Mapping<'a> {
@@ -958,6 +980,9 @@ impl<'a> Mapping<'a> {
         self.map_healthy_readiness(service, &mut builder);
         for environment in service.value().environment() {
             self.map_environment(&subject, environment, &mut builder);
+        }
+        for (index, environment_file) in service.value().environment_files().iter().enumerate() {
+            self.map_environment_file(&subject, index, environment_file, &mut builder);
         }
         self.map_metadata_labels(&subject, service.value(), &mut builder);
         for (index, grant) in service.value().config_grants().iter().enumerate() {
@@ -1776,6 +1801,67 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn map_environment_file(
+        &mut self,
+        service_subject: &str,
+        index: usize,
+        environment_file: &Sourced<EnvironmentFile>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.env_file[{index}]");
+        let origins = environment_file_origins(environment_file);
+        if !environment_file.value().is_required() {
+            self.unsupported(
+                &subject,
+                "Quadlet EnvironmentFile has no documented Compose-compatible optional-file setting",
+                &origins,
+            );
+            return;
+        }
+
+        let authored_path = environment_file.value().path().expose();
+        let path = match classify_path(authored_path) {
+            PathForm::AbsoluteLiteral => normalize_absolute_path(authored_path),
+            PathForm::UnitRelativeLiteral | PathForm::RelativeLiteral
+                if is_safe_mount_part(authored_path) && !authored_path.starts_with('~') =>
+            {
+                self.exporter
+                    .relative_bind_root
+                    .as_deref()
+                    .and_then(|root| resolve_relative_path(root, authored_path))
+            }
+            _ => None,
+        };
+        let Some(path) = path else {
+            let reason = match classify_path(authored_path) {
+                PathForm::UnitRelativeLiteral | PathForm::RelativeLiteral
+                    if self.exporter.relative_bind_root.is_none() =>
+                {
+                    "relative environment-file path needs an explicit Compose project root"
+                }
+                PathForm::SystemdSpecifier => {
+                    "Compose environment-file paths cannot acquire systemd specifier semantics implicitly"
+                }
+                _ => "environment-file path is not a safely encodable POSIX path",
+            };
+            self.unsupported(&subject, reason, &origins);
+            return;
+        };
+
+        if self.capability("quadlet.container.environment-file", &subject, &origins)
+            && self.push_container(builder, ContainerKey::EnvironmentFile, path, &subject, &origins)
+        {
+            let reason = match environment_file.value().format().map(Sourced::value) {
+                Some(EnvironmentFileFormat::Raw) => {
+                    "Compose raw env-file parsing has no explicit Quadlet selector; Podman parser parity is not yet proven"
+                }
+                Some(_) => "the requested env-file parser mode has no proven Quadlet equivalent",
+                None => "Compose default env-file parsing and Podman env-file parsing are not yet proven equivalent",
+            };
+            self.environment_file_approximation(&subject, reason, &origins);
+        }
+    }
+
     fn map_container_host_mapping(
         &mut self,
         service_subject: &str,
@@ -2329,6 +2415,17 @@ impl<'a> Mapping<'a> {
         );
     }
 
+    fn environment_file_approximation(&mut self, subject: &str, reason: &str, origins: &[Provenance]) {
+        self.loss(
+            self.exporter.codes.environment_file.clone(),
+            subject,
+            ConversionKind::Approximate,
+            "environment-file parsing is delegated to Podman",
+            reason,
+            origins,
+        );
+    }
+
     fn invalid(&mut self, code: DiagnosticCode, subject: &str, summary: &str, reason: &str, origins: &[Provenance]) {
         self.loss(code, subject, ConversionKind::Invalid, summary, reason, origins);
     }
@@ -2530,6 +2627,23 @@ fn secret_grant_origins(grant: &Sourced<ResourceGrant>, secret: &Sourced<Secret>
     for origin in secret.origins() {
         if !origins.contains(origin) {
             origins.push(origin.clone());
+        }
+    }
+    origins
+}
+
+fn environment_file_origins(environment_file: &Sourced<EnvironmentFile>) -> Vec<Provenance> {
+    let mut origins = environment_file.origins().to_vec();
+    for sourced in [
+        environment_file.value().required().map(Sourced::origins),
+        environment_file.value().format().map(Sourced::origins),
+    ]
+    .into_iter()
+    .flatten()
+    .flatten()
+    {
+        if !origins.contains(sourced) {
+            origins.push(sourced.clone());
         }
     }
     origins

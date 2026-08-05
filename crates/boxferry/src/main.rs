@@ -1,15 +1,19 @@
 //! Command-line interface for `BoxFerry`.
 
 use std::{
+    collections::BTreeSet,
+    env,
     error::Error,
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     process::ExitCode,
+    str::FromStr,
 };
 
 use boxferry::compose::compose_lens::{
     diagnostic::Diagnostic as ComposeDiagnostic,
+    interpolation::MapEnvironment,
     loader::{DocumentInput, DocumentOrigin, LoadedProject},
     merge::merge_project,
     profiles::{ProfileRequest, select_profiles},
@@ -51,6 +55,23 @@ struct ComposeToQuadlet {
     /// Activate every valid profile declared by the project.
     #[arg(long)]
     all_profiles: bool,
+
+    /// Resolve Compose interpolation using only explicitly supplied variables and defaults.
+    #[arg(long)]
+    interpolate: bool,
+
+    /// Supply one non-sensitive interpolation variable as NAME=VALUE; repeat as needed.
+    #[arg(long = "variable", value_name = "NAME=VALUE", requires = "interpolate")]
+    variables: Vec<VariableAssignment>,
+
+    /// Read one explicitly named process variable as sensitive interpolation input; repeat as needed.
+    #[arg(
+        long = "variable-from-environment",
+        value_name = "NAME",
+        requires = "interpolate",
+        value_parser = parse_variable_name
+    )]
+    environment_variables: Vec<String>,
 
     /// Compatibility floor for generated Quadlet files.
     #[arg(long, default_value = "5.4.0")]
@@ -94,6 +115,26 @@ impl From<CliLossPolicy> for LossPolicy {
 enum Grouping {
     Separate,
     Pod,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VariableAssignment {
+    name: String,
+    value: String,
+}
+
+impl FromStr for VariableAssignment {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (name, value) = value
+            .split_once('=')
+            .ok_or_else(|| "interpolation variable must use NAME=VALUE form".to_owned())?;
+        Ok(Self {
+            name: parse_variable_name(name)?,
+            value: value.to_owned(),
+        })
+    }
 }
 
 impl From<Grouping> for QuadletGroupingPolicy {
@@ -140,7 +181,11 @@ fn convert_compose_to_quadlet(arguments: ComposeToQuadlet) -> Result<ExitCode, B
     }
 
     let loaded = LoadedProject::load(inputs)?;
-    let merged = merge_project(&loaded, None);
+    let interpolation_environment = interpolation_environment(&arguments)?;
+    let interpolation = interpolation_environment
+        .as_ref()
+        .map(|environment| loaded.interpolate(environment));
+    let merged = merge_project(&loaded, interpolation.as_ref());
     if !merged.is_valid() {
         print_compose_diagnostics(merged.diagnostics());
         return Ok(ExitCode::from(2));
@@ -164,7 +209,7 @@ fn convert_compose_to_quadlet(arguments: ComposeToQuadlet) -> Result<ExitCode, B
 
     let importer = ComposeImporter::new()?;
     let exporter = QuadletExporter::new()?
-        .with_relative_bind_root(project_root.to_string_lossy().into_owned())?
+        .with_relative_host_path_root(project_root.to_string_lossy().into_owned())?
         .with_grouping_policy(arguments.grouping.into());
     let target = TargetProfile::new(
         "podman",
@@ -183,6 +228,63 @@ fn convert_compose_to_quadlet(arguments: ComposeToQuadlet) -> Result<ExitCode, B
         println!("{}", arguments.output_directory.join(file.name().as_str()).display());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn interpolation_environment(arguments: &ComposeToQuadlet) -> Result<Option<MapEnvironment>, Box<dyn Error>> {
+    if !arguments.interpolate {
+        return Ok(None);
+    }
+
+    let mut names = BTreeSet::new();
+    let mut environment = MapEnvironment::new();
+    for variable in &arguments.variables {
+        register_variable_name(&mut names, &variable.name)?;
+        let _ = environment.insert(variable.name.clone(), variable.value.clone());
+    }
+    for name in &arguments.environment_variables {
+        register_variable_name(&mut names, name)?;
+        let value = env::var(name).map_err(|error| match error {
+            env::VarError::NotPresent => io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("authorized interpolation variable `{name}` is not present in the process environment"),
+            ),
+            env::VarError::NotUnicode(_) => io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("authorized interpolation variable `{name}` is not valid Unicode"),
+            ),
+        })?;
+        let _ = environment.insert_sensitive(name.clone(), value);
+    }
+    Ok(Some(environment))
+}
+
+fn register_variable_name(names: &mut BTreeSet<String>, name: &str) -> io::Result<()> {
+    if names.insert(name.to_owned()) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("interpolation variable `{name}` was supplied more than once"),
+        ))
+    }
+}
+
+fn parse_variable_name(value: &str) -> Result<String, String> {
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else {
+        return Err("interpolation variable name must not be empty".to_owned());
+    };
+    if first != b'_' && !first.is_ascii_alphabetic() {
+        return Err(format!(
+            "interpolation variable name `{value}` must start with an ASCII letter or underscore"
+        ));
+    }
+    if !bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric()) {
+        return Err(format!(
+            "interpolation variable name `{value}` may contain only ASCII letters, digits, and underscores"
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 fn profile_request(arguments: &ComposeToQuadlet) -> ProfileRequest {

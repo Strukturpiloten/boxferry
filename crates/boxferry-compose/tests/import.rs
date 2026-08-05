@@ -5,9 +5,9 @@ use std::{error::Error, fs, path::PathBuf};
 use boxferry_compose::{ComposeImporter, ComposeSource};
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
-    Command, ConfigMaterial, EnvironmentValue, HealthcheckCommand, HostAddressKind, Identifier, MountSource, Protocol,
-    ResourceGrantSyntax, ResourceOwnership, RestartPolicy, SecretMaterial, SelinuxRelabel, Service,
-    ServiceDependencyCondition, SourceId,
+    Command, ConfigMaterial, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand,
+    HostAddressKind, Identifier, MountSource, Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy,
+    SecretMaterial, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
 };
 use compose_lens::{
     interpolation::MapEnvironment,
@@ -149,6 +149,60 @@ fn imports_mapping_extra_hosts_without_requiring_ip_only_values() -> Result<(), 
     assert_eq!(mappings[0].value().address().kind(), HostAddressKind::Ipv4);
     assert_eq!(mappings[1].value().address().kind(), HostAddressKind::HostGateway);
     assert!(mappings.iter().all(|mapping| !mapping.origins().is_empty()));
+    Ok(())
+}
+
+#[test]
+fn imports_ordered_environment_file_declarations_without_reading_them() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    env_file:\n",
+        "      - ./base.env\n",
+        "      - path: config/production.env\n",
+        "        required: true\n",
+        "      - path: ./raw.env\n",
+        "        format: raw\n",
+    );
+    let compose_source_id = ComposeSourceId::new(84);
+    let project = merged_project([(compose_source_id, "environment-files.compose.yaml", text)])?;
+    let source = ComposeSource::new(project, Identifier::new("environment-files")?)?
+        .with_source_id(compose_source_id, SourceId::new("environment-files.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let files = result
+        .application()
+        .and_then(|application| application.services().first())
+        .map(|service| service.value().environment_files())
+        .ok_or("environment files expected")?;
+    assert_eq!(files.len(), 3);
+    assert_eq!(files[0].value().path().expose(), "./base.env");
+    assert_eq!(files[0].value().syntax(), EnvironmentFileSyntax::Short);
+    assert!(files[0].value().required().is_none());
+    assert_eq!(files[1].value().syntax(), EnvironmentFileSyntax::Long);
+    assert_eq!(
+        files[1].value().required().map(boxferry_model::Sourced::value),
+        Some(&true)
+    );
+    assert!(matches!(
+        files[2].value().format().map(boxferry_model::Sourced::value),
+        Some(EnvironmentFileFormat::Raw)
+    ));
+    assert!(files.iter().all(|file| !file.origins().is_empty()));
+    assert!(
+        files[1]
+            .value()
+            .required()
+            .is_some_and(|required| !required.origins().is_empty())
+    );
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
     Ok(())
 }
 

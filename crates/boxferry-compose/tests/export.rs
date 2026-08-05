@@ -5,10 +5,10 @@ use std::error::Error;
 use boxferry_compose::{ComposeExporter, ComposeRuntime, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET};
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, TargetProfile};
 use boxferry_model::{
-    Application, Command, Config, EnvironmentValue, EnvironmentVariable, Healthcheck, HostAddress, HostMapping,
-    Identifier, ImageReference, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString,
-    Protocol, Provenance, ResourceOwnership, RestartPolicy, Secret, SelinuxRelabel, Service, ServiceGroup, SourceId,
-    Sourced, Volume,
+    Application, Command, Config, EnvironmentFile, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable,
+    Healthcheck, HostAddress, HostMapping, Identifier, ImageReference, MetadataLabel, Mount, MountSource, Network,
+    NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceOwnership, RestartPolicy, Secret,
+    SelinuxRelabel, Service, ServiceGroup, SourceId, Sourced, Volume,
 };
 
 #[test]
@@ -314,6 +314,10 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
         Identifier::new("ABSENT")?,
         EnvironmentValue::Unset,
     )));
+    service.add_environment_file(Sourced::generated(EnvironmentFile::new(
+        ProtectedString::plain("./application.env"),
+        EnvironmentFileSyntax::Short,
+    )?));
 
     let mut application = Application::new(Identifier::new("partial")?);
     application.add_service(Sourced::generated(service))?;
@@ -337,6 +341,7 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
         "secrets.token",
         "service_groups.observed-pod",
         "services.web.environment.ABSENT",
+        "services.web.environment_files[0]",
         "services.web.healthcheck",
     ] {
         assert!(plan.outcomes().iter().any(|outcome| {

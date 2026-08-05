@@ -69,11 +69,14 @@ Minimal offline tests cover every supported policy plus unresolved, explicit-zer
 out-of-range retry limits; the public golden test additionally proves exact `restart: "no"` to
 Quadlet `Restart=no` conversion with provenance and real Podman 6.0.2 generator acceptance.
 
-The first implementation priority derived from the corpus is not one of the exotic stress-case
-features. It is explicit Compose processing context: interpolation values and `env_file` inputs
-must come from caller-authorized files or values, never implicitly from BoxFerry's ambient process.
-Without that boundary, most real deployment files remain deferred even when their container
-semantics are otherwise supported.
+The first processing-context slice derived from the corpus is implemented in the CLI. Compose
+interpolation is opt-in, begins with an empty environment, and accepts only plain literal values or
+individually authorized sensitive process variables. BoxFerry does not read other ambient values
+or an implicit `.env` file. ComposeLens 0.1.12 and BoxFerry now retain service `env_file`
+declarations without reading them and can generate required safe paths as approximate Quadlet
+`EnvironmentFile=` entries. Real deployment execution still needs the separate caller-authorized
+file-content boundary and parser conformance evidence. The corpus itself deliberately supplies no
+environment, so its counts continue to measure environment-independent ingestion.
 
 ## Current compatibility reading
 
@@ -93,7 +96,8 @@ The corpus exercises these already usable paths:
 
 The corpus also makes the remaining work concrete:
 
-1. caller-supplied Compose interpolation and `env_file` processing;
+1. caller-authorized `.env` and service `env_file` content processing plus Podman parser
+   conformance; declaration conversion and explicit literal/named-process interpolation are complete;
 2. entrypoint and shell-command semantics;
 3. hostname/domain/DNS, exposed ports, `tmpfs`, and shared-memory sizing;
 4. CPU, memory, PID and `ulimits` resource policy;

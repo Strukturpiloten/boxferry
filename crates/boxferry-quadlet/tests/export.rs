@@ -4,11 +4,12 @@ use std::{error::Error, num::NonZeroU64};
 
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
 use boxferry_model::{
-    Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
-    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
-    MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance,
-    ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel,
-    Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
+    Application, Command, Config, ConfigMaterial, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
+    EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries,
+    HostAddress, HostMapping, Identifier, ImageReference, MetadataLabel, Mount, MountSource, Network,
+    NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant, ResourceGrantSyntax,
+    ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
+    ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
 };
 use boxferry_quadlet::{QuadletExporter, QuadletGroupingPolicy};
 
@@ -1024,6 +1025,105 @@ fn resolves_relative_binds_against_explicit_caller_context() -> Result<(), Box<d
         QuadletExporter::new()?
             .with_relative_bind_root("/../../escape")
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn emits_ordered_environment_files_only_after_approximation_authorization() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("environment-files")?);
+    let mut service = image_service("web")?;
+    service.add_environment(sourced(EnvironmentVariable::new(
+        id("APP_ENV")?,
+        EnvironmentValue::Literal(ProtectedString::plain("production")),
+    ))?);
+    service.add_environment_file(sourced(EnvironmentFile::new(
+        ProtectedString::plain("./base.env"),
+        EnvironmentFileSyntax::Short,
+    )?)?);
+    let mut raw = EnvironmentFile::new(ProtectedString::plain("config/raw.env"), EnvironmentFileSyntax::Long)?;
+    raw.set_required(sourced(true)?);
+    raw.set_format(sourced(EnvironmentFileFormat::Raw)?);
+    service.add_environment_file(sourced(raw)?);
+    service.add_environment_file(sourced(EnvironmentFile::new(
+        ProtectedString::plain("/etc/example/final.env"),
+        EnvironmentFileSyntax::Short,
+    )?)?);
+    application.add_service(sourced(service)?)?;
+
+    let exporter = QuadletExporter::new()?.with_relative_host_path_root("/srv/project/./")?;
+    assert_eq!(exporter.relative_host_path_root(), Some("/srv/project"));
+    assert_eq!(exporter.relative_bind_root(), Some("/srv/project"));
+    let plan = exporter.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(
+        plan.diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code().as_str() == "BFQ0010")
+    );
+    assert_eq!(
+        plan.outcomes()
+            .iter()
+            .filter(|outcome| outcome.kind() == ConversionKind::Approximate)
+            .count(),
+        3
+    );
+    assert!(
+        plan.outcomes()
+            .iter()
+            .filter(|outcome| outcome.kind() == ConversionKind::Approximate)
+            .all(|outcome| outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0010"))
+    );
+    assert!(plan.clone().authorize(LossPolicy::ExactOnly).is_blocked());
+    let output = plan.authorize(LossPolicy::AllowApproximate);
+    assert_eq!(
+        output
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Container]\n",
+            "Image=example.invalid/web:1\n",
+            "Environment=APP_ENV=production\n",
+            "EnvironmentFile=/srv/project/base.env\n",
+            "EnvironmentFile=/srv/project/config/raw.env\n",
+            "EnvironmentFile=/etc/example/final.env\n",
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn keeps_optional_and_unresolved_environment_file_paths_explicitly_unsupported() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("environment-files")?);
+    let mut service = image_service("web")?;
+    let mut optional = EnvironmentFile::new(ProtectedString::plain("./optional.env"), EnvironmentFileSyntax::Long)?;
+    optional.set_required(sourced(false)?);
+    service.add_environment_file(sourced(optional)?);
+    service.add_environment_file(sourced(EnvironmentFile::new(
+        ProtectedString::plain("relative.env"),
+        EnvironmentFileSyntax::Short,
+    )?)?);
+    service.add_environment_file(sourced(EnvironmentFile::new(
+        ProtectedString::plain("%h/private.env"),
+        EnvironmentFileSyntax::Short,
+    )?)?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert_eq!(
+        plan.outcomes()
+            .iter()
+            .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
+            .count(),
+        3
+    );
+    assert!(plan.clone().authorize(LossPolicy::AllowApproximate).is_blocked());
+    assert_eq!(
+        plan.authorize(LossPolicy::AllowPartial)
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry_quadlet::QuadletFile::text),
+        Some("[Container]\nImage=example.invalid/web:1\n")
     );
     Ok(())
 }

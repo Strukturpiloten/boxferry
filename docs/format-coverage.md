@@ -38,10 +38,12 @@ field as a policy-controlled unsupported outcome.
 | Runtime container name | `container_name` | `end to end` | The name remains distinct from the service key and emits as capability-checked `ContainerName=`. Compose and Podman target grammars are validated independently; invalid values block output. |
 | Command | `command` | `partial` | Safe exec-form arguments emit `Exec=`; shell form, clearing, and values needing target quoting are reported. |
 | Environment | `environment` | `partial` | Literal safe values emit `Environment=`; host lookup, unset intent, and values needing target encoding are reported. |
+| Environment files | `env_file` | `partial` | ComposeLens 0.1.12 imports ordered short/long declarations with `required`, `format`, sensitivity, and provenance without reading files. Required safe absolute paths and relative paths resolved from an explicit project root emit repeatable capability-checked Quadlet `EnvironmentFile=` entries. Output is `BFQ0010` approximate until Compose-default and `raw` parser parity with Podman is proven. Optional files, systemd-specifier ambiguity, and unsafe paths are reported instead of guessed. |
 | Host mappings | `extra_hosts` | `end to end` | Sequence/mapping syntax, IPv4, IPv6, and `host-gateway` reach container or compatible pod `AddHost=` entries. |
 | Published ports | `ports` | `partial` | Single numeric publications are supported; ranges, deferred values, unsupported host-address forms, and target-only options are reported. |
 | Storage | `volumes` plus top-level `volumes` | `partial` | Named, bind, and anonymous mounts cover the first slice, including short-syntax SELinux relabel intent; other mount types/options are reported. |
 | Networking | `networks` plus top-level `networks` | `partial` | Named attachments and ownership are represented; aliases and advanced attachment/definition options are reported. |
+| Project interpolation | `${NAME}` and supported operators | `not applicable` | The CLI leaves interpolation disabled by default. `--interpolate` evaluates per-file overlays from an empty environment plus repeatable plain `--variable NAME=VALUE` and individually authorized sensitive `--variable-from-environment NAME` inputs. No implicit process or `.env` lookup occurs. Embedded callers use the same explicit ComposeLens overlay before constructing `ComposeSource`. |
 | Profile selection | `profiles` | `not applicable` | The caller must explicitly select profiles before import; profiles do not become Quadlet fields. |
 | Health checks | `healthcheck` | `partial` | `CMD`, `CMD-SHELL`, `NONE`/`disable`, interval, timeout, retries, and start period are source-aware and version-checked end to end. Compose `start_interval`, deferred/invalid scalars, conflicting disable/command intent, and systemd-percent-bearing commands produce explicit non-exact outcomes. |
 | Dependencies | `depends_on` | `partial` | Ordered required/optional `service_started` edges map to `Requires`/`Wants` plus `After`. `service_healthy` also maps through `Notify=healthy` when the target has an explicit encodable health command. Restart propagation, successful completion, provider-specific conditions, absent optional services, missing required services, and cycles produce explicit unsupported or invalid outcomes. |
@@ -108,7 +110,7 @@ with independent `BFD` diagnostics and additionally reports the lost entrypoint/
 
 The Compose export path covers the same supported effective subset for images, commands,
 environment, explicit runtime names, service labels, identity/context, container restart policies,
-ports, mounts, networks, and volumes. It uses ComposeLens 0.1.11's
+ports, mounts, networks, and volumes. It uses ComposeLens 0.1.12's
 deterministic generated-document boundary and requires an exact Docker Compose or
 `podman-compose` provider version; the optional exact Docker Engine or Podman backend remains a
 separate input. Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,

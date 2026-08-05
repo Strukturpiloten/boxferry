@@ -718,6 +718,94 @@ pub struct EnvironmentVariable {
     value: EnvironmentValue,
 }
 
+/// Authored syntax family retained for an environment-file declaration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum EnvironmentFileSyntax {
+    /// Path-only short syntax with source-format defaults.
+    Short,
+    /// Mapping-based syntax with separately authored options.
+    Long,
+}
+
+/// Explicit parsing mode requested for an environment file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum EnvironmentFileFormat {
+    /// Preserve values without interpolation or quote processing when the source supports it.
+    Raw,
+}
+
+/// One ordered environment-file declaration.
+///
+/// This value describes source intent only. Importing it never reads the referenced file. A
+/// caller that wants to materialize environment values must cross a separate filesystem-access
+/// boundary and apply the source implementation's parsing rules explicitly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnvironmentFile {
+    path: ProtectedString,
+    syntax: EnvironmentFileSyntax,
+    required: Option<Sourced<bool>>,
+    format: Option<Sourced<EnvironmentFileFormat>>,
+}
+
+impl EnvironmentFile {
+    /// Creates an environment-file declaration with a non-empty path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::EmptyValue`] or [`ModelError::ContainsNul`].
+    pub fn new(path: ProtectedString, syntax: EnvironmentFileSyntax) -> Result<Self, ModelError> {
+        validate_text("environment-file path", path.expose())?;
+        Ok(Self {
+            path,
+            syntax,
+            required: None,
+            format: None,
+        })
+    }
+
+    /// Returns the source-authored path without resolving or reading it.
+    #[must_use]
+    pub const fn path(&self) -> &ProtectedString {
+        &self.path
+    }
+
+    /// Returns the authored short/long syntax family.
+    #[must_use]
+    pub const fn syntax(&self) -> EnvironmentFileSyntax {
+        self.syntax
+    }
+
+    /// Retains an explicit required/optional choice.
+    pub fn set_required(&mut self, required: Sourced<bool>) {
+        self.required = Some(required);
+    }
+
+    /// Returns the explicit required/optional choice, if authored.
+    #[must_use]
+    pub const fn required(&self) -> Option<&Sourced<bool>> {
+        self.required.as_ref()
+    }
+
+    /// Returns whether the source requires the file, including the default of `true`.
+    #[must_use]
+    pub fn is_required(&self) -> bool {
+        self.required.as_ref().is_none_or(|required| *required.value())
+    }
+
+    /// Retains an explicitly selected parsing mode.
+    pub fn set_format(&mut self, format: Sourced<EnvironmentFileFormat>) {
+        self.format = Some(format);
+    }
+
+    /// Returns the explicitly selected parsing mode, if authored.
+    #[must_use]
+    pub const fn format(&self) -> Option<&Sourced<EnvironmentFileFormat>> {
+        self.format.as_ref()
+    }
+}
+
 /// One portable metadata label attached to an application resource.
 ///
 /// Label names remain opaque because Docker, Podman, Compose, and future targets do not share one
@@ -1139,6 +1227,7 @@ pub struct Service {
     working_directory: Option<Sourced<ProtectedString>>,
     read_only_root_filesystem: Option<Sourced<bool>>,
     environment: Vec<Sourced<EnvironmentVariable>>,
+    environment_files: Vec<Sourced<EnvironmentFile>>,
     host_mappings: Vec<Sourced<HostMapping>>,
     ports: Vec<Sourced<Port>>,
     mounts: Vec<Sourced<Mount>>,
@@ -1167,6 +1256,7 @@ impl Service {
             working_directory: None,
             read_only_root_filesystem: None,
             environment: Vec::new(),
+            environment_files: Vec::new(),
             host_mappings: Vec::new(),
             ports: Vec::new(),
             mounts: Vec::new(),
@@ -1324,6 +1414,17 @@ impl Service {
     #[must_use]
     pub fn environment(&self) -> &[Sourced<EnvironmentVariable>] {
         &self.environment
+    }
+
+    /// Appends an environment-file declaration without reading the referenced file.
+    pub fn add_environment_file(&mut self, value: Sourced<EnvironmentFile>) {
+        self.environment_files.push(value);
+    }
+
+    /// Returns environment-file declarations in authored order.
+    #[must_use]
+    pub fn environment_files(&self) -> &[Sourced<EnvironmentFile>] {
+        &self.environment_files
     }
 
     /// Appends an explicit hostname-to-address mapping.
@@ -1620,9 +1721,10 @@ fn validate_text(kind: &'static str, value: &str) -> Result<(), ModelError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Application, Config, ConfigMaterial, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind,
-        HostMapping, Identifier, MetadataLabel, ModelError, ResourceGrant, ResourceGrantSyntax, ResourceOwnership,
-        RestartPolicy, Secret, SecretMaterial, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
+        Application, Config, ConfigMaterial, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
+        HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier, MetadataLabel,
+        ModelError, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecretMaterial,
+        Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
     };
     use crate::{ProtectedString, Sourced};
 
@@ -1681,6 +1783,47 @@ mod tests {
         let debug = format!("{:?}", service.labels()[1]);
         assert!(!debug.contains("never-print-this"));
         assert!(debug.contains("[REDACTED]"));
+        Ok(())
+    }
+
+    #[test]
+    fn environment_files_preserve_order_options_provenance_and_redaction() -> Result<(), String> {
+        let source = crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?;
+        let origin = crate::Provenance::source(source);
+        let mut service = Service::new(id("web")?);
+        service.add_environment_file(Sourced::from_source(
+            EnvironmentFile::new(ProtectedString::plain("./base.env"), EnvironmentFileSyntax::Short)
+                .map_err(|error| error.to_string())?,
+            origin.clone(),
+        ));
+        let mut local = EnvironmentFile::new(ProtectedString::sensitive("./private.env"), EnvironmentFileSyntax::Long)
+            .map_err(|error| error.to_string())?;
+        local.set_required(Sourced::from_source(false, origin.clone()));
+        local.set_format(Sourced::from_source(EnvironmentFileFormat::Raw, origin.clone()));
+        service.add_environment_file(Sourced::from_source(local, origin));
+
+        assert_eq!(service.environment_files().len(), 2);
+        assert_eq!(service.environment_files()[0].value().path().expose(), "./base.env");
+        assert_eq!(
+            service.environment_files()[0].value().syntax(),
+            EnvironmentFileSyntax::Short
+        );
+        assert!(service.environment_files()[0].value().is_required());
+        let local = service.environment_files()[1].value();
+        assert_eq!(local.syntax(), EnvironmentFileSyntax::Long);
+        assert!(!local.is_required());
+        assert_eq!(local.required().map_or(0, |value| value.origins().len()), 1);
+        assert!(matches!(
+            local.format().map(Sourced::value),
+            Some(EnvironmentFileFormat::Raw)
+        ));
+        let debug = format!("{service:?}");
+        assert!(!debug.contains("private.env"));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(matches!(
+            EnvironmentFile::new(ProtectedString::plain(""), EnvironmentFileSyntax::Short),
+            Err(ModelError::EmptyValue("environment-file path"))
+        ));
         Ok(())
     }
 

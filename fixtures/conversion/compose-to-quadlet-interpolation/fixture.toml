@@ -1,0 +1,31 @@
+schema = 1
+id = "compose-to-quadlet-interpolation"
+suite = "conversion"
+description = "Protects opt-in Compose interpolation from explicit plain and individually authorized sensitive process variables."
+secrets_reviewed = true
+files = [
+  "compose.yaml",
+  "app.container",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "Interpolation is explicitly enabled; TAG=2.1 is plain, TOKEN is read by name as sensitive, and an unauthorized ambient UNAUTHORIZED value must not be captured."
+
+[expectations]
+summary = "Only caller-authorized values enter interpolation; Compose defaults use an empty explicit environment rather than ambient state, and restart no converts exactly to systemd Restart=no."
+
+[extensions.compose]
+source-ids = [96]
+active-profiles = []
+interpolation = "explicit-only"
+
+[extensions.quadlet]
+podman-minimum-version = "5.4.0"
+podman-maximum-version = "6.0.2"
+grouping-policy = "separate-containers"

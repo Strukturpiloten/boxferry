@@ -34,6 +34,30 @@ fn facade_exposes_raw_preserving_neutral_host_mappings() -> Result<(), String> {
 }
 
 #[test]
+fn facade_exposes_environment_file_declarations_without_filesystem_access() -> Result<(), String> {
+    use boxferry::{EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, ProtectedString, Service, Sourced};
+
+    let mut service = Service::new(Identifier::new("web").map_err(|error| error.to_string())?);
+    let mut environment_file = EnvironmentFile::new(
+        ProtectedString::sensitive("./production.env"),
+        EnvironmentFileSyntax::Long,
+    )
+    .map_err(|error| error.to_string())?;
+    environment_file.set_required(Sourced::generated(true));
+    environment_file.set_format(Sourced::generated(EnvironmentFileFormat::Raw));
+    service.add_environment_file(Sourced::generated(environment_file));
+
+    let declaration = service.environment_files().first().ok_or("environment file expected")?;
+    assert!(declaration.value().is_required());
+    assert!(matches!(
+        declaration.value().format().map(Sourced::value),
+        Some(EnvironmentFileFormat::Raw)
+    ));
+    assert!(!format!("{service:?}").contains("production.env"));
+    Ok(())
+}
+
+#[test]
 fn facade_exposes_neutral_execution_identity_and_context() -> Result<(), String> {
     use boxferry::{ProtectedString, Service, Sourced};
 

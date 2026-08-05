@@ -117,7 +117,7 @@ or deploying its output.
 T4 provides the first tested public surface:
 
 - an ordered multi-service `Application` with images, commands, container restart policies, health checks, service dependencies,
-  environment, protected metadata labels, explicit host mappings, ports, mounts, networks, volumes, config and secret
+  environment, environment-file declarations, protected metadata labels, explicit host mappings, ports, mounts, networks, volumes, config and secret
   declarations, ordered service grants, lifecycle ownership, and source provenance;
 - tolerant `ImageReference` parsing that retains `name:tag@digest` forms;
 - `ProtectedString` and structured diagnostics whose sensitive fields redact debug and display
@@ -128,7 +128,7 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.11;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.12;
 - an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.9;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
@@ -235,7 +235,20 @@ The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A c
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
 replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
 
-The importer consumes ComposeLens 0.1.11's native `build_project_view` boundary directly. Effective
+Embedded callers control Compose interpolation before merge. They construct a ComposeLens
+`MapEnvironment`, distinguish plain from sensitive entries, create the loaded project's
+per-document interpolation overlay, and pass that exact overlay to `merge_project`. BoxFerry never
+reads ambient variables on behalf of a library caller. The CLI demonstrates the same boundary and
+requires a separate authorization for each process variable it may read.
+
+Service `env_file` declarations cross the public API as ordered neutral `EnvironmentFile` values.
+They retain short/long syntax, a protected path, explicit `required` and `format` options, and
+nested provenance. Importing or exporting a declaration performs no filesystem access. An
+embedded caller may configure `QuadletExporter::with_relative_host_path_root` for lexical
+Compose-relative path resolution. Loading file contents and applying Compose parser semantics will
+remain a separate caller-authorized API.
+
+The importer consumes ComposeLens 0.1.12's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.

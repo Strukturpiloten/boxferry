@@ -5,8 +5,9 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
-    HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
+    Application, Command, Config, ConfigMaterial, EnvironmentFile as NeutralEnvironmentFile,
+    EnvironmentFileFormat as NeutralEnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
+    EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
     HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
     MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
     Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy as NeutralRestartPolicy, Secret,
@@ -16,14 +17,15 @@ use boxferry_model::{
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
     BooleanValue, ComposeScalar, ConfigDefinition, DependencyCondition as ComposeDependencyCondition,
-    HealthcheckDuration as ComposeHealthcheckDuration, HealthcheckRetries as ComposeHealthcheckRetries,
-    HealthcheckTest, HealthcheckTestKind, LongPort, LongVolumeMount, MountType, NetworkDefinition, Port as ComposePort,
-    RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SelinuxRelabel as ComposeSelinuxRelabel,
-    ServiceNetwork, ServiceNetworks, ShortPort, ShortVolumeMount, VolumeDefinition, VolumeMount,
+    EnvironmentFileFormatKind, HealthcheckDuration as ComposeHealthcheckDuration,
+    HealthcheckRetries as ComposeHealthcheckRetries, HealthcheckTest, HealthcheckTestKind, LongPort, LongVolumeMount,
+    MountType, NetworkDefinition, Port as ComposePort, RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition,
+    SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShortPort, ShortVolumeMount,
+    VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
-    ProjectDependsOn, ProjectEnvironment, ProjectFieldReference, ProjectGrant, ProjectHealthcheck, ProjectLabels,
-    ProjectResource, ProjectService, ProjectValue, ProjectView, build_project_view,
+    ProjectDependsOn, ProjectEnvironment, ProjectEnvironmentFile, ProjectFieldReference, ProjectGrant,
+    ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService, ProjectValue, ProjectView, build_project_view,
 };
 use compose_lens::source::SourceSpan as ComposeSpan;
 
@@ -227,9 +229,7 @@ impl<'a> Mapping<'a> {
             service.set_healthcheck(self.map_healthcheck(&subject, healthcheck));
         }
         self.map_execution_context(&subject, native, &mut service);
-        if let Some(environment) = native.environment() {
-            self.map_environment(&subject, environment.value(), &mut service);
-        }
+        self.map_service_environment(&subject, native, &mut service);
         if let Some(labels) = native.labels() {
             self.map_labels(&subject, labels.value(), &mut service);
         }
@@ -762,6 +762,113 @@ impl<'a> Mapping<'a> {
                 self.sourced_provenance(EnvironmentVariable::new(name, value), entry.value().provenance()),
             );
             self.exact_provenance(subject, entry.value().provenance());
+        }
+    }
+
+    fn map_service_environment(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(environment) = native.environment() {
+            self.map_environment(service_subject, environment.value(), service);
+        }
+        if let Some(environment_files) = native.environment_files() {
+            self.map_environment_files(service_subject, environment_files, service);
+        }
+    }
+
+    fn map_environment_files(
+        &mut self,
+        service_subject: &str,
+        environment_files: &ProjectValue<Vec<ProjectValue<ProjectEnvironmentFile>>>,
+        service: &mut Service,
+    ) {
+        for (index, native) in environment_files.value().iter().enumerate() {
+            let subject = format!("{service_subject}.env_file[{index}]");
+            let environment_file = match native.value() {
+                ProjectEnvironmentFile::Short(path) => match NeutralEnvironmentFile::new(
+                    Self::protected(path, native.is_sensitive()),
+                    EnvironmentFileSyntax::Short,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.invalid_model_optional(&subject, &error, native.effective_source());
+                        continue;
+                    }
+                },
+                ProjectEnvironmentFile::Long(long) => {
+                    let Some(path) = long.path() else {
+                        self.invalid_value_optional(
+                            &subject,
+                            "long-syntax environment file has no path",
+                            native.effective_source(),
+                        );
+                        continue;
+                    };
+                    let mut value = match NeutralEnvironmentFile::new(
+                        Self::protected(path.value(), path.is_sensitive()),
+                        EnvironmentFileSyntax::Long,
+                    ) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            self.invalid_model_optional(&subject, &error, path.effective_source());
+                            continue;
+                        }
+                    };
+                    if let Some(required) = long.required() {
+                        match required.value() {
+                            BooleanValue::Literal(required_value) => {
+                                value.set_required(self.sourced_provenance(*required_value, required.provenance()));
+                                self.exact_provenance(format!("{subject}.required"), required.provenance());
+                            }
+                            BooleanValue::Expression(_) => {
+                                self.invalid_value_optional(
+                                    &format!("{subject}.required"),
+                                    "environment-file required expression was not resolved",
+                                    required.effective_source(),
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                    if let Some(format) = long.format() {
+                        match format.value().kind() {
+                            EnvironmentFileFormatKind::Raw => {
+                                value.set_format(
+                                    self.sourced_provenance(NeutralEnvironmentFileFormat::Raw, format.provenance()),
+                                );
+                                self.exact_provenance(format!("{subject}.format"), format.provenance());
+                            }
+                            EnvironmentFileFormatKind::Expression => {
+                                self.invalid_value_optional(
+                                    &format!("{subject}.format"),
+                                    "environment-file format expression was not resolved",
+                                    format.effective_source(),
+                                );
+                                continue;
+                            }
+                            EnvironmentFileFormatKind::Other => {
+                                self.invalid_value_optional(
+                                    &format!("{subject}.format"),
+                                    "environment-file format is not supported by Compose",
+                                    format.effective_source(),
+                                );
+                                continue;
+                            }
+                            _ => {
+                                self.invalid_value_optional(
+                                    &format!("{subject}.format"),
+                                    "environment-file format is newer than this BoxFerry adapter",
+                                    format.effective_source(),
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                    self.report_project_fields(&subject, "environment-file option", long.unmodeled_fields());
+                    value
+                }
+            };
+            let sourced = self.sourced_provenance(environment_file, native.provenance());
+            self.exact_origins(subject, sourced.origins());
+            service.add_environment_file(sourced);
         }
     }
 

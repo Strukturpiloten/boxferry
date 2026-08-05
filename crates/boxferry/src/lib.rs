@@ -55,12 +55,12 @@ pub use boxferry_engine::{
     ParsePlatformVersionError, PlatformVersion, Severity, TargetProfile, VersionRange, convert,
 };
 pub use boxferry_model::{
-    Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
-    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
-    ImageReference, MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString,
-    Protocol, Provenance, ProvenanceKind, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret,
-    SecretMaterial, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId,
-    SourceSpan, Sourced, Volume,
+    Application, Command, Config, ConfigMaterial, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
+    EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries,
+    HostAddress, HostAddressKind, HostMapping, Identifier, ImageReference, MetadataLabel, ModelError, Mount,
+    MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ProvenanceKind,
+    ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel,
+    Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, SourceSpan, Sourced, Volume,
 };
 
 #[cfg(feature = "compose")]

@@ -73,6 +73,13 @@ The dependency scenarios prove long-form required, optional, and health-gated ed
 separate-container output and short-form ordering inside an explicitly selected pod. Adapter tests
 separately cover partial restart/completion behavior and invalid missing-target/cycle behavior.
 
+The CLI interpolation scenario proves that processing is opt-in and per-file-before-merge, direct
+variables are explicit, a named process variable is marked sensitive, an unauthorized ambient
+value cannot override a Compose default, and the reviewed output remains exact. Separate
+black-box failures cover missing authorized variables and duplicate sources before output
+creation. Another test supplies ambient values without `--interpolate` and proves they neither
+enter output nor diagnostic text.
+
 Neutral-model, adapter, and public-facade tests protect execution user/group values, user
 namespaces, ordered supplementary groups, working directories, explicit true/false read-only-root
 intent, field provenance, and sensitive debug redaction. Golden output protects the exact
@@ -223,6 +230,13 @@ network-dependent discovery and ingestion tier. A promoted regression receives a
 offline fixture with an exact expected outcome. The ComposeLens 0.1.11 restart-policy promotion
 has both: focused offline boundary tests plus a corpus run covering 73 exact literal policies and
 two intentionally unresolved Mattermost expressions.
+
+Environment-file declarations have layered offline coverage: neutral model/facade tests prove
+order, options, provenance, and redaction; Compose adapter tests prove short/long import without
+file reads; Quadlet adapter tests prove path resolution, repeatable output, parser-parity
+approximation, and explicit optional/unsafe-path losses; and a public end-to-end test proves the
+Compose-to-Quadlet boundary. File-content loading is intentionally absent from these tests because
+it is not authorized by declaration conversion.
 
 ## Test organization
 

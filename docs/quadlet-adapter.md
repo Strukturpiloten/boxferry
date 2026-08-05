@@ -51,6 +51,9 @@ It currently maps:
 - exec-form commands whose individual arguments need no systemd quoting;
 - literal environment assignments whose names and values need no systemd quoting or specifier
   escaping;
+- ordered required environment-file declarations through repeatable `EnvironmentFile=` entries;
+  safe relative paths resolve only from an explicit caller-provided Compose project root, and the
+  mapping is reported as `BFQ0010` approximate until Podman parser parity is proven;
 - protected service metadata through repeatable `Label=` entries, including empty values,
   systemd-quoted whitespace/control/quote characters, and doubled literal `%` specifiers;
 - health checks using JSON-preserved `CMD` or `CMD-SHELL` commands, explicit disable intent,
@@ -87,6 +90,8 @@ The adapter currently reports rather than guesses:
 - deferred or implementation-specific host-mapping addresses;
 - shell-form, empty, or quoting-dependent commands;
 - quoting-dependent environment values;
+- optional environment files, unsafe paths, and paths that would acquire systemd specifier
+  semantics;
 - relative bind sources when the caller does not provide their Compose project root;
 - tilde, non-POSIX, and other host-specific bind sources without an exact caller-provided mapping;
 - IPv6 or otherwise non-simple host-address port spellings;
@@ -123,9 +128,11 @@ Unsupported fields remain in the conversion report and require `LossPolicy::Allo
 the remaining candidate can be released. Invalid required values and target profiles always block
 output.
 
-`QuadletExporter::with_relative_bind_root` supplies Compose project context explicitly. Resolution
-is lexical, does not require the path to exist, and never reads the filesystem. It produces an
-absolute Quadlet bind source and rejects roots or traversals that would escape the filesystem root.
+`QuadletExporter::with_relative_host_path_root` supplies Compose project context explicitly for
+bind sources and environment files. `with_relative_bind_root` remains a compatibility alias.
+Resolution is lexical, does not require the path to exist, and never reads the filesystem. It
+produces an absolute Quadlet path and rejects roots or traversals that would escape the filesystem
+root.
 
 `QuadletExporter::with_bind_source_mapping` is the separate policy boundary for host-specific
 forms. It matches the authored source spelling exactly and requires a safely encodable absolute

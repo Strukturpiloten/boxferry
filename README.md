@@ -60,9 +60,12 @@ cargo run -p boxferry -- compose-to-quadlet \
 ```
 
 The output directory must not already exist. `exact` is the default policy; `approximate` and
-`partial` authorize their corresponding documented losses. The command does not read the process
-environment, so Compose variable expressions remain unresolved and may block output instead of
-silently capturing workstation values. See the [CLI contract](docs/cli.md).
+`partial` authorize their corresponding documented losses. Compose interpolation is disabled by
+default, so expressions remain unresolved rather than silently capturing workstation values.
+Callers can opt in with `--interpolate`, add repeatable plain `--variable NAME=VALUE` inputs, and
+authorize individual sensitive process values with repeatable
+`--variable-from-environment NAME`. No other ambient variable or implicit `.env` file is read.
+See the [CLI contract](docs/cli.md).
 
 ## Library use
 
@@ -129,7 +132,7 @@ ComposeLens profile selection whenever profiles are present, retains SELinux rel
 reports unsupported source features as policy-controlled conversion outcomes.
 
 The exporter consumes the neutral application and an exact Docker Compose or `podman-compose`
-provider target, with an optional exact Docker Engine or Podman backend. ComposeLens 0.1.11 owns
+provider target, with an optional exact Docker Engine or Podman backend. ComposeLens 0.1.12 owns
 deterministic short/long syntax choices, sensitive-output redaction, and parse-back validation.
 BoxFerry reports compatibility-sensitive tag-plus-digest images, `host-gateway`, Podman user
 namespaces, SELinux relabeling, and SCTP before the caller authorizes output. Runtime-observed
@@ -141,8 +144,8 @@ exporter uses QuadletLens 0.1.9 for typed native construction and capability evi
 Podman 5.4.0 through the finite current catalogue ceiling, keeps each service in its own container
 unit by default, distinguishes application-owned and external resources, preserves absolute and
 systemd-specifier bind paths, and reports every omitted target feature through the same loss policy.
-Callers can also provide an explicit absolute Compose project root to resolve `./` and `../` bind
-sources lexically without filesystem access.
+Callers can also provide an explicit absolute Compose project root to resolve relative bind and
+environment-file paths lexically without filesystem access.
 Tilde, Windows, and other host-specific bind spellings are never guessed; embedded callers can map
 an exact source spelling to an absolute or systemd-specifier target explicitly.
 Explicit single-pod grouping is available only for compatible declared networks, ports, and
@@ -158,6 +161,14 @@ token and IPv4/IPv6 addresses. Compose `extra_hosts` convert to capability-check
 `AddHost` entries. Separate services retain container-level mappings; explicitly grouped services
 must declare identical ordered mappings, which move to the generated pod.
 
+ComposeLens 0.1.12 service `env_file` declarations enter the neutral graph without opening the
+referenced files. Short/long syntax, order, protected paths, explicit `required` and `format`
+options, and nested provenance remain available to embedded callers. Required safe paths emit
+repeatable capability-checked Quadlet `EnvironmentFile=` entries after lexical project-root
+resolution. They require approximation authorization until Podman parser parity with Compose's
+default and `raw` formats is proven; optional files and unsafe or ambiguous paths remain explicit
+partial losses. File-content loading is a separate future authorization boundary.
+
 An optional neutral service runtime name remains distinct from the service key. Compose
 `container_name` imports with complete merge provenance and emits as capability-checked Quadlet
 `ContainerName=`. Runtime reconstruction sets the inspected container name explicitly so generated
@@ -171,20 +182,20 @@ Quadlet adapter emits the capability-checked regular health-check subset and rep
 
 Compose mapping and sequence service labels now enter the protected neutral model with complete
 multi-file provenance. BoxFerry generates deterministic Compose label mappings and native
-repeatable Quadlet `Label=` entries through ComposeLens 0.1.11 and QuadletLens 0.1.9. Empty and
+repeatable Quadlet `Label=` entries through ComposeLens 0.1.12 and QuadletLens 0.1.9. Empty and
 quoted values are preserved, and literal `%` is escaped so systemd cannot turn label metadata into
 a specifier expansion. Reserved `com.docker.compose.*` labels stay visible in diagnostics but are
 never re-authored. Resource, image-build, annotation, and label-file ownership remain separate
 follow-up work.
 
-ComposeLens 0.1.11 service dependencies retain source order, short/long defaults, and field-level
+ComposeLens 0.1.12 service dependencies retain source order, short/long defaults, and field-level
 provenance in the neutral graph. Required and optional startup dependencies become capability-
 checked systemd `Requires`/`Wants` plus `After` directives. A healthy dependency additionally
 enables `Notify=healthy` only when BoxFerry can establish an explicit target health command.
 Compose-controlled restart propagation and successful-completion conditions remain explicit
 partial losses; missing required services and ordering cycles are invalid.
 
-ComposeLens 0.1.11 service `restart` values now map into the distinct neutral container restart
+ComposeLens 0.1.12 service `restart` values now map into the distinct neutral container restart
 policy and generate back to Compose without changing their meaning. Compose-to-Quadlet emits
 `restart: "no"` exactly as systemd `Restart=no`; `always`, unbounded `on-failure`, and
 `unless-stopped` remain explicit systemd approximations, while finite retry limits have no safe
@@ -203,7 +214,7 @@ invalidate the requested grouping rather than selecting a value by service order
 The format-independent graph now also represents application-owned or external configuration and
 secret resources, optional runtime names and material origins, and ordered short/long service
 grants with per-option provenance. Sensitive material and grant values use the same redacting
-`ProtectedString` boundary as environment values. ComposeLens 0.1.11 imports these definitions and
+`ProtectedString` boundary as environment values. ComposeLens 0.1.12 imports these definitions and
 grants. QuadletLens 0.1.9 emits exact mounted-file `Secret=` references for pre-existing external
 Podman secrets, including custom-name default preservation and validated target, UID, GID, and
 read-only mode options. Application-owned secret materialization and Compose config lifecycle are
