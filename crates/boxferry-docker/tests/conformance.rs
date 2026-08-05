@@ -12,7 +12,7 @@ use boxferry_docker::{
     MINIMUM_DOCKER_API_VERSION,
 };
 use boxferry_engine::Severity;
-use boxferry_model::Identifier;
+use boxferry_model::{HealthcheckCommand, Identifier, RestartPolicy};
 use boxferry_runtime::OverrideReconstruction;
 use serde::Deserialize;
 
@@ -227,6 +227,9 @@ fn validate_live_decode(version: DockerApiVersion, resource_prefix: &str, root: 
         .iter()
         .find(|container| container.name().as_str() == expected_container)
         .ok_or_else(|| format!("Docker API {version} inspection lost the test container"))?;
+    let healthcheck = container
+        .healthcheck()
+        .ok_or_else(|| format!("Docker API {version} inspection lost the regular health check"))?;
     if container.image_source_id().is_none()
         || container.user().map(boxferry_model::ProtectedString::expose) != Some("1001:1002")
         || container
@@ -234,6 +237,23 @@ fn validate_live_decode(version: DockerApiVersion, resource_prefix: &str, root: 
             .map(boxferry_model::ProtectedString::expose)
             != Some("/srv/runtime")
         || container.read_only_root_filesystem() != Some(true)
+        || !matches!(
+            container.restart_policy(),
+            Some(RestartPolicy::OnFailure {
+                maximum_retries: Some(value)
+            }) if value.get() == 4
+        )
+        || !has_label(container.labels(), "com.example.boxferry", "runtime-matrix")
+        || !has_label(container.labels(), "com.example.image", "runtime-matrix")
+        || !matches!(healthcheck.command(), Some(HealthcheckCommand::Shell(command)) if command.expose() == "/bin/true")
+        || healthcheck.interval().map(boxferry_model::HealthcheckDuration::as_str) != Some("30s")
+        || healthcheck.timeout().map(boxferry_model::HealthcheckDuration::as_str) != Some("2s")
+        || healthcheck.retries().map(boxferry_model::HealthcheckRetries::as_str) != Some("4")
+        || healthcheck
+            .start_period()
+            .map(boxferry_model::HealthcheckDuration::as_str)
+            != Some("5s")
+        || healthcheck.start_interval().is_some()
         || snapshot
             .images()
             .first()
@@ -246,6 +266,11 @@ fn validate_live_decode(version: DockerApiVersion, resource_prefix: &str, root: 
             .and_then(|image| image.working_directory())
             .map(boxferry_model::ProtectedString::expose)
             != Some("/srv/image")
+        || !has_label(
+            snapshot.images().first().and_then(|image| image.labels()),
+            "com.example.image",
+            "runtime-matrix",
+        )
         || !container.networks().iter().any(|network| {
             network.network().as_str() == expected_network && network.aliases().iter().any(|alias| alias == "web")
         })
@@ -270,6 +295,14 @@ fn conformance_script() -> Result<PathBuf, String> {
         .join("tests/runtime/docker-inspect-conformance.sh")
         .canonicalize()
         .map_err(|error| format!("cannot locate Docker conformance script: {error}"))
+}
+
+fn has_label(labels: Option<&[boxferry_runtime::RuntimeMetadataLabel]>, name: &str, value: &str) -> bool {
+    labels.is_some_and(|labels| {
+        labels
+            .iter()
+            .any(|label| label.name().as_str() == name && label.value().expose() == value)
+    })
 }
 
 fn load_matrix() -> Result<RuntimeMatrix, String> {

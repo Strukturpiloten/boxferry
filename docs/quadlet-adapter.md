@@ -1,7 +1,7 @@
 # Quadlet exporter
 
 The `boxferry-quadlet` crate maps BoxFerry's neutral application model into a deterministic set of
-Quadlet files through `quadlet-lens` 0.1.6. The `boxferry` facade exposes it through the additive
+Quadlet files through `quadlet-lens` 0.1.7. The `boxferry` facade exposes it through the additive
 `quadlet` feature.
 
 ## Planning boundary
@@ -49,6 +49,8 @@ It currently maps:
 - exec-form commands whose individual arguments need no systemd quoting;
 - literal environment assignments whose names and values need no systemd quoting or specifier
   escaping;
+- protected service metadata through repeatable `Label=` entries, including empty values,
+  systemd-quoted whitespace/control/quote characters, and doubled literal `%` specifiers;
 - health checks using JSON-preserved `CMD` or `CMD-SHELL` commands, explicit disable intent,
   regular interval, timeout, retries, and start period;
 - required and optional service-start dependencies through `[Unit]` `Requires`/`Wants` plus
@@ -66,8 +68,8 @@ It currently maps:
 - source-machine-specific bind forms such as `~/data` or `C:\data` when the caller provides an
   exact target mapping;
 - read-only and `z`/`Z` SELinux mount options;
-- application-owned networks through generated `.network` files; and
-- external networks through direct runtime-name references.
+- application-owned networks through generated `.network` files;
+- external networks through direct runtime-name references; and
 - pre-existing external Podman secrets through repeatable `Secret=` entries, preserving Compose's
   default target filename when a custom runtime name differs and mapping safe target, numeric UID,
   numeric GID, and read-only octal mode options.
@@ -101,7 +103,9 @@ The adapter currently reports rather than guesses:
 - Compose config resources and grants, because Quadlet has no managed config-resource lifecycle;
 - application-owned secret creation and file/environment materialization, because `Secret=` only
   consumes a Podman secret that already exists; and
-- secret names or options outside the reviewed unambiguous one-line Podman secret grammar; and
+- secret names or options outside the reviewed unambiguous one-line Podman secret grammar;
+- reserved `com.docker.compose.*` metadata plus resource, build/image, annotation, and label-file
+  label ownership that is not equivalent to service/container metadata; and
 - neutral service groups without a supported caller-selected target grouping and lifecycle
   resolution.
 

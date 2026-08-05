@@ -2,7 +2,7 @@
 
 This plan gives BoxFerry, ComposeLens, and QuadletLens one stable task numbering scheme. Repository roadmaps describe internal phases; this document describes delivery order across repositories.
 
-Last synchronized: 2026-08-04.
+Last synchronized: 2026-08-05.
 
 ## Status convention
 
@@ -104,32 +104,32 @@ network, profile, config, secret, and label forms. QuadletLens has completed its
 with ordered source-aware `.container`, `.pod`, `.network`, and `.volume` documents, generic systemd
 and unknown entry preservation, native key enums, conservative path/reference forms,
 separate syntax/model diagnostics, and exact document-set dependency resolution. BoxFerry now
-consumes ComposeLens 0.1.7 from crates.io through its independent `boxferry-compose` crate. The
+consumes ComposeLens 0.1.8 from crates.io through its independent `boxferry-compose` crate. The
 adapter maps images, commands, execution identity/context, health checks, environment, extra
 hosts, single ports, named volumes, bind mounts, networks, explicit profiles, config/secret
-resources and grants, provenance, and short/long SELinux relabel intent into the neutral model.
+resources and grants, service labels, provenance, and short/long SELinux relabel intent into the neutral model.
 Source omissions are structured outcomes governed by `LossPolicy`, not warning-only side effects.
 The neutral model retains ordered explicit hostname mappings, distinguishes `host-gateway` from
 ordinary IP address spellings, and keeps unsupported `start_interval` intent for target-specific
 reporting.
 
-The implemented input boundary is ComposeLens 0.1.7's native `build_project_view` over a
+The implemented input boundary is ComposeLens 0.1.8's native `build_project_view` over a
 `MergedProject` and optional matching `ProfileSelection`. BoxFerry maps it without canonical
 rendering or reparsing and retains all contributing source origins in neutral values and outcomes.
 
-ComposeLens 0.1.7 is published on crates.io with a documented pre-1.0 compatibility contract.
-BoxFerry consumes ComposeLens 0.1.7 through a compatible crates.io requirement and commits its
+ComposeLens 0.1.8 is published on crates.io with a documented pre-1.0 compatibility contract.
+BoxFerry consumes ComposeLens 0.1.8 through a compatible crates.io requirement and commits its
 application lockfile. Commit-pinned Git dependencies remain an emergency-only fallback.
 
 The Compose adapter fixture also exposed a ComposeLens 0.1 YAML-backend defect: an unquoted short
 volume scalar with comma-separated options can truncate the document without a syntax diagnostic.
 The ComposeLens 0.1.1 parser correction accepts the complete valid scalar through its
 byte-preserving private parser adapter and retains `compose.yaml.unparsed-input` as a fail-safe for
-future backend omissions; that behavior remains present in the consumed 0.1.7 release.
+future backend omissions; that behavior remains present in the consumed 0.1.8 release.
 BoxFerry can now use the unquoted real-world spelling and the released source-aware merged-project
 view without a canonical render-and-reparse bridge.
 
-QuadletLens 0.1.6 is published on crates.io and BoxFerry consumes it through the independent
+QuadletLens 0.1.7 is published on crates.io and BoxFerry consumes it through the independent
 `boxferry-quadlet` crate. The exporter uses typed native construction and capability evaluation,
 generates exact separate container units or an explicitly authorized compatible pod plus
 application-owned network and volume units, references external resources directly, validates the
@@ -170,7 +170,7 @@ Adapter and public-facade golden tests cover separate containers and explicitly 
 
 ### Completed execution identity and context slice
 
-ComposeLens 0.1.7 and QuadletLens 0.1.6 are published and consumed from crates.io. BoxFerry retains and
+ComposeLens 0.1.8 and QuadletLens 0.1.7 are published and consumed from crates.io. BoxFerry retains and
 maps primary user/group, user namespace, ordered supplementary groups, working directory, and
 explicit read-only-root intent with field provenance and sensitivity. Separate containers use
 capability-checked `User`, `Group`, `UserNS`, repeated `GroupAdd`, `WorkingDir`, and `ReadOnly`
@@ -181,7 +181,7 @@ request.
 
 ### Completed config and secret slice
 
-ComposeLens 0.1.7 and QuadletLens 0.1.6 are published and consumed without sibling path dependencies.
+ComposeLens 0.1.8 and QuadletLens 0.1.7 are published and consumed without sibling path dependencies.
 ComposeLens exposes effective service config/secret grants with short/long syntax and nested
 multi-file provenance. QuadletLens exposes repeatable container `Secret` plus pod `UserNS`, with
 real-generator evidence across every recorded Podman patch from 5.4.0 through 6.0.2. BoxFerry
@@ -190,6 +190,31 @@ It emits exact references to pre-existing external Podman secrets when target de
 are safe and equivalent. Application-owned secret materialization and Compose config lifecycle are
 explicit manual actions. Adapter and public-facade tests cover short/long, multi-file, custom-name,
 sensitive-value, strict/partial, and golden behavior.
+
+### Completed runtime container restart slice
+
+Docker Engine API 1.40-through-1.55 and Podman 5.4.0-through-6.0.2 inspection decode the native
+container restart-policy object independently and fail closed on malformed or contradictory
+values. The neutral `RestartPolicy` keeps never, always, unlimited or finite on-failure, and
+unless-stopped intent separate from dependency and deployment restart concepts. Runtime
+reconstruction preserves the host setting directly with observation provenance. Quadlet emits
+exact `Restart=no`, explicit systemd approximations for unbounded policies, and no unsafe
+substitute for finite retry counts. Authored Compose `restart` remains open until the source Lens
+has a typed project value.
+
+### Completed runtime metadata-label slice
+
+Docker Engine API 1.40-through-1.55 and Podman 5.4.0-through-6.0.2 inspection now decode
+container and image label maps as deterministic protected runtime observations. Reconstruction can
+preserve the effective map or omit matching image defaults and retain only changed/runtime-added
+values with conversion-decision provenance. Compose's reserved `com.docker.compose.*` provider
+namespace receives a dedicated unsafe-to-reauthor outcome while remaining reviewable evidence.
+ComposeLens 0.1.8 service-label project/generation boundaries and QuadletLens 0.1.7's native
+repeatable container `Label=` key now complete the typed output gate. BoxFerry imports mapping and
+sequence forms with scalar normalization and multi-file provenance, generates protected Compose
+values, and emits systemd-quoted Quadlet labels with literal `%` escaping. Reserved
+`com.docker.compose.*` provider metadata remains diagnostic-only. Resource, image-build,
+annotation, and label-file ownership remain separate work.
 
 ## T6: First end-to-end milestone
 
@@ -203,7 +228,7 @@ explicit file order, profile selection, target range, grouping, loss policy, and
 output. Broader value encoders and the TYPO3 showcase remain.
 
 Runtime observations can also flow through the public engine into deterministic Compose output.
-The exporter consumes ComposeLens 0.1.7's parse-back-validated generated-document API, requires one
+The exporter consumes ComposeLens 0.1.8's parse-back-validated generated-document API, requires one
 exact Docker Compose or `podman-compose` provider release, keeps an optional exact Docker Engine or
 Podman backend separate, preserves observed resource names, and reports every compatibility or
 unsupported field decision before authorization. Health checks, dependencies, configs, secrets,
@@ -239,8 +264,9 @@ Each harness becomes required only after its command, isolation model, version s
 
 The first BoxFerry runtime tier is now implemented without daemon access: `boxferry-runtime`
 provides duplicate-safe observations, sensitive defaults, optional creation evidence, two explicit
-reconstruction policies, image comparison for command/environment/user-group/working-directory
-overrides, direct read-only-root preservation, relationship preservation for networks/volumes,
+reconstruction policies, image comparison for command/environment/metadata-label/user-group/working-directory
+and field-level regular-health-check overrides, direct read-only-root and restart-policy preservation, relationship
+preservation for networks/volumes,
 provenance-aware structural service groups, uncertain lifecycle ownership, explicit exact-name
 caller resolutions with user-override provenance, and fidelity outcomes. The Quadlet path can
 preserve one complete application-owned observed group without guessing partial/multiple group
@@ -251,10 +277,12 @@ replaceable executor. Policy-controlled expansion now follows selected pod membe
 container images, networks, and named volumes without ambient enumeration. A weekly/manual,
 digest-pinned nested-Podman matrix validates real 5.4.0, 5.5.2, 5.6.2, 5.7.1, and 5.8.2 response
 shapes on disposable runners without a host socket. An additional explicitly selected installed-
-current lane validates 6.0.2 with uniquely named resources and exact cleanup. Native Docker
+current lane validates 6.0.2 with uniquely named resources, protected metadata, regular health and finite restart configuration, and exact
+cleanup. Native Docker
 inspection now has independent versioned decoding, explicit-endpoint command acquisition, finite
 container-resource expansion, public facade tests, and a digest-pinned nested Docker Engine 29.7.1
-lane for forced API 1.40/1.55 responses. Reproducible scheduled-image evidence for Podman 6.0.2 and
+lane for forced API 1.40/1.55 responses including protected metadata, regular health and finite restart configuration. Reproducible
+scheduled-image evidence for Podman 6.0.2 and
 historical Docker 19.03 implementation evidence remain open T7 work; current-daemon downgrade
 responses and one installed runtime are not presented as equivalent to those missing tiers.
 Pure adapter and public-facade tests now cover observation-to-Compose output without invoking a

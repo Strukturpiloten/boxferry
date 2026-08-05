@@ -1,14 +1,14 @@
 //! Public Quadlet exporter behavior and target boundaries.
 
-use std::error::Error;
+use std::{error::Error, num::NonZeroU64};
 
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
 use boxferry_model::{
     Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
-    Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant,
-    ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
+    MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance,
+    ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel,
+    Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
 };
 use boxferry_quadlet::{QuadletExporter, QuadletGroupingPolicy};
 
@@ -199,6 +199,161 @@ fn reports_start_interval_as_explicit_partial_output() -> Result<(), Box<dyn Err
             "Image=example.invalid/web:1\n",
             "HealthCmd=[\"CMD-SHELL\",\"curl --fail http://127.0.0.1/health || exit 1\"]\n",
         ))
+    );
+    Ok(())
+}
+
+#[test]
+fn maps_never_restart_exactly_to_systemd_service_policy() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("restart-never")?);
+    let mut service = image_service("web")?;
+    service.set_restart_policy(sourced(RestartPolicy::Never)?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    assert_eq!(
+        plan.authorize(LossPolicy::ExactOnly)
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Container]\n",
+            "Image=example.invalid/web:1\n",
+            "\n",
+            "[Service]\n",
+            "Restart=no\n",
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn requires_approximation_authorization_for_runtime_restart_semantics() -> Result<(), Box<dyn Error>> {
+    for (policy, expected) in [
+        (RestartPolicy::Always, "always"),
+        (RestartPolicy::on_failure(None), "on-failure"),
+        (RestartPolicy::UnlessStopped, "always"),
+    ] {
+        let mut application = Application::new(id("restart-approximate")?);
+        let mut service = image_service("web")?;
+        service.set_restart_policy(sourced(policy)?);
+        application.add_service(sourced(service)?)?;
+
+        let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+        assert!(plan.outcomes().iter().any(|outcome| {
+            outcome.subject() == "services.web.restart_policy"
+                && outcome.kind() == ConversionKind::Approximate
+                && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0009")
+        }));
+        assert!(plan.clone().authorize(LossPolicy::ExactOnly).is_blocked());
+        let result = plan.authorize(LossPolicy::AllowApproximate);
+        let output = result.output().ok_or("approximate restart output expected")?;
+        assert!(
+            output
+                .file("web.container")
+                .ok_or("container expected")?
+                .text()
+                .contains(&format!("Restart={expected}\n"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn does_not_widen_a_finite_restart_limit_to_infinite_systemd_retries() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("restart-limited")?);
+    let mut service = image_service("web")?;
+    service.set_restart_policy(sourced(RestartPolicy::on_failure(NonZeroU64::new(4)))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.restart_policy" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(plan.clone().authorize(LossPolicy::AllowApproximate).is_blocked());
+    assert_eq!(
+        plan.authorize(LossPolicy::AllowPartial)
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry_quadlet::QuadletFile::text),
+        Some("[Container]\nImage=example.invalid/web:1\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn maps_empty_protected_quoted_and_specifier_label_values() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("metadata-label")?);
+    let mut service = image_service("web")?;
+    service.add_label(sourced(MetadataLabel::new(
+        id("com.example.empty")?,
+        ProtectedString::plain(""),
+    ))?);
+    service.add_label(sourced(MetadataLabel::new(
+        id("com.example.token")?,
+        ProtectedString::sensitive(r#"{"channel": "never-print-this"}"#),
+    ))?);
+    service.add_label(sourced(MetadataLabel::new(
+        id("com.example.percent")?,
+        ProtectedString::plain("literal%h"),
+    ))?);
+    service.add_label(sourced(MetadataLabel::new(
+        id("com.example.lines")?,
+        ProtectedString::plain("first\nsecond\tvalue"),
+    ))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    assert!(
+        plan.outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact),
+        "{:#?}",
+        plan.outcomes()
+    );
+    assert!(!format!("{plan:?}").contains("never-print-this"));
+    assert_eq!(
+        plan.authorize(LossPolicy::ExactOnly)
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Container]\n",
+            "Image=example.invalid/web:1\n",
+            "Label=\"com.example.empty=\"\n",
+            "Label=\"com.example.token={\\\"channel\\\": \\\"never-print-this\\\"}\"\n",
+            "Label=\"com.example.percent=literal%%h\"\n",
+            "Label=\"com.example.lines=first\\nsecond\\tvalue\"\n",
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn refuses_to_reauthor_compose_managed_labels() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("managed-label")?);
+    let mut service = image_service("web")?;
+    service.add_label(sourced(MetadataLabel::new(
+        id("com.docker.compose.project")?,
+        ProtectedString::sensitive("never-print-this"),
+    ))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.labels.com.docker.compose.project"
+            && outcome.kind() == ConversionKind::Unsupported
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0003")
+    }));
+    assert!(!format!("{plan:?}").contains("never-print-this"));
+    assert_eq!(
+        plan.authorize(LossPolicy::AllowPartial)
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry_quadlet::QuadletFile::text),
+        Some("[Container]\nImage=example.invalid/web:1\n")
     );
     Ok(())
 }

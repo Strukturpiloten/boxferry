@@ -493,6 +493,44 @@ pub enum Command {
     Empty,
 }
 
+/// Container-level automatic restart intent.
+///
+/// This policy is distinct from Compose dependency restart propagation and orchestrator-level
+/// deployment restart policies. A limited on-failure policy uses a non-zero retry count so the
+/// absence of a limit remains distinguishable from an invalid zero-valued limit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RestartPolicy {
+    /// Never restart the container automatically.
+    Never,
+    /// Restart after every container exit.
+    Always,
+    /// Restart after a failed container exit, optionally up to a finite retry count.
+    OnFailure {
+        /// Maximum number of restart attempts; `None` means no policy-specific limit.
+        maximum_retries: Option<std::num::NonZeroU64>,
+    },
+    /// Restart automatically unless an explicit stop state must survive runtime restart.
+    UnlessStopped,
+}
+
+impl RestartPolicy {
+    /// Creates an on-failure policy with an optional non-zero retry limit.
+    #[must_use]
+    pub const fn on_failure(maximum_retries: Option<std::num::NonZeroU64>) -> Self {
+        Self::OnFailure { maximum_retries }
+    }
+
+    /// Returns the finite retry limit of an on-failure policy.
+    #[must_use]
+    pub const fn maximum_retries(self) -> Option<std::num::NonZeroU64> {
+        match self {
+            Self::OnFailure { maximum_retries } => maximum_retries,
+            Self::Never | Self::Always | Self::UnlessStopped => None,
+        }
+    }
+}
+
 /// How a container runtime executes one service health check.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -678,6 +716,37 @@ pub enum EnvironmentValue {
 pub struct EnvironmentVariable {
     name: Identifier,
     value: EnvironmentValue,
+}
+
+/// One portable metadata label attached to an application resource.
+///
+/// Label names remain opaque because Docker, Podman, Compose, and future targets do not share one
+/// useful restrictive grammar. Values use [`ProtectedString`] so runtime-derived metadata cannot
+/// leak through debug output before a caller explicitly authorizes rendering it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetadataLabel {
+    name: Identifier,
+    value: ProtectedString,
+}
+
+impl MetadataLabel {
+    /// Creates one metadata label.
+    #[must_use]
+    pub const fn new(name: Identifier, value: ProtectedString) -> Self {
+        Self { name, value }
+    }
+
+    /// Returns the opaque metadata-label name.
+    #[must_use]
+    pub const fn name(&self) -> &Identifier {
+        &self.name
+    }
+
+    /// Returns the protected metadata-label value.
+    #[must_use]
+    pub const fn value(&self) -> &ProtectedString {
+        &self.value
+    }
 }
 
 impl EnvironmentVariable {
@@ -1059,7 +1128,9 @@ pub struct Service {
     name: Identifier,
     image: Option<Sourced<ImageReference>>,
     command: Option<Sourced<Command>>,
+    restart_policy: Option<Sourced<RestartPolicy>>,
     healthcheck: Option<Sourced<Healthcheck>>,
+    labels: Vec<Sourced<MetadataLabel>>,
     user: Option<Sourced<ProtectedString>>,
     group: Option<Sourced<ProtectedString>>,
     user_namespace: Option<Sourced<ProtectedString>>,
@@ -1084,7 +1155,9 @@ impl Service {
             name,
             image: None,
             command: None,
+            restart_policy: None,
             healthcheck: None,
+            labels: Vec::new(),
             user: None,
             group: None,
             user_namespace: None,
@@ -1130,6 +1203,17 @@ impl Service {
         self.command.as_ref()
     }
 
+    /// Sets the container-level automatic restart policy.
+    pub fn set_restart_policy(&mut self, restart_policy: Sourced<RestartPolicy>) {
+        self.restart_policy = Some(restart_policy);
+    }
+
+    /// Returns the container-level automatic restart policy.
+    #[must_use]
+    pub const fn restart_policy(&self) -> Option<&Sourced<RestartPolicy>> {
+        self.restart_policy.as_ref()
+    }
+
     /// Sets the service health-check definition.
     pub fn set_healthcheck(&mut self, healthcheck: Sourced<Healthcheck>) {
         self.healthcheck = Some(healthcheck);
@@ -1139,6 +1223,17 @@ impl Service {
     #[must_use]
     pub const fn healthcheck(&self) -> Option<&Sourced<Healthcheck>> {
         self.healthcheck.as_ref()
+    }
+
+    /// Appends one service metadata label while preserving source order and provenance.
+    pub fn add_label(&mut self, label: Sourced<MetadataLabel>) {
+        self.labels.push(label);
+    }
+
+    /// Returns service metadata labels in source order.
+    #[must_use]
+    pub fn labels(&self) -> &[Sourced<MetadataLabel>] {
+        &self.labels
     }
 
     /// Sets the primary identity used inside the service container.
@@ -1513,8 +1608,8 @@ fn validate_text(kind: &'static str, value: &str) -> Result<(), ModelError> {
 mod tests {
     use super::{
         Application, Config, ConfigMaterial, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind,
-        HostMapping, Identifier, ModelError, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret,
-        SecretMaterial, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
+        HostMapping, Identifier, MetadataLabel, ModelError, ResourceGrant, ResourceGrantSyntax, ResourceOwnership,
+        RestartPolicy, Secret, SecretMaterial, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
     };
     use crate::{ProtectedString, Sourced};
 
@@ -1537,6 +1632,29 @@ mod tests {
 
         let duplicate = application.add_service(Sourced::generated(Service::new(id("web")?)));
         assert!(matches!(duplicate, Err(ModelError::DuplicateResource { .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn restart_policy_keeps_unlimited_and_finite_on_failure_distinct() {
+        let finite = std::num::NonZeroU64::new(4);
+        assert_eq!(RestartPolicy::on_failure(None).maximum_retries(), None);
+        assert_eq!(RestartPolicy::on_failure(finite).maximum_retries(), finite);
+        assert_eq!(RestartPolicy::Always.maximum_retries(), None);
+    }
+
+    #[test]
+    fn metadata_labels_preserve_empty_and_protected_values() -> Result<(), String> {
+        let empty = MetadataLabel::new(id("com.example.empty")?, ProtectedString::plain(""));
+        let protected = MetadataLabel::new(id("com.example.token")?, ProtectedString::sensitive("never-print-this"));
+        let mut service = Service::new(id("web")?);
+        service.add_label(Sourced::generated(empty));
+        service.add_label(Sourced::generated(protected));
+
+        assert_eq!(service.labels()[0].value().value().expose(), "");
+        let debug = format!("{:?}", service.labels()[1]);
+        assert!(!debug.contains("never-print-this"));
+        assert!(debug.contains("[REDACTED]"));
         Ok(())
     }
 

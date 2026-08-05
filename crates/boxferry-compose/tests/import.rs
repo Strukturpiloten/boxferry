@@ -151,6 +151,141 @@ fn imports_mapping_extra_hosts_without_requiring_ip_only_values() -> Result<(), 
 }
 
 #[test]
+fn imports_service_labels_from_mapping_and_sequence_forms_with_provenance() -> Result<(), Box<dyn Error>> {
+    let base_id = ComposeSourceId::new(76);
+    let override_id = ComposeSourceId::new(77);
+    let base = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    labels:\n",
+        "      com.example.empty:\n",
+        "      com.example.boolean: true\n",
+        "      com.example.number: 42\n",
+        "      com.example.channel: testing\n",
+        "  worker:\n",
+        "    image: example.invalid/worker:1\n",
+        "    labels:\n",
+        "      - com.example.key-only\n",
+        "      - com.example.message=hello world\n",
+    );
+    let overlay = concat!(
+        "services:\n",
+        "  web:\n",
+        "    labels:\n",
+        "      com.example.channel: stable\n",
+    );
+    let project = merged_project([
+        (base_id, "labels.compose.yaml", base),
+        (override_id, "labels.override.yaml", overlay),
+    ])?;
+    let source = ComposeSource::new(project, Identifier::new("labels")?)?
+        .with_source_id(base_id, SourceId::new("labels.compose.yaml")?)
+        .with_source_id(override_id, SourceId::new("labels.override.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact),
+        "{:#?}",
+        result.outcomes()
+    );
+    let application = result.application().ok_or("application expected")?;
+    let web = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "web")
+        .ok_or("web service expected")?;
+    assert_eq!(web.value().labels().len(), 4);
+    assert_eq!(web.value().labels()[0].value().value().expose(), "");
+    assert_eq!(web.value().labels()[1].value().value().expose(), "true");
+    assert_eq!(web.value().labels()[2].value().value().expose(), "42");
+    assert_eq!(web.value().labels()[3].value().value().expose(), "stable");
+    assert_eq!(
+        web.value().labels()[3]
+            .origins()
+            .iter()
+            .map(|origin| origin.source_id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "labels.compose.yaml",
+            "labels.override.yaml",
+            "labels.compose.yaml",
+            "labels.override.yaml",
+        ]
+    );
+    let worker = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "worker")
+        .ok_or("worker service expected")?;
+    assert_eq!(worker.value().labels().len(), 2);
+    assert_eq!(
+        worker.value().labels()[0].value().name().as_str(),
+        "com.example.key-only"
+    );
+    assert_eq!(worker.value().labels()[0].value().value().expose(), "");
+    assert_eq!(worker.value().labels()[1].value().value().expose(), "hello world");
+    assert!(worker.value().labels().iter().all(|label| !label.origins().is_empty()));
+    Ok(())
+}
+
+#[test]
+fn protects_interpolated_label_values_and_rejects_ambiguous_sensitive_compact_entries() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    labels:\n",
+        "      com.example.token: ${PRIVATE_LABEL}\n",
+        "  worker:\n",
+        "    image: example.invalid/worker:1\n",
+        "    labels:\n",
+        "      - com.example.token=${PRIVATE_LABEL}\n",
+    );
+    let compose_source_id = ComposeSourceId::new(78);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        compose_source_id,
+        DocumentOrigin::new("sensitive-label.compose.yaml", "."),
+        text,
+    )])?;
+    let mut environment = MapEnvironment::new();
+    let _ = environment.insert_sensitive("PRIVATE_LABEL", "never-print-this");
+    let interpolation = loaded.interpolate(&environment);
+    let merged = merge_project(&loaded, Some(&interpolation));
+    assert!(merged.is_valid(), "{:#?}", merged.diagnostics());
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("sensitive-label")?,
+    )?
+    .with_source_id(compose_source_id, SourceId::new("sensitive-label.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    let application = result.application().ok_or("application expected")?;
+    let web = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "web")
+        .ok_or("web service expected")?;
+    assert!(web.value().labels()[0].value().value().is_sensitive());
+    assert_eq!(web.value().labels()[0].value().value().expose(), "never-print-this");
+    let worker = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "worker")
+        .ok_or("worker service expected")?;
+    assert!(worker.value().labels().is_empty());
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.worker.labels[0]" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(!format!("{result:?}").contains("never-print-this"));
+    Ok(())
+}
+
+#[test]
 fn imports_config_and_secret_definitions_and_ordered_service_grants() -> Result<(), Box<dyn Error>> {
     let text = config_and_secret_compose();
     let compose_source_id = ComposeSourceId::new(75);

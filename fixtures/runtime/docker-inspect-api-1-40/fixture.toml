@@ -20,7 +20,7 @@ modifications = "none"
 description = "Sanitized minimal JSON models documented Docker Engine API 1.40 inspect fields; no daemon or credentials are required."
 
 [expectations]
-summary = "Image defaults, effective command/environment/user/working-directory/read-only-root state, tag-plus-digest image names, ports, SELinux mounts, aliases, and finite relationships decode without exposing raw runtime identities."
+summary = "Image defaults, effective command/environment/metadata/user/working-directory/read-only-root and retry-limited restart state, tag-plus-digest image names, ports, SELinux mounts, aliases, and finite relationships decode without exposing raw runtime identities."
 
 [extensions.docker]
 api-version = "1.40"

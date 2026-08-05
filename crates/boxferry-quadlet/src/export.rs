@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
-    fmt,
+    fmt::{self, Write as _},
 };
 
 use boxferry_engine::{
@@ -12,14 +12,14 @@ use boxferry_engine::{
 };
 use boxferry_model::{
     Application, Command, Config, EnvironmentValue, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping,
-    Mount, MountSource, NetworkAttachment, Port, Protocol, Provenance, ResourceGrant, ResourceOwnership, Secret,
-    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, Sourced,
+    Mount, MountSource, NetworkAttachment, Port, Protocol, Provenance, ResourceGrant, ResourceOwnership, RestartPolicy,
+    Secret, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, Sourced,
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
     model::{ContainerKey, NetworkKey, PodKey, QuadletUnitType, VolumeKey},
     path::{PathForm, classify_path},
-    render::{EntryValue, QuadletDocumentBuilder, RenderError, SystemdUnitKey},
+    render::{EntryValue, QuadletDocumentBuilder, RenderError, SystemdSection, SystemdUnitKey},
     source::SourceId,
 };
 
@@ -75,6 +75,7 @@ impl QuadletExporter {
                 capability: DiagnosticCode::new("BFQ0006")?,
                 grouping: DiagnosticCode::new("BFQ0007")?,
                 dependency: DiagnosticCode::new("BFQ0008")?,
+                restart: DiagnosticCode::new("BFQ0009")?,
             },
             relative_bind_root: None,
             bind_source_mappings: BTreeMap::new(),
@@ -273,6 +274,7 @@ struct Codes {
     capability: DiagnosticCode,
     grouping: DiagnosticCode,
     dependency: DiagnosticCode,
+    restart: DiagnosticCode,
 }
 
 struct Mapping<'a> {
@@ -946,6 +948,9 @@ impl<'a> Mapping<'a> {
             self.map_command(&subject, command, &mut builder);
         }
         self.map_execution_context(&subject, service.value(), grouped, &mut builder);
+        if let Some(restart_policy) = service.value().restart_policy() {
+            self.map_restart_policy(&subject, restart_policy, &mut builder);
+        }
         if let Some(healthcheck) = service.value().healthcheck() {
             self.map_healthcheck(&subject, healthcheck, &mut builder);
         }
@@ -953,6 +958,7 @@ impl<'a> Mapping<'a> {
         for environment in service.value().environment() {
             self.map_environment(&subject, environment, &mut builder);
         }
+        self.map_metadata_labels(&subject, service.value(), &mut builder);
         for (index, grant) in service.value().config_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{subject}.configs[{index}]"),
@@ -976,27 +982,127 @@ impl<'a> Mapping<'a> {
         for (index, mount) in service.value().mounts().iter().enumerate() {
             self.map_mount(&subject, index, mount, &mut builder);
         }
-        if let Some(pod_name) = pod_name {
-            let pod_subject = format!("{subject}.pod");
-            let pod_reference = format!("{pod_name}.pod");
-            if self.capability("quadlet.container.pod", &pod_subject, service.origins())
-                && self.push_container(
-                    &mut builder,
-                    ContainerKey::Pod,
-                    pod_reference,
-                    &pod_subject,
-                    service.origins(),
-                )
-            {
-                self.exact(pod_subject, service.origins());
-            }
-        } else {
-            for network in service.value().networks() {
-                self.map_network_attachment(&subject, network, &mut builder);
-            }
-        }
+        self.map_pod_or_networks(&subject, service, pod_name, &mut builder);
 
         self.finish_document(file_name, &builder, &subject, service.origins());
+    }
+
+    fn map_restart_policy(
+        &mut self,
+        service_subject: &str,
+        restart_policy: &Sourced<RestartPolicy>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.restart_policy");
+        let (value, approximation) = match restart_policy.value() {
+            RestartPolicy::Never => ("no", None),
+            RestartPolicy::Always => (
+                "always",
+                Some("systemd does not reproduce every runtime-specific activation gate and daemon-restart rule"),
+            ),
+            RestartPolicy::OnFailure {
+                maximum_retries: Some(_),
+            } => {
+                self.unsupported(
+                    &subject,
+                    "a finite container restart count has no equivalent in Restart=; systemd start-rate limits use different time-window semantics",
+                    restart_policy.origins(),
+                );
+                return;
+            }
+            RestartPolicy::OnFailure { maximum_retries: None } => (
+                "on-failure",
+                Some(
+                    "systemd on-failure also covers selected signals, timeouts, watchdog failures, and OOM termination",
+                ),
+            ),
+            RestartPolicy::UnlessStopped => (
+                "always",
+                Some(
+                    "systemd manual-stop handling cannot retain source-runtime unless-stopped state across runtime or host restarts",
+                ),
+            ),
+            _ => {
+                self.unsupported(
+                    &subject,
+                    "unknown container restart-policy form",
+                    restart_policy.origins(),
+                );
+                return;
+            }
+        };
+        if !self.capability("systemd.service.restart", &subject, restart_policy.origins())
+            || !self.push_systemd(
+                builder,
+                SystemdSection::Service,
+                "Restart",
+                value,
+                &subject,
+                restart_policy.origins(),
+            )
+        {
+            return;
+        }
+        if let Some(reason) = approximation {
+            self.restart_approximation(&subject, reason, restart_policy.origins());
+        } else {
+            self.exact(subject, restart_policy.origins());
+        }
+    }
+
+    fn map_metadata_labels(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        for label in service.labels() {
+            let name = label.value().name().as_str();
+            let subject = format!("{service_subject}.labels.{name}");
+            if is_compose_managed_label(name) {
+                self.unsupported(
+                    &subject,
+                    "Compose-managed labels cannot be safely re-authored as application metadata",
+                    label.origins(),
+                );
+                continue;
+            }
+            let Some(encoded) = encode_quadlet_label(name, label.value().value().expose()) else {
+                self.unsupported(
+                    &subject,
+                    "label names and values containing NUL cannot be represented by Quadlet or systemd",
+                    label.origins(),
+                );
+                continue;
+            };
+            if self.capability("quadlet.container.label", &subject, label.origins())
+                && self.push_container(builder, ContainerKey::Label, encoded, &subject, label.origins())
+            {
+                self.exact(subject, label.origins());
+            }
+        }
+    }
+
+    fn map_pod_or_networks(
+        &mut self,
+        service_subject: &str,
+        service: &Sourced<Service>,
+        pod_name: Option<&str>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let Some(pod_name) = pod_name else {
+            for network in service.value().networks() {
+                self.map_network_attachment(service_subject, network, builder);
+            }
+            return;
+        };
+        let subject = format!("{service_subject}.pod");
+        if self.capability("quadlet.container.pod", &subject, service.origins())
+            && self.push_container(
+                builder,
+                ContainerKey::Pod,
+                format!("{pod_name}.pod"),
+                &subject,
+                service.origins(),
+            )
+        {
+            self.exact(subject, service.origins());
+        }
     }
 
     fn map_secret_grant(
@@ -2044,6 +2150,24 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn push_systemd(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        section: SystemdSection,
+        key: &str,
+        value: impl Into<String>,
+        subject: &str,
+        origins: &[Provenance],
+    ) -> bool {
+        match EntryValue::new(value).and_then(|value| builder.push_systemd(section, key, value)) {
+            Ok(()) => true,
+            Err(error) => {
+                self.generation_error(subject, &error, origins);
+                false
+            }
+        }
+    }
+
     fn push_pod(
         &mut self,
         builder: &mut QuadletDocumentBuilder,
@@ -2160,6 +2284,17 @@ impl<'a> Mapping<'a> {
             subject,
             ConversionKind::Approximate,
             "generated Quadlet topology intentionally approximates source service isolation",
+            reason,
+            origins,
+        );
+    }
+
+    fn restart_approximation(&mut self, subject: &str, reason: &str, origins: &[Provenance]) {
+        self.loss(
+            self.exporter.codes.restart.clone(),
+            subject,
+            ConversionKind::Approximate,
+            "container restart behavior is approximated by the systemd service manager",
             reason,
             origins,
         );
@@ -2462,6 +2597,34 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',')
         })
+}
+
+fn encode_quadlet_label(name: &str, value: &str) -> Option<String> {
+    if name.contains('\0') || value.contains('\0') {
+        return None;
+    }
+    let mut encoded = String::with_capacity(name.len() + value.len() + 3);
+    encoded.push('"');
+    for character in name.chars().chain(std::iter::once('=')).chain(value.chars()) {
+        match character {
+            '"' => encoded.push_str("\\\""),
+            '\\' => encoded.push_str("\\\\"),
+            '%' => encoded.push_str("%%"),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '\t' => encoded.push_str("\\t"),
+            character if character.is_control() => {
+                write!(&mut encoded, "\\u{:04x}", u32::from(character)).ok()?;
+            }
+            character => encoded.push(character),
+        }
+    }
+    encoded.push('"');
+    Some(encoded)
+}
+
+fn is_compose_managed_label(name: &str) -> bool {
+    name.starts_with("com.docker.compose.")
 }
 
 fn is_safe_secret_component(value: &str) -> bool {

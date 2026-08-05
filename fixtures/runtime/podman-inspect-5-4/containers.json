@@ -12,11 +12,19 @@
       "Cmd": ["server", "--production"],
       "User": "1001:1002",
       "WorkingDir": "/srv/app",
+      "Labels": {
+        "com.example.purpose": "fixture",
+        "org.opencontainers.image.title": "fixture"
+      },
       "CreateCommand": ["podman", "run", "--name", "web"],
       "Entrypoint": ["/usr/local/bin/entrypoint"]
     },
     "HostConfig": {
-      "ReadonlyRootfs": true
+      "ReadonlyRootfs": true,
+      "RestartPolicy": {
+        "Name": "on-failure",
+        "MaximumRetryCount": 4
+      }
     },
     "Mounts": [
       {

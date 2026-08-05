@@ -149,7 +149,7 @@ fn facade_exposes_neutral_structural_service_groups() -> Result<(), String> {
 fn facade_exposes_runtime_reconstruction_additively() -> Result<(), String> {
     use boxferry::{
         ContainerObservation, EffectiveCommand, ImageReference, ImportAdapter, OverrideReconstruction,
-        RuntimeImplementation, RuntimeImporter, RuntimeSnapshot, SourceId,
+        RuntimeImplementation, RuntimeImporter, RuntimeMetadataLabel, RuntimeSnapshot, SourceId,
     };
 
     let mut container = ContainerObservation::new(
@@ -162,6 +162,10 @@ fn facade_exposes_runtime_reconstruction_additively() -> Result<(), String> {
     );
     container.set_command(EffectiveCommand::Empty);
     container.set_environment(Vec::new());
+    container.set_labels(vec![RuntimeMetadataLabel::new(
+        Identifier::new("com.example.role").map_err(|error| error.to_string())?,
+        "web",
+    )]);
 
     let mut snapshot = RuntimeSnapshot::new(
         Identifier::new("example").map_err(|error| error.to_string())?,
@@ -174,6 +178,13 @@ fn facade_exposes_runtime_reconstruction_additively() -> Result<(), String> {
 
     assert_eq!(
         result.application().map(|application| application.services().len()),
+        Some(1)
+    );
+    assert_eq!(
+        result
+            .application()
+            .and_then(|application| application.services().first())
+            .map(|service| service.value().labels().len()),
         Some(1)
     );
     assert!(

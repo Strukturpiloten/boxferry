@@ -21,7 +21,7 @@ modifications = "none"
 description = "Sanitized minimal JSON models observed native Podman 5.4 inspect key casing and fields; no runtime or credentials are required."
 
 [expectations]
-summary = "Image defaults, effective command/environment/user/working-directory/read-only-root state, tag-plus-digest image names, ports, SELinux mounts, aliases, pod membership, and creation evidence decode without exposing raw runtime identities."
+summary = "Image defaults, effective command/environment/metadata/user/working-directory/read-only-root and retry-limited restart state, tag-plus-digest image names, ports, SELinux mounts, aliases, pod membership, and creation evidence decode without exposing raw runtime identities."
 
 [extensions.podman]
 version = "5.4.0"

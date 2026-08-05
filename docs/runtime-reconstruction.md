@@ -43,8 +43,8 @@ outside that range. Within it:
 
 Inspect payloads are redacted from `Debug`. Raw container, image, pod, network, and volume IDs are
 used only in private lookup tables. Public `SourceId` values use stable resource kinds and names.
-Effective command/environment/user/working-directory values and creation commands remain
-protected.
+Effective command/environment/metadata-label/user/working-directory values, health commands, and
+creation commands remain protected. Container restart policy is non-sensitive structured state.
 
 ### Read-only acquisition
 
@@ -109,6 +109,8 @@ entrypoint/command authorship boundary, so that limitation receives an explicit 
 opaque IDs remain private lookup keys. For API 1.40 through 1.44, the decoder removes Docker's
 generated short container ID from endpoint `Aliases`; beginning with API 1.45, `Aliases` is retained
 exactly and the separate generated `DNSNames` response field is not treated as authored intent.
+`HostConfig.RestartPolicy` is decoded as the reviewed container-level policy object. It is not
+inferred from top-level restart history.
 
 ### Explicit endpoint acquisition
 
@@ -148,8 +150,12 @@ chooses stable `SourceId` values that are safe to display; raw opaque runtime ID
 The first reconstructed subset includes:
 
 - effective container image references;
-- effective command vectors and environment values;
+- effective command vectors, environment values, and metadata-label maps;
 - non-empty effective `user[:group]` and working-directory values;
+- effective container-level `Never`, `Always`, `OnFailure[:maximum-retries]`, or `UnlessStopped`
+  restart policy;
+- regular health commands, explicit disable state, interval, timeout, retries, start period, and
+  a native-equivalent start interval where supported;
 - explicit read-only-root-filesystem state;
 - published ports and storage mounts;
 - network attachments with every alias in observed order;
@@ -157,13 +163,13 @@ The first reconstructed subset includes:
 - container-to-image, network, volume, mount, and pod relationships; and
 - optional creation-command evidence.
 
-Effective command arguments, environment values, and creation arguments use `ProtectedString` and
-are sensitive by default. Native adapters must not place unsanitized production inspect responses
-in repository fixtures.
+Effective command arguments, environment values, metadata-label values, health command arguments,
+and creation arguments use `ProtectedString` and are sensitive by default. Native adapters must not place unsanitized
+production inspect responses in repository fixtures.
 
-An absent command or environment collection means the native adapter did not supply that field.
+An absent command, environment, or label collection means the native adapter did not supply that field.
 An explicitly empty command uses `EffectiveCommand::Empty`; an observed empty environment uses
-`set_environment(Vec::new())`. This distinction prevents missing inspection data from being
+`set_environment(Vec::new())`, and an observed empty label map uses `set_labels(Vec::new())`. This distinction prevents missing inspection data from being
 mistaken for an authored clear operation.
 
 ## Reconstruction policies
@@ -171,14 +177,45 @@ mistaken for an authored clear operation.
 The caller must choose one policy:
 
 - `PreserveObservedState` materializes each supported effective command, environment,
-  `user[:group]`, and working-directory value. Retained combined identities split into the neutral
-  primary-user and primary-group fields with the same provenance. This is
+  metadata-label, `user[:group]`, working-directory, and regular-health-check value. Retained combined identities
+  split into the neutral primary-user and primary-group fields with the same provenance. This is
   useful for a behavioral snapshot but can freeze image defaults into the generated definition.
 - `InferImageOverrides` requires an explicit container-to-image observation link. Values equal to
-  image defaults are omitted; differing command, environment, `user[:group]`, and working-directory values
-  are retained. Each classification receives both runtime-observation and conversion-decision
-  provenance plus an approximate outcome. Read-only-root state is a container setting rather than
-  an image-default comparison and is preserved directly when supplied.
+  image defaults are omitted; differing command, environment, metadata-label, `user[:group]`, working-directory,
+  and regular-health-check values are retained. Health command, disable, timing, and retry fields
+  are classified independently. Each classification receives both runtime-observation and
+  conversion-decision provenance plus an approximate outcome. Read-only-root state is a container
+  setting rather than an image-default comparison and is preserved directly when supplied.
+
+Container restart policy is also a host setting rather than an image default. Both policies retain
+a supplied value directly with runtime-observation provenance.
+
+Container and image label maps are compared by opaque name and protected value. A matching image
+label is omitted; a new or changed container value is retained. A missing inherited image label is
+unsupported because inspection cannot prove a portable deletion operation. Values using Compose's
+reserved `com.docker.compose.*` provider namespace remain in the reviewable neutral model but
+receive `BFR0010` rather than being claimed as authored application metadata. Compose and Quadlet
+exporters emit retained application labels through typed Lens boundaries.
+Reserved `com.docker.compose.*` labels remain report-only and are omitted from generated output.
+See [ADR 0016](decisions/0016-runtime-metadata-label-reconstruction.md).
+
+`RuntimeHealthcheck::new()` records an inspected absence of regular health configuration when it is
+attached to an observation; a missing observation means the adapter did not supply the comparison
+field. Docker `StartInterval` is decoded only for Engine API 1.44 and newer. Podman
+`StartupHealthCheck`, health-on-failure actions, and health-log controls remain named native losses
+because they are not equivalent to the shared regular-health fields.
+
+Docker and Podman adapters accept the reviewed restart-policy inspect object and fail closed on
+unknown names, negative counters, malformed objects, or retry counters attached to a
+non-`on-failure` policy. Podman's empty default name and current `never` synonym with a zero
+counter mean `Never`.
+
+Quadlet uses systemd rather than the source runtime's internal restart manager. `Never` maps
+exactly to `[Service] Restart=no`. `Always`, unlimited `OnFailure`, and `UnlessStopped` map only as
+explicit approximations because activation gates, signal/timeout failure classification, manual
+stop state, and daemon-restart behavior differ. Finite `on-failure:N` emits no restart directive:
+systemd `StartLimitBurst=` is a time-window rate limit, not an equivalent retry counter. See
+[ADR 0015](decisions/0015-runtime-container-restart-policy.md).
 
 If image defaults are missing, inference preserves available effective values and reports that it
 could not classify true overrides. Optional creation evidence does not change this decision.
@@ -188,6 +225,7 @@ definition. `BFR0002` records image comparisons, `BFR0003` incomplete comparison
 `BFR0004` uncertain resource ownership, `BFR0005` pod/grouping limitations, `BFR0006` a missing
 reconstructable image, `BFR0007` an invalid neutral-model mapping, `BFR0008` contradictory group
 membership evidence, and `BFR0009` an explicit caller lifecycle resolution.
+`BFR0010` identifies retained runtime metadata in Compose's reserved provider namespace.
 
 ## Resource lifecycle and grouping
 

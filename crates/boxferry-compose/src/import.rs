@@ -7,10 +7,10 @@ use boxferry_engine::{
 use boxferry_model::{
     Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
     HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
-    HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference, ModelError,
-    Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant,
-    ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, SourceSpan, Sourced, Volume,
+    HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
+    MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
+    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, SourceSpan, Sourced, Volume,
 };
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
@@ -21,8 +21,8 @@ use compose_lens::model::{
     ShortVolumeMount, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
-    ProjectDependsOn, ProjectEnvironment, ProjectFieldReference, ProjectGrant, ProjectHealthcheck, ProjectResource,
-    ProjectService, ProjectValue, ProjectView, build_project_view,
+    ProjectDependsOn, ProjectEnvironment, ProjectFieldReference, ProjectGrant, ProjectHealthcheck, ProjectLabels,
+    ProjectResource, ProjectService, ProjectValue, ProjectView, build_project_view,
 };
 use compose_lens::source::SourceSpan as ComposeSpan;
 
@@ -226,6 +226,9 @@ impl<'a> Mapping<'a> {
         self.map_execution_context(&subject, native, &mut service);
         if let Some(environment) = native.environment() {
             self.map_environment(&subject, environment.value(), &mut service);
+        }
+        if let Some(labels) = native.labels() {
+            self.map_labels(&subject, labels.value(), &mut service);
         }
         if let Some(extra_hosts) = native.extra_hosts() {
             for (index, entry) in extra_hosts.value().entries().iter().enumerate() {
@@ -685,6 +688,33 @@ impl<'a> Mapping<'a> {
                 self.sourced_provenance(EnvironmentVariable::new(name, value), entry.value().provenance()),
             );
             self.exact_provenance(subject, entry.value().provenance());
+        }
+    }
+
+    fn map_labels(&mut self, service_subject: &str, labels: &ProjectLabels, service: &mut Service) {
+        for (index, entry) in labels.entries().iter().enumerate() {
+            if entry.name().is_sensitive() {
+                self.unsupported_optional(
+                    &format!("{service_subject}.labels[{index}]"),
+                    "interpolated sensitive label names cannot be represented safely in the neutral model",
+                    entry.name().effective_source(),
+                );
+                continue;
+            }
+            let subject = format!("{service_subject}.labels.{}", entry.name().value());
+            let Some(name) = self.identifier_optional(&subject, entry.name().value(), entry.name().effective_source())
+            else {
+                continue;
+            };
+            let value = match entry.value().value() {
+                ComposeScalar::Null => String::new(),
+                ComposeScalar::Boolean(value) => value.to_string(),
+                ComposeScalar::Number(value) | ComposeScalar::String(value) => value.clone(),
+            };
+            let label = MetadataLabel::new(name, Self::protected(&value, entry.value().is_sensitive()));
+            let label = self.sourced_metadata_label(label, entry.name().sources(), entry.value().provenance());
+            self.exact_origins(subject, label.origins());
+            service.add_label(label);
         }
     }
 
@@ -1311,6 +1341,25 @@ impl<'a> Mapping<'a> {
         for origin in hostname_sources
             .iter()
             .chain(address_provenance.sources())
+            .filter_map(|span| self.origin(*span))
+        {
+            if !sourced.origins().contains(&origin) {
+                sourced.add_origin(origin);
+            }
+        }
+        sourced
+    }
+
+    fn sourced_metadata_label(
+        &self,
+        value: MetadataLabel,
+        name_sources: &[ComposeSpan],
+        value_provenance: &MergeProvenance,
+    ) -> Sourced<MetadataLabel> {
+        let mut sourced = Sourced::generated(value);
+        for origin in name_sources
+            .iter()
+            .chain(value_provenance.sources())
             .filter_map(|span| self.origin(*span))
         {
             if !sourced.origins().contains(&origin) {

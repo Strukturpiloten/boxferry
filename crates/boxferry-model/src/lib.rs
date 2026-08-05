@@ -12,9 +12,9 @@ mod value;
 pub use application::{
     Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
-    ModelError, Mount, MountSource, Network, NetworkAttachment, Port, Protocol, ResourceGrant, ResourceGrantSyntax,
-    ResourceOwnership, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
-    ServiceGroup, Volume,
+    MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, Protocol, ResourceGrant,
+    ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, ServiceGroup, Volume,
 };
 pub use image::ImageReference;
 pub use provenance::{Provenance, ProvenanceKind, SourceId, SourceSpan, Sourced};

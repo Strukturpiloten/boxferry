@@ -21,6 +21,10 @@ services:
       EMPTY: ""
       FROM_HOST:
       PORT: 8080
+    labels:
+      com.example.empty:
+      com.example.metadata: '{"channel": "stable"}'
+      com.example.literal-specifier: literal%h
     extra_hosts:
       - host.docker.internal=host-gateway
       - ipv6=[::1]

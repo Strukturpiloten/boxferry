@@ -69,9 +69,11 @@ current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `C
 dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
 `boxferry::docker`, so embedded callers do not need to guess a second crate version.
 
-The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types,
-`OverrideReconstruction`, `RuntimeResolutions`, and `RuntimeImporter`. It does not enable Docker or
-Podman clients and does not read a daemon, command, filesystem, or process environment.
+The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types including
+`RuntimeHealthcheck` and `RuntimeMetadataLabel`, plus the neutral `RestartPolicy`, `MetadataLabel`, `OverrideReconstruction`,
+`RuntimeResolutions`, and `RuntimeImporter`. It does
+not enable Docker or Podman clients and does not read a daemon, command, filesystem, or process
+environment.
 
 The `podman-runtime` feature re-exports `PodmanInspectDocuments`, `PodmanInspectSource`,
 `PodmanSnapshotResult`, `PodmanImporter`, explicit resource-selection and command types,
@@ -114,8 +116,8 @@ or deploying its output.
 
 T4 provides the first tested public surface:
 
-- an ordered multi-service `Application` with images, commands, health checks, service dependencies,
-  environment, explicit host mappings, ports, mounts, networks, volumes, config and secret
+- an ordered multi-service `Application` with images, commands, container restart policies, health checks, service dependencies,
+  environment, protected metadata labels, explicit host mappings, ports, mounts, networks, volumes, config and secret
   declarations, ordered service grants, lifecycle ownership, and source provenance;
 - tolerant `ImageReference` parsing that retains `name:tag@digest` forms;
 - `ProtectedString` and structured diagnostics whose sensitive fields redact debug and display
@@ -126,8 +128,8 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.7;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.6;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.8;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.7;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
 - an optional `docker-runtime` facade feature backed by `boxferry-docker`.
@@ -147,6 +149,20 @@ directory, and an explicit read-only-root-filesystem choice. Text values use `Pr
 sensitive interpolation remains redacted from debug output while authorized adapters can expose
 it for native encoding.
 
+`RestartPolicy` is the container-level automatic restart contract. It keeps `Never`, `Always`,
+unlimited or non-zero retry-limited `OnFailure`, and `UnlessStopped` distinct from service-
+dependency restart propagation and deployment-orchestrator policy.
+
+`MetadataLabel` retains an opaque non-empty name and a `ProtectedString` value. Runtime adapters
+construct sensitive `RuntimeMetadataLabel` values. The runtime importer can preserve them or
+compare container values with linked image metadata; reserved `com.docker.compose.*` provider
+labels remain reviewable but are explicitly unsafe to re-author. Compose mapping and sequence
+forms import into the same neutral type with name/value provenance. The Compose exporter emits
+deterministic label mappings, while the Quadlet exporter emits capability-checked repeatable
+`Label=` entries with systemd quoting and literal-specifier escaping. These APIs cover service and
+container metadata only; resource labels, image-build labels, annotations, and label files need
+separate ownership contracts.
+
 `Application` exposes separate config and secret resource collections with application/external
 ownership, optional provider/runtime names, and optional material origins. `Service` exposes
 separate ordered grant collections whose shared `ResourceGrant` retains authored short/long
@@ -163,10 +179,15 @@ implementation defaults, and conversion decisions. Embedded runtime adapters sho
 author intent.
 
 `RuntimeImporter` requires an explicit `OverrideReconstruction` policy. `PreserveObservedState`
-materializes supported effective command, environment, `user[:group]`, and working-directory values.
-`InferImageOverrides` omits values equal to linked image defaults and retains differing values with
-both observation and decision provenance. Retained combined identities split into the neutral
-primary-user and primary-group fields. Explicit read-only-root state is preserved directly.
+materializes supported effective command, environment, metadata-label, `user[:group]`, working-directory, and
+regular-health-check values. `InferImageOverrides` omits values equal to linked image defaults and
+retains differing values with both observation and decision provenance. Health command, disable,
+interval, timeout, retries, start-period, and supported start-interval fields are compared
+independently. Retained combined identities split into the neutral primary-user and primary-group
+fields. Explicit read-only-root and container restart-policy state is preserved directly. Restart
+policy is not compared with an image because it is a container host setting. Matching image labels
+are omitted, while changed and runtime-added labels receive decision provenance. Podman startup-health checks,
+on-failure actions, and log policies are not represented as regular health checks.
 Both policies emit an application-level approximate outcome because neither
 can recover complete author intent. Runtime network and volume ownership is `Uncertain`; pod
 membership becomes an ordered `ServiceGroup` when pod and container observations agree. Group
@@ -207,8 +228,8 @@ The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A c
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
 replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
 
-The importer consumes ComposeLens 0.1.7's native `build_project_view` boundary directly. Effective
-multi-file values retain every contributing source origin in BoxFerry's neutral model and
+The importer consumes ComposeLens 0.1.8's native `build_project_view` boundary directly. Effective
+multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
 
@@ -236,8 +257,11 @@ Separate containers remain the exact grouping default. Embedded callers may sele
 `QuadletGroupingPolicy::PreserveSingleGroup` preserves one complete application-owned neutral
 group using the group name and rejects missing, multiple, unresolved, external, or partial groups.
 It remains approximate because structural membership does not itself assert shared namespaces.
-Explicit host mappings, health checks, dependency/readiness directives, execution-context values, and
-external secret grants convert through QuadletLens 0.1.6. A single-pod request requires identical
+Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
+container restart policies, external secret grants, and service metadata labels convert through
+QuadletLens 0.1.7. `Never`
+maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
+limits remain manual actions. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an
 identical explicit namespace emit once at pod scope; separate containers retain their own values.
 Compose config lifecycle and application-owned secret materialization remain explicit target-side

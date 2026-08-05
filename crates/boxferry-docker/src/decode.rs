@@ -7,20 +7,24 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Identifier, ImageReference, ModelError, Mount, MountSource, NetworkAttachment, Port, Protocol, Provenance,
-    SelinuxRelabel, SourceId,
+    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference, ModelError, Mount,
+    MountSource, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, RestartPolicy, SelinuxRelabel,
+    SourceId,
 };
 use boxferry_runtime::{
     ContainerObservation, EffectiveCommand, ImageObservation, NetworkObservation, OverrideReconstruction,
-    RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeImporter, RuntimeResolutions, RuntimeSnapshot,
-    RuntimeSnapshotError, VolumeObservation,
+    RuntimeEnvironmentVariable, RuntimeHealthcheck, RuntimeImplementation, RuntimeImporter, RuntimeMetadataLabel,
+    RuntimeResolutions, RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::{
     DockerInspectSource, MAXIMUM_DOCKER_API_VERSION, MINIMUM_DOCKER_API_VERSION,
-    native::{ContainerInspect, ImageConfig, ImageInspect, InspectMount, NetworkInspect, VolumeInspect},
+    native::{
+        ContainerInspect, HealthConfig, ImageConfig, ImageInspect, InspectMount, NetworkInspect,
+        RestartPolicy as NativeRestartPolicy, VolumeInspect,
+    },
 };
 
 /// Recoverable output of decoding native Docker inspection responses.
@@ -316,11 +320,17 @@ impl<'a> Decoder<'a> {
                         observation.set_environment(environment);
                     }
                 }
+                if let Some(labels) = self.metadata_labels("image", &label, config.labels.unwrap_or_default()) {
+                    observation.set_labels(labels);
+                }
                 if let Some(user) = config.user.filter(|value| !value.is_empty()) {
                     observation.set_user(user);
                 }
                 if let Some(working_directory) = config.working_dir.filter(|value| !value.is_empty()) {
                     observation.set_working_directory(working_directory);
+                }
+                if let Some(healthcheck) = self.healthcheck("image", &label, &source_id, config.healthcheck) {
+                    observation.set_healthcheck(healthcheck);
                 }
                 let mut fields = meaningful_fields(&config.other, &[]);
                 if config.entrypoint.as_ref().is_some_and(|values| !values.is_empty()) {
@@ -535,11 +545,17 @@ impl<'a> Decoder<'a> {
                 observation.set_environment(environment);
             }
         }
+        if let Some(labels) = self.metadata_labels("container", container_name, config.labels.unwrap_or_default()) {
+            observation.set_labels(labels);
+        }
         if let Some(user) = config.user.filter(|value| !value.is_empty()) {
             observation.set_user(user);
         }
         if let Some(working_directory) = config.working_dir.filter(|value| !value.is_empty()) {
             observation.set_working_directory(working_directory);
+        }
+        if let Some(healthcheck) = self.healthcheck("container", container_name, source_id, config.healthcheck) {
+            observation.set_healthcheck(healthcheck);
         }
         let mut fields = meaningful_fields(&config.other, &[]);
         if config.entrypoint.as_ref().is_some_and(|values| !values.is_empty()) {
@@ -570,6 +586,16 @@ impl<'a> Decoder<'a> {
                 "ReadonlyRootfs is not a boolean",
                 Some(container_name),
             ),
+        }
+        match host_config.remove("RestartPolicy") {
+            Some(Value::Null) | None => {}
+            Some(value) => match serde_json::from_value::<NativeRestartPolicy>(value)
+                .map_err(|_| "RestartPolicy is not an object with the expected fields")
+                .and_then(|native| decode_restart_policy(&native, false))
+            {
+                Ok(policy) => observation.set_restart_policy(policy),
+                Err(reason) => self.invalid_resource("container restart policy", reason, Some(container_name)),
+            },
         }
         self.report_fields(
             format!("runtime.docker.containers.{container_name}.HostConfig"),
@@ -682,6 +708,51 @@ impl<'a> Decoder<'a> {
             None
         } else {
             Some(environment)
+        }
+    }
+
+    fn metadata_labels(
+        &mut self,
+        kind: &'static str,
+        resource: &str,
+        values: BTreeMap<String, String>,
+    ) -> Option<Vec<RuntimeMetadataLabel>> {
+        let mut labels = Vec::with_capacity(values.len());
+        for (name, value) in values {
+            let Ok(name) = Identifier::new(name) else {
+                self.invalid_resource(
+                    kind,
+                    "metadata-label name is empty or contains a NUL byte",
+                    Some(resource),
+                );
+                return None;
+            };
+            labels.push(RuntimeMetadataLabel::new(name, value));
+        }
+        Some(labels)
+    }
+
+    fn healthcheck(
+        &mut self,
+        kind: &'static str,
+        label: &str,
+        source_id: &SourceId,
+        native: Option<HealthConfig>,
+    ) -> Option<RuntimeHealthcheck> {
+        let Some(native) = native else {
+            return Some(RuntimeHealthcheck::new());
+        };
+        self.report_fields(
+            format!("runtime.docker.{kind}s.{label}.Config.Healthcheck"),
+            meaningful_fields(&native.other, &[]),
+            Some(source_id),
+        );
+        match decode_healthcheck(native, self.source.api_version() >= crate::DockerApiVersion::new(1, 44)) {
+            Ok(healthcheck) => Some(healthcheck),
+            Err(reason) => {
+                self.invalid_resource("health check", reason, Some(label));
+                None
+            }
         }
     }
 
@@ -970,6 +1041,147 @@ fn effective_command(arguments: Vec<String>) -> EffectiveCommand {
     } else {
         EffectiveCommand::exec(arguments)
     }
+}
+
+fn decode_restart_policy(
+    native: &NativeRestartPolicy,
+    allow_podman_extensions: bool,
+) -> Result<RestartPolicy, &'static str> {
+    let maximum_retry_count =
+        u64::try_from(native.maximum_retry_count).map_err(|_| "restart-policy maximum retry count is negative")?;
+    let maximum_retries = std::num::NonZeroU64::new(maximum_retry_count);
+    match native.name.as_str() {
+        "no" if maximum_retries.is_none() => Ok(RestartPolicy::Never),
+        "" | "never" if allow_podman_extensions && maximum_retries.is_none() => Ok(RestartPolicy::Never),
+        "always" if maximum_retries.is_none() => Ok(RestartPolicy::Always),
+        "unless-stopped" if maximum_retries.is_none() => Ok(RestartPolicy::UnlessStopped),
+        "on-failure" => Ok(RestartPolicy::on_failure(maximum_retries)),
+        "no" | "always" | "unless-stopped" => Err("restart-policy maximum retries are only valid with on-failure"),
+        "" | "never" if allow_podman_extensions => Err("restart-policy maximum retries are only valid with on-failure"),
+        _ => Err("restart-policy name is unknown"),
+    }
+}
+
+fn decode_healthcheck(native: HealthConfig, allow_start_interval: bool) -> Result<RuntimeHealthcheck, &'static str> {
+    let scalars_are_configured = health_scalars_are_configured(&native);
+    let mut healthcheck = RuntimeHealthcheck::new();
+    match native.test {
+        None => {
+            if scalars_are_configured {
+                return Err("health-check timing is present without a command");
+            }
+        }
+        Some(test) if test.is_empty() => return Err("health-check command array is empty"),
+        Some(test) => {
+            let mut values = test.into_iter();
+            match values.next().as_deref() {
+                Some("NONE") if values.next().is_none() => healthcheck.set_disabled(true),
+                Some("CMD") => {
+                    let arguments = values.map(ProtectedString::sensitive).collect::<Vec<ProtectedString>>();
+                    if arguments.is_empty() {
+                        return Err("health-check exec command has no arguments");
+                    }
+                    healthcheck.set_disabled(false);
+                    healthcheck.set_command(HealthcheckCommand::Exec(arguments));
+                }
+                Some("CMD-SHELL") => {
+                    let Some(command) = values.next() else {
+                        return Err("health-check shell command is absent");
+                    };
+                    if command.is_empty() || values.next().is_some() {
+                        return Err("health-check shell command must contain exactly one non-empty value");
+                    }
+                    healthcheck.set_disabled(false);
+                    healthcheck.set_command(HealthcheckCommand::Shell(ProtectedString::sensitive(command)));
+                }
+                Some("NONE") => return Err("disabled health check contains unexpected arguments"),
+                Some(_) => return Err("health-check command kind is unknown"),
+                None => return Err("health-check command array is empty"),
+            }
+        }
+    }
+
+    set_duration(&mut healthcheck, native.interval, RuntimeHealthcheck::set_interval)?;
+    set_duration(&mut healthcheck, native.timeout, RuntimeHealthcheck::set_timeout)?;
+    set_retries(&mut healthcheck, native.retries)?;
+    set_duration(
+        &mut healthcheck,
+        native.start_period,
+        RuntimeHealthcheck::set_start_period,
+    )?;
+    if !allow_start_interval && native.start_interval.is_some_and(|value| value != 0) {
+        return Err("health-check start interval is not available in the selected Docker API version");
+    }
+    if allow_start_interval {
+        set_duration(
+            &mut healthcheck,
+            native.start_interval,
+            RuntimeHealthcheck::set_start_interval,
+        )?;
+    }
+    Ok(healthcheck)
+}
+
+fn health_scalars_are_configured(native: &HealthConfig) -> bool {
+    [
+        native.interval,
+        native.timeout,
+        native.retries,
+        native.start_period,
+        native.start_interval,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value != 0)
+}
+
+fn set_duration(
+    healthcheck: &mut RuntimeHealthcheck,
+    value: Option<i64>,
+    set: fn(&mut RuntimeHealthcheck, HealthcheckDuration),
+) -> Result<(), &'static str> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value < 0 {
+        return Err("health-check duration is negative");
+    }
+    if value > 0 {
+        let duration = HealthcheckDuration::new(canonical_duration(value))
+            .map_err(|_| "health-check duration could not enter the neutral model")?;
+        set(healthcheck, duration);
+    }
+    Ok(())
+}
+
+fn set_retries(healthcheck: &mut RuntimeHealthcheck, value: Option<i64>) -> Result<(), &'static str> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value < 0 {
+        return Err("health-check retry count is negative");
+    }
+    if value > 0 {
+        let retries = HealthcheckRetries::new(value.to_string())
+            .map_err(|_| "health-check retry count could not enter the neutral model")?;
+        healthcheck.set_retries(retries);
+    }
+    Ok(())
+}
+
+fn canonical_duration(nanoseconds: i64) -> String {
+    for (unit_nanoseconds, suffix) in [
+        (3_600_000_000_000, "h"),
+        (60_000_000_000, "m"),
+        (1_000_000_000, "s"),
+        (1_000_000, "ms"),
+        (1_000, "us"),
+    ] {
+        if nanoseconds % unit_nanoseconds == 0 {
+            return format!("{}{suffix}", nanoseconds / unit_nanoseconds);
+        }
+    }
+    format!("{nanoseconds}ns")
 }
 
 fn protocol_value(protocol: &str) -> Protocol {

@@ -16,6 +16,9 @@ HealthStartPeriod=10s
 Environment=EMPTY=
 Environment=PORT=9090
 Environment=OVERRIDE_ONLY=enabled
+Label="com.example.empty="
+Label="com.example.metadata={\"channel\": \"stable\"}"
+Label="com.example.literal-specifier=literal%%h"
 AddHost=host.docker.internal:host-gateway
 AddHost=ipv6:[::1]
 AddHost=database:192.0.2.10

@@ -1,15 +1,216 @@
 //! Runtime reconstruction contracts exercised through the public component API.
 
+use std::num::NonZeroU64;
+
 use boxferry_engine::{ConversionKind, DiagnosticCode, ImportAdapter};
 use boxferry_model::{
-    Command, EnvironmentValue, Identifier, ImageReference, Mount, MountSource, NetworkAttachment, Provenance,
-    ProvenanceKind, ResourceOwnership, SourceId, Sourced,
+    Command, EnvironmentValue, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference,
+    Mount, MountSource, NetworkAttachment, ProtectedString, Provenance, ProvenanceKind, ResourceOwnership,
+    RestartPolicy, SourceId, Sourced,
 };
 use boxferry_runtime::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation,
-    OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeImporter,
-    RuntimeResolutions, RuntimeSnapshot, VolumeObservation,
+    OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeHealthcheck, RuntimeImplementation,
+    RuntimeImporter, RuntimeMetadataLabel, RuntimeResolutions, RuntimeSnapshot, VolumeObservation,
 };
+
+#[test]
+fn label_inference_retains_only_values_that_differ_from_image_metadata() -> Result<(), String> {
+    let image_source = source("runtime:docker:image:web")?;
+    let container_source = source("runtime:docker:container:web")?;
+    let mut image = ImageObservation::new(image_source.clone());
+    image.set_labels(vec![
+        label("com.example.shared", "image-value")?,
+        label("org.opencontainers.image.title", "example")?,
+    ]);
+
+    let mut container = complete_container(container_source, "web")?;
+    container.set_image(image_reference()?, Some(image_source));
+    container.set_labels(vec![
+        label("com.docker.compose.project", "private-project")?,
+        label("com.example.shared", "image-value")?,
+        label("org.opencontainers.image.title", "replacement")?,
+    ]);
+
+    let mut snapshot = snapshot()?;
+    snapshot.add_image(image).map_err(|error| error.to_string())?;
+    snapshot.add_container(container).map_err(|error| error.to_string())?;
+    let result = importer(OverrideReconstruction::InferImageOverrides)?.import(&snapshot);
+    let labels = result
+        .application()
+        .and_then(|application| application.services().first())
+        .map(|service| service.value().labels())
+        .ok_or("service labels expected")?;
+
+    assert_eq!(labels.len(), 2);
+    assert_eq!(labels[0].value().name().as_str(), "com.docker.compose.project");
+    assert_eq!(labels[1].value().name().as_str(), "org.opencontainers.image.title");
+    assert!(
+        labels
+            .iter()
+            .all(|label| origin_kinds(label.origins()) == expected_inferred_origins())
+    );
+    for subject in [
+        "services.web.labels.com.example.shared",
+        "services.web.labels.org.opencontainers.image.title",
+    ] {
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == subject
+                && outcome.kind() == ConversionKind::Approximate
+                && outcome.diagnostic().map(DiagnosticCode::as_str) == Some("BFR0002")
+        }));
+    }
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.labels.com.docker.compose.project"
+            && outcome.kind() == ConversionKind::Unsupported
+            && outcome.diagnostic().map(DiagnosticCode::as_str) == Some("BFR0010")
+    }));
+    let debug = format!("{result:?}");
+    assert!(!debug.contains("private-project"));
+    assert!(!debug.contains("replacement"));
+    Ok(())
+}
+
+#[test]
+fn healthcheck_inference_retains_only_fields_that_differ_from_the_image() -> Result<(), String> {
+    let image_source = source("runtime:docker:image:web")?;
+    let container_source = source("runtime:docker:container:web")?;
+    let image_healthcheck = regular_healthcheck("30s")?;
+    let container_healthcheck = regular_healthcheck("10s")?;
+
+    let mut image = ImageObservation::new(image_source.clone());
+    image.set_healthcheck(image_healthcheck);
+    let mut container = complete_container(container_source, "web")?;
+    container.set_image(image_reference()?, Some(image_source));
+    container.set_healthcheck(container_healthcheck);
+
+    let mut snapshot = snapshot()?;
+    snapshot.add_image(image).map_err(|error| error.to_string())?;
+    snapshot.add_container(container).map_err(|error| error.to_string())?;
+    let result = importer(OverrideReconstruction::InferImageOverrides)?.import(&snapshot);
+    let healthcheck = result
+        .application()
+        .and_then(|application| application.services().first())
+        .and_then(|service| service.value().healthcheck())
+        .ok_or("retained health check expected")?;
+
+    assert!(healthcheck.value().command().is_none());
+    assert_eq!(
+        healthcheck.value().interval().map(|value| value.value().as_str()),
+        Some("10s")
+    );
+    assert!(healthcheck.value().timeout().is_none());
+    assert!(healthcheck.value().retries().is_none());
+    assert_eq!(
+        origin_kinds(healthcheck.value().interval().ok_or("interval expected")?.origins()),
+        expected_inferred_origins()
+    );
+    for subject in [
+        "services.web.healthcheck.test",
+        "services.web.healthcheck.interval",
+        "services.web.healthcheck.timeout",
+        "services.web.healthcheck.retries",
+        "services.web.healthcheck.start_period",
+    ] {
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == subject
+                && outcome.kind() == ConversionKind::Approximate
+                && outcome.diagnostic().map(DiagnosticCode::as_str) == Some("BFR0002")
+        }));
+    }
+    assert!(!format!("{result:?}").contains("health-secret"));
+    Ok(())
+}
+
+#[test]
+fn preserve_policy_retains_an_explicitly_disabled_healthcheck() -> Result<(), String> {
+    let mut healthcheck = RuntimeHealthcheck::new();
+    healthcheck.set_disabled(true);
+    let mut container = complete_container(source("runtime:podman:container:web")?, "web")?;
+    container.set_image(image_reference()?, None);
+    container.set_healthcheck(healthcheck);
+    let mut snapshot = snapshot()?;
+    snapshot.add_container(container).map_err(|error| error.to_string())?;
+
+    let result = importer(OverrideReconstruction::PreserveObservedState)?.import(&snapshot);
+    let healthcheck = result
+        .application()
+        .and_then(|application| application.services().first())
+        .and_then(|service| service.value().healthcheck())
+        .ok_or("disabled health check expected")?;
+    assert_eq!(healthcheck.value().disabled().map(|value| *value.value()), Some(true));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.healthcheck.disable" && outcome.kind() == ConversionKind::Exact
+    }));
+    Ok(())
+}
+
+#[test]
+fn restart_policy_is_preserved_independently_of_image_override_inference() -> Result<(), String> {
+    for policy in [
+        RestartPolicy::Never,
+        RestartPolicy::Always,
+        RestartPolicy::on_failure(None),
+        RestartPolicy::on_failure(NonZeroU64::new(4)),
+        RestartPolicy::UnlessStopped,
+    ] {
+        let mut container = complete_container(source("runtime:docker:container:web")?, "web")?;
+        container.set_image(image_reference()?, None);
+        container.set_restart_policy(policy);
+        let mut snapshot = snapshot()?;
+        snapshot.add_container(container).map_err(|error| error.to_string())?;
+
+        let result = importer(OverrideReconstruction::InferImageOverrides)?.import(&snapshot);
+        let restart_policy = result
+            .application()
+            .and_then(|application| application.services().first())
+            .and_then(|service| service.value().restart_policy())
+            .ok_or("restart policy expected")?;
+        assert_eq!(*restart_policy.value(), policy);
+        assert_eq!(restart_policy.origins()[0].kind(), ProvenanceKind::RuntimeObservation);
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == "services.web.restart_policy" && outcome.kind() == ConversionKind::Exact
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn disabling_image_health_is_an_override_not_missing_command_evidence() -> Result<(), String> {
+    let image_source = source("runtime:podman:image:web")?;
+    let mut image_healthcheck = regular_healthcheck("30s")?;
+    image_healthcheck.set_disabled(false);
+    let mut image = ImageObservation::new(image_source.clone());
+    image.set_healthcheck(image_healthcheck);
+
+    let mut disabled = RuntimeHealthcheck::new();
+    disabled.set_disabled(true);
+    let mut container = complete_container(source("runtime:podman:container:web")?, "web")?;
+    container.set_image(image_reference()?, Some(image_source));
+    container.set_healthcheck(disabled);
+
+    let mut snapshot = snapshot()?;
+    snapshot.add_image(image).map_err(|error| error.to_string())?;
+    snapshot.add_container(container).map_err(|error| error.to_string())?;
+    let result = importer(OverrideReconstruction::InferImageOverrides)?.import(&snapshot);
+    let healthcheck = result
+        .application()
+        .and_then(|application| application.services().first())
+        .and_then(|service| service.value().healthcheck())
+        .ok_or("disabled override expected")?;
+
+    assert_eq!(healthcheck.value().disabled().map(|value| *value.value()), Some(true));
+    assert!(healthcheck.value().command().is_none());
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.healthcheck.disable"
+            && outcome.diagnostic().map(DiagnosticCode::as_str) == Some("BFR0002")
+    }));
+    assert!(!result.outcomes().iter().any(|outcome| {
+        outcome.subject().starts_with("services.web.healthcheck")
+            && outcome.diagnostic().map(DiagnosticCode::as_str) == Some("BFR0003")
+    }));
+    Ok(())
+}
 
 #[test]
 fn image_comparison_retains_only_inferred_overrides_with_decision_provenance() -> Result<(), String> {
@@ -500,6 +701,22 @@ fn image_reference() -> Result<ImageReference, String> {
 
 fn environment(name: &str, value: &str) -> Result<RuntimeEnvironmentVariable, String> {
     Ok(RuntimeEnvironmentVariable::new(id(name)?, value))
+}
+
+fn label(name: &str, value: &str) -> Result<RuntimeMetadataLabel, String> {
+    Ok(RuntimeMetadataLabel::new(id(name)?, value))
+}
+
+fn regular_healthcheck(interval: &str) -> Result<RuntimeHealthcheck, String> {
+    let mut healthcheck = RuntimeHealthcheck::new();
+    healthcheck.set_command(HealthcheckCommand::Shell(ProtectedString::sensitive(
+        "check --token health-secret",
+    )));
+    healthcheck.set_interval(HealthcheckDuration::new(interval).map_err(|error| error.to_string())?);
+    healthcheck.set_timeout(HealthcheckDuration::new("2s").map_err(|error| error.to_string())?);
+    healthcheck.set_retries(HealthcheckRetries::new("3").map_err(|error| error.to_string())?);
+    healthcheck.set_start_period(HealthcheckDuration::new("5s").map_err(|error| error.to_string())?);
+    Ok(healthcheck)
 }
 
 fn id(value: &str) -> Result<Identifier, String> {

@@ -6,8 +6,9 @@ use boxferry_compose::{ComposeExporter, ComposeRuntime, DOCKER_COMPOSE_TARGET, P
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, TargetProfile};
 use boxferry_model::{
     Application, Command, Config, EnvironmentValue, EnvironmentVariable, Healthcheck, HostAddress, HostMapping,
-    Identifier, ImageReference, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
-    Provenance, ResourceOwnership, Secret, SelinuxRelabel, Service, ServiceGroup, SourceId, Sourced, Volume,
+    Identifier, ImageReference, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString,
+    Protocol, Provenance, ResourceOwnership, RestartPolicy, Secret, SelinuxRelabel, Service, ServiceGroup, SourceId,
+    Sourced, Volume,
 };
 
 #[test]
@@ -50,6 +51,17 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
     ));
     service.add_environment(Sourced::from_source(
         EnvironmentVariable::new(Identifier::new("HOST_VALUE")?, EnvironmentValue::Host),
+        origin.clone(),
+    ));
+    service.add_label(Sourced::from_source(
+        MetadataLabel::new(Identifier::new("com.example.empty")?, ProtectedString::plain("")),
+        origin.clone(),
+    ));
+    service.add_label(Sourced::from_source(
+        MetadataLabel::new(
+            Identifier::new("com.example.metadata")?,
+            ProtectedString::sensitive(r#"{"channel": "production-secret"}"#),
+        ),
         origin.clone(),
     ));
     service.add_host_mapping(Sourced::from_source(
@@ -205,6 +217,7 @@ fn unresolved_runtime_resource_ownership_is_visible_and_partial() -> Result<(), 
 fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<(), Box<dyn Error>> {
     let mut service = Service::new(Identifier::new("web")?);
     service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.set_restart_policy(Sourced::generated(RestartPolicy::UnlessStopped));
     service.set_healthcheck(Sourced::generated(Healthcheck::new()));
     service.add_environment(Sourced::generated(EnvironmentVariable::new(
         Identifier::new("ABSENT")?,
@@ -233,6 +246,7 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
         "secrets.token",
         "service_groups.observed-pod",
         "services.web.environment.ABSENT",
+        "services.web.restart_policy",
         "services.web.healthcheck",
     ] {
         assert!(plan.outcomes().iter().any(|outcome| {
@@ -251,6 +265,30 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
                 "    image: \"example.invalid/web:1\"\n",
             )
     }));
+    Ok(())
+}
+
+#[test]
+fn refuses_to_reauthor_compose_managed_labels() -> Result<(), Box<dyn Error>> {
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.add_label(Sourced::generated(MetadataLabel::new(
+        Identifier::new("com.docker.compose.project")?,
+        ProtectedString::sensitive("never-print-this"),
+    )));
+    let mut application = Application::new(Identifier::new("managed-label")?);
+    application.add_service(Sourced::generated(service))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.labels.com.docker.compose.project"
+            && outcome.kind() == ConversionKind::Unsupported
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFC0007")
+    }));
+    assert!(!format!("{plan:?}").contains("never-print-this"));
+    let result = plan.authorize(LossPolicy::AllowPartial);
+    let output = result.output().ok_or("partial output expected")?;
+    assert!(!output.text().contains("com.docker.compose.project"));
     Ok(())
 }
 
@@ -282,6 +320,9 @@ const fn expected_supported_document() -> &'static str {
         "    environment:\n",
         "      - \"TOKEN=production-secret\"\n",
         "      - \"HOST_VALUE\"\n",
+        "    labels:\n",
+        "      \"com.example.empty\": \"\"\n",
+        "      \"com.example.metadata\": \"{\\\"channel\\\": \\\"production-secret\\\"}\"\n",
         "    user: \"1001:1002\"\n",
         "    userns_mode: \"private\"\n",
         "    group_add:\n",

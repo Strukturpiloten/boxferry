@@ -7,7 +7,7 @@ complete conversion pipeline.
 Coverage was audited against the current official
 [Compose service reference](https://docs.docker.com/reference/compose-file/services/) and the
 [Podman Quadlet manual](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html) on
-2026-08-03. A documentation entry is not compatibility evidence by itself. Version claims still
+2026-08-05. A documentation entry is not compatibility evidence by itself. Version claims still
 require the repository tests described in [Testing strategy](testing.md).
 
 ## Status vocabulary
@@ -40,12 +40,12 @@ field as a policy-controlled unsupported outcome.
 | Identity | `user`, `userns_mode`, `group_add` | `partial` | User, numeric primary group, user namespace, and ordered named or numeric supplementary groups retain provenance and sensitivity and emit capability-checked keys. Identical explicit namespaces on every grouped service move to pod `UserNS`; mixed or conflicting intent invalidates grouping. Named primary groups and unsafe values are explicit losses. |
 | Limits and deployment | `ulimits`, CPU/memory/PID fields, `deploy` | `native only` / `preserved` | ComposeLens types `ulimits` and field-level `deploy`; BoxFerry does not yet map resource policy. |
 | Build | `build`, `pull_policy` | `native only` / `preserved` | ComposeLens retains field-level build intent; `.build` generation and image/build policy remain open. |
-| Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.7 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
-| Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `preserved` | No typed end-to-end lifecycle contract exists. Generic systemd directives alone are not a semantic mapping. |
+| Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.8 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
+| Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `preserved` for Compose / `partial` for runtime | Compose `restart` has no typed source mapping yet. Runtime inspection retains container `Never`, `Always`, `OnFailure`, finite retry limits, and `UnlessStopped`; Quadlet emits exact `Restart=no`, explicit approximations for unbounded policies, and no unsafe substitute for finite retry limits. Other lifecycle fields remain preserved only. |
 | Process | `entrypoint`, `working_dir`, `tty`, `stdin_open`, `read_only` | `partial` / `preserved` | Safely encodable working directories and explicit true/false read-only-root intent convert end to end. Values needing systemd encoding are reported. Entrypoint, TTY, and standard-input behavior remain preserved only. |
 | Names and DNS | `container_name`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search` | `preserved` | No end-to-end mapping exists beyond `extra_hosts`. |
 | Security and devices | capabilities, devices, CDI/GPU, namespaces, privileged, security options, sysctls | `preserved` | These require target-, rootless-, platform-, and pod-aware compatibility decisions. |
-| Metadata and logging | annotations, labels, label files, logging | `preserved` | No neutral metadata/logging policy has been selected. |
+| Metadata and logging | annotations, labels, label files, logging | `end to end` for service labels / `partial` otherwise | Compose mapping and sequence labels import with value-scalar normalization and multi-file provenance. Protected neutral service labels generate deterministic Compose mappings and native repeatable Quadlet `Label=` entries; empty, quoted, control, and literal systemd-specifier values are encoded. Runtime container/image maps support image-default comparison. Reserved Compose-managed labels remain reviewable but are never re-authored. Annotations, label files, image-build labels, resource labels, and logging remain open. |
 | Compose orchestration extensions | `extends`, `develop`, `provider`, `models`, links, scaling | `preserved` | These have no direct first-slice Quadlet equivalent and require separate processing or explicit diagnostics. |
 
 The detailed native boundaries are maintained in the
@@ -73,26 +73,33 @@ network, and volume inspect arrays. Its replaceable command boundary requires an
 endpoint and API version; a finite policy may add selected containers' referenced resources. No
 policy enumerates an ambient resource family. The supported effective subset is image reference,
 command, environment, non-empty `user[:group]`, non-empty working directory, explicit read-only-root
-state, ports, mounts, network relationships and ordered aliases, inspected
+state, container restart policy, protected effective metadata labels, regular health command/disable/timing/retry configuration, ports, mounts, network
+relationships and ordered aliases, inspected
 network/volume existence, optional creation-command evidence, and Podman pod membership evidence.
 
-Command, environment, `user[:group]`, and working-directory values can be preserved or compared
-with a linked image observation. A retained identity is split into neutral primary user and group
-fields with shared provenance. Read-only-root state is preserved directly.
+Command, environment, metadata-label, `user[:group]`, working-directory, and regular-health-check values can be
+preserved or compared with a linked image observation. Health fields are compared independently;
+commands remain protected. A retained identity is split into neutral primary user and group fields
+with shared provenance. Read-only-root state is preserved directly.
+Matching image label defaults are omitted; changed, added, and reserved Compose-provider values
+remain explicit reviewable outcomes. Restart policy is also preserved directly because it is a container host setting, not an image
+default. Runtime-to-Quadlet maps `Never` exactly and retains explicit approximate or unsupported
+outcomes for the other policy forms.
 Every comparison is approximate and receives conversion-decision provenance. Network and volume
 lifecycle ownership remains uncertain unless an exact-name caller resolution selects application-
 owned or external behavior with user-override provenance. Consistent Podman pod membership becomes
 an ordered neutral `ServiceGroup` with pod and container provenance, but no inferred namespace or
 lifecycle semantics. Quadlet output reports unresolved groups rather than flattening them and can
 preserve one resolved complete application group as a named pod after explicit approximation
-authorization. Entrypoint, broader
-runtime policy and security settings, labels, health configuration, and other inspect fields remain for the
-native adapter milestones. The Podman decoder reports each meaningful unmodeled native field by
+authorization. Entrypoint, remaining runtime policy and security settings, annotations and
+resource labels, Podman startup-
+health configuration, and other inspect fields remain for later native adapter milestones. The
+Podman decoder reports each meaningful unmodeled native field by
 name as an unsupported outcome instead of discarding it. The Docker decoder applies the same rule
 with independent `BFD` diagnostics and additionally reports the lost entrypoint/command boundary.
 
 The Compose export path covers the same supported effective subset for images, commands,
-environment, identity/context, ports, mounts, networks, and volumes. It uses ComposeLens 0.1.7's
+environment, service labels, identity/context, ports, mounts, networks, and volumes. It uses ComposeLens 0.1.8's
 deterministic generated-document boundary and requires an exact Docker Compose or
 `podman-compose` provider version; the optional exact Docker Engine or Podman backend remains a
 separate input. Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,

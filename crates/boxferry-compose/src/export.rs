@@ -13,8 +13,8 @@ use boxferry_model::{
 use compose_lens::{
     render::{
         ComposeDocumentBuilder, GeneratedCommand, GeneratedComposeDocument, GeneratedEnvironment, GeneratedExtraHost,
-        GeneratedMount, GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol, GeneratedResource,
-        GeneratedSelinux, GeneratedService, GeneratedString, GenerationError,
+        GeneratedLabel, GeneratedMount, GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol,
+        GeneratedResource, GeneratedSelinux, GeneratedService, GeneratedString, GenerationError,
     },
     source::SourceId,
     validation::{
@@ -241,14 +241,14 @@ impl<'a> Mapping<'a> {
         for config in self.application.configs() {
             self.unsupported(
                 &format!("configs.{}", config.value().name().as_str()),
-                "ComposeLens 0.1.7 generation does not yet expose top-level config definitions",
+                "ComposeLens 0.1.8 generation does not yet expose top-level config definitions",
                 config.origins(),
             );
         }
         for secret in self.application.secrets() {
             self.unsupported(
                 &format!("secrets.{}", secret.value().name().as_str()),
-                "ComposeLens 0.1.7 generation does not yet expose top-level secret definitions",
+                "ComposeLens 0.1.8 generation does not yet expose top-level secret definitions",
                 secret.origins(),
             );
         }
@@ -346,6 +346,7 @@ impl<'a> Mapping<'a> {
         self.map_identity(service, &mut generated, &service_subject);
         self.map_execution_context(service, &mut generated, &service_subject);
         self.map_environment(service, &mut generated, &service_subject);
+        self.map_labels(service, &mut generated, &service_subject);
         self.map_host_mappings(service, &mut generated, &service_subject);
         self.map_ports(service, &mut generated, &service_subject);
         self.map_mounts(service, &mut generated, &service_subject);
@@ -467,6 +468,28 @@ impl<'a> Mapping<'a> {
                     "environment value variant is newer than this Compose adapter",
                     environment.origins(),
                 ),
+            }
+        }
+    }
+
+    fn map_labels(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
+        for label in service.labels() {
+            let name = label.value().name().as_str();
+            let subject = format!("{service_subject}.labels.{name}");
+            if is_compose_managed_label(name) {
+                self.unsupported(
+                    &subject,
+                    "Compose-managed labels cannot be safely re-authored as application metadata",
+                    label.origins(),
+                );
+                continue;
+            }
+            match generated_string(label.value().value())
+                .and_then(|value| GeneratedLabel::new(name, value))
+                .and_then(|value| generated.add_label(value))
+            {
+                Ok(()) => self.exact(subject, label.origins()),
+                Err(error) => self.generation_error(&subject, &error, label.origins()),
             }
         }
     }
@@ -608,31 +631,38 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_unimplemented_service_fields(&mut self, service: &Service, service_subject: &str) {
+        if let Some(restart_policy) = service.restart_policy() {
+            self.unsupported(
+                &format!("{service_subject}.restart_policy"),
+                "ComposeLens 0.1.8 generation does not yet expose container restart policies",
+                restart_policy.origins(),
+            );
+        }
         if let Some(healthcheck) = service.healthcheck() {
             self.unsupported(
                 &format!("{service_subject}.healthcheck"),
-                "ComposeLens 0.1.7 generation does not yet expose health-check fields",
+                "ComposeLens 0.1.8 generation does not yet expose health-check fields",
                 healthcheck.origins(),
             );
         }
         for (index, dependency) in service.dependencies().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.dependencies[{index}]"),
-                "ComposeLens 0.1.7 generation does not yet expose service dependencies",
+                "ComposeLens 0.1.8 generation does not yet expose service dependencies",
                 dependency.origins(),
             );
         }
         for (index, grant) in service.config_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.config_grants[{index}]"),
-                "ComposeLens 0.1.7 generation does not yet expose service config grants",
+                "ComposeLens 0.1.8 generation does not yet expose service config grants",
                 grant.origins(),
             );
         }
         for (index, grant) in service.secret_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.secret_grants[{index}]"),
-                "ComposeLens 0.1.7 generation does not yet expose service secret grants",
+                "ComposeLens 0.1.8 generation does not yet expose service secret grants",
                 grant.origins(),
             );
         }
@@ -861,6 +891,10 @@ fn generated_string(value: &ProtectedString) -> Result<GeneratedString, Generati
     } else {
         GeneratedString::plain(value.expose())
     }
+}
+
+fn is_compose_managed_label(name: &str) -> bool {
+    name.starts_with("com.docker.compose.")
 }
 
 fn is_podman_user_namespace(value: &str) -> bool {

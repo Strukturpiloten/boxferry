@@ -30,7 +30,11 @@ fi
 
 mkdir -p -- "$output_directory" "$work_directory/rootfs"
 tar -C "$work_directory/rootfs" -cf "$work_directory/rootfs.tar" .
-"${podman_command[@]}" import "$work_directory/rootfs.tar" "localhost/${resource_prefix}:1" >/dev/null
+"${podman_command[@]}" import \
+  --change LABEL=com.example.image=runtime-matrix \
+  "$work_directory/rootfs.tar" \
+  "localhost/${resource_prefix}:1" \
+  >/dev/null
 "${podman_command[@]}" network create "${resource_prefix}-network" >/dev/null
 "${podman_command[@]}" volume create "${resource_prefix}-data" >/dev/null
 "${podman_command[@]}" pod create \
@@ -42,10 +46,17 @@ tar -C "$work_directory/rootfs" -cf "$work_directory/rootfs.tar" .
   --name "${resource_prefix}-web" \
   --pod "${resource_prefix}-pod" \
   --env BOXFERRY_MODE=matrix \
+  --label com.example.boxferry=runtime-matrix \
   --user 1001:1002 \
   --workdir /srv/runtime \
   --read-only \
+  --restart on-failure:4 \
   --entrypoint /bin/true \
+  --health-cmd /bin/true \
+  --health-interval 30s \
+  --health-timeout 2s \
+  --health-retries 4 \
+  --health-start-period 5s \
   --volume "${resource_prefix}-data:/data:ro,Z" \
   "localhost/${resource_prefix}:1" \
   --serve \

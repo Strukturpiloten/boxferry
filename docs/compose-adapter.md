@@ -1,7 +1,7 @@
 # Compose exporter
 
 `boxferry-compose` maps a neutral `Application` into deterministic Compose YAML through
-ComposeLens 0.1.7. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
+ComposeLens 0.1.8. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
 `DOCKER_COMPOSE_TARGET`, and `PODMAN_COMPOSE_TARGET` through the additive `compose` feature.
 
 ## Target selection
@@ -39,6 +39,7 @@ The first slice generates:
 - image references, including tolerant `name:tag@digest` spellings;
 - exec, shell, and explicit empty commands;
 - literal and host-resolved environment entries;
+- ordered service-label mappings with empty and protected values;
 - combined `user[:group]`, `userns_mode`, supplementary groups, working directory, and read-only
   root intent;
 - ordered `extra_hosts`, including the literal `host-gateway` token;
@@ -49,8 +50,13 @@ The first slice generates:
 
 ComposeLens selects native short/long forms, renders canonical two-space/LF YAML, reparses its own
 bytes through the syntax and typed-model layers, and returns `GeneratedComposeDocument`. Sensitive
-command, environment, identity, and context values cause the complete generated document to redact
+command, environment, service-label, identity, and context values cause the complete generated document to redact
 its `Debug` output. Deployable text remains available only through `text()`.
+
+Labels in the reserved `com.docker.compose.*` provider namespace remain explicit `BFC0007`
+outcomes and are omitted from generated YAML. They are provider-created runtime evidence, not
+safe application metadata. Image-build labels, annotations, `label_file`, and resource labels have
+separate ownership semantics and remain outside this service-label slice.
 
 ## Compatibility and loss policy
 
@@ -64,7 +70,7 @@ Current compatibility-sensitive constructs are tag-plus-digest images, `host-gat
 user-namespace values, and short-form SELinux relabeling. SCTP syntax is generated but remains an
 unsupported outcome until the selected provider/runtime pair has reviewed execution evidence.
 
-The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.7 output:
+The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.8 output:
 
 - a primary group without a primary user;
 - environment values that must be absent;

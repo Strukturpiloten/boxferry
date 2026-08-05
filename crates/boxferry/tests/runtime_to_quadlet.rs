@@ -3,10 +3,11 @@
 #![cfg(all(feature = "runtime", feature = "quadlet"))]
 
 use boxferry::{
-    ContainerObservation, EffectiveCommand, Identifier, ImageReference, LossPolicy, OverrideReconstruction,
-    PlatformVersion, PodObservation, Provenance, QuadletExporter, QuadletFile, QuadletGroupingPolicy,
-    ResourceOwnership, RuntimeImplementation, RuntimeImporter, RuntimeResolutions, RuntimeSnapshot, SourceId, Sourced,
-    TargetProfile, convert,
+    ContainerObservation, EffectiveCommand, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, Identifier,
+    ImageReference, LossPolicy, OverrideReconstruction, PlatformVersion, PodObservation, ProtectedString, Provenance,
+    QuadletExporter, QuadletFile, QuadletGroupingPolicy, ResourceOwnership, RestartPolicy, RuntimeHealthcheck,
+    RuntimeImplementation, RuntimeImporter, RuntimeResolutions, RuntimeSnapshot, SourceId, Sourced, TargetProfile,
+    convert,
 };
 
 #[cfg(feature = "docker-runtime")]
@@ -27,6 +28,16 @@ fn observed_container_generates_reviewable_quadlet_through_public_api() -> Resul
     container.set_user("1001:1002");
     container.set_working_directory("/srv/runtime");
     container.set_read_only_root_filesystem(true);
+    container.set_restart_policy(RestartPolicy::Always);
+    let mut healthcheck = RuntimeHealthcheck::new();
+    healthcheck.set_command(HealthcheckCommand::Shell(ProtectedString::sensitive(
+        "curl --fail http://127.0.0.1/health",
+    )));
+    healthcheck.set_interval(HealthcheckDuration::new("30s").map_err(|error| error.to_string())?);
+    healthcheck.set_timeout(HealthcheckDuration::new("2s").map_err(|error| error.to_string())?);
+    healthcheck.set_retries(HealthcheckRetries::new("3").map_err(|error| error.to_string())?);
+    healthcheck.set_start_period(HealthcheckDuration::new("5s").map_err(|error| error.to_string())?);
+    container.set_healthcheck(healthcheck);
 
     let mut snapshot = RuntimeSnapshot::new(
         Identifier::new("example").map_err(|error| error.to_string())?,
@@ -59,11 +70,23 @@ fn observed_container_generates_reviewable_quadlet_through_public_api() -> Resul
             "Group=1002\n",
             "WorkingDir=/srv/runtime\n",
             "ReadOnly=true\n",
+            "HealthCmd=[\"CMD-SHELL\",\"curl --fail http://127.0.0.1/health\"]\n",
+            "HealthInterval=30s\n",
+            "HealthTimeout=2s\n",
+            "HealthRetries=3\n",
+            "HealthStartPeriod=5s\n",
+            "\n",
+            "[Service]\n",
+            "Restart=always\n",
         ))
     );
     assert!(result.outcomes().iter().any(|outcome| {
         outcome.subject() == "application.reconstruction"
             && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFR0001")
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.restart_policy"
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0009")
     }));
     Ok(())
 }

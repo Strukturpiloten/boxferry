@@ -2,7 +2,10 @@
 
 use std::{error::Error, fmt};
 
-use boxferry_model::{Identifier, ImageReference, Mount, NetworkAttachment, Port, ProtectedString, SourceId};
+use boxferry_model::{
+    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference, Mount, NetworkAttachment,
+    Port, ProtectedString, RestartPolicy, SourceId,
+};
 
 /// Container implementation from which a snapshot was obtained.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,6 +81,40 @@ pub struct RuntimeEnvironmentVariable {
     value: ProtectedString,
 }
 
+/// One effective runtime metadata label.
+///
+/// Inspection exposes only the merged effective value; it does not prove whether the value came
+/// from image metadata, a container-create request, or runtime-generated orchestration metadata.
+/// Values are therefore sensitive by default until an output caller explicitly exposes them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeMetadataLabel {
+    name: Identifier,
+    value: ProtectedString,
+}
+
+impl RuntimeMetadataLabel {
+    /// Creates a sensitive effective metadata label.
+    #[must_use]
+    pub fn new(name: Identifier, value: impl Into<String>) -> Self {
+        Self {
+            name,
+            value: ProtectedString::sensitive(value),
+        }
+    }
+
+    /// Returns the opaque metadata-label name.
+    #[must_use]
+    pub const fn name(&self) -> &Identifier {
+        &self.name
+    }
+
+    /// Returns the protected effective metadata-label value.
+    #[must_use]
+    pub const fn value(&self) -> &ProtectedString {
+        &self.value
+    }
+}
+
 impl RuntimeEnvironmentVariable {
     /// Creates a sensitive effective environment value.
     #[must_use]
@@ -98,6 +135,127 @@ impl RuntimeEnvironmentVariable {
     #[must_use]
     pub const fn value(&self) -> &ProtectedString {
         &self.value
+    }
+}
+
+/// Effective regular health-check configuration observed from a container or image.
+///
+/// An empty value records that the native adapter inspected the field and found no regular health
+/// check. Commands and their arguments remain sensitive by default through [`ProtectedString`].
+/// Podman's separate startup-healthcheck family is intentionally not represented here.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeHealthcheck {
+    command: Option<HealthcheckCommand>,
+    disabled: Option<bool>,
+    interval: Option<HealthcheckDuration>,
+    timeout: Option<HealthcheckDuration>,
+    retries: Option<HealthcheckRetries>,
+    start_period: Option<HealthcheckDuration>,
+    start_interval: Option<HealthcheckDuration>,
+}
+
+impl RuntimeHealthcheck {
+    /// Creates an observed absence of regular health-check configuration.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            command: None,
+            disabled: None,
+            interval: None,
+            timeout: None,
+            retries: None,
+            start_period: None,
+            start_interval: None,
+        }
+    }
+
+    /// Returns whether inspection proved that no regular health-check field is configured.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.command.is_none()
+            && self.disabled.is_none()
+            && self.interval.is_none()
+            && self.timeout.is_none()
+            && self.retries.is_none()
+            && self.start_period.is_none()
+            && self.start_interval.is_none()
+    }
+
+    /// Records the effective regular health-check command.
+    pub fn set_command(&mut self, command: HealthcheckCommand) {
+        self.command = Some(command);
+    }
+
+    /// Returns the effective regular health-check command.
+    #[must_use]
+    pub const fn command(&self) -> Option<&HealthcheckCommand> {
+        self.command.as_ref()
+    }
+
+    /// Records an explicit disabled state.
+    pub fn set_disabled(&mut self, disabled: bool) {
+        self.disabled = Some(disabled);
+    }
+
+    /// Returns the explicit disabled state.
+    #[must_use]
+    pub const fn disabled(&self) -> Option<bool> {
+        self.disabled
+    }
+
+    /// Records the effective interval between regular checks.
+    pub fn set_interval(&mut self, interval: HealthcheckDuration) {
+        self.interval = Some(interval);
+    }
+
+    /// Returns the effective interval between regular checks.
+    #[must_use]
+    pub const fn interval(&self) -> Option<&HealthcheckDuration> {
+        self.interval.as_ref()
+    }
+
+    /// Records the effective timeout of one regular check.
+    pub fn set_timeout(&mut self, timeout: HealthcheckDuration) {
+        self.timeout = Some(timeout);
+    }
+
+    /// Returns the effective timeout of one regular check.
+    #[must_use]
+    pub const fn timeout(&self) -> Option<&HealthcheckDuration> {
+        self.timeout.as_ref()
+    }
+
+    /// Records the effective regular-check retry count.
+    pub fn set_retries(&mut self, retries: HealthcheckRetries) {
+        self.retries = Some(retries);
+    }
+
+    /// Returns the effective regular-check retry count.
+    #[must_use]
+    pub const fn retries(&self) -> Option<&HealthcheckRetries> {
+        self.retries.as_ref()
+    }
+
+    /// Records the effective regular health-check start period.
+    pub fn set_start_period(&mut self, start_period: HealthcheckDuration) {
+        self.start_period = Some(start_period);
+    }
+
+    /// Returns the effective regular health-check start period.
+    #[must_use]
+    pub const fn start_period(&self) -> Option<&HealthcheckDuration> {
+        self.start_period.as_ref()
+    }
+
+    /// Records the effective start interval where the native runtime exposes equivalent semantics.
+    pub fn set_start_interval(&mut self, start_interval: HealthcheckDuration) {
+        self.start_interval = Some(start_interval);
+    }
+
+    /// Returns the effective start interval.
+    #[must_use]
+    pub const fn start_interval(&self) -> Option<&HealthcheckDuration> {
+        self.start_interval.as_ref()
     }
 }
 
@@ -147,8 +305,10 @@ pub struct ImageObservation {
     source_id: SourceId,
     command: Option<EffectiveCommand>,
     environment: Option<Vec<RuntimeEnvironmentVariable>>,
+    labels: Option<Vec<RuntimeMetadataLabel>>,
     user: Option<ProtectedString>,
     working_directory: Option<ProtectedString>,
+    healthcheck: Option<RuntimeHealthcheck>,
 }
 
 impl ImageObservation {
@@ -159,8 +319,10 @@ impl ImageObservation {
             source_id,
             command: None,
             environment: None,
+            labels: None,
             user: None,
             working_directory: None,
+            healthcheck: None,
         }
     }
 
@@ -192,6 +354,17 @@ impl ImageObservation {
         self.environment.as_deref()
     }
 
+    /// Records the complete deterministic image metadata-label map, including an empty map.
+    pub fn set_labels(&mut self, labels: Vec<RuntimeMetadataLabel>) {
+        self.labels = Some(labels);
+    }
+
+    /// Returns the observed image metadata labels, if the adapter supplied them.
+    #[must_use]
+    pub fn labels(&self) -> Option<&[RuntimeMetadataLabel]> {
+        self.labels.as_deref()
+    }
+
     /// Records a non-empty image user default as sensitive runtime data.
     pub fn set_user(&mut self, user: impl Into<String>) {
         self.user = Some(ProtectedString::sensitive(user));
@@ -213,6 +386,17 @@ impl ImageObservation {
     pub const fn working_directory(&self) -> Option<&ProtectedString> {
         self.working_directory.as_ref()
     }
+
+    /// Records the complete effective regular health-check configuration, including its absence.
+    pub fn set_healthcheck(&mut self, healthcheck: RuntimeHealthcheck) {
+        self.healthcheck = Some(healthcheck);
+    }
+
+    /// Returns the observed regular health-check configuration, if the adapter supplied it.
+    #[must_use]
+    pub const fn healthcheck(&self) -> Option<&RuntimeHealthcheck> {
+        self.healthcheck.as_ref()
+    }
 }
 
 /// Effective state and relationships of one runtime container.
@@ -223,9 +407,12 @@ pub struct ContainerObservation {
     image: Option<ImageReference>,
     image_source_id: Option<SourceId>,
     command: Option<EffectiveCommand>,
+    restart_policy: Option<RestartPolicy>,
     environment: Option<Vec<RuntimeEnvironmentVariable>>,
+    labels: Option<Vec<RuntimeMetadataLabel>>,
     user: Option<ProtectedString>,
     working_directory: Option<ProtectedString>,
+    healthcheck: Option<RuntimeHealthcheck>,
     read_only_root_filesystem: Option<bool>,
     ports: Vec<Port>,
     mounts: Vec<Mount>,
@@ -244,9 +431,12 @@ impl ContainerObservation {
             image: None,
             image_source_id: None,
             command: None,
+            restart_policy: None,
             environment: None,
+            labels: None,
             user: None,
             working_directory: None,
+            healthcheck: None,
             read_only_root_filesystem: None,
             ports: Vec::new(),
             mounts: Vec::new(),
@@ -297,6 +487,17 @@ impl ContainerObservation {
         self.command.as_ref()
     }
 
+    /// Records the effective container-level automatic restart policy.
+    pub fn set_restart_policy(&mut self, restart_policy: RestartPolicy) {
+        self.restart_policy = Some(restart_policy);
+    }
+
+    /// Returns the effective container-level automatic restart policy, if supplied.
+    #[must_use]
+    pub const fn restart_policy(&self) -> Option<RestartPolicy> {
+        self.restart_policy
+    }
+
     /// Records the complete ordered effective environment, including an empty collection.
     pub fn set_environment(&mut self, environment: Vec<RuntimeEnvironmentVariable>) {
         self.environment = Some(environment);
@@ -306,6 +507,17 @@ impl ContainerObservation {
     #[must_use]
     pub fn environment(&self) -> Option<&[RuntimeEnvironmentVariable]> {
         self.environment.as_deref()
+    }
+
+    /// Records the complete deterministic effective metadata-label map, including an empty map.
+    pub fn set_labels(&mut self, labels: Vec<RuntimeMetadataLabel>) {
+        self.labels = Some(labels);
+    }
+
+    /// Returns the effective metadata labels, if the adapter supplied them.
+    #[must_use]
+    pub fn labels(&self) -> Option<&[RuntimeMetadataLabel]> {
+        self.labels.as_deref()
     }
 
     /// Records a non-empty effective container user as sensitive runtime data.
@@ -328,6 +540,17 @@ impl ContainerObservation {
     #[must_use]
     pub const fn working_directory(&self) -> Option<&ProtectedString> {
         self.working_directory.as_ref()
+    }
+
+    /// Records the complete effective regular health-check configuration, including its absence.
+    pub fn set_healthcheck(&mut self, healthcheck: RuntimeHealthcheck) {
+        self.healthcheck = Some(healthcheck);
+    }
+
+    /// Returns the observed regular health-check configuration, if the adapter supplied it.
+    #[must_use]
+    pub const fn healthcheck(&self) -> Option<&RuntimeHealthcheck> {
+        self.healthcheck.as_ref()
     }
 
     /// Records the effective read-only-root-filesystem choice.
@@ -718,13 +941,14 @@ mod tests {
 
     use super::{
         ContainerObservation, CreationEvidence, EffectiveCommand, RuntimeEnvironmentVariable, RuntimeImplementation,
-        RuntimeSnapshot,
+        RuntimeMetadataLabel, RuntimeSnapshot,
     };
 
     #[test]
     fn inspected_values_are_redacted_by_default() -> Result<(), String> {
         let command = EffectiveCommand::exec(["server", "--password=never-print-this"]);
         let environment = RuntimeEnvironmentVariable::new(id("PASSWORD")?, "never-print-this");
+        let label = RuntimeMetadataLabel::new(id("com.example.token")?, "never-print-this");
         let mut container = ContainerObservation::new(source("runtime:podman:container:web")?, id("web")?);
         container.set_user("never-print-this");
         container.set_working_directory("/never-print-this");
@@ -736,6 +960,7 @@ mod tests {
         for debug in [
             format!("{command:?}"),
             format!("{environment:?}"),
+            format!("{label:?}"),
             format!("{container:?}"),
             format!("{evidence:?}"),
         ] {

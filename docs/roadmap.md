@@ -216,8 +216,23 @@ boundary for pre-existing external Podman secrets.
 - [x] Extend container/image comparison to non-empty `user[:group]` and working-directory values,
   split retained identities into neutral user/group fields, and preserve explicit container
   read-only-root state directly.
-- [ ] Extend the broader effective-state model with reviewed health, restart, label, and security
-  slices as their native and neutral semantics are defined.
+- [x] Extend the effective-state model with regular health checks, protected command forms,
+  timing/retry values, Docker API-aware start intervals, image-default comparison, and explicit
+  separation from Podman's startup-healthcheck family.
+- [x] Extend effective state with a reviewed container restart-policy slice: decode Docker and
+  Podman policy objects, preserve runtime provenance, emit exact `Restart=no`, approximate
+  unbounded systemd policies explicitly, and never widen finite retry limits silently.
+- [x] Extend effective state with protected Docker/Podman container and image label maps,
+  deterministic image-default comparison, reserved Compose-provider metadata diagnostics, and
+  explicit target-adapter losses.
+- [x] Import and generate typed service labels through ComposeLens 0.1.8 and QuadletLens 0.1.7,
+  retaining mapping/list scalar behavior, multi-file provenance, protected values, empty values,
+  systemd quoting, literal-specifier escaping, and reserved-provider diagnostics in adapter and
+  Compose-to-Quadlet golden tests.
+- [ ] Define resource-label ownership separately for networks, volumes, pods, and build/image
+  artifacts before adding neutral resource-label fields or native generation.
+- [ ] Extend the broader effective-state model with reviewed security slices as their native and
+  neutral semantics are defined.
 - [x] Preserve multiple network aliases plus network, volume, mount, and container relationships
   in observations and the supported neutral subset.
 - [x] Add an ordered neutral service-group relationship with member provenance; consistent Podman

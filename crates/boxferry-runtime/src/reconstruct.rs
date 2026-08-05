@@ -7,13 +7,13 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Application, Command, EnvironmentValue, EnvironmentVariable, ModelError, MountSource, Network, ProtectedString,
-    Provenance, ResourceOwnership, Service, ServiceGroup, SourceId, Sourced, Volume,
+    Application, Command, EnvironmentValue, EnvironmentVariable, Healthcheck, MetadataLabel, ModelError, MountSource,
+    Network, ProtectedString, Provenance, ResourceOwnership, Service, ServiceGroup, SourceId, Sourced, Volume,
 };
 
 use crate::{
     ContainerObservation, EffectiveCommand, ImageObservation, PodObservation, RuntimeEnvironmentVariable,
-    RuntimeResolutions, RuntimeSnapshot,
+    RuntimeHealthcheck, RuntimeMetadataLabel, RuntimeResolutions, RuntimeSnapshot,
 };
 
 /// Caller-selected treatment of effective values that may originate from image defaults.
@@ -59,6 +59,7 @@ impl RuntimeImporter {
                 invalid_model: DiagnosticCode::new("BFR0007")?,
                 group_relationship_conflict: DiagnosticCode::new("BFR0008")?,
                 lifecycle_resolution: DiagnosticCode::new("BFR0009")?,
+                runtime_managed_metadata: DiagnosticCode::new("BFR0010")?,
             },
         })
     }
@@ -112,6 +113,7 @@ struct Codes {
     invalid_model: DiagnosticCode,
     group_relationship_conflict: DiagnosticCode,
     lifecycle_resolution: DiagnosticCode,
+    runtime_managed_metadata: DiagnosticCode,
 }
 
 #[derive(Clone, Copy)]
@@ -347,6 +349,14 @@ impl<'a> Mapping<'a> {
             }
         }
 
+        if let Some(restart_policy) = container.restart_policy() {
+            service.set_restart_policy(Sourced::from_source(restart_policy, container_origin.clone()));
+            self.exact(
+                format!("{service_subject}.restart_policy"),
+                vec![container_origin.clone()],
+            );
+        }
+
         if let Some(read_only) = container.read_only_root_filesystem() {
             service.set_read_only_root_filesystem(Sourced::from_source(read_only, container_origin.clone()));
             self.exact(
@@ -415,6 +425,24 @@ impl<'a> Mapping<'a> {
             );
         }
 
+        if let Some(labels) = container.labels() {
+            for label in labels {
+                service.add_label(Sourced::from_source(neutral_label(label), origin.clone()));
+                let subject = format!("{service_subject}.labels.{}", label.name().as_str());
+                if is_compose_managed_label(label) {
+                    self.runtime_managed_metadata(subject, vec![origin.clone()]);
+                } else {
+                    self.exact(subject, vec![origin.clone()]);
+                }
+            }
+        } else {
+            self.comparison_incomplete(
+                format!("{service_subject}.labels"),
+                "the effective container metadata labels were not supplied",
+                vec![origin.clone()],
+            );
+        }
+
         if let Some(user) = container.user() {
             set_neutral_identity(service, &Sourced::from_source(user.clone(), origin.clone()));
             self.exact(format!("{service_subject}.user"), vec![origin.clone()]);
@@ -424,7 +452,14 @@ impl<'a> Mapping<'a> {
         }
         if let Some(working_directory) = container.working_directory() {
             service.set_working_directory(Sourced::from_source(working_directory.clone(), origin.clone()));
-            self.exact(format!("{service_subject}.working_directory"), vec![origin]);
+            self.exact(format!("{service_subject}.working_directory"), vec![origin.clone()]);
+        }
+        if let Some(healthcheck) = container.healthcheck().filter(|healthcheck| !healthcheck.is_empty()) {
+            service.set_healthcheck(Sourced::from_source(
+                neutral_healthcheck(healthcheck, std::slice::from_ref(&origin)),
+                origin.clone(),
+            ));
+            self.report_exact_healthcheck(service_subject, healthcheck, &origin);
         }
     }
 
@@ -439,7 +474,9 @@ impl<'a> Mapping<'a> {
 
         self.infer_command(service, container, image, service_subject);
         self.infer_environment(service, container, image, service_subject);
+        self.infer_labels(service, container, image, service_subject);
         self.infer_identity(service, container, image, service_subject);
+        self.infer_healthcheck(service, container, image, service_subject);
         self.infer_protected_override(
             format!("{service_subject}.working_directory"),
             container.working_directory(),
@@ -448,6 +485,184 @@ impl<'a> Mapping<'a> {
             image,
             |value| service.set_working_directory(value),
         );
+    }
+
+    fn infer_healthcheck(
+        &mut self,
+        service: &mut Service,
+        container: &ContainerObservation,
+        image: &ImageObservation,
+        service_subject: &str,
+    ) {
+        let container_origin = runtime_origin(container.source_id());
+        let image_origin = runtime_origin(image.source_id());
+        let decision_origin = decision_origin(container.source_id());
+        let origins = vec![container_origin, image_origin, decision_origin];
+
+        let (container_healthcheck, image_healthcheck) = match (container.healthcheck(), image.healthcheck()) {
+            (Some(container_healthcheck), Some(image_healthcheck)) => (container_healthcheck, image_healthcheck),
+            (Some(container_healthcheck), None) if !container_healthcheck.is_empty() => {
+                service.set_healthcheck(sourced_with_origins(
+                    neutral_healthcheck(container_healthcheck, &origins),
+                    origins.clone(),
+                ));
+                self.comparison_incomplete(
+                    format!("{service_subject}.healthcheck"),
+                    "image health-check data was not supplied for comparison",
+                    origins,
+                );
+                return;
+            }
+            (None, Some(image_healthcheck)) if !image_healthcheck.is_empty() => {
+                self.comparison_incomplete(
+                    format!("{service_subject}.healthcheck"),
+                    "effective container health-check data was not supplied for comparison",
+                    origins,
+                );
+                return;
+            }
+            _ => return,
+        };
+
+        let mut retained = RuntimeHealthcheck::new();
+        if container_healthcheck.disabled() == Some(true) {
+            self.infer_health_bool_field(
+                format!("{service_subject}.healthcheck.disable"),
+                container_healthcheck.disabled(),
+                image_healthcheck.disabled(),
+                &origins,
+                |value| retained.set_disabled(value),
+            );
+            if !retained.is_empty() {
+                service.set_healthcheck(sourced_with_origins(neutral_healthcheck(&retained, &origins), origins));
+            }
+            return;
+        }
+        self.infer_health_field(
+            format!("{service_subject}.healthcheck.test"),
+            container_healthcheck.command(),
+            image_healthcheck.command(),
+            &origins,
+            |value| retained.set_command(value),
+        );
+        self.infer_health_bool_field(
+            format!("{service_subject}.healthcheck.disable"),
+            container_healthcheck.disabled(),
+            image_healthcheck.disabled(),
+            &origins,
+            |value| retained.set_disabled(value),
+        );
+        self.infer_health_field(
+            format!("{service_subject}.healthcheck.interval"),
+            container_healthcheck.interval(),
+            image_healthcheck.interval(),
+            &origins,
+            |value| retained.set_interval(value),
+        );
+        self.infer_health_field(
+            format!("{service_subject}.healthcheck.timeout"),
+            container_healthcheck.timeout(),
+            image_healthcheck.timeout(),
+            &origins,
+            |value| retained.set_timeout(value),
+        );
+        self.infer_health_field(
+            format!("{service_subject}.healthcheck.retries"),
+            container_healthcheck.retries(),
+            image_healthcheck.retries(),
+            &origins,
+            |value| retained.set_retries(value),
+        );
+        self.infer_health_field(
+            format!("{service_subject}.healthcheck.start_period"),
+            container_healthcheck.start_period(),
+            image_healthcheck.start_period(),
+            &origins,
+            |value| retained.set_start_period(value),
+        );
+        self.infer_health_field(
+            format!("{service_subject}.healthcheck.start_interval"),
+            container_healthcheck.start_interval(),
+            image_healthcheck.start_interval(),
+            &origins,
+            |value| retained.set_start_interval(value),
+        );
+
+        if !retained.is_empty() {
+            service.set_healthcheck(sourced_with_origins(neutral_healthcheck(&retained, &origins), origins));
+        }
+    }
+
+    fn infer_health_field<T: Clone + Eq>(
+        &mut self,
+        subject: String,
+        container_value: Option<&T>,
+        image_value: Option<&T>,
+        origins: &[Provenance],
+        retain: impl FnOnce(T),
+    ) {
+        match (container_value, image_value) {
+            (Some(value), image_value) => {
+                let matches_default = image_value == Some(value);
+                if !matches_default {
+                    retain(value.clone());
+                }
+                self.inferred_override(subject, matches_default, origins.to_vec());
+            }
+            (None, Some(_)) => self.comparison_incomplete(
+                subject,
+                "an image health-check default is absent from the effective container observation",
+                origins.to_vec(),
+            ),
+            (None, None) => {}
+        }
+    }
+
+    fn infer_health_bool_field(
+        &mut self,
+        subject: String,
+        container_value: Option<bool>,
+        image_value: Option<bool>,
+        origins: &[Provenance],
+        retain: impl FnOnce(bool),
+    ) {
+        match (container_value, image_value) {
+            (Some(value), image_value) => {
+                let matches_default = image_value == Some(value);
+                if !matches_default {
+                    retain(value);
+                }
+                self.inferred_override(subject, matches_default, origins.to_vec());
+            }
+            (None, Some(_)) => self.comparison_incomplete(
+                subject,
+                "an image health-check default is absent from the effective container observation",
+                origins.to_vec(),
+            ),
+            (None, None) => {}
+        }
+    }
+
+    fn report_exact_healthcheck(
+        &mut self,
+        service_subject: &str,
+        healthcheck: &RuntimeHealthcheck,
+        origin: &Provenance,
+    ) {
+        for field in [
+            healthcheck.command().map(|_| "test"),
+            healthcheck.disabled().map(|_| "disable"),
+            healthcheck.interval().map(|_| "interval"),
+            healthcheck.timeout().map(|_| "timeout"),
+            healthcheck.retries().map(|_| "retries"),
+            healthcheck.start_period().map(|_| "start_period"),
+            healthcheck.start_interval().map(|_| "start_interval"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.exact(format!("{service_subject}.healthcheck.{field}"), vec![origin.clone()]);
+        }
     }
 
     fn infer_command(
@@ -537,6 +752,71 @@ impl<'a> Mapping<'a> {
                         "an image environment default is absent from the effective container environment",
                         "inspection cannot establish how the image default was removed",
                         "review whether the generated definition needs an explicit target-specific unset operation",
+                    ),
+                    vec![container_origin.clone(), image_origin.clone(), decision_origin.clone()],
+                );
+            }
+        }
+    }
+
+    fn infer_labels(
+        &mut self,
+        service: &mut Service,
+        container: &ContainerObservation,
+        image: &ImageObservation,
+        service_subject: &str,
+    ) {
+        let container_origin = runtime_origin(container.source_id());
+        let image_origin = runtime_origin(image.source_id());
+        let decision_origin = decision_origin(container.source_id());
+        let (Some(labels), Some(image_labels)) = (container.labels(), image.labels()) else {
+            if let Some(labels) = container.labels() {
+                for label in labels {
+                    service.add_label(sourced_with_origins(
+                        neutral_label(label),
+                        vec![container_origin.clone(), decision_origin.clone()],
+                    ));
+                    if is_compose_managed_label(label) {
+                        self.runtime_managed_metadata(
+                            format!("{service_subject}.labels.{}", label.name().as_str()),
+                            vec![container_origin.clone(), decision_origin.clone()],
+                        );
+                    }
+                }
+            }
+            self.comparison_incomplete(
+                format!("{service_subject}.labels"),
+                "container or image metadata-label data was not supplied for comparison",
+                vec![container_origin, image_origin, decision_origin],
+            );
+            return;
+        };
+
+        for label in labels {
+            let image_label = image_labels.iter().find(|candidate| candidate.name() == label.name());
+            let matches_default = image_label == Some(label);
+            let origins = vec![container_origin.clone(), image_origin.clone(), decision_origin.clone()];
+            if !matches_default {
+                service.add_label(sourced_with_origins(neutral_label(label), origins.clone()));
+            }
+            let subject = format!("{service_subject}.labels.{}", label.name().as_str());
+            if !matches_default && is_compose_managed_label(label) {
+                self.runtime_managed_metadata(subject, origins);
+            } else {
+                self.inferred_override(subject, matches_default, origins);
+            }
+        }
+
+        for image_label in image_labels {
+            if labels.iter().all(|label| label.name() != image_label.name()) {
+                self.loss(
+                    self.codes.comparison_incomplete.clone(),
+                    format!("{service_subject}.labels.{}", image_label.name().as_str()),
+                    ConversionKind::Unsupported,
+                    LossExplanation::new(
+                        "an image metadata-label default is absent from the effective container labels",
+                        "inspection cannot establish how the inherited image label was removed",
+                        "review whether generated output needs an explicit target-specific empty or replacement label",
                     ),
                     vec![container_origin.clone(), image_origin.clone(), decision_origin.clone()],
                 );
@@ -652,6 +932,20 @@ impl<'a> Mapping<'a> {
                 ));
             }
         }
+        if let Some(labels) = container.labels() {
+            for label in labels {
+                service.add_label(sourced_with_origins(
+                    neutral_label(label),
+                    vec![runtime_origin.clone(), decision_origin.clone()],
+                ));
+                if is_compose_managed_label(label) {
+                    self.runtime_managed_metadata(
+                        format!("{service_subject}.labels.{}", label.name().as_str()),
+                        vec![runtime_origin.clone(), decision_origin.clone()],
+                    );
+                }
+            }
+        }
         if let Some(user) = container.user() {
             set_neutral_identity(
                 service,
@@ -662,6 +956,13 @@ impl<'a> Mapping<'a> {
             service.set_working_directory(sourced_with_origins(
                 working_directory.clone(),
                 vec![runtime_origin.clone(), decision_origin.clone()],
+            ));
+        }
+        if let Some(healthcheck) = container.healthcheck().filter(|healthcheck| !healthcheck.is_empty()) {
+            let origins = vec![runtime_origin.clone(), decision_origin.clone()];
+            service.set_healthcheck(sourced_with_origins(
+                neutral_healthcheck(healthcheck, &origins),
+                origins,
             ));
         }
         self.loss(
@@ -691,6 +992,20 @@ impl<'a> Mapping<'a> {
                 "runtime value was classified by comparing container and image observations",
                 reason,
                 "review the inferred override because inspection cannot establish original author intent",
+            ),
+            origins,
+        );
+    }
+
+    fn runtime_managed_metadata(&mut self, subject: String, origins: Vec<Provenance>) {
+        self.loss(
+            self.codes.runtime_managed_metadata.clone(),
+            subject,
+            ConversionKind::Unsupported,
+            LossExplanation::new(
+                "runtime-managed orchestration metadata cannot be re-authored safely",
+                "the observed label uses Compose's reserved com.docker.compose namespace",
+                "omit it from authored output or replace it with reviewed application-owned metadata",
             ),
             origins,
         );
@@ -942,6 +1257,40 @@ fn neutral_environment(variable: &RuntimeEnvironmentVariable) -> EnvironmentVari
         variable.name().clone(),
         EnvironmentValue::Literal(variable.value().clone()),
     )
+}
+
+fn neutral_label(label: &RuntimeMetadataLabel) -> MetadataLabel {
+    MetadataLabel::new(label.name().clone(), label.value().clone())
+}
+
+fn is_compose_managed_label(label: &RuntimeMetadataLabel) -> bool {
+    label.name().as_str().starts_with("com.docker.compose.")
+}
+
+fn neutral_healthcheck(healthcheck: &RuntimeHealthcheck, origins: &[Provenance]) -> Healthcheck {
+    let mut neutral = Healthcheck::new();
+    if let Some(command) = healthcheck.command() {
+        neutral.set_command(sourced_with_origins(command.clone(), origins.to_vec()));
+    }
+    if let Some(disabled) = healthcheck.disabled() {
+        neutral.set_disabled(sourced_with_origins(disabled, origins.to_vec()));
+    }
+    if let Some(interval) = healthcheck.interval() {
+        neutral.set_interval(sourced_with_origins(interval.clone(), origins.to_vec()));
+    }
+    if let Some(timeout) = healthcheck.timeout() {
+        neutral.set_timeout(sourced_with_origins(timeout.clone(), origins.to_vec()));
+    }
+    if let Some(retries) = healthcheck.retries() {
+        neutral.set_retries(sourced_with_origins(retries.clone(), origins.to_vec()));
+    }
+    if let Some(start_period) = healthcheck.start_period() {
+        neutral.set_start_period(sourced_with_origins(start_period.clone(), origins.to_vec()));
+    }
+    if let Some(start_interval) = healthcheck.start_interval() {
+        neutral.set_start_interval(sourced_with_origins(start_interval.clone(), origins.to_vec()));
+    }
+    neutral
 }
 
 fn set_neutral_identity(service: &mut Service, identity: &Sourced<ProtectedString>) {

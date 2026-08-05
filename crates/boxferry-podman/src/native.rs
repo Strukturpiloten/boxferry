@@ -39,6 +39,8 @@ pub(crate) struct ContainerConfig {
     #[serde(default)]
     pub(crate) env: Option<Vec<String>>,
     #[serde(default)]
+    pub(crate) labels: Option<BTreeMap<String, String>>,
+    #[serde(default)]
     pub(crate) cmd: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) create_command: Option<Vec<String>>,
@@ -46,6 +48,8 @@ pub(crate) struct ContainerConfig {
     pub(crate) user: Option<String>,
     #[serde(default)]
     pub(crate) working_dir: Option<String>,
+    #[serde(default)]
+    pub(crate) healthcheck: Option<HealthConfig>,
     #[serde(flatten)]
     pub(crate) other: BTreeMap<String, Value>,
 }
@@ -122,13 +126,43 @@ pub(crate) struct ImageConfig {
     #[serde(default)]
     pub(crate) env: Option<Vec<String>>,
     #[serde(default)]
+    pub(crate) labels: Option<BTreeMap<String, String>>,
+    #[serde(default)]
     pub(crate) cmd: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) user: Option<String>,
     #[serde(default)]
     pub(crate) working_dir: Option<String>,
+    #[serde(default)]
+    pub(crate) healthcheck: Option<HealthConfig>,
     #[serde(flatten)]
     pub(crate) other: BTreeMap<String, Value>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct HealthConfig {
+    #[serde(default)]
+    pub(crate) test: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) interval: Option<i64>,
+    #[serde(default)]
+    pub(crate) timeout: Option<i64>,
+    #[serde(default)]
+    pub(crate) retries: Option<i64>,
+    #[serde(default)]
+    pub(crate) start_period: Option<i64>,
+    #[serde(flatten)]
+    pub(crate) other: BTreeMap<String, Value>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct RestartPolicy {
+    #[serde(default)]
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) maximum_retry_count: i64,
 }
 
 #[derive(Deserialize)]

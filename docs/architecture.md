@@ -28,8 +28,8 @@ Each native format is parsed into its own native model before mapping to BoxFerr
 ### Application model
 
 The application model represents the concepts BoxFerry needs to reason about: workloads, images,
-commands, environment values, explicit hostname mappings, ports, storage, networks, health checks,
-service dependencies, execution identity and container context,
+commands, environment values, protected metadata labels, explicit hostname mappings, ports,
+storage, networks, health checks, container restart policies, service dependencies, execution identity and container context,
 resources, secrets, configuration, replicas, and grouping.
 
 `ServiceGroup` retains ordered structural co-membership and lifecycle ownership without implying
@@ -89,9 +89,10 @@ retain every choice from its original source definition.
 
 The implemented `boxferry-runtime` crate owns runtime-neutral observation DTOs and a pure
 reconstructor. Its caller-selected policy either preserves supported effective state or compares
-linked container and image observations to infer command, environment, combined user/group, and
-working-directory overrides. Retained identities split into the neutral fields with shared
-provenance. Explicit read-only-root state is preserved directly. The
+linked container and image observations to infer command, environment, protected metadata labels,
+combined user/group, and working-directory overrides plus field-level regular-health-check differences. Retained identities
+split into the neutral fields with shared provenance. Explicit read-only-root state is preserved
+directly. Reserved Compose provider labels remain explicit unsafe-to-reauthor evidence. Podman startup health remains outside the shared regular-health contract. The
 implemented `boxferry-podman` and `boxferry-docker` crates decode explicit native response
 documents and acquire caller-selected resources through closed, replaceable command boundaries.
 Finite policies may expand only directly evidenced relationships without ambient enumeration.

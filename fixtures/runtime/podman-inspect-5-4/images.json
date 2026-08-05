@@ -5,7 +5,8 @@
     "Config": {
       "Env": ["BASE=image"],
       "Cmd": ["server"],
-      "WorkingDir": "/srv/app"
+      "WorkingDir": "/srv/app",
+      "Labels": {"org.opencontainers.image.title": "fixture"}
     }
   }
 ]

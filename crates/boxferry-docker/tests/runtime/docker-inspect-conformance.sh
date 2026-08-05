@@ -70,6 +70,7 @@ docker image import \
   --change 'CMD ["--image-default"]' \
   --change 'USER 1000:1000' \
   --change 'WORKDIR /srv/image' \
+  --change 'LABEL com.example.image=runtime-matrix' \
   "$work_directory/rootfs.tar" \
   "$image_name" \
   >/dev/null
@@ -80,10 +81,17 @@ docker container create \
   --network "$network_name" \
   --network-alias web \
   --env BOXFERRY_MODE=matrix \
+  --label com.example.boxferry=runtime-matrix \
   --user 1001:1002 \
   --workdir /srv/runtime \
   --read-only \
+  --restart on-failure:4 \
   --entrypoint /fixture-entrypoint \
+  --health-cmd /bin/true \
+  --health-interval 30s \
+  --health-timeout 2s \
+  --health-retries 4 \
+  --health-start-period 5s \
   --volume "$volume_name:/data:ro,Z" \
   --volume "$work_directory/bind-source:/srv/fixture:ro" \
   "$image_name" \

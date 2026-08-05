@@ -10,7 +10,8 @@ mod resolution;
 
 pub use observation::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation, PodObservation,
-    RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
+    RuntimeEnvironmentVariable, RuntimeHealthcheck, RuntimeImplementation, RuntimeMetadataLabel, RuntimeSnapshot,
+    RuntimeSnapshotError, VolumeObservation,
 };
 pub use reconstruct::{OverrideReconstruction, RuntimeImporter};
 pub use resolution::{RuntimeResolutionError, RuntimeResolutions, RuntimeResourceKind};

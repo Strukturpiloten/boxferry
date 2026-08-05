@@ -57,10 +57,10 @@ pub use boxferry_engine::{
 pub use boxferry_model::{
     Application, Command, Config, ConfigMaterial, EnvironmentValue, EnvironmentVariable, Healthcheck,
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
-    ImageReference, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
-    Provenance, ProvenanceKind, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, Secret, SecretMaterial,
-    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, SourceSpan,
-    Sourced, Volume,
+    ImageReference, MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString,
+    Protocol, Provenance, ProvenanceKind, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret,
+    SecretMaterial, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId,
+    SourceSpan, Sourced, Volume,
 };
 
 #[cfg(feature = "compose")]
@@ -87,7 +87,7 @@ pub use boxferry_podman::{
 #[cfg(feature = "runtime")]
 pub use boxferry_runtime::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation,
-    OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeImplementation, RuntimeImporter,
-    RuntimeResolutionError, RuntimeResolutions, RuntimeResourceKind, RuntimeSnapshot, RuntimeSnapshotError,
-    VolumeObservation,
+    OverrideReconstruction, PodObservation, RuntimeEnvironmentVariable, RuntimeHealthcheck, RuntimeImplementation,
+    RuntimeImporter, RuntimeMetadataLabel, RuntimeResolutionError, RuntimeResolutions, RuntimeResourceKind,
+    RuntimeSnapshot, RuntimeSnapshotError, VolumeObservation,
 };

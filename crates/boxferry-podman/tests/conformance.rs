@@ -8,7 +8,7 @@ use std::{
 };
 
 use boxferry_engine::{PlatformVersion, Severity};
-use boxferry_model::Identifier;
+use boxferry_model::{HealthcheckCommand, Identifier, RestartPolicy};
 use boxferry_podman::{
     MAXIMUM_PODMAN_VERSION, MINIMUM_PODMAN_VERSION, PodmanImporter, PodmanInspectDocuments, PodmanInspectSource,
 };
@@ -344,12 +344,37 @@ fn validate_live_decode(
         .iter()
         .find(|container| container.name().as_str() == expected_container)
         .ok_or_else(|| format!("Podman {version_value} live inspection lost the test container"))?;
+    let healthcheck = container
+        .healthcheck()
+        .ok_or_else(|| format!("Podman {version_value} live inspection lost the regular health check"))?;
     if container.user().map(boxferry_model::ProtectedString::expose) != Some("1001:1002")
         || container
             .working_directory()
             .map(boxferry_model::ProtectedString::expose)
             != Some("/srv/runtime")
         || container.read_only_root_filesystem() != Some(true)
+        || !matches!(
+            container.restart_policy(),
+            Some(RestartPolicy::OnFailure {
+                maximum_retries: Some(value)
+            }) if value.get() == 4
+        )
+        || !has_label(container.labels(), "com.example.boxferry", "runtime-matrix")
+        || !has_label(container.labels(), "com.example.image", "runtime-matrix")
+        || !matches!(healthcheck.command(), Some(HealthcheckCommand::Shell(command)) if command.expose() == "/bin/true")
+        || healthcheck.interval().map(boxferry_model::HealthcheckDuration::as_str) != Some("30s")
+        || healthcheck.timeout().map(boxferry_model::HealthcheckDuration::as_str) != Some("2s")
+        || healthcheck.retries().map(boxferry_model::HealthcheckRetries::as_str) != Some("4")
+        || healthcheck
+            .start_period()
+            .map(boxferry_model::HealthcheckDuration::as_str)
+            != Some("5s")
+        || healthcheck.start_interval().is_some()
+        || !has_label(
+            snapshot.images().first().and_then(|image| image.labels()),
+            "com.example.image",
+            "runtime-matrix",
+        )
         || !snapshot
             .networks()
             .iter()
@@ -372,6 +397,14 @@ fn conformance_script() -> Result<PathBuf, String> {
         .join("tests/runtime/podman-inspect-conformance.sh")
         .canonicalize()
         .map_err(|error| format!("cannot locate conformance script: {error}"))
+}
+
+fn has_label(labels: Option<&[boxferry_runtime::RuntimeMetadataLabel]>, name: &str, value: &str) -> bool {
+    labels.is_some_and(|labels| {
+        labels
+            .iter()
+            .any(|label| label.name().as_str() == name && label.value().expose() == value)
+    })
 }
 
 fn load_matrix() -> Result<RuntimeMatrix, String> {
