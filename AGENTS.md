@@ -80,3 +80,21 @@ cargo deny check
 ```
 
 The `ci-*` aliases in `.cargo/config.toml` use locked resolution and all workspace features and targets where applicable. Do not weaken an alias or CI lint to accommodate new code; address the finding or document a narrowly justified policy change.
+
+## Multi-agent coordination
+
+- Use the primary BoxFerry agent as the integrator for tasks spanning BoxFerry, ComposeLens, and
+  QuadletLens.
+- Delegate only concrete, bounded tasks with an independently verifiable result.
+- Never run two source-writing agents in the same repository checkout concurrently.
+- Agents may write concurrently in separate repository checkouts only after the public contract is
+  defined by the primary agent.
+- Specification research and review agents remain read-only.
+- Run a verifier only after the relevant repository's writing agent has finished.
+- Verification agents report failures but do not modify source, tests, configuration, or
+  documentation.
+- The primary agent reviews every diff and owns architectural and cross-repository API decisions.
+- Subagents never commit, push, publish crates, create tags, or create releases.
+- Prefer subagents for specification research, focused implementation, review, test execution, and
+  log analysis when those tasks would otherwise pollute the primary thread or can proceed
+  independently.
