@@ -7,15 +7,16 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, EnvironmentValue, HostAddressKind, MountSource, ProtectedString, Protocol, Provenance,
-    ProvenanceKind, ResourceOwnership, RestartPolicy, SelinuxRelabel, Service, Sourced,
+    Application, Command, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HostAddressKind, MountSource,
+    ProtectedString, Protocol, Provenance, ProvenanceKind, ResourceOwnership, RestartPolicy, SelinuxRelabel, Service,
+    Sourced,
 };
 use compose_lens::{
     render::{
-        ComposeDocumentBuilder, GeneratedCommand, GeneratedComposeDocument, GeneratedEnvironment, GeneratedExtraHost,
-        GeneratedLabel, GeneratedMount, GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol,
-        GeneratedResource, GeneratedRestartPolicy, GeneratedSelinux, GeneratedService, GeneratedString,
-        GenerationError,
+        ComposeDocumentBuilder, GeneratedCommand, GeneratedComposeDocument, GeneratedEnvironment,
+        GeneratedEnvironmentFile, GeneratedEnvironmentFileFormat, GeneratedExtraHost, GeneratedLabel, GeneratedMount,
+        GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol, GeneratedResource, GeneratedRestartPolicy,
+        GeneratedSelinux, GeneratedService, GeneratedString, GenerationError,
     },
     source::SourceId,
     validation::{
@@ -242,14 +243,14 @@ impl<'a> Mapping<'a> {
         for config in self.application.configs() {
             self.unsupported(
                 &format!("configs.{}", config.value().name().as_str()),
-                "ComposeLens 0.1.12 generation does not yet expose top-level config definitions",
+                "ComposeLens 0.1.13 generation does not yet expose top-level config definitions",
                 config.origins(),
             );
         }
         for secret in self.application.secrets() {
             self.unsupported(
                 &format!("secrets.{}", secret.value().name().as_str()),
-                "ComposeLens 0.1.12 generation does not yet expose top-level secret definitions",
+                "ComposeLens 0.1.13 generation does not yet expose top-level secret definitions",
                 secret.origins(),
             );
         }
@@ -359,6 +360,7 @@ impl<'a> Mapping<'a> {
         self.map_command(service, &mut generated, &service_subject);
         self.map_identity(service, &mut generated, &service_subject);
         self.map_execution_context(service, &mut generated, &service_subject);
+        self.map_environment_files(service, &mut generated, &service_subject);
         self.map_environment(service, &mut generated, &service_subject);
         self.map_labels(service, &mut generated, &service_subject);
         self.map_host_mappings(service, &mut generated, &service_subject);
@@ -509,6 +511,67 @@ impl<'a> Mapping<'a> {
                     "environment value variant is newer than this Compose adapter",
                     environment.origins(),
                 ),
+            }
+        }
+    }
+
+    fn map_environment_files(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
+        for (index, sourced) in service.environment_files().iter().enumerate() {
+            let subject = format!("{service_subject}.environment_files[{index}]");
+            let environment_file = sourced.value();
+            let path = match generated_string(environment_file.path()) {
+                Ok(path) => path,
+                Err(error) => {
+                    self.generation_error(&subject, &error, sourced.origins());
+                    continue;
+                }
+            };
+            let value = match environment_file.syntax() {
+                EnvironmentFileSyntax::Short => {
+                    if environment_file.required().is_some() || environment_file.format().is_some() {
+                        self.unsupported(
+                            &subject,
+                            "short-syntax environment files cannot carry long-syntax options",
+                            sourced.origins(),
+                        );
+                        continue;
+                    }
+                    GeneratedEnvironmentFile::short(path)
+                }
+                EnvironmentFileSyntax::Long => {
+                    let format = match environment_file.format().map(Sourced::value) {
+                        Some(EnvironmentFileFormat::Raw) => Some(GeneratedEnvironmentFileFormat::Raw),
+                        Some(_) => {
+                            self.unsupported(
+                                &subject,
+                                "environment-file format variant is newer than this Compose adapter",
+                                sourced.origins(),
+                            );
+                            continue;
+                        }
+                        None => None,
+                    };
+                    GeneratedEnvironmentFile::long(
+                        path,
+                        environment_file.required().map(|required| *required.value()),
+                        format,
+                    )
+                }
+                _ => {
+                    self.unsupported(
+                        &subject,
+                        "environment-file syntax variant is newer than this Compose adapter",
+                        sourced.origins(),
+                    );
+                    continue;
+                }
+            };
+            match value {
+                Ok(value) => {
+                    generated.add_environment_file(value);
+                    self.exact(subject, sourced.origins());
+                }
+                Err(error) => self.generation_error(&subject, &error, sourced.origins()),
             }
         }
     }
@@ -672,38 +735,31 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_unimplemented_service_fields(&mut self, service: &Service, service_subject: &str) {
-        for (index, environment_file) in service.environment_files().iter().enumerate() {
-            self.unsupported(
-                &format!("{service_subject}.environment_files[{index}]"),
-                "ComposeLens 0.1.12 generation does not yet expose service environment files",
-                environment_file.origins(),
-            );
-        }
         if let Some(healthcheck) = service.healthcheck() {
             self.unsupported(
                 &format!("{service_subject}.healthcheck"),
-                "ComposeLens 0.1.12 generation does not yet expose health-check fields",
+                "ComposeLens 0.1.13 generation does not yet expose health-check fields",
                 healthcheck.origins(),
             );
         }
         for (index, dependency) in service.dependencies().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.dependencies[{index}]"),
-                "ComposeLens 0.1.12 generation does not yet expose service dependencies",
+                "ComposeLens 0.1.13 generation does not yet expose service dependencies",
                 dependency.origins(),
             );
         }
         for (index, grant) in service.config_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.config_grants[{index}]"),
-                "ComposeLens 0.1.12 generation does not yet expose service config grants",
+                "ComposeLens 0.1.13 generation does not yet expose service config grants",
                 grant.origins(),
             );
         }
         for (index, grant) in service.secret_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.secret_grants[{index}]"),
-                "ComposeLens 0.1.12 generation does not yet expose service secret grants",
+                "ComposeLens 0.1.13 generation does not yet expose service secret grants",
                 grant.origins(),
             );
         }

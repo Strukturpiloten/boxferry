@@ -64,10 +64,31 @@ no-default core, every supported individual feature, and all features.
 The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-runtime`, and
 `docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
 current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
-`ComposeRuntime`, Compose target constants, `QuadletExporter`, `QuadletGroupingPolicy`, and
+`ComposeRuntime`, Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
+`QuadletSource`, `QuadletSourceError`, `QuadletExporter`, `QuadletGroupingPolicy`, and
 `QuadletOutput`. It also exposes each adapter and matching native
 dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
 `boxferry::docker`, so embedded callers do not need to guess a second crate version.
+
+`QuadletSource::parse` accepts only caller-provided named in-memory documents. `QuadletImporter`
+maps the documented exact image, container-name, safe command/environment, scalar-port,
+named/absolute-mount, named-network, metadata-label, host-mapping, and execution-context subset
+with source provenance. Repeated absolute-literal `EnvironmentFile=` declarations retain order
+and protected paths without filesystem access, with parser parity classified as approximate. It
+also consumes section-aware `[Service] Restart=` intent and complete
+sibling `[Unit]` activation-plus-ordering dependency pairs. Regular native health commands,
+disable intent, durations, and retry counts enter the source-aware neutral health model. It does
+import reviewed default/`type=mount` `Secret=` declarations as ordered grants to external secret
+resources, preserving target/UID/GID/mode options without accessing secret material. It does not
+discard native pod membership: an application-owned `.pod` with an explicit matching `PodName=`
+and sibling container `Pod=` references becomes a provenance-aware neutral service group. Pod-
+scoped settings and implicit/divergent runtime names remain structured losses. It does not
+inspect an installed
+Podman/systemd environment, resolve host paths, or reinterpret arbitrary systemd units as
+application services. Values that require native quoting, shell or path interpretation remain
+structured unsupported outcomes. Duplicate singleton keys and source combinations that Quadlet
+itself cannot execute, such as `Group=` without `User=`, are invalid rather than last-write-wins
+guesses.
 
 The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types including
 `RuntimeHealthcheck` and `RuntimeMetadataLabel`, plus the neutral `RestartPolicy`, `MetadataLabel`, `OverrideReconstruction`,
@@ -128,7 +149,7 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.12;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.13;
 - an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.9;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
@@ -245,10 +266,11 @@ Service `env_file` declarations cross the public API as ordered neutral `Environ
 They retain short/long syntax, a protected path, explicit `required` and `format` options, and
 nested provenance. Importing or exporting a declaration performs no filesystem access. An
 embedded caller may configure `QuadletExporter::with_relative_host_path_root` for lexical
-Compose-relative path resolution. Loading file contents and applying Compose parser semantics will
-remain a separate caller-authorized API.
+Compose-relative path resolution. The Compose exporter preserves ordered short/long declarations,
+explicit `required`/`raw` options, and path sensitivity through ComposeLens's validated generator.
+Loading file contents and applying Compose parser semantics remains a separate caller-authorized API.
 
-The importer consumes ComposeLens 0.1.12's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.1.13's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.

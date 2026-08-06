@@ -17,6 +17,24 @@ Coverage was audited against the current official
 2026-08-05. A documentation entry is not compatibility evidence by itself. Version claims still
 require the repository tests described in [Testing strategy](testing.md).
 
+## Route availability
+
+The product contract is N-to-N. This table records adapter availability; it is not a list of
+independent pairwise converters. Any implemented importer can feed any implemented exporter, but
+the resulting route supports only their shared semantic subset.
+
+| Boundary | Import to neutral model | Export from neutral model | CLI orchestration |
+| --- | --- | --- | --- |
+| Docker runtime | Inspect decoder and reconstruction library implemented for the reviewed API range | Deployment planning and execution open | Open |
+| Docker Compose | Implemented for the documented subset | Implemented for the documented subset | Compose-to-Quadlet only |
+| Podman runtime | Inspect decoder and reconstruction library implemented for Podman 5.4.0–6.0.2 | Deployment planning and execution open | Open |
+| Podman Quadlet | Shared service/resource subset implemented, including labels, host mappings, and execution context; broader native surface open | Implemented for the documented subset | Compose-to-Quadlet only |
+| Kubernetes | Open | Open | Open |
+
+Runtime export means generating and validating a reviewable create/update plan before an optional
+explicit apply operation. It never means mutating an ambient daemon merely because conversion was
+requested.
+
 ## Status vocabulary
 
 | Status | Meaning |
@@ -38,7 +56,7 @@ field as a policy-controlled unsupported outcome.
 | Runtime container name | `container_name` | `end to end` | The name remains distinct from the service key and emits as capability-checked `ContainerName=`. Compose and Podman target grammars are validated independently; invalid values block output. |
 | Command | `command` | `partial` | Safe exec-form arguments emit `Exec=`; shell form, clearing, and values needing target quoting are reported. |
 | Environment | `environment` | `partial` | Literal safe values emit `Environment=`; host lookup, unset intent, and values needing target encoding are reported. |
-| Environment files | `env_file` | `partial` | ComposeLens 0.1.12 imports ordered short/long declarations with `required`, `format`, sensitivity, and provenance without reading files. Required safe absolute paths and relative paths resolved from an explicit project root emit repeatable capability-checked Quadlet `EnvironmentFile=` entries. Output is `BFQ0010` approximate until Compose-default and `raw` parser parity with Podman is proven. Optional files, systemd-specifier ambiguity, and unsafe paths are reported instead of guessed. |
+| Environment files | `env_file` | `partial` | ComposeLens 0.1.13 imports and exports ordered short/long declarations with `required`, `format`, sensitivity, and provenance without reading files. Required safe absolute paths and relative paths resolved from an explicit project root emit repeatable capability-checked Quadlet `EnvironmentFile=` entries. Quadlet output and Quadlet-to-Compose reconstruction are approximate until Compose-default and `raw` parser parity with Podman is proven. Optional files, systemd-specifier ambiguity, and unsafe paths are reported instead of guessed. |
 | Host mappings | `extra_hosts` | `end to end` | Sequence/mapping syntax, IPv4, IPv6, and `host-gateway` reach container or compatible pod `AddHost=` entries. |
 | Published ports | `ports` | `partial` | Single numeric publications are supported; ranges, deferred values, unsupported host-address forms, and target-only options are reported. |
 | Storage | `volumes` plus top-level `volumes` | `partial` | Named, bind, and anonymous mounts cover the first slice, including short-syntax SELinux relabel intent; other mount types/options are reported. |
@@ -70,6 +88,51 @@ unknown native entries and generic systemd sections loss-aware, but that does no
 BoxFerry to synthesize them. `.image`, `.build`, `.kube`, and experimental `.artifact` generation
 are open work. Native Podman-only keys are added when they support a defined migration scenario,
 not merely because the key exists.
+
+The Quadlet importer reads typed `.container`, `.network`, and `.volume` documents. Its exact
+subset covers direct `Image=`, `ContainerName=`, safe unquoted `Exec=`, one safe explicit
+`NAME=VALUE` per `Environment=`, scalar `PublishPort=` declarations, anonymous/named/absolute-bind
+`Volume=` declarations with `ro`, `rw`, `z`, and `Z`, and named `Network=` attachments. Referenced
+`.network` and `.volume` units become application-owned resources; safe literal names become
+explicit external resources. Environment values are protected in memory and diagnostics never
+contain their authored contents. Single safe `Label=` assignments, repeatable `AddHost=` entries
+with IPv4, bracketed IPv6, or `host-gateway`, user and numeric group identity, supplementary groups,
+user namespace mode, absolute container working directory, and explicit read-only-root state are
+also represented with provenance. One `AddHost=` entry containing semicolon-separated hostnames is
+expanded into equivalent ordered neutral mappings. Section-aware generic-systemd handling maps
+`Restart=no` exactly and retains `always` or `on-failure` only with an explicit approximation
+outcome. Complete `Requires=`/`Wants=` plus `After=` pairs referencing sibling `.container` or
+generated `.service` units become ordered required/optional `service_started` edges. Multiple unit
+names per directive and repeated equivalent directives retain their contributing provenance.
+Regular `HealthCmd=`, `HealthInterval=`, `HealthTimeout=`, `HealthRetries=`, and
+`HealthStartPeriod=` fields enter the neutral health model. `none` disables a check; JSON arrays
+and conservative plain commands are protected so diagnostics and debug output do not expose them.
+Repeated absolute-literal `EnvironmentFile=` paths enter the ordered neutral declaration list
+without reading the referenced files. They carry explicit approximation outcomes because Podman
+and Compose parser parity is not proven. Relative, unit-relative, systemd-specifier-bearing, and
+native-quoted paths stay unsupported until the caller supplies safe source-location context.
+Repeatable `Secret=` values using the default or explicit `type=mount` form become ordered grants
+to external neutral secret resources. Source, target, UID, GID, mode, syntax form, and provenance
+are retained; no secret material is read or synthesized. `type=env`, unknown options, duplicate
+options, unsafe names/targets, invalid decimal IDs, and invalid modes remain explicit outcomes.
+Owned `.pod` documents with explicit `PodName=` equal to the unit stem and container
+`Pod=<name>.pod` references become ordered, provenance-aware neutral service groups. Resolution is
+independent of source document order. Duplicate container `Pod=` declarations are invalid.
+
+Systemd quoting, shell interpretation, continued values, relative or specifier-bearing bind
+sources, IPv6 publications, port ranges, special network modes, attachment options, and unmodeled
+mount options produce explicit unsupported outcomes rather than guessed neutral values. Arbitrary
+host-unit dependencies and incomplete activation/ordering pairs are unsupported; conflicting
+`Requires=` and `Wants=` declarations for one sibling are invalid. Duplicate singleton keys,
+invalid booleans, invalid health durations/retry counts, and `Group=` without a valid `User=`
+produce invalid outcomes. `HealthInterval=disable` remains unsupported because disabling the
+automatic timer is not equivalent to disabling the health check.
+Omitted `PodName=` values use Podman's `systemd-`-prefixed runtime default, which cannot coexist
+with the unit identity in the current single-name service-group model. Divergent explicit pod
+names and pod-scoped `AddHost=`, `Network=`, `PublishPort=`, `UserNS=`, and `Volume=` settings also
+remain explicit outcomes; BoxFerry does not assign shared pod state to an arbitrary service.
+Invalid or unresolved document-set references block import. Typed `.image`, `.build`, `.kube`, and
+`.artifact` input also remains open in QuadletLens and BoxFerry.
 
 ## Runtime reconstruction foundation
 
@@ -110,10 +173,12 @@ with independent `BFD` diagnostics and additionally reports the lost entrypoint/
 
 The Compose export path covers the same supported effective subset for images, commands,
 environment, explicit runtime names, service labels, identity/context, container restart policies,
-ports, mounts, networks, and volumes. It uses ComposeLens 0.1.12's
+ports, mounts, networks, volumes, and ordered environment-file declarations. It uses ComposeLens 0.1.13's
 deterministic generated-document boundary and requires an exact Docker Compose or
 `podman-compose` provider version; the optional exact Docker Engine or Podman backend remains a
-separate input. Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,
+separate input. Short/long `env_file` syntax, order, explicit `required`/`raw` options, and path
+sensitivity survive generated output and parse-back validation.
+Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,
 unresolved lifecycle, structural pod grouping, and fields outside the generated subset remain
 policy-controlled non-exact outcomes rather than silent output changes.
 

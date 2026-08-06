@@ -5,10 +5,10 @@ use std::error::Error;
 use boxferry_compose::{ComposeExporter, ComposeRuntime, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET};
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, TargetProfile};
 use boxferry_model::{
-    Application, Command, Config, EnvironmentFile, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable,
-    Healthcheck, HostAddress, HostMapping, Identifier, ImageReference, MetadataLabel, Mount, MountSource, Network,
-    NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceOwnership, RestartPolicy, Secret,
-    SelinuxRelabel, Service, ServiceGroup, SourceId, Sourced, Volume,
+    Application, Command, Config, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
+    EnvironmentVariable, Healthcheck, HostAddress, HostMapping, Identifier, ImageReference, MetadataLabel, Mount,
+    MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceOwnership,
+    RestartPolicy, Secret, SelinuxRelabel, Service, ServiceGroup, SourceId, Sourced, Volume,
 };
 
 #[test]
@@ -61,6 +61,7 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
         EnvironmentVariable::new(Identifier::new("HOST_VALUE")?, EnvironmentValue::Host),
         origin.clone(),
     ));
+    add_environment_files(&mut service, &origin)?;
     service.add_label(Sourced::from_source(
         MetadataLabel::new(Identifier::new("com.example.empty")?, ProtectedString::plain("")),
         origin.clone(),
@@ -109,10 +110,7 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
     let output = plan.candidate().ok_or("generated document expected")?;
     assert!(output.is_sensitive());
     assert_eq!(output.text(), expected_supported_document());
-    let debug = format!("{output:?}");
-    assert!(debug.contains("<redacted>"));
-    assert!(!debug.contains("production-secret"));
-    assert!(!debug.contains("1001:1002"));
+    assert_sensitive_debug(&format!("{output:?}"));
     Ok(())
 }
 
@@ -314,11 +312,6 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
         Identifier::new("ABSENT")?,
         EnvironmentValue::Unset,
     )));
-    service.add_environment_file(Sourced::generated(EnvironmentFile::new(
-        ProtectedString::plain("./application.env"),
-        EnvironmentFileSyntax::Short,
-    )?));
-
     let mut application = Application::new(Identifier::new("partial")?);
     application.add_service(Sourced::generated(service))?;
     application.add_config(Sourced::generated(Config::new(
@@ -341,7 +334,6 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
         "secrets.token",
         "service_groups.observed-pod",
         "services.web.environment.ABSENT",
-        "services.web.environment_files[0]",
         "services.web.healthcheck",
     ] {
         assert!(plan.outcomes().iter().any(|outcome| {
@@ -396,6 +388,28 @@ fn minimal_application() -> Result<Application, Box<dyn Error>> {
     Ok(application)
 }
 
+fn add_environment_files(service: &mut Service, origin: &Provenance) -> Result<(), Box<dyn Error>> {
+    service.add_environment_file(Sourced::from_source(
+        EnvironmentFile::new(ProtectedString::plain("./default.env"), EnvironmentFileSyntax::Short)?,
+        origin.clone(),
+    ));
+    let mut private = EnvironmentFile::new(
+        ProtectedString::sensitive("/run/credentials/private.env"),
+        EnvironmentFileSyntax::Long,
+    )?;
+    private.set_required(Sourced::from_source(false, origin.clone()));
+    private.set_format(Sourced::from_source(EnvironmentFileFormat::Raw, origin.clone()));
+    service.add_environment_file(Sourced::from_source(private, origin.clone()));
+    Ok(())
+}
+
+fn assert_sensitive_debug(debug: &str) {
+    assert!(debug.contains("<redacted>"));
+    assert!(!debug.contains("production-secret"));
+    assert!(!debug.contains("1001:1002"));
+    assert!(!debug.contains("/run/credentials/private.env"));
+}
+
 fn exact_target(implementation: &str, version: PlatformVersion) -> Result<TargetProfile, Box<dyn Error>> {
     Ok(TargetProfile::new(implementation, version, Some(version))?)
 }
@@ -414,6 +428,11 @@ const fn expected_supported_document() -> &'static str {
         "    command:\n",
         "      - \"server\"\n",
         "      - \"--foreground\"\n",
+        "    env_file:\n",
+        "      - \"./default.env\"\n",
+        "      - path: \"/run/credentials/private.env\"\n",
+        "        required: false\n",
+        "        format: \"raw\"\n",
         "    environment:\n",
         "      - \"TOKEN=production-secret\"\n",
         "      - \"HOST_VALUE\"\n",

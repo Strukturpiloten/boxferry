@@ -118,6 +118,7 @@ dependencies = [
  "boxferry-engine",
  "boxferry-model",
  "quadlet-lens",
+ "serde_json",
 ]
 
 [[package]]
@@ -176,9 +177,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "compose-lens"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d152194487ab2eafe50429d96a44d58315eb4ab993f3226ef47628ab552b948"
+checksum = "c834c83f915ce781baf90d92427145a14472d0faf78d4d566dc7784c7a10b2b9"
 dependencies = [
  "yaml-edit",
 ]

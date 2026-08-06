@@ -7,18 +7,48 @@ compatibility reporting. Its conversion system is a reusable Rust library; the C
 application of that library. BoxFerry is not a text-to-text YAML transformer and does not promise
 lossless conversion between models with different operational semantics.
 
+## N-to-N conversion contract
+
+Every supported format or runtime is both a potential source and a potential target. BoxFerry does
+not implement a separate converter for every pair. Instead, each integration owns two independent
+boundaries:
+
+1. an importer from the native definition or observed runtime state into the neutral application
+   model; and
+2. an exporter from the neutral model into a native definition or reviewable runtime deployment
+   plan.
+
+Once both boundaries exist, the conversion engine can compose that source with every target. A
+route is usable only for the intersection of semantics supported by its importer, the neutral
+model, and its exporter. Incompatible intent remains a structured outcome and never disappears
+because another route happens to support it.
+
+The first major product milestone covers Docker runtime state, Docker Compose, Podman runtime
+state, and Podman Quadlet in every source/target combination. Kubernetes then joins the same
+matrix. Applying a runtime target is a separate, explicit side effect: the pure exporter first
+creates a deterministic deployment plan, and an executor may apply that plan only after caller
+authorization.
+
+This contract is fixed by [ADR 0017](decisions/0017-n-to-n-adapter-matrix.md).
+
 ## System context
 
 ```text
-native source                BoxFerry                              native target
+native source             importer                 neutral model
 
-Compose document ──▶ Compose adapter ──┐                    ┌──▶ Compose document
-Quadlet files ─────▶ Quadlet adapter ──┤                    ├──▶ Quadlet files
-Kubernetes YAML ───▶ Kubernetes adapter├─▶ application ────┼──▶ Kubernetes YAML
-Docker runtime ────▶ Docker inspector ─┤      model         └──▶ conversion report
-Podman runtime ────▶ Podman inspector ─┘           │
-                                                    ▼
-                                          planner and diagnostics
+Docker runtime ─────────▶ Docker importer ───────┐
+Compose documents ──────▶ Compose importer ──────┤
+Podman runtime ─────────▶ Podman importer ───────┼──▶ application model ──▶ planner + diagnostics
+Quadlet files ──────────▶ Quadlet importer ──────┤
+Kubernetes resources ──▶ Kubernetes importer ───┘
+
+neutral model             exporter                 native target
+
+application model ──────▶ Docker exporter ───────▶ Docker deployment plan ──▶ explicit executor
+                  ├─────▶ Compose exporter ──────▶ Compose documents
+                  ├─────▶ Podman exporter ───────▶ Podman deployment plan ──▶ explicit executor
+                  ├─────▶ Quadlet exporter ──────▶ Quadlet files
+                  └─────▶ Kubernetes exporter ──▶ Kubernetes resources
 ```
 
 Each native format is parsed into its own native model before mapping to BoxFerry's application model. Rendering reverses this direction: the target adapter maps application intent into a native target model, and the native library renders it.
@@ -70,6 +100,37 @@ provider target plus an optional exact Docker Engine or Podman backend. It maps 
 into ComposeLens's generated values and returns deterministic, parse-back-validated YAML. Provider
 and runtime identity remain separate, compatibility-sensitive constructs become policy-controlled
 outcomes, and no installed tool is inspected. See [ADR 0013](decisions/0013-explicit-compose-provider-and-runtime.md).
+
+The Quadlet importer consumes explicit in-memory unit inputs through `QuadletSource::parse`, or a
+caller-validated named `QuadletDocumentSet`; it does not search systemd or Quadlet directories.
+The recommended parse boundary rejects invalid native syntax/model results before diagnostics can
+be discarded. Its current exact slice maps direct container images, explicit container names,
+safe unquoted exec arguments, single explicit environment assignments, scalar port publications,
+named or absolute-bind mounts, named network attachments, and application-owned or explicitly
+external network and volume resources. Metadata labels, IPv4/bracketed-IPv6/`host-gateway` host
+mappings, user and numeric group identity, supplementary groups, user namespaces, absolute
+container working directories, and explicit read-only-root state use the same boundary. It rejects
+duplicate singleton keys and invalid document graphs and reports all unmodeled or ambiguous native
+entries. Repeated absolute-literal `EnvironmentFile=` declarations retain their order, protected
+paths, and provenance without filesystem access. Their provider-parser equivalence is explicit
+approximation evidence; relative and specifier-bearing paths require unavailable unit-directory
+context and do not enter the neutral model. The regular native health-check subset retains protected JSON/plain commands, explicit
+disable intent, validated Podman durations, and decimal retry counts with field provenance. Native
+`Secret=` mount grants become references to application-level external secret resources. The
+importer preserves grant order and reviewed target/UID/GID/mode options but never obtains secret
+material; environment exposure and unknown native options stay unsupported. Native
+`.pod` identities and sibling container `Pod=` references become application-owned structural
+service groups when an explicit `PodName=` matches the unit stem. This resolution is independent
+of document order and retains pod/member provenance. Pod-scoped runtime configuration is not
+assigned to arbitrary services, and implicit or divergent runtime pod names remain explicit
+losses until the neutral model grows a pod-settings boundary. Native
+section identity is retained while mapping: `[Service] Restart=no` is exact,
+unbounded systemd restart policies are explicit approximations, and only complete sibling
+`Requires`/`Wants` plus `After` relationships become neutral started-service dependencies.
+Arbitrary host-unit references, activation without ordering, and ordering without activation stay
+explicitly unsupported. Systemd quoting, shell interpretation, unit-relative and
+specifier-bearing bind paths, special network modes, port ranges, and target-specific options are
+never guessed.
 
 The Quadlet exporter consumes the neutral application explicitly, evaluates the caller's Podman
 version range through QuadletLens, and constructs typed native documents. It keeps services as

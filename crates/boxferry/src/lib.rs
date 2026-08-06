@@ -75,7 +75,10 @@ pub use boxferry_docker::{
     MAXIMUM_DOCKER_API_VERSION, MINIMUM_DOCKER_API_VERSION, ParseDockerApiVersionError, ProcessDockerCommandExecutor,
 };
 #[cfg(feature = "quadlet")]
-pub use boxferry_quadlet::{QuadletExporter, QuadletExporterError, QuadletFile, QuadletGroupingPolicy, QuadletOutput};
+pub use boxferry_quadlet::{
+    QuadletDocumentInput, QuadletExporter, QuadletExporterError, QuadletFile, QuadletGroupingPolicy, QuadletImporter,
+    QuadletOutput, QuadletSource, QuadletSourceError,
+};
 
 #[cfg(feature = "podman-runtime")]
 pub use boxferry_podman::{

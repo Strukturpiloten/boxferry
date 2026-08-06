@@ -72,7 +72,7 @@ Quadlet `Restart=no` conversion with provenance and real Podman 6.0.2 generator 
 The first processing-context slice derived from the corpus is implemented in the CLI. Compose
 interpolation is opt-in, begins with an empty environment, and accepts only plain literal values or
 individually authorized sensitive process variables. BoxFerry does not read other ambient values
-or an implicit `.env` file. ComposeLens 0.1.12 and BoxFerry now retain service `env_file`
+or an implicit `.env` file. ComposeLens 0.1.13 and BoxFerry now retain service `env_file`
 declarations without reading them and can generate required safe paths as approximate Quadlet
 `EnvironmentFile=` entries. Real deployment execution still needs the separate caller-authorized
 file-content boundary and parser conformance evidence. The corpus itself deliberately supplies no

@@ -38,3 +38,7 @@ workspace = true
 name = "boxferry"
 path = "src/main.rs"
 required-features = ["cli", "compose", "quadlet"]
+
+[[test]]
+name = "quadlet_to_compose"
+required-features = ["compose", "quadlet"]

@@ -3,11 +3,16 @@
 BoxFerry is a loss-aware Rust library and command-line application for migrating and converting
 container application definitions.
 
-The project is intended to help people move applications between Docker Compose, Podman Quadlet, and Kubernetes without pretending that these environments are perfectly equivalent. BoxFerry will preserve intent where possible and report every approximation, unsupported feature, and required manual action.
+The project is intended to help people move applications between Docker, Docker Compose, Podman,
+Podman Quadlet, and Kubernetes without pretending that these environments are perfectly
+equivalent. Every supported source can be converted into every supported target through the same
+neutral application model. BoxFerry preserves intent where possible and reports every
+approximation, unsupported feature, and required manual action.
 
 ## Goals
 
-- Convert supported application definitions in both directions where the semantics allow it.
+- Import every supported source into one format-independent, provenance-aware application model.
+- Export that model to every supported target where the semantics allow it.
 - Import existing Docker and Podman resources through runtime inspection.
 - Produce actionable compatibility and loss reports instead of silently dropping configuration.
 - Account for target versions, including Podman and Kubernetes feature differences.
@@ -16,6 +21,11 @@ The project is intended to help people move applications between Docker Compose,
 - Remain useful for real-world files that contain extensions and implementation-specific behavior.
 
 ## Initial scope
+
+The first major milestone is the complete source/target matrix for Docker runtime resources,
+Docker Compose, Podman runtime resources, and Podman Quadlet. Kubernetes follows as another input
+and output adapter; it is not a separate conversion engine. Runtime targets produce a reviewable
+deployment plan before any optional, explicitly authorized mutation of Docker or Podman.
 
 Planned inputs include:
 
@@ -132,14 +142,46 @@ ComposeLens profile selection whenever profiles are present, retains SELinux rel
 reports unsupported source features as policy-controlled conversion outcomes.
 
 The exporter consumes the neutral application and an exact Docker Compose or `podman-compose`
-provider target, with an optional exact Docker Engine or Podman backend. ComposeLens 0.1.12 owns
-deterministic short/long syntax choices, sensitive-output redaction, and parse-back validation.
+provider target, with an optional exact Docker Engine or Podman backend. ComposeLens 0.1.13 owns
+deterministic short/long syntax choices, sensitive-output redaction, and parse-back validation,
+including ordered short/long service `env_file` output.
 BoxFerry reports compatibility-sensitive tag-plus-digest images, `host-gateway`, Podman user
 namespaces, SELinux relabeling, and SCTP before the caller authorizes output. Runtime-observed
 network and volume names are emitted explicitly so Compose project scoping cannot rename them.
 See the [Compose exporter contract](docs/compose-adapter.md).
 
-The additive `quadlet` feature exposes `QuadletExporter` and its validated file-set output. The
+The additive `quadlet` feature exposes `QuadletImporter`, `QuadletSource`, `QuadletExporter`, and
+the validated file-set output. The recommended `QuadletSource::parse` boundary accepts explicit
+in-memory unit files, retains native parse validity, and maps direct container images, explicit
+container names, safe unquoted exec arguments, single explicit environment assignments, scalar
+published ports, named and absolute-bind mounts, named network attachments, and application-owned
+or explicitly external network and volume resources. The same exact slice includes single
+metadata-label assignments, host mappings (including `host-gateway` and bracketed IPv6), user and
+numeric group identity, supplementary groups, user namespaces, absolute container working
+directories, and explicit read-only-root state. Environment values enter the neutral model as
+protected values. Repeated absolute-literal `EnvironmentFile=` declarations retain order and
+protected paths without file I/O; parser parity remains an explicit approximation, while relative
+and systemd-specifier paths require caller context and stay unsupported. Regular health checks
+import from `HealthCmd=`, `HealthInterval=`,
+`HealthTimeout=`, `HealthRetries=`, and `HealthStartPeriod=`; JSON command arrays and conservative
+plain command strings are protected, while `HealthCmd=none` retains explicit disable intent.
+Repeatable `Secret=` entries import as grants to explicitly external Podman secret resources.
+The default and explicit `type=mount` forms retain source, target, UID, GID, mode, option order,
+and source provenance without reading or inventing secret material. Environment exposure and
+unreviewed options remain explicit unsupported outcomes.
+Application-owned `.pod` documents with an explicit `PodName=` matching the unit stem and sibling
+container `Pod=<name>.pod` references become provenance-aware neutral service groups independent
+of source document order. Implicit or divergent runtime pod names and pod-scoped settings remain
+explicit losses until the neutral model can retain those values without assigning them to an
+arbitrary member service.
+Section-aware import additionally maps `Restart=no` exactly, records
+`Restart=always` and `Restart=on-failure` as explicit systemd-to-container approximations, and
+turns complete sibling `Requires=`/`Wants=` plus `After=` pairs into ordered neutral startup
+dependencies. References to arbitrary host units and incomplete dependency pairs remain visible
+instead of becoming invented application services. Native forms that require systemd quoting,
+shell parsing, path resolution,
+network-mode interpretation, or unsupported mount/port options remain policy-controlled
+unsupported outcomes; duplicate singleton keys and invalid resource graphs fail explicitly. The
 exporter uses QuadletLens 0.1.9 for typed native construction and capability evidence, supports
 Podman 5.4.0 through the finite current catalogue ceiling, keeps each service in its own container
 unit by default, distinguishes application-owned and external resources, preserves absolute and
@@ -161,9 +203,10 @@ token and IPv4/IPv6 addresses. Compose `extra_hosts` convert to capability-check
 `AddHost` entries. Separate services retain container-level mappings; explicitly grouped services
 must declare identical ordered mappings, which move to the generated pod.
 
-ComposeLens 0.1.12 service `env_file` declarations enter the neutral graph without opening the
+ComposeLens 0.1.13 service `env_file` declarations enter the neutral graph without opening the
 referenced files. Short/long syntax, order, protected paths, explicit `required` and `format`
-options, and nested provenance remain available to embedded callers. Required safe paths emit
+options, and nested provenance remain available to embedded callers and generate back to Compose
+through the same syntax family. Required safe paths emit
 repeatable capability-checked Quadlet `EnvironmentFile=` entries after lexical project-root
 resolution. They require approximation authorization until Podman parser parity with Compose's
 default and `raw` formats is proven; optional files and unsafe or ambiguous paths remain explicit
@@ -182,20 +225,20 @@ Quadlet adapter emits the capability-checked regular health-check subset and rep
 
 Compose mapping and sequence service labels now enter the protected neutral model with complete
 multi-file provenance. BoxFerry generates deterministic Compose label mappings and native
-repeatable Quadlet `Label=` entries through ComposeLens 0.1.12 and QuadletLens 0.1.9. Empty and
+repeatable Quadlet `Label=` entries through ComposeLens 0.1.13 and QuadletLens 0.1.9. Empty and
 quoted values are preserved, and literal `%` is escaped so systemd cannot turn label metadata into
 a specifier expansion. Reserved `com.docker.compose.*` labels stay visible in diagnostics but are
 never re-authored. Resource, image-build, annotation, and label-file ownership remain separate
 follow-up work.
 
-ComposeLens 0.1.12 service dependencies retain source order, short/long defaults, and field-level
+ComposeLens 0.1.13 service dependencies retain source order, short/long defaults, and field-level
 provenance in the neutral graph. Required and optional startup dependencies become capability-
 checked systemd `Requires`/`Wants` plus `After` directives. A healthy dependency additionally
 enables `Notify=healthy` only when BoxFerry can establish an explicit target health command.
 Compose-controlled restart propagation and successful-completion conditions remain explicit
 partial losses; missing required services and ordering cycles are invalid.
 
-ComposeLens 0.1.12 service `restart` values now map into the distinct neutral container restart
+ComposeLens 0.1.13 service `restart` values now map into the distinct neutral container restart
 policy and generate back to Compose without changing their meaning. Compose-to-Quadlet emits
 `restart: "no"` exactly as systemd `Restart=no`; `always`, unbounded `on-failure`, and
 `unless-stopped` remain explicit systemd approximations, while finite retry limits have no safe
@@ -214,7 +257,7 @@ invalidate the requested grouping rather than selecting a value by service order
 The format-independent graph now also represents application-owned or external configuration and
 secret resources, optional runtime names and material origins, and ordered short/long service
 grants with per-option provenance. Sensitive material and grant values use the same redacting
-`ProtectedString` boundary as environment values. ComposeLens 0.1.12 imports these definitions and
+`ProtectedString` boundary as environment values. ComposeLens 0.1.13 imports these definitions and
 grants. QuadletLens 0.1.9 emits exact mounted-file `Secret=` references for pre-existing external
 Podman secrets, including custom-name default preservation and validated target, UID, GID, and
 read-only mode options. Application-owned secret materialization and Compose config lifecycle are

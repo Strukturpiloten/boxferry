@@ -4,6 +4,63 @@ This roadmap describes dependency order, not delivery dates. A later phase may b
 
 Cross-repository delivery uses the stable task numbers in the [implementation plan](implementation-plan.md). This roadmap remains the detailed internal phase order for BoxFerry.
 
+## Product contract and first major milestone
+
+BoxFerry is an N-to-N conversion system. Docker runtime resources, Docker Compose, Podman runtime
+resources, and Podman Quadlet are each required as both a source and a target for the first major
+milestone. Pairwise routes compose through the neutral application model; they are not implemented
+as sixteen unrelated converters.
+
+### Source adapters
+
+- [x] Import Docker Compose into the neutral model for the documented first subset.
+- [x] Decode explicitly selected Docker runtime resources and reconstruct the documented subset.
+- [x] Decode explicitly selected Podman runtime resources and reconstruct the documented subset.
+- [x] Establish the first Quadlet importer slice for direct images, container names, owned network
+  units, and owned volume units with source provenance and explicit unsupported outcomes.
+- [x] Extend Quadlet import with the exact shared command, protected environment, scalar-port,
+  named/absolute-mount, and named-network subset, including explicit external resources and an
+  exact Quadlet-to-Compose golden route.
+- [x] Import the conservative Quadlet metadata and execution-context subset: labels, IPv4/IPv6/
+  `host-gateway` host mappings, user and numeric group identity, supplementary groups, user
+  namespaces, absolute working directories, and read-only-root state.
+- [x] Import section-aware systemd lifecycle and dependency intent: exact `Restart=no`, explicit
+  approximations for unbounded restart policies, and complete sibling `Requires`/`Wants` plus
+  `After` startup relationships without inventing services for arbitrary host units.
+- [x] Import regular Quadlet health commands, explicit disable intent, intervals, timeouts, retry
+  counts, and startup grace periods with protected command values and validated Podman scalars.
+- [x] Import repeatable default/`type=mount` Quadlet secret grants as references to external
+  Podman secrets, preserving reviewed target/UID/GID/mode options and provenance without reading
+  secret material.
+- [x] Import application-owned `.pod` identities with matching explicit runtime names and ordered
+  sibling container membership as provenance-aware neutral service groups.
+- [x] Import repeated absolute-literal Quadlet environment-file declarations without file I/O,
+  retaining order and protected paths while making provider-parser uncertainty explicit.
+- [ ] Extend Quadlet import across the remaining first-milestone semantic subset, including pod-
+  scoped settings, separate implicit/divergent runtime pod names, and safely decoded native value
+  forms not covered by the conservative first slices.
+- [ ] Accept the later typed Quadlet `.image`, `.build`, `.kube`, and `.artifact` unit families.
+
+### Target adapters
+
+- [x] Export the documented neutral subset to Docker Compose or `podman-compose` definitions.
+- [x] Export the documented neutral subset to Podman Quadlet definitions.
+- [x] Consume released ComposeLens 0.1.13 and export ordered neutral environment-file declarations
+  through its new short/long generated-document boundary.
+- [ ] Produce deterministic Docker runtime deployment plans from the neutral model.
+- [ ] Produce deterministic Podman runtime deployment plans from the neutral model.
+- [ ] Add explicit executors that apply an authorized runtime plan without ambient discovery.
+
+### Route orchestration
+
+- [x] Prove the shared importer → neutral model → exporter path in the public library API.
+- [x] Expose Compose-to-Quadlet through the CLI.
+- [ ] Add a generic CLI route contract with explicit source and target selection.
+- [ ] Expose Docker-runtime, Podman-runtime, Compose, and Quadlet sources and targets through that
+  contract without duplicating conversion rules in the CLI.
+- [ ] Add offline golden tests for every source/target combination over their shared supported
+  subset.
+
 ## Status key
 
 - [x] Completed and validated
@@ -304,6 +361,8 @@ boundary for pre-existing external Podman secrets.
   provenance without reading referenced files; resolve safe relative paths only from an explicit
   project root, emit required files as capability-checked `EnvironmentFile=`, classify parser
   parity as `BFQ0010` approximate, and report optional files or unsafe paths explicitly.
+- [x] Release and consume ComposeLens 0.1.13, then replace the tested Compose-generation loss with
+  ordered short/long `env_file` output and parse-back validation.
 - [ ] Define separate caller-authorized project `.env` and environment-file content processing;
   declaration conversion must not imply file reads or silently merge file contents.
 

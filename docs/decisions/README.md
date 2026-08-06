@@ -29,6 +29,7 @@ Architecture decision records capture choices that constrain future development.
 | [0014](0014-runtime-regular-health-observations.md) | accepted | Regular runtime health inference without conflating Podman startup health |
 | [0015](0015-runtime-container-restart-policy.md) | accepted | Container restart observations with conservative systemd approximation |
 | [0016](0016-runtime-metadata-label-reconstruction.md) | accepted | Protected runtime metadata labels with image-default and provider-metadata boundaries |
+| [0017](0017-n-to-n-adapter-matrix.md) | accepted | N-to-N import/export adapters with reviewable runtime deployment plans |
 
 ## Adding an ADR
 
