@@ -228,8 +228,8 @@ multi-file provenance. BoxFerry generates deterministic Compose label mappings a
 repeatable Quadlet `Label=` entries through ComposeLens 0.1.13 and QuadletLens 0.1.9. Empty and
 quoted values are preserved, and literal `%` is escaped so systemd cannot turn label metadata into
 a specifier expansion. Reserved `com.docker.compose.*` labels stay visible in diagnostics but are
-never re-authored. Resource, image-build, annotation, and label-file ownership remain separate
-follow-up work.
+never re-authored. Resource, annotation, and label-file ownership remain separate follow-up work;
+image-build labels use the distinct image-artifact conversion contract.
 
 ComposeLens 0.1.13 service dependencies retain source order, short/long defaults, and field-level
 provenance in the neutral graph. Required and optional startup dependencies become capability-

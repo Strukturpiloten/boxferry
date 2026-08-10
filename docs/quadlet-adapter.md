@@ -45,6 +45,11 @@ neutral structural group alone does not assert Podman shared-namespace behavior.
 
 It currently maps:
 
+- all 12 typed image-acquisition settings into `.image` files and recognition of all 28 typed
+  image-build settings for `.build` files; the former requires `Image=`, while the latter requires an
+  `ImageTag=` plus `File=` or `SetWorkingDirectory=`. Most keys require Podman 5.4.0, `Retry=`
+  and `RetryDelay=` require 5.5.0, and `BuildArg=` and `IgnoreFile=` require 5.7.0, within the
+  reviewed 6.0.2 ceiling. `PodmanArgs=` is retained native evidence and is never synthesized;
 - explicit runtime container names through capability-checked `ContainerName=`, independently of
   service keys, unit filenames, and systemd service names;
 - resolved hostnames, PID limits, shared-memory sizes, ordered capability add/drop entries,
@@ -114,6 +119,8 @@ The adapter currently reports rather than guesses:
 - Compose config resources and grants, because Quadlet has no managed config-resource lifecycle;
 - application-owned secret creation and file/environment materialization, because `Secret=` only
   consumes a Podman secret that already exists; and
+- Volume `Image=` artifact references, which remain explicitly unsupported until their lifecycle
+  and dependency contract is defined;
 - secret names or options outside the reviewed unambiguous one-line Podman secret grammar;
 - explicit container names outside Podman's `[a-zA-Z0-9][a-zA-Z0-9_.-]*` grammar;
 - reserved `com.docker.compose.*` metadata plus resource, build/image, annotation, and label-file

@@ -67,7 +67,7 @@ field as a policy-controlled unsupported outcome.
 | Dependencies | `depends_on` | `partial` | Ordered required/optional `service_started` edges map to `Requires`/`Wants` plus `After`. `service_healthy` also maps through `Notify=healthy` when the target has an explicit encodable health command. Restart propagation, successful completion, provider-specific conditions, absent optional services, missing required services, and cycles produce explicit unsupported or invalid outcomes. |
 | Identity | `user`, `userns_mode`, `group_add` | `partial` | User, numeric primary group, user namespace, and ordered named or numeric supplementary groups retain provenance and sensitivity and emit capability-checked keys. Identical explicit namespaces on every grouped service move to pod `UserNS`; mixed or conflicting intent invalidates grouping. Named primary groups and unsafe values are explicit losses. |
 | Released container settings | `hostname`, `pids_limit`, `shm_size`, `cap_add`, `cap_drop`, `tmpfs`, `sysctls`, `ulimits`, `devices`, `stop_signal` | `partial` | The ten released fields reach raw/protected neutral values with ordered entries and source provenance, then capability-checked Quadlet keys. Only the documented safe resolved forms emit; deferred, malformed, provider-specific, CDI/opaque, incomplete, empty-reset, or namespace-sensitive forms remain explicit losses. Other exporters retain a partial outcome rather than discarding them. |
-| Build | `build`, `pull_policy` | `native only` / `preserved` | ComposeLens retains field-level build intent; `.build` generation and image/build policy remain open. |
+| Build | `build`, `pull_policy` | `partial` | Compose build declarations retain all source leaves. The safe image/build overlap emits validated `.build` files; source-only intent remains an explicit loss. |
 | Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.11 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
 | Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `partial` | Safe resolved `stop_signal` values map end to end. Authored Compose and runtime inspection both retain container `Never`, `Always`, `OnFailure`, finite positive retry limits, and `UnlessStopped`; Compose output is exact for every neutral variant. Quadlet emits exact `Restart=no`, explicit approximations for unbounded policies, and no unsafe substitute for finite retry limits. Unresolved, zero, and out-of-range authored retry limits are invalid. Other lifecycle fields remain preserved only. |
 | Process | `entrypoint`, `working_dir`, `tty`, `stdin_open`, `read_only` | `partial` / `preserved` | Safely encodable working directories and explicit true/false read-only-root intent convert end to end. Values needing systemd encoding are reported. Entrypoint, TTY, and standard-input behavior remain preserved only. |
@@ -83,11 +83,25 @@ and
 
 ## Quadlet-only surface
 
-BoxFerry currently emits `.container`, `.pod`, `.network`, and `.volume` files. QuadletLens keeps
-unknown native entries and generic systemd sections loss-aware, but that does not authorize
-BoxFerry to synthesize them. `.image`, `.build`, `.kube`, and experimental `.artifact` generation
-are open work. Native Podman-only keys are added when they support a defined migration scenario,
-not merely because the key exists.
+BoxFerry currently emits `.container`, `.pod`, `.network`, `.volume`, `.image`, and `.build` files.
+QuadletLens keeps unknown native entries and generic systemd sections loss-aware, but that does not
+authorize BoxFerry to synthesize `.kube` or experimental `.artifact` units. Native Podman-only keys
+are added when they support a defined migration scenario, not merely because the key exists.
+
+## Image artifact resources
+
+The reviewed artifact surface contains 40 typed keys: all 12 image-acquisition (`.image`) keys and
+all 28 image-build (`.build`) keys. Most require Podman 5.4.0; `Retry=` and `RetryDelay=` require
+5.5.0, while `BuildArg=` and `IgnoreFile=` require 5.7.0. The tested catalogue ceiling is 6.0.2.
+An `.image` requires `Image=`. A `.build` requires an `ImageTag=` plus either `File=` or
+`SetWorkingDirectory=`.
+
+Compose retains its 25 build-declaration leaves with source syntax and provenance. Its exact safe
+overlap is deliberately narrow: the service image becomes the first output tag, followed by
+explicit `tags`; `dockerfile`, `target`, explicit mapping arguments or literal `NAME=VALUE` list
+arguments, and labels map to their corresponding Quadlet settings. Protected values and every
+other source-only leaf remain redacted, structured losses. BoxFerry never synthesizes
+`PodmanArgs=`. References from a Volume `Image=` artifact remain explicit unsupported behavior.
 
 The released `HostName=`, `PidsLimit=`, `ShmSize=`, `DropCapability=`, `AddCapability=`,
 `Tmpfs=`, `Sysctl=`, `Ulimit=`, `AddDevice=`, and `StopSignal=` keys are export-only in this

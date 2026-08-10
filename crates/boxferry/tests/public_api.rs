@@ -34,6 +34,53 @@ fn facade_exposes_raw_preserving_neutral_host_mappings() -> Result<(), String> {
 }
 
 #[test]
+fn facade_reexports_image_artifact_model_types() -> Result<(), String> {
+    use boxferry::{
+        BuildAttestation, BuildContext, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, ImageAcquisition,
+        ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ProtectedString,
+        SourceBuildSecret, SourceBuildSetting, Sourced,
+    };
+
+    let identifier = Identifier::new("web-build").map_err(|error| error.to_string())?;
+    let assignment = ImageArtifactAssignment::new(
+        ProtectedString::plain("APP_MODE"),
+        Some(ProtectedString::plain("production")),
+    );
+    let values = BuildSettingValues::new(BuildSyntax::Mapping, vec![Sourced::generated(assignment)]);
+    let declaration =
+        BuildSourceDeclaration::Structured(vec![Sourced::generated(SourceBuildSetting::Arguments(values))]);
+    let mut build = ImageBuild::new(identifier.clone());
+    build.set_source_declaration(Sourced::generated(declaration));
+    build.set_settings(vec![Sourced::generated(ImageBuildSetting::ImageTags(
+        BuildSettingValues::new(
+            BuildSyntax::Repeated,
+            vec![Sourced::generated(ProtectedString::plain("example.invalid/web:1"))],
+        ),
+    ))]);
+
+    let mut acquisition = ImageAcquisition::new(identifier);
+    acquisition.set_settings(vec![Sourced::generated(ImageAcquisitionSetting::Image(
+        ProtectedString::plain("example.invalid/base:1"),
+    ))]);
+
+    let context = BuildContext::new(ProtectedString::plain("source"), ProtectedString::plain("./web"));
+    let secret = SourceBuildSecret::new(ProtectedString::sensitive("build-token"));
+    assert_eq!(context.name().expose(), "source");
+    assert!(secret.source().is_sensitive());
+    assert!(matches!(
+        BuildAttestation::Boolean(true),
+        BuildAttestation::Boolean(true)
+    ));
+    assert_eq!(
+        build.source_declaration().map(|value| value.value().syntax()),
+        Some(BuildSyntax::Structured)
+    );
+    assert_eq!(acquisition.settings().map(<[_]>::len), Some(1));
+    assert!(!format!("{secret:?}").contains("build-token"));
+    Ok(())
+}
+
+#[test]
 fn facade_exposes_environment_file_declarations_without_filesystem_access() -> Result<(), String> {
     use boxferry::{EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, ProtectedString, Service, Sourced};
 

@@ -12,6 +12,8 @@ nodes and attachments include:
 - application
 - service
 - image and command
+- separately named image-acquisition and image-build resources, plus independent service
+  references to those resources
 - health-check command, disable intent, timing, retries, and startup timing
 - ordered service dependencies with readiness, strength, restart intent, and field provenance
 - primary user/group, user namespace, ordered supplementary groups, working directory, and
@@ -38,6 +40,11 @@ a target workload kind. Build input and richer workload semantics are added with
 vertical slices. This permits a single-host Compose project,
 a Quadlet pod, and a multi-node Kubernetes workload to be compared without treating them as
 identical.
+
+Image acquisition and build resources retain their own ordered settings and provenance without
+embedding Compose, Quadlet, or runtime types. A service reference does not replace its runtime
+image reference, so adapters can preserve source intent and diagnose target-specific loss without
+coupling the application graph to a native artifact format.
 
 ## Provenance
 

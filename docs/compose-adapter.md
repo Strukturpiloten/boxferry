@@ -64,6 +64,13 @@ outcomes and are omitted from generated YAML. They are provider-created runtime 
 safe application metadata. Image-build labels, annotations, `label_file`, and resource labels have
 separate ownership semantics and remain outside this service-label slice.
 
+The importer also declares one image-build resource for every Compose service `build` declaration
+before attaching the service reference. It retains all 25 source leaves, syntax, provenance, and
+protected values. Only the reviewed overlaps become target settings: the service image is the
+primary tag, followed by explicit tags; `dockerfile`, `target`, explicit mapping or literal
+`NAME=VALUE` arguments, and build labels are candidates for Quadlet output. All other leaves stay
+policy-controlled source-only losses rather than becoming synthesized Podman arguments.
+
 ## Compatibility and loss policy
 
 Compatibility-sensitive fields are evaluated against ComposeLens's finite rules for the exact

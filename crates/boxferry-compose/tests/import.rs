@@ -5,9 +5,10 @@ use std::{error::Error, fs, path::PathBuf};
 use boxferry_compose::{ComposeImporter, ComposeSource};
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
-    Command, ConfigMaterial, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand,
-    HostAddressKind, Identifier, MountSource, Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy,
-    SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
+    BuildSourceDeclaration, BuildSyntax, Command, ConfigMaterial, EnvironmentFileFormat, EnvironmentFileSyntax,
+    EnvironmentValue, HealthcheckCommand, HostAddressKind, Identifier, ImageBuildSetting, MountSource, ProtectedString,
+    Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, SecretMaterial, SecurityOption, SelinuxRelabel,
+    Service, ServiceDependencyCondition, SourceBuildSetting, SourceId,
 };
 use compose_lens::{
     interpolation::MapEnvironment,
@@ -61,7 +62,7 @@ fn imports_the_core_fixture_without_loss_and_excludes_inactive_profiles() -> Res
         Some(Command::Exec(values))
             if values
                 .iter()
-                .map(boxferry_model::ProtectedString::expose)
+                .map(ProtectedString::expose)
                 .eq(["php", "-v"])
     ));
     assert_core_execution_context(web);
@@ -196,6 +197,257 @@ fn imports_released_container_settings_with_order_and_provenance() -> Result<(),
             .iter()
             .all(|outcome| outcome.kind() == ConversionKind::Exact)
     );
+    Ok(())
+}
+
+#[test]
+fn imports_scalar_build_before_its_referencing_service() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(101);
+    let project = merged_project([(
+        source_id,
+        "scalar-build.compose.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    build: ./web\n",
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("builds")?)?
+        .with_source_id(source_id, SourceId::new("scalar-build.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let application = result.application().ok_or("application expected")?;
+    assert_eq!(application.image_builds().len(), 1);
+    let build = application.image_builds()[0].value();
+    assert!(matches!(
+        build.source_declaration().map(boxferry_model::Sourced::value),
+        Some(BuildSourceDeclaration::Scalar(value)) if value.expose() == "./web"
+    ));
+    assert_eq!(
+        application.services()[0]
+            .value()
+            .image_build()
+            .map(|reference| reference.value().as_str()),
+        Some(build.name().as_str())
+    );
+    assert_eq!(
+        application.services()[0]
+            .value()
+            .image_build()
+            .map(|reference| reference.origins().len()),
+        Some(1)
+    );
+    assert!(matches!(
+        build.settings().and_then(|settings| settings.first()).map(boxferry_model::Sourced::value),
+        Some(ImageBuildSetting::ImageTags(values))
+            if values.values()[0].value().expose() == "example.invalid/web:1"
+    ));
+    Ok(())
+}
+
+#[test]
+fn imports_safe_sequence_build_arguments_without_rewriting_source_syntax() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(104);
+    let project = merged_project([(
+        source_id,
+        "list-args.compose.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    build:\n      args: [ONE=1, BARE, '${DEFERRED}=x', TWO=two=parts]\n",
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("builds")?)?
+        .with_source_id(source_id, SourceId::new("list-args.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let build = result
+        .application()
+        .and_then(|application| application.image_builds().first())
+        .ok_or("build expected")?
+        .value();
+    let source_arguments = build
+        .source_declaration()
+        .and_then(|declaration| declaration.value().structured_settings())
+        .and_then(|settings| {
+            settings
+                .iter()
+                .find(|setting| matches!(setting.value(), SourceBuildSetting::Arguments(_)))
+        })
+        .ok_or("source arguments")?;
+    assert!(matches!(
+        source_arguments.value(),
+        SourceBuildSetting::Arguments(values)
+            if values.syntax() == BuildSyntax::Sequence && values.values().len() == 4
+    ));
+    let overlap = build
+        .settings()
+        .and_then(|settings| {
+            settings
+                .iter()
+                .find(|setting| matches!(setting.value(), ImageBuildSetting::BuildArguments(_)))
+        })
+        .ok_or("overlap arguments")?;
+    assert!(matches!(
+        overlap.value(),
+        ImageBuildSetting::BuildArguments(values)
+            if values.syntax() == BuildSyntax::Sequence
+                && values.values().iter().map(|value| value.value().name().expose()).eq(["ONE", "TWO"])
+                && values.values()[1].value().value().map(ProtectedString::expose) == Some("two=parts")
+    ));
+    Ok(())
+}
+
+#[test]
+fn does_not_duplicate_a_service_image_that_is_an_explicit_build_tag() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(105);
+    let project = merged_project([(
+        source_id,
+        "duplicate-tag.compose.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    build:\n      tags: [example.invalid/web:1]\n",
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("builds")?)?
+        .with_source_id(source_id, SourceId::new("duplicate-tag.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let build = result
+        .application()
+        .and_then(|application| application.image_builds().first())
+        .ok_or("build expected")?
+        .value();
+    let tag_settings = build
+        .settings()
+        .into_iter()
+        .flatten()
+        .filter(|setting| matches!(setting.value(), ImageBuildSetting::ImageTags(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(tag_settings.len(), 1);
+    assert!(matches!(
+        tag_settings[0].value(),
+        ImageBuildSetting::ImageTags(values) if values.values().len() == 1
+    ));
+    Ok(())
+}
+
+#[test]
+fn imports_inline_recipe_as_source_only_build_intent() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(103);
+    let project = merged_project([(
+        source_id,
+        "inline-build.compose.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    build:\n      dockerfile_inline: |\n        FROM scratch\n",
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("builds")?)?
+        .with_source_id(source_id, SourceId::new("inline-build.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let build = result
+        .application()
+        .and_then(|application| application.image_builds().first())
+        .ok_or("build expected")?
+        .value();
+    assert!(matches!(
+        build.source_declaration()
+            .and_then(|declaration| declaration.value().structured_settings())
+            .and_then(|settings| settings.first())
+            .map(boxferry_model::Sourced::value),
+        Some(SourceBuildSetting::InlineRecipe(value)) if value.expose() == "FROM scratch\n"
+    ));
+    assert!(matches!(
+        build.settings().and_then(|settings| settings.first()).map(boxferry_model::Sourced::value),
+        Some(ImageBuildSetting::ImageTags(values)) if values.values()[0].value().expose() == "example.invalid/web:1"
+    ));
+    Ok(())
+}
+
+#[test]
+fn imports_structured_build_fields_empty_resets_and_safe_overlap() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(102);
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    build:\n",
+        "      additional_contexts: []\n",
+        "      args: {}\n",
+        "      cache_from: []\n",
+        "      cache_to: []\n",
+        "      context: ./web\n",
+        "      dockerfile: Containerfile\n",
+        "      entitlements: []\n",
+        "      extra_hosts: []\n",
+        "      isolation: default\n",
+        "      labels: [com.example.first=one, com.example.first=one]\n",
+        "      network: host\n",
+        "      no_cache: true\n",
+        "      no_cache_filter: []\n",
+        "      platforms: []\n",
+        "      privileged: false\n",
+        "      provenance: mode=max\n",
+        "      pull: true\n",
+        "      sbom: true\n",
+        "      secrets: []\n",
+        "      shm_size: 64m\n",
+        "      ssh: [default=/run/secret-agent]\n",
+        "      tags: [example.invalid/web:one, example.invalid/web:one]\n",
+        "      target: release\n",
+        "      ulimits: {}\n",
+    );
+    let project = merged_project([(source_id, "structured-build.compose.yaml", text)])?;
+    let source = ComposeSource::new(project, Identifier::new("builds")?)?
+        .with_source_id(source_id, SourceId::new("structured-build.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let build = result
+        .application()
+        .and_then(|application| application.image_builds().first())
+        .ok_or("build expected")?
+        .value();
+    let declaration = build.source_declaration().ok_or("source declaration")?.value();
+    assert_eq!(declaration.syntax(), BuildSyntax::Structured);
+    let settings = declaration.structured_settings().ok_or("structured settings")?;
+    assert_eq!(settings.len(), 24);
+    assert!(matches!(
+        settings[0].value(),
+        SourceBuildSetting::AdditionalContexts(values) if values.values().is_empty()
+    ));
+    assert!(matches!(
+        settings[1].value(),
+        SourceBuildSetting::Arguments(values) if values.syntax() == BuildSyntax::Mapping && values.values().is_empty()
+    ));
+    assert!(matches!(
+        settings
+            .iter()
+            .find(|setting| matches!(setting.value(), SourceBuildSetting::Ssh(_)))
+            .map(boxferry_model::Sourced::value),
+        Some(SourceBuildSetting::Ssh(values)) if values.values()[0].value().is_sensitive()
+    ));
+    assert!(matches!(
+        build
+            .settings()
+            .and_then(|settings| {
+                settings
+                    .iter()
+                    .find(|setting| matches!(setting.value(), ImageBuildSetting::RecipeFile(_)))
+            })
+            .map(boxferry_model::Sourced::value),
+        Some(ImageBuildSetting::RecipeFile(value)) if value.expose() == "Containerfile"
+    ));
+    assert!(matches!(
+        build
+            .settings()
+            .and_then(|settings| {
+                settings
+                    .iter()
+                    .find(|setting| matches!(setting.value(), ImageBuildSetting::Labels(_)))
+            })
+            .map(boxferry_model::Sourced::value),
+        Some(ImageBuildSetting::Labels(values)) if values.values().len() == 2
+    ));
+    assert!(matches!(
+        build
+            .settings()
+            .and_then(|settings| {
+                settings.iter().find(|setting| {
+                    matches!(setting.value(), ImageBuildSetting::ImageTags(values) if values.values().len() == 2)
+                })
+            })
+            .map(boxferry_model::Sourced::value),
+        Some(ImageBuildSetting::ImageTags(values)) if values.values().len() == 2
+    ));
+    let debug = format!("{build:?}");
+    assert!(!debug.contains("/run/secret-agent"));
+    assert!(debug.contains("[REDACTED]"));
     Ok(())
 }
 

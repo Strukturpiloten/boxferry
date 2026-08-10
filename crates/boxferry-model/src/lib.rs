@@ -6,6 +6,7 @@
 
 mod application;
 mod image;
+mod image_artifact;
 mod provenance;
 mod value;
 
@@ -18,5 +19,10 @@ pub use application::{
     ServiceDependency, ServiceDependencyCondition, ServiceGroup, Volume,
 };
 pub use image::ImageReference;
+pub use image_artifact::{
+    BuildAttestation, BuildContext, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, ImageAcquisition,
+    ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, SourceBuildSecret,
+    SourceBuildSetting,
+};
 pub use provenance::{Provenance, ProvenanceKind, SourceId, SourceSpan, Sourced};
 pub use value::ProtectedString;

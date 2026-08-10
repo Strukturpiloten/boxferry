@@ -34,6 +34,12 @@ protected repeatable labels with empty/quoted/literal-specifier values, reserved
 missing services, and cycle rejection. Neutral-model tests separately preserve ordered host
 mappings, the literal `host-gateway` token, and bracketed IPv6 spelling.
 
+Image-artifact coverage exhaustively exercises the 12 `.image` and 28 `.build` typed settings,
+their capability floors, required `Image=`/`ImageTag=` plus context validation, duplicate and
+explicit-reset handling, and protected debug redaction. A public-facade Compose-to-Quadlet scenario
+checks exact `.build` and `.container` bytes, source provenance, strict-versus-partial policy, and
+source-only loss reporting.
+
 Released Compose container-setting coverage additionally exercises all ten `hostname`,
 `pids_limit`, `shm_size`, capability, `tmpfs`, `sysctls`, `ulimits`, `devices`, and `stop_signal`
 fields across the model, effective-project importer, capability-checked Quadlet exporter, and

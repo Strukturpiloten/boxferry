@@ -2,11 +2,12 @@
 
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
-    Application, Command, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand, Identifier, MountSource,
-    Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service,
-    ServiceDependencyCondition, SourceId,
+    Application, Command, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand, Identifier,
+    ImageAcquisitionSetting, ImageBuildSetting, MountSource, Protocol, ResourceGrantSyntax, ResourceOwnership,
+    RestartPolicy, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
 };
 use boxferry_quadlet::{QuadletDocumentInput, QuadletImporter, QuadletSource, QuadletSourceError};
+use quadlet_lens::model::{NamedQuadletDocument, QuadletDocument, QuadletDocumentSet, QuadletUnitType};
 use quadlet_lens::source::SourceId as QuadletSourceId;
 
 #[test]
@@ -1341,6 +1342,100 @@ fn keeps_security_option_resets_unsafe_values_singletons_and_selinux_conflicts_e
     assert!(result.outcomes().iter().any(|outcome| {
         outcome.subject() == "services.web.security_options" && outcome.kind() == ConversionKind::Unsupported
     }));
+    Ok(())
+}
+
+#[test]
+fn imports_image_and_build_resources_before_their_container_references() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("artifacts")?,
+        [
+            QuadletDocumentInput::new(
+                "base.image",
+                QuadletSourceId::new(1),
+                concat!(
+                    "[Image]\nImage=example.invalid/base:1\nImageTag=example.invalid/base:stable\n",
+                    "ContainersConfModule=one.conf\nContainersConfModule=\nCreds=operator:secret\nDecryptionKey=private-key\n"
+                ),
+            ),
+            QuadletDocumentInput::new(
+                "web.build",
+                QuadletSourceId::new(2),
+                concat!(
+                    "[Build]\nImageTag=example.invalid/web:1\nSetWorkingDirectory=.\nFile=Containerfile\n",
+                    "BuildArg=TOKEN=private\nSecret=id=source,src=/run/secret\nEnvironment=BUILD_TOKEN=private\n",
+                    "DNSOption=\nDNSOption=ndots:1\n"
+                ),
+            ),
+            QuadletDocumentInput::new("api.container", QuadletSourceId::new(3), "[Container]\nImage=base.image\n"),
+            QuadletDocumentInput::new("worker.container", QuadletSourceId::new(4), "[Container]\nImage=web.build\n"),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let app = result.application().ok_or("application expected")?;
+    assert_eq!(app.image_acquisitions().len(), 1);
+    assert_eq!(app.image_builds().len(), 1);
+    let acquisition_settings = app.image_acquisitions()[0]
+        .value()
+        .settings()
+        .ok_or("acquisition settings expected")?;
+    let build_settings = app.image_builds()[0]
+        .value()
+        .settings()
+        .ok_or("build settings expected")?;
+    let acquisition_reference = app.services()[0]
+        .value()
+        .image_acquisition()
+        .ok_or("acquisition reference expected")?;
+    let build_reference = app.services()[1]
+        .value()
+        .image_build()
+        .ok_or("build reference expected")?;
+    assert!(matches!(
+        acquisition_settings[4].value(),
+        ImageAcquisitionSetting::Credentials(_)
+    ));
+    assert!(matches!(
+        build_settings[3].value(),
+        ImageBuildSetting::BuildArguments(_)
+    ));
+    assert_eq!(acquisition_reference.value().as_str(), "base");
+    assert_eq!(build_reference.value().as_str(), "web");
+    assert!(!format!("{:?}", app.image_acquisitions()).contains("operator:secret"));
+    assert!(!format!("{:?}", app.image_builds()).contains("BUILD_TOKEN=private"));
+    Ok(())
+}
+
+#[test]
+fn duplicate_artifact_singletons_produce_one_invalid_import_outcome_without_last_wins_mapping() -> Result<(), String> {
+    let parsed = QuadletDocument::parse(
+        QuadletUnitType::Image,
+        QuadletSourceId::new(77),
+        "[Image]\nImage=example.invalid/first:1\nImage=example.invalid/second:1\n",
+    )
+    .map_err(|error| error.to_string())?;
+    assert!(parsed.is_valid());
+    let documents = QuadletDocumentSet::new(vec![
+        NamedQuadletDocument::new("duplicate.image", parsed.document().clone()).map_err(|error| error.to_string())?,
+    ])
+    .map_err(|error| error.to_string())?;
+    let source = QuadletSource::from_validated_documents(identifier("duplicate")?, documents)
+        .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    assert!(result.application().is_some());
+    let invalid = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.kind() == ConversionKind::Invalid)
+        .collect::<Vec<_>>();
+    assert_eq!(invalid.len(), 1);
+    assert_eq!(invalid[0].subject(), "image_acquisitions.duplicate.Image");
     Ok(())
 }
 

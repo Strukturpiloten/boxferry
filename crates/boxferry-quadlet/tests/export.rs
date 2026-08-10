@@ -2,16 +2,21 @@
 
 use std::{error::Error, num::NonZeroU64};
 
-use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
-use boxferry_model::{
-    Application, Command, Config, ConfigMaterial, Device, EnvironmentFile, EnvironmentFileFormat,
-    EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration,
-    HealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference, KernelParameter, MetadataLabel, Mount,
-    MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant,
-    ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption,
-    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
+use boxferry_engine::{
+    ConversionKind, ExportAdapter, ImportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile,
 };
-use boxferry_quadlet::{QuadletExporter, QuadletGroupingPolicy};
+use boxferry_model::{
+    Application, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command, Config, ConfigMaterial, Device,
+    EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck,
+    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostMapping, Identifier,
+    ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ImageReference,
+    KernelParameter, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
+    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret,
+    SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
+    ServiceGroup, SourceBuildSetting, SourceId, Sourced, Volume,
+};
+use boxferry_quadlet::{QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletSource};
+use quadlet_lens::source::SourceId as QuadletSourceId;
 
 #[test]
 fn exports_the_exact_first_conversion_subset_and_resolves_native_references() -> Result<(), Box<dyn Error>> {
@@ -102,6 +107,321 @@ fn exports_the_exact_first_conversion_subset_and_resolves_native_references() ->
     assert_eq!(output.document_set().graph().edges().len(), 2);
     assert!(!format!("{output:?}").contains("production"));
     assert!(!format!("{output:?}").contains("1001"));
+    Ok(())
+}
+
+#[test]
+fn exports_artifact_units_before_container_references_and_validates_required_settings() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("artifacts")?);
+    let mut acquisition = ImageAcquisition::new(id("base")?);
+    acquisition.set_settings(vec![sourced(ImageAcquisitionSetting::Image(ProtectedString::plain(
+        "example.invalid/base:1",
+    )))?]);
+    application.add_image_acquisition(sourced(acquisition)?)?;
+    let mut build = ImageBuild::new(id("web")?);
+    build.set_settings(vec![
+        sourced(ImageBuildSetting::ImageTags(BuildSettingValues::new(
+            BuildSyntax::Repeated,
+            vec![sourced(ProtectedString::plain("example.invalid/web:1"))?],
+        )))?,
+        sourced(ImageBuildSetting::SetWorkingDirectory(ProtectedString::plain(".")))?,
+        sourced(ImageBuildSetting::BuildArguments(BuildSettingValues::new(
+            BuildSyntax::Repeated,
+            vec![sourced(ImageArtifactAssignment::new(
+                ProtectedString::plain("TOKEN"),
+                Some(ProtectedString::sensitive("private")),
+            ))?],
+        )))?,
+    ]);
+    application.add_image_build(sourced(build)?)?;
+    let mut api = Service::new(id("api")?);
+    api.set_image_acquisition(sourced(id("base")?)?);
+    application.add_service(sourced(api)?)?;
+    let mut worker = Service::new(id("worker")?);
+    worker.set_image_build(sourced(id("web")?)?);
+    application.add_service(sourced(worker)?)?;
+
+    let target = TargetProfile::new("podman", version(5, 7, 0), Some(version(6, 0, 2)))?;
+    let plan = QuadletExporter::new()?.plan(&application, &target)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let output = authorized.output().ok_or("output expected")?;
+    assert_eq!(
+        output
+            .files()
+            .iter()
+            .map(|file| file.name().as_str())
+            .collect::<Vec<_>>(),
+        ["base.image", "web.build", "api.container", "worker.container"]
+    );
+    assert_eq!(
+        output.file("api.container").map(boxferry_quadlet::QuadletFile::text),
+        Some("[Container]\nImage=base.image\n")
+    );
+    assert_eq!(
+        output.file("worker.container").map(boxferry_quadlet::QuadletFile::text),
+        Some("[Container]\nImage=web.build\n")
+    );
+    assert!(!format!("{output:?}").contains("TOKEN=private"));
+    Ok(())
+}
+
+#[test]
+fn emits_a_build_reference_when_the_direct_service_image_is_a_build_tag() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("paired-build")?);
+    let mut build = ImageBuild::new(id("web")?);
+    build.set_settings(vec![
+        sourced(ImageBuildSetting::ImageTags(BuildSettingValues::new(
+            BuildSyntax::Repeated,
+            vec![sourced(ProtectedString::plain("example.invalid/web:1"))?],
+        )))?,
+        sourced(ImageBuildSetting::SetWorkingDirectory(ProtectedString::plain(".")))?,
+    ]);
+    application.add_image_build(sourced(build)?)?;
+    let mut service = Service::new(id("web")?);
+    service.set_image(sourced(ImageReference::parse("example.invalid/web:1")?)?);
+    service.set_image_build(sourced(id("web")?)?);
+    application.add_service(sourced(service)?)?;
+
+    let target = TargetProfile::new("podman", version(5, 7, 0), Some(version(6, 0, 2)))?;
+    let plan = QuadletExporter::new()?.plan(&application, &target)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    assert_eq!(
+        authorized
+            .output()
+            .and_then(|output| output.file("web.container"))
+            .map(boxferry_quadlet::QuadletFile::text),
+        Some("[Container]\nImage=web.build\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn rejects_an_unrelated_direct_image_and_build_reference() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("unrelated-build")?);
+    let mut build = ImageBuild::new(id("web")?);
+    build.set_settings(vec![
+        sourced(ImageBuildSetting::ImageTags(BuildSettingValues::new(
+            BuildSyntax::Repeated,
+            vec![sourced(ProtectedString::plain("example.invalid/web:1"))?],
+        )))?,
+        sourced(ImageBuildSetting::SetWorkingDirectory(ProtectedString::plain(".")))?,
+    ]);
+    application.add_image_build(sourced(build)?)?;
+    let mut service = Service::new(id("web")?);
+    service.set_image(sourced(ImageReference::parse("example.invalid/other:1")?)?);
+    service.set_image_build(sourced(id("web")?)?);
+    application.add_service(sourced(service)?)?;
+    let target = TargetProfile::new("podman", version(5, 7, 0), Some(version(6, 0, 2)))?;
+    let plan = QuadletExporter::new()?.plan(&application, &target)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.image" && outcome.kind() == ConversionKind::Invalid)
+    );
+    Ok(())
+}
+
+#[test]
+fn reports_unmapped_source_build_declarations_without_dropping_them() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("source-build")?);
+    let mut build = ImageBuild::new(id("web")?);
+    build.set_source_declaration(sourced(BuildSourceDeclaration::Scalar(ProtectedString::sensitive(
+        "./context",
+    )))?);
+    build.set_settings(vec![
+        sourced(ImageBuildSetting::ImageTags(BuildSettingValues::new(
+            BuildSyntax::Repeated,
+            vec![sourced(ProtectedString::plain("example.invalid/web:1"))?],
+        )))?,
+        sourced(ImageBuildSetting::SetWorkingDirectory(ProtectedString::plain(".")))?,
+    ]);
+    application.add_image_build(sourced(build)?)?;
+    let mut service = Service::new(id("web")?);
+    service.set_image_build(sourced(id("web")?)?);
+    application.add_service(sourced(service)?)?;
+    let target = TargetProfile::new("podman", version(5, 7, 0), Some(version(6, 0, 2)))?;
+    let plan = QuadletExporter::new()?.plan(&application, &target)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "image_builds.web.source_declaration" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(!format!("{:?}", plan.diagnostics()).contains("./context"));
+    let _ = SourceBuildSetting::Context(ProtectedString::plain("type-coverage"));
+    Ok(())
+}
+
+#[test]
+fn exhaustively_maps_typed_image_and_build_keys_across_capability_floors() -> Result<(), Box<dyn Error>> {
+    let source = all_artifact_source()?;
+    let imported = QuadletImporter::new()?.import(&source);
+    assert!(imported.diagnostics().is_empty(), "{:#?}", imported.diagnostics());
+    let application = imported.application().ok_or("application expected")?;
+    assert_artifact_import(application)?;
+    assert_artifact_export(application)?;
+    assert_artifact_floors(application)?;
+    Ok(())
+}
+
+fn all_artifact_source() -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(
+        id("all-artifacts")?,
+        [
+            QuadletDocumentInput::new(
+                "base.image",
+                QuadletSourceId::new(1),
+                concat!(
+                    "[Image]\nImage=example.invalid/base:1\nImageTag=example.invalid/base:stable\nServiceName=base.service\n",
+                    "AllTags=true\nArch=amd64\nAuthFile=/run/auth.json\nCertDir=/run/certs\nContainersConfModule=base.conf\n",
+                    "Creds=operator:secret\nDecryptionKey=/run/key\nGlobalArgs=--log-level=debug\nOS=linux\n"
+                ),
+            ),
+            QuadletDocumentInput::new(
+                "web.build",
+                QuadletSourceId::new(2),
+                concat!(
+                    "[Build]\nImageTag=example.invalid/web:1\nSetWorkingDirectory=.\nFile=Containerfile\nTarget=release\nNetwork=host\n",
+                    "Label=org.example.build=one\nBuildArg=ARG=value\nSecret=id=build,src=/run/secret\nArch=amd64\nVariant=v8\nPull=always\n",
+                    "PodmanArgs=--layers\nRetry=3\nRetryDelay=1s\nTLSVerify=true\nForceRM=false\nGroupAdd=1000\nDNS=1.1.1.1\n",
+                    "DNSOption=ndots:1\nDNSSearch=example.invalid\nAuthFile=/run/build-auth.json\nIgnoreFile=.containerignore\n",
+                    "Annotation=org.example.annotation=one\nEnvironment=BUILD_TOKEN=private\nContainersConfModule=build.conf\n",
+                    "GlobalArgs=--events-backend=file\nServiceName=web.service\nVolume=cache.volume:/cache\n"
+                ),
+            ),
+            QuadletDocumentInput::new("cache.volume", QuadletSourceId::new(3), "[Volume]\n"),
+            QuadletDocumentInput::new(
+                "base-user.container",
+                QuadletSourceId::new(4),
+                "[Container]\nImage=base.image\n",
+            ),
+            QuadletDocumentInput::new(
+                "web-user.container",
+                QuadletSourceId::new(5),
+                "[Container]\nImage=web.build\n",
+            ),
+        ],
+    )?)
+}
+
+fn expected_image_entries() -> [&'static str; 12] {
+    [
+        "Image=example.invalid/base:1",
+        "ImageTag=example.invalid/base:stable",
+        "ServiceName=base.service",
+        "AllTags=true",
+        "Arch=amd64",
+        "AuthFile=/run/auth.json",
+        "CertDir=/run/certs",
+        "ContainersConfModule=base.conf",
+        "Creds=operator:secret",
+        "DecryptionKey=/run/key",
+        "GlobalArgs=--log-level=debug",
+        "OS=linux",
+    ]
+}
+
+fn expected_build_entries() -> [&'static str; 27] {
+    [
+        "ImageTag=example.invalid/web:1",
+        "SetWorkingDirectory=.",
+        "File=Containerfile",
+        "Target=release",
+        "Network=host",
+        "Label=org.example.build=one",
+        "BuildArg=ARG=value",
+        "Secret=id=build,src=/run/secret",
+        "Arch=amd64",
+        "Variant=v8",
+        "Pull=always",
+        "Retry=3",
+        "RetryDelay=1s",
+        "TLSVerify=true",
+        "ForceRM=false",
+        "GroupAdd=1000",
+        "DNS=1.1.1.1",
+        "DNSOption=ndots:1",
+        "DNSSearch=example.invalid",
+        "AuthFile=/run/build-auth.json",
+        "IgnoreFile=.containerignore",
+        "Annotation=org.example.annotation=one",
+        "Environment=BUILD_TOKEN=private",
+        "ContainersConfModule=build.conf",
+        "GlobalArgs=--events-backend=file",
+        "ServiceName=web.service",
+        "Volume=cache.volume:/cache",
+    ]
+}
+
+fn assert_artifact_import(application: &Application) -> Result<(), Box<dyn Error>> {
+    let acquisition = application.image_acquisitions()[0]
+        .value()
+        .settings()
+        .ok_or("acquisition settings expected")?;
+    let build = application.image_builds()[0]
+        .value()
+        .settings()
+        .ok_or("build settings expected")?;
+    assert_eq!(acquisition.len(), 12);
+    assert_eq!(build.len(), 28);
+    assert!(!format!("{application:?}").contains("operator:secret"));
+    assert!(!format!("{application:?}").contains("BUILD_TOKEN=private"));
+    Ok(())
+}
+
+fn assert_artifact_export(application: &Application) -> Result<(), Box<dyn Error>> {
+    let target_57 = TargetProfile::new("podman", version(5, 7, 0), Some(version(6, 0, 2)))?;
+    let plan_57 = QuadletExporter::new()?.plan(application, &target_57)?;
+    let output = plan_57.candidate().ok_or("candidate expected")?;
+    let image = output.file("base.image").ok_or("image output expected")?.text();
+    let build = output.file("web.build").ok_or("build output expected")?.text();
+    for entry in expected_image_entries() {
+        assert!(image.contains(entry), "missing image entry {entry}: {image}");
+    }
+    for entry in expected_build_entries() {
+        assert!(build.contains(entry), "missing build entry {entry}: {build}");
+    }
+    assert!(!build.contains("PodmanArgs="));
+    assert!(
+        plan_57
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.kind() == ConversionKind::Unsupported && outcome.subject().contains("settings[11]"))
+    );
+    assert!(
+        plan_57
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code().as_str() != "BFQ0006")
+    );
+    Ok(())
+}
+
+fn assert_artifact_floors(application: &Application) -> Result<(), Box<dyn Error>> {
+    for (minimum, rejected) in [
+        (
+            version(5, 4, 0),
+            [
+                "quadlet.build.retry",
+                "quadlet.build.retry-delay",
+                "quadlet.build.build-arg",
+                "quadlet.build.ignore-file",
+            ],
+        ),
+        (
+            version(5, 6, 0),
+            ["quadlet.build.build-arg", "quadlet.build.ignore-file", "", ""],
+        ),
+    ] {
+        let target = TargetProfile::new("podman", minimum, Some(version(6, 0, 2)))?;
+        let plan = QuadletExporter::new()?.plan(application, &target)?;
+        let debug = format!("{:?}", plan.diagnostics());
+        for capability in rejected.into_iter().filter(|capability| !capability.is_empty()) {
+            assert!(
+                debug.contains(capability),
+                "{minimum} should reject {capability}: {debug}"
+            );
+        }
+    }
     Ok(())
 }
 

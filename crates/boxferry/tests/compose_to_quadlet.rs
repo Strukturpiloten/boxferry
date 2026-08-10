@@ -11,8 +11,8 @@ use boxferry::compose::compose_lens::{
     source::SourceId as ComposeSourceId,
 };
 use boxferry::{
-    ComposeImporter, ComposeSource, ConversionKind, Identifier, LossPolicy, PlatformVersion, QuadletExporter,
-    QuadletGroupingPolicy, SourceId, TargetProfile, convert,
+    ComposeImporter, ComposeSource, ConversionKind, Identifier, ImportAdapter, LossPolicy, PlatformVersion,
+    QuadletExporter, QuadletGroupingPolicy, SourceId, TargetProfile, convert,
 };
 
 const BASE_SOURCE_ID: u32 = 91;
@@ -22,6 +22,118 @@ const DEPENDENCY_SOURCE_ID: u32 = 94;
 const SECRET_SOURCE_ID: u32 = 95;
 const ENVIRONMENT_FILE_SOURCE_ID: u32 = 96;
 const SECURITY_OPTION_SOURCE_ID: u32 = 99;
+const IMAGE_BUILD_SOURCE_ID: u32 = 100;
+
+#[test]
+fn public_compose_to_quadlet_route_emits_validated_image_build_artifacts() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(IMAGE_BUILD_SOURCE_ID);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("image-build.compose.yaml", "image-build.compose.yaml"),
+        concat!(
+            "services:\n",
+            "  web:\n",
+            "    image: example.invalid/web:1\n",
+            "    build:\n",
+            "      context: ./web\n",
+            "      dockerfile: Containerfile\n",
+            "      target: release\n",
+            "      tags: [example.invalid/web:stable]\n",
+            "      args: { APP_MODE: production }\n",
+            "      labels: { org.example.build: web }\n",
+            "      ssh: [default=/run/private-build-agent]\n",
+        ),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let project = merged.project().ok_or("merged project expected")?.clone();
+    let source = ComposeSource::new(project, Identifier::new("image-build")?)?
+        .with_source_id(source_id, SourceId::new("image-build.compose.yaml")?);
+    let importer = ComposeImporter::new()?;
+    let import_result = importer.import(&source);
+    let application = import_result.application().ok_or("application expected")?;
+    let build = application.image_builds().first().ok_or("image build expected")?;
+    assert_eq!(build.value().name().as_str(), "web-build");
+    assert!(
+        build
+            .value()
+            .source_declaration()
+            .and_then(|value| value.value().structured_settings())
+            .is_some_and(|settings| !settings[0].origins().is_empty())
+    );
+    assert_eq!(
+        application.services()[0]
+            .value()
+            .image_build()
+            .map(|value| value.value().as_str()),
+        Some("web-build")
+    );
+    assert!(!format!("{application:?}").contains("/run/private-build-agent"));
+
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 7, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+    let strict = convert(
+        &importer,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    assert!(strict.is_blocked());
+
+    let result = convert(
+        &importer,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    let output = result.output().ok_or("partial artifact output expected")?;
+    assert_image_build_output(output);
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "image_builds.web-build.source_declaration.settings[0]"
+            && outcome.kind() == ConversionKind::Unsupported
+            && !outcome.origins().is_empty()
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "image_builds.web-build.source_declaration.settings[6]"
+            && outcome.kind() == ConversionKind::Unsupported
+            && !outcome.origins().is_empty()
+    }));
+    assert!(!format!("{result:?}").contains("/run/private-build-agent"));
+    Ok(())
+}
+
+fn assert_image_build_output(output: &boxferry::QuadletOutput) {
+    assert_eq!(
+        output
+            .files()
+            .iter()
+            .map(|file| file.name().as_str())
+            .collect::<Vec<_>>(),
+        ["web-build.build", "web.container"]
+    );
+    assert_eq!(
+        output.file("web-build.build").map(boxferry::QuadletFile::text),
+        Some(concat!(
+            "[Build]\n",
+            "ImageTag=example.invalid/web:1\n",
+            "File=Containerfile\n",
+            "Target=release\n",
+            "ImageTag=example.invalid/web:stable\n",
+            "BuildArg=APP_MODE=production\n",
+            "Label=org.example.build=web\n",
+        ))
+    );
+    assert_eq!(
+        output.file("web.container").map(boxferry::QuadletFile::text),
+        Some("[Container]\nImage=web-build.build\n")
+    );
+    assert!(output.document_set().is_valid());
+    assert!(output.document_set().graph().is_complete());
+}
 
 #[test]
 fn public_compose_to_quadlet_route_emits_released_container_settings() -> Result<(), Box<dyn Error>> {

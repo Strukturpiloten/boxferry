@@ -11,14 +11,16 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, Config, Device, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, Healthcheck,
-    HealthcheckCommand, HostAddressKind, HostMapping, Mount, MountSource, NetworkAttachment, Port, Protocol,
-    Provenance, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, Sourced,
+    Application, BuildSettingValues, BuildSourceDeclaration, Command, Config, Device, EnvironmentFile,
+    EnvironmentFileFormat, EnvironmentValue, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping,
+    ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, Mount,
+    MountSource, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant, ResourceOwnership,
+    RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
+    SourceBuildSetting, Sourced,
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
-    model::{ContainerKey, NetworkKey, PodKey, QuadletUnitType, VolumeKey},
+    model::{BuildKey, ContainerKey, ImageKey, NetworkKey, PodKey, QuadletUnitType, VolumeKey},
     path::{PathForm, classify_path},
     render::{EntryValue, PidsLimit, QuadletDocumentBuilder, RenderError, ShmSize, SystemdSection, SystemdUnitKey},
     source::SourceId,
@@ -440,6 +442,12 @@ impl<'a> Mapping<'a> {
         for volume in self.application.volumes() {
             self.map_volume(volume);
         }
+        for acquisition in self.application.image_acquisitions() {
+            self.map_image_acquisition(acquisition);
+        }
+        for build in self.application.image_builds() {
+            self.map_image_build(build);
+        }
         for config in self.application.configs() {
             self.map_config(config);
         }
@@ -859,6 +867,333 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn map_image_acquisition(&mut self, acquisition: &Sourced<ImageAcquisition>) {
+        let name = acquisition.value().name().as_str();
+        let subject = format!("image_acquisitions.{name}");
+        let Some(file_name) = self.unit_file_name(&subject, name, "image", acquisition.origins()) else {
+            return;
+        };
+        let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Image);
+        let mut has_image = false;
+        for (index, setting) in acquisition.value().settings().unwrap_or_default().iter().enumerate() {
+            let item = format!("{subject}.settings[{index}]");
+            has_image |= self.emit_image_acquisition_setting(&mut builder, setting, &item);
+        }
+        if !has_image {
+            self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &subject,
+                "Quadlet image generation requires Image",
+                "neutral acquisition has no Image setting",
+                acquisition.origins(),
+            );
+            return;
+        }
+        self.finish_document(file_name, &builder, &subject, acquisition.origins());
+    }
+
+    fn emit_image_acquisition_setting(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        setting: &Sourced<ImageAcquisitionSetting>,
+        subject: &str,
+    ) -> bool {
+        let has_image = matches!(setting.value(), ImageAcquisitionSetting::Image(value) if !value.expose().is_empty());
+        match setting.value() {
+            ImageAcquisitionSetting::Image(value) => {
+                self.emit_image(
+                    builder,
+                    ImageKey::Image,
+                    "quadlet.image.image",
+                    value.expose(),
+                    subject,
+                    setting.origins(),
+                );
+            }
+            ImageAcquisitionSetting::ImageTags(values) => {
+                self.emit_image_values(builder, ImageKey::ImageTag, "quadlet.image.image-tag", values, subject);
+            }
+            ImageAcquisitionSetting::ContainersConfigModules(values) => self.emit_image_values(
+                builder,
+                ImageKey::ContainersConfModule,
+                "quadlet.image.containers-conf-module",
+                values,
+                subject,
+            ),
+            ImageAcquisitionSetting::GlobalArguments(values) => self.emit_image_values(
+                builder,
+                ImageKey::GlobalArgs,
+                "quadlet.image.global-args",
+                values,
+                subject,
+            ),
+            ImageAcquisitionSetting::ServiceName(value) => self.emit_image(
+                builder,
+                ImageKey::ServiceName,
+                "quadlet.image.service-name",
+                value.expose(),
+                subject,
+                setting.origins(),
+            ),
+            ImageAcquisitionSetting::AllTags(value) => self.emit_image(
+                builder,
+                ImageKey::AllTags,
+                "quadlet.image.all-tags",
+                bool_text(*value),
+                subject,
+                setting.origins(),
+            ),
+            ImageAcquisitionSetting::Architecture(value) => self.emit_image(
+                builder,
+                ImageKey::Arch,
+                "quadlet.image.arch",
+                value.expose(),
+                subject,
+                setting.origins(),
+            ),
+            ImageAcquisitionSetting::AuthFile(value) => self.emit_image(
+                builder,
+                ImageKey::AuthFile,
+                "quadlet.image.auth-file",
+                value.expose(),
+                subject,
+                setting.origins(),
+            ),
+            ImageAcquisitionSetting::CertificateDirectory(value) => self.emit_image(
+                builder,
+                ImageKey::CertDir,
+                "quadlet.image.cert-dir",
+                value.expose(),
+                subject,
+                setting.origins(),
+            ),
+            ImageAcquisitionSetting::Credentials(value) => self.emit_image(
+                builder,
+                ImageKey::Creds,
+                "quadlet.image.creds",
+                value.expose(),
+                subject,
+                setting.origins(),
+            ),
+            ImageAcquisitionSetting::DecryptionKey(value) => self.emit_image(
+                builder,
+                ImageKey::DecryptionKey,
+                "quadlet.image.decryption-key",
+                value.expose(),
+                subject,
+                setting.origins(),
+            ),
+            ImageAcquisitionSetting::OperatingSystem(value) => self.emit_image(
+                builder,
+                ImageKey::OS,
+                "quadlet.image.os",
+                value.expose(),
+                subject,
+                setting.origins(),
+            ),
+            _ => self.unsupported(subject, "unrecognized image-acquisition setting", setting.origins()),
+        }
+        has_image
+    }
+
+    fn map_image_build(&mut self, build: &Sourced<ImageBuild>) {
+        let name = build.value().name().as_str();
+        let subject = format!("image_builds.{name}");
+        let Some(file_name) = self.unit_file_name(&subject, name, "build", build.origins()) else {
+            return;
+        };
+        if !self.capability("quadlet.unit-type.build", &subject, build.origins()) {
+            return;
+        }
+        self.report_build_source_declaration(build, &subject);
+        let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Build);
+        let mut has_tag = false;
+        let mut has_context = false;
+        for (index, setting) in build.value().settings().unwrap_or_default().iter().enumerate() {
+            let item = format!("{subject}.settings[{index}]");
+            if self.map_image_build_required_setting(&mut builder, setting, &item, &mut has_tag, &mut has_context)
+                || self.map_image_build_text_setting(&mut builder, setting, &item)
+                || self.map_image_build_boolean_setting(&mut builder, setting, &item)
+                || self.map_image_build_assignment_setting(&mut builder, setting, &item)
+                || self.map_image_build_value_setting(&mut builder, setting, &item)
+            {
+                continue;
+            }
+            match setting.value() {
+                ImageBuildSetting::RuntimeArguments(_) => self.unsupported(
+                    &item,
+                    "PodmanArgs is retained as native evidence and is never synthesized",
+                    setting.origins(),
+                ),
+                _ => self.unsupported(&item, "unrecognized image-build setting", setting.origins()),
+            }
+        }
+        if !has_tag || !has_context {
+            self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &subject,
+                "Quadlet build generation requires ImageTag and File or SetWorkingDirectory",
+                "neutral build is missing a required build tag or context",
+                build.origins(),
+            );
+            return;
+        }
+        self.finish_document(file_name, &builder, &subject, build.origins());
+    }
+
+    fn map_image_build_required_setting(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        setting: &Sourced<ImageBuildSetting>,
+        item: &str,
+        has_tag: &mut bool,
+        has_context: &mut bool,
+    ) -> bool {
+        match setting.value() {
+            ImageBuildSetting::ImageTags(values) => {
+                *has_tag |= values.values().iter().any(|value| !value.value().expose().is_empty());
+                self.emit_build_values(builder, BuildKey::ImageTag, "quadlet.build.image-tag", values, item);
+            }
+            ImageBuildSetting::SetWorkingDirectory(value) => {
+                *has_context |= !value.expose().is_empty();
+                self.emit_build(
+                    builder,
+                    BuildKey::SetWorkingDirectory,
+                    "quadlet.build.set-working-directory",
+                    value.expose(),
+                    item,
+                    setting.origins(),
+                );
+            }
+            ImageBuildSetting::RecipeFile(value) => {
+                *has_context |= !value.expose().is_empty();
+                self.emit_build(
+                    builder,
+                    BuildKey::File,
+                    "quadlet.build.file",
+                    value.expose(),
+                    item,
+                    setting.origins(),
+                );
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn map_image_build_text_setting(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        setting: &Sourced<ImageBuildSetting>,
+        item: &str,
+    ) -> bool {
+        let (key, capability, value) = match setting.value() {
+            ImageBuildSetting::Target(value) => (BuildKey::Target, "quadlet.build.target", value),
+            ImageBuildSetting::Network(value) => (BuildKey::Network, "quadlet.build.network", value),
+            ImageBuildSetting::Architecture(value) => (BuildKey::Arch, "quadlet.build.arch", value),
+            ImageBuildSetting::Variant(value) => (BuildKey::Variant, "quadlet.build.variant", value),
+            ImageBuildSetting::PullPolicy(value) => (BuildKey::Pull, "quadlet.build.pull", value),
+            ImageBuildSetting::Retry(value) => (BuildKey::Retry, "quadlet.build.retry", value),
+            ImageBuildSetting::RetryDelay(value) => (BuildKey::RetryDelay, "quadlet.build.retry-delay", value),
+            ImageBuildSetting::AuthFile(value) => (BuildKey::AuthFile, "quadlet.build.auth-file", value),
+            ImageBuildSetting::IgnoreFile(value) => (BuildKey::IgnoreFile, "quadlet.build.ignore-file", value),
+            ImageBuildSetting::ServiceName(value) => (BuildKey::ServiceName, "quadlet.build.service-name", value),
+            _ => return false,
+        };
+        self.emit_build(builder, key, capability, value.expose(), item, setting.origins());
+        true
+    }
+
+    fn map_image_build_boolean_setting(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        setting: &Sourced<ImageBuildSetting>,
+        item: &str,
+    ) -> bool {
+        let (key, capability, value) = match setting.value() {
+            ImageBuildSetting::TlsVerify(value) => (BuildKey::TLSVerify, "quadlet.build.tls-verify", value),
+            ImageBuildSetting::ForceRemove(value) => (BuildKey::ForceRM, "quadlet.build.force-rm", value),
+            _ => return false,
+        };
+        self.emit_build(builder, key, capability, bool_text(*value), item, setting.origins());
+        true
+    }
+
+    fn map_image_build_assignment_setting(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        setting: &Sourced<ImageBuildSetting>,
+        item: &str,
+    ) -> bool {
+        let (key, capability, values) = match setting.value() {
+            ImageBuildSetting::Labels(values) => (BuildKey::Label, "quadlet.build.label", values),
+            ImageBuildSetting::BuildArguments(values) => (BuildKey::BuildArg, "quadlet.build.build-arg", values),
+            ImageBuildSetting::Annotations(values) => (BuildKey::Annotation, "quadlet.build.annotation", values),
+            ImageBuildSetting::Environment(values) => (BuildKey::Environment, "quadlet.build.environment", values),
+            _ => return false,
+        };
+        self.emit_build_assignments(builder, key, capability, values, item);
+        true
+    }
+
+    fn map_image_build_value_setting(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        setting: &Sourced<ImageBuildSetting>,
+        item: &str,
+    ) -> bool {
+        let (key, capability, values) = match setting.value() {
+            ImageBuildSetting::Secrets(values) => (BuildKey::Secret, "quadlet.build.secret", values),
+            ImageBuildSetting::GroupAdd(values) => (BuildKey::GroupAdd, "quadlet.build.group-add", values),
+            ImageBuildSetting::DnsServers(values) => (BuildKey::DNS, "quadlet.build.dns", values),
+            ImageBuildSetting::DnsOptions(values) => (BuildKey::DNSOption, "quadlet.build.dns-option", values),
+            ImageBuildSetting::DnsSearchDomains(values) => (BuildKey::DNSSearch, "quadlet.build.dns-search", values),
+            ImageBuildSetting::ContainersConfigModules(values) => (
+                BuildKey::ContainersConfModule,
+                "quadlet.build.containers-conf-module",
+                values,
+            ),
+            ImageBuildSetting::GlobalArguments(values) => (BuildKey::GlobalArgs, "quadlet.build.global-args", values),
+            ImageBuildSetting::Volumes(values) => (BuildKey::Volume, "quadlet.build.volume", values),
+            _ => return false,
+        };
+        self.emit_build_values(builder, key, capability, values, item);
+        true
+    }
+
+    fn report_build_source_declaration(&mut self, build: &Sourced<ImageBuild>, subject: &str) {
+        let Some(declaration) = build.value().source_declaration() else {
+            return;
+        };
+        match declaration.value() {
+            BuildSourceDeclaration::Scalar(_) => self.unsupported(
+                &format!("{subject}.source_declaration"),
+                "a scalar source build context is retained separately and is not silently converted into a Quadlet build context",
+                declaration.origins(),
+            ),
+            BuildSourceDeclaration::Structured(settings) => {
+                for (index, setting) in settings.iter().enumerate() {
+                    let item = format!("{subject}.source_declaration.settings[{index}]");
+                    let covered = match setting.value() {
+                        SourceBuildSetting::RecipeFile(_) => build_has_setting(build.value(), |value| matches!(value, ImageBuildSetting::RecipeFile(_))),
+                        SourceBuildSetting::Target(_) => build_has_setting(build.value(), |value| matches!(value, ImageBuildSetting::Target(_))),
+                        SourceBuildSetting::Tags(_) => build_has_setting(build.value(), |value| matches!(value, ImageBuildSetting::ImageTags(_))),
+                        SourceBuildSetting::Labels(_) => build_has_setting(build.value(), |value| matches!(value, ImageBuildSetting::Labels(_))),
+                        SourceBuildSetting::Arguments(arguments) => {
+                            build_has_setting(build.value(), |value| matches!(value, ImageBuildSetting::BuildArguments(_)))
+                                && arguments.values().iter().all(|argument| argument.value().value().is_some())
+                        }
+                        _ => false,
+                    };
+                    if !covered {
+                        self.unsupported(&item, "source build declaration is not represented by the emitted Quadlet build settings", setting.origins());
+                    }
+                }
+            }
+            _ => self.unsupported(&format!("{subject}.source_declaration"), "unrecognized source build declaration", declaration.origins()),
+        }
+    }
+
     fn map_pod(&mut self, plan: &PodPlan) {
         let subject = plan.subject.as_str();
         let name = plan.name.as_str();
@@ -933,60 +1268,97 @@ impl<'a> Mapping<'a> {
         }
         let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Container);
         self.map_service_dependencies(service, &mut builder);
-        let Some(image) = service.value().image() else {
+        let direct_image = service.value().image();
+        let acquisition = service.value().image_acquisition();
+        let build = service.value().image_build();
+        let valid_direct_build_pair = match (direct_image, build) {
+            (Some(image), Some(build_reference)) if acquisition.is_none() => self
+                .application
+                .image_builds()
+                .iter()
+                .find(|candidate| candidate.value().name() == build_reference.value())
+                .is_some_and(|candidate| build_has_tag(candidate.value(), image.value().as_str())),
+            _ => false,
+        };
+        let image_sources =
+            usize::from(direct_image.is_some()) + usize::from(acquisition.is_some()) + usize::from(build.is_some());
+        if !(image_sources == 1 || valid_direct_build_pair) {
             self.invalid(
                 self.exporter.codes.invalid_value.clone(),
                 &format!("{subject}.image"),
-                "Quadlet container generation requires an image",
-                "neutral service has no image",
+                "Quadlet container generation requires exactly one image source",
+                "a direct image may accompany only the image build that declares it as a nonempty ImageTag",
                 service.origins(),
             );
             return;
-        };
-        if !is_safe_word(image.value().as_str(), false) {
-            self.invalid(
-                self.exporter.codes.invalid_value.clone(),
-                &format!("{subject}.image"),
-                "image reference cannot be emitted as an exact one-line Quadlet value",
-                "image spelling contains unsupported whitespace or control syntax",
-                image.origins(),
-            );
-            return;
         }
-        if !self.capability("quadlet.container.image", &format!("{subject}.image"), image.origins())
+        let (value, origins) = if let Some(build) = build.filter(|_| valid_direct_build_pair) {
+            (format!("{}.build", build.value().as_str()), build.origins())
+        } else if let Some(image) = direct_image {
+            if !is_safe_word(image.value().as_str(), false) {
+                self.invalid(
+                    self.exporter.codes.invalid_value.clone(),
+                    &format!("{subject}.image"),
+                    "image reference cannot be emitted as an exact one-line Quadlet value",
+                    "image spelling contains unsupported whitespace or control syntax",
+                    image.origins(),
+                );
+                return;
+            }
+            (image.value().as_str().to_owned(), image.origins())
+        } else if let Some(acquisition) = service.value().image_acquisition() {
+            (format!("{}.image", acquisition.value().as_str()), acquisition.origins())
+        } else if let Some(build) = service.value().image_build() {
+            (format!("{}.build", build.value().as_str()), build.origins())
+        } else {
+            unreachable!("image source count is one")
+        };
+        if !self.capability("quadlet.container.image", &format!("{subject}.image"), origins)
             || !self.push_container(
                 &mut builder,
                 ContainerKey::Image,
-                image.value().as_str(),
+                value,
                 &format!("{subject}.image"),
-                image.origins(),
+                origins,
             )
         {
             return;
         }
-        self.exact(format!("{subject}.image"), image.origins());
+        self.exact(format!("{subject}.image"), origins);
 
-        self.map_container_name(&subject, service.value(), &mut builder);
+        self.map_service_content(&subject, service, grouped, pod_name, &mut builder);
+        self.finish_document(file_name, &builder, &subject, service.origins());
+    }
+
+    fn map_service_content(
+        &mut self,
+        subject: &str,
+        service: &Sourced<Service>,
+        grouped: bool,
+        pod_name: Option<&str>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        self.map_container_name(subject, service.value(), builder);
         if let Some(command) = service.value().command() {
-            self.map_command(&subject, command, &mut builder);
+            self.map_command(subject, command, builder);
         }
-        self.map_execution_context(&subject, service.value(), grouped, &mut builder);
-        self.map_released_container_settings(&subject, service.value(), &mut builder);
-        self.report_grouped_dns(&subject, service.value(), grouped);
+        self.map_execution_context(subject, service.value(), grouped, builder);
+        self.map_released_container_settings(subject, service.value(), builder);
+        self.report_grouped_dns(subject, service.value(), grouped);
         if let Some(restart_policy) = service.value().restart_policy() {
-            self.map_restart_policy(&subject, restart_policy, &mut builder);
+            self.map_restart_policy(subject, restart_policy, builder);
         }
         if let Some(healthcheck) = service.value().healthcheck() {
-            self.map_healthcheck(&subject, healthcheck, &mut builder);
+            self.map_healthcheck(subject, healthcheck, builder);
         }
-        self.map_healthy_readiness(service, &mut builder);
+        self.map_healthy_readiness(service, builder);
         for environment in service.value().environment() {
-            self.map_environment(&subject, environment, &mut builder);
+            self.map_environment(subject, environment, builder);
         }
         for (index, environment_file) in service.value().environment_files().iter().enumerate() {
-            self.map_environment_file(&subject, index, environment_file, &mut builder);
+            self.map_environment_file(subject, index, environment_file, builder);
         }
-        self.map_metadata_labels(&subject, service.value(), &mut builder);
+        self.map_metadata_labels(subject, service.value(), builder);
         for (index, grant) in service.value().config_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{subject}.configs[{index}]"),
@@ -995,24 +1367,22 @@ impl<'a> Mapping<'a> {
             );
         }
         for (index, grant) in service.value().secret_grants().iter().enumerate() {
-            self.map_secret_grant(&subject, index, grant, &mut builder);
+            self.map_secret_grant(subject, index, grant, builder);
         }
         if !grouped {
             for (index, mapping) in service.value().host_mappings().iter().enumerate() {
-                self.map_container_host_mapping(&subject, index, mapping, &mut builder);
+                self.map_container_host_mapping(subject, index, mapping, builder);
             }
         }
         if !grouped {
             for (index, port) in service.value().ports().iter().enumerate() {
-                self.map_port(&subject, index, port, &mut builder);
+                self.map_port(subject, index, port, builder);
             }
         }
         for (index, mount) in service.value().mounts().iter().enumerate() {
-            self.map_mount(&subject, index, mount, &mut builder);
+            self.map_mount(subject, index, mount, builder);
         }
-        self.map_pod_or_networks(&subject, service, pod_name, &mut builder);
-
-        self.finish_document(file_name, &builder, &subject, service.origins());
+        self.map_pod_or_networks(subject, service, pod_name, builder);
     }
 
     fn map_container_name(&mut self, subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
@@ -1515,7 +1885,7 @@ impl<'a> Mapping<'a> {
         &mut self,
         service_subject: &str,
         name: &str,
-        values: Option<&[Sourced<boxferry_model::ProtectedString>]>,
+        values: Option<&[Sourced<ProtectedString>]>,
         collection_origins: &[Provenance],
         key: ContainerKey,
         builder: &mut QuadletDocumentBuilder,
@@ -1776,7 +2146,7 @@ impl<'a> Mapping<'a> {
     fn map_raw_container_value(
         &mut self,
         subject: &str,
-        value: &Sourced<boxferry_model::ProtectedString>,
+        value: &Sourced<ProtectedString>,
         origins: &[Provenance],
         capability: &str,
         key: ContainerKey,
@@ -1797,7 +2167,7 @@ impl<'a> Mapping<'a> {
     fn map_validated_container_value(
         &mut self,
         subject: &str,
-        value: &Sourced<boxferry_model::ProtectedString>,
+        value: &Sourced<ProtectedString>,
         encoded: Option<String>,
         capability: &str,
         key: ContainerKey,
@@ -1820,7 +2190,7 @@ impl<'a> Mapping<'a> {
         &mut self,
         service_subject: &str,
         field: &str,
-        value: &Sourced<boxferry_model::ProtectedString>,
+        value: &Sourced<ProtectedString>,
         capability: &str,
         key: ContainerKey,
         builder: &mut QuadletDocumentBuilder,
@@ -2022,7 +2392,7 @@ impl<'a> Mapping<'a> {
                 Some(
                     arguments
                         .iter()
-                        .map(boxferry_model::ProtectedString::expose)
+                        .map(ProtectedString::expose)
                         .collect::<Vec<_>>()
                         .join(" "),
                 )
@@ -2169,7 +2539,7 @@ impl<'a> Mapping<'a> {
             HealthcheckCommand::Exec(arguments) if !arguments.is_empty() => {
                 let mut values = Vec::with_capacity(arguments.len() + 1);
                 values.push("CMD");
-                values.extend(arguments.iter().map(boxferry_model::ProtectedString::expose));
+                values.extend(arguments.iter().map(ProtectedString::expose));
                 values
             }
             HealthcheckCommand::Shell(value) if !value.expose().is_empty() => {
@@ -2742,6 +3112,156 @@ impl<'a> Mapping<'a> {
                 self.generation_error(subject, &error, origins);
                 false
             }
+        }
+    }
+
+    fn push_image(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: ImageKey,
+        value: impl Into<String>,
+        subject: &str,
+        origins: &[Provenance],
+    ) -> bool {
+        match EntryValue::new(value).and_then(|value| builder.push_image(key, value)) {
+            Ok(()) => true,
+            Err(error) => {
+                self.generation_error(subject, &error, origins);
+                false
+            }
+        }
+    }
+
+    fn push_build(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: BuildKey,
+        value: impl Into<String>,
+        subject: &str,
+        origins: &[Provenance],
+    ) -> bool {
+        match EntryValue::new(value).and_then(|value| builder.push_build(key, value)) {
+            Ok(()) => true,
+            Err(error) => {
+                self.generation_error(subject, &error, origins);
+                false
+            }
+        }
+    }
+
+    fn emit_image(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: ImageKey,
+        capability: &str,
+        value: &str,
+        subject: &str,
+        origins: &[Provenance],
+    ) {
+        if self.capability(capability, subject, origins) && self.push_image(builder, key, value, subject, origins) {
+            self.exact(subject, origins);
+        }
+    }
+
+    fn emit_image_values(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: ImageKey,
+        capability: &str,
+        values: &BuildSettingValues<ProtectedString>,
+        subject: &str,
+    ) {
+        if values.values().is_empty() {
+            self.unsupported(
+                subject,
+                "an explicitly empty repeated Image setting has no physical Quadlet entry to emit",
+                &[],
+            );
+            return;
+        }
+        for (index, value) in values.values().iter().enumerate() {
+            self.emit_image(
+                builder,
+                key,
+                capability,
+                value.value().expose(),
+                &format!("{subject}[{index}]"),
+                value.origins(),
+            );
+        }
+    }
+
+    fn emit_build(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: BuildKey,
+        capability: &str,
+        value: &str,
+        subject: &str,
+        origins: &[Provenance],
+    ) {
+        if self.capability(capability, subject, origins) && self.push_build(builder, key, value, subject, origins) {
+            self.exact(subject, origins);
+        }
+    }
+
+    fn emit_build_values(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: BuildKey,
+        capability: &str,
+        values: &BuildSettingValues<ProtectedString>,
+        subject: &str,
+    ) {
+        if values.values().is_empty() {
+            self.unsupported(
+                subject,
+                "an explicitly empty repeated Build setting has no physical Quadlet entry to emit",
+                &[],
+            );
+            return;
+        }
+        for (index, value) in values.values().iter().enumerate() {
+            self.emit_build(
+                builder,
+                key,
+                capability,
+                value.value().expose(),
+                &format!("{subject}[{index}]"),
+                value.origins(),
+            );
+        }
+    }
+
+    fn emit_build_assignments(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: BuildKey,
+        capability: &str,
+        values: &BuildSettingValues<ImageArtifactAssignment>,
+        subject: &str,
+    ) {
+        if values.values().is_empty() {
+            self.unsupported(
+                subject,
+                "an explicitly empty repeated Build assignment setting has no physical Quadlet entry to emit",
+                &[],
+            );
+            return;
+        }
+        for (index, assignment) in values.values().iter().enumerate() {
+            let value = assignment.value().value().map_or_else(
+                || assignment.value().name().expose().to_owned(),
+                |value| format!("{}={}", assignment.value().name().expose(), value.expose()),
+            );
+            self.emit_build(
+                builder,
+                key,
+                capability,
+                &value,
+                &format!("{subject}[{index}]"),
+                assignment.origins(),
+            );
         }
     }
 
@@ -3588,6 +4108,32 @@ fn normalize_absolute_path(value: &str) -> Option<String> {
         }
     }
     Some(format!("/{}", components.join("/")))
+}
+
+const fn bool_text(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
+fn build_has_tag(build: &ImageBuild, image: &str) -> bool {
+    build
+        .settings()
+        .unwrap_or_default()
+        .iter()
+        .any(|setting| match setting.value() {
+            ImageBuildSetting::ImageTags(tags) => tags
+                .values()
+                .iter()
+                .any(|tag| !tag.value().expose().is_empty() && tag.value().expose() == image),
+            _ => false,
+        })
+}
+
+fn build_has_setting(build: &ImageBuild, matches: impl Fn(&ImageBuildSetting) -> bool) -> bool {
+    build
+        .settings()
+        .unwrap_or_default()
+        .iter()
+        .any(|setting| matches(setting.value()))
 }
 
 fn resolve_relative_path(root: &str, relative: &str) -> Option<String> {

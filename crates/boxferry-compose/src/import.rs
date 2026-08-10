@@ -5,14 +5,16 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Application, Command, Config, ConfigMaterial, Device, EnvironmentFile as NeutralEnvironmentFile,
+    Application, BuildAttestation, BuildContext, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command,
+    Config, ConfigMaterial, Device, EnvironmentFile as NeutralEnvironmentFile,
     EnvironmentFileFormat as NeutralEnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
     EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
-    HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
-    KernelParameter, MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString,
-    Protocol, Provenance, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership,
-    RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, SourceSpan, Sourced, Volume,
+    HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageArtifactAssignment,
+    ImageBuild, ImageBuildSetting, ImageReference, KernelParameter, MetadataLabel, ModelError, Mount, MountSource,
+    Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant, ResourceGrantSyntax,
+    ResourceLimit, ResourceOwnership, RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SecurityOption,
+    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, SourceBuildSecret, SourceBuildSetting,
+    SourceSpan, Sourced, Volume,
 };
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
@@ -25,9 +27,11 @@ use compose_lens::model::{
     ShortDeviceKind, ShortPort, ShortVolumeMount, TmpfsItemKind, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
-    ProjectDependsOn, ProjectDevice, ProjectDns, ProjectDnsSearch, ProjectEnvironment, ProjectEnvironmentFile,
-    ProjectFieldReference, ProjectGrant, ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService,
-    ProjectSysctls, ProjectTmpfs, ProjectUlimitValue, ProjectValue, ProjectView, build_project_view,
+    ProjectBuild, ProjectBuildAdditionalContexts, ProjectBuildArgs, ProjectBuildDefinition, ProjectBuildExtraHosts,
+    ProjectBuildLabels, ProjectBuildNoCacheFilter, ProjectBuildSsh, ProjectDependsOn, ProjectDevice, ProjectDns,
+    ProjectDnsSearch, ProjectEnvironment, ProjectEnvironmentFile, ProjectFieldReference, ProjectGrant,
+    ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService, ProjectSysctls, ProjectTmpfs,
+    ProjectUlimitValue, ProjectValue, ProjectView, build_project_view,
 };
 use compose_lens::source::SourceSpan as ComposeSpan;
 
@@ -118,19 +122,40 @@ impl ImportAdapter for ComposeImporter {
                 }
             }
         }
-        for service in view.services() {
-            let active = if service.profiles().is_none_or(|profiles| profiles.value().is_empty()) {
+        for native_service in view.services() {
+            let active = if native_service
+                .profiles()
+                .is_none_or(|profiles| profiles.value().is_empty())
+            {
                 true
             } else {
                 profiles_valid
                     && source
                         .profile_selection()
-                        .is_some_and(|selection| selection.is_active(service.name().value()))
+                        .is_some_and(|selection| selection.is_active(native_service.name().value()))
             };
             if !active {
                 continue;
             }
-            if let Some(service) = mapping.map_service(service) {
+            if let Some(service) = mapping.map_service(native_service) {
+                let (mut service, origins) = service.into_parts();
+                if let Some(build) = mapping.map_service_build(service.name(), service.image(), native_service) {
+                    let build_name = build.value().name().clone();
+                    let build_origins = build.origins().to_vec();
+                    if let Err(error) = application.add_image_build(build) {
+                        mapping.invalid_model_optional("image_builds", &error, view.provenance().effective_source());
+                    } else {
+                        let mut reference = Sourced::generated(build_name);
+                        for origin in build_origins {
+                            reference.add_origin(origin);
+                        }
+                        service.set_image_build(reference);
+                    }
+                }
+                let mut service = Sourced::generated(service);
+                for origin in origins {
+                    service.add_origin(origin);
+                }
                 if let Err(error) = application.add_service(service) {
                     mapping.invalid_model_optional("services", &error, view.provenance().effective_source());
                 }
@@ -318,6 +343,684 @@ impl<'a> Mapping<'a> {
             container_name.provenance(),
         ));
         self.exact_provenance(format!("{subject}.container_name"), container_name.provenance());
+    }
+
+    fn map_service_build(
+        &mut self,
+        service_name: &Identifier,
+        service_image: Option<&Sourced<ImageReference>>,
+        native: &ProjectService,
+    ) -> Option<Sourced<ImageBuild>> {
+        let build = native.build()?;
+        let subject = format!("services.{}.build", service_name.as_str());
+        let name = match Identifier::new(format!("{}-build", service_name.as_str())) {
+            Ok(name) => name,
+            Err(error) => {
+                self.invalid_model_optional(&subject, &error, build.effective_source());
+                return None;
+            }
+        };
+        let mut neutral = ImageBuild::new(name);
+        match build.value() {
+            ProjectBuild::Context(context) => {
+                neutral.set_source_declaration(self.sourced_provenance(
+                    BuildSourceDeclaration::Scalar(Self::protected(context.value(), context.is_sensitive())),
+                    context.provenance(),
+                ));
+                self.exact_provenance(&subject, context.provenance());
+            }
+            ProjectBuild::Definition(definition) => self.map_build_definition(&subject, definition, &mut neutral),
+            _ => self.unsupported_optional(
+                &subject,
+                "build declaration variant is newer than this Compose adapter",
+                build.effective_source(),
+            ),
+        }
+        Self::add_service_image_build_tag(&mut neutral, service_image);
+        Some(self.sourced_provenance(neutral, build.provenance()))
+    }
+
+    fn add_service_image_build_tag(build: &mut ImageBuild, service_image: Option<&Sourced<ImageReference>>) {
+        let Some(service_image) = service_image else { return };
+        let image = service_image.value().as_str();
+        let mut settings = build.settings().map_or_else(Vec::new, <[_]>::to_vec);
+        let duplicate = settings.iter().any(|setting| {
+            matches!(
+                setting.value(),
+                ImageBuildSetting::ImageTags(values)
+                    if values.values().iter().any(|value| value.value().expose() == image)
+            )
+        });
+        if !duplicate {
+            let mut tag = Sourced::generated(ProtectedString::plain(image));
+            for origin in service_image.origins() {
+                tag.add_origin(origin.clone());
+            }
+            let mut setting = Sourced::generated(ImageBuildSetting::ImageTags(BuildSettingValues::new(
+                BuildSyntax::Scalar,
+                vec![tag],
+            )));
+            for origin in service_image.origins() {
+                setting.add_origin(origin.clone());
+            }
+            settings.insert(0, setting);
+        }
+        build.set_settings(settings);
+    }
+
+    fn map_build_definition(&mut self, subject: &str, definition: &ProjectBuildDefinition, build: &mut ImageBuild) {
+        let mut settings = Vec::new();
+        let mut overlap = Vec::new();
+
+        self.map_build_direct_settings(definition, &mut settings, &mut overlap);
+        self.map_build_boolean_settings(subject, definition, &mut settings);
+        self.map_build_attestations(definition, &mut settings);
+        self.map_build_string_collections(definition, &mut settings, &mut overlap);
+        self.map_build_additional_contexts(definition.additional_contexts(), &mut settings);
+        self.map_build_args(definition.args(), &mut settings, &mut overlap);
+        self.map_build_labels(definition.labels(), &mut settings, &mut overlap);
+        self.map_build_extra_hosts(definition.extra_hosts(), &mut settings);
+        self.map_build_no_cache_filter(definition.no_cache_filter(), &mut settings);
+        self.map_build_ssh(definition.ssh(), &mut settings);
+        self.map_build_secrets(definition.secrets(), &mut settings);
+        self.map_build_ulimits(definition.ulimits(), &mut settings);
+        self.report_project_fields(subject, "build field", definition.unmodeled_fields());
+
+        settings.sort_by_key(|setting| {
+            setting
+                .origins()
+                .last()
+                .and_then(Provenance::span)
+                .map_or(usize::MAX, SourceSpan::start)
+        });
+        build.set_source_declaration(Sourced::generated(BuildSourceDeclaration::Structured(settings)));
+        if !overlap.is_empty() {
+            build.set_settings(overlap);
+        }
+    }
+
+    fn map_build_direct_settings(
+        &self,
+        definition: &ProjectBuildDefinition,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+        overlap: &mut Vec<Sourced<ImageBuildSetting>>,
+    ) {
+        if let Some(context) = definition.context() {
+            settings.push(self.sourced_provenance(
+                SourceBuildSetting::Context(Self::protected(context.value(), context.is_sensitive())),
+                context.provenance(),
+            ));
+        }
+        if let Some(dockerfile) = definition.dockerfile() {
+            let value = Self::protected(dockerfile.value(), dockerfile.is_sensitive());
+            settings
+                .push(self.sourced_provenance(SourceBuildSetting::RecipeFile(value.clone()), dockerfile.provenance()));
+            overlap.push(self.sourced_provenance(ImageBuildSetting::RecipeFile(value), dockerfile.provenance()));
+        }
+        if let Some(inline) = definition.dockerfile_inline() {
+            settings.push(self.sourced_provenance(
+                SourceBuildSetting::InlineRecipe(Self::protected(inline.value(), inline.is_sensitive())),
+                inline.provenance(),
+            ));
+        }
+        if let Some(target) = definition.target() {
+            let value = Self::protected(target.value(), target.is_sensitive());
+            settings.push(self.sourced_provenance(SourceBuildSetting::Target(value.clone()), target.provenance()));
+            overlap.push(self.sourced_provenance(ImageBuildSetting::Target(value), target.provenance()));
+        }
+        if let Some(network) = definition.network() {
+            settings.push(self.sourced_provenance(
+                SourceBuildSetting::Network(Self::protected(network.value(), network.is_sensitive())),
+                network.provenance(),
+            ));
+        }
+        if let Some(isolation) = definition.isolation() {
+            settings.push(self.sourced_provenance(
+                SourceBuildSetting::Isolation(Self::protected(isolation.value(), isolation.is_sensitive())),
+                isolation.provenance(),
+            ));
+        }
+        if let Some(shm_size) = definition.shm_size() {
+            settings.push(self.sourced_provenance(
+                SourceBuildSetting::ShmSize(Self::protected(shm_size.value().raw().value(), shm_size.is_sensitive())),
+                shm_size.provenance(),
+            ));
+        }
+    }
+
+    fn map_build_boolean_settings(
+        &mut self,
+        subject: &str,
+        definition: &ProjectBuildDefinition,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        if let Some(privileged) = definition.privileged() {
+            if let BooleanValue::Literal(value) = privileged.value() {
+                settings.push(self.sourced_provenance(SourceBuildSetting::Privileged(*value), privileged.provenance()));
+            } else {
+                self.invalid_value_optional(
+                    &format!("{subject}.privileged"),
+                    "build privileged expression was not resolved",
+                    privileged.effective_source(),
+                );
+            }
+        }
+        if let Some(pull) = definition.pull() {
+            if let BooleanValue::Literal(value) = pull.value() {
+                settings.push(self.sourced_provenance(SourceBuildSetting::Pull(*value), pull.provenance()));
+            } else {
+                self.invalid_value_optional(
+                    &format!("{subject}.pull"),
+                    "build pull expression was not resolved",
+                    pull.effective_source(),
+                );
+            }
+        }
+        if let Some(no_cache) = definition.no_cache() {
+            match no_cache.value() {
+                compose_lens::model::BuildNoCache::Boolean(value) => {
+                    settings.push(self.sourced_provenance(SourceBuildSetting::NoCache(*value), no_cache.provenance()));
+                }
+                compose_lens::model::BuildNoCache::String(_) => self.unsupported_optional(
+                    &format!("{subject}.no_cache"),
+                    "string build no_cache values have no equivalent boolean neutral value",
+                    no_cache.effective_source(),
+                ),
+            }
+        }
+    }
+
+    fn map_build_attestations(
+        &self,
+        definition: &ProjectBuildDefinition,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        if let Some(sbom) = definition.sbom() {
+            let value = match sbom.value() {
+                compose_lens::model::BuildSbom::Boolean(value) => BuildAttestation::Boolean(*value),
+                compose_lens::model::BuildSbom::String(value) => {
+                    BuildAttestation::Value(Self::protected(value, sbom.is_sensitive()))
+                }
+            };
+            settings.push(self.sourced_provenance(SourceBuildSetting::Sbom(value), sbom.provenance()));
+        }
+        if let Some(provenance) = definition.provenance() {
+            let value = match provenance.value() {
+                compose_lens::model::BuildProvenance::Boolean(value) => BuildAttestation::Boolean(*value),
+                compose_lens::model::BuildProvenance::String(value) => {
+                    BuildAttestation::Value(Self::protected(value, provenance.is_sensitive()))
+                }
+            };
+            settings.push(self.sourced_provenance(SourceBuildSetting::Provenance(value), provenance.provenance()));
+        }
+    }
+
+    fn map_build_string_collections(
+        &self,
+        definition: &ProjectBuildDefinition,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+        overlap: &mut Vec<Sourced<ImageBuildSetting>>,
+    ) {
+        self.map_build_string_list(
+            definition.entitlements(),
+            BuildSyntax::Sequence,
+            SourceBuildSetting::Entitlements,
+            settings,
+        );
+        self.map_build_string_list(
+            definition.cache_from(),
+            BuildSyntax::Sequence,
+            SourceBuildSetting::CacheFrom,
+            settings,
+        );
+        self.map_build_string_list(
+            definition.cache_to(),
+            BuildSyntax::Sequence,
+            SourceBuildSetting::CacheTo,
+            settings,
+        );
+        self.map_build_string_list(
+            definition.platforms(),
+            BuildSyntax::Sequence,
+            SourceBuildSetting::Platforms,
+            settings,
+        );
+        self.map_build_string_list(
+            definition.tags(),
+            BuildSyntax::Sequence,
+            SourceBuildSetting::Tags,
+            settings,
+        );
+        if let Some(tags) = definition.tags() {
+            let values = tags
+                .value()
+                .iter()
+                .map(|value| {
+                    self.sourced_provenance(Self::protected(value.value(), value.is_sensitive()), value.provenance())
+                })
+                .collect();
+            overlap.push(self.sourced_provenance(
+                ImageBuildSetting::ImageTags(BuildSettingValues::new(BuildSyntax::Sequence, values)),
+                tags.provenance(),
+            ));
+        }
+    }
+
+    fn map_build_string_list(
+        &self,
+        native: Option<&ProjectValue<Vec<ProjectValue<String>>>>,
+        syntax: BuildSyntax,
+        constructor: fn(BuildSettingValues<ProtectedString>) -> SourceBuildSetting,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let values = native
+            .value()
+            .iter()
+            .map(|value| {
+                self.sourced_provenance(Self::protected(value.value(), value.is_sensitive()), value.provenance())
+            })
+            .collect();
+        settings.push(self.sourced_provenance(
+            constructor(BuildSettingValues::new(syntax, values)),
+            native.provenance(),
+        ));
+    }
+
+    fn map_build_additional_contexts(
+        &self,
+        native: Option<&ProjectValue<ProjectBuildAdditionalContexts>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let (syntax, values) = match native.value() {
+            ProjectBuildAdditionalContexts::Map(entries) => (
+                BuildSyntax::Mapping,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_project_key_value(
+                            BuildContext::new(
+                                Self::protected(entry.name().value(), entry.name().is_sensitive()),
+                                Self::protected(
+                                    scalar_text(entry.value().value()).as_str(),
+                                    entry.value().is_sensitive(),
+                                ),
+                            ),
+                            entry.name().sources(),
+                            entry.value().provenance(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            ProjectBuildAdditionalContexts::List(entries) => (
+                BuildSyntax::Sequence,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_provenance(
+                            BuildContext::new(
+                                Self::protected(entry.value(), entry.is_sensitive()),
+                                ProtectedString::plain(""),
+                            ),
+                            entry.provenance(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => return,
+        };
+        settings.push(self.sourced_provenance(
+            SourceBuildSetting::AdditionalContexts(BuildSettingValues::new(syntax, values)),
+            native.provenance(),
+        ));
+    }
+
+    fn map_build_args(
+        &self,
+        native: Option<&ProjectValue<ProjectBuildArgs>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+        overlap: &mut Vec<Sourced<ImageBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let (syntax, values, overlap_values) = match native.value() {
+            ProjectBuildArgs::Map(entries) => (
+                BuildSyntax::Mapping,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_project_key_value(
+                            ImageArtifactAssignment::new(
+                                Self::protected(entry.name().value(), entry.name().is_sensitive()),
+                                scalar_option(entry.value().value())
+                                    .map(|value| Self::protected(&value, entry.value().is_sensitive())),
+                            ),
+                            entry.name().sources(),
+                            entry.value().provenance(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                entries
+                    .iter()
+                    .filter(|entry| scalar_option(entry.value().value()).is_some())
+                    .map(|entry| {
+                        self.sourced_project_key_value(
+                            ImageArtifactAssignment::new(
+                                Self::protected(entry.name().value(), entry.name().is_sensitive()),
+                                scalar_option(entry.value().value())
+                                    .map(|value| Self::protected(&value, entry.value().is_sensitive())),
+                            ),
+                            entry.name().sources(),
+                            entry.value().provenance(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            ProjectBuildArgs::List(entries) => (
+                BuildSyntax::Sequence,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_provenance(
+                            ImageArtifactAssignment::new(Self::protected(entry.value(), entry.is_sensitive()), None),
+                            entry.provenance(),
+                        )
+                    })
+                    .collect(),
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let (name, value) = literal_assignment(entry.value())?;
+                        Some(self.sourced_provenance(
+                            ImageArtifactAssignment::new(
+                                Self::protected(name, entry.is_sensitive()),
+                                Some(Self::protected(value, entry.is_sensitive())),
+                            ),
+                            entry.provenance(),
+                        ))
+                    })
+                    .collect(),
+            ),
+            _ => return,
+        };
+        let source_values = BuildSettingValues::new(syntax, values.clone());
+        settings.push(self.sourced_provenance(SourceBuildSetting::Arguments(source_values), native.provenance()));
+        if !overlap_values.is_empty() {
+            overlap.push(self.sourced_provenance(
+                ImageBuildSetting::BuildArguments(BuildSettingValues::new(syntax, overlap_values)),
+                native.provenance(),
+            ));
+        }
+    }
+
+    fn map_build_labels(
+        &self,
+        native: Option<&ProjectValue<ProjectBuildLabels>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+        overlap: &mut Vec<Sourced<ImageBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let (syntax, values) = match native.value() {
+            ProjectBuildLabels::Map(entries) => (
+                BuildSyntax::Mapping,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_project_key_value(
+                            ImageArtifactAssignment::new(
+                                Self::protected(entry.name().value(), entry.name().is_sensitive()),
+                                scalar_option(entry.value().value())
+                                    .map(|value| Self::protected(&value, entry.value().is_sensitive())),
+                            ),
+                            entry.name().sources(),
+                            entry.value().provenance(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            ProjectBuildLabels::List(entries) => (
+                BuildSyntax::Sequence,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_provenance(
+                            ImageArtifactAssignment::new(Self::protected(entry.value(), entry.is_sensitive()), None),
+                            entry.provenance(),
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => return,
+        };
+        settings.push(self.sourced_provenance(
+            SourceBuildSetting::Labels(BuildSettingValues::new(syntax, values.clone())),
+            native.provenance(),
+        ));
+        overlap.push(self.sourced_provenance(
+            ImageBuildSetting::Labels(BuildSettingValues::new(syntax, values)),
+            native.provenance(),
+        ));
+    }
+
+    fn map_build_extra_hosts(
+        &self,
+        native: Option<&ProjectValue<ProjectBuildExtraHosts>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let (syntax, values) = match native.value() {
+            ProjectBuildExtraHosts::List(entries) => (
+                BuildSyntax::Sequence,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_provenance(
+                            ImageArtifactAssignment::new(Self::protected(entry.value(), entry.is_sensitive()), None),
+                            entry.provenance(),
+                        )
+                    })
+                    .collect(),
+            ),
+            ProjectBuildExtraHosts::Map(entries) => (
+                BuildSyntax::Mapping,
+                entries
+                    .iter()
+                    .flat_map(|entry| match entry.addresses() {
+                        compose_lens::project::ProjectBuildExtraHostAddresses::Scalar(value) => {
+                            vec![self.sourced_project_key_value(
+                                ImageArtifactAssignment::new(
+                                    Self::protected(entry.hostname().value(), entry.hostname().is_sensitive()),
+                                    Some(Self::protected(value.value(), value.is_sensitive())),
+                                ),
+                                entry.hostname().sources(),
+                                value.provenance(),
+                            )]
+                        }
+                        compose_lens::project::ProjectBuildExtraHostAddresses::List(values) => values
+                            .iter()
+                            .map(|value| {
+                                self.sourced_project_key_value(
+                                    ImageArtifactAssignment::new(
+                                        Self::protected(entry.hostname().value(), entry.hostname().is_sensitive()),
+                                        Some(Self::protected(value.value(), value.is_sensitive())),
+                                    ),
+                                    entry.hostname().sources(),
+                                    value.provenance(),
+                                )
+                            })
+                            .collect(),
+                        _ => Vec::new(),
+                    })
+                    .collect(),
+            ),
+            _ => return,
+        };
+        settings.push(self.sourced_provenance(
+            SourceBuildSetting::ExtraHosts(BuildSettingValues::new(syntax, values)),
+            native.provenance(),
+        ));
+    }
+
+    fn map_build_no_cache_filter(
+        &self,
+        native: Option<&ProjectValue<ProjectBuildNoCacheFilter>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let (syntax, values) = match native.value() {
+            ProjectBuildNoCacheFilter::Scalar(value) => (
+                BuildSyntax::Scalar,
+                vec![self.sourced_provenance(Self::protected(value.value(), value.is_sensitive()), value.provenance())],
+            ),
+            ProjectBuildNoCacheFilter::List(values) => (
+                BuildSyntax::Sequence,
+                values
+                    .iter()
+                    .map(|value| {
+                        self.sourced_provenance(
+                            Self::protected(value.value(), value.is_sensitive()),
+                            value.provenance(),
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => return,
+        };
+        settings.push(self.sourced_provenance(
+            SourceBuildSetting::NoCacheFilters(BuildSettingValues::new(syntax, values)),
+            native.provenance(),
+        ));
+    }
+
+    fn map_build_ssh(
+        &self,
+        native: Option<&ProjectValue<ProjectBuildSsh>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let (syntax, values) = match native.value() {
+            ProjectBuildSsh::List(entries) => (
+                BuildSyntax::Sequence,
+                entries
+                    .iter()
+                    .map(|entry| self.sourced_provenance(ProtectedString::sensitive(entry.value()), entry.provenance()))
+                    .collect(),
+            ),
+            ProjectBuildSsh::Map(entries) => (
+                BuildSyntax::Mapping,
+                entries
+                    .iter()
+                    .map(|entry| {
+                        self.sourced_project_key_value(
+                            ProtectedString::sensitive(format!(
+                                "{}={}",
+                                entry.name().value(),
+                                scalar_text(entry.value().value())
+                            )),
+                            entry.name().sources(),
+                            entry.value().provenance(),
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => return,
+        };
+        settings.push(self.sourced_provenance(
+            SourceBuildSetting::Ssh(BuildSettingValues::new(syntax, values)),
+            native.provenance(),
+        ));
+    }
+
+    fn map_build_secrets(
+        &self,
+        native: Option<&ProjectValue<Vec<ProjectValue<ProjectGrant>>>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let values = native
+            .value()
+            .iter()
+            .filter_map(|grant| match grant.value() {
+                ProjectGrant::Short(source) => Some(self.sourced_provenance(
+                    SourceBuildSecret::new(Self::protected(source, grant.is_sensitive())),
+                    grant.provenance(),
+                )),
+                ProjectGrant::Long(long) => {
+                    let source = long.source()?;
+                    let mut secret = SourceBuildSecret::new(Self::protected(source.value(), source.is_sensitive()));
+                    if let Some(target) = long.target() {
+                        secret.set_target(Self::protected(target.value(), target.is_sensitive()));
+                    }
+                    if let Some(uid) = long.uid() {
+                        secret.set_uid(Self::protected(uid.value(), uid.is_sensitive()));
+                    }
+                    if let Some(gid) = long.gid() {
+                        secret.set_gid(Self::protected(gid.value(), gid.is_sensitive()));
+                    }
+                    if let Some(mode) = long.mode() {
+                        secret.set_mode(Self::protected(mode.value(), mode.is_sensitive()));
+                    }
+                    Some(self.sourced_provenance(secret, grant.provenance()))
+                }
+            })
+            .collect();
+        settings.push(self.sourced_provenance(
+            SourceBuildSetting::Secrets(BuildSettingValues::new(BuildSyntax::Sequence, values)),
+            native.provenance(),
+        ));
+    }
+
+    fn map_build_ulimits(
+        &self,
+        native: Option<&ProjectValue<compose_lens::project::ProjectUlimits>>,
+        settings: &mut Vec<Sourced<SourceBuildSetting>>,
+    ) {
+        let Some(native) = native else { return };
+        let values = native
+            .value()
+            .entries()
+            .iter()
+            .map(|entry| {
+                let value = entry.value();
+                let (soft, hard) = match value.value() {
+                    ProjectUlimitValue::Single(value) => {
+                        let value = self.sourced_provenance(
+                            Self::protected(value.value().value().raw(), value.is_sensitive()),
+                            value.provenance(),
+                        );
+                        (Some(value.clone()), Some(value))
+                    }
+                    ProjectUlimitValue::Range(range) => (
+                        range.soft().map(|value| {
+                            self.sourced_provenance(
+                                Self::protected(value.value().value().raw(), value.is_sensitive()),
+                                value.provenance(),
+                            )
+                        }),
+                        range.hard().map(|value| {
+                            self.sourced_provenance(
+                                Self::protected(value.value().value().raw(), value.is_sensitive()),
+                                value.provenance(),
+                            )
+                        }),
+                    ),
+                    _ => (None, None),
+                };
+                self.sourced_project_key_value(
+                    ResourceLimit::new(
+                        Self::protected(entry.value().name().value(), entry.value().name().is_sensitive()),
+                        soft,
+                        hard,
+                    ),
+                    entry.value().name().sources(),
+                    entry.provenance(),
+                )
+            })
+            .collect();
+        settings.push(self.sourced_provenance(
+            SourceBuildSetting::Ulimits(BuildSettingValues::new(BuildSyntax::Mapping, values)),
+            native.provenance(),
+        ));
     }
 
     fn map_service_labels(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
@@ -2409,6 +3112,29 @@ impl<'a> Mapping<'a> {
             .ok()
             .map(|span| Provenance::spanned(source_id, span))
     }
+}
+
+fn scalar_text(value: &ComposeScalar) -> String {
+    match value {
+        ComposeScalar::Null => String::new(),
+        ComposeScalar::Boolean(value) => value.to_string(),
+        ComposeScalar::Number(value) | ComposeScalar::String(value) => value.clone(),
+    }
+}
+
+fn scalar_option(value: &ComposeScalar) -> Option<String> {
+    match value {
+        ComposeScalar::Null => None,
+        value => Some(scalar_text(value)),
+    }
+}
+
+fn literal_assignment(value: &str) -> Option<(&str, &str)> {
+    let (name, value) = value.split_once('=')?;
+    if name.is_empty() || name.contains('$') || value.contains('$') {
+        return None;
+    }
+    Some((name, value))
 }
 
 fn map_protocol(protocol: Option<&str>) -> Protocol {

@@ -6,10 +6,34 @@ use boxferry_compose::{ComposeExporter, ComposeRuntime, DOCKER_COMPOSE_TARGET, P
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, TargetProfile};
 use boxferry_model::{
     Application, Command, Config, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
-    EnvironmentVariable, Healthcheck, HostAddress, HostMapping, Identifier, ImageReference, MetadataLabel, Mount,
-    MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceOwnership,
-    RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service, ServiceGroup, SourceId, Sourced, Volume,
+    EnvironmentVariable, Healthcheck, HostAddress, HostMapping, Identifier, ImageAcquisition, ImageBuild,
+    ImageReference, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
+    Provenance, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service, ServiceGroup,
+    SourceId, Sourced, Volume,
 };
+
+#[test]
+fn reports_retained_image_build_resources_as_compose_generation_losses() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("build.yaml")?);
+    let mut application = minimal_application()?;
+    application.add_image_acquisition(Sourced::from_source(
+        ImageAcquisition::new(Identifier::new("base-image")?),
+        origin.clone(),
+    ))?;
+    application.add_image_build(Sourced::from_source(
+        ImageBuild::new(Identifier::new("web-build")?),
+        origin,
+    ))?;
+    let exporter = ComposeExporter::new()?;
+    let plan = exporter.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(2, 30, 0))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.kind() == ConversionKind::Unsupported && outcome.subject() == "image_builds.web-build"
+    }));
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.kind() == ConversionKind::Unsupported && outcome.subject() == "image_acquisitions.base-image"
+    }));
+    Ok(())
+}
 
 #[test]
 fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values() -> Result<(), Box<dyn Error>> {

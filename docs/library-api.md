@@ -70,6 +70,12 @@ current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `C
 dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
 `boxferry::docker`, so embedded callers do not need to guess a second crate version.
 
+The unconditional model re-exports include image artifact resources and their typed settings:
+`ImageAcquisition`, `ImageAcquisitionSetting`, `ImageBuild`, `ImageBuildSetting`,
+`BuildSourceDeclaration`, `SourceBuildSetting`, `BuildSettingValues`, and their protected helper
+types. Services reference those declared resources independently of their runtime `ImageReference`;
+callers retain both authored source intent and policy-controlled target losses.
+
 `QuadletSource::parse` accepts only caller-provided named in-memory documents. `QuadletImporter`
 maps the documented exact image, container-name, safe command/environment, scalar-port,
 named/absolute-mount, named-network, metadata-label, host-mapping, and execution-context subset

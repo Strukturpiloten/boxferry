@@ -7,15 +7,17 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Application, Command, EnvironmentFile, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck,
-    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
-    ImageReference, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
-    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecurityOption,
-    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceSpan, Sourced, Volume,
+    Application, BuildSettingValues, BuildSyntax, Command, EnvironmentFile, EnvironmentFileSyntax, EnvironmentValue,
+    EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress,
+    HostAddressKind, HostMapping, Identifier, ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment,
+    ImageBuild, ImageBuildSetting, ImageReference, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port,
+    ProtectedString, Protocol, Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy,
+    Secret, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
+    SourceSpan, Sourced, Volume,
 };
 use quadlet_lens::model::{
-    ContainerKey, EntryKind, PodKey, QuadletUnitType, SectionKind, TypedEntry, TypedSection, UnitReferenceKind,
-    ValueKind,
+    BuildKey, ContainerKey, EntryKind, ImageKey, PodKey, QuadletUnitType, SectionKind, TypedEntry, TypedSection,
+    UnitReferenceKind, ValueKind,
 };
 
 use crate::QuadletSource;
@@ -92,7 +94,11 @@ impl ImportAdapter for QuadletImporter {
                         mapping.invalid_model("services", filename, &error.to_string(), None);
                     }
                 }
-                QuadletUnitType::Network | QuadletUnitType::Volume | QuadletUnitType::Pod => {}
+                QuadletUnitType::Network
+                | QuadletUnitType::Volume
+                | QuadletUnitType::Pod
+                | QuadletUnitType::Image
+                | QuadletUnitType::Build => {}
                 _ => mapping.unsupported(
                     &format!("quadlet.{filename}"),
                     filename,
@@ -210,6 +216,23 @@ impl<'a> Mapping<'a> {
             let document_origin = self.document_origin(document.source_span());
 
             match document.unit_type() {
+                QuadletUnitType::Image => {
+                    if let Some(name) = self.identifier(stem, "image_acquisitions", document_origin.clone()) {
+                        let acquisition =
+                            self.map_image_definition(filename, name, document.sections(), document_origin);
+                        if let Err(error) = application.add_image_acquisition(acquisition) {
+                            self.invalid_model("image_acquisitions", filename, &error.to_string(), None);
+                        }
+                    }
+                }
+                QuadletUnitType::Build => {
+                    if let Some(name) = self.identifier(stem, "image_builds", document_origin.clone()) {
+                        let build = self.map_build_definition(filename, name, document.sections(), document_origin);
+                        if let Err(error) = application.add_image_build(build) {
+                            self.invalid_model("image_builds", filename, &error.to_string(), None);
+                        }
+                    }
+                }
                 QuadletUnitType::Network => {
                     if let Some(name) = self.identifier(stem, "networks", document_origin.clone()) {
                         let network = Network::new(name, ResourceOwnership::Application);
@@ -242,6 +265,280 @@ impl<'a> Mapping<'a> {
             }
         }
         (pod_order, pod_groups)
+    }
+
+    fn map_image_definition(
+        &mut self,
+        filename: &str,
+        name: Identifier,
+        sections: &[TypedSection],
+        document_origin: Provenance,
+    ) -> Sourced<ImageAcquisition> {
+        let subject = format!("image_acquisitions.{}", name.as_str());
+        let mut resource = ImageAcquisition::new(name);
+        let mut settings = Vec::new();
+        let mut origins = Vec::new();
+        let mut singletons = BTreeSet::new();
+        for section in sections {
+            for entry in section.entries() {
+                let origin = self.entry_origin(entry);
+                origins.push(origin.clone());
+                if !entry.kind().is_repeatable() && !singletons.insert(entry.kind()) {
+                    self.invalid_model(
+                        &format!("{subject}.{}", entry.key().text()),
+                        filename,
+                        "Quadlet image singleton is declared more than once",
+                        Some(origin),
+                    );
+                    continue;
+                }
+                let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+                    continue;
+                };
+                let protected = |s: &str| ProtectedString::plain(s);
+                let setting = match (section.kind(), entry.kind()) {
+                    (SectionKind::Image, EntryKind::Image(ImageKey::Image)) => {
+                        ImageAcquisitionSetting::Image(protected(value))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::ImageTag)) => {
+                        ImageAcquisitionSetting::ImageTags(repeated(protected(value), origin.clone()))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::ServiceName)) => {
+                        ImageAcquisitionSetting::ServiceName(protected(value))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::AllTags)) => {
+                        let Some(value) = parse_quadlet_bool(value) else {
+                            self.invalid_model(
+                                &format!("{subject}.all_tags"),
+                                filename,
+                                "AllTags must be a Quadlet boolean",
+                                Some(origin),
+                            );
+                            continue;
+                        };
+                        ImageAcquisitionSetting::AllTags(value)
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::Arch)) => {
+                        ImageAcquisitionSetting::Architecture(protected(value))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::AuthFile)) => {
+                        ImageAcquisitionSetting::AuthFile(ProtectedString::sensitive(value))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::CertDir)) => {
+                        ImageAcquisitionSetting::CertificateDirectory(protected(value))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::ContainersConfModule)) => {
+                        ImageAcquisitionSetting::ContainersConfigModules(repeated(protected(value), origin.clone()))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::Creds)) => {
+                        ImageAcquisitionSetting::Credentials(ProtectedString::sensitive(value))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::DecryptionKey)) => {
+                        ImageAcquisitionSetting::DecryptionKey(ProtectedString::sensitive(value))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::GlobalArgs)) => {
+                        ImageAcquisitionSetting::GlobalArguments(repeated(protected(value), origin.clone()))
+                    }
+                    (SectionKind::Image, EntryKind::Image(ImageKey::OS)) => {
+                        ImageAcquisitionSetting::OperatingSystem(protected(value))
+                    }
+                    _ => {
+                        self.unsupported(
+                            &format!("{subject}.quadlet.{}", entry.key().text()),
+                            filename,
+                            entry.key().text(),
+                            origin,
+                        );
+                        continue;
+                    }
+                };
+                self.exact(format!("{subject}.{}", entry.key().text()), Some(origin.clone()));
+                settings.push(Sourced::from_source(setting, origin));
+            }
+        }
+        resource.set_settings_with_origins(settings, origins);
+        Sourced::from_source(resource, document_origin)
+    }
+
+    fn map_build_definition(
+        &mut self,
+        filename: &str,
+        name: Identifier,
+        sections: &[TypedSection],
+        document_origin: Provenance,
+    ) -> Sourced<ImageBuild> {
+        let subject = format!("image_builds.{}", name.as_str());
+        let mut resource = ImageBuild::new(name);
+        let mut settings = Vec::new();
+        let mut origins = Vec::new();
+        let mut singletons = BTreeSet::new();
+        for section in sections {
+            for entry in section.entries() {
+                let origin = self.entry_origin(entry);
+                origins.push(origin.clone());
+                if !entry.kind().is_repeatable() && !singletons.insert(entry.kind()) {
+                    self.invalid_model(
+                        &format!("{subject}.{}", entry.key().text()),
+                        filename,
+                        "Quadlet build singleton is declared more than once",
+                        Some(origin),
+                    );
+                    continue;
+                }
+                let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+                    continue;
+                };
+                let setting = if is_repeated_build_key(entry.kind()) {
+                    self.map_repeated_build_setting(filename, &subject, section, entry, value, &origin)
+                } else {
+                    self.map_singleton_build_setting(filename, &subject, section, entry, value, &origin)
+                };
+                let Some(setting) = setting else { continue };
+                self.exact(format!("{subject}.{}", entry.key().text()), Some(origin.clone()));
+                settings.push(Sourced::from_source(setting, origin));
+            }
+        }
+        resource.set_settings_with_origins(settings, origins);
+        Sourced::from_source(resource, document_origin)
+    }
+
+    fn map_singleton_build_setting(
+        &mut self,
+        filename: &str,
+        subject: &str,
+        section: &TypedSection,
+        entry: &TypedEntry,
+        value: &str,
+        origin: &Provenance,
+    ) -> Option<ImageBuildSetting> {
+        let plain = ProtectedString::plain;
+        match (section.kind(), entry.kind()) {
+            (SectionKind::Build, EntryKind::Build(BuildKey::SetWorkingDirectory)) => {
+                Some(ImageBuildSetting::SetWorkingDirectory(plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::File)) => Some(ImageBuildSetting::RecipeFile(plain(value))),
+            (SectionKind::Build, EntryKind::Build(BuildKey::Target)) => Some(ImageBuildSetting::Target(plain(value))),
+            (SectionKind::Build, EntryKind::Build(BuildKey::Network)) => Some(ImageBuildSetting::Network(plain(value))),
+            (SectionKind::Build, EntryKind::Build(BuildKey::Arch)) => {
+                Some(ImageBuildSetting::Architecture(plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::Variant)) => Some(ImageBuildSetting::Variant(plain(value))),
+            (SectionKind::Build, EntryKind::Build(BuildKey::Pull)) => Some(ImageBuildSetting::PullPolicy(plain(value))),
+            (SectionKind::Build, EntryKind::Build(BuildKey::Retry)) => Some(ImageBuildSetting::Retry(plain(value))),
+            (SectionKind::Build, EntryKind::Build(BuildKey::RetryDelay)) => {
+                Some(ImageBuildSetting::RetryDelay(plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::AuthFile)) => {
+                Some(ImageBuildSetting::AuthFile(ProtectedString::sensitive(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::IgnoreFile)) => {
+                Some(ImageBuildSetting::IgnoreFile(plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::ServiceName)) => {
+                Some(ImageBuildSetting::ServiceName(plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::TLSVerify)) => {
+                let Some(value) = parse_quadlet_bool(value) else {
+                    self.invalid_model(
+                        &format!("{subject}.tls_verify"),
+                        filename,
+                        "TLSVerify must be a Quadlet boolean",
+                        Some(origin.clone()),
+                    );
+                    return None;
+                };
+                Some(ImageBuildSetting::TlsVerify(value))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::ForceRM)) => {
+                let Some(value) = parse_quadlet_bool(value) else {
+                    self.invalid_model(
+                        &format!("{subject}.force_remove"),
+                        filename,
+                        "ForceRM must be a Quadlet boolean",
+                        Some(origin.clone()),
+                    );
+                    return None;
+                };
+                Some(ImageBuildSetting::ForceRemove(value))
+            }
+            _ => {
+                self.unsupported(
+                    &format!("{subject}.quadlet.{}", entry.key().text()),
+                    filename,
+                    entry.key().text(),
+                    origin.clone(),
+                );
+                None
+            }
+        }
+    }
+
+    fn map_repeated_build_setting(
+        &mut self,
+        filename: &str,
+        subject: &str,
+        section: &TypedSection,
+        entry: &TypedEntry,
+        value: &str,
+        origin: &Provenance,
+    ) -> Option<ImageBuildSetting> {
+        let plain = ProtectedString::plain;
+        let repeated_plain = |value| repeated(plain(value), origin.clone());
+        let repeated_assignment = |value| repeated(artifact_assignment(value, true), origin.clone());
+        match (section.kind(), entry.kind()) {
+            (SectionKind::Build, EntryKind::Build(BuildKey::ImageTag)) => {
+                Some(ImageBuildSetting::ImageTags(repeated_plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::Label)) => {
+                Some(ImageBuildSetting::Labels(repeated_assignment(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::BuildArg)) => {
+                Some(ImageBuildSetting::BuildArguments(repeated_assignment(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::Secret)) => Some(ImageBuildSetting::Secrets(repeated(
+                ProtectedString::sensitive(value),
+                origin.clone(),
+            ))),
+            (SectionKind::Build, EntryKind::Build(BuildKey::PodmanArgs)) => Some(ImageBuildSetting::RuntimeArguments(
+                repeated(ProtectedString::sensitive(value), origin.clone()),
+            )),
+            (SectionKind::Build, EntryKind::Build(BuildKey::GroupAdd)) => {
+                Some(ImageBuildSetting::GroupAdd(repeated_plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::DNS)) => {
+                Some(ImageBuildSetting::DnsServers(repeated_plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::DNSOption)) => {
+                Some(ImageBuildSetting::DnsOptions(repeated_plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::DNSSearch)) => {
+                Some(ImageBuildSetting::DnsSearchDomains(repeated_plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::Annotation)) => {
+                Some(ImageBuildSetting::Annotations(repeated_assignment(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::Environment)) => {
+                Some(ImageBuildSetting::Environment(repeated_assignment(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::ContainersConfModule)) => {
+                Some(ImageBuildSetting::ContainersConfigModules(repeated_plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::GlobalArgs)) => {
+                Some(ImageBuildSetting::GlobalArguments(repeated_plain(value)))
+            }
+            (SectionKind::Build, EntryKind::Build(BuildKey::Volume)) => {
+                Some(ImageBuildSetting::Volumes(repeated_plain(value)))
+            }
+            _ => {
+                self.unsupported(
+                    &format!("{subject}.quadlet.{}", entry.key().text()),
+                    filename,
+                    entry.key().text(),
+                    origin.clone(),
+                );
+                None
+            }
+        }
     }
 
     fn finish_pod_groups(
@@ -942,12 +1239,25 @@ impl<'a> Mapping<'a> {
         let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
             return;
         };
-        if matches!(
-            entry.value_kind(),
-            ValueKind::UnitReference(UnitReferenceKind::Image | UnitReferenceKind::Build)
-        ) {
-            self.unsupported(&subject, filename, entry.key().text(), origin);
-            return;
+        match entry.value_kind() {
+            ValueKind::UnitReference(UnitReferenceKind::Image) => {
+                let Some(name) = self.identifier(unit_stem(value), &format!("{subject}.acquisition"), origin.clone())
+                else {
+                    return;
+                };
+                service.set_image_acquisition(Sourced::from_source(name, origin.clone()));
+                self.exact(format!("{subject}.acquisition"), Some(origin));
+                return;
+            }
+            ValueKind::UnitReference(UnitReferenceKind::Build) => {
+                let Some(name) = self.identifier(unit_stem(value), &format!("{subject}.build"), origin.clone()) else {
+                    return;
+                };
+                service.set_image_build(Sourced::from_source(name, origin.clone()));
+                self.exact(format!("{subject}.build"), Some(origin));
+                return;
+            }
+            _ => {}
         }
 
         match ImageReference::parse(value) {
@@ -2428,4 +2738,52 @@ fn is_safe_mount_part(value: &str) -> bool {
 
 fn is_ipv4_address(value: &str) -> bool {
     value.parse::<std::net::Ipv4Addr>().is_ok()
+}
+
+fn repeated<T>(value: T, origin: Provenance) -> BuildSettingValues<T> {
+    BuildSettingValues::new(BuildSyntax::Repeated, vec![Sourced::from_source(value, origin)])
+}
+
+fn is_repeated_build_key(kind: EntryKind) -> bool {
+    matches!(
+        kind,
+        EntryKind::Build(
+            BuildKey::ImageTag
+                | BuildKey::Label
+                | BuildKey::BuildArg
+                | BuildKey::Secret
+                | BuildKey::PodmanArgs
+                | BuildKey::GroupAdd
+                | BuildKey::DNS
+                | BuildKey::DNSOption
+                | BuildKey::DNSSearch
+                | BuildKey::Annotation
+                | BuildKey::Environment
+                | BuildKey::ContainersConfModule
+                | BuildKey::GlobalArgs
+                | BuildKey::Volume
+        )
+    )
+}
+
+fn artifact_assignment(value: &str, sensitive: bool) -> ImageArtifactAssignment {
+    let (name, value) = value
+        .split_once('=')
+        .map_or((value, None), |(name, value)| (name, Some(value)));
+    let protect = |value: &str| {
+        if sensitive {
+            ProtectedString::sensitive(value)
+        } else {
+            ProtectedString::plain(value)
+        }
+    };
+    ImageArtifactAssignment::new(protect(name), value.map(protect))
+}
+
+fn parse_quadlet_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" | "yes" | "1" => Some(true),
+        "false" | "no" | "0" => Some(false),
+        _ => None,
+    }
 }

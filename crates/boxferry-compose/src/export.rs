@@ -241,6 +241,21 @@ impl<'a> Mapping<'a> {
             }
         }
 
+        for acquisition in self.application.image_acquisitions() {
+            self.unsupported(
+                &format!("image_acquisitions.{}", acquisition.value().name().as_str()),
+                "ComposeLens 0.1.16 generation does not expose image-acquisition declarations",
+                acquisition.origins(),
+            );
+        }
+        for build in self.application.image_builds() {
+            self.unsupported(
+                &format!("image_builds.{}", build.value().name().as_str()),
+                "ComposeLens 0.1.16 generation does not expose build declarations",
+                build.origins(),
+            );
+        }
+
         for config in self.application.configs() {
             self.unsupported(
                 &format!("configs.{}", config.value().name().as_str()),

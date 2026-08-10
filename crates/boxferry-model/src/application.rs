@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt, net::IpAddr};
 
-use crate::{ImageReference, ProtectedString, Provenance, Sourced};
+use crate::{ImageAcquisition, ImageBuild, ImageReference, ProtectedString, Provenance, Sourced};
 
 /// Error raised when constructing an invalid neutral model value.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,6 +49,20 @@ pub enum ModelError {
         /// Conflicting service-group name.
         replacement: String,
     },
+    /// A service referenced an image acquisition absent from the application.
+    UnknownImageAcquisitionReference {
+        /// Referencing service name.
+        service: String,
+        /// Missing image-acquisition resource name.
+        acquisition: String,
+    },
+    /// A service referenced an image build absent from the application.
+    UnknownImageBuildReference {
+        /// Referencing service name.
+        service: String,
+        /// Missing image-build resource name.
+        build: String,
+    },
     /// An image reference had invalid component structure.
     InvalidImageReference(&'static str),
     /// A container port was zero.
@@ -88,6 +102,16 @@ impl fmt::Display for ModelError {
                 formatter,
                 "service `{service}` belongs to both service groups `{existing}` and `{replacement}`"
             ),
+            Self::UnknownImageAcquisitionReference { service, acquisition } => write!(
+                formatter,
+                "service `{service}` references unknown image acquisition `{acquisition}`"
+            ),
+            Self::UnknownImageBuildReference { service, build } => {
+                write!(
+                    formatter,
+                    "service `{service}` references unknown image build `{build}`"
+                )
+            }
             Self::InvalidImageReference(reason) => write!(formatter, "invalid image reference: {reason}"),
             Self::ZeroContainerPort => formatter.write_str("container port must not be zero"),
             Self::InvalidHealthcheckRetries => {
@@ -1327,6 +1351,8 @@ pub struct Service {
     name: Identifier,
     runtime_name: Option<Sourced<ProtectedString>>,
     image: Option<Sourced<ImageReference>>,
+    image_acquisition: Option<Sourced<Identifier>>,
+    image_build: Option<Sourced<Identifier>>,
     command: Option<Sourced<Command>>,
     restart_policy: Option<Sourced<RestartPolicy>>,
     healthcheck: Option<Sourced<Healthcheck>>,
@@ -1380,6 +1406,8 @@ impl Service {
             name,
             runtime_name: None,
             image: None,
+            image_acquisition: None,
+            image_build: None,
             command: None,
             restart_policy: None,
             healthcheck: None,
@@ -1452,6 +1480,32 @@ impl Service {
     #[must_use]
     pub const fn image(&self) -> Option<&Sourced<ImageReference>> {
         self.image.as_ref()
+    }
+
+    /// References a separately declared image-acquisition resource.
+    ///
+    /// This does not replace [`Self::image`], which remains the runtime container image reference.
+    pub fn set_image_acquisition(&mut self, acquisition: Sourced<Identifier>) {
+        self.image_acquisition = Some(acquisition);
+    }
+
+    /// Returns the separately declared image-acquisition resource reference.
+    #[must_use]
+    pub const fn image_acquisition(&self) -> Option<&Sourced<Identifier>> {
+        self.image_acquisition.as_ref()
+    }
+
+    /// References a separately declared image-build resource.
+    ///
+    /// This does not replace [`Self::image`] or any container runtime settings.
+    pub fn set_image_build(&mut self, build: Sourced<Identifier>) {
+        self.image_build = Some(build);
+    }
+
+    /// Returns the separately declared image-build resource reference.
+    #[must_use]
+    pub const fn image_build(&self) -> Option<&Sourced<Identifier>> {
+        self.image_build.as_ref()
     }
 
     /// Sets the command override.
@@ -1956,6 +2010,8 @@ impl Service {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Application {
     name: Identifier,
+    image_acquisitions: Vec<Sourced<ImageAcquisition>>,
+    image_builds: Vec<Sourced<ImageBuild>>,
     services: Vec<Sourced<Service>>,
     service_groups: Vec<Sourced<ServiceGroup>>,
     volumes: Vec<Sourced<Volume>>,
@@ -1970,6 +2026,8 @@ impl Application {
     pub const fn new(name: Identifier) -> Self {
         Self {
             name,
+            image_acquisitions: Vec::new(),
+            image_builds: Vec::new(),
             services: Vec::new(),
             service_groups: Vec::new(),
             volumes: Vec::new(),
@@ -1985,17 +2043,85 @@ impl Application {
         &self.name
     }
 
+    /// Adds a uniquely named image-acquisition resource while preserving declaration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DuplicateResource`] for a duplicate acquisition name.
+    pub fn add_image_acquisition(&mut self, acquisition: Sourced<ImageAcquisition>) -> Result<(), ModelError> {
+        ensure_unique(
+            "image acquisition",
+            acquisition.value().name(),
+            self.image_acquisitions.iter().map(|candidate| candidate.value().name()),
+        )?;
+        self.image_acquisitions.push(acquisition);
+        Ok(())
+    }
+
+    /// Returns image-acquisition resources in declaration order.
+    #[must_use]
+    pub fn image_acquisitions(&self) -> &[Sourced<ImageAcquisition>] {
+        &self.image_acquisitions
+    }
+
+    /// Adds a uniquely named image-build resource while preserving declaration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::DuplicateResource`] for a duplicate build name.
+    pub fn add_image_build(&mut self, build: Sourced<ImageBuild>) -> Result<(), ModelError> {
+        ensure_unique(
+            "image build",
+            build.value().name(),
+            self.image_builds.iter().map(|candidate| candidate.value().name()),
+        )?;
+        self.image_builds.push(build);
+        Ok(())
+    }
+
+    /// Returns image-build resources in declaration order.
+    #[must_use]
+    pub fn image_builds(&self) -> &[Sourced<ImageBuild>] {
+        &self.image_builds
+    }
+
     /// Adds a uniquely named service while preserving declaration order.
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError::DuplicateResource`] for a duplicate service name.
+    /// Returns [`ModelError::DuplicateResource`] for a duplicate service name,
+    /// [`ModelError::UnknownImageAcquisitionReference`], or
+    /// [`ModelError::UnknownImageBuildReference`] for an unresolved artifact reference.
     pub fn add_service(&mut self, service: Sourced<Service>) -> Result<(), ModelError> {
         ensure_unique(
             "service",
             service.value().name(),
             self.services.iter().map(|candidate| candidate.value().name()),
         )?;
+        if let Some(acquisition) = service.value().image_acquisition() {
+            if !self
+                .image_acquisitions
+                .iter()
+                .any(|candidate| candidate.value().name() == acquisition.value())
+            {
+                return Err(ModelError::UnknownImageAcquisitionReference {
+                    service: service.value().name().as_str().to_owned(),
+                    acquisition: acquisition.value().as_str().to_owned(),
+                });
+            }
+        }
+        if let Some(build) = service.value().image_build() {
+            if !self
+                .image_builds
+                .iter()
+                .any(|candidate| candidate.value().name() == build.value())
+            {
+                return Err(ModelError::UnknownImageBuildReference {
+                    service: service.value().name().as_str().to_owned(),
+                    build: build.value().as_str().to_owned(),
+                });
+            }
+        }
         self.services.push(service);
         Ok(())
     }
@@ -2174,7 +2300,7 @@ mod tests {
         ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, Service, ServiceDependency,
         ServiceDependencyCondition, ServiceGroup,
     };
-    use crate::{ProtectedString, Sourced};
+    use crate::{ImageAcquisition, ImageBuild, ProtectedString, Sourced};
 
     #[test]
     fn preserves_service_order_and_rejects_duplicate_names() -> Result<(), String> {
@@ -2208,6 +2334,45 @@ mod tests {
             service.runtime_name().map(|name| name.value().expose()),
             Some("production-web")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn image_artifact_resources_are_ordered_unique_and_referenced_explicitly() -> Result<(), String> {
+        let mut application = Application::new(id("example")?);
+        application
+            .add_image_acquisition(Sourced::generated(ImageAcquisition::new(id("base-image")?)))
+            .map_err(|error| error.to_string())?;
+        application
+            .add_image_build(Sourced::generated(ImageBuild::new(id("web-build")?)))
+            .map_err(|error| error.to_string())?;
+
+        let mut web = Service::new(id("web")?);
+        web.set_image_acquisition(Sourced::generated(id("base-image")?));
+        web.set_image_build(Sourced::generated(id("web-build")?));
+        application
+            .add_service(Sourced::generated(web))
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(
+            application.image_acquisitions()[0].value().name().as_str(),
+            "base-image"
+        );
+        assert_eq!(application.image_builds()[0].value().name().as_str(), "web-build");
+        assert!(matches!(
+            application.add_image_build(Sourced::generated(ImageBuild::new(id("web-build")?))),
+            Err(ModelError::DuplicateResource {
+                kind: "image build",
+                ..
+            })
+        ));
+
+        let mut missing = Service::new(id("missing")?);
+        missing.set_image_build(Sourced::generated(id("absent-build")?));
+        assert!(matches!(
+            application.add_service(Sourced::generated(missing)),
+            Err(ModelError::UnknownImageBuildReference { .. })
+        ));
         Ok(())
     }
 
