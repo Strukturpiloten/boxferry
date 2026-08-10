@@ -115,6 +115,48 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
 }
 
 #[test]
+fn exports_dns_collections_in_order_and_preserves_explicit_empty_lists() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("dns.compose.yaml")?);
+    let mut application = Application::new(Identifier::new("dns")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/web:1")?,
+        origin.clone(),
+    ));
+    service.set_dns_servers_with_origins(
+        vec![
+            Sourced::from_source(ProtectedString::plain("1.1.1.1"), origin.clone()),
+            Sourced::from_source(ProtectedString::plain("8.8.8.8"), origin.clone()),
+        ],
+        vec![origin.clone()],
+    );
+    service.set_dns_options_with_origins(Vec::new(), vec![origin.clone()]);
+    service.set_dns_search_domains_with_origins(
+        vec![Sourced::from_source(
+            ProtectedString::plain("example.test"),
+            origin.clone(),
+        )],
+        vec![origin],
+    );
+    application.add_service(Sourced::generated(service))?;
+    let plan = ComposeExporter::new()?
+        .with_runtime(ComposeRuntime::DockerEngine(version(29, 7, 1)))
+        .plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let output = authorized.output().ok_or("Compose output expected")?;
+    let text = output.text();
+    assert!(text.contains("dns:\n      - \"1.1.1.1\"\n      - \"8.8.8.8\""));
+    assert!(text.contains("dns_opt: []"));
+    assert!(text.contains("dns_search:\n      - \"example.test\""));
+    Ok(())
+}
+
+#[test]
 fn reports_an_explicit_container_name_outside_the_compose_grammar() -> Result<(), Box<dyn Error>> {
     let origin = Provenance::source(SourceId::new("invalid-name.yaml")?);
     let mut service = Service::new(Identifier::new("web")?);

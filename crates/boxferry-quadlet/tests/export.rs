@@ -156,6 +156,148 @@ fn exports_all_ten_settings_at_podman_5_4_floor() -> Result<(), Box<dyn Error>> 
 }
 
 #[test]
+fn exports_ordered_dns_keys_and_rejects_duplicate_options() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("dns")?);
+    let mut service = image_service("web")?;
+    service.set_dns_servers(vec![
+        sourced(ProtectedString::plain("1.1.1.1"))?,
+        sourced(ProtectedString::plain("8.8.8.8"))?,
+    ]);
+    service.set_dns_options(vec![
+        sourced(ProtectedString::plain("ndots:5"))?,
+        sourced(ProtectedString::plain("none"))?,
+    ]);
+    service.set_dns_search_domains(vec![sourced(ProtectedString::plain("example.test"))?]);
+    application.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(5, 4, 0)))?)?;
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let text = authorized
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("DNS output expected")?;
+    for line in [
+        "DNS=1.1.1.1",
+        "DNS=8.8.8.8",
+        "DNSOption=ndots:5",
+        "DNSOption=none",
+        "DNSSearch=example.test",
+    ] {
+        assert!(text.contains(line), "missing {line} in {text}");
+    }
+
+    let mut duplicate = Application::new(id("duplicate-dns")?);
+    let mut service = image_service("web")?;
+    service.set_dns_options(vec![
+        sourced(ProtectedString::plain("rotate"))?,
+        sourced(ProtectedString::plain("rotate"))?,
+    ]);
+    duplicate.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&duplicate, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.dns_opt" && outcome.kind() == ConversionKind::Invalid)
+    );
+
+    let mut unsafe_values = Application::new(id("unsafe-dns")?);
+    let mut service = image_service("web")?;
+    service.set_dns_servers(Vec::new());
+    service.set_dns_options(vec![sourced(ProtectedString::plain("%h"))?]);
+    service.set_dns_search_domains(vec![sourced(ProtectedString::plain("."))?]);
+    unsafe_values.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&unsafe_values, &podman_target(Some(version(6, 0, 2)))?)?;
+    for subject in [
+        "services.web.dns",
+        "services.web.dns_opt[0]",
+        "services.web.dns_search[0]",
+    ] {
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported)
+        );
+    }
+
+    let mut special = Application::new(id("special-dns")?);
+    let mut service = image_service("web")?;
+    service.set_dns_servers(vec![sourced(ProtectedString::plain("none"))?]);
+    special.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&special, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.dns[0]" && outcome.kind() == ConversionKind::Unsupported)
+    );
+    Ok(())
+}
+
+#[test]
+fn dns_keys_obey_target_boundaries_and_stay_on_grouped_containers() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("dns-boundary")?);
+    for name in ["web", "worker"] {
+        let mut service = image_service(name)?;
+        service.set_dns_servers(vec![sourced(ProtectedString::plain("1.1.1.1"))?]);
+        service.set_dns_options(vec![sourced(ProtectedString::plain("ndots:5"))?]);
+        service.set_dns_search_domains(vec![sourced(ProtectedString::plain("example.test"))?]);
+        application.add_service(sourced(service)?)?;
+    }
+    let exporter = QuadletExporter::new()?;
+    for target in [
+        podman_target(Some(version(5, 4, 0)))?,
+        podman_target(Some(version(6, 0, 2)))?,
+    ] {
+        let plan = exporter.plan(&application, &target)?;
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == "services.web.dns[0]" && outcome.kind() == ConversionKind::Exact)
+        );
+    }
+    for target in [
+        TargetProfile::new("podman", version(5, 3, 0), Some(version(5, 3, 0)))?,
+        TargetProfile::new("podman", version(6, 0, 3), Some(version(6, 0, 3)))?,
+    ] {
+        let plan = exporter.plan(&application, &target)?;
+        assert!(plan.candidate().is_none());
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() != ConversionKind::Exact)
+        );
+    }
+
+    let plan = QuadletExporter::new()?
+        .with_grouping_policy(QuadletGroupingPolicy::SinglePod)
+        .plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    let pod = plan
+        .candidate()
+        .and_then(|output| output.file("dns-boundary.pod"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("grouped pod expected")?;
+    for key in ["DNS=", "DNSOption=", "DNSSearch="] {
+        assert!(!pod.contains(key), "unexpected {key} in {pod}");
+    }
+    for service in ["web", "worker"] {
+        let text = plan
+            .candidate()
+            .and_then(|output| output.file(&format!("{service}.container")))
+            .map(boxferry_quadlet::QuadletFile::text)
+            .ok_or("grouped container expected")?;
+        assert!(text.contains("DNS=1.1.1.1\nDNSOption=ndots:5\nDNSSearch=example.test\n"));
+        for field in ["dns", "dns_opt", "dns_search"] {
+            assert!(
+                plan.outcomes()
+                    .iter()
+                    .any(|outcome| outcome.subject() == format!("services.{service}.{field}")
+                        && outcome.kind() == ConversionKind::Unsupported)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn reports_unsafe_released_container_settings_without_dropping_them() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("unsafe-settings")?);
     let mut service = image_service("web")?;

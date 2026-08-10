@@ -25,9 +25,9 @@ use compose_lens::model::{
     TmpfsItemKind, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
-    ProjectDependsOn, ProjectDevice, ProjectEnvironment, ProjectEnvironmentFile, ProjectFieldReference, ProjectGrant,
-    ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService, ProjectSysctls, ProjectTmpfs,
-    ProjectUlimitValue, ProjectValue, ProjectView, build_project_view,
+    ProjectDependsOn, ProjectDevice, ProjectDns, ProjectDnsSearch, ProjectEnvironment, ProjectEnvironmentFile,
+    ProjectFieldReference, ProjectGrant, ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService,
+    ProjectSysctls, ProjectTmpfs, ProjectUlimitValue, ProjectValue, ProjectView, build_project_view,
 };
 use compose_lens::source::SourceSpan as ComposeSpan;
 
@@ -232,6 +232,7 @@ impl<'a> Mapping<'a> {
         }
         self.map_execution_context(&subject, native, &mut service);
         self.map_released_container_settings(&subject, native, &mut service);
+        self.map_dns(&subject, native, &mut service);
         self.map_service_environment(&subject, native, &mut service);
         if let Some(labels) = native.labels() {
             self.map_labels(&subject, labels.value(), &mut service);
@@ -441,6 +442,132 @@ impl<'a> Mapping<'a> {
         self.map_sysctls(service_subject, native, service);
         self.map_ulimits(service_subject, native, service);
         self.map_devices_and_stop_signal(service_subject, native, service);
+    }
+
+    fn map_dns(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(dns) = native.dns() {
+            let values = match dns.value() {
+                ProjectDns::Scalar(value) => Some(std::slice::from_ref(value)),
+                ProjectDns::List(values) => Some(values.as_slice()),
+                _ => {
+                    self.unsupported_optional(
+                        &format!("{subject}.dns"),
+                        "DNS form is newer than this adapter",
+                        dns.effective_source(),
+                    );
+                    None
+                }
+            };
+            if let Some(values) = values {
+                let mapped = values
+                    .iter()
+                    .map(|value| {
+                        self.sourced_provenance(
+                            Self::protected(value.value(), value.is_sensitive()),
+                            value.provenance(),
+                        )
+                    })
+                    .collect();
+                service.set_dns_servers_with_origins(mapped, self.origins(dns.provenance()));
+                self.dns_import_outcome(&format!("{subject}.dns"), values, dns.provenance(), "dns");
+            }
+        }
+        if let Some(options) = native.dns_options() {
+            let mapped = options
+                .value()
+                .iter()
+                .map(|value| {
+                    self.sourced_provenance(Self::protected(value.value(), value.is_sensitive()), value.provenance())
+                })
+                .collect();
+            service.set_dns_options_with_origins(mapped, self.origins(options.provenance()));
+            let duplicate = options.value().iter().enumerate().any(|(index, value)| {
+                options.value()[..index]
+                    .iter()
+                    .any(|prior| prior.value() == value.value())
+            });
+            if duplicate {
+                self.invalid_value_optional(
+                    &format!("{subject}.dns_opt"),
+                    "dns_opt contains duplicate resolver options",
+                    options.effective_source(),
+                );
+            } else {
+                self.dns_import_outcome(
+                    &format!("{subject}.dns_opt"),
+                    options.value(),
+                    options.provenance(),
+                    "dns_opt",
+                );
+            }
+        }
+        if let Some(search) = native.dns_search() {
+            let values = match search.value() {
+                ProjectDnsSearch::Scalar(value) => Some(std::slice::from_ref(value)),
+                ProjectDnsSearch::List(values) => Some(values.as_slice()),
+                _ => {
+                    self.unsupported_optional(
+                        &format!("{subject}.dns_search"),
+                        "DNS search form is newer than this adapter",
+                        search.effective_source(),
+                    );
+                    None
+                }
+            };
+            if let Some(values) = values {
+                let mapped = values
+                    .iter()
+                    .map(|value| {
+                        self.sourced_provenance(
+                            Self::protected(value.value(), value.is_sensitive()),
+                            value.provenance(),
+                        )
+                    })
+                    .collect();
+                service.set_dns_search_domains_with_origins(mapped, self.origins(search.provenance()));
+                self.dns_import_outcome(
+                    &format!("{subject}.dns_search"),
+                    values,
+                    search.provenance(),
+                    "dns_search",
+                );
+            }
+        }
+    }
+
+    fn dns_import_outcome(
+        &mut self,
+        subject: &str,
+        values: &[ProjectValue<String>],
+        provenance: &MergeProvenance,
+        field: &str,
+    ) {
+        if values.is_empty() {
+            self.unsupported_optional(
+                subject,
+                "explicit empty DNS collections have target-specific reset semantics",
+                provenance.effective_source(),
+            );
+        } else if values
+            .iter()
+            .any(|value| value.value().is_empty() || value.value().contains(['\r', '\n']) || value.is_sensitive())
+        {
+            self.invalid_value_optional(
+                subject,
+                "DNS values must be resolved non-empty single physical lines",
+                provenance.effective_source(),
+            );
+        } else if (field == "dns" && values.iter().any(|value| value.value() == "none"))
+            || (field == "dns_search" && values.iter().any(|value| value.value() == "."))
+        {
+            self.unsupported_optional(
+                subject,
+                "special DNS values have target-specific resolver semantics",
+                provenance.effective_source(),
+            );
+        } else {
+            self.exact_provenance(subject, provenance);
+        }
     }
 
     fn map_hostname_pids_and_shm(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {

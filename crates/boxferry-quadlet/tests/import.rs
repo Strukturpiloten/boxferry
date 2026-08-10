@@ -1187,6 +1187,47 @@ fn parse_boundary_rejects_malformed_input_before_import() -> Result<(), String> 
     Ok(())
 }
 
+#[test]
+fn imports_ordered_dns_keys_and_treats_empty_assignments_as_resets() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            "[Container]\nImage=example.invalid/web:1\nDNS=1.1.1.1\nDNS=8.8.8.8\nDNS=\nDNS=9.9.9.9\nDNSOption=ndots:5\nDNSOption=\nDNSSearch=example.test\nDNSSearch=\n",
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let service = result
+        .application()
+        .and_then(|application| application.services().first())
+        .ok_or("service expected")?
+        .value();
+    assert_eq!(
+        service
+            .dns_servers()
+            .unwrap_or_default()
+            .iter()
+            .map(|value| value.value().expose())
+            .collect::<Vec<_>>(),
+        ["9.9.9.9"]
+    );
+    assert!(service.dns_options().is_some_and(<[_]>::is_empty));
+    assert!(service.dns_search_domains().is_some_and(<[_]>::is_empty));
+    assert_eq!(service.dns_servers_origins().len(), 2);
+    assert_eq!(service.dns_options_origins().len(), 1);
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.dns" && outcome.kind() == ConversionKind::Unsupported)
+    );
+    Ok(())
+}
+
 fn identifier(value: &str) -> Result<Identifier, String> {
     Identifier::new(value).map_err(|error| error.to_string())
 }

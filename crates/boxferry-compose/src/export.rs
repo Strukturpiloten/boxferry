@@ -13,10 +13,11 @@ use boxferry_model::{
 };
 use compose_lens::{
     render::{
-        ComposeDocumentBuilder, GeneratedCommand, GeneratedComposeDocument, GeneratedEnvironment,
-        GeneratedEnvironmentFile, GeneratedEnvironmentFileFormat, GeneratedExtraHost, GeneratedLabel, GeneratedMount,
-        GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol, GeneratedResource, GeneratedRestartPolicy,
-        GeneratedSelinux, GeneratedService, GeneratedString, GenerationError,
+        ComposeDocumentBuilder, GeneratedCommand, GeneratedComposeDocument, GeneratedDns, GeneratedDnsSearch,
+        GeneratedEnvironment, GeneratedEnvironmentFile, GeneratedEnvironmentFileFormat, GeneratedExtraHost,
+        GeneratedLabel, GeneratedMount, GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol,
+        GeneratedResource, GeneratedRestartPolicy, GeneratedSelinux, GeneratedService, GeneratedString,
+        GenerationError,
     },
     source::SourceId,
     validation::{
@@ -360,6 +361,7 @@ impl<'a> Mapping<'a> {
         self.map_command(service, &mut generated, &service_subject);
         self.map_identity(service, &mut generated, &service_subject);
         self.map_execution_context(service, &mut generated, &service_subject);
+        self.map_dns(service, &mut generated, &service_subject);
         self.map_environment_files(service, &mut generated, &service_subject);
         self.map_environment(service, &mut generated, &service_subject);
         self.map_labels(service, &mut generated, &service_subject);
@@ -395,6 +397,50 @@ impl<'a> Mapping<'a> {
         match generated.set_restart(policy) {
             Ok(()) => self.exact(subject, restart.origins()),
             Err(error) => self.generation_error(&subject, &error, restart.origins()),
+        }
+    }
+
+    fn map_dns(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
+        if let Some(values) = service.dns_servers() {
+            let subject = format!("{service_subject}.dns");
+            let origins = collection_or_item_origins(values, service.dns_servers_origins());
+            let generated_values: Result<Vec<_>, _> =
+                values.iter().map(|value| generated_string(value.value())).collect();
+            match generated_values.and_then(|values| generated.set_dns(GeneratedDns::List(values))) {
+                Ok(()) if values.is_empty() => self.exact(subject, &origins),
+                Ok(()) if values.iter().any(|value| value.value().expose() == "none") => {
+                    self.unsupported(&subject, "DNS `none` has target-specific resolver semantics", &origins);
+                }
+                Ok(()) => self.exact(subject, &origins),
+                Err(error) => self.generation_error(&subject, &error, &origins),
+            }
+        }
+        if let Some(values) = service.dns_options() {
+            let subject = format!("{service_subject}.dns_opt");
+            let origins = collection_or_item_origins(values, service.dns_options_origins());
+            let generated_values: Result<Vec<_>, _> =
+                values.iter().map(|value| generated_string(value.value())).collect();
+            match generated_values.and_then(|values| generated.set_dns_options(values)) {
+                Ok(()) if values.is_empty() => self.exact(subject, &origins),
+                Ok(()) => self.exact(subject, &origins),
+                Err(error) => self.generation_error(&subject, &error, &origins),
+            }
+        }
+        if let Some(values) = service.dns_search_domains() {
+            let subject = format!("{service_subject}.dns_search");
+            let origins = collection_or_item_origins(values, service.dns_search_domains_origins());
+            let generated_values: Result<Vec<_>, _> =
+                values.iter().map(|value| generated_string(value.value())).collect();
+            match generated_values.and_then(|values| generated.set_dns_search(GeneratedDnsSearch::List(values))) {
+                Ok(()) if values.is_empty() => self.exact(subject, &origins),
+                Ok(()) if values.iter().any(|value| value.value().expose() == ".") => self.unsupported(
+                    &subject,
+                    "DNS search `.` has target-specific resolver semantics",
+                    &origins,
+                ),
+                Ok(()) => self.exact(subject, &origins),
+                Err(error) => self.generation_error(&subject, &error, &origins),
+            }
         }
     }
 

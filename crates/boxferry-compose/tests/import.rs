@@ -200,6 +200,64 @@ fn imports_released_container_settings_with_order_and_provenance() -> Result<(),
 }
 
 #[test]
+fn imports_dns_collections_with_order_empty_state_and_special_outcomes() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    dns: [1.1.1.1, 8.8.8.8]\n",
+        "    dns_opt: [ndots:5, none, none]\n",
+        "    dns_search: []\n",
+    );
+    let source_id = ComposeSourceId::new(99);
+    let source = ComposeSource::new(
+        merged_project([(source_id, "dns.compose.yaml", text)])?,
+        Identifier::new("dns")?,
+    )?
+    .with_source_id(source_id, SourceId::new("dns.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let service = result
+        .application()
+        .and_then(|application| application.services().first())
+        .ok_or("service expected")?
+        .value();
+    assert_eq!(
+        service
+            .dns_servers()
+            .unwrap_or_default()
+            .iter()
+            .map(|value| value.value().expose())
+            .collect::<Vec<_>>(),
+        ["1.1.1.1", "8.8.8.8"]
+    );
+    assert_eq!(
+        service
+            .dns_options()
+            .unwrap_or_default()
+            .iter()
+            .map(|value| value.value().expose())
+            .collect::<Vec<_>>(),
+        ["ndots:5", "none", "none"]
+    );
+    assert!(!service.dns_options_origins().is_empty());
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.dns_opt" && outcome.kind() == ConversionKind::Invalid)
+    );
+    assert!(service.dns_search_domains().is_some_and(<[_]>::is_empty));
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.dns_search"
+                && outcome.kind() == ConversionKind::Unsupported)
+    );
+    Ok(())
+}
+
+#[test]
 fn imports_mapping_extra_hosts_without_requiring_ip_only_values() -> Result<(), Box<dyn Error>> {
     let text = concat!(
         "services:\n",

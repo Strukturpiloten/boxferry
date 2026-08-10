@@ -972,6 +972,7 @@ impl<'a> Mapping<'a> {
         }
         self.map_execution_context(&subject, service.value(), grouped, &mut builder);
         self.map_released_container_settings(&subject, service.value(), &mut builder);
+        self.report_grouped_dns(&subject, service.value(), grouped);
         if let Some(restart_policy) = service.value().restart_policy() {
             self.map_restart_policy(&subject, restart_policy, &mut builder);
         }
@@ -1326,6 +1327,7 @@ impl<'a> Mapping<'a> {
         builder: &mut QuadletDocumentBuilder,
     ) {
         self.map_released_scalars(service_subject, service, builder);
+        self.map_dns(service_subject, service, builder);
         self.map_capabilities(service_subject, service, builder);
         self.map_tmpfs(service_subject, service, builder);
         self.map_sysctls(service_subject, service, builder);
@@ -1380,6 +1382,131 @@ impl<'a> Mapping<'a> {
                 builder,
                 "shared-memory size must be a positive ASCII decimal with optional b, k, m, or g",
             );
+        }
+    }
+
+    fn map_dns(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        self.map_dns_values(
+            service_subject,
+            "dns",
+            service.dns_servers(),
+            service.dns_servers_origins(),
+            ContainerKey::DNS,
+            builder,
+        );
+        self.map_dns_values(
+            service_subject,
+            "dns_opt",
+            service.dns_options(),
+            service.dns_options_origins(),
+            ContainerKey::DNSOption,
+            builder,
+        );
+        self.map_dns_values(
+            service_subject,
+            "dns_search",
+            service.dns_search_domains(),
+            service.dns_search_domains_origins(),
+            ContainerKey::DNSSearch,
+            builder,
+        );
+    }
+
+    fn report_grouped_dns(&mut self, service_subject: &str, service: &Service, grouped: bool) {
+        if !grouped {
+            return;
+        }
+        for (name, values, collection_origins) in [
+            ("dns", service.dns_servers(), service.dns_servers_origins()),
+            ("dns_opt", service.dns_options(), service.dns_options_origins()),
+            (
+                "dns_search",
+                service.dns_search_domains(),
+                service.dns_search_domains_origins(),
+            ),
+        ] {
+            if let Some(values) = values {
+                let origins = collection_all_origins(values, collection_origins);
+                self.unsupported(
+                    &format!("{service_subject}.{name}"),
+                    "generated Pod grouping can change effective shared-pod resolver configuration",
+                    &origins,
+                );
+            }
+        }
+    }
+
+    fn map_dns_values(
+        &mut self,
+        service_subject: &str,
+        name: &str,
+        values: Option<&[Sourced<boxferry_model::ProtectedString>]>,
+        collection_origins: &[Provenance],
+        key: ContainerKey,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let Some(values) = values else {
+            return;
+        };
+        let subject = format!("{service_subject}.{name}");
+        if values.is_empty() {
+            self.unsupported(
+                &subject,
+                "an empty Quadlet DNS assignment resets native state and cannot represent an explicit empty collection",
+                collection_origins,
+            );
+            return;
+        }
+        if key == ContainerKey::DNSOption {
+            let mut seen = BTreeSet::new();
+            if values.iter().any(|value| !seen.insert(value.value().expose())) {
+                let origins = collection_all_origins(values, collection_origins);
+                self.invalid(
+                    self.exporter.codes.invalid_value.clone(),
+                    &subject,
+                    "DNS resolver options must be unique; duplicates cannot be emitted safely",
+                    "remove duplicate dns_opt entries",
+                    &origins,
+                );
+                return;
+            }
+        }
+        for (index, value) in values.iter().enumerate() {
+            let item_subject = format!("{subject}[{index}]");
+            let raw = value.value().expose();
+            let origins = collection_item_origins(collection_origins, value);
+            if raw.is_empty() || raw.contains(['\0', '\r', '\n', '%', '$']) {
+                self.unsupported(
+                    &item_subject,
+                    "DNS values must be non-empty resolved single physical lines without systemd specifiers",
+                    &origins,
+                );
+                continue;
+            }
+            if (key == ContainerKey::DNS && raw == "none") || (key == ContainerKey::DNSSearch && raw == ".") {
+                self.unsupported(
+                    &item_subject,
+                    "special DNS values have target-specific resolver semantics",
+                    &origins,
+                );
+            }
+            let emitted = self.capability(
+                &format!(
+                    "quadlet.container.{}",
+                    match key {
+                        ContainerKey::DNS => "dns",
+                        ContainerKey::DNSOption => "dns-option",
+                        _ => "dns-search",
+                    }
+                ),
+                &item_subject,
+                &origins,
+            ) && self.push_container(builder, key, raw, &item_subject, &origins);
+            if emitted
+                && !((key == ContainerKey::DNS && raw == "none") || (key == ContainerKey::DNSSearch && raw == "."))
+            {
+                self.exact(item_subject, &origins);
+            }
         }
     }
 
@@ -2847,6 +2974,18 @@ fn dependency_mapping_origins(dependency: &Sourced<ServiceDependency>) -> Vec<Pr
 fn collection_item_origins<T>(collection_origins: &[Provenance], item: &Sourced<T>) -> Vec<Provenance> {
     let mut origins = collection_origins.to_vec();
     extend_origins(&mut origins, item.origins());
+    origins
+}
+
+fn collection_all_origins<T>(values: &[Sourced<T>], collection_origins: &[Provenance]) -> Vec<Provenance> {
+    let mut origins = collection_origins.to_vec();
+    for value in values {
+        for origin in value.origins() {
+            if !origins.contains(origin) {
+                origins.push(origin.clone());
+            }
+        }
+    }
     origins
 }
 

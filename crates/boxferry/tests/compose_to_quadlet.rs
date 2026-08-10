@@ -81,6 +81,64 @@ fn public_compose_to_quadlet_route_emits_released_container_settings() -> Result
 }
 
 #[test]
+fn public_compose_to_quadlet_route_emits_ordered_dns_keys() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(98);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("dns.compose.yaml", "dns.compose.yaml"),
+        concat!(
+            "services:\n  web:\n    image: example.invalid/web:1\n",
+            "    dns: [1.1.1.1, 8.8.8.8]\n",
+            "    dns_opt: [ndots:5, none]\n",
+            "    dns_search: [example.test, example.internal]\n",
+        ),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let project = merged.project().ok_or("merged project expected")?.clone();
+    let source = ComposeSource::new(project, Identifier::new("dns")?)?
+        .with_source_id(source_id, SourceId::new("dns.compose.yaml")?)
+        .with_profile_selection(select_profiles(
+            merged.project().ok_or("merged project expected")?,
+            &ProfileRequest::new(),
+        ));
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+    let result = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    let text = result
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry::QuadletFile::text)
+        .ok_or("DNS Quadlet output expected")?;
+    let expected = [
+        "DNS=1.1.1.1",
+        "DNS=8.8.8.8",
+        "DNSOption=ndots:5",
+        "DNSOption=none",
+        "DNSSearch=example.test",
+        "DNSSearch=example.internal",
+    ];
+    let mut previous = 0;
+    for line in expected {
+        let index = text[previous..]
+            .find(line)
+            .ok_or_else(|| format!("missing {line} in {text}"))?
+            + previous;
+        assert!(index >= previous);
+        previous = index + line.len();
+    }
+    Ok(())
+}
+
+#[test]
 fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(), Box<dyn Error>> {
     let directory = fixture_directory();
     let base = fixture_text("compose.yaml")?;

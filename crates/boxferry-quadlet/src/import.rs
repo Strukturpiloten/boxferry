@@ -478,6 +478,15 @@ impl<'a> Mapping<'a> {
                 EntryKind::Container(ContainerKey::EnvironmentFile) => {
                     self.map_environment_file(filename, &service_name, service, entry);
                 }
+                EntryKind::Container(ContainerKey::DNS) => {
+                    self.map_dns_value(filename, &service_name, service, entry, "dns");
+                }
+                EntryKind::Container(ContainerKey::DNSOption) => {
+                    self.map_dns_value(filename, &service_name, service, entry, "dns_opt");
+                }
+                EntryKind::Container(ContainerKey::DNSSearch) => {
+                    self.map_dns_value(filename, &service_name, service, entry, "dns_search");
+                }
                 EntryKind::Container(ContainerKey::PublishPort) => {
                     self.map_port(filename, &service_name, service, entry);
                 }
@@ -861,6 +870,82 @@ impl<'a> Mapping<'a> {
             origin.clone(),
         ));
         self.exact(subject, Some(origin));
+    }
+
+    fn map_dns_value(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        entry: &TypedEntry,
+        field: &str,
+    ) {
+        let subject = format!("services.{service_name}.{field}");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let (mut values, mut origins) = match field {
+            "dns" => (
+                service.dns_servers().map_or_else(Vec::new, ToOwned::to_owned),
+                service.dns_servers_origins().to_vec(),
+            ),
+            "dns_opt" => (
+                service.dns_options().map_or_else(Vec::new, ToOwned::to_owned),
+                service.dns_options_origins().to_vec(),
+            ),
+            _ => (
+                service.dns_search_domains().map_or_else(Vec::new, ToOwned::to_owned),
+                service.dns_search_domains_origins().to_vec(),
+            ),
+        };
+        if value.is_empty() {
+            values.clear();
+            origins = vec![origin.clone()];
+            match field {
+                "dns" => service.set_dns_servers_with_origins(values, origins),
+                "dns_opt" => service.set_dns_options_with_origins(values, origins),
+                _ => service.set_dns_search_domains_with_origins(values, origins),
+            }
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "an empty native DNS assignment resets the effective list and is not a literal DNS value",
+                origin,
+            );
+            return;
+        }
+        let special = (field == "dns" && value == "none") || (field == "dns_search" && value == ".");
+        let unsafe_value = value.contains(['\0', '\r', '\n', '%', '$']);
+        values.push(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+        if !origins.contains(&origin) {
+            origins.push(origin.clone());
+        }
+        match field {
+            "dns" => service.set_dns_servers_with_origins(values, origins),
+            "dns_opt" => service.set_dns_options_with_origins(values, origins),
+            _ => service.set_dns_search_domains_with_origins(values, origins),
+        }
+        if unsafe_value {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "DNS value requires unsafe systemd/deferred interpretation",
+                origin,
+            );
+        } else if special {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "special DNS values have target-specific resolver semantics",
+                origin,
+            );
+        } else {
+            self.exact(subject, Some(origin));
+        }
     }
 
     fn map_environment_file(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {

@@ -1309,6 +1309,12 @@ pub struct Service {
     working_directory: Option<Sourced<ProtectedString>>,
     read_only_root_filesystem: Option<Sourced<bool>>,
     hostname: Option<Sourced<ProtectedString>>,
+    dns_servers: Option<Vec<Sourced<ProtectedString>>>,
+    dns_servers_origins: Vec<Provenance>,
+    dns_options: Option<Vec<Sourced<ProtectedString>>>,
+    dns_options_origins: Vec<Provenance>,
+    dns_search_domains: Option<Vec<Sourced<ProtectedString>>>,
+    dns_search_domains_origins: Vec<Provenance>,
     pids_limit: Option<Sourced<ProtectedString>>,
     shm_size: Option<Sourced<ProtectedString>>,
     cap_add: Option<Vec<Sourced<ProtectedString>>>,
@@ -1354,6 +1360,12 @@ impl Service {
             working_directory: None,
             read_only_root_filesystem: None,
             hostname: None,
+            dns_servers: None,
+            dns_servers_origins: Vec::new(),
+            dns_options: None,
+            dns_options_origins: Vec::new(),
+            dns_search_domains: None,
+            dns_search_domains_origins: Vec::new(),
             pids_limit: None,
             shm_size: None,
             cap_add: None,
@@ -1528,6 +1540,79 @@ impl Service {
     #[must_use]
     pub const fn hostname(&self) -> Option<&Sourced<ProtectedString>> {
         self.hostname.as_ref()
+    }
+
+    /// Sets ordered DNS servers, preserving omission separately from an explicit empty list.
+    pub fn set_dns_servers_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
+        self.dns_servers = Some(values);
+        self.dns_servers_origins = origins;
+    }
+
+    /// Sets ordered DNS servers without separate collection provenance.
+    pub fn set_dns_servers(&mut self, values: Vec<Sourced<ProtectedString>>) {
+        self.set_dns_servers_with_origins(values, Vec::new());
+    }
+
+    /// Returns ordered DNS servers when explicitly authored.
+    #[must_use]
+    pub fn dns_servers(&self) -> Option<&[Sourced<ProtectedString>]> {
+        self.dns_servers.as_deref()
+    }
+
+    /// Returns collection provenance for explicitly authored DNS servers.
+    #[must_use]
+    pub fn dns_servers_origins(&self) -> &[Provenance] {
+        &self.dns_servers_origins
+    }
+
+    /// Sets ordered DNS resolver options, preserving omission separately from an explicit empty list.
+    pub fn set_dns_options_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
+        self.dns_options = Some(values);
+        self.dns_options_origins = origins;
+    }
+
+    /// Sets ordered DNS resolver options without separate collection provenance.
+    pub fn set_dns_options(&mut self, values: Vec<Sourced<ProtectedString>>) {
+        self.set_dns_options_with_origins(values, Vec::new());
+    }
+
+    /// Returns ordered DNS resolver options when explicitly authored.
+    #[must_use]
+    pub fn dns_options(&self) -> Option<&[Sourced<ProtectedString>]> {
+        self.dns_options.as_deref()
+    }
+
+    /// Returns collection provenance for explicitly authored DNS resolver options.
+    #[must_use]
+    pub fn dns_options_origins(&self) -> &[Provenance] {
+        &self.dns_options_origins
+    }
+
+    /// Sets ordered DNS search domains, preserving omission separately from an explicit empty list.
+    pub fn set_dns_search_domains_with_origins(
+        &mut self,
+        values: Vec<Sourced<ProtectedString>>,
+        origins: Vec<Provenance>,
+    ) {
+        self.dns_search_domains = Some(values);
+        self.dns_search_domains_origins = origins;
+    }
+
+    /// Sets ordered DNS search domains without separate collection provenance.
+    pub fn set_dns_search_domains(&mut self, values: Vec<Sourced<ProtectedString>>) {
+        self.set_dns_search_domains_with_origins(values, Vec::new());
+    }
+
+    /// Returns ordered DNS search domains when explicitly authored.
+    #[must_use]
+    pub fn dns_search_domains(&self) -> Option<&[Sourced<ProtectedString>]> {
+        self.dns_search_domains.as_deref()
+    }
+
+    /// Returns collection provenance for explicitly authored DNS search domains.
+    #[must_use]
+    pub fn dns_search_domains_origins(&self) -> &[Provenance] {
+        &self.dns_search_domains_origins
     }
 
     /// Sets the raw process-ID limit spelling.
@@ -2429,6 +2514,30 @@ mod tests {
             HostAddressKind::Ipv6 { bracketed: true }
         );
         assert!(matches!(HostAddress::new(""), Err(ModelError::EmptyValue(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn dns_collections_preserve_order_provenance_and_explicit_empty_state() -> Result<(), String> {
+        let mut service = Service::new(id("web")?);
+        assert!(service.dns_servers().is_none());
+        service.set_dns_servers(Vec::new());
+        assert!(matches!(service.dns_servers(), Some(values) if values.is_empty()));
+        service.set_dns_options(vec![
+            Sourced::generated(ProtectedString::plain("ndots:5")),
+            Sourced::generated(ProtectedString::sensitive("rotate")),
+        ]);
+        service.set_dns_search_domains(vec![Sourced::generated(ProtectedString::plain("example.test"))]);
+        assert_eq!(
+            service
+                .dns_options()
+                .unwrap_or_default()
+                .iter()
+                .map(|value| value.value().expose())
+                .collect::<Vec<_>>(),
+            ["ndots:5", "rotate"]
+        );
+        assert!(!format!("{service:?}").contains("rotate"));
         Ok(())
     }
 
