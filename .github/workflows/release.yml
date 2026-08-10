@@ -53,7 +53,11 @@ jobs:
             all(.packages[]; .publish != [])
           ' <<< "${metadata}" >/dev/null
 
-          test -f "docs/releases/${version}.md"
+          release_notes="docs/releases/${version}.md"
+          if [[ ! -f "${release_notes}" ]]; then
+            echo "Release notes are missing: ${release_notes}." >&2
+            exit 1
+          fi
           escaped_version="${version//./\\.}"
           if ! grep -Eq "^## \\[${escaped_version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
             echo "CHANGELOG.md must contain '## [${version}] - YYYY-MM-DD'." >&2
