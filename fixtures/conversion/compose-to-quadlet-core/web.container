@@ -9,6 +9,7 @@ GroupAdd=audio
 GroupAdd=44
 WorkingDir=/srv/app
 ReadOnly=true
+NetworkAlias=web.local
 HealthCmd=["CMD-SHELL","curl --fail http://127.0.0.1/health || exit 1"]
 HealthInterval=45s
 HealthTimeout=5s

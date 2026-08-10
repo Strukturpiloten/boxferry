@@ -55,15 +55,17 @@ pub use boxferry_engine::{
     ParsePlatformVersionError, PlatformVersion, Severity, TargetProfile, VersionRange, convert,
 };
 pub use boxferry_model::{
-    Application, BuildAttestation, BuildContext, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command,
-    Config, ConfigMaterial, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
-    EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress,
+    Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildAttestation, BuildContext,
+    BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command, Config, ConfigMaterial, Device, Entrypoint,
+    EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, ExposedPort,
+    GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress,
     HostAddressKind, HostMapping, Identifier, ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment,
-    ImageBuild, ImageBuildSetting, ImageReference, MetadataLabel, ModelError, Mount, MountSource, Network,
-    NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ProvenanceKind, ResourceGrant, ResourceGrantSyntax,
-    ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, ServiceGroup, SourceBuildSecret, SourceBuildSetting, SourceId, SourceSpan, Sourced,
-    Volume,
+    ImageBuild, ImageBuildSetting, ImageReference, KernelParameter, Logging, LoggingOption, MetadataLabel, ModelError,
+    Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, ProtectedString,
+    Protocol, Provenance, ProvenanceKind, PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit,
+    ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime, SourceBuildSecret,
+    SourceBuildSetting, SourceId, SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 
 #[cfg(feature = "compose")]

@@ -34,12 +34,18 @@ as sixteen unrelated converters.
   secret material.
 - [x] Import application-owned `.pod` identities with matching explicit runtime names and ordered
   sibling container membership as provenance-aware neutral service groups.
+- [x] Import and export the reviewed container and pod topology keys with explicit reset, conflict,
+  capability-floor, and group-scope behavior.
+- [x] Import and export the ten reviewed network-definition keys with distinct runtime names and
+  one associated IPAM row; native resets, duplicates, and multi-row association remain explicit.
+- [x] Import and export all typed Quadlet volume settings, including distinct runtime/service
+  names, protected raw lists, 6.0.0 `UID=`/`GID=` floors, and typed image-artifact validation.
 - [x] Import repeated absolute-literal Quadlet environment-file declarations without file I/O,
   retaining order and protected paths while making provider-parser uncertainty explicit.
-- [ ] Extend Quadlet import across the remaining first-milestone semantic subset, including pod-
-  scoped settings, separate implicit/divergent runtime pod names, and safely decoded native value
-  forms not covered by the conservative first slices.
-- [ ] Accept the later typed Quadlet `.image`, `.build`, `.kube`, and `.artifact` unit families.
+- [ ] Extend Quadlet import across the remaining first-milestone semantic subset, including
+  divergent runtime pod names and safely decoded native value forms not covered by the reviewed slices.
+- [x] Accept typed Quadlet `.image` and `.build` unit families.
+- [ ] Accept typed Quadlet `.kube` and `.artifact` unit families.
 
 ### Target adapters
 

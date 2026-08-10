@@ -4,24 +4,29 @@ use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
     ImportResult, InvalidDiagnosticCode, Severity,
 };
+use std::collections::BTreeSet;
+
 use boxferry_model::{
-    Application, BuildAttestation, BuildContext, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command,
-    Config, ConfigMaterial, Device, EnvironmentFile as NeutralEnvironmentFile,
-    EnvironmentFileFormat as NeutralEnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
-    EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
-    HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageArtifactAssignment,
-    ImageBuild, ImageBuildSetting, ImageReference, KernelParameter, MetadataLabel, ModelError, Mount, MountSource,
-    Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant, ResourceGrantSyntax,
-    ResourceLimit, ResourceOwnership, RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SecurityOption,
-    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, SourceBuildSecret, SourceBuildSetting,
-    SourceSpan, Sourced, Volume,
+    Annotation, Application, BuildAttestation, BuildContext, BuildSettingValues, BuildSourceDeclaration, BuildSyntax,
+    Command, Config, ConfigMaterial, Device, Entrypoint as NeutralEntrypoint,
+    EnvironmentFile as NeutralEnvironmentFile, EnvironmentFileFormat as NeutralEnvironmentFileFormat,
+    EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, ExposedPort, Healthcheck, HealthcheckCommand,
+    HealthcheckDuration as NeutralHealthcheckDuration, HealthcheckRetries as NeutralHealthcheckRetries, HostAddress,
+    HostMapping, Identifier, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ImageReference, KernelParameter,
+    Logging, LoggingOption, MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment,
+    NetworkDriverOption, NetworkIpamConfig, Port, ProtectedString, Protocol, Provenance,
+    PullPolicy as NeutralPullPolicy, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership,
+    RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, SourceBuildSecret, SourceBuildSetting, SourceSpan, Sourced,
+    StopTimeout, Volume,
 };
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
     BooleanValue, ComposeScalar, ConfigDefinition, DependencyCondition as ComposeDependencyCondition,
-    EnvironmentFileFormatKind, HealthcheckDuration as ComposeHealthcheckDuration,
-    HealthcheckRetries as ComposeHealthcheckRetries, HealthcheckTest, HealthcheckTestKind, HostnameKind, LimitValue,
-    LongPort, LongVolumeMount, MountType, NetworkDefinition, PidsLimitKind, Port as ComposePort,
+    Entrypoint as ComposeEntrypoint, EnvironmentFileFormatKind, ExposeItemKind, ExposeProtocol,
+    HealthcheckDuration as ComposeHealthcheckDuration, HealthcheckRetries as ComposeHealthcheckRetries,
+    HealthcheckTest, HealthcheckTestKind, HostnameKind, Labels, LimitValue, LongPort, LongVolumeMount, MemLimitKind,
+    MountType, NetworkDefinition, PidsLimitKind, Port as ComposePort, PullPolicyKind,
     RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SecurityOptionKind,
     SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShmSizeKind, ShmSizeUnit,
     ShortDeviceKind, ShortPort, ShortVolumeMount, TmpfsItemKind, VolumeDefinition, VolumeMount,
@@ -30,8 +35,8 @@ use compose_lens::project::{
     ProjectBuild, ProjectBuildAdditionalContexts, ProjectBuildArgs, ProjectBuildDefinition, ProjectBuildExtraHosts,
     ProjectBuildLabels, ProjectBuildNoCacheFilter, ProjectBuildSsh, ProjectDependsOn, ProjectDevice, ProjectDns,
     ProjectDnsSearch, ProjectEnvironment, ProjectEnvironmentFile, ProjectFieldReference, ProjectGrant,
-    ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService, ProjectSysctls, ProjectTmpfs,
-    ProjectUlimitValue, ProjectValue, ProjectView, build_project_view,
+    ProjectHealthcheck, ProjectLabels, ProjectLoggingOptionValue, ProjectResource, ProjectService, ProjectSysctls,
+    ProjectTmpfs, ProjectUlimitValue, ProjectValue, ProjectView, build_project_view,
 };
 use compose_lens::source::SourceSpan as ComposeSpan;
 
@@ -1151,11 +1156,269 @@ impl<'a> Mapping<'a> {
         native: &ProjectService,
         service: &mut Service,
     ) {
+        self.map_entrypoint_lifecycle_and_pull(service_subject, native, service);
         self.map_hostname_pids_and_shm(service_subject, native, service);
+        self.map_memory_and_expose(service_subject, native, service);
         self.map_capabilities_and_tmpfs(service_subject, native, service);
         self.map_sysctls(service_subject, native, service);
         self.map_ulimits(service_subject, native, service);
         self.map_devices_and_stop_signal(service_subject, native, service);
+        self.map_annotations_and_logging(service_subject, native, service);
+    }
+
+    fn map_entrypoint_lifecycle_and_pull(
+        &mut self,
+        service_subject: &str,
+        native: &ProjectService,
+        service: &mut Service,
+    ) {
+        if let Some(entrypoint) = native.entrypoint() {
+            let subject = format!("{service_subject}.entrypoint");
+            let value = match entrypoint.value() {
+                ComposeEntrypoint::String(value) if value.value().is_empty() => Some(NeutralEntrypoint::Empty),
+                ComposeEntrypoint::String(value) => Some(NeutralEntrypoint::Shell(Self::protected(
+                    value.value(),
+                    entrypoint.is_sensitive(),
+                ))),
+                ComposeEntrypoint::List { values, .. } if values.is_empty() => Some(NeutralEntrypoint::Empty),
+                ComposeEntrypoint::List { values, .. } => Some(NeutralEntrypoint::Exec(
+                    values
+                        .iter()
+                        .map(|value| Self::protected(value.value(), entrypoint.is_sensitive()))
+                        .collect(),
+                )),
+                ComposeEntrypoint::Null(_) => None,
+            };
+            if let Some(value) = value {
+                service.set_entrypoint(self.sourced_provenance(value, entrypoint.provenance()));
+                self.exact_provenance(subject, entrypoint.provenance());
+            } else {
+                self.unsupported_optional(&subject, "Compose null entrypoint restores the image default, which differs from a neutral explicit empty override", entrypoint.effective_source());
+            }
+        }
+        if let Some(init) = native.init() {
+            let subject = format!("{service_subject}.init");
+            match init.value() {
+                BooleanValue::Literal(value) => {
+                    service.set_run_init(self.sourced_provenance(*value, init.provenance()));
+                    self.exact_provenance(subject, init.provenance());
+                }
+                BooleanValue::Expression(_) => {
+                    self.invalid_value_optional(&subject, "init expression was not resolved", init.effective_source());
+                }
+            }
+        }
+        if let Some(timeout) = native.stop_grace_period() {
+            let subject = format!("{service_subject}.stop_grace_period");
+            let value = timeout.value().raw();
+            match StopTimeout::new(value) {
+                Ok(value) => service.set_stop_timeout(self.sourced_provenance(value, timeout.provenance())),
+                Err(error) => {
+                    self.invalid_model_optional(&subject, &error, timeout.effective_source());
+                    return;
+                }
+            }
+            if timeout.value().is_valid() && !value.contains('$') {
+                self.exact_provenance(subject, timeout.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &subject,
+                    "stop_grace_period is unresolved or provider-specific",
+                    timeout.effective_source(),
+                );
+            }
+        }
+        if let Some(policy) = native.pull_policy() {
+            let subject = format!("{service_subject}.pull_policy");
+            let raw = policy.value().raw().value();
+            let value = match policy.value().kind() {
+                PullPolicyKind::Always => NeutralPullPolicy::Always,
+                PullPolicyKind::Never => NeutralPullPolicy::Never,
+                PullPolicyKind::Missing => NeutralPullPolicy::Missing,
+                PullPolicyKind::IfNotPresentAlias => NeutralPullPolicy::IfNotPresent,
+                PullPolicyKind::Build => NeutralPullPolicy::Build,
+                PullPolicyKind::Daily => NeutralPullPolicy::Daily,
+                PullPolicyKind::Weekly => NeutralPullPolicy::Weekly,
+                PullPolicyKind::Every { duration } => {
+                    NeutralPullPolicy::Every(Self::protected(duration, policy.is_sensitive()))
+                }
+                PullPolicyKind::RefreshSchemaOnly | PullPolicyKind::Expression | PullPolicyKind::Other => {
+                    NeutralPullPolicy::Raw(Self::protected(raw, policy.is_sensitive()))
+                }
+                _ => NeutralPullPolicy::Raw(Self::protected(raw, policy.is_sensitive())),
+            };
+            service.set_pull_policy(self.sourced_provenance(value, policy.provenance()));
+            if matches!(
+                policy.value().kind(),
+                PullPolicyKind::RefreshSchemaOnly | PullPolicyKind::Expression | PullPolicyKind::Other
+            ) {
+                self.invalid_value_optional(
+                    &subject,
+                    "pull_policy is unresolved, schema-only, or provider-specific",
+                    policy.effective_source(),
+                );
+            } else {
+                self.exact_provenance(subject, policy.provenance());
+            }
+        }
+    }
+
+    fn map_memory_and_expose(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(limit) = native.mem_limit() {
+            let subject = format!("{service_subject}.mem_limit");
+            service.set_memory_limit(self.sourced_provenance(
+                Self::protected(limit.value().raw().value(), limit.is_sensitive()),
+                limit.provenance(),
+            ));
+            if matches!(limit.value().kind(), MemLimitKind::Documented { .. }) {
+                self.exact_provenance(subject, limit.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &subject,
+                    "mem_limit must use a documented positive lowercase-unit value",
+                    limit.effective_source(),
+                );
+            }
+        }
+        if let Some(expose) = native.expose() {
+            let subject = format!("{service_subject}.expose");
+            let mut ports = Vec::new();
+            let mut exact = true;
+            for item in expose.value() {
+                let kind = item.value().kind();
+                let (port, protocol) = match kind {
+                    ExposeItemKind::Documented { port, protocol } if port.end().is_none() => {
+                        let Ok(port) = port.start().parse::<u16>() else {
+                            exact = false;
+                            continue;
+                        };
+                        let protocol = match protocol {
+                            Some(ExposeProtocol::Udp) => Protocol::Udp,
+                            Some(ExposeProtocol::Tcp) | None => Protocol::Tcp,
+                            _ => {
+                                exact = false;
+                                continue;
+                            }
+                        };
+                        (port, protocol)
+                    }
+                    _ => {
+                        exact = false;
+                        continue;
+                    }
+                };
+                match ExposedPort::new(port, protocol) {
+                    Ok(port) => ports.push(self.sourced_provenance(port, item.provenance())),
+                    Err(error) => {
+                        exact = false;
+                        self.invalid_model_optional(&subject, &error, item.effective_source());
+                    }
+                }
+            }
+            service.set_exposed_ports_with_origins(ports, self.origins(expose.provenance()));
+            if exact {
+                self.exact_provenance(subject, expose.provenance());
+            } else {
+                self.invalid_value_optional(&subject, "expose accepts only safe single tcp or udp ports; ranges, SCTP, deferred, and unsafe forms remain explicit", expose.effective_source());
+            }
+        }
+    }
+
+    fn map_annotations_and_logging(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(annotations) = native.annotations() {
+            let subject = format!("{service_subject}.annotations");
+            let mut values = Vec::new();
+            let mut exact = true;
+            for entry in annotations.value().entries() {
+                let Some(value) = entry.value() else {
+                    exact = false;
+                    continue;
+                };
+                let Some(name) =
+                    self.identifier_optional(&subject, entry.name().value(), entry.name().effective_source())
+                else {
+                    exact = false;
+                    continue;
+                };
+                let scalar = Self::compose_scalar(value.value().effective());
+                values.push(self.sourced_project_key_value(
+                    Annotation::new(
+                        self.sourced_spans(name, entry.name().sources()),
+                        self.sourced_provenance(Self::protected(&scalar, value.is_sensitive()), value.provenance()),
+                    ),
+                    entry.name().sources(),
+                    value.provenance(),
+                ));
+            }
+            service.set_annotations_with_origins(values, self.origins(annotations.provenance()));
+            if exact {
+                self.exact_provenance(subject, annotations.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &subject,
+                    "annotations require explicit valid names and values",
+                    annotations.effective_source(),
+                );
+            }
+        }
+        if let Some(logging) = native.logging() {
+            let subject = format!("{service_subject}.logging");
+            let mut value = Logging::new();
+            if let Some(driver) = logging.value().driver() {
+                value.set_driver(self.sourced_provenance(
+                    Self::protected(driver.value(), driver.is_sensitive()),
+                    driver.provenance(),
+                ));
+            } else {
+                self.unsupported_optional(
+                    &subject,
+                    "logging options without a driver use provider-default semantics",
+                    logging.effective_source(),
+                );
+            }
+            if let Some(options) = logging.value().options() {
+                let mut mapped = Vec::new();
+                for option in options.value().entries() {
+                    let raw = match option.value().value().value() {
+                        ProjectLoggingOptionValue::String { value, .. } | ProjectLoggingOptionValue::Number(value) => {
+                            value
+                        }
+                        ProjectLoggingOptionValue::Null => "",
+                        _ => {
+                            self.invalid_value_optional(
+                                &subject,
+                                "logging option variant is newer than this adapter",
+                                option.effective_source(),
+                            );
+                            continue;
+                        }
+                    };
+                    let Some(name) = self.identifier_optional(
+                        &subject,
+                        option.value().name().value(),
+                        option.value().name().effective_source(),
+                    ) else {
+                        continue;
+                    };
+                    mapped.push(self.sourced_project_key_value(
+                        LoggingOption::new(
+                            self.sourced_spans(name, option.value().name().sources()),
+                            self.sourced_provenance(
+                                Self::protected(raw, option.value().value().is_sensitive()),
+                                option.value().value().provenance(),
+                            ),
+                        ),
+                        option.value().name().sources(),
+                        option.value().value().provenance(),
+                    ));
+                }
+                value.set_options_with_origins(mapped, self.origins(options.provenance()));
+            }
+            service.set_logging(self.sourced_provenance(value, logging.provenance()));
+            if logging.value().driver().is_some() {
+                self.exact_provenance(subject, logging.provenance());
+            }
+        }
     }
 
     fn map_dns(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
@@ -2491,17 +2754,22 @@ impl<'a> Mapping<'a> {
         let Some(identifier) = self.identifier(&subject, network.name().value(), network.name().span()) else {
             return;
         };
-        let aliases = network.aliases().iter().map(|alias| alias.value().clone()).collect();
-        service.add_network(self.sourced_provenance(NetworkAttachment::new(identifier, aliases), provenance));
+        let aliases = network
+            .aliases()
+            .iter()
+            .map(|alias| self.sourced_spans(Self::protected(alias.value(), true), &[alias.span()]))
+            .collect();
+        let mut attachment = NetworkAttachment::with_sourced_aliases(identifier, aliases);
+        if let Some(address) = network.ipv4_address() {
+            attachment.set_ipv4_address(self.sourced_spans(Self::protected(address.value(), true), &[address.span()]));
+        }
+        if let Some(address) = network.ipv6_address() {
+            attachment.set_ipv6_address(self.sourced_spans(Self::protected(address.value(), true), &[address.span()]));
+        }
+        service.add_network(self.sourced_provenance(attachment, provenance));
 
         if network.interface_name().is_some() {
             self.unsupported(&subject, "networks.interface_name", network.span());
-        }
-        if network.ipv4_address().is_some() {
-            self.unsupported(&subject, "networks.ipv4_address", network.span());
-        }
-        if network.ipv6_address().is_some() {
-            self.unsupported(&subject, "networks.ipv6_address", network.span());
         }
         if !network.link_local_ips().is_empty() {
             self.unsupported(&subject, "networks.link_local_ips", network.span());
@@ -2528,60 +2796,554 @@ impl<'a> Mapping<'a> {
         let subject = format!("volumes.{}", resource.name().value());
         let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
         let ownership = self.resource_ownership(&subject, native.external(), native.span());
-        if native.driver().is_some() {
-            self.unsupported(&subject, "volume.driver", native.span());
+        let definition_sensitive = resource.definition().is_sensitive();
+        let external = matches!(
+            native.external().map(compose_lens::model::Located::value),
+            Some(BooleanValue::Literal(true))
+        );
+        let mut volume = Volume::new(name, ownership);
+
+        if let Some(runtime_name) = native.custom_name() {
+            if runtime_name.value().contains('$') {
+                self.invalid_value(
+                    &format!("{subject}.name"),
+                    "volume name expression was not resolved",
+                    runtime_name.span(),
+                );
+            } else {
+                volume.set_runtime_name(self.sourced_spans(
+                    Self::protected(runtime_name.value(), definition_sensitive),
+                    &[runtime_name.span()],
+                ));
+                self.exact_spans(format!("{subject}.name"), &[runtime_name.span()]);
+            }
         }
-        if !native.driver_opts().is_empty() {
-            self.unsupported(&subject, "volume.driver_opts", native.span());
-        }
-        if native.labels().is_some() {
-            self.unsupported(&subject, "volume.labels", native.span());
-        }
-        if native.custom_name().is_some() {
-            self.unsupported(&subject, "volume.name", native.span());
+
+        if external {
+            for (field, present) in [
+                ("driver", native.driver().is_some()),
+                // ComposeLens exposes this as a vector, so an empty vector cannot distinguish
+                // omission from an explicit empty mapping. Do not manufacture a reset.
+                ("driver_opts", !native.driver_opts().is_empty()),
+                ("labels", native.labels().is_some()),
+            ] {
+                if present {
+                    self.unsupported(
+                        &format!("{subject}.{field}"),
+                        "Compose external volumes may only declare their platform name",
+                        native.span(),
+                    );
+                }
+            }
+        } else {
+            let local_driver = match native.driver() {
+                Some(driver) if driver.value().contains('$') => {
+                    self.invalid_value(
+                        &format!("{subject}.driver"),
+                        "volume driver expression was not resolved",
+                        driver.span(),
+                    );
+                    false
+                }
+                Some(driver) => {
+                    volume.set_driver(
+                        self.sourced_spans(Self::protected(driver.value(), definition_sensitive), &[driver.span()]),
+                    );
+                    self.exact_spans(format!("{subject}.driver"), &[driver.span()]);
+                    driver.value() == "local"
+                }
+                None => false,
+            };
+
+            if !native.driver_opts().is_empty() {
+                if local_driver {
+                    self.map_local_volume_driver_options(
+                        &mut volume,
+                        &subject,
+                        native.driver_opts(),
+                        resource.definition().provenance(),
+                        definition_sensitive,
+                    );
+                } else {
+                    self.unsupported(
+                        &format!("{subject}.driver_opts"),
+                        "Compose local-driver options require an explicit `driver: local`",
+                        native.span(),
+                    );
+                }
+            }
+            if let Some(labels) = native.labels() {
+                self.map_volume_labels(
+                    &mut volume,
+                    &subject,
+                    labels,
+                    resource.definition().provenance(),
+                    definition_sensitive,
+                );
+            }
         }
         self.report_fields(&subject, "volume definition extension", native.extension_fields());
         self.report_fields(&subject, "unknown volume definition field", native.unknown_fields());
         self.exact_provenance(&subject, resource.definition().provenance());
-        Some(self.sourced_provenance(Volume::new(name, ownership), resource.definition().provenance()))
+        Some(self.sourced_provenance(volume, resource.definition().provenance()))
     }
 
+    fn map_local_volume_driver_options(
+        &mut self,
+        volume: &mut Volume,
+        subject: &str,
+        options: &[compose_lens::model::KeyValueEntry],
+        provenance: &MergeProvenance,
+        definition_sensitive: bool,
+    ) {
+        let mut seen = BTreeSet::new();
+        let mut exact = true;
+        for (index, option) in options.iter().enumerate() {
+            let option_subject = format!("{subject}.driver_opts[{index}]");
+            let key = option.key().value();
+            let value = match option.value().value() {
+                ComposeScalar::String(value) | ComposeScalar::Number(value) if !value.is_empty() => value,
+                _ => {
+                    self.invalid_value(
+                        &option_subject,
+                        "local volume driver options require non-empty string or number values",
+                        option.span(),
+                    );
+                    exact = false;
+                    continue;
+                }
+            };
+            if key.contains('$') || value.contains('$') {
+                self.invalid_value(
+                    &option_subject,
+                    "local volume driver-option expression was not resolved",
+                    option.span(),
+                );
+                exact = false;
+                continue;
+            }
+            if !seen.insert(key) {
+                self.invalid_value(
+                    &option_subject,
+                    "local volume driver option is duplicated",
+                    option.span(),
+                );
+                exact = false;
+                continue;
+            }
+            let value = self.sourced_spans(Self::protected(value, definition_sensitive), &[option.value().span()]);
+            match key.as_str() {
+                "type" => volume.set_volume_type(value),
+                "device" => volume.set_device(value),
+                "o" => volume.set_options(value),
+                _ => {
+                    self.unsupported(
+                        &option_subject,
+                        "only local volume driver options `type`, `device`, and `o` are modeled",
+                        option.span(),
+                    );
+                    exact = false;
+                }
+            }
+        }
+        if exact {
+            self.exact_provenance(format!("{subject}.driver_opts"), provenance);
+        }
+    }
+
+    fn map_volume_labels(
+        &mut self,
+        volume: &mut Volume,
+        subject: &str,
+        labels: &Labels,
+        provenance: &MergeProvenance,
+        definition_sensitive: bool,
+    ) {
+        let mut mapped = Vec::new();
+        let mut exact = true;
+        match labels {
+            Labels::Map { entries, .. } => {
+                for (index, entry) in entries.iter().enumerate() {
+                    let entry_subject = format!("{subject}.labels[{index}]");
+                    let value = Self::compose_scalar(entry.value().value());
+                    if entry.key().value().contains('$') || value.contains('$') {
+                        self.invalid_value(&entry_subject, "volume label expression was not resolved", entry.span());
+                        exact = false;
+                        continue;
+                    }
+                    let Some(name) =
+                        self.identifier_optional(&entry_subject, entry.key().value(), Some(entry.key().span()))
+                    else {
+                        exact = false;
+                        continue;
+                    };
+                    mapped.push(self.sourced_spans(
+                        MetadataLabel::new(name, Self::protected(&value, definition_sensitive)),
+                        &[entry.key().span(), entry.value().span()],
+                    ));
+                }
+            }
+            Labels::List { values, .. } => {
+                for (index, value) in values.iter().enumerate() {
+                    let entry_subject = format!("{subject}.labels[{index}]");
+                    let Some((name, label_value)) = literal_assignment(value.value()) else {
+                        self.invalid_value(
+                            &entry_subject,
+                            "volume label list entries must use unambiguous name=value spelling",
+                            value.span(),
+                        );
+                        exact = false;
+                        continue;
+                    };
+                    if value.value().contains('$') {
+                        self.invalid_value(&entry_subject, "volume label expression was not resolved", value.span());
+                        exact = false;
+                        continue;
+                    }
+                    let Some(name) = self.identifier_optional(&entry_subject, name, Some(value.span())) else {
+                        exact = false;
+                        continue;
+                    };
+                    mapped.push(self.sourced_spans(
+                        MetadataLabel::new(name, Self::protected(label_value, definition_sensitive)),
+                        &[value.span()],
+                    ));
+                }
+            }
+        }
+        volume.set_labels_with_origins(mapped, self.origins(provenance));
+        if exact {
+            self.exact_provenance(format!("{subject}.labels"), provenance);
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn map_network_definition(&mut self, resource: &ProjectResource<NetworkDefinition>) -> Option<Sourced<Network>> {
         let native = resource.definition().value();
         let subject = format!("networks.{}", resource.name().value());
         let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
         let ownership = self.resource_ownership(&subject, native.external(), native.span());
-        if native.driver().is_some() {
-            self.unsupported(&subject, "network.driver", native.span());
+        let definition_sensitive = resource.definition().is_sensitive();
+        let external = matches!(
+            native.external().map(compose_lens::model::Located::value),
+            Some(BooleanValue::Literal(true))
+        );
+        let mut network = Network::new(name, ownership);
+
+        if let Some(runtime_name) = native.custom_name() {
+            if runtime_name.value().contains('$') {
+                self.invalid_value(
+                    &format!("{subject}.name"),
+                    "network name expression was not resolved",
+                    runtime_name.span(),
+                );
+            } else {
+                network.set_runtime_name(self.sourced_spans(
+                    Self::protected(runtime_name.value(), definition_sensitive),
+                    &[runtime_name.span()],
+                ));
+                self.exact_spans(format!("{subject}.name"), &[runtime_name.span()]);
+            }
         }
-        if !native.driver_opts().is_empty() {
-            self.unsupported(&subject, "network.driver_opts", native.span());
-        }
-        if native.attachable().is_some() {
-            self.unsupported(&subject, "network.attachable", native.span());
-        }
-        if native.enable_ipv4().is_some() {
-            self.unsupported(&subject, "network.enable_ipv4", native.span());
-        }
-        if native.enable_ipv6().is_some() {
-            self.unsupported(&subject, "network.enable_ipv6", native.span());
-        }
-        if native.internal().is_some() {
-            self.unsupported(&subject, "network.internal", native.span());
-        }
-        if native.ipam().is_some() {
-            self.unsupported(&subject, "network.ipam", native.span());
-        }
-        if native.labels().is_some() {
-            self.unsupported(&subject, "network.labels", native.span());
-        }
-        if native.custom_name().is_some() {
-            self.unsupported(&subject, "network.name", native.span());
+
+        if external {
+            for (field, present) in [
+                ("driver", native.driver().is_some()),
+                ("driver_opts", !native.driver_opts().is_empty()),
+                ("attachable", native.attachable().is_some()),
+                ("enable_ipv4", native.enable_ipv4().is_some()),
+                ("enable_ipv6", native.enable_ipv6().is_some()),
+                ("internal", native.internal().is_some()),
+                ("ipam", native.ipam().is_some()),
+                ("labels", native.labels().is_some()),
+            ] {
+                if present {
+                    self.unsupported(
+                        &format!("{subject}.{field}"),
+                        "Compose external networks may only declare their platform name",
+                        native.span(),
+                    );
+                }
+            }
+        } else {
+            if let Some(driver) = native.driver() {
+                if driver.value().contains('$') {
+                    self.invalid_value(
+                        &format!("{subject}.driver"),
+                        "network driver expression was not resolved",
+                        driver.span(),
+                    );
+                } else {
+                    network.set_driver(
+                        self.sourced_spans(Self::protected(driver.value(), definition_sensitive), &[driver.span()]),
+                    );
+                    self.exact_spans(format!("{subject}.driver"), &[driver.span()]);
+                }
+            }
+
+            if !native.driver_opts().is_empty() {
+                let mut options = Vec::with_capacity(native.driver_opts().len());
+                let mut exact = true;
+                for (index, option) in native.driver_opts().iter().enumerate() {
+                    let option_subject = format!("{subject}.driver_opts[{index}]");
+                    let value = Self::compose_scalar(option.value().value());
+                    if option.key().value().contains('$') || value.contains('$') {
+                        self.invalid_value(
+                            &option_subject,
+                            "network driver-option expression was not resolved",
+                            option.span(),
+                        );
+                        exact = false;
+                        continue;
+                    }
+                    let Some(option_name) =
+                        self.identifier_optional(&option_subject, option.key().value(), Some(option.key().span()))
+                    else {
+                        exact = false;
+                        continue;
+                    };
+                    let option_span = option.span();
+                    match NetworkDriverOption::new(
+                        self.sourced_spans(option_name, &[option.key().span()]),
+                        self.sourced_spans(Self::protected(&value, definition_sensitive), &[option.value().span()]),
+                    ) {
+                        Ok(option) => options.push(self.sourced_spans(option, &[option_span])),
+                        Err(error) => {
+                            self.invalid_model(&option_subject, &error, option.span());
+                            exact = false;
+                        }
+                    }
+                }
+                network.set_driver_options_with_origins(options, self.origins(resource.definition().provenance()));
+                if exact {
+                    self.exact_provenance(format!("{subject}.driver_opts"), resource.definition().provenance());
+                }
+            }
+
+            if native.attachable().is_some() {
+                self.unsupported(&format!("{subject}.attachable"), "network.attachable", native.span());
+            }
+            if native.enable_ipv4().is_some() {
+                self.unsupported(&format!("{subject}.enable_ipv4"), "network.enable_ipv4", native.span());
+            }
+            self.map_network_boolean(
+                &mut network,
+                &subject,
+                "enable_ipv6",
+                native.enable_ipv6(),
+                Network::set_ipv6,
+            );
+            self.map_network_boolean(
+                &mut network,
+                &subject,
+                "internal",
+                native.internal(),
+                Network::set_internal,
+            );
+
+            if let Some(ipam) = native.ipam() {
+                if let Some(driver) = ipam.driver() {
+                    if driver.value().contains('$') {
+                        self.invalid_value(
+                            &format!("{subject}.ipam.driver"),
+                            "IPAM driver expression was not resolved",
+                            driver.span(),
+                        );
+                    } else {
+                        network.set_ipam_driver(
+                            self.sourced_spans(Self::protected(driver.value(), definition_sensitive), &[driver.span()]),
+                        );
+                        self.exact_spans(format!("{subject}.ipam.driver"), &[driver.span()]);
+                    }
+                }
+                if !ipam.options().is_empty() {
+                    self.unsupported(&format!("{subject}.ipam.options"), "network.ipam.options", ipam.span());
+                }
+                if !ipam.config().is_empty() {
+                    let mut configs = Vec::with_capacity(ipam.config().len());
+                    let mut exact = true;
+                    for (index, config) in ipam.config().iter().enumerate() {
+                        let config_subject = format!("{subject}.ipam.config[{index}]");
+                        let Some(subnet) = config.subnet() else {
+                            self.invalid_value(&config_subject, "IPAM configuration requires a subnet", config.span());
+                            exact = false;
+                            continue;
+                        };
+                        if subnet.value().contains('$')
+                            || config.gateway().is_some_and(|value| value.value().contains('$'))
+                            || config.ip_range().is_some_and(|value| value.value().contains('$'))
+                        {
+                            self.invalid_value(&config_subject, "IPAM expression was not resolved", config.span());
+                            exact = false;
+                            continue;
+                        }
+                        let mut mapped = match NetworkIpamConfig::new(
+                            self.sourced_spans(Self::protected(subnet.value(), definition_sensitive), &[subnet.span()]),
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                self.invalid_model(&config_subject, &error, subnet.span());
+                                exact = false;
+                                continue;
+                            }
+                        };
+                        if let Some(gateway) = config.gateway() {
+                            if let Err(error) = mapped.set_gateway(self.sourced_spans(
+                                Self::protected(gateway.value(), definition_sensitive),
+                                &[gateway.span()],
+                            )) {
+                                self.invalid_model(&config_subject, &error, gateway.span());
+                                exact = false;
+                                continue;
+                            }
+                        }
+                        if let Some(ip_range) = config.ip_range() {
+                            if let Err(error) = mapped.set_ip_range(self.sourced_spans(
+                                Self::protected(ip_range.value(), definition_sensitive),
+                                &[ip_range.span()],
+                            )) {
+                                self.invalid_model(&config_subject, &error, ip_range.span());
+                                exact = false;
+                                continue;
+                            }
+                        }
+                        if !config.aux_addresses().is_empty() {
+                            self.unsupported(
+                                &format!("{config_subject}.aux_addresses"),
+                                "network.ipam.config.aux_addresses",
+                                config.span(),
+                            );
+                            exact = false;
+                        }
+                        self.report_fields(
+                            &config_subject,
+                            "IPAM configuration extension",
+                            config.extension_fields(),
+                        );
+                        self.report_fields(
+                            &config_subject,
+                            "unknown IPAM configuration field",
+                            config.unknown_fields(),
+                        );
+                        configs.push(self.sourced_spans(mapped, &[config.span()]));
+                    }
+                    network.set_ipam_configs_with_origins(configs, self.origins(resource.definition().provenance()));
+                    if exact {
+                        self.exact_provenance(format!("{subject}.ipam.config"), resource.definition().provenance());
+                    }
+                }
+                self.report_fields(&format!("{subject}.ipam"), "IPAM extension", ipam.extension_fields());
+                self.report_fields(&format!("{subject}.ipam"), "unknown IPAM field", ipam.unknown_fields());
+            }
+
+            if let Some(labels) = native.labels() {
+                self.map_network_labels(
+                    &mut network,
+                    &subject,
+                    labels,
+                    resource.definition().provenance(),
+                    definition_sensitive,
+                );
+            }
         }
         self.report_fields(&subject, "network definition extension", native.extension_fields());
         self.report_fields(&subject, "unknown network definition field", native.unknown_fields());
         self.exact_provenance(&subject, resource.definition().provenance());
-        Some(self.sourced_provenance(Network::new(name, ownership), resource.definition().provenance()))
+        Some(self.sourced_provenance(network, resource.definition().provenance()))
+    }
+
+    fn map_network_boolean(
+        &mut self,
+        network: &mut Network,
+        subject: &str,
+        field: &str,
+        value: Option<&compose_lens::model::Located<BooleanValue>>,
+        setter: fn(&mut Network, Sourced<bool>),
+    ) {
+        let Some(value) = value else { return };
+        match value.value() {
+            BooleanValue::Literal(literal) => {
+                setter(network, self.sourced_spans(*literal, &[value.span()]));
+                self.exact_spans(format!("{subject}.{field}"), &[value.span()]);
+            }
+            BooleanValue::Expression(_) => self.invalid_value(
+                &format!("{subject}.{field}"),
+                "network boolean expression was not resolved",
+                value.span(),
+            ),
+        }
+    }
+
+    fn map_network_labels(
+        &mut self,
+        network: &mut Network,
+        subject: &str,
+        labels: &Labels,
+        provenance: &MergeProvenance,
+        definition_sensitive: bool,
+    ) {
+        let mut mapped = Vec::new();
+        let mut exact = true;
+        match labels {
+            Labels::Map { entries, .. } => {
+                for (index, entry) in entries.iter().enumerate() {
+                    let entry_subject = format!("{subject}.labels[{index}]");
+                    let value = Self::compose_scalar(entry.value().value());
+                    if entry.key().value().contains('$') || value.contains('$') {
+                        self.invalid_value(
+                            &entry_subject,
+                            "network label expression was not resolved",
+                            entry.span(),
+                        );
+                        exact = false;
+                        continue;
+                    }
+                    let Some(name) =
+                        self.identifier_optional(&entry_subject, entry.key().value(), Some(entry.key().span()))
+                    else {
+                        exact = false;
+                        continue;
+                    };
+                    let label = MetadataLabel::new(name, Self::protected(&value, definition_sensitive));
+                    mapped.push(self.sourced_spans(label, &[entry.key().span(), entry.value().span()]));
+                }
+            }
+            Labels::List { values, .. } => {
+                for (index, value) in values.iter().enumerate() {
+                    let entry_subject = format!("{subject}.labels[{index}]");
+                    let Some((name, label_value)) = literal_assignment(value.value()) else {
+                        self.invalid_value(
+                            &entry_subject,
+                            "network label list entries must use unambiguous name=value spelling",
+                            value.span(),
+                        );
+                        exact = false;
+                        continue;
+                    };
+                    if value.value().contains('$') {
+                        self.invalid_value(
+                            &entry_subject,
+                            "network label expression was not resolved",
+                            value.span(),
+                        );
+                        exact = false;
+                        continue;
+                    }
+                    let Some(name) = self.identifier_optional(&entry_subject, name, Some(value.span())) else {
+                        exact = false;
+                        continue;
+                    };
+                    mapped.push(self.sourced_spans(
+                        MetadataLabel::new(name, Self::protected(label_value, definition_sensitive)),
+                        &[value.span()],
+                    ));
+                }
+            }
+        }
+        network.set_labels_with_origins(mapped, self.origins(provenance));
+        if exact {
+            self.exact_provenance(format!("{subject}.labels"), provenance);
+        }
     }
 
     fn map_config_definition(&mut self, resource: &ProjectResource<ConfigDefinition>) -> Option<Sourced<Config>> {

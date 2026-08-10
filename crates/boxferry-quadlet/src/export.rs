@@ -11,12 +11,14 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, BuildSettingValues, BuildSourceDeclaration, Command, Config, Device, EnvironmentFile,
-    EnvironmentFileFormat, EnvironmentValue, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping,
-    ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, Mount,
-    MountSource, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant, ResourceOwnership,
-    RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
-    SourceBuildSetting, Sourced,
+    Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildSettingValues, BuildSourceDeclaration,
+    Command, Config, Device, Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, ExposedPort,
+    GroupExitPolicy, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping, ImageAcquisition,
+    ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, MetadataLabel, Mount, MountSource,
+    NetworkAttachment, NetworkDriverOption, Port, ProtectedString, Protocol, Provenance, PullPolicy, ReloadAction,
+    ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, ServiceGroupRuntime, SourceBuildSetting, Sourced,
+    StartupNotification, VolumeImageSource,
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
@@ -319,6 +321,7 @@ struct PodPlan {
     origins: Vec<Provenance>,
     consumed_group: Option<String>,
     approximation: &'static str,
+    runtime: Option<Sourced<ServiceGroupRuntime>>,
 }
 
 #[derive(Clone, Copy)]
@@ -407,6 +410,21 @@ impl<'a> Mapping<'a> {
             self.generation_failed = true;
             return;
         }
+        let artifact_dependencies = self.artifact_dependencies();
+        if let Err(error) = self
+            .application
+            .validate_image_artifact_dependencies(&artifact_dependencies)
+        {
+            self.invalid(
+                self.exporter.codes.dependency.clone(),
+                "application.artifact_dependencies",
+                "image artifact references must form a complete acyclic graph",
+                &error.to_string(),
+                &[],
+            );
+            self.generation_failed = true;
+            return;
+        }
         let pod_plan = match self.exporter.grouping_policy {
             QuadletGroupingPolicy::SeparateContainers => None,
             QuadletGroupingPolicy::SinglePod => {
@@ -420,6 +438,7 @@ impl<'a> Mapping<'a> {
                     origins: service_origins(self.application.services()),
                     consumed_group: None,
                     approximation: "caller-selected single-pod grouping shares one network namespace across source services",
+                    runtime: None,
                 })
             }
             QuadletGroupingPolicy::PreserveSingleGroup => {
@@ -439,14 +458,14 @@ impl<'a> Mapping<'a> {
         for network in self.application.networks() {
             self.map_network(network);
         }
-        for volume in self.application.volumes() {
-            self.map_volume(volume);
-        }
         for acquisition in self.application.image_acquisitions() {
             self.map_image_acquisition(acquisition);
         }
         for build in self.application.image_builds() {
             self.map_image_build(build);
+        }
+        for volume in self.application.volumes() {
+            self.map_volume(volume);
         }
         for config in self.application.configs() {
             self.map_config(config);
@@ -460,6 +479,32 @@ impl<'a> Mapping<'a> {
         for service in self.application.services() {
             self.map_service(service, pod_plan.as_ref().map(|plan| plan.name.as_str()));
         }
+    }
+
+    fn artifact_dependencies(&self) -> Vec<Sourced<ArtifactDependency>> {
+        let mut dependencies = Vec::new();
+        for volume in self.application.volumes() {
+            let source = ArtifactDependencyNode::Volume(volume.value().name().clone());
+            let Some(image) = volume.value().image_source() else {
+                continue;
+            };
+            let target = match image.value() {
+                VolumeImageSource::ImageAcquisition(name) => ArtifactDependencyNode::ImageAcquisition(name.clone()),
+                VolumeImageSource::ImageBuild(name) => ArtifactDependencyNode::ImageBuild(name.clone()),
+                VolumeImageSource::Literal(_) | _ => continue,
+            };
+            let Some(origin) = image.origins().first() else {
+                continue;
+            };
+            dependencies.push(Sourced::from_source(
+                ArtifactDependency::new(
+                    Sourced::from_source(source, origin.clone()),
+                    Sourced::from_source(target, origin.clone()),
+                ),
+                origin.clone(),
+            ));
+        }
+        dependencies
     }
 
     fn preserve_single_group_plan(&mut self) -> Option<PodPlan> {
@@ -518,7 +563,9 @@ impl<'a> Mapping<'a> {
             );
             return None;
         }
-        if !self.validate_single_pod_grouping() {
+        // Native pod settings are authoritative.  Do not combine them with values inferred from
+        // the member containers: those values can intentionally disagree in a converted graph.
+        if group.value().runtime().is_none() && !self.validate_single_pod_grouping() {
             return None;
         }
 
@@ -528,6 +575,7 @@ impl<'a> Mapping<'a> {
             origins: service_group_origins(group, self.application.services()),
             consumed_group: Some(group.value().name().as_str().to_owned()),
             approximation: "caller-selected preservation maps structural membership to one shared Podman pod namespace",
+            runtime: group.value().runtime().cloned(),
         })
     }
 
@@ -763,19 +811,34 @@ impl<'a> Mapping<'a> {
                 else {
                     return;
                 };
-                if !self.capability("quadlet.unit-type.network", &subject, network.origins())
-                    || !self.capability("quadlet.network.name", &subject, network.origins())
-                {
+                if !self.capability("quadlet.unit-type.network", &subject, network.origins()) {
                     return;
                 }
                 let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Network);
-                if self.push_network(
-                    &mut builder,
-                    NetworkKey::NetworkName,
-                    network.value().name().as_str(),
-                    &subject,
-                    network.origins(),
-                ) {
+                let runtime_name_subject = format!("{subject}.runtime_name");
+                let (runtime_name, runtime_name_origins) = network.value().runtime_name().map_or_else(
+                    || (network.value().name().as_str(), network.origins()),
+                    |name| (name.value().expose(), name.origins()),
+                );
+                if !is_safe_network_scalar(runtime_name, false) {
+                    self.unsupported(
+                        &runtime_name_subject,
+                        "NetworkName must be an unquoted systemd-safe network name",
+                        runtime_name_origins,
+                    );
+                    return;
+                }
+                if self.capability("quadlet.network.name", &runtime_name_subject, runtime_name_origins)
+                    && self.push_network(
+                        &mut builder,
+                        NetworkKey::NetworkName,
+                        runtime_name,
+                        &runtime_name_subject,
+                        runtime_name_origins,
+                    )
+                {
+                    self.exact(&runtime_name_subject, runtime_name_origins);
+                    self.map_network_settings(&subject, network.value(), &mut builder);
                     self.finish_document(file_name, &builder, &subject, network.origins());
                 }
             }
@@ -786,6 +849,206 @@ impl<'a> Mapping<'a> {
                 network.origins(),
             ),
             _ => self.unsupported(&subject, "unknown network ownership", network.origins()),
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the ten related typed network keys share one generated document and ordered IPAM contract"
+    )]
+    fn map_network_settings(
+        &mut self,
+        network_subject: &str,
+        network: &boxferry_model::Network,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        if let Some(driver) = network.driver() {
+            self.map_raw_network_value(
+                &format!("{network_subject}.driver"),
+                driver,
+                "quadlet.network.driver",
+                NetworkKey::Driver,
+                builder,
+                "network driver must be an unquoted systemd-safe scalar",
+            );
+        }
+        if let Some(options) = network.driver_options() {
+            if options.is_empty() {
+                self.unsupported(
+                    &format!("{network_subject}.driver_options"),
+                    "an explicit empty network option collection has no safe Quadlet reset encoding",
+                    network.driver_options_origins(),
+                );
+            }
+            for (index, option) in options.iter().enumerate() {
+                let subject = format!("{network_subject}.driver_options[{index}]");
+                let origins = network_option_origins(network.driver_options_origins(), option);
+                let name = option.value().name().value().as_str();
+                let value = option.value().value().value().expose();
+                if is_safe_network_assignment(name, value) {
+                    self.emit_network(
+                        builder,
+                        NetworkKey::Options,
+                        "quadlet.network.options",
+                        &format!("{name}={value}"),
+                        &subject,
+                        &origins,
+                    );
+                } else {
+                    self.unsupported(
+                        &subject,
+                        "network option must use an unambiguous systemd-safe NAME=VALUE spelling",
+                        &origins,
+                    );
+                }
+            }
+        }
+        if let Some(labels) = network.labels() {
+            if labels.is_empty() {
+                self.unsupported(
+                    &format!("{network_subject}.labels"),
+                    "an explicit empty network label collection has no safe Quadlet reset encoding",
+                    network.labels_origins(),
+                );
+            }
+            for (index, label) in labels.iter().enumerate() {
+                let subject = format!("{network_subject}.labels[{index}]");
+                let origins = network_label_origins(network.labels_origins(), label);
+                let name = label.value().name().as_str();
+                let value = label.value().value().expose();
+                if is_label_name(name) && is_safe_network_scalar(value, true) {
+                    self.emit_network(
+                        builder,
+                        NetworkKey::Label,
+                        "quadlet.network.label",
+                        &format!("{name}={value}"),
+                        &subject,
+                        &origins,
+                    );
+                } else {
+                    self.unsupported(
+                        &subject,
+                        "network label must use an unambiguous systemd-safe NAME=VALUE spelling",
+                        &origins,
+                    );
+                }
+            }
+        }
+        for (field, value, key, capability) in [
+            (
+                "internal",
+                network.internal(),
+                NetworkKey::Internal,
+                "quadlet.network.internal",
+            ),
+            ("ipv6", network.ipv6(), NetworkKey::IPv6, "quadlet.network.ipv6"),
+        ] {
+            if let Some(value) = value {
+                let subject = format!("{network_subject}.{field}");
+                self.emit_network(
+                    builder,
+                    key,
+                    capability,
+                    if *value.value() { "true" } else { "false" },
+                    &subject,
+                    value.origins(),
+                );
+            }
+        }
+        if let Some(driver) = network.ipam_driver() {
+            self.map_raw_network_value(
+                &format!("{network_subject}.ipam_driver"),
+                driver,
+                "quadlet.network.ipam-driver",
+                NetworkKey::IPAMDriver,
+                builder,
+                "IPAM driver must be an unquoted systemd-safe scalar",
+            );
+        }
+        if let Some(rows) = network.ipam_configs() {
+            if rows.is_empty() {
+                self.unsupported(
+                    &format!("{network_subject}.ipam_configs"),
+                    "an explicit empty IPAM collection has no safe Quadlet reset encoding",
+                    network.ipam_configs_origins(),
+                );
+            }
+            for (index, row) in rows.iter().enumerate() {
+                let subject = format!("{network_subject}.ipam_configs[{index}]");
+                let origins = network_ipam_origins(network.ipam_configs_origins(), row);
+                self.emit_network_ipam_value(
+                    builder,
+                    NetworkKey::Subnet,
+                    "quadlet.network.subnet",
+                    row.value().subnet(),
+                    &format!("{subject}.subnet"),
+                    &origins,
+                );
+                if let Some(gateway) = row.value().gateway() {
+                    self.emit_network_ipam_value(
+                        builder,
+                        NetworkKey::Gateway,
+                        "quadlet.network.gateway",
+                        gateway,
+                        &format!("{subject}.gateway"),
+                        &origins,
+                    );
+                }
+                if let Some(range) = row.value().ip_range() {
+                    self.emit_network_ipam_value(
+                        builder,
+                        NetworkKey::IPRange,
+                        "quadlet.network.ip-range",
+                        range,
+                        &format!("{subject}.ip_range"),
+                        &origins,
+                    );
+                }
+            }
+        }
+    }
+
+    fn map_raw_network_value(
+        &mut self,
+        subject: &str,
+        value: &Sourced<ProtectedString>,
+        capability: &str,
+        key: NetworkKey,
+        builder: &mut QuadletDocumentBuilder,
+        unsupported: &str,
+    ) {
+        if is_safe_network_scalar(value.value().expose(), false) {
+            self.emit_network(
+                builder,
+                key,
+                capability,
+                value.value().expose(),
+                subject,
+                value.origins(),
+            );
+        } else {
+            self.unsupported(subject, unsupported, value.origins());
+        }
+    }
+
+    fn emit_network_ipam_value(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: NetworkKey,
+        capability: &str,
+        value: &Sourced<ProtectedString>,
+        subject: &str,
+        row_origins: &[Provenance],
+    ) {
+        let origins = if value.origins().is_empty() {
+            row_origins
+        } else {
+            value.origins()
+        };
+        if is_safe_network_scalar(value.value().expose(), false) {
+            self.emit_network(builder, key, capability, value.value().expose(), subject, origins);
+        } else {
+            self.unsupported(subject, "IPAM values must be unquoted systemd-safe scalars", origins);
         }
     }
 
@@ -804,13 +1067,18 @@ impl<'a> Mapping<'a> {
                     return;
                 }
                 let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Volume);
+                let runtime_name = volume
+                    .value()
+                    .runtime_name()
+                    .map_or_else(|| volume.value().name().as_str(), |name| name.value().expose());
                 if self.push_volume(
                     &mut builder,
                     VolumeKey::VolumeName,
-                    volume.value().name().as_str(),
+                    runtime_name,
                     &subject,
                     volume.origins(),
                 ) {
+                    self.map_volume_settings(&mut builder, volume, &subject);
                     self.finish_document(file_name, &builder, &subject, volume.origins());
                 }
             }
@@ -821,6 +1089,230 @@ impl<'a> Mapping<'a> {
                 volume.origins(),
             ),
             _ => self.unsupported(&subject, "unknown volume ownership", volume.origins()),
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the typed volume keys share one generated document contract"
+    )]
+    fn map_volume_settings(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        volume: &Sourced<boxferry_model::Volume>,
+        subject: &str,
+    ) {
+        let volume = volume.value();
+        for (field, value, key, capability) in [
+            ("driver", volume.driver(), VolumeKey::Driver, "quadlet.volume.driver"),
+            ("device", volume.device(), VolumeKey::Device, "quadlet.volume.device"),
+            ("type", volume.volume_type(), VolumeKey::Type, "quadlet.volume.type"),
+            ("user", volume.user(), VolumeKey::User, "quadlet.volume.user"),
+            ("group", volume.group(), VolumeKey::Group, "quadlet.volume.group"),
+            (
+                "service_name",
+                volume.service_name(),
+                VolumeKey::ServiceName,
+                "quadlet.volume.service-name",
+            ),
+        ] {
+            if let Some(value) = value {
+                let item = format!("{subject}.{field}");
+                if is_safe_network_scalar(value.value().expose(), false)
+                    && self.capability(capability, &item, value.origins())
+                    && self.push_volume(builder, key, value.value().expose(), &item, value.origins())
+                {
+                    self.exact(item, value.origins());
+                } else {
+                    self.unsupported(
+                        &item,
+                        "volume value requires an unquoted systemd-safe scalar",
+                        value.origins(),
+                    );
+                }
+            }
+        }
+        if let Some(value) = volume.options() {
+            let item = format!("{subject}.options");
+            if volume.device().is_none()
+                && self
+                    .podman_target
+                    .is_some_and(|target| target.minimum() < PodmanVersion::new(6, 0, 0))
+            {
+                self.unsupported(
+                    &item,
+                    "Options without Device is only evidenced for target ranges beginning at Podman 6.0",
+                    value.origins(),
+                );
+            } else if is_safe_network_scalar(value.value().expose(), false)
+                && self.capability("quadlet.volume.options", &item, value.origins())
+                && self.push_volume(
+                    builder,
+                    VolumeKey::Options,
+                    value.value().expose(),
+                    &item,
+                    value.origins(),
+                )
+            {
+                self.exact(item, value.origins());
+            } else {
+                self.unsupported(
+                    &item,
+                    "volume value requires an unquoted systemd-safe scalar",
+                    value.origins(),
+                );
+            }
+        }
+        for (field, value, key, capability) in [
+            ("uid", volume.uid(), VolumeKey::UID, "quadlet.volume.uid"),
+            ("gid", volume.gid(), VolumeKey::GID, "quadlet.volume.gid"),
+        ] {
+            if let Some(value) = value {
+                let item = format!("{subject}.{field}");
+                if !value.value().expose().is_empty()
+                    && value.value().expose().bytes().all(|b| b.is_ascii_digit())
+                    && self.capability(capability, &item, value.origins())
+                    && self.push_volume(builder, key, value.value().expose(), &item, value.origins())
+                {
+                    self.exact(item, value.origins());
+                } else {
+                    self.unsupported(
+                        &item,
+                        "only reviewed canonical numeric identity spellings can be emitted",
+                        value.origins(),
+                    );
+                }
+            }
+        }
+        if volume.volume_type().is_some() && volume.device().is_none() {
+            self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &format!("{subject}.type"),
+                "Volume Type requires Device",
+                "set Device with Type",
+                &[],
+            );
+        }
+        if let Some(copy) = volume.copy() {
+            let item = format!("{subject}.copy");
+            if self.capability("quadlet.volume.copy", &item, copy.origins())
+                && self.push_volume(
+                    builder,
+                    VolumeKey::Copy,
+                    if *copy.value() { "true" } else { "false" },
+                    &item,
+                    copy.origins(),
+                )
+            {
+                self.exact(item, copy.origins());
+            }
+        }
+        if let Some(labels) = volume.labels() {
+            if labels.is_empty() {
+                self.unsupported(
+                    &format!("{subject}.labels"),
+                    "an explicit empty volume label collection has no safe Quadlet reset encoding",
+                    volume.labels_origins(),
+                );
+            }
+            for (index, label) in labels.iter().enumerate() {
+                let item = format!("{subject}.labels[{index}]");
+                let name = label.value().name().as_str();
+                let text = label.value().value().expose();
+                if is_label_name(name)
+                    && is_safe_network_scalar(text, true)
+                    && self.capability("quadlet.volume.label", &item, label.origins())
+                    && self.push_volume(
+                        builder,
+                        VolumeKey::Label,
+                        format!("{name}={text}"),
+                        &item,
+                        label.origins(),
+                    )
+                {
+                    self.exact(item, label.origins());
+                } else {
+                    self.unsupported(
+                        &item,
+                        "volume label must use a safe NAME=VALUE assignment",
+                        label.origins(),
+                    );
+                }
+            }
+        }
+        for (field, values, key, capability) in [
+            (
+                "containers_conf_modules",
+                volume.containers_conf_modules(),
+                VolumeKey::ContainersConfModule,
+                "quadlet.volume.containers-conf-module",
+            ),
+            (
+                "global_args",
+                volume.global_args(),
+                VolumeKey::GlobalArgs,
+                "quadlet.volume.global-args",
+            ),
+            (
+                "podman_args",
+                volume.podman_args(),
+                VolumeKey::PodmanArgs,
+                "quadlet.volume.podman-args",
+            ),
+        ] {
+            if let Some(values) = values {
+                if values.is_empty() {
+                    let origins = match field {
+                        "containers_conf_modules" => volume.containers_conf_modules_origins(),
+                        "global_args" => volume.global_args_origins(),
+                        _ => volume.podman_args_origins(),
+                    };
+                    self.unsupported(
+                        &format!("{subject}.{field}"),
+                        "an explicit empty collection has no safe Quadlet reset encoding",
+                        origins,
+                    );
+                }
+                for (index, value) in values.iter().enumerate() {
+                    let item = format!("{subject}.{field}[{index}]");
+                    if is_safe_network_scalar(value.value().expose(), false)
+                        && self.capability(capability, &item, value.origins())
+                        && self.push_volume(builder, key, value.value().expose(), &item, value.origins())
+                    {
+                        self.exact(item, value.origins());
+                    } else {
+                        self.unsupported(
+                            &item,
+                            "protected raw volume arguments are retained but only safe physical forms can be regenerated",
+                            value.origins(),
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(image) = volume.image_source() {
+            let item = format!("{subject}.image");
+            let text = match image.value() {
+                VolumeImageSource::Literal(value) => value.expose().to_owned(),
+                VolumeImageSource::ImageAcquisition(name) => format!("{}.image", name.as_str()),
+                VolumeImageSource::ImageBuild(name) => format!("{}.build", name.as_str()),
+                _ => {
+                    self.unsupported(&item, "unknown volume image source cannot be emitted", image.origins());
+                    return;
+                }
+            };
+            if volume.copy().is_some() {
+                self.unsupported(
+                    &item,
+                    "Image ignores Copy; the conflict is retained rather than claimed exact",
+                    image.origins(),
+                );
+            }
+            if self.capability("quadlet.volume.image", &item, image.origins())
+                && self.push_volume(builder, VolumeKey::Image, text, &item, image.origins())
+            {
+                self.exact(item, image.origins());
+            }
         }
     }
 
@@ -1201,14 +1693,33 @@ impl<'a> Mapping<'a> {
         let Some(file_name) = self.unit_file_name(subject, name, "pod", origins) else {
             return;
         };
-        if !self.capability("quadlet.unit-type.pod", subject, origins)
-            || !self.capability("quadlet.pod.name", subject, origins)
-        {
+        if !self.capability("quadlet.unit-type.pod", subject, origins) {
             return;
         }
 
         let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Pod);
-        if !self.push_pod(&mut builder, PodKey::PodName, name, subject, origins) {
+        if let Some(runtime) = plan.runtime.as_ref() {
+            if let Some(runtime_name) = runtime.value().runtime_name() {
+                if !self.capability("quadlet.pod.name", subject, runtime_name.origins())
+                    || !self.push_pod(
+                        &mut builder,
+                        PodKey::PodName,
+                        runtime_name.value().expose(),
+                        subject,
+                        runtime_name.origins(),
+                    )
+                {
+                    return;
+                }
+            }
+            self.map_group_runtime(subject, runtime, &mut builder);
+            self.exact(subject, origins);
+            self.finish_document(file_name, &builder, subject, origins);
+            return;
+        }
+        if !self.capability("quadlet.pod.name", subject, origins)
+            || !self.push_pod(&mut builder, PodKey::PodName, name, subject, origins)
+        {
             return;
         }
 
@@ -1256,6 +1767,197 @@ impl<'a> Mapping<'a> {
         self.finish_document(file_name, &builder, subject, origins);
     }
 
+    #[allow(clippy::too_many_lines)] // Each native pod key remains capability-gated at its mapping site.
+    fn map_group_runtime(
+        &mut self,
+        group_subject: &str,
+        runtime: &Sourced<ServiceGroupRuntime>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let value = runtime.value();
+        if let Some(service_name) = value.service_name() {
+            let subject = format!("{group_subject}.runtime.service_name");
+            let name = service_name.value().expose();
+            if name.ends_with(".service") || !is_native_atom(name) {
+                self.unsupported(
+                    &subject,
+                    "pod ServiceName must be a safe unsuffixed service-name stem",
+                    service_name.origins(),
+                );
+            } else if self.capability("quadlet.pod.service-name", &subject, service_name.origins())
+                && self.push_pod(builder, PodKey::ServiceName, name, &subject, service_name.origins())
+            {
+                self.exact(subject, service_name.origins());
+            }
+        }
+        if let Some(user_namespace) = value.user_namespace() {
+            let subject = format!("{group_subject}.runtime.user_namespace");
+            if is_safe_word(user_namespace.value().expose(), false)
+                && self.capability("quadlet.pod.userns", &subject, user_namespace.origins())
+                && self.push_pod(
+                    builder,
+                    PodKey::UserNS,
+                    user_namespace.value().expose(),
+                    &subject,
+                    user_namespace.origins(),
+                )
+            {
+                self.exact(subject, user_namespace.origins());
+            } else {
+                self.unsupported(
+                    &subject,
+                    "pod UserNS requires a safe one-line native token",
+                    user_namespace.origins(),
+                );
+            }
+        }
+        if let Some(shm_size) = value.shm_size() {
+            let subject = format!("{group_subject}.runtime.shm_size");
+            if ShmSize::new(shm_size.value().expose()).is_ok()
+                && self.capability("quadlet.pod.shm-size", &subject, shm_size.origins())
+                && self.push_pod(
+                    builder,
+                    PodKey::ShmSize,
+                    shm_size.value().expose(),
+                    &subject,
+                    shm_size.origins(),
+                )
+            {
+                self.exact(subject, shm_size.origins());
+            } else {
+                self.unsupported(
+                    &subject,
+                    "pod ShmSize must use the reviewed native grammar",
+                    shm_size.origins(),
+                );
+            }
+        }
+        if let Some(exit_policy) = value.exit_policy() {
+            let subject = format!("{group_subject}.runtime.exit_policy");
+            let output = match exit_policy.value() {
+                GroupExitPolicy::Stop => Some("stop"),
+                GroupExitPolicy::Continue => Some("continue"),
+                _ => None,
+            };
+            if let Some(output) = output {
+                if self.pod_capability(
+                    "quadlet.pod.exit-policy",
+                    PodmanVersion::new(5, 6, 0),
+                    &subject,
+                    exit_policy.origins(),
+                ) && self.push_pod(builder, PodKey::ExitPolicy, output, &subject, exit_policy.origins())
+                {
+                    self.exact(subject, exit_policy.origins());
+                }
+            } else {
+                self.unsupported(
+                    &subject,
+                    "raw pod ExitPolicy is retained as native evidence and is not synthesized",
+                    exit_policy.origins(),
+                );
+            }
+        }
+        if let Some(timeout) = value.stop_timeout() {
+            let subject = format!("{group_subject}.runtime.stop_timeout");
+            if is_canonical_nonnegative_seconds(timeout.value().as_str())
+                && self.pod_capability(
+                    "quadlet.pod.stop-timeout",
+                    PodmanVersion::new(5, 7, 0),
+                    &subject,
+                    timeout.origins(),
+                )
+                && self.push_pod(
+                    builder,
+                    PodKey::StopTimeout,
+                    timeout.value().as_str(),
+                    &subject,
+                    timeout.origins(),
+                )
+            {
+                self.exact(subject, timeout.origins());
+            } else {
+                self.unsupported(
+                    &subject,
+                    "pod StopTimeout requires canonical integral seconds",
+                    timeout.origins(),
+                );
+            }
+        }
+        if let Some(host_mappings) = value.host_mappings() {
+            if host_mappings.is_empty() {
+                self.unsupported(
+                    &format!("{group_subject}.runtime.host_mappings"),
+                    "an explicit empty pod AddHost reset has no generated Quadlet representation",
+                    value.host_mappings_origins(),
+                );
+            }
+            for (index, mapping) in host_mappings.iter().enumerate() {
+                self.map_pod_host_mapping(index, mapping.value(), mapping.origins(), builder);
+            }
+        }
+        let host_network = value.networks().is_some_and(|networks| {
+            networks
+                .iter()
+                .any(|network| network.value().network().as_str() == "host")
+        });
+        if host_network && value.ports().is_some_and(|ports| !ports.is_empty()) {
+            let mut origins = value
+                .ports()
+                .map_or_else(Vec::new, |ports| collection_all_origins(ports, value.ports_origins()));
+            if let Some(networks) = value.networks() {
+                for origin in collection_all_origins(networks, value.networks_origins()) {
+                    if !origins.contains(&origin) {
+                        origins.push(origin);
+                    }
+                }
+            }
+            self.invalid(
+                self.exporter.codes.invalid_value.clone(),
+                &format!("{group_subject}.runtime.ports"),
+                "Network=host conflicts with PublishPort",
+                "remove published ports or choose a non-host pod network",
+                &origins,
+            );
+        }
+        if let Some(ports) = value.ports() {
+            if ports.is_empty() {
+                self.unsupported(
+                    &format!("{group_subject}.runtime.ports"),
+                    "an explicit empty pod PublishPort reset has no generated Quadlet representation",
+                    value.ports_origins(),
+                );
+            }
+            for (index, port) in ports.iter().enumerate() {
+                self.map_pod_port(group_subject, index, port, builder);
+            }
+        }
+        if let Some(networks) = value.networks() {
+            if networks.is_empty() {
+                self.unsupported(
+                    &format!("{group_subject}.runtime.networks"),
+                    "an explicit empty pod Network reset has no generated Quadlet representation",
+                    value.networks_origins(),
+                );
+            }
+            for network in networks {
+                self.map_pod_network_attachment(network, builder);
+            }
+        }
+        if let Some(mounts) = value.mounts() {
+            if mounts.is_empty() {
+                self.unsupported(
+                    &format!("{group_subject}.runtime.mounts"),
+                    "an explicit empty pod Volume reset has no generated Quadlet representation",
+                    value.mounts_origins(),
+                );
+            }
+            for (index, mount) in mounts.iter().enumerate() {
+                self.map_pod_mount(group_subject, index, mount, builder);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)] // Image-or-rootfs selection and typed service mapping share one document builder.
     fn map_service(&mut self, service: &Sourced<Service>, pod_name: Option<&str>) {
         let grouped = pod_name.is_some();
         let name = service.value().name().as_str();
@@ -1268,6 +1970,44 @@ impl<'a> Mapping<'a> {
         }
         let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Container);
         self.map_service_dependencies(service, &mut builder);
+        if let Some(rootfs) = service.value().rootfs() {
+            let rootfs_subject = format!("{subject}.rootfs");
+            if service.value().image().is_some()
+                || service.value().image_acquisition().is_some()
+                || service.value().image_build().is_some()
+            {
+                self.invalid(
+                    self.exporter.codes.invalid_value.clone(),
+                    &rootfs_subject,
+                    "Rootfs conflicts with every image source",
+                    "remove the image, image acquisition, or image build reference before emitting Rootfs",
+                    rootfs.origins(),
+                );
+                return;
+            }
+            if !is_safe_absolute_container_path(rootfs.value().expose()) {
+                self.unsupported(
+                    &rootfs_subject,
+                    "Rootfs requires a safe absolute literal path",
+                    rootfs.origins(),
+                );
+                return;
+            }
+            if self.capability("quadlet.container.rootfs", &rootfs_subject, rootfs.origins())
+                && self.push_container(
+                    &mut builder,
+                    ContainerKey::Rootfs,
+                    rootfs.value().expose(),
+                    &rootfs_subject,
+                    rootfs.origins(),
+                )
+            {
+                self.exact(rootfs_subject, rootfs.origins());
+            }
+            self.map_service_content(&subject, service, grouped, pod_name, &mut builder);
+            self.finish_document(file_name, &builder, &subject, service.origins());
+            return;
+        }
         let direct_image = service.value().image();
         let acquisition = service.value().image_acquisition();
         let build = service.value().image_build();
@@ -1344,6 +2084,10 @@ impl<'a> Mapping<'a> {
         }
         self.map_execution_context(subject, service.value(), grouped, builder);
         self.map_released_container_settings(subject, service.value(), builder);
+        self.map_extended_container_settings(subject, service.value(), grouped, builder);
+        if let Some(notification) = service.value().startup_notification() {
+            self.map_startup_notification(subject, notification, builder);
+        }
         self.report_grouped_dns(subject, service.value(), grouped);
         if let Some(restart_policy) = service.value().restart_policy() {
             self.map_restart_policy(subject, restart_policy, builder);
@@ -1351,7 +2095,9 @@ impl<'a> Mapping<'a> {
         if let Some(healthcheck) = service.value().healthcheck() {
             self.map_healthcheck(subject, healthcheck, builder);
         }
-        self.map_healthy_readiness(service, builder);
+        if service.value().startup_notification().is_none() {
+            self.map_healthy_readiness(service, builder);
+        }
         for environment in service.value().environment() {
             self.map_environment(subject, environment, builder);
         }
@@ -1383,6 +2129,69 @@ impl<'a> Mapping<'a> {
             self.map_mount(subject, index, mount, builder);
         }
         self.map_pod_or_networks(subject, service, pod_name, builder);
+        if let Some(arguments) = service.value().podman_args() {
+            if arguments.is_empty() {
+                let field = format!("{subject}.podman_args");
+                if self.capability(
+                    "quadlet.container.podman-args",
+                    &field,
+                    service.value().podman_args_origins(),
+                ) && self.push_container(
+                    builder,
+                    ContainerKey::PodmanArgs,
+                    "",
+                    &field,
+                    service.value().podman_args_origins(),
+                ) {
+                    self.exact(field, service.value().podman_args_origins());
+                }
+            }
+            for (index, argument) in arguments.iter().enumerate() {
+                let field = format!("{subject}.podman_args[{index}]");
+                let raw = argument.value().expose();
+                if raw.contains(['\0', '\r', '\n']) {
+                    self.unsupported(
+                        &field,
+                        "authored PodmanArgs contains an unsafe physical-line control character",
+                        argument.origins(),
+                    );
+                } else if self.capability("quadlet.container.podman-args", &field, argument.origins())
+                    && self.push_container(builder, ContainerKey::PodmanArgs, raw, &field, argument.origins())
+                {
+                    self.exact(field, argument.origins());
+                }
+            }
+        }
+    }
+
+    fn map_startup_notification(
+        &mut self,
+        service_subject: &str,
+        notification: &Sourced<StartupNotification>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.startup_notification");
+        match notification.value() {
+            StartupNotification::Healthy => {
+                if self.capability("quadlet.container.notify-healthy", &subject, notification.origins())
+                    && self.push_container(
+                        builder,
+                        ContainerKey::Notify,
+                        "healthy",
+                        &subject,
+                        notification.origins(),
+                    )
+                {
+                    self.exact(subject, notification.origins());
+                }
+            }
+            StartupNotification::Runtime | StartupNotification::Application => self.unsupported(
+                &subject,
+                "Notify=false and Notify=true require explicit capability evidence before they can be generated",
+                notification.origins(),
+            ),
+            _ => self.unsupported(&subject, "unknown startup notification form", notification.origins()),
+        }
     }
 
     fn map_container_name(&mut self, subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
@@ -1686,6 +2495,421 @@ impl<'a> Mapping<'a> {
                 && self.push_container(builder, ContainerKey::ReadOnly, value, &subject, read_only.origins())
             {
                 self.exact(subject, read_only.origins());
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)] // All new typed service keys are capability-gated together.
+    fn map_extended_container_settings(
+        &mut self,
+        service_subject: &str,
+        service: &Service,
+        grouped: bool,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        if let Some(entrypoint) = service.entrypoint() {
+            let subject = format!("{service_subject}.entrypoint");
+            match entrypoint.value() {
+                Entrypoint::Exec(arguments)
+                    if !arguments.is_empty() && arguments.iter().all(|arg| is_safe_word(arg.expose(), false)) =>
+                {
+                    let value = format!(
+                        "[{}]",
+                        arguments
+                            .iter()
+                            .map(|arg| format!("\"{}\"", arg.expose()))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                    if self.capability("quadlet.container.entrypoint", &subject, entrypoint.origins())
+                        && self.push_container(builder, ContainerKey::Entrypoint, value, &subject, entrypoint.origins())
+                    {
+                        self.exact(subject, entrypoint.origins());
+                    }
+                }
+                _ => self.unsupported(
+                    &subject,
+                    "Entrypoint is exact only for a reviewed JSON exec array",
+                    entrypoint.origins(),
+                ),
+            }
+        }
+        if let Some(run_init) = service.run_init() {
+            let subject = format!("{service_subject}.run_init");
+            if self.capability("quadlet.container.run-init", &subject, run_init.origins())
+                && self.push_container(
+                    builder,
+                    ContainerKey::RunInit,
+                    run_init.value().to_string(),
+                    &subject,
+                    run_init.origins(),
+                )
+            {
+                self.approximate(
+                    &subject,
+                    "RunInit runtime equivalence remains reviewable",
+                    run_init.origins(),
+                );
+            }
+        }
+        if let Some(timeout) = service.stop_timeout() {
+            let subject = format!("{service_subject}.stop_timeout");
+            if let Ok(seconds) = timeout.value().as_str().parse::<u64>() {
+                if self.capability("quadlet.container.stop-timeout", &subject, timeout.origins())
+                    && self.push_container(
+                        builder,
+                        ContainerKey::StopTimeout,
+                        timeout.value().as_str(),
+                        &subject,
+                        timeout.origins(),
+                    )
+                {
+                    if seconds == 0 {
+                        self.approximate(
+                            &subject,
+                            "a zero stop timeout can differ from an omitted/default timeout and remains reviewable",
+                            timeout.origins(),
+                        );
+                    } else {
+                        self.exact(subject, timeout.origins());
+                    }
+                }
+            } else {
+                self.unsupported(
+                    &subject,
+                    "only nonnegative integral stop-timeout seconds are encodable; fractional native durations remain source-aware but require review",
+                    timeout.origins(),
+                );
+            }
+        }
+        if let Some(policy) = service.pull_policy() {
+            let subject = format!("{service_subject}.pull_policy");
+            let value = match policy.value() {
+                PullPolicy::Always => Some("always"),
+                PullPolicy::Missing => Some("missing"),
+                PullPolicy::Never => Some("never"),
+                PullPolicy::Raw(raw) if raw.expose() == "newer" => Some("newer"),
+                _ => None,
+            };
+            if let Some(value) = value {
+                if self.capability("quadlet.container.pull", &subject, policy.origins())
+                    && self.push_container(builder, ContainerKey::Pull, value, &subject, policy.origins())
+                {
+                    self.exact(subject, policy.origins());
+                }
+            } else {
+                self.unsupported(
+                    &subject,
+                    "only reviewed native Pull values can be emitted; arbitrary raw policies remain unsupported",
+                    policy.origins(),
+                );
+            }
+        }
+        if let Some(memory) = service.memory_limit() {
+            let subject = format!("{service_subject}.memory_limit");
+            if is_positive_memory(memory.value().expose()) {
+                if self.capability("quadlet.container.memory", &subject, memory.origins())
+                    && self.push_container(
+                        builder,
+                        ContainerKey::Memory,
+                        memory.value().expose(),
+                        &subject,
+                        memory.origins(),
+                    )
+                {
+                    self.exact(subject, memory.origins());
+                }
+            } else {
+                self.unsupported(
+                    &subject,
+                    "memory must be a positive canonical byte quantity",
+                    memory.origins(),
+                );
+            }
+        }
+        if let Some(ports) = service.exposed_ports() {
+            if ports.is_empty() {
+                self.unsupported(
+                    &format!("{service_subject}.exposed_ports"),
+                    "an explicit empty exposed-port collection has no reviewed Quadlet reset encoding",
+                    service.exposed_ports_origins(),
+                );
+            } else {
+                for (index, port) in ports.iter().enumerate() {
+                    self.map_exposed_port(service_subject, index, port, builder);
+                }
+            }
+        }
+        if let Some(annotations) = service.annotations() {
+            if annotations.is_empty() {
+                self.unsupported(
+                    &format!("{service_subject}.annotations"),
+                    "an explicit empty annotation collection has no reviewed Quadlet reset encoding",
+                    service.annotations_origins(),
+                );
+            } else {
+                for annotation in annotations {
+                    self.map_annotation(service_subject, annotation, builder);
+                }
+            }
+        }
+        if let Some(logging) = service.logging() {
+            self.map_logging(service_subject, logging, builder);
+        }
+        if let Some(reload) = service.reload_action() {
+            self.map_reload_action(service_subject, reload, builder);
+        }
+        self.map_network_addresses(service_subject, service, grouped, builder);
+    }
+
+    fn map_exposed_port(
+        &mut self,
+        service_subject: &str,
+        index: usize,
+        port: &Sourced<ExposedPort>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.exposed_ports[{index}]");
+        let protocol = match port.value().protocol() {
+            Protocol::Tcp => "tcp",
+            Protocol::Udp => "udp",
+            _ => {
+                self.unsupported(&subject, "ExposeHostPort supports only tcp or udp", port.origins());
+                return;
+            }
+        };
+        let value = if protocol == "tcp" {
+            port.value().container().to_string()
+        } else {
+            format!("{}/udp", port.value().container())
+        };
+        if self.capability("quadlet.container.expose-host-port", &subject, port.origins())
+            && self.push_container(builder, ContainerKey::ExposeHostPort, value, &subject, port.origins())
+        {
+            self.exact(subject, port.origins());
+        }
+    }
+
+    fn map_annotation(
+        &mut self,
+        service_subject: &str,
+        annotation: &Sourced<Annotation>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!(
+            "{service_subject}.annotations.{}",
+            annotation.value().name().value().as_str()
+        );
+        let Some(value) = encode_quadlet_label(
+            annotation.value().name().value().as_str(),
+            annotation.value().value().value().expose(),
+        ) else {
+            self.unsupported(
+                &subject,
+                "annotation contains NUL and cannot be represented",
+                annotation.origins(),
+            );
+            return;
+        };
+        if self.capability("quadlet.container.annotation", &subject, annotation.origins())
+            && self.push_container(builder, ContainerKey::Annotation, value, &subject, annotation.origins())
+        {
+            self.exact(subject, annotation.origins());
+        }
+    }
+
+    fn map_logging(
+        &mut self,
+        service_subject: &str,
+        logging: &Sourced<boxferry_model::Logging>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        if let Some(driver) = logging.value().driver() {
+            let subject = format!("{service_subject}.logging.driver");
+            if !is_safe_word(driver.value().expose(), false) {
+                self.unsupported(
+                    &subject,
+                    "LogDriver requires a non-empty systemd-safe token",
+                    driver.origins(),
+                );
+            } else if self.capability("quadlet.container.log-driver", &subject, driver.origins())
+                && self.push_container(
+                    builder,
+                    ContainerKey::LogDriver,
+                    driver.value().expose(),
+                    &subject,
+                    driver.origins(),
+                )
+            {
+                self.approximate(
+                    &subject,
+                    "provider logging remains a reviewable partial mapping",
+                    driver.origins(),
+                );
+            }
+        }
+        if let Some(options) = logging.value().options() {
+            if options.is_empty() {
+                self.unsupported(
+                    &format!("{service_subject}.logging.options"),
+                    "an explicit empty logging-option collection has no reviewed Quadlet reset encoding",
+                    logging.value().options_origins(),
+                );
+            }
+            for option in options {
+                let subject = format!(
+                    "{service_subject}.logging.options.{}",
+                    option.value().name().value().as_str()
+                );
+                let Some(value) = encode_quadlet_label(
+                    option.value().name().value().as_str(),
+                    option.value().value().value().expose(),
+                ) else {
+                    self.unsupported(
+                        &subject,
+                        "LogOpt contains NUL and cannot be represented",
+                        option.origins(),
+                    );
+                    continue;
+                };
+                if self.capability("quadlet.container.log-opt", &subject, option.origins())
+                    && self.push_container(builder, ContainerKey::LogOpt, value, &subject, option.origins())
+                {
+                    self.approximate(
+                        &subject,
+                        "provider logging remains a reviewable partial mapping",
+                        option.origins(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn map_reload_action(
+        &mut self,
+        service_subject: &str,
+        reload: &Sourced<ReloadAction>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{service_subject}.reload_action");
+        match reload.value() {
+            ReloadAction::Signal(signal) => {
+                if is_safe_stop_signal(signal.expose())
+                    && self.capability("quadlet.container.reload-signal", &subject, reload.origins())
+                    && self.push_container(
+                        builder,
+                        ContainerKey::ReloadSignal,
+                        signal.expose(),
+                        &subject,
+                        reload.origins(),
+                    )
+                {
+                    self.exact(subject, reload.origins());
+                } else {
+                    self.unsupported(&subject, "reload signal is not safely encodable", reload.origins());
+                }
+            }
+            ReloadAction::Command(Command::Exec(arguments))
+                if !arguments.is_empty() && arguments.iter().all(|arg| is_safe_word(arg.expose(), false)) =>
+            {
+                let value = arguments
+                    .iter()
+                    .map(ProtectedString::expose)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if self.capability("quadlet.container.reload-cmd", &subject, reload.origins())
+                    && self.push_container(builder, ContainerKey::ReloadCmd, value, &subject, reload.origins())
+                {
+                    self.exact(subject, reload.origins());
+                }
+            }
+            _ => self.unsupported(
+                &subject,
+                "reload command requires unsupported systemd command-line encoding",
+                reload.origins(),
+            ),
+        }
+    }
+
+    fn map_network_addresses(
+        &mut self,
+        service_subject: &str,
+        service: &Service,
+        grouped: bool,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let networks = service.networks();
+        let has_values = networks.iter().any(|network| {
+            network.value().ipv4_address().is_some()
+                || network.value().ipv6_address().is_some()
+                || !network.value().aliases().is_empty()
+        });
+        if !has_values {
+            return;
+        }
+        if grouped {
+            for network in networks {
+                if network.value().ipv4_address().is_some()
+                    || network.value().ipv6_address().is_some()
+                    || !network.value().aliases().is_empty()
+                {
+                    self.unsupported(
+                        &format!("{service_subject}.networks.{}", network.value().network().as_str()),
+                        "IP, IP6, and NetworkAlias remain container-scoped and cannot be moved into a generated pod",
+                        network.origins(),
+                    );
+                }
+            }
+            return;
+        }
+        if networks.len() != 1 {
+            let origins = networks
+                .iter()
+                .flat_map(|network| {
+                    network
+                        .origins()
+                        .iter()
+                        .chain(network.value().ipv4_address().into_iter().flat_map(Sourced::origins))
+                        .chain(network.value().ipv6_address().into_iter().flat_map(Sourced::origins))
+                        .chain(network.value().alias_origins().iter().flatten())
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            self.unsupported(
+                &format!("{service_subject}.networks"),
+                "IP, IP6, and NetworkAlias require exactly one compatible network attachment",
+                &origins,
+            );
+            return;
+        }
+        let network = networks[0].value();
+        for (key, value, capability) in [
+            (ContainerKey::IP, network.ipv4_address(), "quadlet.container.ip"),
+            (ContainerKey::IP6, network.ipv6_address(), "quadlet.container.ip6"),
+        ] {
+            if let Some(value) = value {
+                let subject = format!(
+                    "{service_subject}.networks.{}",
+                    if key == ContainerKey::IP {
+                        "ipv4_address"
+                    } else {
+                        "ipv6_address"
+                    }
+                );
+                if self.capability(capability, &subject, value.origins())
+                    && self.push_container(builder, key, value.value().expose(), &subject, value.origins())
+                {
+                    self.exact(subject, value.origins());
+                }
+            }
+        }
+        for (index, alias) in network.aliases().iter().enumerate() {
+            let subject = format!("{service_subject}.networks.aliases[{index}]");
+            let origins = network.alias_origins().get(index).map_or(&[][..], Vec::as_slice);
+            if self.capability("quadlet.container.network-alias", &subject, origins)
+                && self.push_container(builder, ContainerKey::NetworkAlias, alias, &subject, origins)
+            {
+                self.exact(subject, origins);
             }
         }
     }
@@ -2135,8 +3359,8 @@ impl<'a> Mapping<'a> {
                     capability,
                     key,
                     builder,
-                    |value| is_safe_word(value, false),
-                    "capability names must be non-empty systemd-safe values; values are not normalized or reconciled",
+                    is_safe_capability,
+                    "capability names must use the reviewed uppercase Linux capability grammar",
                 );
             }
         }
@@ -2976,13 +4200,84 @@ impl<'a> Mapping<'a> {
                 self.exact(&subject, network.origins());
             }
         }
-        if !network.value().aliases().is_empty() {
-            self.unsupported(
-                &format!("{subject}.aliases"),
-                "per-network aliases are not in QuadletLens's Podman 5.4 generation subset",
-                network.origins(),
-            );
+    }
+
+    fn map_pod_mount(
+        &mut self,
+        group_subject: &str,
+        index: usize,
+        mount: &Sourced<Mount>,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        let subject = format!("{group_subject}.runtime.mounts[{index}]");
+        let Some(encoded) = self.encode_pod_mount(&subject, mount) else {
+            return;
+        };
+        if self.capability("quadlet.pod.volume", &subject, mount.origins())
+            && self.push_pod(builder, PodKey::Volume, encoded, &subject, mount.origins())
+        {
+            self.exact(subject, mount.origins());
         }
+    }
+
+    fn encode_pod_mount(&mut self, subject: &str, mount: &Sourced<Mount>) -> Option<String> {
+        if !is_safe_mount_part(mount.value().target()) || !mount.value().target().starts_with('/') {
+            self.unsupported(
+                subject,
+                "pod mount target is not a safely encoded absolute path",
+                mount.origins(),
+            );
+            return None;
+        }
+        let source = match mount.value().source() {
+            MountSource::Volume(name) => self.volume_source(subject, name.as_str(), mount.origins()),
+            MountSource::HostPath(path) => {
+                if let Some(mapped) = self.exporter.bind_source_mappings.get(path) {
+                    Some(mapped.clone())
+                } else if matches!(
+                    classify_path(path),
+                    PathForm::AbsoluteLiteral | PathForm::SystemdSpecifier
+                ) && is_safe_mount_part(path)
+                {
+                    Some(path.clone())
+                } else {
+                    self.unsupported(
+                        subject,
+                        "pod bind source needs an explicit safe source-to-target mapping",
+                        mount.origins(),
+                    );
+                    None
+                }
+            }
+            MountSource::Anonymous => Some(String::new()),
+            _ => {
+                self.unsupported(subject, "unknown pod mount source", mount.origins());
+                None
+            }
+        }?;
+        let mut encoded = if source.is_empty() {
+            mount.value().target().to_owned()
+        } else {
+            format!("{source}:{}", mount.value().target())
+        };
+        let mut options = Vec::new();
+        if mount.value().read_only() {
+            options.push("ro");
+        }
+        match mount.value().selinux_relabel() {
+            Some(SelinuxRelabel::Shared) => options.push("z"),
+            Some(SelinuxRelabel::Private) => options.push("Z"),
+            None => {}
+            Some(_) => {
+                self.unsupported(subject, "unknown pod mount SELinux relabel mode", mount.origins());
+                return None;
+            }
+        }
+        if !options.is_empty() {
+            encoded.push(':');
+            encoded.push_str(&options.join(","));
+        }
+        Some(encoded)
     }
 
     fn map_pod_network_attachment(
@@ -3003,6 +4298,9 @@ impl<'a> Mapping<'a> {
     }
 
     fn network_source(&mut self, subject: &str, name: &str, origins: &[Provenance]) -> Option<String> {
+        if name == "host" {
+            return Some(name.to_owned());
+        }
         if !is_native_atom(name) {
             self.unsupported(subject, "network name requires target-specific escaping", origins);
             return None;
@@ -3096,6 +4394,40 @@ impl<'a> Mapping<'a> {
                 false
             }
         }
+    }
+
+    /// Uses the Lens catalogue when available and retains the reviewed local floor for newly
+    /// released Pod keys until the pinned Lens catalogue carries the corresponding evidence.
+    fn pod_capability(
+        &mut self,
+        capability: &str,
+        minimum: PodmanVersion,
+        subject: &str,
+        origins: &[Provenance],
+    ) -> bool {
+        let Some(target) = self.podman_target else {
+            return false;
+        };
+        if self.exporter.catalogue.capability(capability).is_some()
+            && matches!(
+                self.exporter.catalogue.evaluate(capability, target).classification(),
+                SupportClassification::Native | SupportClassification::Deprecated
+            )
+        {
+            return self.capability(capability, subject, origins);
+        }
+        if target.minimum() >= minimum {
+            return true;
+        }
+        self.loss(
+            self.exporter.codes.capability.clone(),
+            subject,
+            ConversionKind::Unsupported,
+            "required Quadlet capability does not cover the complete target range",
+            &format!("{capability}: reviewed minimum is {minimum}"),
+            origins,
+        );
+        false
     }
 
     fn push_container(
@@ -3334,6 +4666,20 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn emit_network(
+        &mut self,
+        builder: &mut QuadletDocumentBuilder,
+        key: NetworkKey,
+        capability: &str,
+        value: &str,
+        subject: &str,
+        origins: &[Provenance],
+    ) {
+        if self.capability(capability, subject, origins) && self.push_network(builder, key, value, subject, origins) {
+            self.exact(subject, origins);
+        }
+    }
+
     fn push_volume(
         &mut self,
         builder: &mut QuadletDocumentBuilder,
@@ -3569,6 +4915,32 @@ fn dependency_mapping_origins(dependency: &Sourced<ServiceDependency>) -> Vec<Pr
 fn collection_item_origins<T>(collection_origins: &[Provenance], item: &Sourced<T>) -> Vec<Provenance> {
     let mut origins = collection_origins.to_vec();
     extend_origins(&mut origins, item.origins());
+    origins
+}
+
+fn network_option_origins(collection_origins: &[Provenance], option: &Sourced<NetworkDriverOption>) -> Vec<Provenance> {
+    let mut origins = collection_item_origins(collection_origins, option);
+    extend_origins(&mut origins, option.value().name().origins());
+    extend_origins(&mut origins, option.value().value().origins());
+    origins
+}
+
+fn network_label_origins(collection_origins: &[Provenance], label: &Sourced<MetadataLabel>) -> Vec<Provenance> {
+    collection_item_origins(collection_origins, label)
+}
+
+fn network_ipam_origins(
+    collection_origins: &[Provenance],
+    row: &Sourced<boxferry_model::NetworkIpamConfig>,
+) -> Vec<Provenance> {
+    let mut origins = collection_item_origins(collection_origins, row);
+    extend_origins(&mut origins, row.value().subnet().origins());
+    if let Some(gateway) = row.value().gateway() {
+        extend_origins(&mut origins, gateway.origins());
+    }
+    if let Some(range) = row.value().ip_range() {
+        extend_origins(&mut origins, range.origins());
+    }
     origins
 }
 
@@ -3814,6 +5186,40 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         })
 }
 
+fn is_safe_network_scalar(value: &str, allow_empty: bool) -> bool {
+    (allow_empty || !value.is_empty())
+        && value.trim() == value
+        && !value.bytes().any(|byte| {
+            matches!(byte, b'\0' | b'\n' | b'\r' | b'%' | b'\'' | b'"' | b'\\') || byte.is_ascii_whitespace()
+        })
+}
+
+fn is_safe_network_assignment(name: &str, value: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('=')
+        && is_safe_network_scalar(name, false)
+        && is_safe_network_scalar(value, true)
+}
+
+fn is_label_name(value: &str) -> bool {
+    value.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && value.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
+}
+
+fn is_positive_memory(value: &str) -> bool {
+    let split = value
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (amount, suffix) = value.split_at(split);
+    !amount.is_empty()
+        && !amount.starts_with('0')
+        && amount.parse::<u64>().is_ok_and(|amount| amount > 0)
+        && matches!(suffix, "" | "b" | "k" | "m" | "g")
+}
+
 fn is_safe_security_option_value(value: &str) -> bool {
     !value.is_empty()
         && value.bytes().all(|byte| {
@@ -3907,7 +5313,16 @@ fn is_safe_hostname(value: &str) -> bool {
 }
 
 fn is_safe_tmpfs(value: &str) -> bool {
-    is_safe_word(value, false)
+    let (target, options) = value
+        .split_once(':')
+        .map_or((value, None), |(target, options)| (target, Some(options)));
+    is_safe_absolute_container_path(target)
+        && options.is_none_or(|options| {
+            !options.is_empty()
+                && options
+                    .split(',')
+                    .all(|option| is_safe_word(option, false) && !option.contains([':', '%']))
+        })
 }
 
 fn is_safe_sysctl(name: &str, value: &str) -> bool {
@@ -3915,7 +5330,7 @@ fn is_safe_sysctl(name: &str, value: &str) -> bool {
 }
 
 fn is_safe_limit_value(value: &str) -> bool {
-    value == "-1" || (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+    value == "-1" || value == "0" || (!value.starts_with('0') && value.parse::<u64>().is_ok_and(|value| value > 0))
 }
 
 fn is_safe_ulimit(name: &str, soft: &str, hard: &str) -> bool {
@@ -3926,10 +5341,15 @@ fn is_safe_ulimit(name: &str, soft: &str, hard: &str) -> bool {
 }
 
 fn is_safe_stop_signal(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    value
+        .parse::<u8>()
+        .is_ok_and(|number| (1..=64).contains(&number) && (value == "0" || !value.starts_with('0')))
+        || value.strip_prefix("SIG").is_some_and(|name| {
+            name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        })
 }
 
 fn reviewed_device_value(device: &Device) -> Option<String> {
@@ -3991,7 +5411,30 @@ fn is_reviewed_device_component(value: &str) -> bool {
 }
 
 fn is_reviewed_device_permissions(value: &str) -> bool {
-    !value.is_empty() && value.bytes().all(|byte| matches!(byte, b'r' | b'w' | b'm'))
+    !value.is_empty()
+        && value.bytes().all(|byte| matches!(byte, b'r' | b'w' | b'm'))
+        && value.bytes().collect::<BTreeSet<_>>().len() == value.len()
+}
+
+fn is_safe_capability(value: &str) -> bool {
+    let name = value.strip_prefix("CAP_").unwrap_or(value);
+    name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn is_safe_absolute_container_path(value: &str) -> bool {
+    value.starts_with('/')
+        && !value.contains('%')
+        && value.split('/').all(|part| part != "..")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b'@' | b'+'))
+}
+
+fn is_canonical_nonnegative_seconds(value: &str) -> bool {
+    value == "0" || (!value.is_empty() && !value.starts_with('0') && value.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn valid_podman_container_name(value: &str) -> bool {

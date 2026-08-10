@@ -4,8 +4,8 @@ use std::error::Error;
 
 use boxferry::quadlet::quadlet_lens::source::SourceId;
 use boxferry::{
-    ComposeExporter, DOCKER_COMPOSE_TARGET, Identifier, LossPolicy, PlatformVersion, QuadletDocumentInput,
-    QuadletImporter, QuadletSource, TargetProfile, convert,
+    ComposeExporter, ConversionKind, DOCKER_COMPOSE_TARGET, Identifier, LossPolicy, PlatformVersion,
+    QuadletDocumentInput, QuadletImporter, QuadletSource, TargetProfile, convert,
 };
 
 #[test]
@@ -37,6 +37,61 @@ fn quadlet_input_composes_with_the_existing_compose_exporter() -> Result<(), Box
             "    restart: \"no\"\n"
         )
     );
+    Ok(())
+}
+
+#[test]
+fn pod_runtime_settings_remain_group_scoped_and_never_leak_into_compose_services() -> Result<(), Box<dyn Error>> {
+    let source = QuadletSource::parse(
+        Identifier::new("grouped")?,
+        [
+            QuadletDocumentInput::new("frontend.network", SourceId::new(1), "[Network]\n"),
+            QuadletDocumentInput::new("cache.volume", SourceId::new(2), "[Volume]\n"),
+            QuadletDocumentInput::new(
+                "grouped.pod",
+                SourceId::new(3),
+                concat!(
+                    "[Pod]\nPodName=grouped\nServiceName=grouped-service\n",
+                    "AddHost=host.docker.internal:host-gateway\nPublishPort=8080:80\n",
+                    "Network=frontend.network\nUserNS=keep-id\nVolume=cache.volume:/cache\n",
+                    "ShmSize=64m\nExitPolicy=continue\nStopTimeout=30\n",
+                ),
+            ),
+            QuadletDocumentInput::new(
+                "web.container",
+                SourceId::new(4),
+                "[Container]\nImage=example.invalid/web:1\nPod=grouped.pod\n",
+            ),
+        ],
+    )?;
+    let version = PlatformVersion::new(5, 3, 1);
+    let target = TargetProfile::new(DOCKER_COMPOSE_TARGET, version, Some(version))?;
+    let result = convert(
+        &QuadletImporter::new()?,
+        &source,
+        &ComposeExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    let output = result.output().ok_or("partial Compose output expected")?.text();
+    assert!(output.contains("image: \"example.invalid/web:1\""));
+    for native_group_value in [
+        "grouped-service",
+        "host.docker.internal",
+        "8080",
+        "keep-id",
+        "64m",
+        "continue",
+        "30",
+    ] {
+        assert!(
+            !output.contains(native_group_value),
+            "group runtime leaked into Compose: {native_group_value} in {output}"
+        );
+    }
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "service_groups.grouped.runtime" && outcome.kind() == ConversionKind::Unsupported
+    }));
     Ok(())
 }
 
@@ -170,7 +225,7 @@ fn public_quadlet_to_compose_route_reconstructs_canonical_security_options() -> 
     for index in 0..11 {
         assert!(result.outcomes().iter().any(|outcome| {
             outcome.subject() == format!("services.web.security_options[{index}]")
-                && outcome.kind() == boxferry::ConversionKind::Exact
+                && outcome.kind() == ConversionKind::Exact
         }));
     }
     Ok(())
@@ -205,11 +260,11 @@ fn false_quadlet_selinux_booleans_remain_neutral_but_are_not_invented_in_compose
     for index in [0, 1] {
         assert!(result.outcomes().iter().any(|outcome| {
             outcome.subject() == format!("services.web.security_options[{index}]")
-                && outcome.kind() == boxferry::ConversionKind::Exact
+                && outcome.kind() == ConversionKind::Exact
         }));
         assert!(result.outcomes().iter().any(|outcome| {
             outcome.subject() == format!("services.web.security_opt[{index}]")
-                && outcome.kind() == boxferry::ConversionKind::Unsupported
+                && outcome.kind() == ConversionKind::Unsupported
         }));
     }
     Ok(())

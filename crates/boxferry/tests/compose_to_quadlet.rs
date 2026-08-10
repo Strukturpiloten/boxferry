@@ -456,7 +456,7 @@ fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(
         .iter()
         .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
         .collect::<Vec<_>>();
-    assert_eq!(unsupported.len(), 6);
+    assert_eq!(unsupported.len(), 5);
     assert!(unsupported.iter().all(|outcome| !outcome.origins().is_empty()));
     Ok(())
 }

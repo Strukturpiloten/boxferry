@@ -40,12 +40,25 @@ explicit-reset handling, and protected debug redaction. A public-facade Compose-
 checks exact `.build` and `.container` bytes, source provenance, strict-versus-partial policy, and
 source-only loss reporting.
 
-Released Compose container-setting coverage additionally exercises all ten `hostname`,
-`pids_limit`, `shm_size`, capability, `tmpfs`, `sysctls`, `ulimits`, `devices`, and `stop_signal`
-fields across the model, effective-project importer, capability-checked Quadlet exporter, and
-unsafe/deferred target boundary. Tests retain raw spelling, order, deduplicated collection and nested-value provenance, explicit-empty
-collections, and protected debug redaction; unsupported exporters report retained intent rather
-than silently discarding it.
+Public volume tests cover all 16 typed keys, distinct logical/runtime/service names, 5.4.0 and
+6.0.0 identity floors, the 6.0.2 ceiling, protected raw lists, resets/duplicates, local
+type/device/options rules, `Copy=` plus `Image=` loss, and literal/typed/missing/cyclic artifacts.
+
+Iteration-one container-setting coverage exercises all 24 typed keys through the model, relevant
+native adapters, and public Quadlet round trips. It verifies the 5.4.0 floor for 21 keys, the
+5.5.0 floor for memory and reload keys, the finite 6.0.2 ceiling, strict-versus-partial policy,
+redaction, and rejection of ambiguous static-address/alias attachment. Unsafe, deferred, empty,
+or mutually exclusive values retain explicit outcomes instead of being discarded.
+
+Public topology tests cover container `Rootfs=`, `Notify=`, and authored `PodmanArgs=` redaction,
+plus preserved pod settings, omitted `PodName=`, explicit resets, unsuffixed `ServiceName=`,
+host-network/port rejection, the 5.4.0/5.6.0/5.7.0 capability floors, and the 6.0.2 ceiling.
+Quadlet-to-Compose coverage proves group-runtime values remain group-scoped.
+
+Public network tests cover all ten typed Quadlet network keys at the 5.4.0 floor and 6.0.2
+ceiling, logical/runtime identity, ordered safe IPAM association, and protected debug output.
+They also require an explicit Compose IPAM loss and reject resets, duplicates, and positional
+multi-row IPAM inference.
 
 Security-option coverage spans the public Compose-to-Quadlet and Quadlet-to-Compose routes for
 `AppArmor`, `NoNewPrivileges`, `SeccompProfile`, `SecurityLabelDisable`,

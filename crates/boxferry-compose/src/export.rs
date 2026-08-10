@@ -7,17 +7,22 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, Device, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HostAddressKind,
-    MountSource, ProtectedString, Protocol, Provenance, ProvenanceKind, ResourceOwnership, RestartPolicy,
-    SecurityOption, SelinuxRelabel, Service, Sourced,
+    Application, Command, Device, Entrypoint, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
+    HostAddressKind, MountSource, Network, ProtectedString, Protocol, Provenance, ProvenanceKind, PullPolicy,
+    ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service, Sourced, Volume,
 };
 use compose_lens::{
+    model::{MemLimitUnit, ShmSizeUnit},
     render::{
-        ComposeDocumentBuilder, GeneratedCommand, GeneratedComposeDocument, GeneratedDns, GeneratedDnsSearch,
-        GeneratedEnvironment, GeneratedEnvironmentFile, GeneratedEnvironmentFileFormat, GeneratedExtraHost,
-        GeneratedLabel, GeneratedMount, GeneratedNetworkAttachment, GeneratedPort, GeneratedProtocol,
-        GeneratedResource, GeneratedRestartPolicy, GeneratedSelinux, GeneratedService, GeneratedString,
-        GenerationError,
+        ComposeDocumentBuilder, GeneratedAnnotation, GeneratedCommand, GeneratedComposeDocument, GeneratedDevice,
+        GeneratedDns, GeneratedDnsSearch, GeneratedEntrypoint, GeneratedEnvironment, GeneratedEnvironmentFile,
+        GeneratedEnvironmentFileFormat, GeneratedExtraHost, GeneratedHostname, GeneratedLabel, GeneratedLogging,
+        GeneratedLoggingOption, GeneratedLoggingOptionValue, GeneratedLongDevice, GeneratedMemLimit, GeneratedMount,
+        GeneratedNetworkAttachment, GeneratedNetworkDefinition, GeneratedNetworkDriverOption,
+        GeneratedNetworkDriverOptionValue, GeneratedPidsLimit, GeneratedPort, GeneratedProtocol, GeneratedPullPolicy,
+        GeneratedResource, GeneratedRestartPolicy, GeneratedSelinux, GeneratedService, GeneratedShmSize,
+        GeneratedString, GeneratedSysctl, GeneratedSysctls, GeneratedTmpfs, GeneratedUlimit, GeneratedUlimits,
+        GeneratedVolumeDefinition, GeneratedVolumeDriverOption, GeneratedVolumeDriverOptionValue, GenerationError,
     },
     source::SourceId,
     validation::{
@@ -209,36 +214,10 @@ impl<'a> Mapping<'a> {
         }
 
         for network in self.application.networks() {
-            let subject = format!("networks.{}", network.value().name().as_str());
-            match self.map_resource(
-                network.value().name().as_str(),
-                network.value().ownership(),
-                network.origins(),
-                &subject,
-            ) {
-                Some(resource) => {
-                    if let Err(error) = builder.add_network(resource) {
-                        self.generation_error(&subject, &error, network.origins());
-                    }
-                }
-                None => self.generation_failed = true,
-            }
+            self.map_network_definition(network, &mut builder);
         }
         for volume in self.application.volumes() {
-            let subject = format!("volumes.{}", volume.value().name().as_str());
-            match self.map_resource(
-                volume.value().name().as_str(),
-                volume.value().ownership(),
-                volume.origins(),
-                &subject,
-            ) {
-                Some(resource) => {
-                    if let Err(error) = builder.add_volume(resource) {
-                        self.generation_error(&subject, &error, volume.origins());
-                    }
-                }
-                None => self.generation_failed = true,
-            }
+            self.map_volume_definition(volume, &mut builder);
         }
 
         for acquisition in self.application.image_acquisitions() {
@@ -271,11 +250,7 @@ impl<'a> Mapping<'a> {
             );
         }
         for group in self.application.service_groups() {
-            self.unsupported(
-                &format!("service_groups.{}", group.value().name().as_str()),
-                "Compose has no native structural equivalent for a runtime pod or shared namespace group",
-                group.origins(),
-            );
+            self.report_service_group_loss(group);
         }
 
         for service in self.application.services() {
@@ -346,6 +321,458 @@ impl<'a> Mapping<'a> {
         Some(resource)
     }
 
+    #[allow(clippy::too_many_lines)]
+    fn map_network_definition(&mut self, sourced: &Sourced<Network>, builder: &mut ComposeDocumentBuilder) {
+        let network = sourced.value();
+        let subject = format!("networks.{}", network.name().as_str());
+        if network.ownership() != ResourceOwnership::Application {
+            let Some(mut generated) = self.map_resource(
+                network.name().as_str(),
+                network.ownership(),
+                sourced.origins(),
+                &subject,
+            ) else {
+                self.generation_failed = true;
+                return;
+            };
+            if let Some(runtime_name) = network.runtime_name() {
+                if runtime_name.value().is_sensitive() {
+                    self.unsupported(
+                        &format!("{subject}.name"),
+                        "sensitive runtime network names cannot be passed to ComposeLens' plain-string generator",
+                        runtime_name.origins(),
+                    );
+                } else if let Err(error) = generated.set_custom_name(runtime_name.value().expose()) {
+                    self.generation_error(&format!("{subject}.name"), &error, runtime_name.origins());
+                } else {
+                    self.exact(format!("{subject}.name"), runtime_name.origins());
+                }
+            }
+            self.report_external_network_configuration(network, &subject);
+            if let Err(error) = builder.add_network(generated) {
+                self.generation_error(&subject, &error, sourced.origins());
+            }
+            return;
+        }
+
+        let mut generated = match GeneratedNetworkDefinition::application(network.name().as_str()) {
+            Ok(value) => value,
+            Err(error) => {
+                self.generation_error(&subject, &error, sourced.origins());
+                return;
+            }
+        };
+        let mut valid = true;
+        if let Some(runtime_name) = network.runtime_name() {
+            if runtime_name.value().is_sensitive() {
+                self.unsupported(
+                    &format!("{subject}.name"),
+                    "sensitive runtime network names cannot be passed to ComposeLens' plain-string generator",
+                    runtime_name.origins(),
+                );
+            } else {
+                match generated.set_custom_name(runtime_name.value().expose()) {
+                    Ok(()) => self.exact(format!("{subject}.name"), runtime_name.origins()),
+                    Err(error) => {
+                        self.generation_error(&format!("{subject}.name"), &error, runtime_name.origins());
+                        valid = false;
+                    }
+                }
+            }
+        }
+        if let Some(driver) = network.driver() {
+            match generated_string(driver.value()).and_then(|value| generated.set_driver(value)) {
+                Ok(()) => self.exact(format!("{subject}.driver"), driver.origins()),
+                Err(error) => {
+                    self.generation_error(&format!("{subject}.driver"), &error, driver.origins());
+                    valid = false;
+                }
+            }
+        }
+        if let Some(options) = network.driver_options() {
+            let origins = collection_or_item_origins(options, network.driver_options_origins());
+            let values: Result<Vec<_>, _> = options
+                .iter()
+                .map(|option| {
+                    GeneratedNetworkDriverOption::new(
+                        option.value().name().value().as_str(),
+                        GeneratedNetworkDriverOptionValue::String(generated_string(option.value().value().value())?),
+                    )
+                })
+                .collect();
+            match values.and_then(|values| generated.set_driver_opts(values)) {
+                Ok(()) => self.exact(format!("{subject}.driver_opts"), &origins),
+                Err(error) => {
+                    self.generation_error(&format!("{subject}.driver_opts"), &error, &origins);
+                    valid = false;
+                }
+            }
+        }
+        if let Some(ipv6) = network.ipv6() {
+            match generated.set_enable_ipv6(*ipv6.value()) {
+                Ok(()) => self.exact(format!("{subject}.enable_ipv6"), ipv6.origins()),
+                Err(error) => {
+                    self.generation_error(&format!("{subject}.enable_ipv6"), &error, ipv6.origins());
+                    valid = false;
+                }
+            }
+        }
+        if let Some(internal) = network.internal() {
+            match generated.set_internal(*internal.value()) {
+                Ok(()) => self.exact(format!("{subject}.internal"), internal.origins()),
+                Err(error) => {
+                    self.generation_error(&format!("{subject}.internal"), &error, internal.origins());
+                    valid = false;
+                }
+            }
+        }
+        if let Some(labels) = network.labels() {
+            let origins = collection_or_item_origins(labels, network.labels_origins());
+            let values: Result<Vec<_>, _> = labels
+                .iter()
+                .map(|label| {
+                    GeneratedLabel::new(label.value().name().as_str(), generated_string(label.value().value())?)
+                })
+                .collect();
+            match values.and_then(|values| generated.set_labels(values)) {
+                Ok(()) => self.exact(format!("{subject}.labels"), &origins),
+                Err(error) => {
+                    self.generation_error(&format!("{subject}.labels"), &error, &origins);
+                    valid = false;
+                }
+            }
+        }
+        if let Some(driver) = network.ipam_driver() {
+            self.unsupported(
+                &format!("{subject}.ipam.driver"),
+                "ComposeLens 0.1.16 has no generated IPAM definition API",
+                driver.origins(),
+            );
+        }
+        if let Some(configs) = network.ipam_configs() {
+            self.unsupported(
+                &format!("{subject}.ipam.config"),
+                "ComposeLens 0.1.16 has no generated IPAM definition API",
+                &collection_or_item_origins(configs, network.ipam_configs_origins()),
+            );
+        }
+        if valid {
+            if let Err(error) = builder.add_network_definition(generated) {
+                self.generation_error(&subject, &error, sourced.origins());
+            }
+        }
+    }
+
+    fn report_external_network_configuration(&mut self, network: &Network, subject: &str) {
+        let reason = "Compose external networks may only declare their platform name";
+        if let Some(driver) = network.driver() {
+            self.unsupported(&format!("{subject}.driver"), reason, driver.origins());
+        }
+        if let Some(values) = network.driver_options() {
+            self.unsupported(
+                &format!("{subject}.driver_opts"),
+                reason,
+                &collection_or_item_origins(values, network.driver_options_origins()),
+            );
+        }
+        if let Some(value) = network.internal() {
+            self.unsupported(&format!("{subject}.internal"), reason, value.origins());
+        }
+        if let Some(value) = network.ipv6() {
+            self.unsupported(&format!("{subject}.enable_ipv6"), reason, value.origins());
+        }
+        if let Some(driver) = network.ipam_driver() {
+            self.unsupported(&format!("{subject}.ipam.driver"), reason, driver.origins());
+        }
+        if let Some(values) = network.ipam_configs() {
+            self.unsupported(
+                &format!("{subject}.ipam.config"),
+                reason,
+                &collection_or_item_origins(values, network.ipam_configs_origins()),
+            );
+        }
+        if let Some(values) = network.labels() {
+            self.unsupported(
+                &format!("{subject}.labels"),
+                reason,
+                &collection_or_item_origins(values, network.labels_origins()),
+            );
+        }
+    }
+
+    fn map_volume_definition(&mut self, sourced: &Sourced<Volume>, builder: &mut ComposeDocumentBuilder) {
+        let volume = sourced.value();
+        let subject = format!("volumes.{}", volume.name().as_str());
+        self.report_compose_native_only_volume_fields(volume, &subject);
+        if volume.ownership() != ResourceOwnership::Application {
+            let Some(mut generated) = self.map_external_volume_resource(volume, sourced.origins(), &subject) else {
+                self.generation_failed = true;
+                return;
+            };
+            if let Some(runtime_name) = volume.runtime_name() {
+                if runtime_name.value().is_sensitive() {
+                    self.unsupported(
+                        &format!("{subject}.name"),
+                        "sensitive runtime volume names cannot be passed to ComposeLens' plain-string generator",
+                        runtime_name.origins(),
+                    );
+                } else {
+                    match generated.set_custom_name(runtime_name.value().expose()) {
+                        Ok(()) => self.exact(format!("{subject}.name"), runtime_name.origins()),
+                        Err(error) => {
+                            self.generation_error(&format!("{subject}.name"), &error, runtime_name.origins());
+                        }
+                    }
+                }
+            }
+            self.report_external_volume_configuration(volume, &subject);
+            if let Err(error) = builder.add_volume(generated) {
+                self.generation_error(&subject, &error, sourced.origins());
+            }
+            return;
+        }
+
+        let mut generated = match GeneratedVolumeDefinition::application(volume.name().as_str()) {
+            Ok(value) => value,
+            Err(error) => {
+                self.generation_error(&subject, &error, sourced.origins());
+                return;
+            }
+        };
+        let mut valid = true;
+        if let Some(runtime_name) = volume.runtime_name() {
+            if runtime_name.value().is_sensitive() {
+                self.unsupported(
+                    &format!("{subject}.name"),
+                    "sensitive runtime volume names cannot be passed to ComposeLens' plain-string generator",
+                    runtime_name.origins(),
+                );
+            } else {
+                match generated.set_custom_name(runtime_name.value().expose()) {
+                    Ok(()) => self.exact(format!("{subject}.name"), runtime_name.origins()),
+                    Err(error) => {
+                        self.generation_error(&format!("{subject}.name"), &error, runtime_name.origins());
+                        valid = false;
+                    }
+                }
+            }
+        }
+        if let Some(driver) = volume.driver() {
+            match generated_string(driver.value()).and_then(|value| generated.set_driver(value)) {
+                Ok(()) => self.exact(format!("{subject}.driver"), driver.origins()),
+                Err(error) => {
+                    self.generation_error(&format!("{subject}.driver"), &error, driver.origins());
+                    valid = false;
+                }
+            }
+        }
+        self.map_local_volume_driver_options(volume, &mut generated, &subject, &mut valid);
+        if let Some(labels) = volume.labels() {
+            let origins = collection_or_item_origins(labels, volume.labels_origins());
+            let values: Result<Vec<_>, _> = labels
+                .iter()
+                .map(|label| {
+                    GeneratedLabel::new(label.value().name().as_str(), generated_string(label.value().value())?)
+                })
+                .collect();
+            match values.and_then(|values| generated.set_labels(values)) {
+                Ok(()) => self.exact(format!("{subject}.labels"), &origins),
+                Err(error) => {
+                    self.generation_error(&format!("{subject}.labels"), &error, &origins);
+                    valid = false;
+                }
+            }
+        }
+        if valid {
+            if let Err(error) = builder.add_volume_definition(generated) {
+                self.generation_error(&subject, &error, sourced.origins());
+            }
+        }
+    }
+
+    fn map_external_volume_resource(
+        &mut self,
+        volume: &Volume,
+        origins: &[Provenance],
+        subject: &str,
+    ) -> Option<GeneratedResource> {
+        let generated = match volume.ownership() {
+            ResourceOwnership::External => GeneratedResource::external(volume.name().as_str()),
+            ResourceOwnership::Implicit => {
+                self.unsupported(
+                    subject,
+                    "implicit source lifecycle is emitted as an externally managed Compose resource",
+                    origins,
+                );
+                GeneratedResource::external(volume.name().as_str())
+            }
+            ResourceOwnership::Uncertain => {
+                self.unsupported(
+                    subject,
+                    "runtime inspection did not determine volume ownership; output conservatively reuses the existing volume",
+                    origins,
+                );
+                GeneratedResource::external(volume.name().as_str())
+            }
+            ResourceOwnership::Application => return None,
+            _ => {
+                self.unsupported(
+                    subject,
+                    "volume ownership variant is newer than this Compose adapter",
+                    origins,
+                );
+                GeneratedResource::external(volume.name().as_str())
+            }
+        };
+        let mut generated = match generated {
+            Ok(generated) => generated,
+            Err(error) => {
+                self.generation_error(subject, &error, origins);
+                return None;
+            }
+        };
+        if origins
+            .iter()
+            .any(|origin| origin.kind() == ProvenanceKind::RuntimeObservation)
+            && volume.runtime_name().is_none()
+        {
+            if let Err(error) = generated.set_custom_name(volume.name().as_str()) {
+                self.generation_error(subject, &error, origins);
+                return None;
+            }
+        }
+        if matches!(volume.ownership(), ResourceOwnership::External) {
+            self.exact(subject, origins);
+        }
+        Some(generated)
+    }
+
+    fn map_local_volume_driver_options(
+        &mut self,
+        volume: &Volume,
+        generated: &mut GeneratedVolumeDefinition,
+        subject: &str,
+        valid: &mut bool,
+    ) {
+        let fields = [
+            ("type", volume.volume_type()),
+            ("device", volume.device()),
+            ("o", volume.options()),
+        ];
+        if fields.iter().all(|(_, value)| value.is_none()) {
+            return;
+        }
+        let local_driver = volume.driver().is_some_and(|driver| driver.value().expose() == "local");
+        if !local_driver {
+            for (field, value) in fields {
+                if let Some(value) = value {
+                    self.unsupported(
+                        &format!("{subject}.driver_opts.{field}"),
+                        "Compose local-driver options require an explicit `driver: local`",
+                        value.origins(),
+                    );
+                }
+            }
+            return;
+        }
+        let origins = fields
+            .iter()
+            .filter_map(|(_, value)| value.map(Sourced::origins))
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        let values: Result<Vec<_>, _> = fields
+            .into_iter()
+            .filter_map(|(name, value)| {
+                value.map(|value| {
+                    GeneratedVolumeDriverOption::new(
+                        name,
+                        GeneratedVolumeDriverOptionValue::String(generated_string(value.value())?),
+                    )
+                })
+            })
+            .collect();
+        match values.and_then(|values| generated.set_driver_opts(values)) {
+            Ok(()) => self.exact(format!("{subject}.driver_opts"), &origins),
+            Err(error) => {
+                self.generation_error(&format!("{subject}.driver_opts"), &error, &origins);
+                *valid = false;
+            }
+        }
+    }
+
+    fn report_external_volume_configuration(&mut self, volume: &Volume, subject: &str) {
+        let reason = "Compose external volumes may only declare platform name";
+        if let Some(driver) = volume.driver() {
+            self.unsupported(&format!("{subject}.driver"), reason, driver.origins());
+        }
+        for (field, value) in [
+            ("type", volume.volume_type()),
+            ("device", volume.device()),
+            ("o", volume.options()),
+        ] {
+            if let Some(value) = value {
+                self.unsupported(&format!("{subject}.driver_opts.{field}"), reason, value.origins());
+            }
+        }
+        if let Some(values) = volume.labels() {
+            self.unsupported(
+                &format!("{subject}.labels"),
+                reason,
+                &collection_or_item_origins(values, volume.labels_origins()),
+            );
+        }
+    }
+
+    fn report_compose_native_only_volume_fields(&mut self, volume: &Volume, subject: &str) {
+        for (name, value) in [
+            ("service_name", volume.service_name()),
+            ("user", volume.user()),
+            ("group", volume.group()),
+            ("uid", volume.uid()),
+            ("gid", volume.gid()),
+        ] {
+            if let Some(value) = value {
+                self.unsupported(
+                    &format!("{subject}.{name}"),
+                    "Quadlet-only volume setting has no reviewed Compose volume-definition mapping",
+                    value.origins(),
+                );
+            }
+        }
+        if let Some(value) = volume.copy() {
+            self.unsupported(
+                &format!("{subject}.copy"),
+                "Quadlet-only volume setting has no reviewed Compose volume-definition mapping",
+                value.origins(),
+            );
+        }
+        for (name, values, origins) in [
+            (
+                "containers_conf_modules",
+                volume.containers_conf_modules(),
+                volume.containers_conf_modules_origins(),
+            ),
+            ("global_args", volume.global_args(), volume.global_args_origins()),
+            ("podman_args", volume.podman_args(), volume.podman_args_origins()),
+        ] {
+            if let Some(values) = values {
+                self.unsupported(
+                    &format!("{subject}.{name}"),
+                    "Quadlet-only volume setting has no reviewed Compose volume-definition mapping",
+                    &collection_or_item_origins(values, origins),
+                );
+            }
+        }
+        if let Some(image) = volume.image_source() {
+            self.unsupported(
+                &format!("{subject}.image"),
+                "Quadlet volume image source has no reviewed Compose volume-definition mapping",
+                image.origins(),
+            );
+        }
+    }
+
     fn map_service(&mut self, sourced: &Sourced<Service>) -> Option<GeneratedService> {
         let service = sourced.value();
         let service_name = service.name().as_str();
@@ -369,11 +796,13 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
+        self.report_compose_native_only_service_fields(service, &service_subject);
         if !self.map_image(service, sourced.origins(), &mut generated, &service_subject) {
             return None;
         }
         self.map_restart_policy(service, &mut generated, &service_subject);
         self.map_command(service, &mut generated, &service_subject);
+        self.map_released_container_settings(service, &mut generated, &service_subject);
         self.map_identity(service, &mut generated, &service_subject);
         self.map_execution_context(service, &mut generated, &service_subject);
         self.map_dns(service, &mut generated, &service_subject);
@@ -805,11 +1234,42 @@ impl<'a> Mapping<'a> {
             match GeneratedNetworkAttachment::new(network.value().network().as_str()) {
                 Ok(mut value) => {
                     let mut valid = true;
-                    for alias in network.value().aliases() {
+                    for (index, alias) in network.value().aliases().iter().enumerate() {
+                        if network
+                            .value()
+                            .alias_sensitivities()
+                            .get(index)
+                            .copied()
+                            .unwrap_or(false)
+                        {
+                            self.unsupported(
+                                &subject,
+                                "sensitive network aliases cannot be passed to ComposeLens' plain-string generator",
+                                network.origins(),
+                            );
+                            valid = false;
+                            break;
+                        }
                         if let Err(error) = value.add_alias(alias) {
                             self.generation_error(&subject, &error, network.origins());
                             valid = false;
                             break;
+                        }
+                    }
+                    if let Some(address) = network.value().ipv4_address() {
+                        if let Err(error) =
+                            generated_string(address.value()).and_then(|address| value.set_ipv4_address(address))
+                        {
+                            self.generation_error(&subject, &error, address.origins());
+                            valid = false;
+                        }
+                    }
+                    if let Some(address) = network.value().ipv6_address() {
+                        if let Err(error) =
+                            generated_string(address.value()).and_then(|address| value.set_ipv6_address(address))
+                        {
+                            self.generation_error(&subject, &error, address.origins());
+                            valid = false;
                         }
                     }
                     if valid {
@@ -824,43 +1284,415 @@ impl<'a> Mapping<'a> {
         }
     }
 
-    fn report_unimplemented_service_fields(&mut self, service: &Service, service_subject: &str) {
-        let reason =
-            "this neutral field is retained but BoxFerry's Compose exporter does not yet implement its mapping";
+    fn map_released_container_settings(
+        &mut self,
+        service: &Service,
+        generated: &mut GeneratedService,
+        service_subject: &str,
+    ) {
+        self.map_entrypoint_lifecycle_and_pull(service, generated, service_subject);
+        self.map_hostname_pids_shm_memory(service, generated, service_subject);
+        self.map_collections(service, generated, service_subject);
+        self.map_annotations_logging_and_reload(service, generated, service_subject);
+    }
+
+    fn map_entrypoint_lifecycle_and_pull(
+        &mut self,
+        service: &Service,
+        generated: &mut GeneratedService,
+        subject: &str,
+    ) {
+        if let Some(entrypoint) = service.entrypoint() {
+            let field = format!("{subject}.entrypoint");
+            let value = match entrypoint.value() {
+                Entrypoint::Exec(values) => values
+                    .iter()
+                    .map(generated_string)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(GeneratedEntrypoint::List),
+                Entrypoint::Shell(value) => generated_string(value).map(GeneratedEntrypoint::String),
+                Entrypoint::Empty => Ok(GeneratedEntrypoint::Empty),
+                _ => {
+                    self.unsupported(
+                        &field,
+                        "entrypoint variant is newer than this Compose adapter",
+                        entrypoint.origins(),
+                    );
+                    return;
+                }
+            };
+            match value.and_then(|value| generated.set_entrypoint(value)) {
+                Ok(()) => self.exact(field, entrypoint.origins()),
+                Err(error) => self.generation_error(&field, &error, entrypoint.origins()),
+            }
+        }
+        if let Some(init) = service.run_init() {
+            let field = format!("{subject}.init");
+            match generated.set_init(*init.value()) {
+                Ok(()) => self.exact(field, init.origins()),
+                Err(error) => self.generation_error(&field, &error, init.origins()),
+            }
+        }
+        if let Some(timeout) = service.stop_timeout() {
+            let field = format!("{subject}.stop_grace_period");
+            match generated_string(&ProtectedString::plain(timeout.value().as_str()))
+                .and_then(|value| generated.set_stop_grace_period(value))
+            {
+                Ok(()) => self.exact(field, timeout.origins()),
+                Err(error) => self.generation_error(&field, &error, timeout.origins()),
+            }
+        }
+        if let Some(policy) = service.pull_policy() {
+            let field = format!("{subject}.pull_policy");
+            let value = match policy.value() {
+                PullPolicy::Always => Ok(GeneratedPullPolicy::Always),
+                PullPolicy::Missing => Ok(GeneratedPullPolicy::Missing),
+                PullPolicy::Never => Ok(GeneratedPullPolicy::Never),
+                PullPolicy::IfNotPresent => Ok(GeneratedPullPolicy::IfNotPresentAlias),
+                PullPolicy::Build => Ok(GeneratedPullPolicy::Build),
+                PullPolicy::Daily => Ok(GeneratedPullPolicy::Daily),
+                PullPolicy::Weekly => Ok(GeneratedPullPolicy::Weekly),
+                PullPolicy::Every(value) => generated_string(value).map(GeneratedPullPolicy::Every),
+                PullPolicy::Raw(_) => {
+                    self.unsupported(
+                        &field,
+                        "provider-specific pull policy cannot be silently normalized for Compose output",
+                        policy.origins(),
+                    );
+                    return;
+                }
+                _ => {
+                    self.unsupported(
+                        &field,
+                        "pull-policy variant is newer than this Compose adapter",
+                        policy.origins(),
+                    );
+                    return;
+                }
+            };
+            match value.and_then(|value| generated.set_pull_policy(value)) {
+                Ok(()) => self.exact(field, policy.origins()),
+                Err(error) => self.generation_error(&field, &error, policy.origins()),
+            }
+        }
+    }
+
+    fn map_hostname_pids_shm_memory(&mut self, service: &Service, generated: &mut GeneratedService, subject: &str) {
         if let Some(value) = service.hostname() {
-            self.unsupported(&format!("{service_subject}.hostname"), reason, value.origins());
+            let field = format!("{subject}.hostname");
+            match generated_string(value.value())
+                .map(GeneratedHostname::Resolved)
+                .and_then(|value| generated.set_hostname(value))
+            {
+                Ok(()) => self.exact(field, value.origins()),
+                Err(error) => self.generation_error(&field, &error, value.origins()),
+            }
         }
         if let Some(value) = service.pids_limit() {
-            self.unsupported(&format!("{service_subject}.pids_limit"), reason, value.origins());
+            let field = format!("{subject}.pids_limit");
+            let limit = if value.value().expose() == "-1" {
+                GeneratedPidsLimit::Unlimited
+            } else {
+                GeneratedPidsLimit::Finite(value.value().expose().to_owned())
+            };
+            match generated.set_pids_limit(limit) {
+                Ok(()) => self.exact(field, value.origins()),
+                Err(error) => self.generation_error(&field, &error, value.origins()),
+            }
         }
         if let Some(value) = service.shm_size() {
-            self.unsupported(&format!("{service_subject}.shm_size"), reason, value.origins());
+            self.map_sized_value(value.value(), value.origins(), &format!("{subject}.shm_size"), |size| {
+                generated.set_shm_size(size)
+            });
         }
-        if let Some(value) = service.stop_signal() {
-            self.unsupported(&format!("{service_subject}.stop_signal"), reason, value.origins());
+        if let Some(value) = service.memory_limit() {
+            self.map_memory_value(
+                value.value(),
+                value.origins(),
+                &format!("{subject}.mem_limit"),
+                |limit| generated.set_mem_limit(limit),
+            );
         }
-        for (field, values, collection_origins) in [
-            ("cap_add", service.cap_add(), service.cap_add_origins()),
-            ("cap_drop", service.cap_drop(), service.cap_drop_origins()),
-            ("tmpfs", service.tmpfs(), service.tmpfs_origins()),
+    }
+
+    fn map_sized_value<F>(&mut self, value: &ProtectedString, origins: &[Provenance], subject: &str, set: F)
+    where
+        F: FnOnce(GeneratedShmSize) -> Result<(), GenerationError>,
+    {
+        let Some((amount, unit)) = split_size(value.expose()) else {
+            self.unsupported(
+                subject,
+                "shared-memory size requires a documented lowercase unit",
+                origins,
+            );
+            return;
+        };
+        let amount = if value.is_sensitive() {
+            GeneratedString::sensitive(amount)
+        } else {
+            GeneratedString::plain(amount)
+        };
+        let Ok(amount) = amount else {
+            self.unsupported(subject, "invalid shared-memory size", origins);
+            return;
+        };
+        match set(GeneratedShmSize::Explicit { amount, unit }) {
+            Ok(()) => self.exact(subject, origins),
+            Err(error) => self.generation_error(subject, &error, origins),
+        }
+    }
+
+    fn map_memory_value<F>(&mut self, value: &ProtectedString, origins: &[Provenance], subject: &str, set: F)
+    where
+        F: FnOnce(GeneratedMemLimit) -> Result<(), GenerationError>,
+    {
+        let Some((amount, unit)) = split_memory(value.expose()) else {
+            self.unsupported(subject, "memory limit requires a documented lowercase unit", origins);
+            return;
+        };
+        let amount = if value.is_sensitive() {
+            GeneratedString::sensitive(amount)
+        } else {
+            GeneratedString::plain(amount)
+        };
+        match amount.and_then(|amount| set(GeneratedMemLimit::Explicit { amount, unit })) {
+            Ok(()) => self.exact(subject, origins),
+            Err(error) => self.generation_error(subject, &error, origins),
+        }
+    }
+
+    fn map_collections(&mut self, service: &Service, generated: &mut GeneratedService, subject: &str) {
+        self.map_capabilities(service, generated, subject);
+        self.map_resource_collections(service, generated, subject);
+        self.map_devices_signals_and_expose(service, generated, subject);
+    }
+
+    fn map_capabilities(&mut self, service: &Service, generated: &mut GeneratedService, subject: &str) {
+        for (name, values, origins, set) in [
+            (
+                "cap_add",
+                service.cap_add(),
+                service.cap_add_origins(),
+                GeneratedService::set_cap_add as fn(&mut GeneratedService, Vec<GeneratedString>) -> _,
+            ),
+            (
+                "cap_drop",
+                service.cap_drop(),
+                service.cap_drop_origins(),
+                GeneratedService::set_cap_drop as fn(&mut GeneratedService, Vec<GeneratedString>) -> _,
+            ),
         ] {
             if let Some(values) = values {
-                let origins = collection_or_item_origins(values, collection_origins);
-                self.unsupported(&format!("{service_subject}.{field}"), reason, &origins);
+                let field = format!("{subject}.{name}");
+                let all_origins = collection_or_item_origins(values, origins);
+                match values
+                    .iter()
+                    .map(|value| generated_string(value.value()))
+                    .collect::<Result<Vec<_>, _>>()
+                    .and_then(|values| set(generated, values))
+                {
+                    Ok(()) => self.exact(field, &all_origins),
+                    Err(error) => self.generation_error(&field, &error, &all_origins),
+                }
+            }
+        }
+    }
+
+    fn map_resource_collections(&mut self, service: &Service, generated: &mut GeneratedService, subject: &str) {
+        if let Some(values) = service.tmpfs() {
+            let field = format!("{subject}.tmpfs");
+            let origins = collection_or_item_origins(values, service.tmpfs_origins());
+            match values
+                .iter()
+                .map(|value| generated_string(value.value()))
+                .collect::<Result<Vec<_>, _>>()
+                .and_then(|values| generated.set_tmpfs(GeneratedTmpfs::List(values)))
+            {
+                Ok(()) => self.exact(field, &origins),
+                Err(error) => self.generation_error(&field, &error, &origins),
             }
         }
         if let Some(values) = service.sysctls() {
+            let field = format!("{subject}.sysctls");
             let origins = collection_or_item_origins(values, service.sysctls_origins());
-            self.unsupported(&format!("{service_subject}.sysctls"), reason, &origins);
+            let values = values
+                .iter()
+                .map(|value| {
+                    GeneratedSysctl::new(value.value().name().expose(), generated_string(value.value().value())?)
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match values.and_then(|values| generated.set_sysctls(GeneratedSysctls::Map(values))) {
+                Ok(()) => self.exact(field, &origins),
+                Err(error) => self.generation_error(&field, &error, &origins),
+            }
         }
         if let Some(values) = service.ulimits() {
+            let field = format!("{subject}.ulimits");
             let origins = resource_limit_collection_origins(values, service.ulimits_origins());
-            self.unsupported(&format!("{service_subject}.ulimits"), reason, &origins);
+            let values = values
+                .iter()
+                .map(|value| {
+                    let limit = value.value();
+                    match (limit.soft(), limit.hard()) {
+                        (Some(soft), Some(hard)) if soft.value().expose() == hard.value().expose() => {
+                            GeneratedUlimit::single(limit.name().expose(), generated_string(soft.value())?)
+                        }
+                        (Some(soft), Some(hard)) => GeneratedUlimit::range(
+                            limit.name().expose(),
+                            generated_string(soft.value())?,
+                            generated_string(hard.value())?,
+                        ),
+                        _ => Err(GenerationError::MissingUlimitRangeMember("soft/hard")),
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match values
+                .and_then(GeneratedUlimits::new)
+                .and_then(|values| generated.set_ulimits(values))
+            {
+                Ok(()) => self.exact(field, &origins),
+                Err(error) => self.generation_error(&field, &error, &origins),
+            }
         }
+    }
+
+    fn map_devices_signals_and_expose(&mut self, service: &Service, generated: &mut GeneratedService, subject: &str) {
         if let Some(values) = service.devices() {
+            let field = format!("{subject}.devices");
             let origins = device_collection_origins(values, service.devices_origins());
-            self.unsupported(&format!("{service_subject}.devices"), reason, &origins);
+            let values = values
+                .iter()
+                .map(|value| match value.value() {
+                    Device::Short(value) => generated_string(value).map(GeneratedDevice::Short),
+                    Device::Long {
+                        source,
+                        target,
+                        permissions,
+                    } => {
+                        let source = source.as_ref().ok_or(GenerationError::InvalidDeviceValue("source"))?;
+                        GeneratedLongDevice::new(
+                            generated_string(source.value())?,
+                            target
+                                .as_ref()
+                                .map(|value| generated_string(value.value()))
+                                .transpose()?,
+                            permissions
+                                .as_ref()
+                                .map(|value| generated_string(value.value()))
+                                .transpose()?,
+                        )
+                        .map(GeneratedDevice::Long)
+                    }
+                    _ => Err(GenerationError::InvalidDeviceValue("variant")),
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match values.and_then(|values| generated.set_devices(values)) {
+                Ok(()) => self.exact(field, &origins),
+                Err(error) => self.generation_error(&field, &error, &origins),
+            }
         }
+        if let Some(value) = service.stop_signal() {
+            let field = format!("{subject}.stop_signal");
+            match generated_string(value.value()).and_then(|value| generated.set_stop_signal(value)) {
+                Ok(()) => self.exact(field, value.origins()),
+                Err(error) => self.generation_error(&field, &error, value.origins()),
+            }
+        }
+        if let Some(values) = service.exposed_ports() {
+            let field = format!("{subject}.expose");
+            let origins = collection_or_item_origins(values, service.exposed_ports_origins());
+            let values = values
+                .iter()
+                .map(|value| {
+                    GeneratedString::plain(format!(
+                        "{}/{}",
+                        value.value().container(),
+                        match value.value().protocol() {
+                            Protocol::Tcp => "tcp",
+                            Protocol::Udp => "udp",
+                            _ => "unsupported",
+                        }
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match values.and_then(|values| generated.set_expose(values)) {
+                Ok(()) => self.exact(field, &origins),
+                Err(error) => self.generation_error(&field, &error, &origins),
+            }
+        }
+    }
+
+    fn map_annotations_logging_and_reload(
+        &mut self,
+        service: &Service,
+        generated: &mut GeneratedService,
+        subject: &str,
+    ) {
+        if let Some(values) = service.annotations() {
+            let field = format!("{subject}.annotations");
+            let origins = collection_or_item_origins(values, service.annotations_origins());
+            let values = values
+                .iter()
+                .map(|value| {
+                    GeneratedAnnotation::new(
+                        value.value().name().value().as_str(),
+                        generated_string(value.value().value().value())?,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match values.and_then(|values| generated.set_annotations(values)) {
+                Ok(()) => self.exact(field, &origins),
+                Err(error) => self.generation_error(&field, &error, &origins),
+            }
+        }
+        if let Some(logging) = service.logging() {
+            let field = format!("{subject}.logging");
+            let value = logging.value();
+            let Some(driver) = value.driver() else {
+                self.unsupported(
+                    &field,
+                    "Compose logging requires a driver; neutral logging retains its absence",
+                    logging.origins(),
+                );
+                return;
+            };
+            let options = value
+                .options()
+                .unwrap_or_default()
+                .iter()
+                .map(|option| {
+                    GeneratedLoggingOption::new(
+                        option.value().name().value().as_str(),
+                        GeneratedLoggingOptionValue::String(generated_string(option.value().value().value())?),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match generated_string(driver.value())
+                .and_then(|driver| options.and_then(|options| GeneratedLogging::new(driver, options)))
+                .and_then(|value| generated.set_logging(value))
+            {
+                Ok(()) if value.options().is_some() => self.exact(field, logging.origins()),
+                Ok(()) => self.loss(
+                    self.exporter.codes.unsupported.clone(),
+                    &field,
+                    ConversionKind::Approximate,
+                    "generated Compose logging adds an explicit empty options mapping",
+                    "neutral logging omitted options, but ComposeLens GeneratedLogging requires an options collection",
+                    logging.origins(),
+                ),
+                Err(error) => self.generation_error(&field, &error, logging.origins()),
+            }
+        }
+        if let Some(reload) = service.reload_action() {
+            self.unsupported(
+                &format!("{subject}.reload_action"),
+                "Compose has no reload command or signal field; reload intent is never emitted as a lifecycle hook",
+                reload.origins(),
+            );
+        }
+    }
+
+    fn report_unimplemented_service_fields(&mut self, service: &Service, service_subject: &str) {
         if let Some(healthcheck) = service.healthcheck() {
             self.unsupported(
                 &format!("{service_subject}.healthcheck"),
@@ -887,6 +1719,146 @@ impl<'a> Mapping<'a> {
                 &format!("{service_subject}.secret_grants[{index}]"),
                 "ComposeLens 0.1.13 generation does not yet expose service secret grants",
                 grant.origins(),
+            );
+        }
+    }
+
+    fn report_compose_native_only_service_fields(&mut self, service: &Service, service_subject: &str) {
+        if let Some(notification) = service.startup_notification() {
+            self.unsupported(
+                &format!("{service_subject}.startup_notification"),
+                "Compose has no service startup-notification field",
+                notification.origins(),
+            );
+        }
+        if let Some(rootfs) = service.rootfs() {
+            self.unsupported(
+                &format!("{service_subject}.rootfs"),
+                "Compose has no root-filesystem source field; rootfs is never rewritten as an image",
+                rootfs.origins(),
+            );
+        }
+        if let Some(arguments) = service.podman_args() {
+            for (index, argument) in arguments.iter().enumerate() {
+                self.unsupported(
+                    &format!("{service_subject}.podman_args[{index}]"),
+                    "Compose has no native Podman-argument field; authored arguments are never synthesized",
+                    argument.origins(),
+                );
+            }
+            if arguments.is_empty() {
+                self.unsupported(
+                    &format!("{service_subject}.podman_args"),
+                    "Compose has no native Podman-argument field; authored arguments are never synthesized",
+                    service.podman_args_origins(),
+                );
+            }
+        }
+    }
+
+    fn report_service_group_loss(&mut self, group: &Sourced<boxferry_model::ServiceGroup>) {
+        let group_subject = format!("service_groups.{}", group.value().name().as_str());
+        self.unsupported(
+            &group_subject,
+            "Compose has no native structural equivalent for a runtime pod or shared namespace group",
+            group.origins(),
+        );
+        let Some(runtime) = group.value().runtime() else {
+            return;
+        };
+        let runtime_subject = format!("{group_subject}.runtime");
+        self.unsupported(
+            &runtime_subject,
+            "Compose has no native service-group runtime; it is never assigned to a member service",
+            runtime.origins(),
+        );
+        let runtime = runtime.value();
+        if let Some(value) = runtime.runtime_name() {
+            self.unsupported(
+                &format!("{runtime_subject}.runtime_name"),
+                "Compose has no native service-group runtime name",
+                value.origins(),
+            );
+        }
+        if let Some(value) = runtime.service_name() {
+            self.unsupported(
+                &format!("{runtime_subject}.service_name"),
+                "Compose has no native service-group systemd service name",
+                value.origins(),
+            );
+        }
+        self.report_group_runtime_collection(
+            &format!("{runtime_subject}.host_mappings"),
+            runtime.host_mappings(),
+            runtime.host_mappings_origins(),
+        );
+        self.report_group_runtime_collection(
+            &format!("{runtime_subject}.ports"),
+            runtime.ports(),
+            runtime.ports_origins(),
+        );
+        self.report_group_runtime_collection(
+            &format!("{runtime_subject}.networks"),
+            runtime.networks(),
+            runtime.networks_origins(),
+        );
+        if let Some(value) = runtime.user_namespace() {
+            self.unsupported(
+                &format!("{runtime_subject}.user_namespace"),
+                "Compose has no native service-group user-namespace field",
+                value.origins(),
+            );
+        }
+        self.report_group_runtime_collection(
+            &format!("{runtime_subject}.mounts"),
+            runtime.mounts(),
+            runtime.mounts_origins(),
+        );
+        if let Some(value) = runtime.shm_size() {
+            self.unsupported(
+                &format!("{runtime_subject}.shm_size"),
+                "Compose has no native service-group shared-memory-size field",
+                value.origins(),
+            );
+        }
+        if let Some(value) = runtime.exit_policy() {
+            self.unsupported(
+                &format!("{runtime_subject}.exit_policy"),
+                "Compose has no native service-group exit-policy field",
+                value.origins(),
+            );
+        }
+        if let Some(value) = runtime.stop_timeout() {
+            self.unsupported(
+                &format!("{runtime_subject}.stop_timeout"),
+                "Compose has no native service-group stop-timeout field",
+                value.origins(),
+            );
+        }
+    }
+
+    fn report_group_runtime_collection<T>(
+        &mut self,
+        subject: &str,
+        values: Option<&[Sourced<T>]>,
+        collection_origins: &[Provenance],
+    ) {
+        let Some(values) = values else {
+            return;
+        };
+        if values.is_empty() {
+            self.unsupported(
+                subject,
+                "Compose has no native service-group runtime collection; it is never assigned to a member service",
+                collection_origins,
+            );
+            return;
+        }
+        for (index, value) in values.iter().enumerate() {
+            self.unsupported(
+                &format!("{subject}[{index}]"),
+                "Compose has no native service-group runtime collection; it is never assigned to a member service",
+                value.origins(),
             );
         }
     }
@@ -1114,6 +2086,37 @@ fn generated_string(value: &ProtectedString) -> Result<GeneratedString, Generati
     } else {
         GeneratedString::plain(value.expose())
     }
+}
+
+fn split_size(value: &str) -> Option<(&str, ShmSizeUnit)> {
+    for (suffix, unit) in [
+        ("b", ShmSizeUnit::B),
+        ("k", ShmSizeUnit::K),
+        ("m", ShmSizeUnit::M),
+        ("g", ShmSizeUnit::G),
+    ] {
+        if let Some(amount) = value.strip_suffix(suffix) {
+            return Some((amount, unit));
+        }
+    }
+    None
+}
+
+fn split_memory(value: &str) -> Option<(&str, MemLimitUnit)> {
+    for (suffix, unit) in [
+        ("kb", MemLimitUnit::Kb),
+        ("mb", MemLimitUnit::Mb),
+        ("gb", MemLimitUnit::Gb),
+        ("b", MemLimitUnit::B),
+        ("k", MemLimitUnit::K),
+        ("m", MemLimitUnit::M),
+        ("g", MemLimitUnit::G),
+    ] {
+        if let Some(amount) = value.strip_suffix(suffix) {
+            return Some((amount, unit));
+        }
+    }
+    None
 }
 
 enum SecurityOptionGeneration {

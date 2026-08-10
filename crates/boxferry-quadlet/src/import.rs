@@ -7,17 +7,19 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Application, BuildSettingValues, BuildSyntax, Command, EnvironmentFile, EnvironmentFileSyntax, EnvironmentValue,
-    EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress,
-    HostAddressKind, HostMapping, Identifier, ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment,
-    ImageBuild, ImageBuildSetting, ImageReference, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port,
-    ProtectedString, Protocol, Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy,
-    Secret, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
-    SourceSpan, Sourced, Volume,
+    Annotation, Application, BuildSettingValues, BuildSyntax, Command, Device, Entrypoint, EnvironmentFile,
+    EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, ExposedPort, GroupExitPolicy, Healthcheck,
+    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
+    ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ImageReference,
+    KernelParameter, Logging, LoggingOption, MetadataLabel, Mount, MountSource, Network, NetworkAttachment,
+    NetworkDriverOption, NetworkIpamConfig, Port, ProtectedString, Protocol, Provenance, PullPolicy, ReloadAction,
+    ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecurityOption,
+    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime,
+    SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 use quadlet_lens::model::{
-    BuildKey, ContainerKey, EntryKind, ImageKey, PodKey, QuadletUnitType, SectionKind, TypedEntry, TypedSection,
-    UnitReferenceKind, ValueKind,
+    BuildKey, ContainerKey, EntryKind, ImageKey, NetworkKey, PodKey, QuadletUnitType, SectionKind, TypedEntry,
+    TypedSection, UnitReferenceKind, ValueKind, VolumeKey,
 };
 
 use crate::QuadletSource;
@@ -109,6 +111,9 @@ impl ImportAdapter for QuadletImporter {
         }
 
         mapping.finish_pod_groups(&mut application, pod_order, pod_groups);
+        if let Err(error) = application.validate_image_artifact_references() {
+            mapping.invalid_model("volumes", "quadlet", &error.to_string(), None);
+        }
 
         ImportResult::new(Some(application), mapping.outcomes, mapping.diagnostics)
     }
@@ -157,6 +162,7 @@ struct ContainerImportState<'entry> {
     health_origins: Vec<Provenance>,
     security_options: Vec<Sourced<SecurityOption>>,
     security_option_origins: Vec<Provenance>,
+    network_attachment_entries: Vec<&'entry TypedEntry>,
 }
 
 struct PodImportGroup {
@@ -164,6 +170,7 @@ struct PodImportGroup {
     name: Identifier,
     origin: Provenance,
     members: Vec<Sourced<Identifier>>,
+    runtime: ServiceGroupRuntime,
 }
 
 impl DependencyRelations {
@@ -235,28 +242,28 @@ impl<'a> Mapping<'a> {
                 }
                 QuadletUnitType::Network => {
                     if let Some(name) = self.identifier(stem, "networks", document_origin.clone()) {
-                        let network = Network::new(name, ResourceOwnership::Application);
+                        let network =
+                            self.map_network_definition(filename, name, document.sections(), document_origin.clone());
                         if let Err(error) = application.add_network(Sourced::from_source(network, document_origin)) {
                             self.invalid_model("networks", filename, &error.to_string(), None);
-                        } else {
-                            self.exact(format!("networks.{stem}"), None);
                         }
                     }
-                    self.report_unmapped_entries(filename, document.entries());
                 }
                 QuadletUnitType::Volume => {
                     if let Some(name) = self.identifier(stem, "volumes", document_origin.clone()) {
-                        let volume = Volume::new(name, ResourceOwnership::Application);
+                        let volume =
+                            self.map_volume_definition(filename, name, document.sections(), document_origin.clone());
                         if let Err(error) = application.add_volume(Sourced::from_source(volume, document_origin)) {
                             self.invalid_model("volumes", filename, &error.to_string(), None);
                         } else {
                             self.exact(format!("volumes.{stem}"), None);
                         }
                     }
-                    self.report_unmapped_entries(filename, document.entries());
                 }
                 QuadletUnitType::Pod => {
-                    if let Some(group) = self.map_pod_definition(filename, stem, document.sections(), document_origin) {
+                    if let Some(group) =
+                        self.map_pod_definition(filename, stem, application, document.sections(), document_origin)
+                    {
                         pod_order.push(stem.to_owned());
                         pod_groups.insert(stem.to_owned(), group);
                     }
@@ -265,6 +272,624 @@ impl<'a> Mapping<'a> {
             }
         }
         (pod_order, pod_groups)
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the typed volume keys share one ordered import contract"
+    )]
+    fn map_volume_definition(
+        &mut self,
+        filename: &str,
+        name: Identifier,
+        sections: &[TypedSection],
+        document_origin: Provenance,
+    ) -> Volume {
+        let subject = format!("volumes.{}", name.as_str());
+        let mut volume = Volume::new(name, ResourceOwnership::Application);
+        let mut singletons = BTreeSet::new();
+        let mut labels = None;
+        let mut label_origins = Vec::new();
+        let mut modules = None;
+        let mut module_origins = Vec::new();
+        let mut global_args = None;
+        let mut global_args_origins = Vec::new();
+        let mut podman_args = None;
+        let mut podman_args_origins = Vec::new();
+        for section in sections {
+            for entry in section.entries() {
+                let origin = self.entry_origin(entry);
+                let EntryKind::Volume(key) = entry.kind() else {
+                    self.unsupported(
+                        &format!("quadlet.{filename}.{}", entry.key().text()),
+                        filename,
+                        entry.key().text(),
+                        origin,
+                    );
+                    continue;
+                };
+                if !entry.kind().is_repeatable() && !singletons.insert(key) {
+                    self.invalid_model(
+                        &format!("{subject}.{}", entry.key().text()),
+                        filename,
+                        "Quadlet volume singleton is declared more than once",
+                        Some(origin),
+                    );
+                    continue;
+                }
+                let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+                    continue;
+                };
+                let sourced = |value: &str| Sourced::from_source(ProtectedString::sensitive(value), origin.clone());
+                match key {
+                    VolumeKey::VolumeName => {
+                        volume.set_runtime_name(sourced(value));
+                        self.exact(format!("{subject}.runtime_name"), Some(origin));
+                    }
+                    VolumeKey::Driver => {
+                        volume.set_driver(sourced(value));
+                        self.exact(format!("{subject}.driver"), Some(origin));
+                    }
+                    VolumeKey::Device => {
+                        volume.set_device(sourced(value));
+                        self.exact(format!("{subject}.device"), Some(origin));
+                    }
+                    VolumeKey::Type => {
+                        volume.set_volume_type(sourced(value));
+                        self.exact(format!("{subject}.type"), Some(origin));
+                    }
+                    VolumeKey::Options => {
+                        volume.set_options(sourced(value));
+                        self.exact(format!("{subject}.options"), Some(origin));
+                    }
+                    VolumeKey::Copy => match value {
+                        "true" => {
+                            volume.set_copy(Sourced::from_source(true, origin.clone()));
+                            self.exact(format!("{subject}.copy"), Some(origin));
+                        }
+                        "false" => {
+                            volume.set_copy(Sourced::from_source(false, origin.clone()));
+                            self.exact(format!("{subject}.copy"), Some(origin));
+                        }
+                        _ => self.invalid_model(
+                            &format!("{subject}.copy"),
+                            filename,
+                            "Copy must be true or false",
+                            Some(origin),
+                        ),
+                    },
+                    VolumeKey::Label if value.is_empty() => {
+                        labels = Some(Vec::new());
+                        label_origins = vec![origin.clone()];
+                        self.unsupported_value(
+                            &format!("{subject}.labels"),
+                            filename,
+                            "Label",
+                            "an empty Label assignment resets the effective list and cannot be regenerated exactly",
+                            origin,
+                        );
+                    }
+                    VolumeKey::Label => match parse_network_label(value) {
+                        Some((name, value)) => {
+                            if let Some(name) = self.identifier(name, &format!("{subject}.labels"), origin.clone()) {
+                                let labels = labels.get_or_insert_default();
+                                labels.push(Sourced::from_source(
+                                    MetadataLabel::new(name, ProtectedString::sensitive(value)),
+                                    origin.clone(),
+                                ));
+                                self.exact(format!("{subject}.labels[{}]", labels.len() - 1), Some(origin));
+                            }
+                        }
+                        None => self.unsupported_value(
+                            &format!("{subject}.labels"),
+                            filename,
+                            "Label",
+                            "Label requires one safe NAME=VALUE assignment",
+                            origin,
+                        ),
+                    },
+                    VolumeKey::ContainersConfModule => {
+                        if value.is_empty() {
+                            modules = Some(Vec::new());
+                            module_origins = vec![origin.clone()];
+                            self.unsupported_value(
+                                &format!("{subject}.containers_conf_modules"),
+                                filename,
+                                "ContainersConfModule",
+                                "an empty assignment reset cannot be regenerated exactly",
+                                origin,
+                            );
+                        } else {
+                            let modules = modules.get_or_insert_default();
+                            modules.push(sourced(value));
+                            self.exact(
+                                format!("{subject}.containers_conf_modules[{}]", modules.len() - 1),
+                                Some(origin),
+                            );
+                        }
+                    }
+                    VolumeKey::GlobalArgs => {
+                        if value.is_empty() {
+                            global_args = Some(Vec::new());
+                            global_args_origins = vec![origin.clone()];
+                            self.unsupported_value(
+                                &format!("{subject}.global_args"),
+                                filename,
+                                "GlobalArgs",
+                                "an empty assignment reset cannot be regenerated exactly",
+                                origin,
+                            );
+                        } else {
+                            let global_args = global_args.get_or_insert_default();
+                            global_args.push(sourced(value));
+                            self.exact(
+                                format!("{subject}.global_args[{}]", global_args.len() - 1),
+                                Some(origin),
+                            );
+                        }
+                    }
+                    VolumeKey::PodmanArgs => {
+                        if value.is_empty() {
+                            podman_args = Some(Vec::new());
+                            podman_args_origins = vec![origin.clone()];
+                            self.unsupported_value(
+                                &format!("{subject}.podman_args"),
+                                filename,
+                                "PodmanArgs",
+                                "an empty assignment reset cannot be regenerated exactly",
+                                origin,
+                            );
+                        } else {
+                            let podman_args = podman_args.get_or_insert_default();
+                            podman_args.push(sourced(value));
+                            self.exact(
+                                format!("{subject}.podman_args[{}]", podman_args.len() - 1),
+                                Some(origin),
+                            );
+                        }
+                    }
+                    VolumeKey::User => {
+                        volume.set_user(sourced(value));
+                        self.exact(format!("{subject}.user"), Some(origin));
+                    }
+                    VolumeKey::Group => {
+                        volume.set_group(sourced(value));
+                        self.exact(format!("{subject}.group"), Some(origin));
+                    }
+                    VolumeKey::UID => {
+                        volume.set_uid(sourced(value));
+                        self.exact(format!("{subject}.uid"), Some(origin));
+                    }
+                    VolumeKey::GID => {
+                        volume.set_gid(sourced(value));
+                        self.exact(format!("{subject}.gid"), Some(origin));
+                    }
+                    VolumeKey::ServiceName => {
+                        volume.set_service_name(sourced(value));
+                        self.exact(format!("{subject}.service_name"), Some(origin));
+                    }
+                    VolumeKey::Image => {
+                        let image = if let Some(stem) = value.strip_suffix(".image") {
+                            self.identifier(stem, &format!("{subject}.image"), origin.clone())
+                                .map(VolumeImageSource::ImageAcquisition)
+                        } else if let Some(stem) = value.strip_suffix(".build") {
+                            self.identifier(stem, &format!("{subject}.image"), origin.clone())
+                                .map(VolumeImageSource::ImageBuild)
+                        } else {
+                            Some(VolumeImageSource::Literal(ProtectedString::sensitive(value)))
+                        };
+                        if let Some(image) = image {
+                            if let Err(error) = volume.set_image_source(Sourced::from_source(image, origin.clone())) {
+                                self.invalid_model(
+                                    &format!("{subject}.image"),
+                                    filename,
+                                    &error.to_string(),
+                                    Some(origin),
+                                );
+                            } else {
+                                self.exact(format!("{subject}.image"), Some(origin));
+                            }
+                        }
+                    }
+                    _ => self.unsupported(
+                        &format!("{subject}.quadlet.{}", entry.key().text()),
+                        filename,
+                        entry.key().text(),
+                        origin,
+                    ),
+                }
+            }
+        }
+        if let Some(labels) = labels {
+            volume.set_labels_with_origins(labels, label_origins);
+        }
+        if let Some(modules) = modules {
+            volume.set_containers_conf_modules_with_origins(modules, module_origins);
+        }
+        if let Some(global_args) = global_args {
+            volume.set_global_args_with_origins(global_args, global_args_origins);
+        }
+        if let Some(podman_args) = podman_args {
+            volume.set_podman_args_with_origins(podman_args, podman_args_origins);
+        }
+        if volume.volume_type().is_some() && volume.device().is_none() {
+            self.invalid_model(
+                &format!("{subject}.type"),
+                filename,
+                "Type requires Device",
+                Some(document_origin),
+            );
+        }
+        volume
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the ten related typed network keys share one source-order and IPAM-association contract"
+    )]
+    fn map_network_definition(
+        &mut self,
+        filename: &str,
+        name: Identifier,
+        sections: &[TypedSection],
+        document_origin: Provenance,
+    ) -> Network {
+        let subject = format!("networks.{}", name.as_str());
+        let mut network = Network::new(name, ResourceOwnership::Application);
+        let mut singletons = BTreeSet::new();
+        let mut options = None;
+        let mut option_names = BTreeSet::new();
+        let mut option_reset_origins = Vec::new();
+        let mut labels = None;
+        let mut label_names = BTreeSet::new();
+        let mut label_reset_origins = Vec::new();
+        let mut ipam_entries = Vec::new();
+
+        for section in sections {
+            for entry in section.entries() {
+                let origin = self.entry_origin(entry);
+                let EntryKind::Network(key) = entry.kind() else {
+                    self.unsupported(
+                        &format!("quadlet.{filename}.{}", entry.key().text()),
+                        filename,
+                        entry.key().text(),
+                        origin,
+                    );
+                    continue;
+                };
+                if matches!(
+                    key,
+                    NetworkKey::NetworkName
+                        | NetworkKey::Driver
+                        | NetworkKey::Internal
+                        | NetworkKey::IPv6
+                        | NetworkKey::IPAMDriver
+                ) && !singletons.insert(key)
+                {
+                    self.invalid_model(
+                        &format!("{subject}.{}", entry.key().text()),
+                        filename,
+                        "Quadlet network singleton is declared more than once",
+                        Some(origin),
+                    );
+                    continue;
+                }
+                let Some(value) = self.network_direct_value(filename, &subject, entry, origin.clone()) else {
+                    continue;
+                };
+                match key {
+                    NetworkKey::NetworkName => {
+                        if is_safe_network_scalar(value, false) {
+                            network
+                                .set_runtime_name(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+                            self.exact(format!("{subject}.runtime_name"), Some(origin));
+                        } else {
+                            self.unsupported_value(
+                                &subject,
+                                filename,
+                                "NetworkName",
+                                "NetworkName requires an unquoted systemd-safe scalar",
+                                origin,
+                            );
+                        }
+                    }
+                    NetworkKey::Driver => {
+                        if is_safe_network_scalar(value, false) {
+                            network.set_driver(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+                            self.exact(format!("{subject}.driver"), Some(origin));
+                        } else {
+                            self.unsupported_value(
+                                &subject,
+                                filename,
+                                "Driver",
+                                "Driver requires an unquoted systemd-safe scalar",
+                                origin,
+                            );
+                        }
+                    }
+                    NetworkKey::Options if value.is_empty() => {
+                        options = Some(Vec::new());
+                        option_names.clear();
+                        option_reset_origins = vec![origin.clone()];
+                        self.unsupported_value(
+                            &format!("{subject}.driver_options"),
+                            filename,
+                            "Options",
+                            "an empty Options assignment resets the effective list and cannot be regenerated exactly",
+                            origin,
+                        );
+                    }
+                    NetworkKey::Options => match parse_network_assignment(value) {
+                        Some((option_name, option_value)) => {
+                            let Some(option_name) =
+                                self.identifier(option_name, &format!("{subject}.driver_options"), origin.clone())
+                            else {
+                                continue;
+                            };
+                            if !option_names.insert(option_name.as_str().to_owned()) {
+                                self.unsupported_value(
+                                    &format!("{subject}.driver_options"),
+                                    filename,
+                                    "Options",
+                                    "duplicate network option names are collapsed by native processing and cannot be imported exactly",
+                                    origin,
+                                );
+                                continue;
+                            }
+                            match NetworkDriverOption::new(
+                                Sourced::from_source(option_name, origin.clone()),
+                                Sourced::from_source(ProtectedString::sensitive(option_value), origin.clone()),
+                            ) {
+                                Ok(option) => {
+                                    let options = options.get_or_insert_default();
+                                    options.push(Sourced::from_source(option, origin.clone()));
+                                    self.exact(
+                                        format!("{subject}.driver_options[{}]", options.len() - 1),
+                                        Some(origin),
+                                    );
+                                }
+                                Err(error) => self.invalid_model(&subject, filename, &error.to_string(), Some(origin)),
+                            }
+                        }
+                        None => self.unsupported_value(
+                            &format!("{subject}.driver_options"),
+                            filename,
+                            "Options",
+                            "Options requires one explicit unquoted systemd-safe NAME=VALUE assignment",
+                            origin,
+                        ),
+                    },
+                    NetworkKey::Label if value.is_empty() => {
+                        labels = Some(Vec::new());
+                        label_names.clear();
+                        label_reset_origins = vec![origin.clone()];
+                        self.unsupported_value(
+                            &format!("{subject}.labels"),
+                            filename,
+                            "Label",
+                            "an empty Label assignment resets the effective list and cannot be regenerated exactly",
+                            origin,
+                        );
+                    }
+                    NetworkKey::Label => match parse_network_label(value) {
+                        Some((label_name, label_value)) => {
+                            let Some(label_name) =
+                                self.identifier(label_name, &format!("{subject}.labels"), origin.clone())
+                            else {
+                                continue;
+                            };
+                            if !label_names.insert(label_name.as_str().to_owned()) {
+                                self.unsupported_value(
+                                    &format!("{subject}.labels"),
+                                    filename,
+                                    "Label",
+                                    "duplicate network label names are collapsed by native processing and cannot be imported exactly",
+                                    origin,
+                                );
+                                continue;
+                            }
+                            let label = MetadataLabel::new(label_name, ProtectedString::sensitive(label_value));
+                            let labels = labels.get_or_insert_default();
+                            labels.push(Sourced::from_source(label, origin.clone()));
+                            self.exact(format!("{subject}.labels[{}]", labels.len() - 1), Some(origin));
+                        }
+                        None => self.unsupported_value(
+                            &format!("{subject}.labels"),
+                            filename,
+                            "Label",
+                            "Label requires one explicit unquoted systemd-safe NAME=VALUE assignment",
+                            origin,
+                        ),
+                    },
+                    NetworkKey::Internal | NetworkKey::IPv6 => {
+                        let Some(value) = parse_canonical_network_bool(value) else {
+                            self.invalid_model(
+                                &format!(
+                                    "{subject}.{}",
+                                    if key == NetworkKey::Internal {
+                                        "internal"
+                                    } else {
+                                        "ipv6"
+                                    }
+                                ),
+                                filename,
+                                "network booleans must use canonical true or false spelling",
+                                Some(origin),
+                            );
+                            continue;
+                        };
+                        if key == NetworkKey::Internal {
+                            network.set_internal(Sourced::from_source(value, origin.clone()));
+                            self.exact(format!("{subject}.internal"), Some(origin));
+                        } else {
+                            network.set_ipv6(Sourced::from_source(value, origin.clone()));
+                            self.exact(format!("{subject}.ipv6"), Some(origin));
+                        }
+                    }
+                    NetworkKey::IPAMDriver => {
+                        if is_safe_network_scalar(value, false) {
+                            network.set_ipam_driver(Sourced::from_source(
+                                ProtectedString::sensitive(value),
+                                origin.clone(),
+                            ));
+                            self.exact(format!("{subject}.ipam_driver"), Some(origin));
+                        } else {
+                            self.unsupported_value(
+                                &subject,
+                                filename,
+                                "IPAMDriver",
+                                "IPAMDriver requires an unquoted systemd-safe scalar",
+                                origin,
+                            );
+                        }
+                    }
+                    NetworkKey::Subnet | NetworkKey::Gateway | NetworkKey::IPRange => {
+                        ipam_entries.push((key, value.to_owned(), origin));
+                    }
+                    _ => self.unsupported_value(
+                        &format!("quadlet.{filename}.{}", entry.key().text()),
+                        filename,
+                        entry.key().text(),
+                        "unrecognized typed network key",
+                        origin,
+                    ),
+                }
+            }
+        }
+        if let Some(options) = options {
+            network.set_driver_options_with_origins(options, option_reset_origins);
+        }
+        if let Some(labels) = labels {
+            network.set_labels_with_origins(labels, label_reset_origins);
+        }
+        self.map_network_ipam(filename, &subject, &mut network, &ipam_entries, document_origin);
+        self.exact(subject, None);
+        network
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "IPAM association deliberately checks every native column before retaining one neutral row"
+    )]
+    fn map_network_ipam(
+        &mut self,
+        filename: &str,
+        subject: &str,
+        network: &mut Network,
+        entries: &[(NetworkKey, String, Provenance)],
+        document_origin: Provenance,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        if entries.iter().any(|(_, value, _)| value.is_empty()) {
+            if entries.iter().all(|(_, value, _)| value.is_empty()) {
+                network.set_ipam_configs_with_origins(
+                    Vec::new(),
+                    entries.iter().map(|(_, _, origin)| origin.clone()).collect(),
+                );
+            }
+            self.unsupported_value(
+                &format!("{subject}.ipam_configs"),
+                filename,
+                "IPAM",
+                "an empty IPAM column assignment resets native state and cannot be regenerated exactly",
+                document_origin,
+            );
+            return;
+        }
+        if entries
+            .iter()
+            .any(|(_, value, _)| !is_safe_network_scalar(value, false))
+        {
+            self.unsupported_value(
+                &format!("{subject}.ipam_configs"),
+                filename,
+                "IPAM",
+                "IPAM columns require unquoted systemd-safe scalar values",
+                document_origin,
+            );
+            return;
+        }
+        let subnets = entries.iter().filter(|(key, _, _)| *key == NetworkKey::Subnet).count();
+        let gateways = entries.iter().filter(|(key, _, _)| *key == NetworkKey::Gateway).count();
+        let ranges = entries.iter().filter(|(key, _, _)| *key == NetworkKey::IPRange).count();
+        if subnets == 0 && (gateways > 0 || ranges > 0) {
+            self.invalid_model(
+                &format!("{subject}.ipam_configs"),
+                filename,
+                "Gateway or IPRange requires a Subnet",
+                Some(document_origin),
+            );
+            return;
+        }
+        if subnets != 1 || gateways > 1 || ranges > 1 {
+            self.unsupported_value(
+                &format!("{subject}.ipam_configs"),
+                filename,
+                "IPAM",
+                "independent repeated IPAM columns cannot be associated safely without positional zipping",
+                document_origin,
+            );
+            return;
+        }
+        let Some(subnet_index) = entries.iter().position(|(key, _, _)| *key == NetworkKey::Subnet) else {
+            self.invalid_model(
+                &format!("{subject}.ipam_configs"),
+                filename,
+                "IPAM association unexpectedly lacks its required Subnet",
+                Some(document_origin),
+            );
+            return;
+        };
+        if entries[..subnet_index]
+            .iter()
+            .any(|(key, _, _)| matches!(key, NetworkKey::Gateway | NetworkKey::IPRange))
+        {
+            self.unsupported_value(
+                &format!("{subject}.ipam_configs"),
+                filename,
+                "IPAM",
+                "Gateway and IPRange must physically follow their Subnet to establish one safe row",
+                document_origin,
+            );
+            return;
+        }
+        let (subnet, subnet_origin) = (&entries[subnet_index].1, entries[subnet_index].2.clone());
+        let Ok(mut row) = NetworkIpamConfig::new(Sourced::from_source(
+            ProtectedString::sensitive(subnet),
+            subnet_origin.clone(),
+        )) else {
+            self.invalid_model(
+                &format!("{subject}.ipam_configs"),
+                filename,
+                "invalid IPAM subnet",
+                Some(subnet_origin),
+            );
+            return;
+        };
+        for (key, value, origin) in entries.iter().skip(subnet_index + 1) {
+            let result = match key {
+                NetworkKey::Gateway => {
+                    row.set_gateway(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()))
+                }
+                NetworkKey::IPRange => {
+                    row.set_ip_range(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()))
+                }
+                _ => Ok(()),
+            };
+            if let Err(error) = result {
+                self.invalid_model(
+                    &format!("{subject}.ipam_configs"),
+                    filename,
+                    &error.to_string(),
+                    Some(origin.clone()),
+                );
+                return;
+            }
+        }
+        network.add_ipam_config(Sourced::from_source(row, subnet_origin));
+        self.exact(format!("{subject}.ipam_configs[0]"), None);
     }
 
     fn map_image_definition(
@@ -552,6 +1177,7 @@ impl<'a> Mapping<'a> {
                 continue;
             };
             let mut group = ServiceGroup::new(imported.name, ResourceOwnership::Application);
+            group.set_runtime(Sourced::from_source(imported.runtime, imported.origin.clone()));
             for member in imported.members {
                 if let Err(error) = group.add_member(member) {
                     self.invalid_model(
@@ -579,12 +1205,15 @@ impl<'a> Mapping<'a> {
         &mut self,
         filename: &str,
         stem: &str,
+        application: &mut Application,
         sections: &[TypedSection],
         document_origin: Provenance,
     ) -> Option<PodImportGroup> {
         let name = self.identifier(stem, "service_groups", document_origin.clone())?;
-        let subject = format!("service_groups.{stem}.runtime_name");
+        let subject = format!("service_groups.{stem}.runtime");
         let mut pod_name_seen = false;
+        let mut singletons = BTreeSet::new();
+        let mut runtime = ServiceGroupRuntime::new();
 
         for section in sections {
             for entry in section.entries() {
@@ -604,17 +1233,20 @@ impl<'a> Mapping<'a> {
                         let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
                             continue;
                         };
-                        if value == stem {
-                            self.exact(subject.clone(), Some(origin));
-                        } else {
-                            self.unsupported_value(
+                        runtime.set_runtime_name(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+                        self.exact(format!("{subject}.pod_name"), Some(origin));
+                    }
+                    (SectionKind::Pod, EntryKind::Pod(key)) => {
+                        if !entry.kind().is_repeatable() && !singletons.insert(key) {
+                            self.invalid_model(
                                 &subject,
                                 filename,
-                                "PodName",
-                                "the neutral service-group identity cannot retain a runtime pod name different from its Quadlet unit name",
-                                origin,
+                                "Quadlet singleton pod key is declared more than once",
+                                Some(self.entry_origin(entry)),
                             );
+                            continue;
                         }
+                        self.map_pod_runtime_entry(filename, stem, application, &mut runtime, entry);
                     }
                     _ => self.unsupported(
                         &format!("service_groups.{stem}.quadlet.{}", entry.key().text()),
@@ -626,13 +1258,17 @@ impl<'a> Mapping<'a> {
             }
         }
 
-        if !pod_name_seen {
-            self.unsupported_value(
-                &subject,
+        if runtime.networks().is_some_and(|networks| {
+            networks
+                .iter()
+                .any(|network| network.value().network().as_str() == "host")
+        }) && runtime.ports().is_some_and(|ports| !ports.is_empty())
+        {
+            self.invalid_model(
+                &format!("service_groups.{stem}.runtime.ports"),
                 filename,
-                "PodName",
-                "an omitted PodName uses Podman's systemd-prefixed runtime default, which the neutral service-group identity cannot retain separately",
-                document_origin.clone(),
+                "Network=host conflicts with PublishPort",
+                Some(document_origin.clone()),
             );
         }
 
@@ -641,7 +1277,205 @@ impl<'a> Mapping<'a> {
             name,
             origin: document_origin,
             members: Vec::new(),
+            runtime,
         })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn map_pod_runtime_entry(
+        &mut self,
+        filename: &str,
+        stem: &str,
+        application: &mut Application,
+        runtime: &mut ServiceGroupRuntime,
+        entry: &TypedEntry,
+    ) {
+        let subject = format!("service_groups.{stem}.runtime.{}", entry.key().text());
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        match entry.kind() {
+            EntryKind::Pod(PodKey::AddHost) if value.is_empty() => {
+                runtime.set_host_mappings_with_origins(Vec::new(), vec![origin.clone()]);
+                self.unsupported_value(
+                    &subject,
+                    filename,
+                    "AddHost",
+                    "an empty AddHost assignment resets the effective list",
+                    origin,
+                );
+            }
+            EntryKind::Pod(PodKey::AddHost) => match decode_host_mappings(value) {
+                Ok(values) => {
+                    for value in values {
+                        runtime.add_host_mapping(Sourced::from_source(value, origin.clone()));
+                    }
+                    self.exact(subject, Some(origin));
+                }
+                Err(ValueIssue::Unsupported(reason)) => {
+                    self.unsupported_value(&subject, filename, "AddHost", reason, origin);
+                }
+                Err(ValueIssue::Invalid(reason)) => self.invalid_model(&subject, filename, reason, Some(origin)),
+            },
+            EntryKind::Pod(PodKey::PublishPort) if value.is_empty() => {
+                runtime.set_ports_with_origins(Vec::new(), vec![origin.clone()]);
+                self.unsupported_value(
+                    &subject,
+                    filename,
+                    "PublishPort",
+                    "an empty PublishPort assignment resets the effective list",
+                    origin,
+                );
+            }
+            EntryKind::Pod(PodKey::PublishPort) => match decode_port(value) {
+                Ok(value) => {
+                    runtime.add_port(Sourced::from_source(value, origin.clone()));
+                    self.exact(subject, Some(origin));
+                }
+                Err(ValueIssue::Unsupported(reason)) => {
+                    self.unsupported_value(&subject, filename, "PublishPort", reason, origin);
+                }
+                Err(ValueIssue::Invalid(reason)) => self.invalid_model(&subject, filename, reason, Some(origin)),
+            },
+            EntryKind::Pod(PodKey::Network) => {
+                if value.is_empty() {
+                    runtime.set_networks_with_origins(Vec::new(), vec![origin.clone()]);
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        "Network",
+                        "an empty Network assignment resets the effective list",
+                        origin,
+                    );
+                    return;
+                }
+                let (name, external) = match entry.value_kind() {
+                    ValueKind::UnitReference(UnitReferenceKind::Network) => (value.strip_suffix(".network"), false),
+                    _ if value == "host" => (Some(value), false),
+                    _ if is_external_network_name(value) => (Some(value), true),
+                    _ => {
+                        self.unsupported_value(
+                            &subject,
+                            filename,
+                            "Network",
+                            "Network mode and target-specific arguments remain unsupported",
+                            origin,
+                        );
+                        return;
+                    }
+                };
+                let Some(name) = name else {
+                    self.invalid_model(&subject, filename, "invalid .network unit reference", Some(origin));
+                    return;
+                };
+                let Some(name) = self.identifier(name, &subject, origin.clone()) else {
+                    return;
+                };
+                if external && !self.ensure_external_network(application, &name, filename, origin.clone()) {
+                    return;
+                }
+                runtime.add_network(Sourced::from_source(
+                    NetworkAttachment::new(name, Vec::new()),
+                    origin.clone(),
+                ));
+                self.exact(subject, Some(origin));
+            }
+            EntryKind::Pod(PodKey::Volume) if value.is_empty() => {
+                runtime.set_mounts_with_origins(Vec::new(), vec![origin.clone()]);
+                self.unsupported_value(
+                    &subject,
+                    filename,
+                    "Volume",
+                    "an empty Volume assignment resets the effective list",
+                    origin,
+                );
+            }
+            EntryKind::Pod(PodKey::Volume) => match decode_mount(value, entry.value_kind()) {
+                Ok((mount, external)) => {
+                    if let Some(name) = external {
+                        if !self.ensure_external_volume(application, &name, filename, origin.clone()) {
+                            return;
+                        }
+                    }
+                    runtime.add_mount(Sourced::from_source(mount, origin.clone()));
+                    self.exact(subject, Some(origin));
+                }
+                Err(ValueIssue::Unsupported(reason)) => {
+                    self.unsupported_value(&subject, filename, "Volume", reason, origin);
+                }
+                Err(ValueIssue::Invalid(reason)) => self.invalid_model(&subject, filename, reason, Some(origin)),
+            },
+            EntryKind::Pod(PodKey::UserNS) => {
+                runtime.set_user_namespace(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+                self.exact(subject, Some(origin));
+            }
+            EntryKind::Pod(PodKey::ShmSize) => {
+                runtime.set_shm_size(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
+                if is_positive_memory(value) || value == "0" {
+                    self.exact(subject, Some(origin));
+                } else {
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        "ShmSize",
+                        "pod shared-memory size is retained but outside the reviewed grammar",
+                        origin,
+                    );
+                }
+            }
+            EntryKind::Pod(PodKey::ExitPolicy) => {
+                let policy = match value {
+                    "stop" => GroupExitPolicy::Stop,
+                    "continue" => GroupExitPolicy::Continue,
+                    _ => GroupExitPolicy::Raw(ProtectedString::sensitive(value)),
+                };
+                runtime.set_exit_policy(Sourced::from_source(policy, origin.clone()));
+                if matches!(value, "stop" | "continue") {
+                    self.exact(subject, Some(origin));
+                } else {
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        "ExitPolicy",
+                        "native exit policy is retained as a raw target-specific value",
+                        origin,
+                    );
+                }
+            }
+            EntryKind::Pod(PodKey::StopTimeout) => match StopTimeout::new(value) {
+                Ok(value) => {
+                    let exact = is_canonical_nonnegative_seconds(value.as_str());
+                    runtime.set_stop_timeout(Sourced::from_source(value, origin.clone()));
+                    if exact {
+                        self.exact(subject, Some(origin));
+                    } else {
+                        self.unsupported_value(
+                            &subject,
+                            filename,
+                            "StopTimeout",
+                            "pod StopTimeout is retained but must be canonical integral seconds",
+                            origin,
+                        );
+                    }
+                }
+                Err(error) => self.invalid_model(&subject, filename, &error.to_string(), Some(origin)),
+            },
+            EntryKind::Pod(PodKey::ServiceName) => {
+                if value.is_empty() || value.ends_with(".service") {
+                    self.invalid_model(
+                        &subject,
+                        filename,
+                        "Pod ServiceName must be an unsuffixed service-name stem",
+                        Some(origin),
+                    );
+                    return;
+                }
+                runtime.set_service_name(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+                self.exact(subject, Some(origin));
+            }
+            _ => self.unsupported(&subject, filename, entry.key().text(), origin),
+        }
     }
 
     fn map_pod_membership(
@@ -755,8 +1589,15 @@ impl<'a> Mapping<'a> {
         if !state.health_origins.is_empty() {
             service.set_healthcheck(sourced_with_origins(state.healthcheck, &state.health_origins));
         }
+        self.map_deferred_network_attachment_entries(
+            filename,
+            &service_name,
+            service,
+            &state.network_attachment_entries,
+        );
     }
 
+    #[allow(clippy::too_many_lines)] // Dispatch preserves typed native entry order in one place.
     fn map_native_container_section<'entry>(
         &mut self,
         filename: &str,
@@ -792,12 +1633,32 @@ impl<'a> Mapping<'a> {
                 EntryKind::Container(ContainerKey::Image) => {
                     self.map_image(filename, &service_name, service, entry);
                 }
+                EntryKind::Container(ContainerKey::Rootfs) => {
+                    self.map_rootfs(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::Notify) => {
+                    self.map_startup_notification(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::PodmanArgs) => {
+                    self.map_podman_args(filename, &service_name, service, entry);
+                }
                 EntryKind::Container(ContainerKey::ContainerName) => {
                     self.map_container_name(filename, &service_name, service, entry);
                 }
                 EntryKind::Container(ContainerKey::Exec) => {
                     self.map_command(filename, &service_name, service, entry);
                 }
+                EntryKind::Container(ContainerKey::Entrypoint) => {
+                    self.map_entrypoint(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::RunInit) => {
+                    self.map_run_init(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::StopTimeout) => {
+                    self.map_stop_timeout(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::Pull) => self.map_pull(filename, &service_name, service, entry),
+                EntryKind::Container(ContainerKey::Memory) => self.map_memory(filename, &service_name, service, entry),
                 EntryKind::Container(ContainerKey::Environment) => {
                     self.map_environment(filename, &service_name, service, entry);
                 }
@@ -816,17 +1677,36 @@ impl<'a> Mapping<'a> {
                 EntryKind::Container(ContainerKey::PublishPort) => {
                     self.map_port(filename, &service_name, service, entry);
                 }
+                EntryKind::Container(ContainerKey::ExposeHostPort) => {
+                    self.map_exposed_port(filename, &service_name, service, entry);
+                }
                 EntryKind::Container(ContainerKey::Volume) => {
                     self.map_mount(filename, &service_name, application, service, entry);
                 }
                 EntryKind::Container(ContainerKey::Network) => {
                     self.map_network(filename, &service_name, application, service, entry);
                 }
+                EntryKind::Container(ContainerKey::IP | ContainerKey::IP6 | ContainerKey::NetworkAlias) => {
+                    state.network_attachment_entries.push(entry);
+                }
                 EntryKind::Container(ContainerKey::Pod) => {
                     self.map_pod_membership(filename, &service_name, entry, pod_groups);
                 }
                 EntryKind::Container(ContainerKey::Label) => {
                     self.map_label(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::Annotation) => {
+                    self.map_annotation(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::LogDriver) => {
+                    self.map_log_driver(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::LogOpt) => self.map_log_opt(filename, &service_name, service, entry),
+                EntryKind::Container(ContainerKey::ReloadCmd) => {
+                    self.map_reload_command(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::ReloadSignal) => {
+                    self.map_reload_signal(filename, &service_name, service, entry);
                 }
                 EntryKind::Container(ContainerKey::Secret) => {
                     self.map_secret_grant(filename, &service_name, application, service, entry);
@@ -849,6 +1729,30 @@ impl<'a> Mapping<'a> {
                 }
                 EntryKind::Container(ContainerKey::ReadOnly) => {
                     self.map_read_only(filename, &service_name, service, entry);
+                }
+                EntryKind::Container(ContainerKey::HostName) => {
+                    self.map_raw_service_value(filename, &service_name, service, entry, "hostname");
+                }
+                EntryKind::Container(ContainerKey::PidsLimit) => {
+                    self.map_raw_service_value(filename, &service_name, service, entry, "pids_limit");
+                }
+                EntryKind::Container(ContainerKey::ShmSize) => {
+                    self.map_raw_service_value(filename, &service_name, service, entry, "shm_size");
+                }
+                EntryKind::Container(ContainerKey::StopSignal) => {
+                    self.map_raw_service_value(filename, &service_name, service, entry, "stop_signal");
+                }
+                EntryKind::Container(ContainerKey::AddCapability) => {
+                    self.map_capability(filename, &service_name, service, entry, true);
+                }
+                EntryKind::Container(ContainerKey::DropCapability) => {
+                    self.map_capability(filename, &service_name, service, entry, false);
+                }
+                EntryKind::Container(ContainerKey::Tmpfs) => self.map_tmpfs(filename, &service_name, service, entry),
+                EntryKind::Container(ContainerKey::Sysctl) => self.map_sysctl(filename, &service_name, service, entry),
+                EntryKind::Container(ContainerKey::Ulimit) => self.map_ulimit(filename, &service_name, service, entry),
+                EntryKind::Container(ContainerKey::AddDevice) => {
+                    self.map_device(filename, &service_name, service, entry);
                 }
                 _ => self.unsupported_entry(filename, &service_name, entry),
             }
@@ -1269,6 +2173,472 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn map_rootfs(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.rootfs");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        if !is_safe_absolute_container_path(value) {
+            self.unsupported_value(
+                &subject,
+                filename,
+                "Rootfs",
+                "Rootfs requires a safe absolute literal path",
+                origin,
+            );
+            return;
+        }
+        match service.set_rootfs(Sourced::from_source(ProtectedString::sensitive(value), origin.clone())) {
+            Ok(()) => self.exact(subject, Some(origin)),
+            Err(error) => self.invalid_model(&subject, filename, &error.to_string(), Some(origin)),
+        }
+    }
+
+    fn map_startup_notification(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        entry: &TypedEntry,
+    ) {
+        let subject = format!("services.{service_name}.startup_notification");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let notification = match value {
+            "false" => StartupNotification::Runtime,
+            "true" => StartupNotification::Application,
+            "healthy" => StartupNotification::Healthy,
+            _ => {
+                self.unsupported_value(
+                    &subject,
+                    filename,
+                    "Notify",
+                    "Notify must be false, true, or healthy",
+                    origin,
+                );
+                return;
+            }
+        };
+        service.set_startup_notification(Sourced::from_source(notification, origin.clone()));
+        self.exact(subject, Some(origin));
+    }
+
+    fn map_podman_args(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.podman_args");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let mut values = service.podman_args().map_or_else(Vec::new, ToOwned::to_owned);
+        let mut origins = service.podman_args_origins().to_vec();
+        if value.is_empty() {
+            values.clear();
+            origins = vec![origin.clone()];
+            self.unsupported_value(
+                &subject,
+                filename,
+                "PodmanArgs",
+                "an empty PodmanArgs assignment resets the effective list",
+                origin,
+            );
+        } else {
+            values.push(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
+            if !origins.contains(&origin) {
+                origins.push(origin.clone());
+            }
+            self.unsupported_value(
+                &subject,
+                filename,
+                "PodmanArgs",
+                "PodmanArgs is retained as authored native evidence and is never synthesized",
+                origin,
+            );
+        }
+        service.set_podman_args_with_origins(values, origins);
+    }
+
+    fn map_raw_service_value(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        entry: &TypedEntry,
+        field: &str,
+    ) {
+        let subject = format!("services.{service_name}.{field}");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let raw = value;
+        let value = Sourced::from_source(ProtectedString::plain(raw), origin.clone());
+        let exact = match field {
+            "hostname" => is_safe_hostname(raw),
+            "pids_limit" => raw == "-1" || is_positive_canonical_decimal(raw),
+            "shm_size" => is_positive_canonical_size(raw),
+            "stop_signal" => is_safe_signal(raw),
+            _ => true,
+        };
+        match field {
+            "hostname" => service.set_hostname(value),
+            "pids_limit" => service.set_pids_limit(value),
+            "shm_size" => service.set_shm_size(value),
+            "stop_signal" => service.set_stop_signal(value),
+            _ => return,
+        }
+        if exact {
+            self.exact(subject, Some(origin));
+        } else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "native value is retained but outside the reviewed exact grammar",
+                origin,
+            );
+        }
+    }
+
+    fn map_capability(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        entry: &TypedEntry,
+        add: bool,
+    ) {
+        let field = if add { "cap_add" } else { "cap_drop" };
+        let subject = format!("services.{service_name}.{field}");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let mut values = if add {
+            service.cap_add().map_or_else(Vec::new, ToOwned::to_owned)
+        } else {
+            service.cap_drop().map_or_else(Vec::new, ToOwned::to_owned)
+        };
+        let mut origins = if add {
+            service.cap_add_origins().to_vec()
+        } else {
+            service.cap_drop_origins().to_vec()
+        };
+        if value.is_empty() {
+            values.clear();
+            origins = vec![origin.clone()];
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "an empty native capability assignment resets the effective list",
+                origin,
+            );
+        } else if value.split_ascii_whitespace().all(is_safe_capability) {
+            values.extend(
+                value
+                    .split_ascii_whitespace()
+                    .map(|capability| Sourced::from_source(ProtectedString::plain(capability), origin.clone())),
+            );
+            if !origins.contains(&origin) {
+                origins.push(origin.clone());
+            }
+            self.exact(subject, Some(origin));
+        } else {
+            values.push(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+            if !origins.contains(&origin) {
+                origins.push(origin.clone());
+            }
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "capabilities are retained but require a plain whitespace-separated capability list",
+                origin,
+            );
+        }
+        if add {
+            service.set_cap_add_with_origins(values, origins);
+        } else {
+            service.set_cap_drop_with_origins(values, origins);
+        }
+    }
+
+    fn map_tmpfs(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.tmpfs");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let mut values = service.tmpfs().map_or_else(Vec::new, ToOwned::to_owned);
+        let mut origins = service.tmpfs_origins().to_vec();
+        if value.is_empty() {
+            values.clear();
+            origins = vec![origin.clone()];
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "an empty native tmpfs assignment resets the effective list",
+                origin,
+            );
+        } else if is_safe_tmpfs(value) {
+            values.push(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+            if !origins.contains(&origin) {
+                origins.push(origin.clone());
+            }
+            self.exact(subject, Some(origin));
+        } else {
+            values.push(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
+            if !origins.contains(&origin) {
+                origins.push(origin.clone());
+            }
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "tmpfs is retained but must use an absolute target and plain comma-separated options",
+                origin,
+            );
+        }
+        service.set_tmpfs_with_origins(values, origins);
+    }
+
+    fn map_sysctl(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.sysctls");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let Some((name, value)) = value.split_once('=') else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Sysctl must contain one NAME=VALUE assignment",
+                origin,
+            );
+            return;
+        };
+        let mut values = service.sysctls().map_or_else(Vec::new, ToOwned::to_owned);
+        let mut origins = service.sysctls_origins().to_vec();
+        values.push(Sourced::from_source(
+            KernelParameter::new(ProtectedString::plain(name), ProtectedString::plain(value)),
+            origin.clone(),
+        ));
+        if !origins.contains(&origin) {
+            origins.push(origin.clone());
+        }
+        service.set_sysctls_with_origins(values, origins);
+        if is_safe_sysctl_assignment(name, value) {
+            self.exact(subject, Some(origin));
+        } else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Sysctl is retained but must have one safe nonempty NAME=VALUE assignment",
+                origin,
+            );
+        }
+    }
+
+    fn map_ulimit(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.ulimits");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let Some((name, values)) = value.split_once('=') else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Ulimit must contain NAME=SOFT:HARD",
+                origin,
+            );
+            return;
+        };
+        let Some((soft, hard)) = values.split_once(':') else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Ulimit must contain NAME=SOFT:HARD",
+                origin,
+            );
+            return;
+        };
+        let mut entries = service.ulimits().map_or_else(Vec::new, ToOwned::to_owned);
+        let mut origins = service.ulimits_origins().to_vec();
+        entries.push(Sourced::from_source(
+            ResourceLimit::new(
+                ProtectedString::plain(name),
+                Some(Sourced::from_source(ProtectedString::plain(soft), origin.clone())),
+                Some(Sourced::from_source(ProtectedString::plain(hard), origin.clone())),
+            ),
+            origin.clone(),
+        ));
+        if !origins.contains(&origin) {
+            origins.push(origin.clone());
+        }
+        service.set_ulimits_with_origins(entries, origins);
+        if is_safe_ulimit_assignment(name, soft, hard) {
+            self.exact(subject, Some(origin));
+        } else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Ulimit is retained but must be NAME=SOFT:HARD with safe decimal or unlimited values",
+                origin,
+            );
+        }
+    }
+
+    fn map_device(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.devices");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let mut entries = service.devices().map_or_else(Vec::new, ToOwned::to_owned);
+        let mut origins = service.devices_origins().to_vec();
+        entries.push(Sourced::from_source(
+            Device::Short(ProtectedString::plain(value)),
+            origin.clone(),
+        ));
+        if !origins.contains(&origin) {
+            origins.push(origin.clone());
+        }
+        service.set_devices_with_origins(entries, origins);
+        if is_safe_device(value) {
+            self.exact(subject, Some(origin));
+        } else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "device is retained but outside the reviewed absolute host[:container][:rwm] grammar",
+                origin,
+            );
+        }
+    }
+
+    fn map_entrypoint(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.entrypoint");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let Some(args) = decode_json_exec_array(value) else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Entrypoint is exact only for reviewed JSON exec arrays",
+                origin,
+            );
+            return;
+        };
+        service.set_entrypoint(Sourced::from_source(
+            Entrypoint::Exec(args.into_iter().map(ProtectedString::plain).collect()),
+            origin.clone(),
+        ));
+        self.exact(subject, Some(origin));
+    }
+
+    fn map_run_init(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.run_init");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let Some(value) = parse_quadlet_bool(value) else {
+            self.invalid_model(&subject, filename, "RunInit must be a Quadlet boolean", Some(origin));
+            return;
+        };
+        service.set_run_init(Sourced::from_source(value, origin.clone()));
+        self.approximate(
+            &subject,
+            filename,
+            "RunInit runtime equivalence remains reviewable",
+            origin,
+        );
+    }
+
+    fn map_stop_timeout(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.stop_timeout");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let Ok(value) = StopTimeout::new(value) else {
+            self.invalid_model(&subject, filename, "StopTimeout is invalid", Some(origin));
+            return;
+        };
+        let exact = value.as_str().parse::<u64>().is_ok_and(|seconds| seconds > 0);
+        service.set_stop_timeout(Sourced::from_source(value, origin.clone()));
+        if exact {
+            self.exact(subject, Some(origin));
+        } else {
+            self.approximate(
+                &subject,
+                filename,
+                "fractional, zero, and default stop-timeout semantics remain reviewable",
+                origin,
+            );
+        }
+    }
+
+    fn map_pull(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.pull_policy");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let (policy, exact) = match value {
+            "always" => (PullPolicy::Always, true),
+            "missing" => (PullPolicy::Missing, true),
+            "never" => (PullPolicy::Never, true),
+            _ => (PullPolicy::Raw(ProtectedString::sensitive(value)), false),
+        };
+        service.set_pull_policy(Sourced::from_source(policy, origin.clone()));
+        if exact {
+            self.exact(subject, Some(origin));
+        } else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "native pull policy is retained as a raw target-specific value",
+                origin,
+            );
+        }
+    }
+
+    fn map_memory(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.memory_limit");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        service.set_memory_limit(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
+        if is_positive_memory(value) {
+            self.exact(subject, Some(origin));
+        } else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Memory must be a positive canonical byte quantity",
+                origin,
+            );
+        }
+    }
+
     fn map_command(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
         let subject = format!("services.{service_name}.command");
         let origin = self.entry_origin(entry);
@@ -1577,6 +2947,299 @@ impl<'a> Mapping<'a> {
             MetadataLabel::new(name, ProtectedString::plain(value)),
             origin.clone(),
         ));
+        self.exact(subject, Some(origin));
+    }
+
+    fn map_annotation(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.annotations");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let Some((name, value)) = value.split_once('=') else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Annotation must contain one explicit NAME=VALUE assignment",
+                origin,
+            );
+            return;
+        };
+        let Some(name) = self.identifier(name, &subject, origin.clone()) else {
+            return;
+        };
+        service.add_annotation(Sourced::from_source(
+            Annotation::new(
+                Sourced::from_source(name, origin.clone()),
+                Sourced::from_source(ProtectedString::sensitive(value), origin.clone()),
+            ),
+            origin.clone(),
+        ));
+        self.exact(subject, Some(origin));
+    }
+
+    fn map_log_driver(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.logging.driver");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let mut logging = service
+            .logging()
+            .map(Sourced::value)
+            .cloned()
+            .unwrap_or_else(Logging::new);
+        logging.set_driver(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
+        service.set_logging(Sourced::from_source(logging, origin.clone()));
+        self.unsupported_value(
+            &subject,
+            filename,
+            entry.key().text(),
+            "provider logging remains a reviewable partial cross-format mapping",
+            origin,
+        );
+    }
+
+    fn map_log_opt(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.logging.options");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let Some((name, value)) = value.split_once('=') else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "LogOpt must contain one explicit NAME=VALUE assignment",
+                origin,
+            );
+            return;
+        };
+        let Some(name) = self.identifier(name, &subject, origin.clone()) else {
+            return;
+        };
+        let mut logging = service
+            .logging()
+            .map(Sourced::value)
+            .cloned()
+            .unwrap_or_else(Logging::new);
+        let mut options = logging.options().map_or_else(Vec::new, ToOwned::to_owned);
+        let mut origins = logging.options_origins().to_vec();
+        options.push(Sourced::from_source(
+            LoggingOption::new(
+                Sourced::from_source(name, origin.clone()),
+                Sourced::from_source(ProtectedString::sensitive(value), origin.clone()),
+            ),
+            origin.clone(),
+        ));
+        if !origins.contains(&origin) {
+            origins.push(origin.clone());
+        }
+        logging.set_options_with_origins(options, origins);
+        service.set_logging(Sourced::from_source(logging, origin.clone()));
+        self.unsupported_value(
+            &subject,
+            filename,
+            entry.key().text(),
+            "provider logging remains a reviewable partial cross-format mapping",
+            origin,
+        );
+    }
+
+    fn map_exposed_port(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        let subject = format!("services.{service_name}.exposed_ports");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let (port, protocol) = match value.split_once('/') {
+            Some((port, "tcp")) => (port, Protocol::Tcp),
+            Some((port, "udp")) => (port, Protocol::Udp),
+            None => (value, Protocol::Tcp),
+            _ => {
+                self.unsupported_value(
+                    &subject,
+                    filename,
+                    entry.key().text(),
+                    "ExposeHostPort supports only one tcp or udp port",
+                    origin,
+                );
+                return;
+            }
+        };
+        let Ok(port) = port.parse::<u16>() else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "ExposeHostPort ranges and deferred values are not exposure metadata",
+                origin,
+            );
+            return;
+        };
+        let Ok(port) = ExposedPort::new(port, protocol) else {
+            self.invalid_model(&subject, filename, "ExposeHostPort cannot be zero", Some(origin));
+            return;
+        };
+        let mut ports = service.exposed_ports().map_or_else(Vec::new, ToOwned::to_owned);
+        ports.push(Sourced::from_source(port, origin.clone()));
+        service.set_exposed_ports_with_origins(ports, vec![origin.clone()]);
+        self.exact(subject, Some(origin));
+    }
+
+    fn map_deferred_network_attachment_entries(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        entries: &[&TypedEntry],
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        if service.networks().len() != 1 {
+            for entry in entries {
+                let (field, reason) = match entry.kind() {
+                    EntryKind::Container(ContainerKey::IP | ContainerKey::IP6) => (
+                        "networks.address",
+                        "IP/IP6 requires exactly one compatible service network; no attachment was selected",
+                    ),
+                    EntryKind::Container(ContainerKey::NetworkAlias) => (
+                        "networks.aliases",
+                        "NetworkAlias requires exactly one compatible service network; no attachment was selected",
+                    ),
+                    _ => continue,
+                };
+                let subject = format!("services.{service_name}.{field}");
+                let mut origins = service
+                    .networks()
+                    .iter()
+                    .flat_map(|network| network.origins().iter().cloned())
+                    .collect::<Vec<_>>();
+                origins.push(self.entry_origin(entry));
+                self.unsupported_value_with_origins(&subject, filename, entry.key().text(), reason, origins);
+            }
+            return;
+        }
+
+        let source = service.networks()[0].clone();
+        let (mut attachment, origins) = source.into_parts();
+        for entry in entries {
+            let origin = self.entry_origin(entry);
+            match entry.kind() {
+                EntryKind::Container(ContainerKey::IP) => {
+                    let subject = format!("services.{service_name}.networks.ipv4_address");
+                    let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+                        continue;
+                    };
+                    if value.parse::<std::net::Ipv4Addr>().is_ok() {
+                        attachment
+                            .set_ipv4_address(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
+                        self.exact(subject, Some(origin));
+                    } else {
+                        self.unsupported_value(
+                            &subject,
+                            filename,
+                            entry.key().text(),
+                            "IP is retained as source evidence but is not a reviewed IPv4 address",
+                            origin,
+                        );
+                    }
+                }
+                EntryKind::Container(ContainerKey::IP6) => {
+                    let subject = format!("services.{service_name}.networks.ipv6_address");
+                    let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+                        continue;
+                    };
+                    if value.parse::<std::net::Ipv6Addr>().is_ok() {
+                        attachment
+                            .set_ipv6_address(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
+                        self.exact(subject, Some(origin));
+                    } else {
+                        self.unsupported_value(
+                            &subject,
+                            filename,
+                            entry.key().text(),
+                            "IP6 is retained as source evidence but is not a reviewed IPv6 address",
+                            origin,
+                        );
+                    }
+                }
+                EntryKind::Container(ContainerKey::NetworkAlias) => {
+                    let subject = format!("services.{service_name}.networks.aliases");
+                    let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+                        continue;
+                    };
+                    if is_native_atom(value) {
+                        attachment.add_alias(&Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
+                        self.exact(subject, Some(origin));
+                    } else {
+                        self.unsupported_value(
+                            &subject,
+                            filename,
+                            entry.key().text(),
+                            "NetworkAlias is retained as source evidence but is not a nonempty native atom",
+                            origin,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut replacement = Sourced::generated(attachment);
+        for origin in origins {
+            replacement.add_origin(origin);
+        }
+        let _ = service.replace_network(0, replacement);
+    }
+
+    fn map_reload_command(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        self.map_reload(filename, service_name, service, entry, true);
+    }
+    fn map_reload_signal(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
+        self.map_reload(filename, service_name, service, entry, false);
+    }
+    fn map_reload(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        entry: &TypedEntry,
+        command: bool,
+    ) {
+        let subject = format!("services.{service_name}.reload_action");
+        let origin = self.entry_origin(entry);
+        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        if service.reload_action().is_some() {
+            self.invalid_model(
+                &subject,
+                filename,
+                "ReloadCmd and ReloadSignal are mutually exclusive",
+                Some(origin),
+            );
+            return;
+        }
+        let action = if command {
+            let args: Vec<_> = value.split_ascii_whitespace().collect();
+            if args.is_empty() || !args.iter().all(|arg| is_safe_word(arg, false)) {
+                self.unsupported_value(
+                    &subject,
+                    filename,
+                    entry.key().text(),
+                    "ReloadCmd requires unsupported systemd command-line decoding",
+                    origin,
+                );
+                return;
+            }
+            ReloadAction::Command(Command::Exec(args.into_iter().map(ProtectedString::plain).collect()))
+        } else {
+            ReloadAction::Signal(ProtectedString::sensitive(value))
+        };
+        service.set_reload_action(Sourced::from_source(action, origin.clone()));
         self.exact(subject, Some(origin));
     }
 
@@ -2045,15 +3708,25 @@ impl<'a> Mapping<'a> {
         Some(entry.value().primary().text().trim())
     }
 
-    fn report_unmapped_entries<'entry>(&mut self, filename: &str, entries: impl Iterator<Item = &'entry TypedEntry>) {
-        for entry in entries {
-            self.unsupported(
-                &format!("quadlet.{filename}.{}", entry.key().text()),
+    fn network_direct_value<'entry>(
+        &mut self,
+        filename: &str,
+        subject: &str,
+        entry: &'entry TypedEntry,
+        origin: Provenance,
+    ) -> Option<&'entry str> {
+        let value = self.direct_value(filename, subject, entry, origin.clone())?;
+        if entry.value().primary().text() != value || value.contains(['\'', '"', '\\', '%']) {
+            self.unsupported_value(
+                subject,
                 filename,
                 entry.key().text(),
-                self.entry_origin(entry),
+                "quoted, escaped, specifier-bearing, or whitespace-padded network values require native semantic decoding",
+                origin,
             );
+            return None;
         }
+        Some(value)
     }
 
     fn unsupported_entry(&mut self, filename: &str, service_name: &str, entry: &TypedEntry) {
@@ -2123,6 +3796,17 @@ impl<'a> Mapping<'a> {
         self.unsupported_with_reason(subject, document, key, Some(reason), origin);
     }
 
+    fn unsupported_value_with_origins(
+        &mut self,
+        subject: &str,
+        document: &str,
+        key: &str,
+        reason: &str,
+        origins: Vec<Provenance>,
+    ) {
+        self.unsupported_with_reason_and_origins(subject, document, key, Some(reason), origins);
+    }
+
     fn unsupported_with_reason(
         &mut self,
         subject: &str,
@@ -2131,10 +3815,22 @@ impl<'a> Mapping<'a> {
         reason: Option<&str>,
         origin: Provenance,
     ) {
+        self.unsupported_with_reason_and_origins(subject, document, key, reason, vec![origin]);
+    }
+
+    fn unsupported_with_reason_and_origins(
+        &mut self,
+        subject: &str,
+        document: &str,
+        key: &str,
+        reason: Option<&str>,
+        origins: Vec<Provenance>,
+    ) {
         if let Ok(outcome) =
             ConversionOutcome::loss(subject, ConversionKind::Unsupported, self.codes.unsupported.clone())
         {
-            self.outcomes.push(outcome.with_origin(origin));
+            self.outcomes
+                .push(origins.into_iter().fold(outcome, ConversionOutcome::with_origin));
         }
         let mut diagnostic = Diagnostic::new(
             self.codes.unsupported.clone(),
@@ -2256,8 +3952,19 @@ fn sourced_with_origins<T>(value: T, origins: &[Provenance]) -> Sourced<T> {
 const fn singleton_field(key: ContainerKey) -> Option<&'static str> {
     match key {
         ContainerKey::Image => Some("image"),
+        ContainerKey::Rootfs => Some("rootfs"),
         ContainerKey::ContainerName => Some("runtime_name"),
         ContainerKey::Exec => Some("command"),
+        ContainerKey::Entrypoint => Some("entrypoint"),
+        ContainerKey::RunInit => Some("run_init"),
+        ContainerKey::StopTimeout => Some("stop_timeout"),
+        ContainerKey::StopSignal => Some("stop_signal"),
+        ContainerKey::Pull => Some("pull_policy"),
+        ContainerKey::Memory => Some("memory_limit"),
+        ContainerKey::IP => Some("networks.ipv4_address"),
+        ContainerKey::IP6 => Some("networks.ipv6_address"),
+        ContainerKey::LogDriver => Some("logging.driver"),
+        ContainerKey::ReloadCmd | ContainerKey::ReloadSignal => Some("reload_action"),
         ContainerKey::User => Some("user"),
         ContainerKey::Group => Some("group"),
         ContainerKey::UserNS => Some("user_namespace"),
@@ -2268,6 +3975,7 @@ const fn singleton_field(key: ContainerKey) -> Option<&'static str> {
         ContainerKey::HealthTimeout => Some("healthcheck.timeout"),
         ContainerKey::HealthRetries => Some("healthcheck.retries"),
         ContainerKey::HealthStartPeriod => Some("healthcheck.start_period"),
+        ContainerKey::Notify => Some("startup_notification"),
         ContainerKey::Pod => Some("service_group"),
         ContainerKey::AppArmor => Some("security_options.apparmor"),
         ContainerKey::NoNewPrivileges => Some("security_options.no_new_privileges"),
@@ -2279,6 +3987,140 @@ const fn singleton_field(key: ContainerKey) -> Option<&'static str> {
         ContainerKey::SecurityLabelType => Some("security_options.security_label_type"),
         _ => None,
     }
+}
+
+fn decode_json_exec_array(value: &str) -> Option<Vec<String>> {
+    let inner = value.strip_prefix('[')?.strip_suffix(']')?;
+    if inner.is_empty() {
+        return None;
+    }
+    let mut values = Vec::new();
+    for item in inner.split(',') {
+        let item = item.strip_prefix('"')?.strip_suffix('"')?;
+        if item.is_empty() || item.contains(['\\', '\r', '\n', '\0']) {
+            return None;
+        }
+        values.push(item.to_owned());
+    }
+    Some(values)
+}
+
+fn is_positive_memory(value: &str) -> bool {
+    let split = value
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (amount, suffix) = value.split_at(split);
+    !amount.is_empty()
+        && !amount.starts_with('0')
+        && amount.parse::<u64>().is_ok_and(|amount| amount > 0)
+        && matches!(suffix, "" | "b" | "k" | "m" | "g")
+}
+
+fn is_positive_canonical_decimal(value: &str) -> bool {
+    !value.starts_with('0') && value.parse::<u64>().is_ok_and(|value| value > 0)
+}
+fn is_canonical_decimal(value: &str) -> bool {
+    value == "0" || is_positive_canonical_decimal(value)
+}
+fn is_positive_canonical_size(value: &str) -> bool {
+    let split = value.find(|c: char| !c.is_ascii_digit()).unwrap_or(value.len());
+    let (amount, suffix) = value.split_at(split);
+    is_positive_canonical_decimal(amount) && matches!(suffix, "" | "b" | "k" | "m" | "g")
+}
+fn is_safe_signal(value: &str) -> bool {
+    value
+        .parse::<u8>()
+        .is_ok_and(|number| (1..=64).contains(&number) && is_canonical_decimal(value))
+        || value.strip_prefix("SIG").is_some_and(|name| {
+            name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        })
+}
+fn is_safe_sysctl_assignment(name: &str, value: &str) -> bool {
+    !name.is_empty()
+        && !value.is_empty()
+        && !value.contains('=')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-' | b'/' | b':'))
+}
+fn is_safe_ulimit_assignment(name: &str, soft: &str, hard: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && !soft.contains(':')
+        && !hard.contains(':')
+        && [soft, hard]
+            .iter()
+            .all(|value| *value == "-1" || is_canonical_decimal(value))
+}
+fn is_safe_device(value: &str) -> bool {
+    let parts: Vec<_> = value.split(':').collect();
+    if !(1..=3).contains(&parts.len()) || !is_safe_device_path(parts[0]) {
+        return false;
+    }
+    if parts.len() >= 2 && !is_safe_device_path(parts[1]) {
+        return false;
+    }
+    parts.len() != 3
+        || (!parts[2].is_empty()
+            && parts[2].bytes().all(|byte| matches!(byte, b'r' | b'w' | b'm'))
+            && parts[2].bytes().collect::<BTreeSet<_>>().len() == parts[2].len())
+}
+
+fn is_safe_device_path(value: &str) -> bool {
+    value.starts_with("/dev/") && value.len() > 5 && is_safe_absolute_container_path(value)
+}
+
+fn is_safe_capability(value: &str) -> bool {
+    let name = value.strip_prefix("CAP_").unwrap_or(value);
+    name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn is_safe_tmpfs(value: &str) -> bool {
+    let (target, options) = value
+        .split_once(':')
+        .map_or((value, None), |(target, options)| (target, Some(options)));
+    is_safe_absolute_container_path(target)
+        && options.is_none_or(|options| {
+            !options.is_empty()
+                && options
+                    .split(',')
+                    .all(|option| is_safe_word(option, false) && !option.contains([':', '%']))
+        })
+}
+
+fn is_safe_absolute_container_path(value: &str) -> bool {
+    value.starts_with('/')
+        && !value.contains('%')
+        && value.split('/').all(|part| part != "..")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b'@' | b'+'))
+}
+
+fn is_canonical_nonnegative_seconds(value: &str) -> bool {
+    value == "0" || (!value.is_empty() && !value.starts_with('0') && value.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn is_safe_hostname(value: &str) -> bool {
+    value.len() <= 253
+        && value.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+                && label.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+                && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 const fn is_security_container_key(kind: EntryKind) -> bool {
@@ -2786,4 +4628,34 @@ fn parse_quadlet_bool(value: &str) -> Option<bool> {
         "false" | "no" | "0" => Some(false),
         _ => None,
     }
+}
+
+fn parse_canonical_network_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn is_safe_network_scalar(value: &str, allow_empty: bool) -> bool {
+    (allow_empty || !value.is_empty())
+        && value.trim() == value
+        && !value.bytes().any(|byte| {
+            matches!(byte, b'\0' | b'\n' | b'\r' | b'%' | b'\'' | b'"' | b'\\') || byte.is_ascii_whitespace()
+        })
+}
+
+fn parse_network_assignment(value: &str) -> Option<(&str, &str)> {
+    let (name, value) = value.split_once('=')?;
+    (!name.is_empty()
+        && !name.contains('=')
+        && is_safe_network_scalar(name, false)
+        && is_safe_network_scalar(value, true))
+    .then_some((name, value))
+}
+
+fn parse_network_label(value: &str) -> Option<(&str, &str)> {
+    let (name, value) = parse_network_assignment(value)?;
+    (is_label_name(name)).then_some((name, value))
 }

@@ -11,12 +11,14 @@ mod provenance;
 mod value;
 
 pub use application::{
-    Application, Command, Config, ConfigMaterial, Device, EnvironmentFile, EnvironmentFileFormat,
-    EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration,
-    HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier, KernelParameter, MetadataLabel,
-    ModelError, Mount, MountSource, Network, NetworkAttachment, Port, Protocol, ResourceGrant, ResourceGrantSyntax,
-    ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, ServiceGroup, Volume,
+    Annotation, Application, ArtifactDependency, ArtifactDependencyNode, Command, Config, ConfigMaterial, Device,
+    Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable,
+    ExposedPort, GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries,
+    HostAddress, HostAddressKind, HostMapping, Identifier, KernelParameter, Logging, LoggingOption, MetadataLabel,
+    ModelError, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, Protocol,
+    PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy,
+    Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
+    ServiceGroup, ServiceGroupRuntime, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 pub use image::ImageReference;
 pub use image_artifact::{

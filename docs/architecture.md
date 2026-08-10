@@ -121,9 +121,10 @@ importer preserves grant order and reviewed target/UID/GID/mode options but neve
 material; environment exposure and unknown native options stay unsupported. Native
 `.pod` identities and sibling container `Pod=` references become application-owned structural
 service groups when an explicit `PodName=` matches the unit stem. This resolution is independent
-of document order and retains pod/member provenance. Pod-scoped runtime configuration is not
-assigned to arbitrary services, and implicit or divergent runtime pod names remain explicit
-losses until the neutral model grows a pod-settings boundary. Native
+of document order and retains pod/member provenance. The group runtime separately retains a
+divergent explicit runtime pod name, pod host mappings, ports, networks, user namespace, mounts,
+shared memory, exit policy, stop timeout, and an unsuffixed service name; it is never assigned to
+an arbitrary service. Omitted runtime pod names remain omitted. Native
 section identity is retained while mapping: `[Service] Restart=no` is exact,
 unbounded systemd restart policies are explicit approximations, and only complete sibling
 `Requires`/`Wants` plus `After` relationships become neutral started-service dependencies.

@@ -6,14 +6,16 @@ use boxferry_engine::{
     ConversionKind, ExportAdapter, ImportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command, Config, ConfigMaterial, Device,
-    EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck,
-    HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostMapping, Identifier,
-    ImageAcquisition, ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ImageReference,
-    KernelParameter, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
-    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret,
-    SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
-    ServiceGroup, SourceBuildSetting, SourceId, Sourced, Volume,
+    Annotation, Application, BuildSettingValues, BuildSourceDeclaration, BuildSyntax, Command, Config, ConfigMaterial,
+    Device, Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
+    EnvironmentVariable, ExposedPort, GroupExitPolicy, Healthcheck, HealthcheckCommand, HealthcheckDuration,
+    HealthcheckRetries, HostAddress, HostMapping, Identifier, ImageAcquisition, ImageAcquisitionSetting,
+    ImageArtifactAssignment, ImageBuild, ImageBuildSetting, ImageReference, KernelParameter, Logging, LoggingOption,
+    MetadataLabel, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port,
+    ProtectedString, Protocol, Provenance, PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit,
+    ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime, SourceBuildSetting, SourceId,
+    Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 use boxferry_quadlet::{QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletSource};
 use quadlet_lens::source::SourceId as QuadletSourceId;
@@ -107,6 +109,142 @@ fn exports_the_exact_first_conversion_subset_and_resolves_native_references() ->
     assert_eq!(output.document_set().graph().edges().len(), 2);
     assert!(!format!("{output:?}").contains("production"));
     assert!(!format!("{output:?}").contains("1001"));
+    Ok(())
+}
+
+#[test]
+fn exports_typed_network_settings_in_native_ipam_row_order() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("example")?);
+    let mut network = Network::new(id("logical")?, ResourceOwnership::Application);
+    network.set_runtime_name(sourced(ProtectedString::plain("runtime-network"))?);
+    network.set_driver(sourced(ProtectedString::plain("bridge"))?);
+    network.add_driver_option(sourced(NetworkDriverOption::new(
+        sourced(id("mtu")?)?,
+        sourced(ProtectedString::sensitive("1500"))?,
+    )?)?);
+    network.add_label(sourced(MetadataLabel::new(
+        id("org.example.owner")?,
+        ProtectedString::sensitive("private"),
+    ))?);
+    network.set_internal(sourced(true)?);
+    network.set_ipv6(sourced(false)?);
+    network.set_ipam_driver(sourced(ProtectedString::plain("host-local"))?);
+    let mut row = NetworkIpamConfig::new(sourced(ProtectedString::plain("10.88.0.0/16"))?)?;
+    row.set_gateway(sourced(ProtectedString::plain("10.88.0.1"))?)?;
+    row.set_ip_range(sourced(ProtectedString::plain("10.88.1.0/24"))?)?;
+    network.add_ipam_config(sourced(row)?);
+    application.add_network(sourced(network)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    let authorized = plan.clone().authorize(LossPolicy::AllowPartial);
+    let output = authorized.output().ok_or("exact output expected")?;
+    assert_eq!(
+        output.file("logical.network").map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Network]\nNetworkName=runtime-network\nDriver=bridge\nOptions=mtu=1500\n",
+            "Label=org.example.owner=private\nInternal=true\nIPv6=false\nIPAMDriver=host-local\n",
+            "Subnet=10.88.0.0/16\nGateway=10.88.0.1\nIPRange=10.88.1.0/24\n",
+        )),
+    );
+    assert!(!format!("{output:?}").contains("private"));
+    let beyond_ceiling = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 3)))?)?;
+    assert!(beyond_ceiling.candidate().is_none());
+    assert!(
+        beyond_ceiling
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.kind() == ConversionKind::Invalid)
+    );
+    Ok(())
+}
+
+#[test]
+fn exports_typed_volume_settings_at_their_capability_floors() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("example")?);
+    let mut volume = Volume::new(id("data")?, ResourceOwnership::Application);
+    volume.set_runtime_name(sourced(ProtectedString::plain("runtime"))?);
+    volume.set_driver(sourced(ProtectedString::plain("local"))?);
+    volume.set_device(sourced(ProtectedString::plain("/srv/data"))?);
+    volume.set_volume_type(sourced(ProtectedString::plain("none"))?);
+    volume.set_options(sourced(ProtectedString::plain("bind"))?);
+    volume.set_copy(sourced(true)?);
+    volume.add_label(sourced(MetadataLabel::new(
+        id("org.example.owner")?,
+        ProtectedString::sensitive("private"),
+    ))?);
+    volume.set_containers_conf_modules(vec![sourced(ProtectedString::sensitive("base.conf"))?]);
+    volume.set_global_args(vec![sourced(ProtectedString::sensitive("--log-level=debug"))?]);
+    volume.set_podman_args(vec![sourced(ProtectedString::sensitive("--retry=3"))?]);
+    volume.set_user(sourced(ProtectedString::sensitive("alice"))?);
+    volume.set_group(sourced(ProtectedString::sensitive("staff"))?);
+    volume.set_service_name(sourced(ProtectedString::sensitive("data-custom"))?);
+    volume.set_image_source(sourced(VolumeImageSource::Literal(ProtectedString::sensitive(
+        "example.invalid/base:1",
+    )))?)?;
+    application.add_volume(sourced(volume)?)?;
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(5, 4, 0)))?)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "volumes.data.image" && outcome.kind() == ConversionKind::Unsupported)
+    );
+    let authorized = plan.clone().authorize(LossPolicy::AllowPartial);
+    let output = authorized
+        .output()
+        .ok_or_else(|| format!("5.4 output expected: {plan:#?}"))?;
+    let text = output.file("data.volume").ok_or("volume expected")?.text();
+    for key in [
+        "VolumeName=runtime",
+        "Driver=local",
+        "Device=/srv/data",
+        "Type=none",
+        "Options=bind",
+        "Copy=true",
+        "Label=org.example.owner=private",
+        "ContainersConfModule=base.conf",
+        "GlobalArgs=--log-level=debug",
+        "PodmanArgs=--retry=3",
+        "User=alice",
+        "Group=staff",
+        "ServiceName=data-custom",
+        "Image=example.invalid/base:1",
+    ] {
+        assert!(text.contains(key), "missing {key}: {text}");
+    }
+    let mut identity = application.volumes()[0].value().clone();
+    identity.set_uid(sourced(ProtectedString::sensitive("1000"))?);
+    identity.set_gid(sourced(ProtectedString::sensitive("1001"))?);
+    let mut at_six = Application::new(id("six")?);
+    at_six.add_volume(sourced(identity)?)?;
+    let older = QuadletExporter::new()?.plan(&at_six, &podman_target(Some(version(5, 4, 0)))?)?;
+    assert!(
+        older
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "volumes.data.uid" && outcome.kind() == ConversionKind::Unsupported)
+    );
+    let newer = QuadletExporter::new()?.plan(&at_six, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(newer.candidate().is_some());
+    Ok(())
+}
+
+#[test]
+fn volume_options_without_device_require_a_six_or_later_target() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("example")?);
+    let mut volume = Volume::new(id("data")?, ResourceOwnership::Application);
+    volume.set_options(sourced(ProtectedString::plain("bind"))?);
+    application.add_volume(sourced(volume)?)?;
+    let older = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(5, 4, 0)))?)?;
+    assert!(older.outcomes().iter().any(|outcome| outcome.subject() == "volumes.data.options" && outcome.kind() == ConversionKind::Unsupported));
+    let newer_target = TargetProfile::new("podman", version(6, 0, 0), Some(version(6, 0, 2)))?;
+    let newer = QuadletExporter::new()?.plan(&application, &newer_target)?;
+    assert!(
+        newer
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "volumes.data.options" && outcome.kind() == ConversionKind::Exact)
+    );
     Ok(())
 }
 
@@ -2020,7 +2158,6 @@ fn retains_a_partial_candidate_but_requires_authorization_for_unresolved_intent(
         "services.web.environment.FROM_HOST",
         "services.web.host_mappings[1]",
         "services.web.mounts[0]",
-        "services.web.networks.frontend.aliases",
     ] {
         assert!(
             plan.outcomes()
@@ -2033,7 +2170,7 @@ fn retains_a_partial_candidate_but_requires_authorization_for_unresolved_intent(
             .iter()
             .filter(|diagnostic| diagnostic.code().as_str() == "BFQ0003")
             .count(),
-        4
+        3
     );
     assert!(plan.clone().authorize(LossPolicy::ExactOnly).is_blocked());
     let partial = plan.authorize(LossPolicy::AllowPartial);
@@ -2044,6 +2181,7 @@ fn retains_a_partial_candidate_but_requires_authorization_for_unresolved_intent(
     assert!(!container.contains("HOST_ADDRESS"));
     assert!(!container.contains("./config"));
     assert!(container.contains("Network=frontend.network"));
+    assert!(container.contains("NetworkAlias=web.local"));
     Ok(())
 }
 
@@ -2107,6 +2245,105 @@ fn preserves_one_resolved_complete_service_group_as_its_named_pod() -> Result<()
             "Pod=observed-pod.pod\n",
         ))
     );
+    Ok(())
+}
+
+#[test]
+fn preserves_authoritative_native_group_runtime_without_merging_member_settings() -> Result<(), Box<dyn Error>> {
+    let mut application = minimal_application()?;
+    let mut group = ServiceGroup::new(id("logical-pod")?, ResourceOwnership::Application);
+    group.add_member(sourced(id("web")?)?)?;
+    let mut runtime = ServiceGroupRuntime::new();
+    runtime.set_runtime_name(sourced(ProtectedString::plain("runtime-pod"))?);
+    runtime.set_service_name(sourced(ProtectedString::plain("chosen-pod"))?);
+    runtime.set_shm_size(sourced(ProtectedString::plain("64m"))?);
+    runtime.set_exit_policy(sourced(GroupExitPolicy::Continue)?);
+    runtime.set_stop_timeout(sourced(StopTimeout::new("30")?)?);
+    runtime.add_host_mapping(sourced(HostMapping::new(
+        id("host.docker.internal")?,
+        HostAddress::new("host-gateway")?,
+    ))?);
+    runtime.add_port(sourced(Port::new(80, Some(8080), None, Protocol::Tcp)?)?);
+    group.set_runtime(sourced(runtime)?);
+    application.add_service_group(sourced(group)?)?;
+
+    let plan = QuadletExporter::new()?
+        .with_grouping_policy(QuadletGroupingPolicy::PreserveSingleGroup)
+        .plan(
+            &application,
+            &TargetProfile::new("podman", version(5, 7, 0), Some(version(6, 0, 2)))?,
+        )?;
+    let plan_debug = format!("{plan:?}");
+    let result = plan.authorize(LossPolicy::AllowApproximate);
+    let output = result.output().ok_or(plan_debug)?;
+    assert_eq!(
+        output.file("logical-pod.pod").map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Pod]\n",
+            "PodName=runtime-pod\n",
+            "ServiceName=chosen-pod\n",
+            "ShmSize=64m\n",
+            "ExitPolicy=continue\n",
+            "StopTimeout=30\n",
+            "AddHost=host.docker.internal:host-gateway\n",
+            "PublishPort=8080:80/tcp\n",
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn preserves_an_omitted_native_pod_name_without_synthesizing_one() -> Result<(), Box<dyn Error>> {
+    let source = QuadletSource::parse(
+        id("imported")?,
+        [
+            QuadletDocumentInput::new("native.pod", QuadletSourceId::new(1), "[Pod]\nServiceName=chosen\n"),
+            QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(2),
+                "[Container]\nImage=example.invalid/web:1\nPod=native.pod\n",
+            ),
+        ],
+    )?;
+    let imported = QuadletImporter::new()?.import(&source);
+    let application = imported.application().ok_or("imported application expected")?;
+    let plan = QuadletExporter::new()?
+        .with_grouping_policy(QuadletGroupingPolicy::PreserveSingleGroup)
+        .plan(application, &podman_target(Some(version(6, 0, 2)))?)?;
+    let result = plan.authorize(LossPolicy::AllowApproximate);
+    let pod = result
+        .output()
+        .and_then(|output| output.file("native.pod"))
+        .ok_or("preserved pod expected")?
+        .text();
+    assert_eq!(pod, "[Pod]\nServiceName=chosen\n");
+    Ok(())
+}
+
+#[test]
+fn emits_rootfs_notification_and_only_explicitly_authored_podman_args() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("rootfs")?);
+    let mut service = Service::new(id("web")?);
+    service.set_rootfs(sourced(ProtectedString::sensitive("/srv/rootfs"))?)?;
+    service.set_startup_notification(sourced(StartupNotification::Healthy)?);
+    service.set_podman_args_with_origins(
+        vec![sourced(ProtectedString::sensitive("--replace"))?],
+        vec![Provenance::source(SourceId::new("authored.container")?)],
+    );
+    application.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.podman_args[0]" && outcome.kind() == ConversionKind::Exact
+    }));
+    let result = plan.authorize(LossPolicy::AllowPartial);
+    let container = result
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .ok_or("partial rootfs output expected")?
+        .text();
+    assert!(container.contains("Rootfs=/srv/rootfs"));
+    assert!(container.contains("Notify=healthy"));
+    assert!(container.contains("PodmanArgs=--replace"));
     Ok(())
 }
 
@@ -2221,6 +2458,102 @@ fn image_service(name: &str) -> Result<Service, Box<dyn Error>> {
     let mut service = Service::new(id(name)?);
     service.set_image(sourced(ImageReference::parse(format!("example.invalid/{name}:1"))?)?);
     Ok(service)
+}
+
+#[test]
+fn exports_extended_container_keys_with_capability_checks() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("extended")?);
+    application.add_network(sourced(Network::new(id("frontend")?, ResourceOwnership::Application))?)?;
+    let mut service = image_service("web")?;
+    service.set_entrypoint(sourced(Entrypoint::Exec(vec![ProtectedString::plain("/bin/web")]))?);
+    service.set_run_init(sourced(true)?);
+    service.set_stop_timeout(sourced(StopTimeout::new("30")?)?);
+    service.set_pull_policy(sourced(PullPolicy::Always)?);
+    service.set_memory_limit(sourced(ProtectedString::sensitive("64m"))?);
+    service.add_exposed_port(sourced(ExposedPort::new(8080, Protocol::Udp)?)?);
+    service.add_annotation(sourced(Annotation::new(
+        sourced(id("io.example.note")?)?,
+        sourced(ProtectedString::sensitive("private"))?,
+    ))?);
+    let mut logging = Logging::new();
+    logging.set_driver(sourced(ProtectedString::sensitive("journald"))?);
+    logging.add_option(sourced(LoggingOption::new(
+        sourced(id("tag")?)?,
+        sourced(ProtectedString::sensitive("web"))?,
+    ))?);
+    service.set_logging(sourced(logging)?);
+    service.set_reload_action(sourced(ReloadAction::Signal(ProtectedString::sensitive("SIGHUP")))?);
+    let mut attachment =
+        NetworkAttachment::with_sourced_aliases(id("frontend")?, vec![sourced(ProtectedString::sensitive("web"))?]);
+    attachment.set_ipv4_address(sourced(ProtectedString::sensitive("192.0.2.10"))?);
+    attachment.set_ipv6_address(sourced(ProtectedString::sensitive("2001:db8::10"))?);
+    service.add_network(sourced(attachment)?);
+    application.add_service(sourced(service)?)?;
+    let target = TargetProfile::new("podman", version(5, 5, 0), Some(version(6, 0, 2)))?;
+    let plan = QuadletExporter::new()?.plan(&application, &target)?;
+    assert!(!format!("{plan:?}").contains("private"));
+    let authorized = plan.authorize(LossPolicy::AllowPartial);
+    let text = authorized
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("expected output")?;
+    for key in [
+        "Entrypoint=",
+        "RunInit=true",
+        "StopTimeout=30",
+        "Pull=always",
+        "Memory=64m",
+        "ExposeHostPort=8080/udp",
+        "Annotation=\"io.example.note=private\"",
+        "LogDriver=journald",
+        "LogOpt=\"tag=web\"",
+        "IP=192.0.2.10",
+        "IP6=2001:db8::10",
+        "NetworkAlias=web",
+        "ReloadSignal=SIGHUP",
+    ] {
+        assert!(text.contains(key), "missing {key} in {text}");
+    }
+    Ok(())
+}
+
+#[test]
+fn retains_reviewed_native_pull_and_reports_explicit_empty_extended_collections() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("extended-empty")?);
+    let mut service = image_service("web")?;
+    service.set_pull_policy(sourced(PullPolicy::Raw(ProtectedString::sensitive("newer")))?);
+    service.set_exposed_ports_with_origins(Vec::new(), vec![Provenance::source(SourceId::new("ports")?)]);
+    service.set_annotations_with_origins(Vec::new(), vec![Provenance::source(SourceId::new("annotations")?)]);
+    let mut logging = Logging::new();
+    logging.set_options_with_origins(Vec::new(), vec![Provenance::source(SourceId::new("logging")?)]);
+    service.set_logging(sourced(logging)?);
+    application.add_service(sourced(service)?)?;
+    let target = TargetProfile::new("podman", version(5, 5, 0), Some(version(6, 0, 2)))?;
+    let plan = QuadletExporter::new()?.plan(&application, &target)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.exposed_ports"
+                && outcome.kind() == ConversionKind::Unsupported)
+    );
+    assert!(plan.outcomes().iter().any(
+        |outcome| outcome.subject() == "services.web.annotations" && outcome.kind() == ConversionKind::Unsupported
+    ));
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.logging.options"
+                && outcome.kind() == ConversionKind::Unsupported)
+    );
+    let result = plan.authorize(LossPolicy::AllowPartial);
+    let text = result
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("expected output")?;
+    assert!(text.contains("Pull=newer"));
+    Ok(())
 }
 
 fn exact_healthcheck() -> Result<Healthcheck, Box<dyn Error>> {

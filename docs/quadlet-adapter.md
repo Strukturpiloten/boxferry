@@ -50,12 +50,26 @@ It currently maps:
   `ImageTag=` plus `File=` or `SetWorkingDirectory=`. Most keys require Podman 5.4.0, `Retry=`
   and `RetryDelay=` require 5.5.0, and `BuildArg=` and `IgnoreFile=` require 5.7.0, within the
   reviewed 6.0.2 ceiling. `PodmanArgs=` is retained native evidence and is never synthesized;
+- application-owned volumes through `VolumeName=`, `Driver=`, `Device=`, `Type=`, `Options=`,
+  `Copy=`, `Label=`, raw protected module/argument lists, identity, `ServiceName=`, and literal or
+  typed `Image=` sources. `UID=`/`GID=` start at 6.0.0; `Type=` requires `Device=`, and resets,
+  duplicates, options-without-device before 6.0, `Copy=` plus `Image=`, and unresolved/cyclic
+  typed artifacts remain explicit outcomes;
 - explicit runtime container names through capability-checked `ContainerName=`, independently of
   service keys, unit filenames, and systemd service names;
 - resolved hostnames, PID limits, shared-memory sizes, ordered capability add/drop entries,
   temporary filesystems, sysctls, resource limits, reviewed host-device mappings, and stop signals
   through `HostName=`, `PidsLimit=`, `ShmSize=`, `DropCapability=`, `AddCapability=`, `Tmpfs=`,
   `Sysctl=`, `Ulimit=`, `AddDevice=`, and `StopSignal=` across the finite 5.4.0–6.0.2 catalogue;
+- JSON exec `Entrypoint=`, `RunInit=`, integral `StopTimeout=`, reviewed `Pull=`, `ExposeHostPort=`,
+  `Annotation=`, `LogDriver=`, `LogOpt=`, and one unambiguous attachment's `IP=`, `IP6=`, and
+  ordered `NetworkAlias=` values across the finite 5.4.0–6.0.2 catalogue;
+- positive `Memory=` plus mutually exclusive safe `ReloadCmd=` or `ReloadSignal=` values from
+  Podman 5.5.0 through the finite 6.0.2 catalogue ceiling;
+- container `Rootfs=`, `Notify=`, and authored repeatable `PodmanArgs=` without inventing runtime
+  arguments; and one preserved complete group's `AddHost=`, `PublishPort=`, `Network=`, `UserNS=`,
+  `Volume=`, `ShmSize=`, `ExitPolicy=`, `StopTimeout=`, and unsuffixed `ServiceName=`. General
+  topology keys start at 5.4.0, `ExitPolicy=` at 5.6.0, and `StopTimeout=` at 5.7.0;
 - image references, including `name:tag@digest` spellings;
 - exec-form commands whose individual arguments need no systemd quoting;
 - literal environment assignments whose names and values need no systemd quoting or specifier
@@ -82,7 +96,10 @@ It currently maps:
 - source-machine-specific bind forms such as `~/data` or `C:\data` when the caller provides an
   exact target mapping;
 - read-only and `z`/`Z` SELinux mount options;
-- application-owned networks through generated `.network` files;
+- application-owned networks through generated `.network` files, including distinct runtime names,
+  driver/options/labels, `Internal=`, `IPv6=`, `IPAMDriver=`, and ordered associated
+  `Subnet=`/`Gateway=`/`IPRange=` rows across Podman 5.4.0–6.0.2; Quadlet import reconstructs only
+  one unambiguous authored row;
 - external networks through direct runtime-name references; and
 - pre-existing external Podman secrets through repeatable `Secret=` entries, preserving Compose's
   default target filename when a custom runtime name differs and mapping safe target, numeric UID,
@@ -106,7 +123,9 @@ The adapter currently reports rather than guesses:
 - IPv6 or otherwise non-simple host-address port spellings;
 - container-only exposed ports without host publication;
 - implicit resource lifecycles;
-- per-network aliases;
+- static addresses or aliases whose native container-level spelling cannot be associated with one
+  exact network attachment;
+- empty or duplicate native network options and reset, duplicate, or multi-row IPAM columns;
 - identifiers requiring systemd unit-name escaping;
 - Compose `start_interval`, which has no native Quadlet key and is not silently mapped to Podman's
   semantically different startup-healthcheck feature family;
@@ -119,12 +138,10 @@ The adapter currently reports rather than guesses:
 - Compose config resources and grants, because Quadlet has no managed config-resource lifecycle;
 - application-owned secret creation and file/environment materialization, because `Secret=` only
   consumes a Podman secret that already exists; and
-- Volume `Image=` artifact references, which remain explicitly unsupported until their lifecycle
-  and dependency contract is defined;
 - secret names or options outside the reviewed unambiguous one-line Podman secret grammar;
 - explicit container names outside Podman's `[a-zA-Z0-9][a-zA-Z0-9_.-]*` grammar;
-- reserved `com.docker.compose.*` metadata plus resource, build/image, annotation, and label-file
-  label ownership that is not equivalent to service/container metadata; and
+- reserved `com.docker.compose.*` metadata plus resource, build/image, and label-file ownership
+  that is not equivalent to service/container metadata; and
 - neutral service groups without a supported caller-selected target grouping and lifecycle
   resolution.
 

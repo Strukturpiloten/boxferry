@@ -60,20 +60,20 @@ field as a policy-controlled unsupported outcome.
 | Host mappings | `extra_hosts` | `end to end` | Sequence/mapping syntax, IPv4, IPv6, and `host-gateway` reach container or compatible pod `AddHost=` entries. |
 | Published ports | `ports` | `partial` | Single numeric publications are supported; ranges, deferred values, unsupported host-address forms, and target-only options are reported. |
 | Storage | `volumes` plus top-level `volumes` | `partial` | Named, bind, and anonymous mounts cover the first slice, including short-syntax SELinux relabel intent; other mount types/options are reported. |
-| Networking | `networks` plus top-level `networks` | `partial` | Named attachments and ownership are represented; aliases and advanced attachment/definition options are reported. |
+| Networking | `networks` plus top-level `networks` | `partial` | Owned definitions retain logical/runtime names, driver, ordered options/labels, `internal`, IPv6, and associated IPAM rows. Compose-authored rows emit to Quadlet; Quadlet import reconstructs only one unambiguous row. Compose generation reports retained IPAM until ComposeLens provides that API; resets, duplicates, and ambiguous native rows remain explicit. |
 | Project interpolation | `${NAME}` and supported operators | `not applicable` | The CLI leaves interpolation disabled by default. `--interpolate` evaluates per-file overlays from an empty environment plus repeatable plain `--variable NAME=VALUE` and individually authorized sensitive `--variable-from-environment NAME` inputs. No implicit process or `.env` lookup occurs. Embedded callers use the same explicit ComposeLens overlay before constructing `ComposeSource`. |
 | Profile selection | `profiles` | `not applicable` | The caller must explicitly select profiles before import; profiles do not become Quadlet fields. |
 | Health checks | `healthcheck` | `partial` | `CMD`, `CMD-SHELL`, `NONE`/`disable`, interval, timeout, retries, and start period are source-aware and version-checked end to end. Compose `start_interval`, deferred/invalid scalars, conflicting disable/command intent, and systemd-percent-bearing commands produce explicit non-exact outcomes. |
 | Dependencies | `depends_on` | `partial` | Ordered required/optional `service_started` edges map to `Requires`/`Wants` plus `After`. `service_healthy` also maps through `Notify=healthy` when the target has an explicit encodable health command. Restart propagation, successful completion, provider-specific conditions, absent optional services, missing required services, and cycles produce explicit unsupported or invalid outcomes. |
 | Identity | `user`, `userns_mode`, `group_add` | `partial` | User, numeric primary group, user namespace, and ordered named or numeric supplementary groups retain provenance and sensitivity and emit capability-checked keys. Identical explicit namespaces on every grouped service move to pod `UserNS`; mixed or conflicting intent invalidates grouping. Named primary groups and unsafe values are explicit losses. |
-| Released container settings | `hostname`, `pids_limit`, `shm_size`, `cap_add`, `cap_drop`, `tmpfs`, `sysctls`, `ulimits`, `devices`, `stop_signal` | `partial` | The ten released fields reach raw/protected neutral values with ordered entries and source provenance, then capability-checked Quadlet keys. Only the documented safe resolved forms emit; deferred, malformed, provider-specific, CDI/opaque, incomplete, empty-reset, or namespace-sensitive forms remain explicit losses. Other exporters retain a partial outcome rather than discarding them. |
+| Iteration-one container settings | hostname, limits, capabilities, tmpfs/sysctl/device, entrypoint/init/stop/pull/memory, exposed ports, annotations/logging, static network values, reload | `partial` | All 24 keys retain source provenance and emit through typed Quadlet keys. Twenty-one are evidenced for Podman 5.4.0–6.0.2; `Memory=`, `ReloadCmd=`, and `ReloadSignal=` require 5.5.0–6.0.2. Only documented safe forms and one unambiguous network attachment emit; deferred, malformed, empty-reset, mutually exclusive, CDI/opaque, or ambiguous values remain explicit losses. |
 | Build | `build`, `pull_policy` | `partial` | Compose build declarations retain all source leaves. The safe image/build overlap emits validated `.build` files; source-only intent remains an explicit loss. |
 | Config and secret grants | `configs`, `secrets` | `partial` / `end to end` | ComposeLens 0.1.11 imports ownership, runtime names, file/environment/inline material origins, and ordered short/long grants with per-option provenance and redaction. Pre-existing external Podman secrets emit repeatable Quadlet `Secret=` entries with preserved target defaults and validated target/UID/GID/read-only-mode options. Application-owned secret materialization and every Compose config lifecycle/grant remain explicit manual actions because Quadlet has no equivalent managed config resource. |
-| Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `partial` | Safe resolved `stop_signal` values map end to end. Authored Compose and runtime inspection both retain container `Never`, `Always`, `OnFailure`, finite positive retry limits, and `UnlessStopped`; Compose output is exact for every neutral variant. Quadlet emits exact `Restart=no`, explicit approximations for unbounded policies, and no unsafe substitute for finite retry limits. Unresolved, zero, and out-of-range authored retry limits are invalid. Other lifecycle fields remain preserved only. |
-| Process | `entrypoint`, `working_dir`, `tty`, `stdin_open`, `read_only` | `partial` / `preserved` | Safely encodable working directories and explicit true/false read-only-root intent convert end to end. Values needing systemd encoding are reported. Entrypoint, TTY, and standard-input behavior remain preserved only. |
+| Lifecycle | `restart`, `stop_grace_period`, `stop_signal`, `init`, lifecycle hooks | `partial` | Safe stop timeouts and signals map to typed Quadlet keys; `init` maps with an explicit runtime-equivalence approximation. Restart policies remain source-aware with no unsafe substitute for finite retry limits. Reload actions are Quadlet-only and Compose reports them as loss. |
+| Process | `entrypoint`, `working_dir`, `tty`, `stdin_open`, `read_only` | `partial` / `preserved` | JSON-exec entrypoints, safe working directories, and explicit read-only-root intent reach typed Quadlet keys. Shell/empty entrypoints needing different semantics, TTY, standard input, and values needing systemd encoding remain explicit losses. |
 | Hostname and DNS | `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search` | `partial` / `preserved` | Safe resolved `hostname` values reach Quadlet `HostName=` when UTS mode is not retained. Ordered non-empty DNS servers, options, and search domains map through the neutral model and Compose/Quadlet native keys; explicit empties, resolver-special `none`/`.`, deferred or multiline values, and generated Pod resolver sharing remain structured non-exact outcomes. Runtime container names do not imply container hostnames. |
 | Security and devices | capabilities, devices, CDI/GPU, namespaces, privileged, `security_opt`, sysctls | `partial` / `preserved` | Reviewed safe capabilities, host devices, and sysctls reach typed Quadlet keys. The released container-scoped security slice is `AppArmor`, `NoNewPrivileges`, `SeccompProfile`, `SecurityLabelDisable`, `SecurityLabelFileType`, `SecurityLabelLevel`, `SecurityLabelNested`, `SecurityLabelType`, repeatable `Mask`, and repeatable `Unmask`; AppArmor requires Podman 5.8.0+, and the other keys require 5.4.0+. Explicit-empty collections, unsafe values, singleton/SELinux conflicts, and any host LSM/profile/file/runtime enforcement remain explicit limits. Grouping never moves these values out of their containers. CDI/GPU, namespaces, privileged mode, and remaining security options remain explicit losses. |
-| Metadata and logging | annotations, labels, label files, logging | `end to end` for service labels / `partial` otherwise | Compose mapping and sequence labels import with value-scalar normalization and multi-file provenance. Protected neutral service labels generate deterministic Compose mappings and native repeatable Quadlet `Label=` entries; empty, quoted, control, and literal systemd-specifier values are encoded. Runtime container/image maps support image-default comparison. Reserved Compose-managed labels remain reviewable but are never re-authored. Annotations, label files, image-build labels, resource labels, and logging remain open. |
+| Metadata and logging | annotations, labels, label files, logging | `end to end` for service labels / `partial` otherwise | Protected annotations plus logging driver/options map through the neutral model and typed Quadlet keys; provider equivalence remains reviewable. Service labels remain deterministic and Compose-managed labels are never re-authored. Label files, image-build labels, and resource labels remain open. |
 | Compose orchestration extensions | `extends`, `develop`, `provider`, `models`, links, scaling | `preserved` | These have no direct first-slice Quadlet equivalent and require separate processing or explicit diagnostics. |
 
 The detailed native boundaries are maintained in the
@@ -101,12 +101,26 @@ overlap is deliberately narrow: the service image becomes the first output tag, 
 explicit `tags`; `dockerfile`, `target`, explicit mapping arguments or literal `NAME=VALUE` list
 arguments, and labels map to their corresponding Quadlet settings. Protected values and every
 other source-only leaf remain redacted, structured losses. BoxFerry never synthesizes
-`PodmanArgs=`. References from a Volume `Image=` artifact remain explicit unsupported behavior.
+`PodmanArgs=`. Volumes retain distinct logical, runtime (`VolumeName=`), and service-manager
+(`ServiceName=`) names; all 16 typed volume keys map across 5.4.0–6.0.2 except `UID=`/`GID=`,
+which start at 6.0.0. `Image=` accepts literal, `.image`, and `.build` sources; `Copy=` plus
+`Image=` is a reported loss, and missing typed references or explicit artifact cycles fail closed.
 
-The released `HostName=`, `PidsLimit=`, `ShmSize=`, `DropCapability=`, `AddCapability=`,
-`Tmpfs=`, `Sysctl=`, `Ulimit=`, `AddDevice=`, and `StopSignal=` keys are export-only in this
-slice. The Quadlet importer names each as an unmapped `BFQ1003` outcome rather than silently
-dropping it until its inverse source contract is defined.
+The Quadlet importer and exporter cover the 24 iteration-one container keys: `HostName=`,
+`PidsLimit=`, `ShmSize=`, `DropCapability=`, `AddCapability=`, `Tmpfs=`, `Sysctl=`, `Ulimit=`,
+`AddDevice=`, `StopSignal=`, `Entrypoint=`, `RunInit=`, `StopTimeout=`, `Pull=`, `Memory=`,
+`ExposeHostPort=`, `Annotation=`, `LogDriver=`, `LogOpt=`, `IP=`, `IP6=`, `NetworkAlias=`,
+`ReloadCmd=`, and `ReloadSignal=`. `Memory=` and both reload keys start at Podman 5.5.0; the
+other 21 are evidenced from 5.4.0, with a finite 6.0.2 ceiling. `ReloadCmd=` and
+`ReloadSignal=` are mutually exclusive, and static address/alias values require exactly one
+service network attachment.
+
+The topology slice retains container `Rootfs=`, `Notify=`, and authored repeatable `PodmanArgs=`
+(never synthesized), plus pod `AddHost=`, `PublishPort=`, `Network=`, `UserNS=`, `Volume=`,
+`ShmSize=`, `ExitPolicy=`, `StopTimeout=`, and unsuffixed `ServiceName=`. General topology keys
+are evidenced for Podman 5.4.0–6.0.2; `ExitPolicy=` starts at 5.6.0 and `StopTimeout=` at 5.7.0.
+Explicit empty list resets remain loss outcomes and are not regenerated; `Network=host` with a
+published port is invalid.
 
 The Quadlet importer reads typed `.container`, `.network`, and `.volume` documents. Its exact
 subset covers direct `Image=`, `ContainerName=`, safe unquoted `Exec=`, one safe explicit
@@ -146,12 +160,11 @@ host-unit dependencies and incomplete activation/ordering pairs are unsupported;
 invalid booleans, invalid health durations/retry counts, and `Group=` without a valid `User=`
 produce invalid outcomes. `HealthInterval=disable` remains unsupported because disabling the
 automatic timer is not equivalent to disabling the health check.
-Omitted `PodName=` values use Podman's `systemd-`-prefixed runtime default, which cannot coexist
-with the unit identity in the current single-name service-group model. Divergent explicit pod
-names and pod-scoped `AddHost=`, `Network=`, `PublishPort=`, `UserNS=`, and `Volume=` settings also
-remain explicit outcomes; BoxFerry does not assign shared pod state to an arbitrary service.
-Invalid or unresolved document-set references block import. Typed `.image`, `.build`, `.kube`, and
-`.artifact` input also remains open in QuadletLens and BoxFerry.
+Omitted `PodName=` values retain no explicit runtime name and are never synthesized. Divergent
+explicit pod names remain separate from the logical group identity; pod-scoped values stay on
+`ServiceGroupRuntime` and are never assigned to an arbitrary service.
+Invalid or unresolved document-set references block import. Typed `.image` and `.build` input is
+supported; `.kube` and `.artifact` input remain open in QuadletLens and BoxFerry.
 
 ## Runtime reconstruction foundation
 

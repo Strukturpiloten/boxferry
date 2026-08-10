@@ -2,9 +2,10 @@
 
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
-    Application, Command, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand, Identifier,
-    ImageAcquisitionSetting, ImageBuildSetting, MountSource, Protocol, ResourceGrantSyntax, ResourceOwnership,
-    RestartPolicy, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
+    Application, Command, Entrypoint, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand, Identifier,
+    ImageAcquisitionSetting, ImageBuildSetting, MountSource, Protocol, PullPolicy, ReloadAction, ResourceGrantSyntax,
+    ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
+    StartupNotification, VolumeImageSource,
 };
 use boxferry_quadlet::{QuadletDocumentInput, QuadletImporter, QuadletSource, QuadletSourceError};
 use quadlet_lens::model::{NamedQuadletDocument, QuadletDocument, QuadletDocumentSet, QuadletUnitType};
@@ -175,14 +176,12 @@ fn keeps_unrepresentable_pod_defaults_and_pod_scoped_values_explicit() -> Result
     let application = result.application().ok_or("expected imported application")?;
     assert_eq!(application.service_groups().len(), 1);
     assert_eq!(application.service_groups()[0].value().members().len(), 1);
-    assert_eq!(
-        result
-            .outcomes()
-            .iter()
-            .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
-            .count(),
-        2
-    );
+    let runtime = application.service_groups()[0]
+        .value()
+        .runtime()
+        .ok_or("pod runtime expected")?
+        .value();
+    assert_eq!(runtime.ports().map(<[_]>::len), Some(1));
     assert_eq!(
         result
             .outcomes()
@@ -200,6 +199,119 @@ fn keeps_unrepresentable_pod_defaults_and_pod_scoped_values_explicit() -> Result
             .count(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn retains_rootfs_notify_and_ordered_podman_args_without_synthesizing_them() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            concat!(
+                "[Container]\n",
+                "Rootfs=/srv/rootfs\n",
+                "Notify=false\n",
+                "PodmanArgs=--replace\n",
+                "PodmanArgs=--secret=private\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let service = result
+        .application()
+        .and_then(|app| app.services().first())
+        .ok_or("service expected")?
+        .value();
+    assert!(service.rootfs().is_some());
+    assert!(matches!(
+        service.startup_notification().map(boxferry_model::Sourced::value),
+        Some(StartupNotification::Runtime)
+    ));
+    assert_eq!(service.podman_args().map(<[_]>::len), Some(2));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.startup_notification" && outcome.kind() == ConversionKind::Exact
+    }));
+    assert!(!format!("{service:?}").contains("private"));
+    Ok(())
+}
+
+#[test]
+fn retains_pod_resets_omitted_name_and_host_network_conflict() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new(
+                "application.pod",
+                QuadletSourceId::new(1),
+                concat!(
+                    "[Pod]\n",
+                    "ServiceName=chosen\n",
+                    "AddHost=host.docker.internal:host-gateway\nAddHost=\n",
+                    "PublishPort=8080:80\nPublishPort=\n",
+                    "Volume=\n",
+                    "StopTimeout=01\n",
+                ),
+            ),
+            QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(2),
+                "[Container]\nImage=example.invalid/web:1\nPod=application.pod\n",
+            ),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let runtime = result
+        .application()
+        .and_then(|app| app.service_groups().first())
+        .ok_or("group expected")?
+        .value()
+        .runtime()
+        .ok_or("runtime expected")?
+        .value();
+    assert!(runtime.runtime_name().is_none());
+    assert!(runtime.host_mappings().is_some_and(<[_]>::is_empty));
+    assert!(runtime.ports().is_some_and(<[_]>::is_empty));
+    assert!(runtime.mounts().is_some_and(<[_]>::is_empty));
+    assert!(runtime.stop_timeout().is_some());
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "service_groups.application.runtime.StopTimeout"
+            && outcome.kind() == ConversionKind::Unsupported
+    }));
+    Ok(())
+}
+
+#[test]
+fn reports_pod_host_network_and_published_port_conflict_independently_of_entry_order() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new(
+                "application.pod",
+                QuadletSourceId::new(1),
+                "[Pod]\nPublishPort=8080:80\nNetwork=host\n",
+            ),
+            QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(2),
+                "[Container]\nImage=example.invalid/web:1\nPod=application.pod\n",
+            ),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "service_groups.application.runtime.ports" && outcome.kind() == ConversionKind::Invalid
+    }));
     Ok(())
 }
 
@@ -339,7 +451,7 @@ fn reports_every_unmapped_quadlet_entry_instead_of_dropping_it() -> Result<(), S
 }
 
 #[test]
-fn reports_released_container_settings_until_quadlet_import_mapping_is_defined() -> Result<(), String> {
+fn imports_released_container_settings_with_order_and_provenance() -> Result<(), String> {
     let source = QuadletSource::parse(
         identifier("example")?,
         [QuadletDocumentInput::new(
@@ -347,8 +459,8 @@ fn reports_released_container_settings_until_quadlet_import_mapping_is_defined()
             QuadletSourceId::new(1),
             concat!(
                 "[Container]\nImage=example/web:1\nHostName=web.example\nPidsLimit=42\nShmSize=64m\n",
-                "DropCapability=NET_RAW\nAddCapability=SYS_PTRACE\nTmpfs=/run:mode=1777\n",
-                "Sysctl=net.ipv4.ip_forward=1\nUlimit=nofile=1024:4096\n",
+                "DropCapability=NET_RAW\nAddCapability=SYS_PTRACE CAP_CHOWN\nTmpfs=/run:mode=1777\n",
+                "Sysctl=net.ipv4.ip_forward=1\nUlimit=nofile=0:0\n",
                 "AddDevice=/dev/fuse:/dev/fuse:rwm\nStopSignal=SIGTERM\n",
             ),
         )],
@@ -357,36 +469,168 @@ fn reports_released_container_settings_until_quadlet_import_mapping_is_defined()
     let result = QuadletImporter::new()
         .map_err(|error| error.to_string())?
         .import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let service = result.application().ok_or("expected application")?.services()[0].value();
+    assert_eq!(
+        service.hostname().map(|value| value.value().expose()),
+        Some("web.example")
+    );
+    assert_eq!(service.pids_limit().map(|value| value.value().expose()), Some("42"));
+    assert_eq!(service.shm_size().map(|value| value.value().expose()), Some("64m"));
+    assert_eq!(service.cap_drop().map(<[_]>::len), Some(1));
+    assert_eq!(service.cap_add().map(<[_]>::len), Some(2));
+    assert_eq!(service.tmpfs().map(<[_]>::len), Some(1));
+    assert_eq!(service.sysctls().map(<[_]>::len), Some(1));
+    assert_eq!(service.ulimits().map(<[_]>::len), Some(1));
+    assert_eq!(service.devices().map(<[_]>::len), Some(1));
+    assert_eq!(
+        service.stop_signal().map(|value| value.value().expose()),
+        Some("SIGTERM")
+    );
+    Ok(())
+}
+
+#[test]
+fn retains_unreviewed_native_container_values_without_classifying_them_as_exact() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            concat!(
+                "[Container]\nImage=example/web:1\nHostName=bad%h\nStopSignal=SIG\n",
+                "AddCapability=SYS_PTRACE quoted-value\nTmpfs=relative:mode=1777\n",
+                "Ulimit=nofile=00:0\nAddDevice=/dev/fuse:relative:rwm\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+
     let unsupported = result
         .outcomes()
         .iter()
         .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
         .map(boxferry_engine::ConversionOutcome::subject)
         .collect::<Vec<_>>();
-    assert_eq!(unsupported.len(), 10);
-    for key in [
-        "HostName",
-        "PidsLimit",
-        "ShmSize",
-        "DropCapability",
-        "AddCapability",
-        "Tmpfs",
-        "Sysctl",
-        "Ulimit",
-        "AddDevice",
-        "StopSignal",
-    ] {
-        assert!(
-            unsupported.iter().any(|subject| subject.ends_with(key)),
-            "missing {key}: {unsupported:?}"
-        );
-    }
-    assert!(
-        result
-            .diagnostics()
-            .iter()
-            .all(|diagnostic| diagnostic.code().as_str() == "BFQ1003")
+    assert_eq!(
+        unsupported,
+        [
+            "services.web.hostname",
+            "services.web.stop_signal",
+            "services.web.cap_add",
+            "services.web.tmpfs",
+            "services.web.ulimits",
+            "services.web.devices",
+        ]
     );
+    let service = result.application().ok_or("expected application")?.services()[0].value();
+    assert_eq!(service.hostname().map(|value| value.value().expose()), Some("bad%h"));
+    assert_eq!(service.stop_signal().map(|value| value.value().expose()), Some("SIG"));
+    assert_eq!(service.cap_add().map(<[_]>::len), Some(1));
+    assert_eq!(service.tmpfs().map(<[_]>::len), Some(1));
+    assert_eq!(service.ulimits().map(<[_]>::len), Some(1));
+    assert_eq!(service.devices().map(<[_]>::len), Some(1));
+    Ok(())
+}
+
+#[test]
+fn imports_extended_container_keys_and_redacts_sensitive_values() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new("frontend.network", QuadletSourceId::new(2), "[Network]\n"),
+            QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(1),
+                concat!(
+                    "[Container]\nImage=example/web:1\nNetwork=frontend.network\n",
+                    "Entrypoint=[\"/bin/web\",\"serve\"]\nRunInit=true\nStopTimeout=30\nPull=always\nMemory=64m\n",
+                    "ExposeHostPort=8080/udp\nAnnotation=io.example.note=private\nLogDriver=journald\nLogOpt=tag=web\n",
+                    "IP=192.0.2.10\nIP6=2001:db8::10\nNetworkAlias=web\nReloadSignal=SIGHUP\n",
+                ),
+            ),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let service = result.application().ok_or("expected application")?.services()[0].value();
+    assert!(matches!(
+        service.entrypoint().map(boxferry_model::Sourced::value),
+        Some(Entrypoint::Exec(_))
+    ));
+    assert_eq!(service.run_init().map(boxferry_model::Sourced::value), Some(&true));
+    assert_eq!(service.stop_timeout().map(|value| value.value().as_str()), Some("30"));
+    assert!(matches!(
+        service.pull_policy().map(boxferry_model::Sourced::value),
+        Some(PullPolicy::Always)
+    ));
+    assert_eq!(service.exposed_ports().map(<[_]>::len), Some(1));
+    assert_eq!(service.annotations().map(<[_]>::len), Some(1));
+    assert_eq!(
+        service
+            .logging()
+            .and_then(|logging| logging.value().options())
+            .map(<[_]>::len),
+        Some(1)
+    );
+    assert!(matches!(
+        service.reload_action().map(boxferry_model::Sourced::value),
+        Some(ReloadAction::Signal(_))
+    ));
+    let network = &service.networks()[0].value();
+    assert_eq!(
+        network.ipv4_address().map(|value| value.value().expose()),
+        Some("192.0.2.10")
+    );
+    assert_eq!(network.aliases(), ["web"]);
+    assert!(!format!("{service:?}").contains("private"));
+    Ok(())
+}
+
+#[test]
+fn network_attachment_values_before_or_after_network_have_identical_meaning() -> Result<(), String> {
+    let import = |container: &str| -> Result<_, String> {
+        let source = QuadletSource::parse(
+            identifier("example")?,
+            [
+                QuadletDocumentInput::new("frontend.network", QuadletSourceId::new(2), "[Network]\n"),
+                QuadletDocumentInput::new("web.container", QuadletSourceId::new(1), container),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(QuadletImporter::new()
+            .map_err(|error| error.to_string())?
+            .import(&source))
+    };
+    let before = import(concat!(
+        "[Container]\nImage=example/web:1\nIP=192.0.2.10\nNetworkAlias=first\n",
+        "NetworkAlias=second\nIP6=2001:db8::10\nNetwork=frontend.network\n",
+    ))?;
+    let after = import(concat!(
+        "[Container]\nImage=example/web:1\nNetwork=frontend.network\nIP=192.0.2.10\n",
+        "NetworkAlias=first\nNetworkAlias=second\nIP6=2001:db8::10\n",
+    ))?;
+    for result in [&before, &after] {
+        let network = &result.application().ok_or("expected application")?.services()[0]
+            .value()
+            .networks()[0]
+            .value();
+        assert_eq!(
+            network.ipv4_address().map(|value| value.value().expose()),
+            Some("192.0.2.10")
+        );
+        assert_eq!(
+            network.ipv6_address().map(|value| value.value().expose()),
+            Some("2001:db8::10")
+        );
+        assert_eq!(network.aliases(), ["first", "second"]);
+        assert_eq!(network.alias_origins().len(), 2);
+    }
     Ok(())
 }
 
@@ -1436,6 +1680,170 @@ fn duplicate_artifact_singletons_produce_one_invalid_import_outcome_without_last
         .collect::<Vec<_>>();
     assert_eq!(invalid.len(), 1);
     assert_eq!(invalid[0].subject(), "image_acquisitions.duplicate.Image");
+    Ok(())
+}
+
+#[test]
+fn imports_safe_network_settings_without_conflating_the_unit_stem_and_runtime_name() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "logical.network",
+            QuadletSourceId::new(91),
+            concat!(
+                "[Network]\n",
+                "NetworkName=runtime-network\nDriver=bridge\nOptions=mtu=1500\n",
+                "Label=org.example.owner=private\nInternal=true\nIPv6=false\n",
+                "IPAMDriver=host-local\nSubnet=10.88.0.0/16\nGateway=10.88.0.1\nIPRange=10.88.1.0/24\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let network = &result.application().ok_or("application expected")?.networks()[0].value();
+    assert_eq!(network.name().as_str(), "logical");
+    assert_eq!(
+        network.runtime_name().map(|name| name.value().expose()),
+        Some("runtime-network")
+    );
+    assert_eq!(network.driver().map(|driver| driver.value().expose()), Some("bridge"));
+    assert_eq!(network.driver_options().map(<[_]>::len), Some(1));
+    assert_eq!(network.labels().map(<[_]>::len), Some(1));
+    assert_eq!(network.internal().map(|value| *value.value()), Some(true));
+    assert_eq!(network.ipv6().map(|value| *value.value()), Some(false));
+    let row = &network.ipam_configs().ok_or("IPAM row expected")?[0];
+    assert_eq!(row.value().subnet().value().expose(), "10.88.0.0/16");
+    assert_eq!(
+        row.value().gateway().map(|value| value.value().expose()),
+        Some("10.88.0.1")
+    );
+    assert_eq!(
+        row.value().ip_range().map(|value| value.value().expose()),
+        Some("10.88.1.0/24")
+    );
+    assert!(!format!("{network:?}").contains("private"));
+    assert!(format!("{network:?}").contains("runtime-network"));
+    Ok(())
+}
+
+#[test]
+fn retains_network_resets_and_rejects_duplicate_option_and_label_names() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "logical.network",
+            QuadletSourceId::new(93),
+            concat!(
+                "[Network]\n",
+                "Options=mtu=1500\nOptions=mtu=9000\nOptions=\n",
+                "Label=org.example.owner=one\nLabel=org.example.owner=two\nLabel=\n",
+                "Subnet=\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let network = &result.application().ok_or("application expected")?.networks()[0].value();
+    assert!(network.driver_options().is_some_and(<[_]>::is_empty));
+    assert!(network.labels().is_some_and(<[_]>::is_empty));
+    assert!(network.ipam_configs().is_some_and(<[_]>::is_empty));
+    assert_eq!(network.driver_options_origins().len(), 1);
+    assert_eq!(network.labels_origins().len(), 1);
+    assert_eq!(network.ipam_configs_origins().len(), 1);
+    let unsupported = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
+        .map(boxferry_engine::ConversionOutcome::subject)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        unsupported
+            .iter()
+            .filter(|subject| **subject == "networks.logical.driver_options")
+            .count(),
+        2
+    );
+    assert_eq!(
+        unsupported
+            .iter()
+            .filter(|subject| **subject == "networks.logical.labels")
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn rejects_ambiguous_network_ipam_and_noncanonical_booleans_without_positional_zipping() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "logical.network",
+            QuadletSourceId::new(92),
+            "[Network]\nInternal=yes\nSubnet=10.88.0.0/16\nGateway=10.88.0.1\nSubnet=fd00::/64\nGateway=fd00::1\n",
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let network = &result.application().ok_or("application expected")?.networks()[0].value();
+    assert!(network.ipam_configs().is_none());
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "networks.logical.internal" && outcome.kind() == ConversionKind::Invalid
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "networks.logical.ipam_configs" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    Ok(())
+}
+
+#[test]
+fn imports_typed_volume_settings_and_retains_resets_and_raw_evidence() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new("base.image", QuadletSourceId::new(101), "[Image]\nImage=example.invalid/base:1\n"),
+            QuadletDocumentInput::new("build.build", QuadletSourceId::new(102), "[Build]\nImageTag=example.invalid/build:1\n"),
+            QuadletDocumentInput::new("data.volume", QuadletSourceId::new(103), "[Volume]\nVolumeName=runtime\nDriver=local\nDevice=/srv/data\nType=none\nOptions=bind\nLabel=org.example.owner=one\nLabel=\nCopy=true\nContainersConfModule=one module\nContainersConfModule=\nGlobalArgs=--log-level=debug\nPodmanArgs=--secret=private value\nUser=alice\nGroup=staff\nUID=1000\nGID=1001\nServiceName=data-custom\nImage=base.image\n"),
+        ],
+    ).map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let volume = result.application().ok_or("application expected")?.volumes()[0].value();
+    assert_eq!(
+        volume.runtime_name().map(|value| value.value().expose()),
+        Some("runtime")
+    );
+    assert_eq!(
+        volume.service_name().map(|value| value.value().expose()),
+        Some("data-custom")
+    );
+    assert!(volume.labels().is_some_and(<[_]>::is_empty));
+    assert_eq!(volume.labels_origins().len(), 1);
+    assert!(volume.containers_conf_modules().is_some_and(<[_]>::is_empty));
+    assert!(volume.global_args().is_some_and(|values| values.len() == 1));
+    assert!(
+        volume
+            .podman_args()
+            .is_some_and(|values| values[0].value().expose().contains("private value"))
+    );
+    assert!(
+        matches!(volume.image_source().map(boxferry_model::Sourced::value), Some(VolumeImageSource::ImageAcquisition(name)) if name.as_str() == "base")
+    );
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "volumes.data.containers_conf_modules"
+                && outcome.kind() == ConversionKind::Unsupported)
+    );
     Ok(())
 }
 

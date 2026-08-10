@@ -5,11 +5,236 @@ use std::{error::Error, fs, path::PathBuf};
 use boxferry_compose::{ComposeImporter, ComposeSource};
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
-    BuildSourceDeclaration, BuildSyntax, Command, ConfigMaterial, EnvironmentFileFormat, EnvironmentFileSyntax,
-    EnvironmentValue, HealthcheckCommand, HostAddressKind, Identifier, ImageBuildSetting, MountSource, ProtectedString,
-    Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, SecretMaterial, SecurityOption, SelinuxRelabel,
-    Service, ServiceDependencyCondition, SourceBuildSetting, SourceId,
+    BuildSourceDeclaration, BuildSyntax, Command, ConfigMaterial, Entrypoint, EnvironmentFileFormat,
+    EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand, HostAddressKind, Identifier, ImageBuildSetting,
+    MountSource, ProtectedString, Protocol, PullPolicy, ResourceGrantSyntax, ResourceOwnership, RestartPolicy,
+    SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceBuildSetting, SourceId,
 };
+
+#[test]
+fn imports_iteration_one_compose_fields_without_conflating_command_or_published_ports() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(111);
+    let project = merged_project([(
+        id,
+        "iteration-one.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    command: [serve]\n    entrypoint: [/bin/web]\n    init: true\n    stop_grace_period: 1m30s\n    pull_policy: daily\n    mem_limit: 256m\n    expose: [8080, 5353/udp]\n    annotations: {io.example.note: stable}\n    logging: {driver: json-file, options: {tag: demo}}\n    networks:\n      front:\n        aliases: [web]\n        ipv4_address: 192.0.2.20\n        ipv6_address: 2001:db8::20\nnetworks: {front: {}}\n",
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("iteration-one")?)?
+        .with_source_id(id, SourceId::new("iteration-one.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let service = result.application().ok_or("application")?.services()[0].value();
+    assert!(
+        matches!(service.entrypoint().map(boxferry_model::Sourced::value), Some(Entrypoint::Exec(values)) if values[0].expose() == "/bin/web")
+    );
+    assert!(
+        matches!(service.command().map(boxferry_model::Sourced::value), Some(Command::Exec(values)) if values[0].expose() == "serve")
+    );
+    assert_eq!(service.run_init().map(|value| *value.value()), Some(true));
+    assert_eq!(
+        service.stop_timeout().map(|value| value.value().as_str()),
+        Some("1m30s")
+    );
+    assert!(matches!(
+        service.pull_policy().map(boxferry_model::Sourced::value),
+        Some(PullPolicy::Daily)
+    ));
+    assert_eq!(service.memory_limit().map(|value| value.value().expose()), Some("256m"));
+    assert_eq!(service.exposed_ports().map(<[_]>::len), Some(2));
+    assert_eq!(service.ports().len(), 0);
+    assert_eq!(
+        service
+            .annotations()
+            .map(|values| values[0].value().name().value().as_str()),
+        Some("io.example.note")
+    );
+    assert_eq!(
+        service
+            .logging()
+            .and_then(|value| value.value().driver())
+            .map(|value| value.value().expose()),
+        Some("json-file")
+    );
+    let attachment = service.networks().first().ok_or("network attachment")?.value();
+    assert_eq!(attachment.aliases(), ["web"]);
+    assert_eq!(
+        attachment.ipv4_address().map(|value| value.value().expose()),
+        Some("192.0.2.20")
+    );
+    assert_eq!(
+        attachment.ipv6_address().map(|value| value.value().expose()),
+        Some("2001:db8::20")
+    );
+    Ok(())
+}
+
+#[test]
+fn keeps_compose_runtime_fields_on_the_service_without_inventing_a_group_runtime() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(113);
+    let project = merged_project([(
+        id,
+        "service-scope.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    extra_hosts: [host.docker.internal:host-gateway]\n    ports: [127.0.0.1:18080:8080]\n    userns_mode: keep-id\n    volumes: [cache:/var/cache/web]\n    shm_size: 64m\n    stop_grace_period: 30s\n    networks: [front]\nnetworks: {front: {}}\nvolumes: {cache: {}}\n",
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("service-scope")?)?
+        .with_source_id(id, SourceId::new("service-scope.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    let service = application.services().first().ok_or("service")?.value();
+    assert!(application.service_groups().is_empty());
+    assert_eq!(service.host_mappings().len(), 1);
+    assert_eq!(service.ports().len(), 1);
+    assert_eq!(service.networks().len(), 1);
+    assert_eq!(service.mounts().len(), 1);
+    assert_eq!(
+        service.user_namespace().map(|value| value.value().expose()),
+        Some("keep-id")
+    );
+    assert_eq!(service.shm_size().map(|value| value.value().expose()), Some("64m"));
+    assert_eq!(service.stop_timeout().map(|value| value.value().as_str()), Some("30s"));
+    for origins in [
+        service.host_mappings()[0].origins(),
+        service.ports()[0].origins(),
+        service.networks()[0].origins(),
+        service.mounts()[0].origins(),
+        service.user_namespace().ok_or("user namespace")?.origins(),
+        service.shm_size().ok_or("shm size")?.origins(),
+        service.stop_timeout().ok_or("stop timeout")?.origins(),
+    ] {
+        assert_eq!(origins[0].source_id().as_str(), "service-scope.yaml");
+    }
+    Ok(())
+}
+
+#[test]
+fn retains_empty_entrypoint_and_logging_options_without_a_driver() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(112);
+    let project = merged_project([(
+        id,
+        "empty-iteration-one.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n    entrypoint: []\n    logging:\n      options: {}\n",
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("empty-iteration-one")?)?
+        .with_source_id(id, SourceId::new("empty-iteration-one.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let service = result.application().ok_or("application")?.services()[0].value();
+    assert!(matches!(
+        service.entrypoint().map(boxferry_model::Sourced::value),
+        Some(Entrypoint::Empty)
+    ));
+    assert_eq!(service.logging().and_then(|value| value.value().driver()), None);
+    assert_eq!(
+        service
+            .logging()
+            .and_then(|value| value.value().options())
+            .map(<[_]>::len),
+        Some(0)
+    );
+    assert!(result.outcomes().iter().any(|outcome| outcome.subject() == "services.web.logging" && outcome.kind() == ConversionKind::Unsupported));
+    Ok(())
+}
+
+#[test]
+fn imports_network_definitions_with_runtime_identity_protected_options_and_associated_ipam_rows()
+-> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(114);
+    let project = merged_project([(
+        id,
+        "network.yaml",
+        "services: {web: {image: example.invalid/web:1, networks: [front, driver-only, existing]}}\nnetworks:\n  front:\n    name: runtime-front\n    driver: bridge\n    driver_opts: {com.example.secret: production-secret}\n    labels: {com.example.role: frontend}\n    internal: false\n    enable_ipv6: true\n    ipam:\n      driver: default\n      config:\n        - subnet: 192.0.2.0/24\n          gateway: 192.0.2.1\n          ip_range: 192.0.2.64/26\n        - subnet: 2001:db8::/64\n          gateway: 2001:db8::1\n  driver-only:\n    ipam: {driver: default}\n  existing:\n    external: true\n    name: platform-existing\n",
+    )])?;
+    let source =
+        ComposeSource::new(project, Identifier::new("networks")?)?.with_source_id(id, SourceId::new("network.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    let front = application
+        .networks()
+        .iter()
+        .find(|network| network.value().name().as_str() == "front")
+        .ok_or("front")?
+        .value();
+    assert_eq!(
+        front.runtime_name().map(|value| value.value().expose()),
+        Some("runtime-front")
+    );
+    assert_eq!(front.driver().map(|value| value.value().expose()), Some("bridge"));
+    assert_eq!(front.driver_options().map(<[_]>::len), Some(1));
+    assert!(
+        !front.driver_options().ok_or("driver options")?[0]
+            .value()
+            .value()
+            .value()
+            .is_sensitive()
+    );
+    assert_eq!(front.internal().map(|value| *value.value()), Some(false));
+    assert_eq!(front.ipv6().map(|value| *value.value()), Some(true));
+    assert_eq!(front.ipam_driver().map(|value| value.value().expose()), Some("default"));
+    let rows = front.ipam_configs().ok_or("IPAM rows")?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].value().subnet().value().expose(), "192.0.2.0/24");
+    assert_eq!(
+        rows[0].value().gateway().map(|value| value.value().expose()),
+        Some("192.0.2.1")
+    );
+    assert_eq!(rows[1].value().subnet().value().expose(), "2001:db8::/64");
+    assert!(
+        application
+            .networks()
+            .iter()
+            .find(|network| network.value().name().as_str() == "driver-only")
+            .ok_or("driver-only")?
+            .value()
+            .ipam_configs()
+            .is_none()
+    );
+    assert_eq!(
+        application
+            .networks()
+            .iter()
+            .find(|network| network.value().name().as_str() == "existing")
+            .ok_or("existing")?
+            .value()
+            .ownership(),
+        ResourceOwnership::External
+    );
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "networks.front.driver_opts"
+                && outcome.origins()[0].source_id().as_str() == "network.yaml")
+    );
+    Ok(())
+}
+
+#[test]
+fn redacts_network_values_when_sensitive_interpolation_marks_the_definition_sensitive() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(115);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        id,
+        DocumentOrigin::new("sensitive-network.yaml", "."),
+        "services: {web: {image: example.invalid/web:1, networks: [private]}}\nnetworks:\n  private:\n    driver: ${NETWORK_DRIVER}\n    driver_opts: {token: plaintext-network-token}\n",
+    )])?;
+    let mut environment = MapEnvironment::new();
+    let _ = environment.insert_sensitive("NETWORK_DRIVER", "bridge");
+    let interpolation = loaded.interpolate(&environment);
+    let merged = merge_project(&loaded, Some(&interpolation));
+    assert!(merged.is_valid(), "{:#?}", merged.diagnostics());
+    let project = merged.project().ok_or("merged project")?.clone();
+    let source = ComposeSource::new(project, Identifier::new("sensitive-network")?)?
+        .with_source_id(id, SourceId::new("sensitive-network.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let network = result.application().ok_or("application")?.networks()[0].value();
+    assert!(
+        network.driver_options().ok_or("driver options")?[0]
+            .value()
+            .value()
+            .value()
+            .is_sensitive()
+    );
+    assert!(!format!("{result:?}").contains("plaintext-network-token"));
+    Ok(())
+}
 use compose_lens::{
     interpolation::MapEnvironment,
     loader::{DocumentInput, DocumentOrigin, LoadedProject},
@@ -1653,6 +1878,73 @@ fn processed_project(
     ])?;
     let selection = select_profiles(&project, request);
     Ok((project, selection))
+}
+
+#[test]
+fn imports_local_volume_driver_fields_labels_and_runtime_name() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(197);
+    let project = merged_project([(
+        id,
+        "volumes.compose.yaml",
+        concat!(
+            "services:\n  web:\n    image: example.invalid/web:1\n",
+            "volumes:\n  data:\n    name: platform-data\n    driver: local\n",
+            "    driver_opts: {type: none, device: /srv/data, o: bind}\n",
+            "    labels: {com.example.owner: operations}\n",
+        ),
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("volumes")?)?
+        .with_source_id(id, SourceId::new("volumes.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let volume = result.application().ok_or("application expected")?.volumes()[0].value();
+    assert_eq!(volume.name().as_str(), "data");
+    assert_eq!(
+        volume.runtime_name().map(|value| value.value().expose()),
+        Some("platform-data")
+    );
+    assert_eq!(volume.driver().map(|value| value.value().expose()), Some("local"));
+    assert_eq!(volume.volume_type().map(|value| value.value().expose()), Some("none"));
+    assert_eq!(volume.device().map(|value| value.value().expose()), Some("/srv/data"));
+    assert_eq!(volume.options().map(|value| value.value().expose()), Some("bind"));
+    assert_eq!(volume.labels().map(<[_]>::len), Some(1));
+    assert_eq!(
+        volume.labels().map(|labels| labels[0].value().value().expose()),
+        Some("operations")
+    );
+    assert!(
+        volume
+            .labels()
+            .is_some_and(|labels| !labels[0].value().value().is_sensitive())
+    );
+    Ok(())
+}
+
+#[test]
+fn reports_nonlocal_and_malformed_volume_configuration() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(198);
+    let project = merged_project([(
+        id,
+        "invalid-volumes.compose.yaml",
+        concat!(
+            "services:\n  web:\n    image: example.invalid/web:1\nvolumes:\n",
+            "  plugin-data:\n    driver: rexray\n    driver_opts: {type: none}\n",
+            "  local-data:\n    driver: local\n    driver_opts: {device: '', unknown: value}\n",
+        ),
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("invalid-volumes")?)?
+        .with_source_id(id, SourceId::new("invalid-volumes.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "volumes.plugin-data.driver_opts" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "volumes.local-data.driver_opts[0]" && outcome.kind() == ConversionKind::Invalid
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "volumes.local-data.driver_opts[1]" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    Ok(())
 }
 
 fn merged_project<'a>(
