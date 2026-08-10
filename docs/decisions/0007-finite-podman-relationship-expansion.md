@@ -45,9 +45,9 @@ does not enter error or debug output.
 
 The [Podman 5.4 container-inspect documentation](https://docs.podman.io/en/v5.4.2/markdown/podman-container-inspect.1.html)
 exposes `Dependencies` without classifying individual entries. The exact-version
-[Podman 5.4.2 implementation](https://github.com/containers/podman/blob/v5.4.2/libpod/container.go)
+[Podman 5.4.2 implementation](https://github.com/podman-container-tools/podman/blob/v5.4.2/libpod/container.go)
 builds the value from every shared namespace container plus generic dependencies. The
-[Podman 6.0.2 inspect implementation](https://github.com/containers/podman/blob/v6.0.2/libpod/container_inspect.go)
+[Podman 6.0.2 inspect implementation](https://github.com/podman-container-tools/podman/blob/v6.0.2/libpod/container_inspect.go)
 continues to populate the response through `c.Dependencies()`.
 
 ## Alternatives

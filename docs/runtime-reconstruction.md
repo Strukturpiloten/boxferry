@@ -331,9 +331,9 @@ The initial contract is based on the official
 [network inspect](https://docs.podman.io/en/v5.4.2/markdown/podman-network-inspect.1.html), and
 [volume inspect](https://docs.podman.io/en/v5.4.2/markdown/podman-volume-inspect.1.html) contracts,
 the exact
-[Podman 5.4.2 container response source](https://github.com/containers/podman/blob/v5.4.2/libpod/define/container_inspect.go),
+[Podman 5.4.2 container response source](https://github.com/podman-container-tools/podman/blob/v5.4.2/libpod/define/container_inspect.go),
 and the exact
-[Podman 6.0.2 container response source](https://github.com/containers/podman/blob/v6.0.2/libpod/define/container_inspect.go),
+[Podman 6.0.2 container response source](https://github.com/podman-container-tools/podman/blob/v6.0.2/libpod/define/container_inspect.go),
 plus Docker's official [container inspection](https://docs.docker.com/reference/cli/docker/container/inspect/),
 [image inspection](https://docs.docker.com/reference/cli/docker/image/inspect/),
 [versioned Engine API](https://docs.docker.com/reference/api/engine/),
