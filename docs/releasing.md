@@ -3,19 +3,24 @@
 BoxFerry publishes eight crates in one lockstep version. The manual `Release` workflow validates
 the default branch, creates an annotated tag and draft GitHub release, publishes through crates.io
 trusted publishing, attaches attested crate archives and checksums, and then publishes the GitHub
-release. It never uses a long-lived registry token.
+release. The initial 0.1.1 publication uses one temporary crates.io token because trusted
+publishers cannot be attached before the crate names exist.
 
 ## First-time setup
 
 1. Create a protected GitHub environment named `release`; require review and restrict it to the
    default branch.
-2. On crates.io, add a pending trusted publisher for each crate listed below. Use organization
-   `Strukturpiloten`, repository `boxferry`, workflow `release.yml`, and environment `release`.
-3. Merge the prepared release metadata, then run **Actions → Release → Run workflow** from the
+2. Create a short-lived crates.io API token permitted to publish new crates.
+3. Add it to the GitHub `release` environment as the secret `CRATES_IO_BOOTSTRAP_TOKEN`.
+4. Merge the prepared release metadata, then run **Actions → Release → Run workflow** from the
    default branch. Do not create the tag manually.
+5. After all eight crates are published, revoke the crates.io token and delete the GitHub secret.
+6. Add a trusted publisher to every crate using organization `Strukturpiloten`, repository
+   `boxferry`, workflow `release.yml`, and environment `release`.
 
-Pending trusted publishers are required because 0.1.1 is the first crates.io version. Configure
-all eight immediately before the release so none expire during setup.
+The workflow maps the bootstrap secret to Cargo's `CARGO_REGISTRY_TOKEN` only in publication
+steps and rejects it for every version other than 0.1.1. Later releases require the trusted
+publisher configuration and do not use a stored crates.io token.
 
 ## Publication order
 
