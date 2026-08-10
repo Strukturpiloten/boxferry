@@ -1,0 +1,499 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate release
+    if: github.repository == 'Strukturpiloten/boxferry'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install configured Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Validate release metadata
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "Run releases from the default branch (${DEFAULT_BRANCH})." >&2
+            exit 1
+          fi
+
+          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
+          version="$(
+            jq -er '[.packages[].version] | unique | if length == 1 then .[0] else error("workspace packages must use one version") end' \
+              <<< "${metadata}"
+          )"
+          packages='["boxferry-model","boxferry-engine","boxferry-compose","boxferry-quadlet","boxferry-runtime","boxferry-docker","boxferry-podman","boxferry"]'
+
+          jq --exit-status --argjson expected "${packages}" '
+            ([.packages[].name] | sort) == ($expected | sort) and
+            all(.packages[]; .publish != [])
+          ' <<< "${metadata}" >/dev/null
+
+          test -f "docs/releases/${version}.md"
+          escaped_version="${version//./\\.}"
+          if ! grep -Eq "^## \\[${escaped_version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+            echo "CHANGELOG.md must contain '## [${version}] - YYYY-MM-DD'." >&2
+            exit 1
+          fi
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check all targets
+        run: cargo ci-check
+      - name: Check facade feature boundaries
+        run: |
+          cargo ci-core
+          cargo ci-compose
+          cargo ci-docker
+          cargo ci-quadlet
+          cargo ci-podman
+          cargo ci-runtime
+      - name: Check repository policies
+        run: cargo ci-policy
+      - name: Run Clippy
+        run: cargo ci-clippy
+      - name: Run tests
+        run: cargo ci-test
+      - name: Run documentation tests
+        run: cargo ci-doctest
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo ci-doc
+
+      - name: Read the workspace MSRV
+        id: msrv
+        shell: bash
+        run: |
+          msrv="$(
+            cargo metadata --locked --no-deps --format-version 1 |
+              jq -er '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("workspace packages must declare one common rust-version") end'
+          )"
+          printf 'version=%s\n' "${msrv}" >> "${GITHUB_OUTPUT}"
+      - name: Install minimum supported Rust
+        env:
+          RUST_MSRV: ${{ steps.msrv.outputs.version }}
+        run: rustup toolchain install "${RUST_MSRV}" --profile minimal
+      - name: Check all targets with the MSRV
+        env:
+          RUST_MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+${RUST_MSRV}" ci-check
+      - name: Check repository policies with the MSRV
+        env:
+          RUST_MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+${RUST_MSRV}" ci-policy
+
+      - name: Audit dependencies, licenses, bans, and sources
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features
+
+  semver:
+    name: SemVer (${{ matrix.package }})
+    needs: validate
+    if: github.repository == 'Strukturpiloten/boxferry'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - boxferry-model
+          - boxferry-engine
+          - boxferry-compose
+          - boxferry-quadlet
+          - boxferry-runtime
+          - boxferry-docker
+          - boxferry-podman
+          - boxferry
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for a published baseline
+        id: baseline
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          status="$(
+            curl --proto '=https' \
+              --tlsv1.2 \
+              --silent \
+              --show-error \
+              --user-agent 'BoxFerry release workflow (+https://github.com/Strukturpiloten/boxferry)' \
+              --retry 3 \
+              --retry-all-errors \
+              --connect-timeout 10 \
+              --max-time 60 \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              "https://crates.io/api/v1/crates/${PACKAGE}"
+          )"
+          case "${status}" in
+            200) echo 'published=true' >> "${GITHUB_OUTPUT}" ;;
+            404) echo 'published=false' >> "${GITHUB_OUTPUT}" ;;
+            *) echo "Unexpected crates.io response: HTTP ${status}." >&2; exit 1 ;;
+          esac
+
+      - name: Check public API compatibility
+        if: steps.baseline.outputs.published == 'true'
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          package: ${{ matrix.package }}
+          feature-group: all-features
+
+  publish:
+    name: Publish BoxFerry
+    needs: [validate, semver]
+    if: github.repository == 'Strukturpiloten/boxferry'
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RELEASE_GITHUB_API_VERSION: "2026-03-10"
+    permissions:
+      artifact-metadata: write # Record artifact attestations for the packaged crates.
+      attestations: write # Sign the packaged crates' provenance attestations.
+      contents: write # Create the release tag and GitHub release.
+      id-token: write # Authenticate attestations and crates.io trusted publishing.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install configured Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Derive release metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(
+            cargo metadata --locked --no-deps --format-version 1 |
+              jq -er '[.packages[].version] | unique | if length == 1 then .[0] else error("workspace packages must use one version") end'
+          )"
+          printf 'version=%s\n' "${version}" >> "${GITHUB_OUTPUT}"
+          printf 'tag=v%s\n' "${version}" >> "${GITHUB_OUTPUT}"
+          printf 'notes=docs/releases/%s.md\n' "${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create or verify annotated release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            tagged_commit="$(git rev-list -n 1 "${TAG}")"
+            if [[ "${tagged_commit}" != "${GITHUB_SHA}" ]]; then
+              echo "${TAG} already points to ${tagged_commit}, not ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+          else
+            tag_object_sha="$(
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/git/tags" \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                -f tag="${TAG}" \
+                -f message="BoxFerry ${TAG}" \
+                -f object="${GITHUB_SHA}" \
+                -f type=commit \
+                --jq '.sha'
+            )"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+              -f ref="refs/tags/${TAG}" \
+              -f sha="${tag_object_sha}"
+          fi
+
+      - name: Create or replace draft GitHub release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.metadata.outputs.notes }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          release_name="BoxFerry ${VERSION}"
+          releases="$(
+            gh api --paginate \
+              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq --slurp '[.[][]]'
+          )"
+          published_count="$(
+            jq --raw-output --arg tag "${TAG}" \
+              '[.[] | select(.draft == false and .tag_name == $tag)] | length' \
+              <<< "${releases}"
+          )"
+          if [[ "${published_count}" != "0" ]]; then
+            echo "${TAG} is already associated with a published GitHub release." >&2
+            exit 1
+          fi
+
+          drafts="$(
+            jq --arg name "${release_name}" --arg tag "${TAG}" \
+              '[.[] | select(.draft == true and (.tag_name == $tag or .name == $name))]' \
+              <<< "${releases}"
+          )"
+          draft_count="$(jq --raw-output 'length' <<< "${drafts}")"
+          case "${draft_count}" in
+            0) ;;
+            1)
+              previous_release_id="$(jq --exit-status --raw-output '.[0].id' <<< "${drafts}")"
+              gh api --method DELETE \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                "repos/${GITHUB_REPOSITORY}/releases/${previous_release_id}"
+              ;;
+            *)
+              echo "Found ${draft_count} possible workflow drafts for ${TAG}; refusing to choose one." >&2
+              exit 1
+              ;;
+          esac
+
+          release="$(
+            jq --null-input \
+              --rawfile body "${NOTES}" \
+              --arg name "${release_name}" \
+              --arg tag "${TAG}" \
+              --arg target "${GITHUB_SHA}" \
+              '{tag_name: $tag, target_commitish: $target, name: $name, body: $body, draft: true, prerelease: false}' |
+              gh api --method POST \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                "repos/${GITHUB_REPOSITORY}/releases" \
+                --input -
+          )"
+          release_id="$(jq --exit-status --raw-output '.id' <<< "${release}")"
+          upload_url="$(
+            jq --exit-status --raw-output '.upload_url | sub("\\{\\?name,label\\}$"; "")' <<< "${release}"
+          )"
+          expected_upload_url="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets"
+          if [[ "${upload_url}" != "${expected_upload_url}" ]]; then
+            echo "GitHub returned an unexpected release asset upload URL." >&2
+            exit 1
+          fi
+          printf 'release_id=%s\n' "${release_id}" >> "${GITHUB_OUTPUT}"
+          printf 'upload_url=%s\n' "${upload_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Authenticate boxferry-model to crates.io
+        id: auth_model
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-model
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_model.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-model "${VERSION}"
+
+      - name: Authenticate boxferry-engine to crates.io
+        id: auth_engine
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-engine
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_engine.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-engine "${VERSION}"
+
+      - name: Authenticate boxferry-compose to crates.io
+        id: auth_compose
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-compose
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_compose.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-compose "${VERSION}"
+
+      - name: Authenticate boxferry-quadlet to crates.io
+        id: auth_quadlet
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-quadlet
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_quadlet.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-quadlet "${VERSION}"
+
+      - name: Authenticate boxferry-runtime to crates.io
+        id: auth_runtime
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-runtime
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_runtime.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-runtime "${VERSION}"
+
+      - name: Authenticate boxferry-docker to crates.io
+        id: auth_docker
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-docker
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_docker.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-docker "${VERSION}"
+
+      - name: Authenticate boxferry-podman to crates.io
+        id: auth_podman
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-podman
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_podman.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-podman "${VERSION}"
+
+      - name: Authenticate boxferry to crates.io
+        id: auth_facade
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_facade.outputs.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry "${VERSION}"
+
+      - name: Download published release packages and build checksums
+        shell: bash
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          artifact_directory=target/release-artifacts
+          mkdir -p "${artifact_directory}"
+          packages=(
+            boxferry-model
+            boxferry-engine
+            boxferry-compose
+            boxferry-quadlet
+            boxferry-runtime
+            boxferry-docker
+            boxferry-podman
+            boxferry
+          )
+          archive_names=()
+          for package in "${packages[@]}"; do
+            archive_name="${package}-${VERSION}.crate"
+            archive="${artifact_directory}/${archive_name}"
+            curl --proto '=https' \
+              --tlsv1.2 \
+              --fail \
+              --location \
+              --silent \
+              --show-error \
+              --user-agent 'BoxFerry release workflow (+https://github.com/Strukturpiloten/boxferry)' \
+              --retry 12 \
+              --retry-all-errors \
+              --retry-delay 5 \
+              --connect-timeout 10 \
+              --max-time 180 \
+              --output "${archive}" \
+              "https://crates.io/api/v1/crates/${package}/${VERSION}/download"
+            archive_names+=("${archive_name}")
+          done
+          cd "${artifact_directory}"
+          sha256sum "${archive_names[@]}" > SHA256SUMS
+
+      - name: Attest release packages
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: target/release-artifacts/boxferry*.crate
+
+      - name: Upload draft GitHub release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+          UPLOAD_URL: ${{ steps.release.outputs.upload_url }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          upload_asset() {
+            local asset_path="$1"
+            local content_type="$2"
+            local asset_name="${asset_path##*/}"
+            local response
+            test -f "${asset_path}"
+            if [[ ! "${asset_name}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+              echo "Unsafe release asset name: ${asset_name}" >&2
+              return 1
+            fi
+            response="$(
+              curl --proto '=https' \
+                --tlsv1.2 \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --connect-timeout 10 \
+                --max-time 120 \
+                --request POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                --header "Content-Type: ${content_type}" \
+                --data-binary "@${asset_path}" \
+                "${UPLOAD_URL}?name=${asset_name}"
+            )"
+            jq --exit-status --arg name "${asset_name}" \
+              '.name == $name and .state == "uploaded" and (.id | type == "number")' \
+              <<< "${response}" >/dev/null
+          }
+
+          expected_upload_url="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets"
+          if [[ "${UPLOAD_URL}" != "${expected_upload_url}" ]]; then
+            echo "Release asset upload URL does not match the created release." >&2
+            exit 1
+          fi
+
+          for package in boxferry-model boxferry-engine boxferry-compose boxferry-quadlet boxferry-runtime boxferry-docker boxferry-podman boxferry; do
+            upload_asset "target/release-artifacts/${package}-${VERSION}.crate" "application/gzip"
+          done
+          upload_asset target/release-artifacts/SHA256SUMS text/plain
+
+      - name: Publish immutable GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          jq --null-input '{draft: false, make_latest: "true"}' |
+            gh api --method PATCH \
+              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              --input - \
+              --jq 'if .draft == false then .html_url else error("GitHub release remained a draft") end'

@@ -1,25 +1,43 @@
 # Release policy
 
-BoxFerry is not publishable yet: every workspace package deliberately has `publish = false`.
-The supported facade, model, engine, and future adapter crates inherit one lockstep version from
-the workspace `Cargo.toml`.
+BoxFerry publishes eight crates in one lockstep version. The manual `Release` workflow validates
+the default branch, creates an annotated tag and draft GitHub release, publishes through crates.io
+trusted publishing, attaches attested crate archives and checksums, and then publishes the GitHub
+release. It never uses a long-lived registry token.
 
-Library publication is not blocked on the CLI becoming feature-complete. It is blocked on the
-corresponding crate having a useful public API, documentation, tests, package metadata, package
-content review, and compliance with the [pre-1.0 compatibility policy](api-stability.md). The
-intended publication order is:
+## First-time setup
 
-1. `boxferry-model` and `boxferry-engine` after T4.
-2. `boxferry-compose` and `boxferry-quadlet` with the supported T5/T6 mappings.
-3. `boxferry-runtime` after both native runtime adapters have exercised its public contract.
-4. The `boxferry` facade and executable with the first useful end-to-end conversion.
+1. Create a protected GitHub environment named `release`; require review and restrict it to the
+   default branch.
+2. On crates.io, add a pending trusted publisher for each crate listed below. Use organization
+   `Strukturpiloten`, repository `boxferry`, workflow `release.yml`, and environment `release`.
+3. Merge the prepared release metadata, then run **Actions → Release → Run workflow** from the
+   default branch. Do not create the tag manually.
 
-Workspace dependencies use both a local `path` and the matching released `version`, so packaged
-crates resolve through crates.io. Publication automation must respect dependency order and verify
-each packaged crate independently.
+Pending trusted publishers are required because 0.1.1 is the first crates.io version. Configure
+all eight immediately before the release so none expire during setup.
 
-Each published crate needs its own crates.io ownership establishment and trusted-publisher
-configuration. Long-lived registry tokens must not remain in GitHub after that bootstrap. Binary
-release automation is a distinct pipeline: it must derive versions from Cargo metadata, use a
-protected `release` environment, pin every third-party GitHub Action by exact version and commit,
-attest platform artifacts, publish checksums, and create an immutable GitHub release.
+## Publication order
+
+1. `boxferry-model`
+2. `boxferry-engine`
+3. `boxferry-compose`
+4. `boxferry-quadlet`
+5. `boxferry-runtime`
+6. `boxferry-docker`
+7. `boxferry-podman`
+8. `boxferry`
+
+The workflow waits for each version to become visible in the registry before publishing a
+dependent crate. A rerun skips versions already present on crates.io and resumes the same release;
+it refuses tags or published GitHub releases that point elsewhere.
+
+## Preparing later releases
+
+- Update the workspace version and every internal dependency requirement together.
+- Add a concise `CHANGELOG.md` entry and `docs/releases/<version>.md`.
+- Run the canonical checks and review `cargo package --list` for every crate.
+- Use a pre-1.0 minor version for intentional public breaks and include migration notes.
+
+Repository-only tools remain unpublished. Binary bundles are separate future artifacts; the
+0.1.1 workflow publishes the Rust crates and the installable `boxferry` binary they contain.

@@ -1,16 +1,19 @@
 [package]
 name = "boxferry-engine"
-description = "Conversion planning, policy, capability, and diagnostic engine for BoxFerry"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+description = "Conversion planning, policy, capability, and diagnostic engine for BoxFerry"
+readme = "README.md"
 homepage.workspace = true
 repository.workspace = true
-publish = false
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = true
 
 [dependencies]
-boxferry-model = { path = "../boxferry-model", version = "0.1.0" }
+boxferry-model = { path = "../boxferry-model", version = "0.1.1" }
 
 [lints]
 workspace = true

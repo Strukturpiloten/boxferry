@@ -1,7 +1,7 @@
 # Compose exporter
 
 `boxferry-compose` maps a neutral `Application` into deterministic Compose YAML through
-ComposeLens 0.1.13. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
+ComposeLens 0.1.15. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
 `DOCKER_COMPOSE_TARGET`, and `PODMAN_COMPOSE_TARGET` through the additive `compose` feature.
 
 ## Target selection
@@ -83,7 +83,7 @@ Current compatibility-sensitive constructs are tag-plus-digest images, `host-gat
 user-namespace values, and short-form SELinux relabeling. SCTP syntax is generated but remains an
 unsupported outcome until the selected provider/runtime pair has reviewed execution evidence.
 
-The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.13 output:
+The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.15 output:
 
 - a primary group without a primary user;
 - environment values that must be absent;

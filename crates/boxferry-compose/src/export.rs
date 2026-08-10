@@ -238,14 +238,14 @@ impl<'a> Mapping<'a> {
         for config in self.application.configs() {
             self.unsupported(
                 &format!("configs.{}", config.value().name().as_str()),
-                "ComposeLens 0.1.13 generation does not yet expose top-level config definitions",
+                "the current Compose generation boundary does not yet expose top-level config definitions",
                 config.origins(),
             );
         }
         for secret in self.application.secrets() {
             self.unsupported(
                 &format!("secrets.{}", secret.value().name().as_str()),
-                "ComposeLens 0.1.13 generation does not yet expose top-level secret definitions",
+                "the current Compose generation boundary does not yet expose top-level secret definitions",
                 secret.origins(),
             );
         }
@@ -1696,28 +1696,28 @@ impl<'a> Mapping<'a> {
         if let Some(healthcheck) = service.healthcheck() {
             self.unsupported(
                 &format!("{service_subject}.healthcheck"),
-                "ComposeLens 0.1.13 generation does not yet expose health-check fields",
+                "the current Compose generation boundary does not yet expose health-check fields",
                 healthcheck.origins(),
             );
         }
         for (index, dependency) in service.dependencies().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.dependencies[{index}]"),
-                "ComposeLens 0.1.13 generation does not yet expose service dependencies",
+                "the current Compose generation boundary does not yet expose service dependencies",
                 dependency.origins(),
             );
         }
         for (index, grant) in service.config_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.config_grants[{index}]"),
-                "ComposeLens 0.1.13 generation does not yet expose service config grants",
+                "the current Compose generation boundary does not yet expose service config grants",
                 grant.origins(),
             );
         }
         for (index, grant) in service.secret_grants().iter().enumerate() {
             self.unsupported(
                 &format!("{service_subject}.secret_grants[{index}]"),
-                "ComposeLens 0.1.13 generation does not yet expose service secret grants",
+                "the current Compose generation boundary does not yet expose service secret grants",
                 grant.origins(),
             );
         }

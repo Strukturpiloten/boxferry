@@ -1,18 +1,21 @@
 [package]
 name = "boxferry-docker"
-description = "Docker Engine inspection decoding for BoxFerry runtime reconstruction"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+description = "Docker Engine inspection decoding for BoxFerry runtime reconstruction"
+readme = "README.md"
 homepage.workspace = true
 repository.workspace = true
-publish = false
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = true
 
 [dependencies]
-boxferry-engine = { path = "../boxferry-engine", version = "0.1.0" }
-boxferry-model = { path = "../boxferry-model", version = "0.1.0" }
-boxferry-runtime = { path = "../boxferry-runtime", version = "0.1.0" }
+boxferry-engine = { path = "../boxferry-engine", version = "0.1.1" }
+boxferry-model = { path = "../boxferry-model", version = "0.1.1" }
+boxferry-runtime = { path = "../boxferry-runtime", version = "0.1.1" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 

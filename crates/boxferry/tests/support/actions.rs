@@ -225,7 +225,7 @@ pub(crate) fn validate_action_pins(repository_root: &Path) -> Result<(), String>
 
             if !is_immutable_versioned_action(reference) {
                 errors.push(format!(
-                    "{}:{} must use owner/action@<40-character SHA> # v<major>.<minor>.<patch>",
+                    "{}:{} must use owner/action@<40-character SHA> # <exact release tag>",
                     path.display(),
                     index + 1
                 ));
@@ -285,7 +285,16 @@ fn is_immutable_versioned_action(reference: &str) -> bool {
         && sha
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        && is_exact_version(version.trim())
+        && is_exact_action_release(version.trim())
+}
+
+fn is_exact_action_release(version: &str) -> bool {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    let core = version.split_once('-').map_or(version, |(core, _prerelease)| core);
+    let core = core.split_once('+').map_or(core, |(core, _build)| core);
+    let components: Vec<_> = core.split('.').collect();
+
+    matches!(components.len(), 2 | 3) && components.into_iter().all(is_ascii_number)
 }
 
 fn is_exact_version(version: &str) -> bool {
@@ -320,6 +329,13 @@ mod tests {
     fn accepts_a_full_sha_with_an_exact_version() {
         assert!(is_immutable_versioned_action(
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"
+        ));
+    }
+
+    #[test]
+    fn accepts_an_exact_two_component_action_release() {
+        assert!(is_immutable_versioned_action(
+            "owner/action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9"
         ));
     }
 
