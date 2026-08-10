@@ -25,6 +25,7 @@ const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry",
 ];
 const CRATES_IO_AUTH_ACTION: &str = "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5";
+const CRATES_IO_BOOTSTRAP_SECRET: &str = "secrets.CRATES_IO_BOOTSTRAP_TOKEN";
 
 #[test]
 fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
@@ -123,13 +124,7 @@ fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
     let script = fs::read_to_string(&script_path)
         .map_err(|error| format!("failed to read {}: {error}", script_path.display()))?;
 
-    for forbidden in [
-        "CRATES_IO_API_TOKEN",
-        "CRATES_IO_BOOTSTRAP_TOKEN",
-        "cargo login",
-        "--token",
-        "secrets.",
-    ] {
+    for forbidden in ["CRATES_IO_API_TOKEN", "cargo login", "--token"] {
         if workflow.contains(forbidden) || script.contains(forbidden) {
             return Err(format!(
                 "release automation contains forbidden credential path `{forbidden}`"
@@ -137,8 +132,27 @@ fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
         }
     }
 
+    let bootstrap_references = workflow.matches(CRATES_IO_BOOTSTRAP_SECRET).count();
+    let secret_references = workflow.matches("secrets.").count();
+    if bootstrap_references != PUBLISHED_PACKAGES.len() + 1
+        || secret_references != bootstrap_references
+        || script.contains("CRATES_IO_BOOTSTRAP_TOKEN")
+        || script.contains("secrets.")
+    {
+        return Err("release bootstrap must use only the exact scoped GitHub environment secret".to_owned());
+    }
+    if workflow
+        .matches("if: steps.auth_mode.outputs.bootstrap != 'true'")
+        .count()
+        != PUBLISHED_PACKAGES.len()
+        || workflow.matches("|| secrets.CRATES_IO_BOOTSTRAP_TOKEN").count() != PUBLISHED_PACKAGES.len()
+        || !workflow.contains("if [[ \"${VERSION}\" != \"0.1.1\" ]]")
+    {
+        return Err("release bootstrap must be limited to 0.1.1 and preserve trusted publishing".to_owned());
+    }
+
     if workflow.matches(CRATES_IO_AUTH_ACTION).count() != PUBLISHED_PACKAGES.len() {
-        return Err("every published crate must receive a fresh trusted-publishing token".to_owned());
+        return Err("every published crate must declare a fresh trusted-publishing token path".to_owned());
     }
     if script.matches("cargo publish --locked --package").count() != 1 {
         return Err("the publication helper must contain one locked package command".to_owned());
