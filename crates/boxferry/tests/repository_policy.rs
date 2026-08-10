@@ -25,6 +25,7 @@ const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry",
 ];
 const CRATES_IO_AUTH_ACTION: &str = "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5";
+const CRATES_IO_BOOTSTRAP_SECRET: &str = "secrets.CRATES_IO_BOOTSTRAP_TOKEN";
 
 #[test]
 fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
@@ -131,8 +132,7 @@ fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
         }
     }
 
-    const BOOTSTRAP_SECRET: &str = "secrets.CRATES_IO_BOOTSTRAP_TOKEN";
-    let bootstrap_references = workflow.matches(BOOTSTRAP_SECRET).count();
+    let bootstrap_references = workflow.matches(CRATES_IO_BOOTSTRAP_SECRET).count();
     let secret_references = workflow.matches("secrets.").count();
     if bootstrap_references != PUBLISHED_PACKAGES.len() + 1
         || secret_references != bootstrap_references
