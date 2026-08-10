@@ -1,0 +1,22 @@
+schema = 1
+id = "compose-import-core"
+suite = "adapter-contract"
+description = "Protects the first lossless multi-file Compose-to-BoxFerry model mapping and explicit profile selection."
+secrets_reviewed = true
+files = ["compose.yaml", "compose.override.yaml"]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "No process environment is read; the default empty profile request excludes the worker service."
+
+[expectations]
+summary = "Merged service, execution-context, health-check, host mapping, resource, port, network, mount, SELinux, image, profile, and provenance intent imports exactly."
+
+[extensions.compose]
+source-id = 71
+active-profiles = []

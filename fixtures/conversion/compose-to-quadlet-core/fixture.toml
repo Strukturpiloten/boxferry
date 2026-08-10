@@ -1,0 +1,33 @@
+schema = 1
+id = "compose-to-quadlet-core"
+suite = "conversion"
+description = "Protects the first policy-controlled Compose-to-Quadlet multi-file conversion, including execution context, health checks, service labels, and explicit host mappings."
+secrets_reviewed = true
+files = [
+  "compose.yaml",
+  "compose.override.yaml",
+  "frontend.network",
+  "data.volume",
+  "web.container",
+  "expected-diagnostics.txt",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "The empty Compose profile selection excludes worker; Podman target is 5.4.0 through 6.0.2; no host environment or relative-path base is supplied."
+
+[expectations]
+summary = "Supported execution-context, health-check, service-label, host-mapping, and single-network alias intent produces three validated Quadlet files; start_interval, host environment resolution, and relative bind sources require AllowPartial and stable diagnostics."
+
+[extensions.compose]
+source-ids = [91, 92]
+active-profiles = []
+
+[extensions.quadlet]
+podman-minimum-version = "5.4.0"
+podman-maximum-version = "6.0.2"

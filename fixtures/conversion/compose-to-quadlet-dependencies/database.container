@@ -1,0 +1,4 @@
+[Container]
+Image=example.invalid/database:1
+HealthCmd=["CMD","true"]
+Notify=healthy

@@ -1,0 +1,12 @@
+[
+  {
+    "Id": "pod-runtime-id-app",
+    "Name": "app-pod",
+    "Containers": [
+      {
+        "Id": "container-runtime-id-web"
+      }
+    ],
+    "CreateCommand": ["podman", "pod", "create", "--name", "app-pod"]
+  }
+]

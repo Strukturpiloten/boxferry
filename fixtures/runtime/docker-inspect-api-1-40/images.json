@@ -1,0 +1,15 @@
+[
+  {
+    "Id": "sha256:image-runtime-id-web",
+    "RepoTags": ["registry.example.invalid/team/web:1.2"],
+    "RepoDigests": ["registry.example.invalid/team/web@sha256:abcd"],
+    "Config": {
+      "Env": ["BASE=image"],
+      "Cmd": ["server"],
+      "Entrypoint": ["/usr/local/bin/entrypoint"],
+      "User": "1000:1000",
+      "WorkingDir": "/srv/app",
+      "Labels": {"org.opencontainers.image.title": "fixture"}
+    }
+  }
+]

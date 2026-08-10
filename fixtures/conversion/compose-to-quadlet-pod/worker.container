@@ -1,0 +1,7 @@
+[Unit]
+Requires=web.service
+After=web.service
+
+[Container]
+Image=example.invalid/worker:1
+Pod=ferry-pod.pod

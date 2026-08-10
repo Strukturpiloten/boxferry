@@ -1,0 +1,28 @@
+schema = 1
+id = "podman-inspect-5-4"
+suite = "runtime"
+description = "Protects the reviewed Podman 5.4 inspect boundary and representative resource relationships."
+secrets_reviewed = true
+files = [
+  "containers.json",
+  "images.json",
+  "networks.json",
+  "pods.json",
+  "volumes.json",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "Sanitized minimal JSON models observed native Podman 5.4 inspect key casing and fields; no runtime or credentials are required."
+
+[expectations]
+summary = "Image defaults, effective command/environment/metadata/user/working-directory/read-only-root and retry-limited restart state, tag-plus-digest image names, ports, SELinux mounts, aliases, pod membership, and creation evidence decode without exposing raw runtime identities."
+
+[extensions.podman]
+version = "5.4.0"
+source-review = "Podman v5.4.2 libpod/define/container_inspect.go and versioned inspect manuals"

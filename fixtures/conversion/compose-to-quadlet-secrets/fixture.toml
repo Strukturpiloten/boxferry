@@ -1,0 +1,31 @@
+schema = 1
+id = "compose-to-quadlet-secrets"
+suite = "conversion"
+description = "Protects exact external Podman secret grants and explicit manual actions for Compose configs and application-owned secret material."
+secrets_reviewed = true
+files = [
+  "compose.yaml",
+  "web.container",
+  "expected-diagnostics.txt",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "No Compose profiles are active; external Podman secrets already exist; Podman target is 5.4.0 through 6.0.2; LOCAL_PASSWORD is a source variable name and is never resolved by the test."
+
+[expectations]
+summary = "External short and long secret grants produce reviewed Secret entries; a custom external name retains the Compose default target; config lifecycle and application-owned secret materialization require AllowPartial with stable diagnostics."
+
+[extensions.compose]
+source-ids = [95]
+active-profiles = []
+
+[extensions.quadlet]
+podman-minimum-version = "5.4.0"
+podman-maximum-version = "6.0.2"
+grouping-policy = "separate-containers"

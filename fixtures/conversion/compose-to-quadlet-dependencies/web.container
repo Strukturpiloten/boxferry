@@ -1,0 +1,8 @@
+[Unit]
+Requires=database.service
+After=database.service
+Wants=cache.service
+After=cache.service
+
+[Container]
+Image=example.invalid/web:1

@@ -1,0 +1,32 @@
+schema = 1
+id = "compose-to-quadlet-dependencies"
+suite = "conversion"
+description = "Protects exact required, optional, and health-gated Compose service dependencies in separate Quadlet containers."
+secrets_reviewed = true
+files = [
+  "compose.yaml",
+  "database.container",
+  "cache.container",
+  "web.container",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "No Compose profiles or process environment are active; separate containers target Podman 5.4.0 through 6.0.2."
+
+[expectations]
+summary = "Required and optional startup edges render as Requires/Wants plus After; a healthy edge additionally enables Notify=healthy on the explicitly health-checked target service, with no compatibility losses."
+
+[extensions.compose]
+source-ids = [94]
+active-profiles = []
+
+[extensions.quadlet]
+podman-minimum-version = "5.4.0"
+podman-maximum-version = "6.0.2"
+grouping-policy = "separate-containers"

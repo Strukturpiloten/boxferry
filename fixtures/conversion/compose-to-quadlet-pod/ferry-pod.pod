@@ -1,0 +1,7 @@
+[Pod]
+PodName=ferry-pod
+UserNS=keep-id
+AddHost=host.docker.internal:host-gateway
+PublishPort=8080:80/tcp
+PublishPort=9090:90/tcp
+Network=frontend.network

@@ -1,0 +1,15 @@
+name: dependency-demo
+services:
+  database:
+    image: example.invalid/database:1
+    healthcheck:
+      test: ["CMD", "true"]
+  cache:
+    image: example.invalid/cache:1
+  web:
+    image: example.invalid/web:1
+    depends_on:
+      database:
+        condition: service_healthy
+      cache:
+        required: false

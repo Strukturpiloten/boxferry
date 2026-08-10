@@ -1,0 +1,19 @@
+[package]
+name = "boxferry-quadlet"
+description = "QuadletLens adapter for the BoxFerry application model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+boxferry-engine = { path = "../boxferry-engine", version = "0.1.0" }
+boxferry-model = { path = "../boxferry-model", version = "0.1.0" }
+quadlet-lens = { version = "0.1.11", default-features = false }
+serde_json = "1.0.151"
+
+[lints]
+workspace = true

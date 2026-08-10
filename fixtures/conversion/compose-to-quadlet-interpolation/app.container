@@ -1,0 +1,7 @@
+[Container]
+Image=example.invalid/app:2.1
+Environment=TOKEN=explicit-secret
+Environment=UNAUTHORIZED=safe-default
+
+[Service]
+Restart=no

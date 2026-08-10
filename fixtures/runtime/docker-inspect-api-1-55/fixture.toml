@@ -1,0 +1,27 @@
+schema = 1
+id = "docker-inspect-api-1-55"
+suite = "runtime"
+description = "Protects the current reviewed Docker Engine API 1.55 inspect boundary."
+secrets_reviewed = true
+files = [
+  "containers.json",
+  "images.json",
+  "networks.json",
+  "volumes.json",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "Sanitized minimal JSON models documented Docker Engine API 1.55 inspect fields; no daemon or credentials are required."
+
+[expectations]
+summary = "The newest reviewed additive inspect shape is accepted while configuration outside the neutral model is reported."
+
+[extensions.docker]
+api-version = "1.55"
+source-review = "Docker Engine API version-history schema for v1.55 and Docker Engine 29.7.1 release documentation"

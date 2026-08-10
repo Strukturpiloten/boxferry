@@ -1,0 +1,175 @@
+schema = 1
+reviewed = "2026-08-05"
+
+# The upstream files are not vendored. Each entry identifies one immutable Git commit and blob.
+# `cargo ci-real-world-compose` retrieves those exact files into a temporary directory.
+
+[[projects]]
+id = "paperless-ngx"
+tier = "baseline"
+repository = "paperless-ngx/paperless-ngx"
+revision = "47727de11673c2a08d27b144048bd5f1a2ac8179"
+path = "docker/compose/docker-compose.postgres.yml"
+blob_sha = "705432b67cd20409f19c79b6b27ceaa347ced438"
+license = "GPL-3.0-only"
+minimum_services = 3
+compose_fields = ["depends_on", "env_file", "environment", "image", "ports", "restart", "volumes"]
+goals = [
+  "baseline multi-service application",
+  "host and named volumes",
+  "environment file boundary",
+  "restart policy",
+]
+
+[[projects]]
+id = "immich"
+tier = "migration"
+repository = "immich-app/immich"
+revision = "1c7c28bb0d5c4a2edba062806efff50921b489b2"
+path = "docker/docker-compose.yml"
+blob_sha = "4bcf52ca6e4353a822165647481f7b2205f84237"
+license = "AGPL-3.0-only"
+minimum_services = 4
+compose_fields = ["container_name", "depends_on", "env_file", "healthcheck", "image", "restart", "shm_size", "volumes"]
+goals = [
+  "tag plus digest image references",
+  "environment interpolation",
+  "disabled health checks",
+  "shared-memory sizing",
+]
+
+[[projects]]
+id = "librechat"
+tier = "migration"
+repository = "danny-avila/LibreChat"
+revision = "120ee2afa6579fa1efa28dfb69d99fa7e9a4c040"
+path = "docker-compose.yml"
+blob_sha = "0fada4bb69c1798f59af2b51b727dadd0b5a5741"
+license = "MIT"
+minimum_services = 5
+compose_fields = ["command", "container_name", "depends_on", "env_file", "extra_hosts", "ports", "restart", "user", "volumes"]
+goals = [
+  "host.docker.internal host-gateway",
+  "nested and empty-default interpolation",
+  "short and long bind syntax",
+  "deferred user and group identity",
+]
+
+[[projects]]
+id = "mattermost"
+tier = "migration"
+repository = "mattermost/docker"
+revision = "497414659ee7127677d2b91b44bb4f3ea9d14695"
+path = "docker-compose.yml"
+blob_sha = "6aaea680c273727d7ad8d5137284ad63f0f21f4c"
+license = "Apache-2.0"
+minimum_services = 2
+compose_fields = ["depends_on", "environment", "mem_limit", "read_only", "restart", "security_opt", "tmpfs", "volumes"]
+goals = [
+  "host-resolved environment variables",
+  "read-only root filesystems",
+  "memory limits",
+  "temporary filesystems and security options",
+]
+
+[[projects]]
+id = "nextcloud"
+tier = "migration"
+repository = "nextcloud/docker"
+revision = "4de1eed65a44c61ecce601ef1d27abd2059b52e6"
+path = ".examples/docker-compose/with-nginx-proxy/postgres/fpm/compose.yaml"
+blob_sha = "df1ee22c4845ea4fa8c8cbad6e80f689bfc99145"
+license = "AGPL-3.0-only"
+minimum_services = 6
+compose_fields = ["build", "depends_on", "entrypoint", "env_file", "labels", "networks", "ports", "restart", "volumes"]
+goals = [
+  "short-volume SELinux z and Z modes",
+  "build versus image services",
+  "entrypoint overrides",
+  "external proxy network",
+]
+
+[[projects]]
+id = "plausible"
+tier = "migration"
+repository = "plausible/community-edition"
+revision = "ec6c4da776547516d8f48159ce1a704df4f475ad"
+path = "compose.yml"
+blob_sha = "a4af5c815985397207201254d9cbf432e2ed25fc"
+license = "MIT"
+minimum_services = 3
+compose_fields = ["command", "depends_on", "environment", "healthcheck", "restart", "ulimits", "volumes"]
+goals = [
+  "health-gated dependencies",
+  "shell commands",
+  "ulimits",
+  "host-resolved environment variables",
+]
+
+[[projects]]
+id = "apache-superset"
+tier = "stress"
+repository = "apache/superset"
+revision = "816f37f5b97b2e060a30cc53eaa6ac87f58320b3"
+path = "docker-compose.yml"
+blob_sha = "d3a79aeef905f241fea14f17c23be0c147493feb"
+license = "Apache-2.0"
+minimum_services = 8
+compose_fields = ["build", "command", "depends_on", "env_file", "extra_hosts", "healthcheck", "network_mode", "profiles", "restart", "user", "volumes"]
+goals = [
+  "YAML anchors aliases and merge keys",
+  "long env_file syntax with required flags",
+  "profile selection",
+  "host-gateway and multiline shell commands",
+]
+
+[[projects]]
+id = "appwrite"
+tier = "stress"
+repository = "appwrite/appwrite"
+revision = "9595616bdad93e3e2579348afea645f244a9062c"
+path = "docker-compose.yml"
+blob_sha = "3b0d5ca475d3eceb65536ee5e8b86c1d63470926"
+license = "BSD-3-Clause"
+minimum_services = 20
+compose_fields = ["command", "container_name", "depends_on", "entrypoint", "extra_hosts", "healthcheck", "labels", "logging", "networks", "stop_signal", "volumes"]
+goals = [
+  "large service graph",
+  "extension anchors and repeated service labels",
+  "Docker socket bind mounts",
+  "logging and lifecycle controls",
+]
+
+[[projects]]
+id = "mailcow"
+tier = "stress"
+repository = "mailcow/mailcow-dockerized"
+revision = "06424670fa5d60fee851f58bfc49f66086d5f0a6"
+path = "docker-compose.yml"
+blob_sha = "4742fef17eda69c8c1d08f2a23a6feb1351e500e"
+license = "GPL-3.0-only"
+minimum_services = 15
+compose_fields = ["cap_add", "dns", "entrypoint", "labels", "network_mode", "privileged", "security_opt", "stop_grace_period", "sysctls", "tmpfs", "tty", "ulimits", "volumes"]
+goals = [
+  "static network addresses and aliases",
+  "capabilities privileged mode and security options",
+  "DNS sysctls and ulimits",
+  "large production-oriented topology",
+]
+
+[[projects]]
+id = "supabase"
+tier = "stress"
+repository = "supabase/supabase"
+revision = "9952d6f10fb9a7b2d9d8c3312b279bfab2c4ba96"
+path = "docker/docker-compose.yml"
+blob_sha = "d34a43fe755979029636091503b70d818176abd8"
+license = "Apache-2.0"
+minimum_services = 11
+compose_fields = ["command", "container_name", "depends_on", "entrypoint", "healthcheck", "networks", "ports", "restart", "volumes"]
+goals = [
+  "nested interpolation and provider differences",
+  "large health-gated dependency graph",
+  "network aliases",
+  "mixed command and entrypoint overrides",
+]

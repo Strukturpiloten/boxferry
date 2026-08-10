@@ -1,0 +1,12 @@
+[
+  {
+    "Id": "image-runtime-id-web",
+    "User": "1000",
+    "Config": {
+      "Env": ["BASE=image"],
+      "Cmd": ["server"],
+      "WorkingDir": "/srv/app",
+      "Labels": {"org.opencontainers.image.title": "fixture"}
+    }
+  }
+]
