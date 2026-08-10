@@ -1,17 +1,20 @@
 [package]
 name = "boxferry-runtime"
-description = "Runtime-neutral observation and reconstruction for BoxFerry"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+description = "Runtime-neutral observation and reconstruction for BoxFerry"
+readme = "README.md"
 homepage.workspace = true
 repository.workspace = true
-publish = false
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = true
 
 [dependencies]
-boxferry-engine = { path = "../boxferry-engine", version = "0.1.0" }
-boxferry-model = { path = "../boxferry-model", version = "0.1.0" }
+boxferry-engine = { path = "../boxferry-engine", version = "0.1.1" }
+boxferry-model = { path = "../boxferry-model", version = "0.1.1" }
 
 [lints]
 workspace = true

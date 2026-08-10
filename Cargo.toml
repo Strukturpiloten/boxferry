@@ -13,12 +13,14 @@ members = [
 default-members = ["crates/boxferry"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85.0"
 homepage = "https://www.strukturpiloten.de/"
 repository = "https://github.com/Strukturpiloten/boxferry"
 license = "MPL-2.0"
+keywords = ["containers", "compose", "podman", "quadlet", "migration"]
+categories = ["command-line-utilities", "config", "development-tools"]
 
 [workspace.metadata.strukturpiloten]
 company = "Strukturpiloten OHG"

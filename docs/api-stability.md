@@ -2,14 +2,13 @@
 
 ## Current status
 
-BoxFerry's Rust crates are unpublished pre-release software. A Git dependency can be useful for
-early integration, but a Git revision—not a branch—is the compatibility boundary until the first
-crates.io release. The repository does not promise source compatibility between arbitrary
-unreleased commits.
+BoxFerry 0.1.1 is the first crates.io release. The facade and seven supported component crates use
+one lockstep version and the pre-1.0 contract below. A Git dependency remains bound to its exact
+revision rather than an arbitrary branch.
 
 The additive `compose`, `quadlet`, pure `runtime`, `podman-runtime`, and `docker-runtime` facade
 features are exercised as external callers use them,
-but remain part of this unpublished development contract. Generated Quadlet file contents require
+and are part of this pre-1.0 contract. Generated Quadlet file contents require
 an explicit `QuadletFile::text` call and are redacted from adapter `Debug` output.
 
 ## Planned pre-1.0 contract

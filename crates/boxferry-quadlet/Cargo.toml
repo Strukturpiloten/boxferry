@@ -1,17 +1,20 @@
 [package]
 name = "boxferry-quadlet"
-description = "QuadletLens adapter for the BoxFerry application model"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+description = "QuadletLens adapter for the BoxFerry application model"
+readme = "README.md"
 homepage.workspace = true
 repository.workspace = true
-publish = false
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = true
 
 [dependencies]
-boxferry-engine = { path = "../boxferry-engine", version = "0.1.0" }
-boxferry-model = { path = "../boxferry-model", version = "0.1.0" }
+boxferry-engine = { path = "../boxferry-engine", version = "0.1.1" }
+boxferry-model = { path = "../boxferry-model", version = "0.1.1" }
 quadlet-lens = { version = "0.1.11", default-features = false }
 serde_json = "1.0.151"
 

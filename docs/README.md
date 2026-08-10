@@ -8,7 +8,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Project structure](project-structure.md) — intended Cargo workspace and ownership boundaries
 - [Library API and publication policy](library-api.md) — facade, component crates, features, and CLI parity
 - [Command-line interface](cli.md) — supported commands, safety behavior, and exit status
-- [API stability](api-stability.md) — unpublished and planned pre-1.0 compatibility contracts
+- [API stability](api-stability.md) — published pre-1.0 compatibility contracts
 - [Conversion model](conversion-model.md) — application model, conversion outcomes, and diagnostics
 - [Format coverage](format-coverage.md) — field-by-field pipeline coverage and promotion rules
 - [Compose exporter](compose-adapter.md) — generated fields, provider/runtime selection, and explicit limits

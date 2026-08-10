@@ -393,7 +393,7 @@ boundary for pre-existing external Podman secrets.
 - [ ] Promote corpus-derived gaps into minimal offline conversion and golden fixtures as features
   are implemented.
 - [ ] Stabilize selected library APIs.
-- [ ] Add packaging and signed releases.
+- [x] Add ordered packaging, trusted publishing, checksums, and crate attestations.
 - [ ] Publish compatibility matrices and migration guides.
 - [ ] Establish contributor governance and long-term maintenance policy.
 

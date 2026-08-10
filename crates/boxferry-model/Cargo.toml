@@ -1,13 +1,16 @@
 [package]
 name = "boxferry-model"
-description = "Format-independent application model for BoxFerry"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+description = "Format-independent application model for BoxFerry"
+readme = "README.md"
 homepage.workspace = true
 repository.workspace = true
-publish = false
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = true
 
 [lints]
 workspace = true

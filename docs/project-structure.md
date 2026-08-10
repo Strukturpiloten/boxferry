@@ -43,11 +43,14 @@ boxferry/
 ├── docs/
 │   └── fixture-format.md          # versioned fixture manifest contract
 └── .github/
+    ├── scripts/
+    │   └── publish-crate.sh       # resumable ordered crates.io publication helper
     ├── renovate.json
     └── workflows/
         ├── ci.yml
         ├── docker-runtime-conformance.yml
-        └── podman-runtime-conformance.yml
+        ├── podman-runtime-conformance.yml
+        └── release.yml            # protected lockstep crate publication
 ```
 
 ## Crate publication policy
@@ -58,13 +61,13 @@ boxferry/
   publication once T4 establishes their supported API contracts.
 - Format adapters are independently testable and may be published when their first supported
   native mapping is complete.
-- `boxferry-runtime` is a reusable pure component. It remains unpublished until the observation
-  and reconstruction contract has been exercised by both native runtime adapters.
+- `boxferry-runtime` is a reusable pure component whose observation and reconstruction contract
+  is exercised by both native runtime adapters.
 - Runtime adapters are published only when an embedded caller can use them safely without relying
   on CLI-global state.
 - Test utilities and repository-only tools remain unpublished.
-- Every crate starts with `publish = false`; publication is enabled only with API policy,
-  documentation, package-content checks, and release automation.
+- Publication remains enabled only for crates with API policy, documentation, package-content
+  checks, and release automation.
 - Supported BoxFerry crates use one lockstep pre-1.0 version so cross-crate requirements and
   release notes remain understandable.
 

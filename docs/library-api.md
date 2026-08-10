@@ -56,7 +56,7 @@ shared reconstruction layer. The implemented non-default `podman-runtime` and `d
 features add their independent native inspect decoders and enable `runtime` transitively. Enabling
 one feature must not disable or change another adapter's public behavior.
 
-The first release candidate enables `cli`, `compose`, and `quadlet` by default so
+The 0.1.1 release enables `cli`, `compose`, and `quadlet` by default so
 `cargo install boxferry` builds a useful command. Embedded callers can select a smaller dependency
 surface with `default-features = false` and explicit format features. CI tests the default set,
 no-default core, every supported individual feature, and all features.
@@ -128,9 +128,9 @@ Supported BoxFerry crates use a lockstep version. Workspace path dependencies al
 version so crates.io packages resolve without the repository checkout. Intentional public breaks
 require a new pre-1.0 minor version, migration notes, and an ADR when the architecture changes.
 
-Crates stay `publish = false` until their first useful API and compatibility contract are tested.
-The [release policy](releasing.md) defines publication order; unpublished repository tools and test
-utilities are not part of the public dependency surface.
+The supported crates publish in lockstep after their API and compatibility contracts pass the
+release gates. The [release policy](releasing.md) defines publication order; repository tools and
+test utilities are not part of the public dependency surface.
 
 ## Side-effect contract
 
@@ -155,14 +155,14 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.13;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.9;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.15;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.11;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
 - an optional `docker-runtime` facade feature backed by `boxferry-docker`.
 
-The crates are still `publish = false`; this is a usable development API, not a crates.io release
-promise. Broader native value encoders and the final default feature set remain T5/T6 work.
+Version 0.1.1 establishes this surface as the first crates.io contract. Broader native value
+encoders remain T5/T6 work and continue to use structured fidelity outcomes.
 
 `HostMapping` retains an ordered hostname and raw-preserving `HostAddress`. Its conservative
 classification distinguishes IPv4, bracketed or unbracketed IPv6, the runtime-specific
@@ -276,7 +276,7 @@ Compose-relative path resolution. The Compose exporter preserves ordered short/l
 explicit `required`/`raw` options, and path sensitivity through ComposeLens's validated generator.
 Loading file contents and applying Compose parser semantics remains a separate caller-authorized API.
 
-The importer consumes ComposeLens 0.1.13's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.1.15's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
@@ -307,7 +307,7 @@ group using the group name and rejects missing, multiple, unresolved, external, 
 It remains approximate because structural membership does not itself assert shared namespaces.
 Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
 container restart policies, explicit container names, external secret grants, and service
-metadata labels convert through QuadletLens 0.1.9. `Never`
+metadata labels convert through QuadletLens 0.1.11. `Never`
 maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
 limits remain manual actions. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an
