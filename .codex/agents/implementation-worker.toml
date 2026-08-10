@@ -1,6 +1,6 @@
 name = "implementation_worker"
 description = "Implements one bounded Rust task in exactly one assigned repository."
-model = "gpt-5.6-sol"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

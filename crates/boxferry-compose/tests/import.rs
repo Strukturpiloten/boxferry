@@ -124,6 +124,82 @@ fn imports_the_core_fixture_without_loss_and_excludes_inactive_profiles() -> Res
 }
 
 #[test]
+fn imports_released_container_settings_with_order_and_provenance() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    hostname: web.example\n",
+        "    pids_limit: '00042'\n",
+        "    shm_size: 64m\n",
+        "    cap_drop: [NET_RAW]\n",
+        "    cap_add: [SYS_PTRACE]\n",
+        "    tmpfs: [/run:mode=1777]\n",
+        "    sysctls:\n",
+        "      net.ipv4.ip_forward: '1'\n",
+        "    ulimits:\n",
+        "      nofile:\n",
+        "        soft: 1024\n",
+        "        hard: 4096\n",
+        "    devices: [/dev/fuse:/dev/fuse:rwm]\n",
+        "    stop_signal: SIGTERM\n",
+    );
+    let compose_source_id = ComposeSourceId::new(98);
+    let project = merged_project([(compose_source_id, "settings.compose.yaml", text)])?;
+    let source = ComposeSource::new(project, Identifier::new("settings")?)?
+        .with_source_id(compose_source_id, SourceId::new("settings.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let service = result
+        .application()
+        .and_then(|application| application.services().first())
+        .ok_or("service expected")?
+        .value();
+    assert_eq!(
+        service.hostname().map(|value| value.value().expose()),
+        Some("web.example")
+    );
+    assert_eq!(service.pids_limit().map(|value| value.value().expose()), Some("00042"));
+    assert_eq!(service.shm_size().map(|value| value.value().expose()), Some("64m"));
+    assert_eq!(
+        service.cap_drop().map(|values| values[0].value().expose()),
+        Some("NET_RAW")
+    );
+    assert_eq!(
+        service.cap_add().map(|values| values[0].value().expose()),
+        Some("SYS_PTRACE")
+    );
+    assert_eq!(
+        service.tmpfs().map(|values| values[0].value().expose()),
+        Some("/run:mode=1777")
+    );
+    assert_eq!(
+        service.sysctls().map(|values| values[0].value().name().expose()),
+        Some("net.ipv4.ip_forward")
+    );
+    assert_eq!(
+        service
+            .ulimits()
+            .map(|values| values[0].value().hard().map(|value| value.value().expose())),
+        Some(Some("4096"))
+    );
+    assert!(
+        matches!(service.devices().map(|values| values[0].value()), Some(boxferry_model::Device::Short(value)) if value.expose() == "/dev/fuse:/dev/fuse:rwm")
+    );
+    assert_eq!(
+        service.stop_signal().map(|value| value.value().expose()),
+        Some("SIGTERM")
+    );
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+    Ok(())
+}
+
+#[test]
 fn imports_mapping_extra_hosts_without_requiring_ip_only_values() -> Result<(), Box<dyn Error>> {
     let text = concat!(
         "services:\n",
@@ -1014,6 +1090,55 @@ fn reports_invalid_health_scalars_without_erasing_the_service() -> Result<(), Bo
     assert!(result.outcomes().iter().any(|outcome| {
         outcome.subject() == "services.web.healthcheck.retries" && outcome.kind() == ConversionKind::Invalid
     }));
+    Ok(())
+}
+
+#[test]
+fn retains_invalid_released_settings_without_claiming_exact_source_conversion() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n  web:\n    image: example.invalid/web\n    hostname: web.example\n    uts: host\n",
+        "    cap_add: ['']\n    tmpfs: ['${TMPFS}']\n    sysctls: ['not-an-assignment']\n",
+        "    ulimits:\n      nofile:\n        soft: '${SOFT}'\n        hard: 1024\n",
+        "    devices:\n      - target: /dev/fuse\n    stop_signal: ''\n",
+    );
+    let source_id = ComposeSourceId::new(99);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("invalid-settings.compose.yaml", "."),
+        text,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("invalid-settings")?,
+    )?
+    .with_source_id(source_id, SourceId::new("invalid-settings.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.application().is_some());
+    for subject in [
+        "services.web.hostname",
+        "services.web.cap_add",
+        "services.web.tmpfs",
+        "services.web.sysctls",
+        "services.web.ulimits",
+        "services.web.devices",
+        "services.web.stop_signal",
+    ] {
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() != ConversionKind::Exact),
+            "missing non-exact {subject}: {:#?}",
+            result.outcomes()
+        );
+    }
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code().as_str() == "BFC0005")
+    );
     Ok(())
 }
 

@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt, net::IpAddr};
 
-use crate::{ImageReference, ProtectedString, Sourced};
+use crate::{ImageReference, ProtectedString, Provenance, Sourced};
 
 /// Error raised when constructing an invalid neutral model value.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1151,6 +1151,88 @@ pub struct ServiceDependency {
     required: Option<Sourced<bool>>,
 }
 
+/// One raw-preserving kernel-parameter assignment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KernelParameter {
+    name: ProtectedString,
+    value: ProtectedString,
+}
+
+impl KernelParameter {
+    /// Creates an assignment without interpreting kernel namespaces or privileges.
+    #[must_use]
+    pub const fn new(name: ProtectedString, value: ProtectedString) -> Self {
+        Self { name, value }
+    }
+
+    /// Returns the authored parameter name.
+    #[must_use]
+    pub const fn name(&self) -> &ProtectedString {
+        &self.name
+    }
+
+    /// Returns the authored scalar value spelling.
+    #[must_use]
+    pub const fn value(&self) -> &ProtectedString {
+        &self.value
+    }
+}
+
+/// One raw-preserving resource-limit declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceLimit {
+    name: ProtectedString,
+    soft: Option<Sourced<ProtectedString>>,
+    hard: Option<Sourced<ProtectedString>>,
+}
+
+impl ResourceLimit {
+    /// Creates a limit with independently sourced soft and hard values.
+    #[must_use]
+    pub const fn new(
+        name: ProtectedString,
+        soft: Option<Sourced<ProtectedString>>,
+        hard: Option<Sourced<ProtectedString>>,
+    ) -> Self {
+        Self { name, soft, hard }
+    }
+
+    /// Returns the raw limit name.
+    #[must_use]
+    pub const fn name(&self) -> &ProtectedString {
+        &self.name
+    }
+
+    /// Returns the optional soft value.
+    #[must_use]
+    pub const fn soft(&self) -> Option<&Sourced<ProtectedString>> {
+        self.soft.as_ref()
+    }
+
+    /// Returns the optional hard value.
+    #[must_use]
+    pub const fn hard(&self) -> Option<&Sourced<ProtectedString>> {
+        self.hard.as_ref()
+    }
+}
+
+/// A service device declaration with its authored syntax retained.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Device {
+    /// A raw short device spelling.
+    Short(ProtectedString),
+    /// A long device mapping with independently sourced members.
+    Long {
+        /// Host-device source spelling.
+        source: Option<Sourced<ProtectedString>>,
+        /// Container-device target spelling.
+        target: Option<Sourced<ProtectedString>>,
+        /// Raw permission spelling.
+        permissions: Option<Sourced<ProtectedString>>,
+    },
+}
+
 impl ServiceDependency {
     /// Creates an edge using source-format defaults for readiness, restart propagation, and
     /// requirement strength.
@@ -1226,6 +1308,22 @@ pub struct Service {
     supplementary_groups: Vec<Sourced<ProtectedString>>,
     working_directory: Option<Sourced<ProtectedString>>,
     read_only_root_filesystem: Option<Sourced<bool>>,
+    hostname: Option<Sourced<ProtectedString>>,
+    pids_limit: Option<Sourced<ProtectedString>>,
+    shm_size: Option<Sourced<ProtectedString>>,
+    cap_add: Option<Vec<Sourced<ProtectedString>>>,
+    cap_add_origins: Vec<Provenance>,
+    cap_drop: Option<Vec<Sourced<ProtectedString>>>,
+    cap_drop_origins: Vec<Provenance>,
+    tmpfs: Option<Vec<Sourced<ProtectedString>>>,
+    tmpfs_origins: Vec<Provenance>,
+    sysctls: Option<Vec<Sourced<KernelParameter>>>,
+    sysctls_origins: Vec<Provenance>,
+    ulimits: Option<Vec<Sourced<ResourceLimit>>>,
+    ulimits_origins: Vec<Provenance>,
+    devices: Option<Vec<Sourced<Device>>>,
+    devices_origins: Vec<Provenance>,
+    stop_signal: Option<Sourced<ProtectedString>>,
     environment: Vec<Sourced<EnvironmentVariable>>,
     environment_files: Vec<Sourced<EnvironmentFile>>,
     host_mappings: Vec<Sourced<HostMapping>>,
@@ -1255,6 +1353,22 @@ impl Service {
             supplementary_groups: Vec::new(),
             working_directory: None,
             read_only_root_filesystem: None,
+            hostname: None,
+            pids_limit: None,
+            shm_size: None,
+            cap_add: None,
+            cap_add_origins: Vec::new(),
+            cap_drop: None,
+            cap_drop_origins: Vec::new(),
+            tmpfs: None,
+            tmpfs_origins: Vec::new(),
+            sysctls: None,
+            sysctls_origins: Vec::new(),
+            ulimits: None,
+            ulimits_origins: Vec::new(),
+            devices: None,
+            devices_origins: Vec::new(),
+            stop_signal: None,
             environment: Vec::new(),
             environment_files: Vec::new(),
             host_mappings: Vec::new(),
@@ -1403,6 +1517,194 @@ impl Service {
     #[must_use]
     pub const fn read_only_root_filesystem(&self) -> Option<&Sourced<bool>> {
         self.read_only_root_filesystem.as_ref()
+    }
+
+    /// Sets the explicit container hostname without inferring namespace ownership.
+    pub fn set_hostname(&mut self, hostname: Sourced<ProtectedString>) {
+        self.hostname = Some(hostname);
+    }
+
+    /// Returns the raw-preserving explicit hostname.
+    #[must_use]
+    pub const fn hostname(&self) -> Option<&Sourced<ProtectedString>> {
+        self.hostname.as_ref()
+    }
+
+    /// Sets the raw process-ID limit spelling.
+    pub fn set_pids_limit(&mut self, limit: Sourced<ProtectedString>) {
+        self.pids_limit = Some(limit);
+    }
+
+    /// Returns the raw process-ID limit spelling.
+    #[must_use]
+    pub const fn pids_limit(&self) -> Option<&Sourced<ProtectedString>> {
+        self.pids_limit.as_ref()
+    }
+
+    /// Sets the raw shared-memory size spelling.
+    pub fn set_shm_size(&mut self, size: Sourced<ProtectedString>) {
+        self.shm_size = Some(size);
+    }
+
+    /// Returns the raw shared-memory size spelling.
+    #[must_use]
+    pub const fn shm_size(&self) -> Option<&Sourced<ProtectedString>> {
+        self.shm_size.as_ref()
+    }
+
+    /// Sets the complete ordered capability-add collection; `Some([])` retains an explicit reset.
+    pub fn set_cap_add(&mut self, values: Vec<Sourced<ProtectedString>>) {
+        self.cap_add = Some(values);
+        self.cap_add_origins.clear();
+    }
+
+    /// Sets capability additions with collection-level provenance for an explicit empty/reset value.
+    pub fn set_cap_add_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
+        self.cap_add = Some(values);
+        self.cap_add_origins = origins;
+    }
+
+    /// Returns capability additions, preserving omitted versus explicit-empty state.
+    #[must_use]
+    pub fn cap_add(&self) -> Option<&[Sourced<ProtectedString>]> {
+        self.cap_add.as_deref()
+    }
+
+    /// Returns the collection-level capability-add provenance.
+    #[must_use]
+    pub fn cap_add_origins(&self) -> &[Provenance] {
+        &self.cap_add_origins
+    }
+
+    /// Sets the complete ordered capability-drop collection; `Some([])` retains an explicit reset.
+    pub fn set_cap_drop(&mut self, values: Vec<Sourced<ProtectedString>>) {
+        self.cap_drop = Some(values);
+        self.cap_drop_origins.clear();
+    }
+
+    /// Sets capability removals with collection-level provenance for an explicit empty/reset value.
+    pub fn set_cap_drop_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
+        self.cap_drop = Some(values);
+        self.cap_drop_origins = origins;
+    }
+
+    /// Returns capability removals, preserving omitted versus explicit-empty state.
+    #[must_use]
+    pub fn cap_drop(&self) -> Option<&[Sourced<ProtectedString>]> {
+        self.cap_drop.as_deref()
+    }
+
+    /// Returns the collection-level capability-drop provenance.
+    #[must_use]
+    pub fn cap_drop_origins(&self) -> &[Provenance] {
+        &self.cap_drop_origins
+    }
+
+    /// Sets ordered raw temporary-filesystem declarations.
+    pub fn set_tmpfs(&mut self, values: Vec<Sourced<ProtectedString>>) {
+        self.tmpfs = Some(values);
+        self.tmpfs_origins.clear();
+    }
+
+    /// Sets temporary filesystems with collection-level provenance.
+    pub fn set_tmpfs_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
+        self.tmpfs = Some(values);
+        self.tmpfs_origins = origins;
+    }
+
+    /// Returns temporary-filesystem declarations, preserving explicit-empty state.
+    #[must_use]
+    pub fn tmpfs(&self) -> Option<&[Sourced<ProtectedString>]> {
+        self.tmpfs.as_deref()
+    }
+
+    /// Returns collection-level temporary-filesystem provenance.
+    #[must_use]
+    pub fn tmpfs_origins(&self) -> &[Provenance] {
+        &self.tmpfs_origins
+    }
+
+    /// Sets ordered raw kernel-parameter assignments.
+    pub fn set_sysctls(&mut self, values: Vec<Sourced<KernelParameter>>) {
+        self.sysctls = Some(values);
+        self.sysctls_origins.clear();
+    }
+
+    /// Sets kernel parameters with collection-level provenance.
+    pub fn set_sysctls_with_origins(&mut self, values: Vec<Sourced<KernelParameter>>, origins: Vec<Provenance>) {
+        self.sysctls = Some(values);
+        self.sysctls_origins = origins;
+    }
+
+    /// Returns kernel-parameter assignments, preserving explicit-empty state.
+    #[must_use]
+    pub fn sysctls(&self) -> Option<&[Sourced<KernelParameter>]> {
+        self.sysctls.as_deref()
+    }
+
+    /// Returns collection-level kernel-parameter provenance.
+    #[must_use]
+    pub fn sysctls_origins(&self) -> &[Provenance] {
+        &self.sysctls_origins
+    }
+
+    /// Sets ordered resource limits.
+    pub fn set_ulimits(&mut self, values: Vec<Sourced<ResourceLimit>>) {
+        self.ulimits = Some(values);
+        self.ulimits_origins.clear();
+    }
+
+    /// Sets resource limits with collection-level provenance.
+    pub fn set_ulimits_with_origins(&mut self, values: Vec<Sourced<ResourceLimit>>, origins: Vec<Provenance>) {
+        self.ulimits = Some(values);
+        self.ulimits_origins = origins;
+    }
+
+    /// Returns resource limits, preserving explicit-empty state.
+    #[must_use]
+    pub fn ulimits(&self) -> Option<&[Sourced<ResourceLimit>]> {
+        self.ulimits.as_deref()
+    }
+
+    /// Returns collection-level resource-limit provenance.
+    #[must_use]
+    pub fn ulimits_origins(&self) -> &[Provenance] {
+        &self.ulimits_origins
+    }
+
+    /// Sets ordered short/long device declarations.
+    pub fn set_devices(&mut self, values: Vec<Sourced<Device>>) {
+        self.devices = Some(values);
+        self.devices_origins.clear();
+    }
+
+    /// Sets devices with collection-level provenance.
+    pub fn set_devices_with_origins(&mut self, values: Vec<Sourced<Device>>, origins: Vec<Provenance>) {
+        self.devices = Some(values);
+        self.devices_origins = origins;
+    }
+
+    /// Returns device declarations, preserving explicit-empty state.
+    #[must_use]
+    pub fn devices(&self) -> Option<&[Sourced<Device>]> {
+        self.devices.as_deref()
+    }
+
+    /// Returns collection-level device provenance.
+    #[must_use]
+    pub fn devices_origins(&self) -> &[Provenance] {
+        &self.devices_origins
+    }
+
+    /// Sets the explicit stop-signal spelling.
+    pub fn set_stop_signal(&mut self, signal: Sourced<ProtectedString>) {
+        self.stop_signal = Some(signal);
+    }
+
+    /// Returns the raw explicit stop-signal spelling.
+    #[must_use]
+    pub const fn stop_signal(&self) -> Option<&Sourced<ProtectedString>> {
+        self.stop_signal.as_ref()
     }
 
     /// Appends an environment entry.
@@ -1721,10 +2023,11 @@ fn validate_text(kind: &'static str, value: &str) -> Result<(), ModelError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Application, Config, ConfigMaterial, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
-        HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier, MetadataLabel,
-        ModelError, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecretMaterial,
-        Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
+        Application, Config, ConfigMaterial, Device, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
+        HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
+        KernelParameter, MetadataLabel, ModelError, ResourceGrant, ResourceGrantSyntax, ResourceLimit,
+        ResourceOwnership, RestartPolicy, Secret, SecretMaterial, Service, ServiceDependency,
+        ServiceDependencyCondition, ServiceGroup,
     };
     use crate::{ProtectedString, Sourced};
 
@@ -1760,6 +2063,48 @@ mod tests {
             service.runtime_name().map(|name| name.value().expose()),
             Some("production-web")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn collection_resets_retain_explicit_emptiness_and_clear_stale_origins() -> Result<(), String> {
+        let origin =
+            crate::Provenance::source(crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?);
+        let mut service = Service::new(id("web")?);
+
+        service.set_cap_add_with_origins(Vec::new(), vec![origin.clone()]);
+        service.set_cap_drop_with_origins(Vec::new(), vec![origin.clone()]);
+        service.set_tmpfs_with_origins(Vec::new(), vec![origin.clone()]);
+        service.set_sysctls_with_origins(Vec::new(), vec![origin.clone()]);
+        service.set_ulimits_with_origins(Vec::new(), vec![origin.clone()]);
+        service.set_devices_with_origins(Vec::new(), vec![origin]);
+
+        assert_eq!(service.cap_add().map(<[_]>::len), Some(0));
+        assert_eq!(service.cap_drop().map(<[_]>::len), Some(0));
+        assert_eq!(service.tmpfs().map(<[_]>::len), Some(0));
+        assert_eq!(service.sysctls().map(<[_]>::len), Some(0));
+        assert_eq!(service.ulimits().map(<[_]>::len), Some(0));
+        assert_eq!(service.devices().map(<[_]>::len), Some(0));
+        assert_eq!(service.cap_add_origins().len(), 1);
+        assert_eq!(service.cap_drop_origins().len(), 1);
+        assert_eq!(service.tmpfs_origins().len(), 1);
+        assert_eq!(service.sysctls_origins().len(), 1);
+        assert_eq!(service.ulimits_origins().len(), 1);
+        assert_eq!(service.devices_origins().len(), 1);
+
+        service.set_cap_add(Vec::new());
+        service.set_cap_drop(Vec::new());
+        service.set_tmpfs(Vec::new());
+        service.set_sysctls(Vec::<Sourced<KernelParameter>>::new());
+        service.set_ulimits(Vec::<Sourced<ResourceLimit>>::new());
+        service.set_devices(Vec::<Sourced<Device>>::new());
+
+        assert!(service.cap_add_origins().is_empty());
+        assert!(service.cap_drop_origins().is_empty());
+        assert!(service.tmpfs_origins().is_empty());
+        assert!(service.sysctls_origins().is_empty());
+        assert!(service.ulimits_origins().is_empty());
+        assert!(service.devices_origins().is_empty());
         Ok(())
     }
 

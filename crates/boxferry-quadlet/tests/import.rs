@@ -338,6 +338,58 @@ fn reports_every_unmapped_quadlet_entry_instead_of_dropping_it() -> Result<(), S
 }
 
 #[test]
+fn reports_released_container_settings_until_quadlet_import_mapping_is_defined() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            concat!(
+                "[Container]\nImage=example/web:1\nHostName=web.example\nPidsLimit=42\nShmSize=64m\n",
+                "DropCapability=NET_RAW\nAddCapability=SYS_PTRACE\nTmpfs=/run:mode=1777\n",
+                "Sysctl=net.ipv4.ip_forward=1\nUlimit=nofile=1024:4096\n",
+                "AddDevice=/dev/fuse:/dev/fuse:rwm\nStopSignal=SIGTERM\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let unsupported = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
+        .map(boxferry_engine::ConversionOutcome::subject)
+        .collect::<Vec<_>>();
+    assert_eq!(unsupported.len(), 10);
+    for key in [
+        "HostName",
+        "PidsLimit",
+        "ShmSize",
+        "DropCapability",
+        "AddCapability",
+        "Tmpfs",
+        "Sysctl",
+        "Ulimit",
+        "AddDevice",
+        "StopSignal",
+    ] {
+        assert!(
+            unsupported.iter().any(|subject| subject.ends_with(key)),
+            "missing {key}: {unsupported:?}"
+        );
+    }
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code().as_str() == "BFQ1003")
+    );
+    Ok(())
+}
+
+#[test]
 fn imports_the_shared_command_environment_port_mount_and_network_subset() -> Result<(), String> {
     let source = QuadletSource::parse(
         identifier("example")?,

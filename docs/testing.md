@@ -34,6 +34,13 @@ protected repeatable labels with empty/quoted/literal-specifier values, reserved
 missing services, and cycle rejection. Neutral-model tests separately preserve ordered host
 mappings, the literal `host-gateway` token, and bracketed IPv6 spelling.
 
+Released Compose container-setting coverage additionally exercises all ten `hostname`,
+`pids_limit`, `shm_size`, capability, `tmpfs`, `sysctls`, `ulimits`, `devices`, and `stop_signal`
+fields across the model, effective-project importer, capability-checked Quadlet exporter, and
+unsafe/deferred target boundary. Tests retain raw spelling, order, deduplicated collection and nested-value provenance, explicit-empty
+collections, and protected debug redaction; unsupported exporters report retained intent rather
+than silently discarding it.
+
 The Compose exporter contract suite covers exact provider selection, optional backend runtime
 selection, deterministic parse-back-validated YAML, every field in the first generated subset,
 application/external and unresolved runtime resource lifecycle, runtime-name preservation,

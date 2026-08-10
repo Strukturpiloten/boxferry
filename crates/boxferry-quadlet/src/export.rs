@@ -11,7 +11,7 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, Config, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, Healthcheck,
+    Application, Command, Config, Device, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, Healthcheck,
     HealthcheckCommand, HostAddressKind, HostMapping, Mount, MountSource, NetworkAttachment, Port, Protocol,
     Provenance, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SelinuxRelabel, Service, ServiceDependency,
     ServiceDependencyCondition, Sourced,
@@ -20,7 +20,7 @@ use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
     model::{ContainerKey, NetworkKey, PodKey, QuadletUnitType, VolumeKey},
     path::{PathForm, classify_path},
-    render::{EntryValue, QuadletDocumentBuilder, RenderError, SystemdSection, SystemdUnitKey},
+    render::{EntryValue, PidsLimit, QuadletDocumentBuilder, RenderError, ShmSize, SystemdSection, SystemdUnitKey},
     source::SourceId,
 };
 
@@ -971,6 +971,7 @@ impl<'a> Mapping<'a> {
             self.map_command(&subject, command, &mut builder);
         }
         self.map_execution_context(&subject, service.value(), grouped, &mut builder);
+        self.map_released_container_settings(&subject, service.value(), &mut builder);
         if let Some(restart_policy) = service.value().restart_policy() {
             self.map_restart_policy(&subject, restart_policy, &mut builder);
         }
@@ -1315,6 +1316,300 @@ impl<'a> Mapping<'a> {
             {
                 self.exact(subject, read_only.origins());
             }
+        }
+    }
+
+    fn map_released_container_settings(
+        &mut self,
+        service_subject: &str,
+        service: &Service,
+        builder: &mut QuadletDocumentBuilder,
+    ) {
+        self.map_released_scalars(service_subject, service, builder);
+        self.map_capabilities(service_subject, service, builder);
+        self.map_tmpfs(service_subject, service, builder);
+        self.map_sysctls(service_subject, service, builder);
+        self.map_ulimits(service_subject, service, builder);
+        self.map_devices(service_subject, service, builder);
+        self.map_stop_signal(service_subject, service, builder);
+    }
+
+    fn map_released_scalars(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        if let Some(hostname) = service.hostname() {
+            self.map_raw_container_value(
+                &format!("{service_subject}.hostname"),
+                hostname,
+                hostname.origins(),
+                "quadlet.container.hostname",
+                ContainerKey::HostName,
+                builder,
+                is_safe_hostname,
+                "hostname must be a resolved systemd-safe token and must not rely on host UTS mode",
+            );
+        }
+        if let Some(limit) = service.pids_limit() {
+            let subject = format!("{service_subject}.pids_limit");
+            let value = limit.value().expose();
+            let valid = if value == "-1" {
+                Some(PidsLimit::unlimited().as_str().to_owned())
+            } else {
+                PidsLimit::finite(value).ok().map(|value| value.as_str().to_owned())
+            };
+            self.map_validated_container_value(
+                &subject,
+                limit,
+                valid,
+                "quadlet.container.pids-limit",
+                ContainerKey::PidsLimit,
+                builder,
+                "PID limit must be -1 or a positive ASCII decimal without normalization",
+            );
+        }
+        if let Some(size) = service.shm_size() {
+            let subject = format!("{service_subject}.shm_size");
+            let valid = ShmSize::new(size.value().expose())
+                .ok()
+                .filter(|size| !size.is_unlimited())
+                .map(|size| size.as_str().to_owned());
+            self.map_validated_container_value(
+                &subject,
+                size,
+                valid,
+                "quadlet.container.shm-size",
+                ContainerKey::ShmSize,
+                builder,
+                "shared-memory size must be a positive ASCII decimal with optional b, k, m, or g",
+            );
+        }
+    }
+
+    fn map_tmpfs(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        if let Some(tmpfs) = service.tmpfs() {
+            if tmpfs.is_empty() {
+                self.unsupported(
+                    &format!("{service_subject}.tmpfs"),
+                    "an explicit empty tmpfs collection is retained but has no safe repeatable Quadlet reset encoding",
+                    service.tmpfs_origins(),
+                );
+            }
+            for (index, value) in tmpfs.iter().enumerate() {
+                let origins = collection_item_origins(service.tmpfs_origins(), value);
+                self.map_raw_container_value(
+                    &format!("{service_subject}.tmpfs[{index}]"),
+                    value,
+                    &origins,
+                    "quadlet.container.tmpfs",
+                    ContainerKey::Tmpfs,
+                    builder,
+                    is_safe_tmpfs,
+                    "tmpfs must be a resolved non-empty systemd-safe declaration",
+                );
+            }
+        }
+    }
+
+    fn map_sysctls(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        if let Some(sysctls) = service.sysctls() {
+            if sysctls.is_empty() {
+                self.unsupported(&format!("{service_subject}.sysctls"), "an explicit empty sysctls collection is retained but has no safe repeatable Quadlet reset encoding", service.sysctls_origins());
+            }
+            for (index, sysctl) in sysctls.iter().enumerate() {
+                let subject = format!("{service_subject}.sysctls[{index}]");
+                let origins = collection_item_origins(service.sysctls_origins(), sysctl);
+                let name = sysctl.value().name().expose();
+                let value = sysctl.value().value().expose();
+                if !is_safe_sysctl(name, value) {
+                    self.unsupported(
+                        &subject,
+                        "sysctl must use an unambiguous systemd-safe name=value spelling",
+                        &origins,
+                    );
+                } else if self.capability("quadlet.container.sysctl", &subject, &origins)
+                    && self.push_container(
+                        builder,
+                        ContainerKey::Sysctl,
+                        format!("{name}={value}"),
+                        &subject,
+                        &origins,
+                    )
+                {
+                    self.exact(subject, &origins);
+                }
+            }
+        }
+    }
+
+    fn map_ulimits(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        if let Some(ulimits) = service.ulimits() {
+            if ulimits.is_empty() {
+                self.unsupported(&format!("{service_subject}.ulimits"), "an explicit empty ulimits collection is retained but has no safe repeatable Quadlet reset encoding", service.ulimits_origins());
+            }
+            for (index, limit) in ulimits.iter().enumerate() {
+                let subject = format!("{service_subject}.ulimits[{index}]");
+                let origins = resource_limit_origins(service.ulimits_origins(), limit);
+                let Some(soft) = limit.value().soft() else {
+                    self.unsupported(
+                        &subject,
+                        "ulimit lacks a complete soft/hard scalar representation",
+                        &origins,
+                    );
+                    continue;
+                };
+                let Some(hard) = limit.value().hard() else {
+                    self.unsupported(
+                        &subject,
+                        "ulimit lacks a complete soft/hard scalar representation",
+                        &origins,
+                    );
+                    continue;
+                };
+                let name = limit.value().name().expose();
+                let soft_value = soft.value().expose();
+                let hard_value = hard.value().expose();
+                if !is_safe_ulimit(name, soft_value, hard_value) {
+                    self.unsupported(
+                        &subject,
+                        "ulimit requires a lowercase name and -1 or non-negative ASCII decimal soft/hard values",
+                        &origins,
+                    );
+                } else if self.capability("quadlet.container.ulimit", &subject, &origins)
+                    && self.push_container(
+                        builder,
+                        ContainerKey::Ulimit,
+                        format!("{name}={soft_value}:{hard_value}"),
+                        &subject,
+                        &origins,
+                    )
+                {
+                    self.exact(subject, &origins);
+                }
+            }
+        }
+    }
+
+    fn map_devices(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        if let Some(devices) = service.devices() {
+            if devices.is_empty() {
+                self.unsupported(&format!("{service_subject}.devices"), "an explicit empty devices collection is retained but has no safe repeatable Quadlet reset encoding", service.devices_origins());
+            }
+            for (index, device) in devices.iter().enumerate() {
+                let subject = format!("{service_subject}.devices[{index}]");
+                let origins = device_origins(service.devices_origins(), device);
+                let Some(value) = reviewed_device_value(device.value()) else {
+                    self.unsupported(
+                        &subject,
+                        "device is CDI, opaque, deferred, or not a reviewed host-device spelling",
+                        &origins,
+                    );
+                    continue;
+                };
+                if self.capability("quadlet.container.add-device", &subject, &origins)
+                    && self.push_container(builder, ContainerKey::AddDevice, value, &subject, &origins)
+                {
+                    self.exact(subject, &origins);
+                }
+            }
+        }
+    }
+
+    fn map_stop_signal(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        if let Some(signal) = service.stop_signal() {
+            self.map_raw_container_value(
+                &format!("{service_subject}.stop_signal"),
+                signal,
+                signal.origins(),
+                "quadlet.container.stop-signal",
+                ContainerKey::StopSignal,
+                builder,
+                is_safe_stop_signal,
+                "stop signal must be a non-empty systemd-safe token or number without grammar normalization",
+            );
+        }
+    }
+
+    fn map_capabilities(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        for (field, values, collection_origins, capability, key) in [
+            (
+                "cap_drop",
+                service.cap_drop(),
+                service.cap_drop_origins(),
+                "quadlet.container.drop-capability",
+                ContainerKey::DropCapability,
+            ),
+            (
+                "cap_add",
+                service.cap_add(),
+                service.cap_add_origins(),
+                "quadlet.container.add-capability",
+                ContainerKey::AddCapability,
+            ),
+        ] {
+            let Some(values) = values else {
+                continue;
+            };
+            if values.is_empty() {
+                self.unsupported(
+                    &format!("{service_subject}.{field}"),
+                    "an explicit empty capability collection is retained but has no safe repeatable Quadlet reset encoding",
+                    collection_origins,
+                );
+            }
+            for (index, value) in values.iter().enumerate() {
+                let origins = collection_item_origins(collection_origins, value);
+                self.map_raw_container_value(
+                    &format!("{service_subject}.{field}[{index}]"),
+                    value,
+                    &origins,
+                    capability,
+                    key,
+                    builder,
+                    |value| is_safe_word(value, false),
+                    "capability names must be non-empty systemd-safe values; values are not normalized or reconciled",
+                );
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn map_raw_container_value(
+        &mut self,
+        subject: &str,
+        value: &Sourced<boxferry_model::ProtectedString>,
+        origins: &[Provenance],
+        capability: &str,
+        key: ContainerKey,
+        builder: &mut QuadletDocumentBuilder,
+        validate: impl FnOnce(&str) -> bool,
+        reason: &str,
+    ) {
+        if !validate(value.value().expose()) {
+            self.unsupported(subject, reason, origins);
+        } else if self.capability(capability, subject, origins)
+            && self.push_container(builder, key, value.value().expose(), subject, origins)
+        {
+            self.exact(subject, origins);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn map_validated_container_value(
+        &mut self,
+        subject: &str,
+        value: &Sourced<boxferry_model::ProtectedString>,
+        encoded: Option<String>,
+        capability: &str,
+        key: ContainerKey,
+        builder: &mut QuadletDocumentBuilder,
+        reason: &str,
+    ) {
+        let Some(encoded) = encoded else {
+            self.unsupported(subject, reason, value.origins());
+            return;
+        };
+        if self.capability(capability, subject, value.origins())
+            && self.push_container(builder, key, encoded, subject, value.origins())
+        {
+            self.exact(subject, value.origins());
         }
     }
 
@@ -2549,6 +2844,49 @@ fn dependency_mapping_origins(dependency: &Sourced<ServiceDependency>) -> Vec<Pr
     origins
 }
 
+fn collection_item_origins<T>(collection_origins: &[Provenance], item: &Sourced<T>) -> Vec<Provenance> {
+    let mut origins = collection_origins.to_vec();
+    extend_origins(&mut origins, item.origins());
+    origins
+}
+
+fn resource_limit_origins(
+    collection_origins: &[Provenance],
+    limit: &Sourced<boxferry_model::ResourceLimit>,
+) -> Vec<Provenance> {
+    let mut origins = collection_item_origins(collection_origins, limit);
+    for value in [limit.value().soft(), limit.value().hard()].into_iter().flatten() {
+        extend_origins(&mut origins, value.origins());
+    }
+    origins
+}
+
+fn device_origins(collection_origins: &[Provenance], device: &Sourced<Device>) -> Vec<Provenance> {
+    let mut origins = collection_item_origins(collection_origins, device);
+    if let Device::Long {
+        source,
+        target,
+        permissions,
+    } = device.value()
+    {
+        for value in [source.as_ref(), target.as_ref(), permissions.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            extend_origins(&mut origins, value.origins());
+        }
+    }
+    origins
+}
+
+fn extend_origins(origins: &mut Vec<Provenance>, additional: &[Provenance]) {
+    for origin in additional {
+        if !origins.contains(origin) {
+            origins.push(origin.clone());
+        }
+    }
+}
+
 fn same_host_mappings(left: &[Sourced<HostMapping>], right: &[Sourced<HostMapping>]) -> bool {
     left.len() == right.len()
         && left
@@ -2740,6 +3078,107 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',')
         })
+}
+
+fn is_safe_hostname(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 253
+        && value.is_ascii()
+        && value.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.bytes().next().is_some_and(|byte| byte.is_ascii_alphanumeric())
+                && label.bytes().last().is_some_and(|byte| byte.is_ascii_alphanumeric())
+                && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
+fn is_safe_tmpfs(value: &str) -> bool {
+    is_safe_word(value, false)
+}
+
+fn is_safe_sysctl(name: &str, value: &str) -> bool {
+    !name.is_empty() && !name.contains('=') && is_safe_word(name, false) && is_safe_word(value, true)
+}
+
+fn is_safe_limit_value(value: &str) -> bool {
+    value == "-1" || (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn is_safe_ulimit(name: &str, soft: &str, hard: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| byte.is_ascii_lowercase())
+        && is_safe_limit_value(soft)
+        && is_safe_limit_value(hard)
+}
+
+fn is_safe_stop_signal(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn reviewed_device_value(device: &Device) -> Option<String> {
+    match device {
+        Device::Short(value) => reviewed_device_spelling(value.expose()),
+        Device::Long {
+            source,
+            target,
+            permissions,
+        } => {
+            let source = source.as_ref()?.value().expose();
+            let target = target.as_ref().map(|value| value.value().expose());
+            let permissions = permissions.as_ref().map(|value| value.value().expose());
+            if !is_reviewed_device_component(source)
+                || target.is_some_and(|target| !is_reviewed_device_component(target))
+                || permissions.is_some_and(|permissions| !is_reviewed_device_permissions(permissions))
+            {
+                return None;
+            }
+            let mut rendered = source.to_owned();
+            if let Some(target) = target {
+                rendered.push(':');
+                rendered.push_str(target);
+            }
+            if let Some(permissions) = permissions {
+                target?;
+                rendered.push(':');
+                rendered.push_str(permissions);
+            }
+            Some(rendered)
+        }
+        _ => None,
+    }
+}
+
+fn reviewed_device_spelling(value: &str) -> Option<String> {
+    let mut parts = value.split(':');
+    let source = parts.next()?;
+    let target = parts.next();
+    let permissions = parts.next();
+    if parts.next().is_some()
+        || !is_reviewed_device_component(source)
+        || target.is_some_and(|target| !is_reviewed_device_component(target))
+        || permissions.is_some_and(|permissions| !is_reviewed_device_permissions(permissions))
+        || permissions.is_some() && target.is_none()
+    {
+        return None;
+    }
+    Some(value.to_owned())
+}
+
+fn is_reviewed_device_component(value: &str) -> bool {
+    value.starts_with("/dev/")
+        && value.len() > 5
+        && value.is_ascii()
+        && !value.contains(['$', '%', ':', '\0', '\r', '\n'])
+        && !value.chars().any(char::is_whitespace)
+        && value.split('/').all(|segment| !matches!(segment, "." | ".."))
+}
+
+fn is_reviewed_device_permissions(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| matches!(byte, b'r' | b'w' | b'm'))
 }
 
 fn valid_podman_container_name(value: &str) -> bool {

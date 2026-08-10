@@ -5,27 +5,29 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, Severity,
 };
 use boxferry_model::{
-    Application, Command, Config, ConfigMaterial, EnvironmentFile as NeutralEnvironmentFile,
+    Application, Command, Config, ConfigMaterial, Device, EnvironmentFile as NeutralEnvironmentFile,
     EnvironmentFileFormat as NeutralEnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
     EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration as NeutralHealthcheckDuration,
     HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
-    MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
-    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy as NeutralRestartPolicy, Secret,
-    SecretMaterial, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, SourceSpan, Sourced,
-    Volume,
+    KernelParameter, MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString,
+    Protocol, Provenance, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership,
+    RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
+    ServiceDependencyCondition, SourceSpan, Sourced, Volume,
 };
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
     BooleanValue, ComposeScalar, ConfigDefinition, DependencyCondition as ComposeDependencyCondition,
     EnvironmentFileFormatKind, HealthcheckDuration as ComposeHealthcheckDuration,
-    HealthcheckRetries as ComposeHealthcheckRetries, HealthcheckTest, HealthcheckTestKind, LongPort, LongVolumeMount,
-    MountType, NetworkDefinition, Port as ComposePort, RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition,
-    SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShortPort, ShortVolumeMount,
-    VolumeDefinition, VolumeMount,
+    HealthcheckRetries as ComposeHealthcheckRetries, HealthcheckTest, HealthcheckTestKind, HostnameKind, LimitValue,
+    LongPort, LongVolumeMount, MountType, NetworkDefinition, PidsLimitKind, Port as ComposePort,
+    RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SelinuxRelabel as ComposeSelinuxRelabel,
+    ServiceNetwork, ServiceNetworks, ShmSizeKind, ShmSizeUnit, ShortDeviceKind, ShortPort, ShortVolumeMount,
+    TmpfsItemKind, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
-    ProjectDependsOn, ProjectEnvironment, ProjectEnvironmentFile, ProjectFieldReference, ProjectGrant,
-    ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService, ProjectValue, ProjectView, build_project_view,
+    ProjectDependsOn, ProjectDevice, ProjectEnvironment, ProjectEnvironmentFile, ProjectFieldReference, ProjectGrant,
+    ProjectHealthcheck, ProjectLabels, ProjectResource, ProjectService, ProjectSysctls, ProjectTmpfs,
+    ProjectUlimitValue, ProjectValue, ProjectView, build_project_view,
 };
 use compose_lens::source::SourceSpan as ComposeSpan;
 
@@ -229,6 +231,7 @@ impl<'a> Mapping<'a> {
             service.set_healthcheck(self.map_healthcheck(&subject, healthcheck));
         }
         self.map_execution_context(&subject, native, &mut service);
+        self.map_released_container_settings(&subject, native, &mut service);
         self.map_service_environment(&subject, native, &mut service);
         if let Some(labels) = native.labels() {
             self.map_labels(&subject, labels.value(), &mut service);
@@ -425,6 +428,398 @@ impl<'a> Mapping<'a> {
                 ),
             }
         }
+    }
+
+    fn map_released_container_settings(
+        &mut self,
+        service_subject: &str,
+        native: &ProjectService,
+        service: &mut Service,
+    ) {
+        self.map_hostname_pids_and_shm(service_subject, native, service);
+        self.map_capabilities_and_tmpfs(service_subject, native, service);
+        self.map_sysctls(service_subject, native, service);
+        self.map_ulimits(service_subject, native, service);
+        self.map_devices_and_stop_signal(service_subject, native, service);
+    }
+
+    fn map_hostname_pids_and_shm(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(hostname) = native.hostname() {
+            let subject = format!("{service_subject}.hostname");
+            let value = hostname.value().raw().value();
+            service.set_hostname(
+                self.sourced_provenance(Self::protected(value, hostname.is_sensitive()), hostname.provenance()),
+            );
+            if native
+                .unmodeled_fields()
+                .iter()
+                .any(|field| field.path().last().is_some_and(|name| name == "uts"))
+            {
+                self.unsupported_optional(
+                    &subject,
+                    "hostname cannot be emitted while host UTS mode remains unmodeled",
+                    hostname.effective_source(),
+                );
+            } else if matches!(hostname.value().kind(), HostnameKind::Resolved) {
+                self.exact_provenance(subject, hostname.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &subject,
+                    "hostname is unresolved or outside the conservative portable hostname grammar",
+                    hostname.effective_source(),
+                );
+            }
+        }
+        if let Some(limit) = native.pids_limit() {
+            let subject = format!("{service_subject}.pids_limit");
+            service.set_pids_limit(self.sourced_provenance(
+                Self::protected(limit.value().raw().value(), limit.is_sensitive()),
+                limit.provenance(),
+            ));
+            match limit.value().kind() {
+                PidsLimitKind::Unlimited | PidsLimitKind::Finite { .. } => {
+                    self.exact_provenance(subject, limit.provenance());
+                }
+                _ => self.invalid_value_optional(
+                    &subject,
+                    "PID limit must be -1 or a positive ASCII decimal before exact conversion",
+                    limit.effective_source(),
+                ),
+            }
+        }
+        if let Some(size) = native.shm_size() {
+            let subject = format!("{service_subject}.shm_size");
+            service.set_shm_size(self.sourced_provenance(
+                Self::protected(size.value().raw().value(), size.is_sensitive()),
+                size.provenance(),
+            ));
+            let exact = matches!(size.value().kind(), ShmSizeKind::Documented { amount_raw, unit: ShmSizeUnit::B | ShmSizeUnit::K | ShmSizeUnit::M | ShmSizeUnit::G }
+                if amount_raw.bytes().any(|byte| byte != b'0') && amount_raw.bytes().all(|byte| byte.is_ascii_digit()));
+            if exact {
+                self.exact_provenance(subject, size.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &subject,
+                    "shared-memory size must be a positive ASCII decimal with b, k, m, or g",
+                    size.effective_source(),
+                );
+            }
+        }
+    }
+
+    fn map_capabilities_and_tmpfs(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(values) = native.cap_add() {
+            let subject = format!("{service_subject}.cap_add");
+            let mut exact = true;
+            let mapped = values
+                .value()
+                .iter()
+                .map(|value| {
+                    if !value.value().is_exact_candidate() || value.value().value().contains('$') {
+                        exact = false;
+                    }
+                    self.sourced_provenance(
+                        Self::protected(value.value().value(), value.is_sensitive()),
+                        value.provenance(),
+                    )
+                })
+                .collect();
+            service.set_cap_add_with_origins(mapped, self.origins(values.provenance()));
+            if exact {
+                self.exact_provenance(subject, values.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &subject,
+                    "capability entries must be resolved non-empty strings without whitespace",
+                    values.effective_source(),
+                );
+            }
+        }
+        if let Some(values) = native.cap_drop() {
+            let subject = format!("{service_subject}.cap_drop");
+            let mut exact = true;
+            let mapped = values
+                .value()
+                .iter()
+                .map(|value| {
+                    if !value.value().is_exact_candidate() || value.value().value().contains('$') {
+                        exact = false;
+                    }
+                    self.sourced_provenance(
+                        Self::protected(value.value().value(), value.is_sensitive()),
+                        value.provenance(),
+                    )
+                })
+                .collect();
+            service.set_cap_drop_with_origins(mapped, self.origins(values.provenance()));
+            if exact {
+                self.exact_provenance(subject, values.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &subject,
+                    "capability entries must be resolved non-empty strings without whitespace",
+                    values.effective_source(),
+                );
+            }
+        }
+        if let Some(tmpfs) = native.tmpfs() {
+            let (values, exact) = match tmpfs.value() {
+                ProjectTmpfs::Scalar(value) => (vec![value], value.value().kind() == TmpfsItemKind::Documented),
+                ProjectTmpfs::List(values) => (
+                    values.iter().collect(),
+                    values
+                        .iter()
+                        .all(|value| value.value().kind() == TmpfsItemKind::Documented),
+                ),
+                _ => (Vec::new(), false),
+            };
+            let mapped = values
+                .into_iter()
+                .map(|value| {
+                    self.sourced_provenance(
+                        Self::protected(value.value().value(), value.is_sensitive()),
+                        value.provenance(),
+                    )
+                })
+                .collect();
+            service.set_tmpfs_with_origins(mapped, self.origins(tmpfs.provenance()));
+            if exact {
+                self.exact_provenance(format!("{service_subject}.tmpfs"), tmpfs.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &format!("{service_subject}.tmpfs"),
+                    "tmpfs entries must be resolved documented declarations",
+                    tmpfs.effective_source(),
+                );
+            }
+        }
+    }
+
+    fn map_sysctls(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(sysctls) = native.sysctls() {
+            let mut exact = true;
+            let values = match sysctls.value() {
+                ProjectSysctls::Map(values) => values
+                    .iter()
+                    .map(|value| {
+                        let native = value.value();
+                        let scalar = Self::compose_scalar(native.value().value());
+                        if native.name().value().is_empty()
+                            || native.name().value().contains('$')
+                            || scalar.contains('$')
+                            || matches!(native.value().value(), ComposeScalar::Null)
+                        {
+                            exact = false;
+                        }
+                        self.sourced_project_key_value(
+                            KernelParameter::new(
+                                Self::protected(native.name().value(), native.name().is_sensitive()),
+                                Self::protected(&scalar, native.value().is_sensitive()),
+                            ),
+                            native.name().sources(),
+                            native.value().provenance(),
+                        )
+                    })
+                    .collect(),
+                ProjectSysctls::List(values) => values
+                    .iter()
+                    .filter_map(|value| {
+                        let Some((name, scalar)) = value.value().split_once('=') else {
+                            exact = false;
+                            self.invalid_value_optional(
+                                &format!("{service_subject}.sysctls"),
+                                "sysctl list entries must use unambiguous name=value spelling",
+                                value.effective_source(),
+                            );
+                            return None;
+                        };
+                        if name.is_empty() || name.contains('$') || scalar.contains('$') {
+                            exact = false;
+                        }
+                        Some(self.sourced_provenance(
+                            KernelParameter::new(
+                                Self::protected(name, value.is_sensitive()),
+                                Self::protected(scalar, value.is_sensitive()),
+                            ),
+                            value.provenance(),
+                        ))
+                    })
+                    .collect(),
+                _ => {
+                    exact = false;
+                    Vec::new()
+                }
+            };
+            service.set_sysctls_with_origins(values, self.origins(sysctls.provenance()));
+            if exact {
+                self.exact_provenance(format!("{service_subject}.sysctls"), sysctls.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &format!("{service_subject}.sysctls"),
+                    "sysctl entries must use resolved unambiguous name=value spelling",
+                    sysctls.effective_source(),
+                );
+            }
+        }
+    }
+
+    fn map_ulimits(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(ulimits) = native.ulimits() {
+            let mut mapped = Vec::new();
+            let mut exact = true;
+            for limit in ulimits.value().entries() {
+                let name = limit.value().name();
+                let (soft, hard) = match limit.value().value() {
+                    ProjectUlimitValue::Single(value) => {
+                        if !matches!(value.value().value(), LimitValue::Unlimited | LimitValue::Number(_)) {
+                            exact = false;
+                        }
+                        let value = self.sourced_provenance(
+                            Self::protected(value.value().authored(), value.is_sensitive()),
+                            value.provenance(),
+                        );
+                        (Some(value.clone()), Some(value))
+                    }
+                    ProjectUlimitValue::Range(range) => (
+                        range.soft().map(|value| {
+                            if !matches!(value.value().value(), LimitValue::Unlimited | LimitValue::Number(_)) {
+                                exact = false;
+                            }
+                            self.sourced_provenance(
+                                Self::protected(value.value().authored(), value.is_sensitive()),
+                                value.provenance(),
+                            )
+                        }),
+                        range.hard().map(|value| {
+                            if !matches!(value.value().value(), LimitValue::Unlimited | LimitValue::Number(_)) {
+                                exact = false;
+                            }
+                            self.sourced_provenance(
+                                Self::protected(value.value().authored(), value.is_sensitive()),
+                                value.provenance(),
+                            )
+                        }),
+                    ),
+                    _ => {
+                        exact = false;
+                        (None, None)
+                    }
+                };
+                if soft.is_none() || hard.is_none() {
+                    exact = false;
+                }
+                let item = ResourceLimit::new(Self::protected(name.value(), name.is_sensitive()), soft, hard);
+                mapped.push(self.sourced_spans(item, name.sources()));
+            }
+            service.set_ulimits_with_origins(mapped, self.origins(ulimits.provenance()));
+            if exact {
+                self.exact_provenance(format!("{service_subject}.ulimits"), ulimits.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &format!("{service_subject}.ulimits"),
+                    "ulimits require complete resolved -1 or non-negative decimal values",
+                    ulimits.effective_source(),
+                );
+            }
+        }
+    }
+
+    fn map_devices_and_stop_signal(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(devices) = native.devices() {
+            let mut exact = true;
+            let mapped = devices
+                .value()
+                .iter()
+                .filter_map(|device| match device.value() {
+                    ProjectDevice::Short(short) => {
+                        if matches!(short.kind(), ShortDeviceKind::Deferred) {
+                            exact = false;
+                        }
+                        Some(self.sourced_provenance(
+                            Device::Short(Self::protected(short.raw().value(), device.is_sensitive())),
+                            device.provenance(),
+                        ))
+                    }
+                    ProjectDevice::Long(long) => {
+                        if long.source().is_none_or(|value| value.value().contains('$'))
+                            || long.target().is_some_and(|value| value.value().contains('$'))
+                            || long.permissions().is_some_and(|value| value.value().contains('$'))
+                            || !long.extension_fields().is_empty()
+                            || !long.unknown_fields().is_empty()
+                        {
+                            exact = false;
+                        }
+                        Some(self.sourced_provenance(
+                            Device::Long {
+                                source: long.source().map(|value| {
+                                    self.sourced_provenance(
+                                        Self::protected(value.value(), value.is_sensitive()),
+                                        value.provenance(),
+                                    )
+                                }),
+                                target: long.target().map(|value| {
+                                    self.sourced_provenance(
+                                        Self::protected(value.value(), value.is_sensitive()),
+                                        value.provenance(),
+                                    )
+                                }),
+                                permissions: long.permissions().map(|value| {
+                                    self.sourced_provenance(
+                                        Self::protected(value.value(), value.is_sensitive()),
+                                        value.provenance(),
+                                    )
+                                }),
+                            },
+                            device.provenance(),
+                        ))
+                    }
+                    _ => {
+                        exact = false;
+                        None
+                    }
+                })
+                .collect();
+            service.set_devices_with_origins(mapped, self.origins(devices.provenance()));
+            if exact {
+                self.exact_provenance(format!("{service_subject}.devices"), devices.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &format!("{service_subject}.devices"),
+                    "devices require complete resolved short or long declarations",
+                    devices.effective_source(),
+                );
+            }
+        }
+        if let Some(signal) = native.stop_signal() {
+            service.set_stop_signal(self.sourced_provenance(
+                Self::protected(signal.value(), signal.is_sensitive()),
+                signal.provenance(),
+            ));
+            if Self::is_safe_stop_signal(signal.value()) {
+                self.exact_provenance(format!("{service_subject}.stop_signal"), signal.provenance());
+            } else {
+                self.invalid_value_optional(
+                    &format!("{service_subject}.stop_signal"),
+                    "stop signal must be a non-empty resolved token or number",
+                    signal.effective_source(),
+                );
+            }
+        }
+    }
+
+    fn compose_scalar(value: &ComposeScalar) -> String {
+        match value {
+            ComposeScalar::Null => String::new(),
+            ComposeScalar::Boolean(value) => value.to_string(),
+            ComposeScalar::Number(value) | ComposeScalar::String(value) => value.clone(),
+        }
+    }
+
+    fn is_safe_stop_signal(value: &str) -> bool {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     }
 
     fn protected(value: &str, sensitive: bool) -> ProtectedString {
@@ -1502,9 +1897,32 @@ impl<'a> Mapping<'a> {
         sourced
     }
 
+    fn origins(&self, provenance: &MergeProvenance) -> Vec<Provenance> {
+        provenance
+            .sources()
+            .iter()
+            .filter_map(|span| self.origin(*span))
+            .collect()
+    }
+
     fn sourced_spans<T>(&self, value: T, source_spans: &[ComposeSpan]) -> Sourced<T> {
         let mut result = Sourced::generated(value);
         for origin in source_spans.iter().filter_map(|span| self.origin(*span)) {
+            if !result.origins().contains(&origin) {
+                result.add_origin(origin);
+            }
+        }
+        result
+    }
+
+    fn sourced_project_key_value<T>(
+        &self,
+        value: T,
+        key_sources: &[ComposeSpan],
+        value_provenance: &MergeProvenance,
+    ) -> Sourced<T> {
+        let mut result = self.sourced_spans(value, key_sources);
+        for origin in value_provenance.sources().iter().filter_map(|span| self.origin(*span)) {
             if !result.origins().contains(&origin) {
                 result.add_origin(origin);
             }

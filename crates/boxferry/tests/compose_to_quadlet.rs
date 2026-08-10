@@ -23,6 +23,64 @@ const SECRET_SOURCE_ID: u32 = 95;
 const ENVIRONMENT_FILE_SOURCE_ID: u32 = 96;
 
 #[test]
+fn public_compose_to_quadlet_route_emits_released_container_settings() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n  web:\n    image: example.invalid/web:1\n    hostname: web.example\n",
+        "    pids_limit: '00042'\n    shm_size: 64m\n    cap_drop: [NET_RAW]\n",
+        "    cap_add: [SYS_PTRACE]\n    tmpfs: [/run:mode=1777]\n",
+        "    sysctls: { net.ipv4.ip_forward: '1' }\n",
+        "    ulimits:\n      nofile:\n        soft: 1024\n        hard: 4096\n",
+        "    devices: [/dev/fuse:/dev/fuse:rwm]\n    stop_signal: SIGTERM\n",
+    );
+    let source_id = ComposeSourceId::new(97);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("settings.compose.yaml", "settings.compose.yaml"),
+        text,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let project = merged.project().ok_or("merged project expected")?.clone();
+    let source = ComposeSource::new(project, Identifier::new("settings")?)?
+        .with_source_id(source_id, SourceId::new("settings.compose.yaml")?)
+        .with_profile_selection(select_profiles(
+            merged.project().ok_or("merged project expected")?,
+            &ProfileRequest::new(),
+        ));
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+    let result = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    let text = result
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry::QuadletFile::text)
+        .ok_or("exact public output expected")?;
+    for line in [
+        "HostName=web.example",
+        "PidsLimit=00042",
+        "ShmSize=64m",
+        "DropCapability=NET_RAW",
+        "AddCapability=SYS_PTRACE",
+        "Tmpfs=/run:mode=1777",
+        "Sysctl=net.ipv4.ip_forward=1",
+        "Ulimit=nofile=1024:4096",
+        "AddDevice=/dev/fuse:/dev/fuse:rwm",
+        "StopSignal=SIGTERM",
+    ] {
+        assert!(text.contains(line), "missing {line} in {text}");
+    }
+    Ok(())
+}
+
+#[test]
 fn converts_the_golden_project_with_explicit_partial_authorization() -> Result<(), Box<dyn Error>> {
     let directory = fixture_directory();
     let base = fixture_text("compose.yaml")?;

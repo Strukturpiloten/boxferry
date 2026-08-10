@@ -4,12 +4,12 @@ use std::{error::Error, num::NonZeroU64};
 
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
 use boxferry_model::{
-    Application, Command, Config, ConfigMaterial, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
-    EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration, HealthcheckRetries,
-    HostAddress, HostMapping, Identifier, ImageReference, MetadataLabel, Mount, MountSource, Network,
-    NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant, ResourceGrantSyntax,
-    ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
+    Application, Command, Config, ConfigMaterial, Device, EnvironmentFile, EnvironmentFileFormat,
+    EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration,
+    HealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference, KernelParameter, MetadataLabel, Mount,
+    MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant,
+    ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel,
+    Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
 };
 use boxferry_quadlet::{QuadletExporter, QuadletGroupingPolicy};
 
@@ -102,6 +102,132 @@ fn exports_the_exact_first_conversion_subset_and_resolves_native_references() ->
     assert_eq!(output.document_set().graph().edges().len(), 2);
     assert!(!format!("{output:?}").contains("production"));
     assert!(!format!("{output:?}").contains("1001"));
+    Ok(())
+}
+
+#[test]
+fn exports_all_ten_settings_at_podman_5_4_floor() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("settings")?);
+    let mut service = image_service("web")?;
+    service.set_hostname(sourced(ProtectedString::plain("web.example"))?);
+    service.set_pids_limit(sourced(ProtectedString::plain("00042"))?);
+    service.set_shm_size(sourced(ProtectedString::plain("64m"))?);
+    service.set_cap_drop(vec![sourced(ProtectedString::plain("NET_RAW"))?]);
+    service.set_cap_add(vec![sourced(ProtectedString::plain("SYS_PTRACE"))?]);
+    service.set_tmpfs(vec![sourced(ProtectedString::plain("/run:mode=1777"))?]);
+    service.set_sysctls(vec![sourced(KernelParameter::new(
+        ProtectedString::plain("net.ipv4.ip_forward"),
+        ProtectedString::plain("1"),
+    ))?]);
+    service.set_ulimits(vec![sourced(ResourceLimit::new(
+        ProtectedString::plain("nofile"),
+        Some(sourced(ProtectedString::plain("1024"))?),
+        Some(sourced(ProtectedString::plain("4096"))?),
+    ))?]);
+    service.set_devices(vec![sourced(Device::Short(ProtectedString::plain(
+        "/dev/fuse:/dev/fuse:rwm",
+    )))?]);
+    service.set_stop_signal(sourced(ProtectedString::plain("SIGTERM"))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(5, 4, 0)))?)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let text = authorized
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("expected exact container")?;
+    for line in [
+        "HostName=web.example",
+        "PidsLimit=00042",
+        "ShmSize=64m",
+        "DropCapability=NET_RAW",
+        "AddCapability=SYS_PTRACE",
+        "Tmpfs=/run:mode=1777",
+        "Sysctl=net.ipv4.ip_forward=1",
+        "Ulimit=nofile=1024:4096",
+        "AddDevice=/dev/fuse:/dev/fuse:rwm",
+        "StopSignal=SIGTERM",
+    ] {
+        assert!(text.contains(line), "missing {line} in {text}");
+    }
+    Ok(())
+}
+
+#[test]
+fn reports_unsafe_released_container_settings_without_dropping_them() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("unsafe-settings")?);
+    let mut service = image_service("web")?;
+    service.set_pids_limit(sourced(ProtectedString::plain("0"))?);
+    service.set_shm_size(sourced(ProtectedString::plain("0"))?);
+    service.set_tmpfs(vec![sourced(ProtectedString::plain("/run:%h"))?]);
+    service.set_devices(vec![
+        sourced(Device::Short(ProtectedString::plain("vendor.example/device=gpu")))?,
+        sourced(Device::Short(ProtectedString::plain("/dev/../fuse:/dev/fuse:rwm")))?,
+        sourced(Device::Short(ProtectedString::plain("/dev/fuse:/dev/naïve:rwm")))?,
+    ]);
+    service.set_stop_signal(sourced(ProtectedString::plain("SIG TERM"))?);
+    application.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    for subject in [
+        "services.web.pids_limit",
+        "services.web.shm_size",
+        "services.web.tmpfs[0]",
+        "services.web.devices[0]",
+        "services.web.devices[1]",
+        "services.web.devices[2]",
+        "services.web.stop_signal",
+    ] {
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported)
+        );
+    }
+    assert!(plan.authorize(LossPolicy::ExactOnly).is_blocked());
+    Ok(())
+}
+
+#[test]
+fn retains_collection_item_and_nested_limit_origins_in_target_outcomes() -> Result<(), Box<dyn Error>> {
+    let collection_origin = Provenance::source(SourceId::new("base.compose.yaml")?);
+    let item_origin = Provenance::source(SourceId::new("override.compose.yaml")?);
+    let soft_origin = Provenance::source(SourceId::new("limits-soft.compose.yaml")?);
+    let hard_origin = Provenance::source(SourceId::new("limits-hard.compose.yaml")?);
+    let limit = ResourceLimit::new(
+        ProtectedString::plain("NOFILE"),
+        Some(Sourced::from_source(ProtectedString::plain("1024"), soft_origin)),
+        Some(Sourced::from_source(ProtectedString::plain("4096"), hard_origin)),
+    );
+    let mut sourced_limit = Sourced::from_source(limit, item_origin);
+    sourced_limit.add_origin(collection_origin.clone());
+
+    let mut application = Application::new(id("limit-origins")?);
+    let mut service = image_service("web")?;
+    service.set_ulimits_with_origins(vec![sourced_limit], vec![collection_origin]);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    let outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.ulimits[0]")
+        .ok_or("expected ulimit outcome")?;
+    assert_eq!(outcome.kind(), ConversionKind::Unsupported);
+    assert_eq!(
+        outcome
+            .origins()
+            .iter()
+            .map(|origin| origin.source_id().as_str())
+            .collect::<Vec<_>>(),
+        [
+            "base.compose.yaml",
+            "override.compose.yaml",
+            "limits-soft.compose.yaml",
+            "limits-hard.compose.yaml",
+        ]
+    );
     Ok(())
 }
 
@@ -1375,6 +1501,35 @@ fn fails_closed_outside_verified_podman_coverage() -> Result<(), Box<dyn Error>>
         );
         assert!(plan.authorize(LossPolicy::AllowPartial).is_blocked());
     }
+    Ok(())
+}
+
+#[test]
+fn released_setting_obeys_the_catalogue_version_boundaries() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("setting-boundary")?);
+    let mut service = image_service("web")?;
+    service.set_stop_signal(sourced(ProtectedString::plain("SIGTERM"))?);
+    application.add_service(sourced(service)?)?;
+    let exporter = QuadletExporter::new()?;
+
+    let supported = exporter.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(
+        supported.outcomes().iter().any(|outcome| {
+            outcome.subject() == "services.web.stop_signal" && outcome.kind() == ConversionKind::Exact
+        })
+    );
+
+    let unsupported = exporter.plan(
+        &application,
+        &TargetProfile::new("podman", version(5, 4, 0), Some(version(6, 0, 3)))?,
+    )?;
+    assert!(unsupported.candidate().is_none());
+    assert!(
+        unsupported
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| { diagnostic.code().as_str() == "BFQ0001" && diagnostic.severity() == Severity::Error })
+    );
     Ok(())
 }
 

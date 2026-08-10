@@ -7,9 +7,9 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HostAddressKind, MountSource,
-    ProtectedString, Protocol, Provenance, ProvenanceKind, ResourceOwnership, RestartPolicy, SelinuxRelabel, Service,
-    Sourced,
+    Application, Command, Device, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HostAddressKind,
+    MountSource, ProtectedString, Protocol, Provenance, ProvenanceKind, ResourceOwnership, RestartPolicy,
+    SelinuxRelabel, Service, Sourced,
 };
 use compose_lens::{
     render::{
@@ -735,6 +735,42 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_unimplemented_service_fields(&mut self, service: &Service, service_subject: &str) {
+        let reason =
+            "this neutral field is retained but BoxFerry's Compose exporter does not yet implement its mapping";
+        if let Some(value) = service.hostname() {
+            self.unsupported(&format!("{service_subject}.hostname"), reason, value.origins());
+        }
+        if let Some(value) = service.pids_limit() {
+            self.unsupported(&format!("{service_subject}.pids_limit"), reason, value.origins());
+        }
+        if let Some(value) = service.shm_size() {
+            self.unsupported(&format!("{service_subject}.shm_size"), reason, value.origins());
+        }
+        if let Some(value) = service.stop_signal() {
+            self.unsupported(&format!("{service_subject}.stop_signal"), reason, value.origins());
+        }
+        for (field, values, collection_origins) in [
+            ("cap_add", service.cap_add(), service.cap_add_origins()),
+            ("cap_drop", service.cap_drop(), service.cap_drop_origins()),
+            ("tmpfs", service.tmpfs(), service.tmpfs_origins()),
+        ] {
+            if let Some(values) = values {
+                let origins = collection_or_item_origins(values, collection_origins);
+                self.unsupported(&format!("{service_subject}.{field}"), reason, &origins);
+            }
+        }
+        if let Some(values) = service.sysctls() {
+            let origins = collection_or_item_origins(values, service.sysctls_origins());
+            self.unsupported(&format!("{service_subject}.sysctls"), reason, &origins);
+        }
+        if let Some(values) = service.ulimits() {
+            let origins = resource_limit_collection_origins(values, service.ulimits_origins());
+            self.unsupported(&format!("{service_subject}.ulimits"), reason, &origins);
+        }
+        if let Some(values) = service.devices() {
+            let origins = device_collection_origins(values, service.devices_origins());
+            self.unsupported(&format!("{service_subject}.devices"), reason, &origins);
+        }
         if let Some(healthcheck) = service.healthcheck() {
             self.unsupported(
                 &format!("{service_subject}.healthcheck"),
@@ -987,6 +1023,55 @@ fn generated_string(value: &ProtectedString) -> Result<GeneratedString, Generati
         GeneratedString::sensitive(value.expose())
     } else {
         GeneratedString::plain(value.expose())
+    }
+}
+
+fn collection_or_item_origins<T>(values: &[Sourced<T>], collection_origins: &[Provenance]) -> Vec<Provenance> {
+    let mut origins = collection_origins.to_vec();
+    for value in values {
+        extend_origins(&mut origins, value.origins());
+    }
+    origins
+}
+
+fn resource_limit_collection_origins(
+    values: &[Sourced<boxferry_model::ResourceLimit>],
+    collection_origins: &[Provenance],
+) -> Vec<Provenance> {
+    let mut origins = collection_or_item_origins(values, collection_origins);
+    for value in values {
+        for nested in [value.value().soft(), value.value().hard()].into_iter().flatten() {
+            extend_origins(&mut origins, nested.origins());
+        }
+    }
+    origins
+}
+
+fn device_collection_origins(values: &[Sourced<Device>], collection_origins: &[Provenance]) -> Vec<Provenance> {
+    let mut origins = collection_or_item_origins(values, collection_origins);
+    for value in values {
+        if let Device::Long {
+            source,
+            target,
+            permissions,
+        } = value.value()
+        {
+            for nested in [source.as_ref(), target.as_ref(), permissions.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                extend_origins(&mut origins, nested.origins());
+            }
+        }
+    }
+    origins
+}
+
+fn extend_origins(origins: &mut Vec<Provenance>, additional: &[Provenance]) {
+    for origin in additional {
+        if !origins.contains(origin) {
+            origins.push(origin.clone());
+        }
     }
 }
 

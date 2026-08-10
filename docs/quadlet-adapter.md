@@ -47,6 +47,10 @@ It currently maps:
 
 - explicit runtime container names through capability-checked `ContainerName=`, independently of
   service keys, unit filenames, and systemd service names;
+- resolved hostnames, PID limits, shared-memory sizes, ordered capability add/drop entries,
+  temporary filesystems, sysctls, resource limits, reviewed host-device mappings, and stop signals
+  through `HostName=`, `PidsLimit=`, `ShmSize=`, `DropCapability=`, `AddCapability=`, `Tmpfs=`,
+  `Sysctl=`, `Ulimit=`, `AddDevice=`, and `StopSignal=` across the finite 5.4.0–6.0.2 catalogue;
 - image references, including `name:tag@digest` spellings;
 - exec-form commands whose individual arguments need no systemd quoting;
 - literal environment assignments whose names and values need no systemd quoting or specifier
@@ -116,6 +120,12 @@ The adapter currently reports rather than guesses:
   label ownership that is not equivalent to service/container metadata; and
 - neutral service groups without a supported caller-selected target grouping and lifecycle
   resolution.
+
+The released container-setting keys do not make runtime claims: hostname output requires a resolved
+safe value without host-UTS conflict; PID and shared-memory values retain arbitrary-precision raw
+spelling but emit only the reviewed positive forms; capability order, duplication, and explicit
+empty collections remain evidence without reconciliation; and sysctl, ulimit, tmpfs, and device
+values are not interpreted as kernel, mount, privilege, rootless, or host-inspection assertions.
 
 Missing required dependency services, dependency-ordering cycles, missing secret declarations,
 and incompatible explicit grouping requests are invalid. Optional absent services and unsupported
