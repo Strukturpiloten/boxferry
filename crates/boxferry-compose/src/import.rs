@@ -11,8 +11,8 @@ use boxferry_model::{
     HealthcheckRetries as NeutralHealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference,
     KernelParameter, MetadataLabel, ModelError, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString,
     Protocol, Provenance, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership,
-    RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, SourceSpan, Sourced, Volume,
+    RestartPolicy as NeutralRestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, SourceSpan, Sourced, Volume,
 };
 use compose_lens::merge::MergeProvenance;
 use compose_lens::model::{
@@ -20,9 +20,9 @@ use compose_lens::model::{
     EnvironmentFileFormatKind, HealthcheckDuration as ComposeHealthcheckDuration,
     HealthcheckRetries as ComposeHealthcheckRetries, HealthcheckTest, HealthcheckTestKind, HostnameKind, LimitValue,
     LongPort, LongVolumeMount, MountType, NetworkDefinition, PidsLimitKind, Port as ComposePort,
-    RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SelinuxRelabel as ComposeSelinuxRelabel,
-    ServiceNetwork, ServiceNetworks, ShmSizeKind, ShmSizeUnit, ShortDeviceKind, ShortPort, ShortVolumeMount,
-    TmpfsItemKind, VolumeDefinition, VolumeMount,
+    RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SecurityOptionKind,
+    SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShmSizeKind, ShmSizeUnit,
+    ShortDeviceKind, ShortPort, ShortVolumeMount, TmpfsItemKind, VolumeDefinition, VolumeMount,
 };
 use compose_lens::project::{
     ProjectDependsOn, ProjectDevice, ProjectDns, ProjectDnsSearch, ProjectEnvironment, ProjectEnvironmentFile,
@@ -151,6 +151,12 @@ struct Codes {
     invalid_value: DiagnosticCode,
 }
 
+enum SecurityOptionMapping {
+    Exact(SecurityOption),
+    Invalid(&'static str),
+    Unsupported(&'static str),
+}
+
 struct Mapping<'a> {
     codes: &'a Codes,
     source: &'a ComposeSource,
@@ -233,10 +239,9 @@ impl<'a> Mapping<'a> {
         self.map_execution_context(&subject, native, &mut service);
         self.map_released_container_settings(&subject, native, &mut service);
         self.map_dns(&subject, native, &mut service);
+        self.map_security_options(&subject, native, &mut service);
         self.map_service_environment(&subject, native, &mut service);
-        if let Some(labels) = native.labels() {
-            self.map_labels(&subject, labels.value(), &mut service);
-        }
+        self.map_service_labels(&subject, native, &mut service);
         if let Some(extra_hosts) = native.extra_hosts() {
             for (index, entry) in extra_hosts.value().entries().iter().enumerate() {
                 let host_subject = format!("{subject}.extra_hosts[{index}]");
@@ -313,6 +318,12 @@ impl<'a> Mapping<'a> {
             container_name.provenance(),
         ));
         self.exact_provenance(format!("{subject}.container_name"), container_name.provenance());
+    }
+
+    fn map_service_labels(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
+        if let Some(labels) = native.labels() {
+            self.map_labels(subject, labels.value(), service);
+        }
     }
 
     fn map_restart_policy(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
@@ -532,6 +543,143 @@ impl<'a> Mapping<'a> {
                     "dns_search",
                 );
             }
+        }
+    }
+
+    fn map_security_options(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        let Some(options) = native.security_options() else {
+            return;
+        };
+        let subject = format!("{service_subject}.security_opt");
+        let mut mapped = Vec::new();
+        let mut singleton_counts = [0_usize; 8];
+        let mut has_label_disable = false;
+        let mut has_other_label = false;
+
+        for (index, item) in options.value().iter().enumerate() {
+            let item_subject = format!("{subject}[{index}]");
+            match Self::map_security_option(item.value().kind(), item.is_sensitive()) {
+                SecurityOptionMapping::Exact(value) => {
+                    Self::record_security_option_conflict(
+                        &value,
+                        &mut singleton_counts,
+                        &mut has_label_disable,
+                        &mut has_other_label,
+                    );
+                    mapped.push(self.sourced_provenance(value, item.provenance()));
+                    self.exact_provenance(item_subject, item.provenance());
+                }
+                SecurityOptionMapping::Invalid(reason) => {
+                    self.invalid_value_optional(&item_subject, reason, item.effective_source());
+                }
+                SecurityOptionMapping::Unsupported(reason) => {
+                    self.unsupported_optional(&item_subject, reason, item.effective_source());
+                }
+            }
+        }
+
+        service.set_security_options_with_origins(mapped, self.origins(options.provenance()));
+        let singleton_conflict = singleton_counts.iter().any(|count| *count > 1);
+        if singleton_conflict {
+            self.invalid_value_optional(
+                &subject,
+                "security_opt contains multiple candidates for a singleton security-option family",
+                options.effective_source(),
+            );
+        }
+        if has_label_disable && has_other_label {
+            self.unsupported_optional(
+                &subject,
+                "label:disable conflicts semantically with other SELinux label candidates",
+                options.effective_source(),
+            );
+        }
+        if !(singleton_conflict || has_label_disable && has_other_label) {
+            self.exact_provenance(subject, options.provenance());
+        }
+    }
+
+    fn map_security_option(kind: &SecurityOptionKind, sensitive: bool) -> SecurityOptionMapping {
+        let exact = match kind {
+            SecurityOptionKind::AppArmor { profile } => SecurityOption::AppArmor(Self::protected(profile, sensitive)),
+            SecurityOptionKind::NoNewPrivileges { enabled } => SecurityOption::NoNewPrivileges(*enabled),
+            SecurityOptionKind::Seccomp { profile } => {
+                SecurityOption::SeccompProfile(Self::protected(profile, sensitive))
+            }
+            SecurityOptionKind::SecurityLabelDisable { enabled } => SecurityOption::SecurityLabelDisable(*enabled),
+            SecurityOptionKind::SecurityLabelFileType { file_type } => {
+                SecurityOption::SecurityLabelFileType(Self::protected(file_type, sensitive))
+            }
+            SecurityOptionKind::SecurityLabelLevel { level } => {
+                SecurityOption::SecurityLabelLevel(Self::protected(level, sensitive))
+            }
+            SecurityOptionKind::SecurityLabelNested { enabled } => SecurityOption::SecurityLabelNested(*enabled),
+            SecurityOptionKind::SecurityLabelType { label_type } => {
+                SecurityOption::SecurityLabelType(Self::protected(label_type, sensitive))
+            }
+            SecurityOptionKind::Mask { paths } => SecurityOption::Mask(Self::protected(paths, sensitive)),
+            SecurityOptionKind::Unmask { paths } => SecurityOption::Unmask(Self::protected(paths, sensitive)),
+            SecurityOptionKind::Expression => {
+                return SecurityOptionMapping::Invalid("security option expression was not resolved before conversion");
+            }
+            SecurityOptionKind::Empty => {
+                return SecurityOptionMapping::Invalid("security options must not contain empty strings");
+            }
+            SecurityOptionKind::AppArmorNearMiss
+            | SecurityOptionKind::SeccompNearMiss
+            | SecurityOptionKind::NoNewPrivilegesNearMiss
+            | SecurityOptionKind::SecurityLabelDisableNearMiss
+            | SecurityOptionKind::SecurityLabelFileTypeNearMiss
+            | SecurityOptionKind::SecurityLabelLevelNearMiss
+            | SecurityOptionKind::SecurityLabelNestedNearMiss
+            | SecurityOptionKind::SecurityLabelTypeNearMiss
+            | SecurityOptionKind::MaskNearMiss
+            | SecurityOptionKind::UnmaskNearMiss => {
+                return SecurityOptionMapping::Invalid(
+                    "security option must use a released exact ComposeLens candidate spelling",
+                );
+            }
+            SecurityOptionKind::Other => {
+                return SecurityOptionMapping::Unsupported("raw security option has no neutral semantic mapping");
+            }
+            _ => {
+                return SecurityOptionMapping::Unsupported(
+                    "security option variant is newer than this Compose adapter",
+                );
+            }
+        };
+        SecurityOptionMapping::Exact(exact)
+    }
+
+    fn record_security_option_conflict(
+        value: &SecurityOption,
+        singleton_counts: &mut [usize; 8],
+        has_label_disable: &mut bool,
+        has_other_label: &mut bool,
+    ) {
+        let family = match value {
+            SecurityOption::AppArmor(_) => Some(0),
+            SecurityOption::NoNewPrivileges(_) => Some(1),
+            SecurityOption::SeccompProfile(_) => Some(2),
+            SecurityOption::SecurityLabelDisable(enabled) => {
+                *has_label_disable |= *enabled;
+                Some(3)
+            }
+            SecurityOption::SecurityLabelFileType(_) => Some(4),
+            SecurityOption::SecurityLabelLevel(_) => Some(5),
+            SecurityOption::SecurityLabelNested(_) => Some(6),
+            SecurityOption::SecurityLabelType(_) => Some(7),
+            _ => None,
+        };
+        *has_other_label |= matches!(
+            value,
+            SecurityOption::SecurityLabelFileType(_)
+                | SecurityOption::SecurityLabelLevel(_)
+                | SecurityOption::SecurityLabelNested(_)
+                | SecurityOption::SecurityLabelType(_)
+        );
+        if let Some(family) = family {
+            singleton_counts[family] += 1;
         }
     }
 

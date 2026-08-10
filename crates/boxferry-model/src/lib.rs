@@ -14,7 +14,7 @@ pub use application::{
     EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration,
     HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier, KernelParameter, MetadataLabel,
     ModelError, Mount, MountSource, Network, NetworkAttachment, Port, Protocol, ResourceGrant, ResourceGrantSyntax,
-    ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel, Service,
+    ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
     ServiceDependency, ServiceDependencyCondition, ServiceGroup, Volume,
 };
 pub use image::ImageReference;

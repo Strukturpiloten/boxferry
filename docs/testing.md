@@ -41,6 +41,15 @@ unsafe/deferred target boundary. Tests retain raw spelling, order, deduplicated 
 collections, and protected debug redaction; unsupported exporters report retained intent rather
 than silently discarding it.
 
+Security-option coverage spans the public Compose-to-Quadlet and Quadlet-to-Compose routes for
+`AppArmor`, `NoNewPrivileges`, `SeccompProfile`, `SecurityLabelDisable`,
+`SecurityLabelFileType`, `SecurityLabelLevel`, `SecurityLabelNested`, `SecurityLabelType`, and
+repeatable `Mask`/`Unmask`. It checks the Podman 5.8.0 AppArmor floor and 5.4.0 floor for the
+other keys, canonical true forms, false SELinux options withheld from Compose, duplicate
+`Mask`/`Unmask` retention, strict-versus-partial authorization, and redaction. Explicit-empty,
+unsafe, and conflicting values stay non-exact; grouped output keeps the values on containers, and
+the suite makes no host LSM, profile, file, or runtime-enforcement claim.
+
 The Compose exporter contract suite covers exact provider selection, optional backend runtime
 selection, deterministic parse-back-validated YAML, every field in the first generated subset,
 application/external and unresolved runtime resource lifecycle, runtime-name preservation,

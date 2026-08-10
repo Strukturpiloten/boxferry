@@ -8,8 +8,8 @@ use boxferry_model::{
     EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand, HealthcheckDuration,
     HealthcheckRetries, HostAddress, HostMapping, Identifier, ImageReference, KernelParameter, MetadataLabel, Mount,
     MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceGrant,
-    ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SelinuxRelabel,
-    Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
+    ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption,
+    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceId, Sourced, Volume,
 };
 use boxferry_quadlet::{QuadletExporter, QuadletGroupingPolicy};
 
@@ -294,6 +294,205 @@ fn dns_keys_obey_target_boundaries_and_stay_on_grouped_containers() -> Result<()
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn exports_all_security_options_in_order_through_typed_container_keys() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("security-options")?);
+    let mut service = image_service("web")?;
+    service.set_security_options(vec![
+        sourced(SecurityOption::AppArmor(ProtectedString::sensitive("profile")))?,
+        sourced(SecurityOption::NoNewPrivileges(true))?,
+        sourced(SecurityOption::SeccompProfile(ProtectedString::sensitive("unconfined")))?,
+        sourced(SecurityOption::SecurityLabelDisable(false))?,
+        sourced(SecurityOption::SecurityLabelFileType(ProtectedString::sensitive(
+            "container_file_t",
+        )))?,
+        sourced(SecurityOption::SecurityLabelLevel(ProtectedString::sensitive(
+            "s0:c1,c2",
+        )))?,
+        sourced(SecurityOption::SecurityLabelNested(true))?,
+        sourced(SecurityOption::SecurityLabelType(ProtectedString::sensitive(
+            "container_t",
+        )))?,
+        sourced(SecurityOption::Mask(ProtectedString::sensitive(
+            "/proc/acpi:/sys/firmware",
+        )))?,
+        sourced(SecurityOption::Unmask(ProtectedString::sensitive("ALL")))?,
+        sourced(SecurityOption::Mask(ProtectedString::sensitive(
+            "/proc/acpi:/sys/firmware",
+        )))?,
+        sourced(SecurityOption::Unmask(ProtectedString::sensitive("ALL")))?,
+    ]);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(
+        &application,
+        &TargetProfile::new("podman", version(5, 8, 0), Some(version(6, 0, 2)))?,
+    )?;
+    let output = plan.authorize(LossPolicy::ExactOnly);
+    let text = output
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("security-option output expected")?;
+    let expected = [
+        "AppArmor=profile",
+        "NoNewPrivileges=true",
+        "SeccompProfile=unconfined",
+        "SecurityLabelDisable=false",
+        "SecurityLabelFileType=container_file_t",
+        "SecurityLabelLevel=s0:c1,c2",
+        "SecurityLabelNested=true",
+        "SecurityLabelType=container_t",
+        "Mask=/proc/acpi:/sys/firmware",
+        "Unmask=ALL",
+        "Mask=/proc/acpi:/sys/firmware",
+        "Unmask=ALL",
+    ];
+    let actual: Vec<_> = text
+        .lines()
+        .filter(|line| {
+            [
+                "AppArmor=",
+                "NoNewPrivileges=",
+                "SeccompProfile=",
+                "SecurityLabel",
+                "Mask=",
+                "Unmask=",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .collect();
+    assert_eq!(actual, expected, "{text}");
+    assert!(!format!("{output:?}").contains("container_file_t"));
+    Ok(())
+}
+
+#[test]
+fn security_options_obey_version_boundaries_and_remain_container_scoped() -> Result<(), Box<dyn Error>> {
+    let mut apparmor = Application::new(id("apparmor-boundary")?);
+    let mut service = image_service("web")?;
+    service.set_security_options(vec![sourced(SecurityOption::AppArmor(ProtectedString::sensitive(
+        "profile",
+    )))?]);
+    apparmor.add_service(sourced(service)?)?;
+    for target in [
+        TargetProfile::new("podman", version(5, 7, 1), Some(version(5, 7, 1)))?,
+        TargetProfile::new("podman", version(5, 7, 1), Some(version(5, 8, 0)))?,
+    ] {
+        let plan = QuadletExporter::new()?.plan(&apparmor, &target)?;
+        assert!(plan.outcomes().iter().any(|outcome| {
+            outcome.subject() == "services.web.security_options[0]" && outcome.kind() == ConversionKind::Unsupported
+        }));
+    }
+    let plan = QuadletExporter::new()?.plan(
+        &apparmor,
+        &TargetProfile::new("podman", version(5, 8, 0), Some(version(5, 8, 0)))?,
+    )?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options[0]" && outcome.kind() == ConversionKind::Exact
+    }));
+
+    let mut floor = Application::new(id("security-floor")?);
+    let mut service = image_service("web")?;
+    service.set_security_options(vec![
+        sourced(SecurityOption::NoNewPrivileges(false))?,
+        sourced(SecurityOption::SeccompProfile(ProtectedString::sensitive("unconfined")))?,
+        sourced(SecurityOption::SecurityLabelDisable(false))?,
+        sourced(SecurityOption::SecurityLabelFileType(ProtectedString::sensitive(
+            "container_file_t",
+        )))?,
+        sourced(SecurityOption::SecurityLabelLevel(ProtectedString::sensitive(
+            "s0:c1,c2",
+        )))?,
+        sourced(SecurityOption::SecurityLabelNested(false))?,
+        sourced(SecurityOption::SecurityLabelType(ProtectedString::sensitive(
+            "container_t",
+        )))?,
+        sourced(SecurityOption::Mask(ProtectedString::sensitive("/proc/acpi")))?,
+        sourced(SecurityOption::Unmask(ProtectedString::sensitive("ALL")))?,
+    ]);
+    floor.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&floor, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+
+    let mut grouped = Application::new(id("grouped-security")?);
+    let mut service = image_service("web")?;
+    service.set_security_options(vec![sourced(SecurityOption::Mask(ProtectedString::sensitive(
+        "/proc/acpi",
+    )))?]);
+    grouped.add_service(sourced(service)?)?;
+    let mut group = ServiceGroup::new(id("security-group")?, ResourceOwnership::Application);
+    group.add_member(sourced(id("web")?)?)?;
+    grouped.add_service_group(sourced(group)?)?;
+    let output = QuadletExporter::new()?
+        .with_grouping_policy(QuadletGroupingPolicy::PreserveSingleGroup)
+        .plan(&grouped, &podman_target(Some(version(6, 0, 2)))?)?
+        .authorize(LossPolicy::AllowApproximate);
+    let output = output.output().ok_or("grouped security output expected")?;
+    assert!(
+        !output
+            .file("security-group.pod")
+            .ok_or("pod expected")?
+            .text()
+            .contains("Mask=")
+    );
+    assert!(
+        output
+            .file("web.container")
+            .ok_or("container expected")?
+            .text()
+            .contains("Mask=/proc/acpi\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn reports_empty_unsafe_duplicate_and_conflicting_security_options() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("unsafe-security")?);
+    let mut service = image_service("web")?;
+    service.set_security_options(vec![
+        sourced(SecurityOption::AppArmor(ProtectedString::sensitive("first")))?,
+        sourced(SecurityOption::AppArmor(ProtectedString::sensitive("second")))?,
+        sourced(SecurityOption::SeccompProfile(ProtectedString::sensitive(
+            "%h/profile.json",
+        )))?,
+        sourced(SecurityOption::SecurityLabelDisable(true))?,
+        sourced(SecurityOption::SecurityLabelType(ProtectedString::sensitive(
+            "container_t",
+        )))?,
+    ]);
+    application.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(
+        &application,
+        &TargetProfile::new("podman", version(5, 8, 0), Some(version(6, 0, 2)))?,
+    )?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options" && outcome.kind() == ConversionKind::Invalid
+    }));
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options[2]" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(plan.authorize(LossPolicy::AllowApproximate).is_blocked());
+
+    let mut empty = Application::new(id("empty-security")?);
+    let mut service = image_service("web")?;
+    service.set_security_options(Vec::new());
+    empty.add_service(sourced(service)?)?;
+    let plan = QuadletExporter::new()?.plan(&empty, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options" && outcome.kind() == ConversionKind::Unsupported
+    }));
     Ok(())
 }
 

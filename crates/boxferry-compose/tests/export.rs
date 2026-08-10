@@ -8,7 +8,7 @@ use boxferry_model::{
     Application, Command, Config, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
     EnvironmentVariable, Healthcheck, HostAddress, HostMapping, Identifier, ImageReference, MetadataLabel, Mount,
     MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, ResourceOwnership,
-    RestartPolicy, Secret, SelinuxRelabel, Service, ServiceGroup, SourceId, Sourced, Volume,
+    RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service, ServiceGroup, SourceId, Sourced, Volume,
 };
 
 #[test]
@@ -153,6 +153,207 @@ fn exports_dns_collections_in_order_and_preserves_explicit_empty_lists() -> Resu
     assert!(text.contains("dns:\n      - \"1.1.1.1\"\n      - \"8.8.8.8\""));
     assert!(text.contains("dns_opt: []"));
     assert!(text.contains("dns_search:\n      - \"example.test\""));
+    Ok(())
+}
+
+#[test]
+fn exports_all_security_options_canonically_in_order_and_redacts_sensitive_payloads() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("security.yaml")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/web:1")?,
+        origin.clone(),
+    ));
+    service.set_security_options_with_origins(
+        vec![
+            Sourced::from_source(
+                SecurityOption::AppArmor(ProtectedString::plain("profile-a")),
+                origin.clone(),
+            ),
+            Sourced::from_source(SecurityOption::NoNewPrivileges(false), origin.clone()),
+            Sourced::from_source(
+                SecurityOption::SeccompProfile(ProtectedString::sensitive("secret-seccomp.json")),
+                origin.clone(),
+            ),
+            Sourced::from_source(SecurityOption::SecurityLabelDisable(true), origin.clone()),
+            Sourced::from_source(
+                SecurityOption::SecurityLabelFileType(ProtectedString::plain("container_file_t")),
+                origin.clone(),
+            ),
+            Sourced::from_source(
+                SecurityOption::SecurityLabelLevel(ProtectedString::plain("s0:c1,c2")),
+                origin.clone(),
+            ),
+            Sourced::from_source(SecurityOption::SecurityLabelNested(true), origin.clone()),
+            Sourced::from_source(
+                SecurityOption::SecurityLabelType(ProtectedString::plain("container_t")),
+                origin.clone(),
+            ),
+            Sourced::from_source(
+                SecurityOption::Mask(ProtectedString::plain("/proc/acpi")),
+                origin.clone(),
+            ),
+            Sourced::from_source(
+                SecurityOption::Unmask(ProtectedString::plain("/proc/acpi")),
+                origin.clone(),
+            ),
+            Sourced::from_source(
+                SecurityOption::Mask(ProtectedString::plain("/proc/acpi")),
+                origin.clone(),
+            ),
+        ],
+        vec![origin.clone()],
+    );
+    let mut application = Application::new(Identifier::new("security")?);
+    application.add_service(Sourced::from_source(service, origin))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    assert!(plan.diagnostics().is_empty(), "{:#?}", plan.diagnostics());
+    assert!(
+        plan.outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+    let output = plan.candidate().ok_or("generated Compose expected")?;
+    assert!(output.is_sensitive());
+    assert!(!format!("{output:?}").contains("secret-seccomp.json"));
+    assert!(output.text().contains(concat!(
+        "security_opt:\n",
+        "      - \"apparmor=profile-a\"\n",
+        "      - \"no-new-privileges:false\"\n",
+        "      - \"seccomp=secret-seccomp.json\"\n",
+        "      - \"label:disable\"\n",
+        "      - \"label:filetype:container_file_t\"\n",
+        "      - \"label:level:s0:c1,c2\"\n",
+        "      - \"label:nested\"\n",
+        "      - \"label:type:container_t\"\n",
+        "      - \"mask=/proc/acpi\"\n",
+        "      - \"unmask=/proc/acpi\"\n",
+        "      - \"mask=/proc/acpi\"\n",
+    )));
+    assert_eq!(
+        plan.outcomes()
+            .iter()
+            .filter(|outcome| outcome.subject() == "services.web.security_opt")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn reports_false_selinux_security_options_as_unsupported_without_generating_them() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("security-false.yaml")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/web:1")?,
+        origin.clone(),
+    ));
+    service.set_security_options_with_origins(
+        vec![
+            Sourced::from_source(SecurityOption::SecurityLabelDisable(false), origin.clone()),
+            Sourced::from_source(SecurityOption::SecurityLabelNested(false), origin.clone()),
+            Sourced::from_source(
+                SecurityOption::Mask(ProtectedString::plain("/proc/acpi")),
+                origin.clone(),
+            ),
+        ],
+        vec![origin.clone()],
+    );
+    let mut application = Application::new(Identifier::new("security-false")?);
+    application.add_service(Sourced::from_source(service, origin.clone()))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    for index in [0, 1] {
+        assert!(plan.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.web.security_opt[{index}]")
+                && outcome.kind() == ConversionKind::Unsupported
+                && outcome.origins() == [origin.clone()]
+        }));
+    }
+    let output = plan.candidate().ok_or("generated Compose expected")?;
+    assert!(output.text().contains("- \"mask=/proc/acpi\""));
+    assert!(!output.text().contains("label:disable:false"));
+    assert!(!output.text().contains("label:nested:false"));
+    assert!(plan.authorize(LossPolicy::ExactOnly).output().is_none());
+    Ok(())
+}
+
+#[test]
+fn exports_explicit_empty_security_options_without_emitting_an_omitted_field() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("security-empty.yaml")?);
+    let mut empty = Service::new(Identifier::new("empty")?);
+    empty.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/empty:1")?,
+        origin.clone(),
+    ));
+    empty.set_security_options_with_origins(Vec::new(), vec![origin.clone()]);
+    let mut omitted = Service::new(Identifier::new("omitted")?);
+    omitted.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/omitted:1")?,
+        origin.clone(),
+    ));
+    let mut application = Application::new(Identifier::new("security-empty")?);
+    application.add_service(Sourced::from_source(empty, origin.clone()))?;
+    application.add_service(Sourced::from_source(omitted, origin))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+    let output = plan.candidate().ok_or("generated Compose expected")?;
+    assert!(
+        output
+            .text()
+            .contains("  \"empty\":\n    image: \"example.invalid/empty:1\"\n    security_opt: []")
+    );
+    assert!(
+        output
+            .text()
+            .contains("  \"omitted\":\n    image: \"example.invalid/omitted:1\"\n")
+    );
+    assert!(
+        !output
+            .text()
+            .contains("  \"omitted\":\n    image: \"example.invalid/omitted:1\"\n    security_opt")
+    );
+    Ok(())
+}
+
+#[test]
+fn reports_security_option_generation_failures_with_item_and_collection_provenance() -> Result<(), Box<dyn Error>> {
+    let item_origin = Provenance::source(SourceId::new("invalid-security-item.yaml")?);
+    let collection_origin = Provenance::source(SourceId::new("invalid-security-field.yaml")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/web:1")?,
+        item_origin.clone(),
+    ));
+    service.set_security_options_with_origins(
+        vec![Sourced::from_source(
+            SecurityOption::AppArmor(ProtectedString::plain("invalid\nprofile")),
+            item_origin.clone(),
+        )],
+        vec![collection_origin.clone()],
+    );
+    let mut application = Application::new(Identifier::new("invalid-security")?);
+    application.add_service(Sourced::from_source(service, item_origin.clone()))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    assert!(plan.candidate().is_none());
+    let outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.security_opt")
+        .ok_or("security-option outcome expected")?;
+    assert_eq!(outcome.kind(), ConversionKind::Invalid);
+    assert_eq!(
+        outcome.diagnostic().map(boxferry_engine::DiagnosticCode::as_str),
+        Some("BFC0008")
+    );
+    assert_eq!(outcome.origins(), &[collection_origin, item_origin]);
     Ok(())
 }
 

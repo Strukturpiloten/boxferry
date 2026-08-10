@@ -7,7 +7,7 @@ use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
     Command, ConfigMaterial, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand,
     HostAddressKind, Identifier, MountSource, Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy,
-    SecretMaterial, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
+    SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
 };
 use compose_lens::{
     interpolation::MapEnvironment,
@@ -1011,6 +1011,192 @@ fn retains_sensitive_interpolated_identity_without_debug_disclosure() -> Result<
     assert_eq!(service.user().map(|value| value.value().expose()), Some("private-user"));
     assert!(!format!("{service:?}").contains("private-user"));
     assert!(!format!("{service:?}").contains("private-group"));
+    Ok(())
+}
+
+#[test]
+fn imports_all_typed_security_options_in_order_with_provenance_and_redaction() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    security_opt:\n",
+        "      - apparmor=profile-a\n",
+        "      - no-new-privileges:false\n",
+        "      - seccomp=${PRIVATE_SECCOMP}\n",
+        "      - label:disable\n",
+        "      - label:filetype:container_file_t\n",
+        "      - label:level:s0:c1,c2\n",
+        "      - label:nested\n",
+        "      - label:type:container_t\n",
+        "      - mask=/proc/acpi:/proc/kcore\n",
+        "      - unmask=/proc/acpi\n",
+        "      - mask=/proc/acpi:/proc/kcore\n",
+    );
+    let compose_source_id = ComposeSourceId::new(106);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        compose_source_id,
+        DocumentOrigin::new("security.compose.yaml", "."),
+        text,
+    )])?;
+    let mut environment = MapEnvironment::new();
+    let _ = environment.insert_sensitive("PRIVATE_SECCOMP", "/run/credentials/seccomp.json");
+    let interpolation = loaded.interpolate(&environment);
+    let merged = merge_project(&loaded, Some(&interpolation));
+    assert!(merged.is_valid(), "{:#?}", merged.diagnostics());
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("security")?,
+    )?
+    .with_source_id(compose_source_id, SourceId::new("security.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    let service = result
+        .application()
+        .and_then(|application| application.services().first())
+        .map(boxferry_model::Sourced::value)
+        .ok_or("service expected")?;
+    let options = service.security_options().ok_or("security options expected")?;
+    assert_eq!(options.len(), 11);
+    assert!(matches!(options[0].value(), SecurityOption::AppArmor(profile) if profile.expose() == "profile-a"));
+    assert!(matches!(options[1].value(), SecurityOption::NoNewPrivileges(false)));
+    assert!(
+        matches!(options[2].value(), SecurityOption::SeccompProfile(profile) if profile.is_sensitive() && profile.expose() == "/run/credentials/seccomp.json")
+    );
+    assert!(matches!(options[3].value(), SecurityOption::SecurityLabelDisable(true)));
+    assert!(
+        matches!(options[4].value(), SecurityOption::SecurityLabelFileType(value) if value.expose() == "container_file_t")
+    );
+    assert!(matches!(options[5].value(), SecurityOption::SecurityLabelLevel(value) if value.expose() == "s0:c1,c2"));
+    assert!(matches!(options[6].value(), SecurityOption::SecurityLabelNested(true)));
+    assert!(matches!(options[7].value(), SecurityOption::SecurityLabelType(value) if value.expose() == "container_t"));
+    assert!(matches!(options[8].value(), SecurityOption::Mask(value) if value.expose() == "/proc/acpi:/proc/kcore"));
+    assert!(matches!(options[9].value(), SecurityOption::Unmask(value) if value.expose() == "/proc/acpi"));
+    assert!(matches!(options[10].value(), SecurityOption::Mask(value) if value.expose() == "/proc/acpi:/proc/kcore"));
+    assert!(options.iter().all(|option| !option.origins().is_empty()));
+    assert!(!service.security_options_origins().is_empty());
+    assert!(!format!("{service:?}").contains("/run/credentials/seccomp.json"));
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "services.web.security_opt[10]")
+    );
+    Ok(())
+}
+
+#[test]
+fn distinguishes_empty_security_options_from_omission() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  empty:\n",
+        "    image: example.invalid/empty:1\n",
+        "    security_opt: []\n",
+        "  omitted:\n",
+        "    image: example.invalid/omitted:1\n",
+    );
+    let compose_source_id = ComposeSourceId::new(107);
+    let source = ComposeSource::new(
+        merged_project([(compose_source_id, "security-empty.compose.yaml", text)])?,
+        Identifier::new("security-empty")?,
+    )?
+    .with_source_id(compose_source_id, SourceId::new("security-empty.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let application = result.application().ok_or("application expected")?;
+    let empty = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "empty");
+    let omitted = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "omitted");
+    assert!(empty.is_some_and(|service| service.value().security_options().is_some_and(<[_]>::is_empty)));
+    assert!(omitted.is_some_and(|service| service.value().security_options().is_none()));
+    Ok(())
+}
+
+#[test]
+fn reports_security_option_conflicts_and_untyped_values_without_dropping_typed_evidence() -> Result<(), Box<dyn Error>>
+{
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    security_opt:\n",
+        "      - apparmor=first\n",
+        "      - apparmor=second\n",
+        "      - label:disable\n",
+        "      - label:type:container_t\n",
+        "      - mask=/proc/acpi\n",
+        "      - mask=/proc/acpi\n",
+        "      - apparmor = near-miss\n",
+        "      - ${DEFERRED}\n",
+        "      - raw-provider-option=value\n",
+        "      - \"\"\n",
+    );
+    let compose_source_id = ComposeSourceId::new(108);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        compose_source_id,
+        DocumentOrigin::new("security-conflict.compose.yaml", "."),
+        text,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("security-conflict")?,
+    )?
+    .with_source_id(compose_source_id, SourceId::new("security-conflict.compose.yaml")?);
+    let result = ComposeImporter::new()?.import(&source);
+    let service = result
+        .application()
+        .and_then(|application| application.services().first())
+        .map(boxferry_model::Sourced::value)
+        .ok_or("service expected")?;
+    assert_eq!(service.security_options().map(<[_]>::len), Some(6));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_opt" && outcome.kind() == ConversionKind::Invalid
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_opt" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    for index in [6, 7, 9] {
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.web.security_opt[{index}]")
+                && outcome.kind() == ConversionKind::Invalid
+        }));
+    }
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_opt[8]" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    Ok(())
+}
+
+#[test]
+fn reports_non_string_security_option_scalars_as_invalid() -> Result<(), Box<dyn Error>> {
+    let text = concat!(
+        "services:\n",
+        "  web:\n",
+        "    image: example.invalid/web:1\n",
+        "    security_opt: [7]\n",
+    );
+    let compose_source_id = ComposeSourceId::new(109);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        compose_source_id,
+        DocumentOrigin::new("security-scalar.compose.yaml", "."),
+        text,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project expected")?.clone(),
+        Identifier::new("security-scalar")?,
+    )?
+    .with_source_id(compose_source_id, SourceId::new("security-scalar.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.kind() == ConversionKind::Invalid && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFC0005")
+    }));
     Ok(())
 }
 

@@ -124,6 +124,98 @@ fn shared_quadlet_service_fields_convert_to_compose_without_loss() -> Result<(),
 }
 
 #[test]
+fn public_quadlet_to_compose_route_reconstructs_canonical_security_options() -> Result<(), Box<dyn Error>> {
+    let source = QuadletSource::parse(
+        Identifier::new("security")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            SourceId::new(4),
+            concat!(
+                "[Container]\nImage=example.invalid/web:1\n",
+                "AppArmor=profile-a\nNoNewPrivileges=false\nSeccompProfile=secret-seccomp.json\n",
+                "SecurityLabelDisable=true\nSecurityLabelFileType=container_file_t\n",
+                "SecurityLabelLevel=s0:c1,c2\nSecurityLabelNested=true\n",
+                "SecurityLabelType=container_t\nMask=/proc/acpi\nUnmask=/proc/acpi\nMask=/proc/acpi\n",
+            ),
+        )],
+    )?;
+    let version = PlatformVersion::new(5, 3, 1);
+    let target = TargetProfile::new(DOCKER_COMPOSE_TARGET, version, Some(version))?;
+    let result = convert(
+        &QuadletImporter::new()?,
+        &source,
+        &ComposeExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    assert!(!result.is_blocked(), "{:#?}", result.diagnostics());
+    let output = result
+        .output()
+        .ok_or("partial Compose security-option output expected")?;
+    assert!(!format!("{output:?}").contains("secret-seccomp.json"));
+    assert!(output.text().contains(concat!(
+        "security_opt:\n",
+        "      - \"apparmor=profile-a\"\n",
+        "      - \"no-new-privileges:false\"\n",
+        "      - \"seccomp=secret-seccomp.json\"\n",
+        "      - \"label:disable\"\n",
+        "      - \"label:filetype:container_file_t\"\n",
+        "      - \"label:level:s0:c1,c2\"\n",
+        "      - \"label:nested\"\n",
+        "      - \"label:type:container_t\"\n",
+        "      - \"mask=/proc/acpi\"\n",
+        "      - \"unmask=/proc/acpi\"\n",
+        "      - \"mask=/proc/acpi\"\n",
+    )));
+    for index in 0..11 {
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.web.security_options[{index}]")
+                && outcome.kind() == boxferry::ConversionKind::Exact
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn false_quadlet_selinux_booleans_remain_neutral_but_are_not_invented_in_compose() -> Result<(), Box<dyn Error>> {
+    let source = QuadletSource::parse(
+        Identifier::new("security-false")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            SourceId::new(5),
+            concat!(
+                "[Container]\nImage=example.invalid/web:1\n",
+                "SecurityLabelDisable=false\nSecurityLabelNested=false\nMask=/proc/acpi\n",
+            ),
+        )],
+    )?;
+    let version = PlatformVersion::new(5, 3, 1);
+    let target = TargetProfile::new(DOCKER_COMPOSE_TARGET, version, Some(version))?;
+    let result = convert(
+        &QuadletImporter::new()?,
+        &source,
+        &ComposeExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    let output = result.output().ok_or("partial Compose output expected")?;
+    assert!(output.text().contains("- \"mask=/proc/acpi\""));
+    assert!(!output.text().contains("label:disable:false"));
+    assert!(!output.text().contains("label:nested:false"));
+    for index in [0, 1] {
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.web.security_options[{index}]")
+                && outcome.kind() == boxferry::ConversionKind::Exact
+        }));
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.web.security_opt[{index}]")
+                && outcome.kind() == boxferry::ConversionKind::Unsupported
+        }));
+    }
+    Ok(())
+}
+
+#[test]
 fn converts_quadlet_environment_files_after_parser_parity_authorization() -> Result<(), Box<dyn Error>> {
     let source = QuadletSource::parse(
         Identifier::new("example")?,

@@ -3,7 +3,7 @@
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
     Application, Command, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand, Identifier, MountSource,
-    Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, SelinuxRelabel, Service,
+    Protocol, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service,
     ServiceDependencyCondition, SourceId,
 };
 use boxferry_quadlet::{QuadletDocumentInput, QuadletImporter, QuadletSource, QuadletSourceError};
@@ -1225,6 +1225,122 @@ fn imports_ordered_dns_keys_and_treats_empty_assignments_as_resets() -> Result<(
             .iter()
             .any(|outcome| outcome.subject() == "services.web.dns" && outcome.kind() == ConversionKind::Unsupported)
     );
+    Ok(())
+}
+
+#[test]
+fn imports_security_options_in_native_order_with_sensitive_provenance() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            concat!(
+                "[Container]\n",
+                "Image=example.invalid/web:1\n",
+                "AppArmor=profile\n",
+                "NoNewPrivileges=yes\n",
+                "SeccompProfile=unconfined\n",
+                "SecurityLabelDisable=false\n",
+                "SecurityLabelFileType=container_file_t\n",
+                "SecurityLabelLevel=s0:c1,c2\n",
+                "SecurityLabelNested=true\n",
+                "SecurityLabelType=container_t\n",
+                "Mask=/proc/acpi:/sys/firmware\n",
+                "Unmask=ALL\n",
+                "Mask=/proc/acpi:/sys/firmware\n",
+                "Unmask=ALL\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?
+    .with_source_id(
+        QuadletSourceId::new(1),
+        SourceId::new("quadlet/security.container").map_err(|error| error.to_string())?,
+    );
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let service = result
+        .application()
+        .and_then(|application| application.services().first())
+        .ok_or("service expected")?
+        .value();
+    let options = service.security_options().ok_or("security options expected")?;
+    assert_eq!(options.len(), 12);
+    assert!(matches!(options[0].value(), SecurityOption::AppArmor(value) if value.expose() == "profile"));
+    assert!(matches!(options[1].value(), SecurityOption::NoNewPrivileges(true)));
+    assert!(matches!(options[2].value(), SecurityOption::SeccompProfile(value) if value.expose() == "unconfined"));
+    assert!(matches!(
+        options[3].value(),
+        SecurityOption::SecurityLabelDisable(false)
+    ));
+    assert!(
+        matches!(options[4].value(), SecurityOption::SecurityLabelFileType(value) if value.expose() == "container_file_t")
+    );
+    assert!(matches!(options[5].value(), SecurityOption::SecurityLabelLevel(value) if value.expose() == "s0:c1,c2"));
+    assert!(matches!(options[6].value(), SecurityOption::SecurityLabelNested(true)));
+    assert!(matches!(options[7].value(), SecurityOption::SecurityLabelType(value) if value.expose() == "container_t"));
+    assert!(matches!(options[8].value(), SecurityOption::Mask(value) if value.expose() == "/proc/acpi:/sys/firmware"));
+    assert!(matches!(options[9].value(), SecurityOption::Unmask(value) if value.expose() == "ALL"));
+    assert!(matches!(options[10].value(), SecurityOption::Mask(value) if value.expose() == "/proc/acpi:/sys/firmware"));
+    assert!(matches!(options[11].value(), SecurityOption::Unmask(value) if value.expose() == "ALL"));
+    assert_eq!(service.security_options_origins().len(), 12);
+    assert_eq!(
+        options[0].origins()[0].source_id().as_str(),
+        "quadlet/security.container"
+    );
+    assert!(!format!("{options:?}").contains("container_file_t"));
+    Ok(())
+}
+
+#[test]
+fn keeps_security_option_resets_unsafe_values_singletons_and_selinux_conflicts_explicit() -> Result<(), String> {
+    let source = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            concat!(
+                "[Container]\n",
+                "Image=example.invalid/web:1\n",
+                "Mask=\n",
+                "NoNewPrivileges=not-a-boolean\n",
+                "SeccompProfile=\"quoted\"\n",
+                "AppArmor=first\n",
+                "AppArmor=second\n",
+                "SecurityLabelDisable=true\n",
+                "SecurityLabelType=container_t\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let service = result
+        .application()
+        .and_then(|application| application.services().first())
+        .ok_or("service expected")?
+        .value();
+    let options = service
+        .security_options()
+        .ok_or("security options should remain explicitly present")?;
+    assert_eq!(options.len(), 3);
+    assert!(matches!(options[0].value(), SecurityOption::AppArmor(value) if value.expose() == "first"));
+    assert!(matches!(options[1].value(), SecurityOption::SecurityLabelDisable(true)));
+    assert!(matches!(options[2].value(), SecurityOption::SecurityLabelType(value) if value.expose() == "container_t"));
+    assert_eq!(service.security_options_origins().len(), 6);
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options[0]" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options.apparmor" && outcome.kind() == ConversionKind::Invalid
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options" && outcome.kind() == ConversionKind::Unsupported
+    }));
     Ok(())
 }
 

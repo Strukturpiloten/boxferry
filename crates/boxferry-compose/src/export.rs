@@ -9,7 +9,7 @@ use boxferry_engine::{
 use boxferry_model::{
     Application, Command, Device, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, HostAddressKind,
     MountSource, ProtectedString, Protocol, Provenance, ProvenanceKind, ResourceOwnership, RestartPolicy,
-    SelinuxRelabel, Service, Sourced,
+    SecurityOption, SelinuxRelabel, Service, Sourced,
 };
 use compose_lens::{
     render::{
@@ -362,6 +362,7 @@ impl<'a> Mapping<'a> {
         self.map_identity(service, &mut generated, &service_subject);
         self.map_execution_context(service, &mut generated, &service_subject);
         self.map_dns(service, &mut generated, &service_subject);
+        self.map_security_options(service, &mut generated, &service_subject);
         self.map_environment_files(service, &mut generated, &service_subject);
         self.map_environment(service, &mut generated, &service_subject);
         self.map_labels(service, &mut generated, &service_subject);
@@ -441,6 +442,34 @@ impl<'a> Mapping<'a> {
                 Ok(()) => self.exact(subject, &origins),
                 Err(error) => self.generation_error(&subject, &error, &origins),
             }
+        }
+    }
+
+    fn map_security_options(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
+        let Some(options) = service.security_options() else {
+            return;
+        };
+        let subject = format!("{service_subject}.security_opt");
+        let origins = collection_or_item_origins(options, service.security_options_origins());
+        let mut generated_options = Vec::with_capacity(options.len());
+        let mut all_exact = true;
+        for (index, option) in options.iter().enumerate() {
+            match security_option_string(option.value()) {
+                Ok(SecurityOptionGeneration::Generated(value)) => generated_options.push(value),
+                Ok(SecurityOptionGeneration::Unsupported(reason)) => {
+                    all_exact = false;
+                    self.unsupported(&format!("{subject}[{index}]"), reason, option.origins());
+                }
+                Err(error) => {
+                    self.generation_error(&subject, &error, &origins);
+                    return;
+                }
+            }
+        }
+        match generated.set_security_options(generated_options) {
+            Ok(()) if all_exact => self.exact(subject, &origins),
+            Ok(()) => {}
+            Err(error) => self.generation_error(&subject, &error, &origins),
         }
     }
 
@@ -1069,6 +1098,66 @@ fn generated_string(value: &ProtectedString) -> Result<GeneratedString, Generati
         GeneratedString::sensitive(value.expose())
     } else {
         GeneratedString::plain(value.expose())
+    }
+}
+
+enum SecurityOptionGeneration {
+    Generated(GeneratedString),
+    Unsupported(&'static str),
+}
+
+fn security_option_string(option: &SecurityOption) -> Result<SecurityOptionGeneration, GenerationError> {
+    Ok(match option {
+        SecurityOption::AppArmor(profile) => {
+            SecurityOptionGeneration::Generated(prefixed_generated_string("apparmor=", profile)?)
+        }
+        SecurityOption::NoNewPrivileges(enabled) => {
+            SecurityOptionGeneration::Generated(GeneratedString::plain(format!("no-new-privileges:{enabled}"))?)
+        }
+        SecurityOption::SeccompProfile(profile) => {
+            SecurityOptionGeneration::Generated(prefixed_generated_string("seccomp=", profile)?)
+        }
+        SecurityOption::SecurityLabelDisable(enabled) => {
+            if *enabled {
+                SecurityOptionGeneration::Generated(GeneratedString::plain("label:disable")?)
+            } else {
+                SecurityOptionGeneration::Unsupported(
+                    "Compose has no exact `security_opt` spelling that re-enables SELinux label separation",
+                )
+            }
+        }
+        SecurityOption::SecurityLabelFileType(file_type) => {
+            SecurityOptionGeneration::Generated(prefixed_generated_string("label:filetype:", file_type)?)
+        }
+        SecurityOption::SecurityLabelLevel(level) => {
+            SecurityOptionGeneration::Generated(prefixed_generated_string("label:level:", level)?)
+        }
+        SecurityOption::SecurityLabelNested(enabled) => {
+            if *enabled {
+                SecurityOptionGeneration::Generated(GeneratedString::plain("label:nested")?)
+            } else {
+                SecurityOptionGeneration::Unsupported(
+                    "Compose has no exact `security_opt` spelling that disables nested SELinux labeling",
+                )
+            }
+        }
+        SecurityOption::SecurityLabelType(label_type) => {
+            SecurityOptionGeneration::Generated(prefixed_generated_string("label:type:", label_type)?)
+        }
+        SecurityOption::Mask(paths) => SecurityOptionGeneration::Generated(prefixed_generated_string("mask=", paths)?),
+        SecurityOption::Unmask(paths) => {
+            SecurityOptionGeneration::Generated(prefixed_generated_string("unmask=", paths)?)
+        }
+        _ => SecurityOptionGeneration::Unsupported("security-option variant is newer than this Compose adapter"),
+    })
+}
+
+fn prefixed_generated_string(prefix: &str, value: &ProtectedString) -> Result<GeneratedString, GenerationError> {
+    let raw = format!("{prefix}{}", value.expose());
+    if value.is_sensitive() {
+        GeneratedString::sensitive(raw)
+    } else {
+        GeneratedString::plain(raw)
     }
 }
 

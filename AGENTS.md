@@ -83,12 +83,28 @@ The `ci-*` aliases in `.cargo/config.toml` use locked resolution and all workspa
 
 ## Multi-agent coordination
 
+- The human-facing batch prompt and operator responsibilities are documented in
+  `docs/agent-workflow.md`.
 - Use the primary BoxFerry agent as the integrator for tasks spanning BoxFerry, ComposeLens, and
   QuadletLens.
 - Delegate only concrete, bounded tasks with an independently verifiable result.
 - Never run two source-writing agents in the same repository checkout concurrently.
 - Agents may write concurrently in separate repository checkouts only after the public contract is
   defined by the primary agent.
+- For a large BoxFerry key batch, prefer this pipeline:
+  1. specification researchers establish the native behavior and evidence boundaries;
+  2. one foundation writer adds the complete neutral-model contract and model tests;
+  3. after that foundation is available in isolated checkouts, one Compose-adapter writer and one
+     Quadlet-adapter writer may work concurrently on the same batch; and
+  4. the primary agent integrates both uncommitted diffs, adds or delegates facade coverage, and
+     reviews the combined change before verification.
+- Batch related keys instead of assigning one writer per key. Keep each writer's crate and file
+  ownership explicit; shared manifests, lockfiles, facade wiring, coverage documents, and release
+  preparation remain owned by the primary agent unless assigned as a separate sequential task.
+- The primary agent creates and removes isolated checkouts. Workers neither create branches nor
+  assume that changes in another checkout are visible.
+- Run at most two BoxFerry source-writing workers concurrently, leaving capacity for independent
+  research or review. Run one repository verifier only after the integrated BoxFerry diff is final.
 - Specification research and review agents remain read-only.
 - Run a verifier only after the relevant repository's writing agent has finished.
 - Verification agents report failures but do not modify source, tests, configuration, or

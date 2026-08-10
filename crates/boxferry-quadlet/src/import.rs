@@ -10,8 +10,8 @@ use boxferry_model::{
     Application, Command, EnvironmentFile, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, Healthcheck,
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
     ImageReference, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, Port, ProtectedString, Protocol,
-    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceSpan, Sourced, Volume,
+    Provenance, ResourceGrant, ResourceGrantSyntax, ResourceOwnership, RestartPolicy, Secret, SecurityOption,
+    SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, SourceSpan, Sourced, Volume,
 };
 use quadlet_lens::model::{
     ContainerKey, EntryKind, PodKey, QuadletUnitType, SectionKind, TypedEntry, TypedSection, UnitReferenceKind,
@@ -149,6 +149,8 @@ struct ContainerImportState<'entry> {
     relations: DependencyRelations,
     healthcheck: Healthcheck,
     health_origins: Vec<Provenance>,
+    security_options: Vec<Sourced<SecurityOption>>,
+    security_option_origins: Vec<Provenance>,
 }
 
 struct PodImportGroup {
@@ -433,6 +435,26 @@ impl<'a> Mapping<'a> {
         if let Some(entry) = state.group_entry {
             self.map_group(filename, &service_name, service, entry);
         }
+        if !state.security_option_origins.is_empty() {
+            let has_disable = state
+                .security_options
+                .iter()
+                .any(|option| matches!(option.value(), SecurityOption::SecurityLabelDisable(true)));
+            let has_other_labels = state
+                .security_options
+                .iter()
+                .any(|option| security_option_is_selinux_label(option.value()));
+            if has_disable && has_other_labels {
+                self.unsupported_value(
+                    &format!("services.{service_name}.security_options"),
+                    filename,
+                    "SecurityLabelDisable",
+                    "SecurityLabelDisable=true conflicts with additional SELinux label settings; the native values remain explicit but need caller review",
+                    state.security_option_origins[0].clone(),
+                );
+            }
+            service.set_security_options_with_origins(state.security_options, state.security_option_origins);
+        }
         if !state.health_origins.is_empty() {
             service.set_healthcheck(sourced_with_origins(state.healthcheck, &state.health_origins));
         }
@@ -460,6 +482,13 @@ impl<'a> Mapping<'a> {
                     "Quadlet singleton key is declared more than once",
                     Some(self.entry_origin(entry)),
                 );
+                continue;
+            }
+            if is_security_container_key(entry.kind()) {
+                self.map_security_option(filename, &service_name, entry, state);
+                continue;
+            }
+            if self.map_container_health_entry(filename, &service_name, entry, state) {
                 continue;
             }
             match entry.kind() {
@@ -524,24 +553,145 @@ impl<'a> Mapping<'a> {
                 EntryKind::Container(ContainerKey::ReadOnly) => {
                     self.map_read_only(filename, &service_name, service, entry);
                 }
-                EntryKind::Container(ContainerKey::HealthCmd) => {
-                    self.map_health_command(filename, &service_name, entry, state);
-                }
-                EntryKind::Container(ContainerKey::HealthInterval) => {
-                    self.map_health_duration(filename, &service_name, entry, state, HealthDurationField::Interval);
-                }
-                EntryKind::Container(ContainerKey::HealthTimeout) => {
-                    self.map_health_duration(filename, &service_name, entry, state, HealthDurationField::Timeout);
-                }
-                EntryKind::Container(ContainerKey::HealthStartPeriod) => {
-                    self.map_health_duration(filename, &service_name, entry, state, HealthDurationField::StartPeriod);
-                }
-                EntryKind::Container(ContainerKey::HealthRetries) => {
-                    self.map_health_retries(filename, &service_name, entry, state);
-                }
                 _ => self.unsupported_entry(filename, &service_name, entry),
             }
         }
+    }
+
+    fn map_container_health_entry(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        entry: &TypedEntry,
+        state: &mut ContainerImportState<'_>,
+    ) -> bool {
+        match entry.kind() {
+            EntryKind::Container(ContainerKey::HealthCmd) => {
+                self.map_health_command(filename, service_name, entry, state);
+            }
+            EntryKind::Container(ContainerKey::HealthInterval) => {
+                self.map_health_duration(filename, service_name, entry, state, HealthDurationField::Interval);
+            }
+            EntryKind::Container(ContainerKey::HealthTimeout) => {
+                self.map_health_duration(filename, service_name, entry, state, HealthDurationField::Timeout);
+            }
+            EntryKind::Container(ContainerKey::HealthStartPeriod) => {
+                self.map_health_duration(filename, service_name, entry, state, HealthDurationField::StartPeriod);
+            }
+            EntryKind::Container(ContainerKey::HealthRetries) => {
+                self.map_health_retries(filename, service_name, entry, state);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn map_security_option(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        entry: &TypedEntry,
+        state: &mut ContainerImportState<'_>,
+    ) {
+        let origin = self.entry_origin(entry);
+        state.security_option_origins.push(origin.clone());
+        let index = state.security_options.len();
+        let subject = format!("services.{service_name}.security_options[{index}]");
+        let Some(value) = self.security_option_value(filename, &subject, entry, origin.clone()) else {
+            return;
+        };
+        let option = match entry.kind() {
+            EntryKind::Container(ContainerKey::AppArmor) => SecurityOption::AppArmor(ProtectedString::sensitive(value)),
+            EntryKind::Container(ContainerKey::NoNewPrivileges) => {
+                let Some(value) = parse_security_option_boolean(value) else {
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        entry.key().text(),
+                        "NoNewPrivileges must use a supported systemd boolean spelling",
+                        origin,
+                    );
+                    return;
+                };
+                SecurityOption::NoNewPrivileges(value)
+            }
+            EntryKind::Container(ContainerKey::SeccompProfile) => {
+                SecurityOption::SeccompProfile(ProtectedString::sensitive(value))
+            }
+            EntryKind::Container(ContainerKey::SecurityLabelDisable) => {
+                let Some(value) = parse_security_option_boolean(value) else {
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        entry.key().text(),
+                        "SecurityLabelDisable must use a supported systemd boolean spelling",
+                        origin,
+                    );
+                    return;
+                };
+                SecurityOption::SecurityLabelDisable(value)
+            }
+            EntryKind::Container(ContainerKey::SecurityLabelFileType) => {
+                SecurityOption::SecurityLabelFileType(ProtectedString::sensitive(value))
+            }
+            EntryKind::Container(ContainerKey::SecurityLabelLevel) => {
+                SecurityOption::SecurityLabelLevel(ProtectedString::sensitive(value))
+            }
+            EntryKind::Container(ContainerKey::SecurityLabelNested) => {
+                let Some(value) = parse_security_option_boolean(value) else {
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        entry.key().text(),
+                        "SecurityLabelNested must use a supported systemd boolean spelling",
+                        origin,
+                    );
+                    return;
+                };
+                SecurityOption::SecurityLabelNested(value)
+            }
+            EntryKind::Container(ContainerKey::SecurityLabelType) => {
+                SecurityOption::SecurityLabelType(ProtectedString::sensitive(value))
+            }
+            EntryKind::Container(ContainerKey::Mask) => SecurityOption::Mask(ProtectedString::sensitive(value)),
+            EntryKind::Container(ContainerKey::Unmask) => SecurityOption::Unmask(ProtectedString::sensitive(value)),
+            _ => return,
+        };
+        state
+            .security_options
+            .push(Sourced::from_source(option, origin.clone()));
+        self.exact(subject, Some(origin));
+    }
+
+    fn security_option_value<'entry>(
+        &mut self,
+        filename: &str,
+        subject: &str,
+        entry: &'entry TypedEntry,
+        origin: Provenance,
+    ) -> Option<&'entry str> {
+        if entry.value().is_continued() {
+            self.unsupported_value(
+                subject,
+                filename,
+                entry.key().text(),
+                "security-option continuation requires native semantic decoding before import",
+                origin,
+            );
+            return None;
+        }
+        let value = entry.value().primary().text();
+        if !is_safe_security_option_value(value) {
+            self.unsupported_value(
+                subject,
+                filename,
+                entry.key().text(),
+                "security-option must be a non-empty unquoted physical line without systemd specifiers",
+                origin,
+            );
+            return None;
+        }
+        Some(value)
     }
 
     fn map_container_name(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
@@ -1809,8 +1959,34 @@ const fn singleton_field(key: ContainerKey) -> Option<&'static str> {
         ContainerKey::HealthRetries => Some("healthcheck.retries"),
         ContainerKey::HealthStartPeriod => Some("healthcheck.start_period"),
         ContainerKey::Pod => Some("service_group"),
+        ContainerKey::AppArmor => Some("security_options.apparmor"),
+        ContainerKey::NoNewPrivileges => Some("security_options.no_new_privileges"),
+        ContainerKey::SeccompProfile => Some("security_options.seccomp_profile"),
+        ContainerKey::SecurityLabelDisable => Some("security_options.security_label_disable"),
+        ContainerKey::SecurityLabelFileType => Some("security_options.security_label_file_type"),
+        ContainerKey::SecurityLabelLevel => Some("security_options.security_label_level"),
+        ContainerKey::SecurityLabelNested => Some("security_options.security_label_nested"),
+        ContainerKey::SecurityLabelType => Some("security_options.security_label_type"),
         _ => None,
     }
+}
+
+const fn is_security_container_key(kind: EntryKind) -> bool {
+    matches!(
+        kind,
+        EntryKind::Container(
+            ContainerKey::AppArmor
+                | ContainerKey::NoNewPrivileges
+                | ContainerKey::SeccompProfile
+                | ContainerKey::SecurityLabelDisable
+                | ContainerKey::SecurityLabelFileType
+                | ContainerKey::SecurityLabelLevel
+                | ContainerKey::SecurityLabelNested
+                | ContainerKey::SecurityLabelType
+                | ContainerKey::Mask
+                | ContainerKey::Unmask
+        )
+    )
 }
 
 fn decode_health_command(value: &str) -> Result<HealthcheckCommand, ValueIssue> {
@@ -2119,6 +2295,35 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',')
         })
+}
+
+fn is_safe_security_option_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',' | b'*'
+                )
+        })
+}
+
+fn parse_security_option_boolean(value: &str) -> Option<bool> {
+    match value {
+        "1" | "yes" | "y" | "true" | "t" | "on" => Some(true),
+        "0" | "no" | "n" | "false" | "f" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn security_option_is_selinux_label(option: &SecurityOption) -> bool {
+    matches!(
+        option,
+        SecurityOption::SecurityLabelFileType(_)
+            | SecurityOption::SecurityLabelLevel(_)
+            | SecurityOption::SecurityLabelNested(_)
+            | SecurityOption::SecurityLabelType(_)
+    )
 }
 
 fn is_safe_health_shell_command(value: &str) -> bool {

@@ -21,6 +21,7 @@ const POD_SOURCE_ID: u32 = 93;
 const DEPENDENCY_SOURCE_ID: u32 = 94;
 const SECRET_SOURCE_ID: u32 = 95;
 const ENVIRONMENT_FILE_SOURCE_ID: u32 = 96;
+const SECURITY_OPTION_SOURCE_ID: u32 = 99;
 
 #[test]
 fn public_compose_to_quadlet_route_emits_released_container_settings() -> Result<(), Box<dyn Error>> {
@@ -135,6 +136,106 @@ fn public_compose_to_quadlet_route_emits_ordered_dns_keys() -> Result<(), Box<dy
         assert!(index >= previous);
         previous = index + line.len();
     }
+    Ok(())
+}
+
+#[test]
+fn public_compose_to_quadlet_route_emits_all_released_security_keys_in_order() -> Result<(), Box<dyn Error>> {
+    let source = security_option_source()?;
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 8, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+
+    let result = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    assert!(!result.is_blocked(), "{:#?}", result.diagnostics());
+    let output = result.output().ok_or("partial security-option output expected")?;
+    assert!(!format!("{output:?}").contains("secret-seccomp.json"));
+    assert_eq!(
+        security_option_lines(output.file("web.container").map(boxferry::QuadletFile::text)),
+        [
+            "AppArmor=profile-a",
+            "NoNewPrivileges=false",
+            "SeccompProfile=secret-seccomp.json",
+            "SecurityLabelDisable=true",
+            "SecurityLabelFileType=container_file_t",
+            "SecurityLabelLevel=s0:c1,c2",
+            "SecurityLabelNested=true",
+            "SecurityLabelType=container_t",
+            "Mask=/proc/acpi",
+            "Unmask=/proc/acpi",
+            "Mask=/proc/acpi",
+        ]
+    );
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    Ok(())
+}
+
+#[test]
+fn public_compose_to_quadlet_route_requires_apparmor_floor_without_losing_other_candidates()
+-> Result<(), Box<dyn Error>> {
+    let source = security_option_source()?;
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 7, 1),
+        Some(PlatformVersion::new(5, 8, 0)),
+    )?;
+
+    let strict = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    assert!(strict.is_blocked());
+    assert!(strict.output().is_none());
+    assert!(strict.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.security_options[0]" && outcome.kind() == ConversionKind::Unsupported
+    }));
+
+    let partial = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    let output = partial.output().ok_or("partial security-option output expected")?;
+    assert_eq!(
+        security_option_lines(output.file("web.container").map(boxferry::QuadletFile::text)),
+        [
+            "NoNewPrivileges=false",
+            "SeccompProfile=secret-seccomp.json",
+            "SecurityLabelDisable=true",
+            "SecurityLabelFileType=container_file_t",
+            "SecurityLabelLevel=s0:c1,c2",
+            "SecurityLabelNested=true",
+            "SecurityLabelType=container_t",
+            "Mask=/proc/acpi",
+            "Unmask=/proc/acpi",
+            "Mask=/proc/acpi",
+        ]
+    );
+    assert!(
+        partial
+            .outcomes()
+            .iter()
+            .filter(|outcome| {
+                outcome.subject().starts_with("services.web.security_options[")
+                    && outcome.subject() != "services.web.security_options[0]"
+            })
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
     Ok(())
 }
 
@@ -586,4 +687,46 @@ fn dependency_fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
 
 fn secret_fixture_text(name: &str) -> Result<String, Box<dyn Error>> {
     Ok(fs::read_to_string(secret_fixture_directory().join(name))?)
+}
+
+fn security_option_source() -> Result<ComposeSource, Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(SECURITY_OPTION_SOURCE_ID);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("security.compose.yaml", "security.compose.yaml"),
+        concat!(
+            "services:\n  web:\n    image: example.invalid/web:1\n    security_opt:\n",
+            "      - apparmor=profile-a\n      - no-new-privileges:false\n",
+            "      - seccomp=secret-seccomp.json\n      - label:disable\n",
+            "      - label:filetype:container_file_t\n      - label:level:s0:c1,c2\n",
+            "      - label:nested\n      - label:type:container_t\n",
+            "      - mask=/proc/acpi\n      - unmask=/proc/acpi\n      - mask=/proc/acpi\n",
+        ),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let project = merged.project().ok_or("merged project expected")?.clone();
+    Ok(ComposeSource::new(project, Identifier::new("security")?)?
+        .with_source_id(source_id, SourceId::new("security.compose.yaml")?)
+        .with_profile_selection(select_profiles(
+            merged.project().ok_or("merged project expected")?,
+            &ProfileRequest::new(),
+        )))
+}
+
+fn security_option_lines(text: Option<&str>) -> Vec<&str> {
+    text.unwrap_or_default()
+        .lines()
+        .filter(|line| {
+            [
+                "AppArmor=",
+                "NoNewPrivileges=",
+                "SeccompProfile=",
+                "SecurityLabel",
+                "Mask=",
+                "Unmask=",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .collect()
 }

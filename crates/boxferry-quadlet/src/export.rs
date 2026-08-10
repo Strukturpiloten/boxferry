@@ -13,8 +13,8 @@ use boxferry_engine::{
 use boxferry_model::{
     Application, Command, Config, Device, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, Healthcheck,
     HealthcheckCommand, HostAddressKind, HostMapping, Mount, MountSource, NetworkAttachment, Port, Protocol,
-    Provenance, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SelinuxRelabel, Service, ServiceDependency,
-    ServiceDependencyCondition, Sourced,
+    Provenance, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service,
+    ServiceDependency, ServiceDependencyCondition, Sourced,
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
@@ -1334,6 +1334,81 @@ impl<'a> Mapping<'a> {
         self.map_ulimits(service_subject, service, builder);
         self.map_devices(service_subject, service, builder);
         self.map_stop_signal(service_subject, service, builder);
+        self.map_security_options(service_subject, service, builder);
+    }
+
+    fn map_security_options(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
+        let Some(options) = service.security_options() else {
+            return;
+        };
+        let collection_subject = format!("{service_subject}.security_options");
+        if options.is_empty() {
+            self.unsupported(
+                &collection_subject,
+                "an explicit empty security-option collection has no safe Quadlet reset encoding",
+                service.security_options_origins(),
+            );
+            return;
+        }
+
+        let mut singleton_counts = BTreeMap::new();
+        for option in options {
+            if let Some(name) = security_option_singleton_name(option.value()) {
+                *singleton_counts.entry(name).or_insert(0_usize) += 1;
+            }
+        }
+        let all_origins = collection_all_origins(options, service.security_options_origins());
+        for (name, count) in &singleton_counts {
+            if *count > 1 {
+                self.invalid(
+                    self.exporter.codes.invalid_value.clone(),
+                    &collection_subject,
+                    "security-option singleton is declared more than once",
+                    &format!("{name} occurs {count} times; retain one explicit value before generating Quadlet"),
+                    &all_origins,
+                );
+            }
+        }
+
+        let disable_labels = options
+            .iter()
+            .any(|option| matches!(option.value(), SecurityOption::SecurityLabelDisable(true)));
+        let other_labels = options
+            .iter()
+            .any(|option| security_option_is_selinux_label(option.value()));
+        if disable_labels && other_labels {
+            self.unsupported(
+                &collection_subject,
+                "SecurityLabelDisable=true conflicts with additional SELinux label settings; all native keys are retained but require explicit partial authorization",
+                &all_origins,
+            );
+        }
+
+        for (index, option) in options.iter().enumerate() {
+            let subject = format!("{collection_subject}[{index}]");
+            let Some((capability, key, value)) = security_option_output(option.value()) else {
+                self.unsupported(&subject, "unknown security-option variant", option.origins());
+                continue;
+            };
+            if security_option_singleton_name(option.value())
+                .is_some_and(|name| singleton_counts.get(name).copied().unwrap_or_default() > 1)
+            {
+                continue;
+            }
+            if !is_safe_security_option_value(value) {
+                self.unsupported(
+                    &subject,
+                    "security-option value requires quoting, contains a systemd specifier, or is not one safe physical line",
+                    option.origins(),
+                );
+                continue;
+            }
+            if self.capability(capability, &subject, option.origins())
+                && self.push_container(builder, key, value, &subject, option.origins())
+            {
+                self.exact(subject, option.origins());
+            }
+        }
     }
 
     fn map_released_scalars(&mut self, service_subject: &str, service: &Service, builder: &mut QuadletDocumentBuilder) {
@@ -3217,6 +3292,85 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',')
         })
+}
+
+fn is_safe_security_option_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',' | b'*'
+                )
+        })
+}
+
+fn security_option_singleton_name(option: &SecurityOption) -> Option<&'static str> {
+    match option {
+        SecurityOption::AppArmor(_) => Some("AppArmor"),
+        SecurityOption::NoNewPrivileges(_) => Some("NoNewPrivileges"),
+        SecurityOption::SeccompProfile(_) => Some("SeccompProfile"),
+        SecurityOption::SecurityLabelDisable(_) => Some("SecurityLabelDisable"),
+        SecurityOption::SecurityLabelFileType(_) => Some("SecurityLabelFileType"),
+        SecurityOption::SecurityLabelLevel(_) => Some("SecurityLabelLevel"),
+        SecurityOption::SecurityLabelNested(_) => Some("SecurityLabelNested"),
+        SecurityOption::SecurityLabelType(_) => Some("SecurityLabelType"),
+        _ => None,
+    }
+}
+
+fn security_option_is_selinux_label(option: &SecurityOption) -> bool {
+    matches!(
+        option,
+        SecurityOption::SecurityLabelFileType(_)
+            | SecurityOption::SecurityLabelLevel(_)
+            | SecurityOption::SecurityLabelNested(_)
+            | SecurityOption::SecurityLabelType(_)
+    )
+}
+
+fn security_option_output(option: &SecurityOption) -> Option<(&'static str, ContainerKey, &str)> {
+    match option {
+        SecurityOption::AppArmor(value) => Some(("quadlet.container.apparmor", ContainerKey::AppArmor, value.expose())),
+        SecurityOption::NoNewPrivileges(value) => Some((
+            "quadlet.container.no-new-privileges",
+            ContainerKey::NoNewPrivileges,
+            if *value { "true" } else { "false" },
+        )),
+        SecurityOption::SeccompProfile(value) => Some((
+            "quadlet.container.seccomp-profile",
+            ContainerKey::SeccompProfile,
+            value.expose(),
+        )),
+        SecurityOption::SecurityLabelDisable(value) => Some((
+            "quadlet.container.security-label-disable",
+            ContainerKey::SecurityLabelDisable,
+            if *value { "true" } else { "false" },
+        )),
+        SecurityOption::SecurityLabelFileType(value) => Some((
+            "quadlet.container.security-label-file-type",
+            ContainerKey::SecurityLabelFileType,
+            value.expose(),
+        )),
+        SecurityOption::SecurityLabelLevel(value) => Some((
+            "quadlet.container.security-label-level",
+            ContainerKey::SecurityLabelLevel,
+            value.expose(),
+        )),
+        SecurityOption::SecurityLabelNested(value) => Some((
+            "quadlet.container.security-label-nested",
+            ContainerKey::SecurityLabelNested,
+            if *value { "true" } else { "false" },
+        )),
+        SecurityOption::SecurityLabelType(value) => Some((
+            "quadlet.container.security-label-type",
+            ContainerKey::SecurityLabelType,
+            value.expose(),
+        )),
+        SecurityOption::Mask(value) => Some(("quadlet.container.mask", ContainerKey::Mask, value.expose())),
+        SecurityOption::Unmask(value) => Some(("quadlet.container.unmask", ContainerKey::Unmask, value.expose())),
+        _ => None,
+    }
 }
 
 fn is_safe_hostname(value: &str) -> bool {

@@ -1233,6 +1233,35 @@ pub enum Device {
     },
 }
 
+/// One format-independent service security option.
+///
+/// Native adapters retain ordering and duplicates around this value. They classify any
+/// source-specific singleton conflicts rather than imposing those rules on the neutral model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum SecurityOption {
+    /// Selects an `AppArmor` profile.
+    AppArmor(ProtectedString),
+    /// Enables or disables the no-new-privileges security bit.
+    NoNewPrivileges(bool),
+    /// Selects a seccomp profile.
+    SeccompProfile(ProtectedString),
+    /// Selects whether `SELinux` labeling is disabled (`true` disables labels).
+    SecurityLabelDisable(bool),
+    /// Selects the `SELinux` file type.
+    SecurityLabelFileType(ProtectedString),
+    /// Selects the `SELinux` level.
+    SecurityLabelLevel(ProtectedString),
+    /// Enables or disables nested `SELinux` labeling.
+    SecurityLabelNested(bool),
+    /// Selects the `SELinux` type.
+    SecurityLabelType(ProtectedString),
+    /// Masks one or more colon-separated container paths, or `ALL`.
+    Mask(ProtectedString),
+    /// Unmasks one or more colon-separated container paths, or `ALL`.
+    Unmask(ProtectedString),
+}
+
 impl ServiceDependency {
     /// Creates an edge using source-format defaults for readiness, restart propagation, and
     /// requirement strength.
@@ -1315,6 +1344,8 @@ pub struct Service {
     dns_options_origins: Vec<Provenance>,
     dns_search_domains: Option<Vec<Sourced<ProtectedString>>>,
     dns_search_domains_origins: Vec<Provenance>,
+    security_options: Option<Vec<Sourced<SecurityOption>>>,
+    security_options_origins: Vec<Provenance>,
     pids_limit: Option<Sourced<ProtectedString>>,
     shm_size: Option<Sourced<ProtectedString>>,
     cap_add: Option<Vec<Sourced<ProtectedString>>>,
@@ -1366,6 +1397,8 @@ impl Service {
             dns_options_origins: Vec::new(),
             dns_search_domains: None,
             dns_search_domains_origins: Vec::new(),
+            security_options: None,
+            security_options_origins: Vec::new(),
             pids_limit: None,
             shm_size: None,
             cap_add: None,
@@ -1613,6 +1646,33 @@ impl Service {
     #[must_use]
     pub fn dns_search_domains_origins(&self) -> &[Provenance] {
         &self.dns_search_domains_origins
+    }
+
+    /// Sets ordered security options, preserving omission separately from an explicit empty list.
+    pub fn set_security_options_with_origins(
+        &mut self,
+        values: Vec<Sourced<SecurityOption>>,
+        origins: Vec<Provenance>,
+    ) {
+        self.security_options = Some(values);
+        self.security_options_origins = origins;
+    }
+
+    /// Sets ordered security options without separate collection provenance.
+    pub fn set_security_options(&mut self, values: Vec<Sourced<SecurityOption>>) {
+        self.set_security_options_with_origins(values, Vec::new());
+    }
+
+    /// Returns ordered security options when explicitly authored.
+    #[must_use]
+    pub fn security_options(&self) -> Option<&[Sourced<SecurityOption>]> {
+        self.security_options.as_deref()
+    }
+
+    /// Returns collection provenance for explicitly authored security options.
+    #[must_use]
+    pub fn security_options_origins(&self) -> &[Provenance] {
+        &self.security_options_origins
     }
 
     /// Sets the raw process-ID limit spelling.
@@ -2111,7 +2171,7 @@ mod tests {
         Application, Config, ConfigMaterial, Device, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax,
         HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
         KernelParameter, MetadataLabel, ModelError, ResourceGrant, ResourceGrantSyntax, ResourceLimit,
-        ResourceOwnership, RestartPolicy, Secret, SecretMaterial, Service, ServiceDependency,
+        ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, Service, ServiceDependency,
         ServiceDependencyCondition, ServiceGroup,
     };
     use crate::{ProtectedString, Sourced};
@@ -2538,6 +2598,107 @@ mod tests {
             ["ndots:5", "rotate"]
         );
         assert!(!format!("{service:?}").contains("rotate"));
+        Ok(())
+    }
+
+    #[test]
+    fn security_options_preserve_empty_order_duplicates_provenance_and_redaction() -> Result<(), String> {
+        let origin =
+            crate::Provenance::source(crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?);
+        let mut service = Service::new(id("web")?);
+
+        assert!(service.security_options().is_none());
+        service.set_security_options_with_origins(Vec::new(), vec![origin.clone()]);
+        assert_eq!(service.security_options().map(<[_]>::len), Some(0));
+        assert_eq!(service.security_options_origins(), std::slice::from_ref(&origin));
+
+        service.set_security_options_with_origins(
+            vec![
+                Sourced::from_source(
+                    SecurityOption::AppArmor(ProtectedString::sensitive("apparmor-secret")),
+                    origin.clone(),
+                ),
+                Sourced::from_source(SecurityOption::NoNewPrivileges(true), origin.clone()),
+                Sourced::from_source(
+                    SecurityOption::SeccompProfile(ProtectedString::sensitive("seccomp-secret")),
+                    origin.clone(),
+                ),
+                Sourced::from_source(SecurityOption::SecurityLabelDisable(false), origin.clone()),
+                Sourced::from_source(
+                    SecurityOption::SecurityLabelFileType(ProtectedString::sensitive("file-type-secret")),
+                    origin.clone(),
+                ),
+                Sourced::from_source(
+                    SecurityOption::SecurityLabelLevel(ProtectedString::sensitive("level-secret")),
+                    origin.clone(),
+                ),
+                Sourced::from_source(SecurityOption::SecurityLabelNested(true), origin.clone()),
+                Sourced::from_source(
+                    SecurityOption::SecurityLabelType(ProtectedString::sensitive("type-secret")),
+                    origin.clone(),
+                ),
+                Sourced::from_source(
+                    SecurityOption::Mask(ProtectedString::sensitive("mask-secret")),
+                    origin.clone(),
+                ),
+                Sourced::from_source(
+                    SecurityOption::Unmask(ProtectedString::sensitive("unmask-secret")),
+                    origin.clone(),
+                ),
+                Sourced::from_source(
+                    SecurityOption::Mask(ProtectedString::sensitive("mask-secret")),
+                    origin.clone(),
+                ),
+            ],
+            vec![origin.clone()],
+        );
+
+        let options = service.security_options().unwrap_or_default();
+        assert_eq!(options.len(), 11);
+        assert!(
+            matches!(options[0].value(), SecurityOption::AppArmor(profile) if profile.expose() == "apparmor-secret")
+        );
+        assert!(matches!(options[1].value(), SecurityOption::NoNewPrivileges(true)));
+        assert!(
+            matches!(options[2].value(), SecurityOption::SeccompProfile(profile) if profile.expose() == "seccomp-secret")
+        );
+        assert!(matches!(
+            options[3].value(),
+            SecurityOption::SecurityLabelDisable(false)
+        ));
+        assert!(
+            matches!(options[4].value(), SecurityOption::SecurityLabelFileType(profile) if profile.expose() == "file-type-secret")
+        );
+        assert!(
+            matches!(options[5].value(), SecurityOption::SecurityLabelLevel(profile) if profile.expose() == "level-secret")
+        );
+        assert!(matches!(options[6].value(), SecurityOption::SecurityLabelNested(true)));
+        assert!(
+            matches!(options[7].value(), SecurityOption::SecurityLabelType(profile) if profile.expose() == "type-secret")
+        );
+        assert!(matches!(options[8].value(), SecurityOption::Mask(path) if path.expose() == "mask-secret"));
+        assert!(matches!(options[9].value(), SecurityOption::Unmask(path) if path.expose() == "unmask-secret"));
+        assert!(matches!(options[10].value(), SecurityOption::Mask(path) if path.expose() == "mask-secret"));
+        assert_eq!(options[0].origins(), std::slice::from_ref(&origin));
+        assert_eq!(service.security_options_origins(), std::slice::from_ref(&origin));
+
+        let debug = format!("{service:?}");
+        for secret in [
+            "apparmor-secret",
+            "seccomp-secret",
+            "file-type-secret",
+            "level-secret",
+            "type-secret",
+            "mask-secret",
+            "unmask-secret",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("[REDACTED]"));
+
+        service.set_security_options(Vec::new());
+        assert_eq!(service.security_options().map(<[_]>::len), Some(0));
+        assert!(service.security_options_origins().is_empty());
         Ok(())
     }
 
