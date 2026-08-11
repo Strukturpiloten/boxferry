@@ -4,6 +4,11 @@ The `boxferry` executable is a thin consumer of the public library facade. It ow
 parsing, authorized file reads and writes, diagnostic presentation, and process status; conversion
 rules remain in the reusable adapters and engine.
 
+This document describes the legacy compatibility command. The implemented generic `convert` and
+`validate` interface, ordered file/directory discovery, presentation modes, canonical
+`--report-file`, and local `--generate-error-report` support bundle are documented in the
+[vNext CLI contract](cli-vnext.md) and [Error reports](error-reports.md).
+
 ## Compose to Quadlet
 
 `boxferry compose-to-quadlet` accepts:

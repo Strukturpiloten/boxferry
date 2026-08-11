@@ -59,6 +59,7 @@ pub struct QuadletExporter {
     relative_bind_root: Option<String>,
     bind_source_mappings: BTreeMap<String, String>,
     grouping_policy: QuadletGroupingPolicy,
+    pod_name: Option<String>,
 }
 
 impl QuadletExporter {
@@ -86,6 +87,7 @@ impl QuadletExporter {
             relative_bind_root: None,
             bind_source_mappings: BTreeMap::new(),
             grouping_policy: QuadletGroupingPolicy::SeparateContainers,
+            pod_name: None,
         })
     }
 
@@ -191,6 +193,22 @@ impl QuadletExporter {
     #[must_use]
     pub const fn grouping_policy(&self) -> QuadletGroupingPolicy {
         self.grouping_policy
+    }
+
+    /// Selects the native name for a caller-requested single Podman pod.
+    ///
+    /// The override applies only to [`QuadletGroupingPolicy::SinglePod`]. Callers selecting
+    /// another grouping policy retain its established naming behavior.
+    #[must_use]
+    pub fn with_pod_name(mut self, name: impl Into<String>) -> Self {
+        self.pod_name = Some(name.into());
+        self
+    }
+
+    /// Returns the caller-selected native pod name, when one was supplied.
+    #[must_use]
+    pub fn pod_name(&self) -> Option<&str> {
+        self.pod_name.as_deref()
     }
 }
 
@@ -433,7 +451,11 @@ impl<'a> Mapping<'a> {
                     return;
                 }
                 Some(PodPlan {
-                    name: self.application.name().as_str().to_owned(),
+                    name: self
+                        .exporter
+                        .pod_name
+                        .clone()
+                        .unwrap_or_else(|| self.application.name().as_str().to_owned()),
                     subject: "application.pod".to_owned(),
                     origins: service_origins(self.application.services()),
                     consumed_group: None,

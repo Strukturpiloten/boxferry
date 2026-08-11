@@ -92,6 +92,8 @@ diagnostics will add source feature, target capability, explanation, suggested a
 fields without changing the redaction contract.
 
 Human and machine-readable renderers consume the same diagnostic objects. JSON output must not be reconstructed from terminal text.
+The implemented local [error-report bundle](error-reports.md) uses this structured boundary and adds
+only allowlisted, redacted invocation context; it does not capture terminal output or raw sources.
 
 The first target adapter assigns `BFQ0001` through `BFQ0008` to invalid target ranges, finite
 evidence notes, unsupported target mappings, invalid values, native generation failures,

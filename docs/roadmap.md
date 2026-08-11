@@ -61,9 +61,11 @@ as sixteen unrelated converters.
 
 - [x] Prove the shared importer → neutral model → exporter path in the public library API.
 - [x] Expose Compose-to-Quadlet through the CLI.
-- [ ] Add a generic CLI route contract with explicit source and target selection.
+- [x] Add the [generic CLI route contract](cli-vnext.md) with explicit source and target selection.
 - [ ] Expose Docker-runtime, Podman-runtime, Compose, and Quadlet sources and targets through that
   contract without duplicating conversion rules in the CLI.
+- [x] Add the [privacy-safe local error-report bundle](error-reports.md) without automatic upload
+  or raw input collection.
 - [ ] Add offline golden tests for every source/target combination over their shared supported
   subset.
 

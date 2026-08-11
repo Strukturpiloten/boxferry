@@ -29,6 +29,9 @@
 //! # }
 //! ```
 
+/// Versioned, presentation-independent conversion reports.
+pub mod report;
+
 /// Compose native-model adapter APIs, enabled by the additive `compose` feature.
 #[cfg(feature = "compose")]
 pub use boxferry_compose as compose;

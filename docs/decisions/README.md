@@ -30,6 +30,7 @@ Architecture decision records capture choices that constrain future development.
 | [0015](0015-runtime-container-restart-policy.md) | accepted | Container restart observations with conservative systemd approximation |
 | [0016](0016-runtime-metadata-label-reconstruction.md) | accepted | Protected runtime metadata labels with image-default and provider-metadata boundaries |
 | [0017](0017-n-to-n-adapter-matrix.md) | accepted | N-to-N import/export adapters with reviewable runtime deployment plans |
+| [0018](0018-generic-cli-and-diagnostic-support-bundle.md) | accepted | Generic CLI migration and privacy-safe local diagnostic support bundle |
 
 ## Adding an ADR
 

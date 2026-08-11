@@ -3,6 +3,25 @@
 use boxferry::{Application, Identifier, InMemoryAdapter, LossPolicy, PlatformVersion, TargetProfile, convert};
 
 #[test]
+fn facade_exposes_report_dto_without_cli_features() {
+    use boxferry::report::{ConversionReport, ExitCategory, ReportStatus, VersionBounds, redact_text};
+
+    let mut report = ConversionReport::new(
+        "test",
+        "compose",
+        "quadlet",
+        VersionBounds {
+            minimum: "5.4".into(),
+            maximum: "6.0".into(),
+        },
+    );
+    report.status = ReportStatus::Success;
+    report.exit_category = ExitCategory::Success;
+    assert_eq!(redact_text("databasePassword", "canary", false).0, "<redacted>");
+    assert!(report.review_required);
+}
+
+#[test]
 fn facade_converts_through_public_adapter_contracts() -> Result<(), String> {
     let application = Application::new(Identifier::new("example").map_err(|error| error.to_string())?);
     let adapter = InMemoryAdapter::exact("rendered target".to_owned());

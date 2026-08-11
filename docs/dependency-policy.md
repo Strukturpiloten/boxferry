@@ -46,6 +46,13 @@ share Podman and Docker native types: their version, casing, relationship, and c
 remain separate. Unknown meaningful Docker fields receive structured loss reports, and malformed
 payload diagnostics do not echo input values.
 
+The `boxferry` CLI feature uses ZIP 6.0.0 with default features disabled to create the local
+diagnostic support bundle recorded in ADR 0018. It writes only fixed, stored entries in bounded
+memory and enables no compression, encryption, timestamp, or runtime-inspection feature. ZIP is
+MIT-licensed and supports Rust 1.83.0, below BoxFerry's 1.85.0 MSRV. The lockfile necessarily
+records ZIP's mandatory crates (`arbitrary`, `crc32fast`, `indexmap`, and `memchr`), while a
+no-default embedded build does not activate ZIP or those CLI-only dependencies.
+
 ## Automation
 
 Run `cargo deny check` after installing `cargo-deny`. CI checks advisories, licenses, bans, and sources. Renovate proposes Cargo, lockfile, Rust toolchain, and GitHub Actions updates; updates still require the same tests and review as human-authored dependency changes.

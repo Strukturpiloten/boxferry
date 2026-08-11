@@ -1,0 +1,242 @@
+# vNext command-line interface contract
+
+## Status
+
+This is the accepted implementation contract recorded by
+[ADR 0018](decisions/0018-generic-cli-and-diagnostic-support-bundle.md). The implemented
+`compose-to-quadlet` behavior remains documented in the [current CLI contract](cli.md) until the
+generic command is available.
+
+## Command surface
+
+The implemented top-level commands are:
+
+- `boxferry convert` converts one explicit source type to one explicit target type.
+- `boxferry validate` parses and plans without writing generated artifacts.
+- `boxferry capabilities` reports supported formats, versions, and fidelity boundaries.
+- `boxferry help` and `boxferry help <COMMAND>` show help.
+- `boxferry version` prints version information.
+
+`-h`, `--help`, and `--version` remain visible conventional forms.
+Subcommand help is contextual: `boxferry convert --help` describes `convert`, not only the root
+command.
+
+## Generic conversion
+
+`convert` requires all of the following:
+
+```console
+boxferry convert \
+  --input-type compose \
+  --output-type quadlet \
+  --input-file compose.yaml \
+  --output-directory ./quadlet-output
+```
+
+`--input-file` and `--input-directory` are repeatable. Their occurrences form one ordered input
+sequence, even when the two options are interleaved:
+
+```console
+--input-file base.yaml \
+--input-directory overlays/ \
+--input-file production.yaml
+```
+
+The directory expansion is inserted at that exact position. An implementation must retain the
+occurrence indices instead of collecting both options independently and concatenating them.
+
+### Compose directory discovery
+
+A Compose input directory is scanned non-recursively. Conventional names are alternatives, not
+files to merge together. BoxFerry selects the first existing regular file in this order:
+
+1. `compose.yaml`
+2. `compose.yml`
+3. `podman-compose.yaml`
+4. `podman-compose.yml`
+5. `docker-compose.yaml`
+6. `docker-compose.yml`
+
+This order prefers vendor-neutral names, then Podman over Docker, and `.yaml` over `.yml`.
+BoxFerry reports the selected file and, in verbose mode, the ignored candidates. It fails when no
+candidate exists. Override files are never discovered or merged implicitly; callers add them with
+another ordered input option.
+
+An existing conventional candidate that is not a regular non-symlink file is ignored and recorded
+in the same verbose/report discovery detail; scanning continues to the next conventional name.
+
+### Quadlet directory discovery
+
+A Quadlet input directory contributes every supported unit extension in deterministic lexical
+filename order. Discovery remains non-recursive. Unsupported files remain outside the input set
+and are reported in verbose discovery details.
+
+## Compose preprocessing
+
+Compose `${NAME}` interpolation and runtime container environment are separate concepts.
+Interpolation remains opt-in with `--interpolate` during the compatibility period and accepts:
+
+- repeatable `--env-file PATH`; later files override earlier files;
+- repeatable `--env NAME=VALUE`; explicit values override environment files; and
+- `--env NAME`, which authorizes reading only that named process variable.
+
+`--env-file` accepts UTF-8 blank lines, comments whose first non-whitespace character is `#`, and
+`NAME=VALUE` assignments split at the first `=`. Names use the Compose interpolation variable
+grammar. The value is otherwise literal after removal of a trailing carriage return; quoting,
+escaping, `export`, multiline values, and nested interpolation are not interpreted. This is a
+strict BoxFerry input format, not a claim of full Docker Compose `.env` compatibility.
+
+BoxFerry does not import the complete process environment or discover `.env` implicitly. Values
+from every explicit interpolation source are protected in reports. Command-line values may be
+visible in shell history, process lists, and CI logs, so documentation must discourage
+`--env NAME=VALUE` for secrets.
+
+Each Compose document is interpolated before the documents are merged. Service-level Compose
+`env_file` declarations are runtime configuration and are preserved without reading their
+contents. The existing `--variable` and `--variable-from-environment` names plus the earlier
+`--interpolation-env-file` proposal are replaced by the smaller input contract above.
+
+The environment options require `--interpolate`. A future change to default interpolation needs a
+separate compatibility decision.
+
+### Project directory
+
+`--project-directory PATH` supplies the base for relative bind mounts, build contexts, environment
+file declarations, and other source paths. It does not change BoxFerry's process working
+directory. The default is the parent of the first resolved Compose input file. A project directory
+is required for stdin because stdin has no parent path.
+
+### Profiles
+
+Without profile options, only unprofiled services are active. `--profile NAME` is repeatable.
+`--all-profiles` explicitly activates every profile and all unprofiled services.
+
+All-profile activation is syntactically valid but may select mutually exclusive alternatives,
+such as two database services. BoxFerry never chooses an alternative. It reports active profiles
+and fails if the selected target cannot represent the combined application safely.
+
+## Runtime topology and file layout
+
+Runtime grouping and physical output layout are independent:
+
+- `--quadlet-grouping separate` keeps services in separate containers and is the default.
+- `--quadlet-grouping pod` requests one compatible Podman pod.
+- `--pod-name NAME` names that pod.
+- `--output-layout files` writes ordinary Quadlet files and is the only native layout in this
+  release.
+
+Quadlet does not require a pod. Automatically placing every Compose or Docker service into one
+pod changes network, namespace, port, and lifecycle semantics. Kubernetes output uses workload
+pod templates as required by Kubernetes; it does not imply that one application becomes one pod.
+
+When pod grouping is selected, BoxFerry first uses `--pod-name`, then a valid resolved application
+or Compose project name. It fails and requests `--pod-name` when no valid name exists. It rejects
+`--pod-name` with separate grouping. Podman's reviewed manuals do not define a `.quadlets` bundle.
+A future BoxFerry transport archive and Kubernetes or Podman Kube YAML belong to separate output
+types and contracts.
+
+## Target version selectors
+
+Podman minimum and maximum selectors accept `major.minor` or `major.minor.patch`. Major-only forms
+are invalid.
+
+- A minimum such as `5.4` resolves to the lowest reviewed patch in that line, normally `5.4.0`.
+- A maximum such as `6.0` resolves to the greatest `6.0.z` present in BoxFerry's finite capability
+  catalogue.
+- A shortened maximum never promises compatibility with unknown future patches.
+
+Human and JSON reports include both the requested selectors and their resolved finite bounds.
+
+## Output safety
+
+`--output-directory` is required for every conversion. BoxFerry never writes generated artifacts
+to the working directory implicitly.
+
+The output path must be completely absent. BoxFerry creates it only after conversion and policy
+authorization and refuses any existing file, directory, or symbolic link. Existing-empty-directory
+and overwrite behavior remain deferred until they have an atomic, rollback-safe contract.
+
+## Console presentation
+
+There is no `--silent` alias. Presentation modes are mutually exclusive:
+
+- normal human output is the default;
+- `--verbose` adds discovery, resolution, route-fidelity, and per-file detail;
+- `--quiet` suppresses progress and success text but retains warnings and errors; and
+- `--console-format json` writes one complete JSON result without human progress text.
+
+For `capabilities`, each JSON route includes stable fidelity-boundary fields:
+`exact` is `supported-compose-quadlet-intersection`, `approximate` contains `pod-grouping`, and
+`policy_controlled` contains `unsupported-fields`.
+
+Normal output includes selected inputs, the route, the resolved Compose application name, stage
+summaries, every non-exact diagnostic, and the write summary. Verbose output additionally includes resolved input
+order, ignored directory candidates, selected profiles, environment variable names and sources
+without values, resolved target bounds, concise route fidelity boundaries, and every written path.
+
+Verbosity affects only live human presentation. It never changes diagnostics or a report file.
+Showing only `source import failed with N diagnostic(s)` is a defect: every contained diagnostic
+must remain available in normal human output and structured JSON.
+
+### Streams
+
+In human mode, progress and success messages use standard output. Warnings and errors use standard
+error. Quiet mode leaves standard output empty and retains diagnostics on standard error.
+
+JSON mode writes exactly one document to standard output. It contains structured diagnostics and
+does not mix in human progress. Standard error is reserved for failures that occur before a JSON
+result can be constructed. Scripts should normally use JSON and stable exit statuses; `--quiet`
+is suitable when a script needs only filesystem effects and an exit status.
+
+The JSON result includes a schema version, BoxFerry version, status, stable exit category,
+resolved input order, source and target types, application identity, compatibility bounds,
+fidelity counts, structured diagnostics, output paths, and redacted provenance.
+
+`--report-file PATH` writes the same complete canonical JSON report independently of console mode.
+`--generate-error-report PATH` writes a local stored ZIP with exactly `README.md` and `report.json`.
+Both options use create-new semantics. When both are requested, BoxFerry writes `--report-file`
+first and then the support bundle; the bundle therefore records a report-file failure, while a
+later bundle-write failure is present in the final console report only. Either requested-output
+failure makes an otherwise successful conversion fail. The privacy-safe diagnostic support bundle
+is independent of presentation modes; see [Error reports](error-reports.md).
+
+## Full example
+
+```console
+boxferry convert \
+  --input-type compose \
+  --output-type quadlet \
+  --input-directory ./deployment \
+  --input-file ./production.override.yaml \
+  --project-directory . \
+  --interpolate \
+  --env-file ./deployment.env \
+  --env IMMICH_VERSION \
+  --output-layout files \
+  --podman-minimum-version 5.4 \
+  --podman-maximum-version 6.0 \
+  --output-directory ./quadlet-output
+```
+
+An explicit compatible single-pod conversion adds:
+
+```console
+--quadlet-grouping pod --pod-name immich
+```
+
+For a script that consumes the result:
+
+```console
+boxferry convert <OPTIONS> --console-format json >boxferry-result.json
+jq -e '.status == "success"' boxferry-result.json
+```
+
+The script must still check BoxFerry's process status; a pipeline should not accidentally replace
+it with the status of a later command.
+
+## Deferred features
+
+- Additional generic source and target pairs as their adapters become complete.
+- Safe overwrite or existing-empty-directory output.
+- Default interpolation after the compatibility period.
+- A non-native BoxFerry single-file transport archive with an explicit unpack/install contract.
