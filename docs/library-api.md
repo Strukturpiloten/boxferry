@@ -65,7 +65,8 @@ The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-ru
 `docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
 current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
 `ComposeRuntime`, Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
-`QuadletSource`, `QuadletSourceError`, `QuadletExporter`, `QuadletGroupingPolicy`, and
+`QuadletSource`, `QuadletSourceError`, `QuadletDetailedParseResult`, `QuadletDetailedParseError`,
+the `QuadletParseDiagnostic` DTO family, `QuadletExporter`, `QuadletGroupingPolicy`, and
 `QuadletOutput`. It also exposes each adapter and matching native
 dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
 `boxferry::docker`, so embedded callers do not need to guess a second crate version.
@@ -95,6 +96,15 @@ application services. Values that require native quoting, shell or path interpre
 structured unsupported outcomes. Duplicate singleton keys and source combinations that Quadlet
 itself cannot execute, such as `Group=` without `User=`, are invalid rather than last-write-wins
 guesses.
+
+`QuadletSource::parse_detailed` is the additive diagnostic boundary for callers that need native
+recovery detail. It retains every recoverable QuadletLens syntax and typed-model diagnostic in
+caller input order, followed by document-set diagnostics. The BoxFerry-owned DTOs preserve native
+code, severity, static summary, static label messages, numeric source IDs, and byte spans, but
+never retain source text, filenames or paths, protected values, or terminal-rendered diagnostics.
+Any error-severity native diagnostic or non-recoverable native metadata failure returns a detailed
+error without a usable `QuadletSource`; `QuadletSource::parse` remains source-compatible and
+continues to expose only its legacy aggregate invalid-document summary.
 
 The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types including
 `RuntimeHealthcheck` and `RuntimeMetadataLabel`, plus the neutral `RestartPolicy`, `MetadataLabel`, `OverrideReconstruction`,
@@ -281,13 +291,16 @@ multi-file values, including service label names and scalar-normalized values, r
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
 
-The Compose exporter accepts a neutral `Application`, an exact `docker-compose` or
-`podman-compose` provider `TargetProfile`, and an optional exact Docker Engine or Podman backend
-through `ComposeRuntime`. It returns a policy-controlled
+The Compose exporter accepts a neutral `Application`, either the provider-neutral
+`COMPOSE_SPECIFICATION_TARGET` with its documented internal profile revision or an exact
+`docker-compose`/`podman-compose` provider `TargetProfile`. Provider-aware targets may attach an
+optional exact Docker Engine or Podman backend through `ComposeRuntime`; the specification target
+does not. It returns a policy-controlled
 `ConversionPlan<compose_lens::render::GeneratedComposeDocument>`. ComposeLens owns deterministic
-syntax selection and parse-back validation; BoxFerry owns semantic mapping, provider/runtime
-compatibility outcomes, provenance, and authorization. Runtime-observed resource names are emitted
-explicitly so Compose project scoping cannot rename them. See the
+syntax selection and parse-back validation; BoxFerry owns semantic mapping, target compatibility
+outcomes, provenance, and authorization. The internal specification profile revision is not a
+Compose Specification release version or a claim about historical consumers. Runtime-observed
+resource names are emitted explicitly so Compose project scoping cannot rename them. See the
 [Compose exporter contract](compose-adapter.md).
 
 The Quadlet exporter accepts the neutral `Application` and an explicit Podman `TargetProfile`. It

@@ -37,6 +37,15 @@ pub const DOCKER_COMPOSE_TARGET: &str = "docker-compose";
 /// Target implementation name for the independent `containers/podman-compose` provider.
 pub const PODMAN_COMPOSE_TARGET: &str = "podman-compose";
 
+/// Provider-neutral target for the rolling Compose Specification.
+///
+/// The internal profile revision is a `BoxFerry` compatibility token, not a Compose Specification
+/// release or a claim that every historical Compose consumer accepts generated output.
+pub const COMPOSE_SPECIFICATION_TARGET: &str = "compose-specification";
+
+/// Internal revision used with [`COMPOSE_SPECIFICATION_TARGET`].
+pub const COMPOSE_SPECIFICATION_PROFILE_REVISION: PlatformVersion = PlatformVersion::new(1, 0, 0);
+
 /// Exact backend runtime used by the selected Compose provider.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -138,6 +147,32 @@ impl<'a> Mapping<'a> {
 
     fn validate_target(&mut self) -> bool {
         let versions = self.target.versions();
+        if self.target.implementation() == COMPOSE_SPECIFICATION_TARGET {
+            if versions.maximum() != Some(versions.minimum())
+                || versions.minimum() != COMPOSE_SPECIFICATION_PROFILE_REVISION
+            {
+                self.invalid(
+                    self.exporter.codes.invalid_target.clone(),
+                    "target.versions",
+                    "Compose Specification output requires the BoxFerry compatibility-profile revision",
+                    "use the documented exact BoxFerry Compose Specification profile revision",
+                    &[],
+                );
+                return false;
+            }
+            if self.exporter.runtime.is_some() {
+                self.invalid(
+                    self.exporter.codes.invalid_target.clone(),
+                    "target.runtime",
+                    "Compose Specification output does not select a backend runtime",
+                    "select a provider-aware target before attaching a runtime",
+                    &[],
+                );
+                return false;
+            }
+            self.compatibility = Some(CompatibilityProfile::specification());
+            return true;
+        }
         let Some(maximum) = versions.maximum() else {
             self.invalid(
                 self.exporter.codes.invalid_target.clone(),

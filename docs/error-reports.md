@@ -3,8 +3,8 @@
 ## Purpose and status
 
 This accepted contract defines a local diagnostic support bundle that users can inspect and attach
-to a GitHub issue. It is recorded by
-[ADR 0018](decisions/0018-generic-cli-and-diagnostic-support-bundle.md). Its purpose is to give
+to a GitHub issue. It is recorded by [ADR 0018](decisions/0018-generic-cli-and-diagnostic-support-bundle.md)
+and [ADR 0021](decisions/0021-automatic-local-error-report-names.md). Its purpose is to give
 maintainers the complete safe
 diagnostic context that normal console output cannot provide, without automatically collecting or
 uploading source files, credentials, or ambient host state.
@@ -13,13 +13,20 @@ The implemented option is:
 
 ```console
 boxferry convert <OPTIONS> \
-  --generate-error-report ./boxferry-error-report.zip
+  --generate-error-report
 ```
 
-The path is required, its parent must exist, and create-new semantics prevent replacement of an
-existing report. The bundle is generated locally and is never uploaded, submitted to GitHub, or
-sent over the network by BoxFerry. It is independent of `--verbose`, `--quiet`, and console JSON
-mode and always contains the maximum safe structured detail.
+By default, the archive is created in the current working directory. Add
+`--error-report-directory DIR` to use an existing non-symlink directory instead. BoxFerry uses the
+local wall clock to generate `boxferry-error-report-YYYY-MM-DD_HH-MM-SS.zip`; it fails if the local
+clock is unavailable rather than falling back to UTC. Filename selection may inspect the standard
+`TZ` setting, including a TZif path, and operating-system time-zone configuration; these values,
+names, and paths are never persisted or reported. Create-new publication prevents replacement of
+an existing report. A same-second collision tries the base name plus suffixes `-01` through `-99`
+(100 candidates), then fails.
+The bundle is generated locally and is never uploaded, submitted to GitHub, or sent over the
+network by BoxFerry. It is independent of `--verbose`, `--quiet`, and console JSON mode and always
+contains the maximum safe structured detail.
 
 The standard-library publication boundary refuses observed symlink parents and destination
 collisions, with no overwrite fallback. It cannot defend against a hostile local actor replacing a
@@ -34,8 +41,10 @@ memory termination, or every panic before report initialization.
 
 The ZIP archive has fixed entry names rather than user-derived paths:
 
-- `README.md` contains the status summary, redaction warning, and GitHub issue instructions.
-- `report.json` contains the versioned machine-readable diagnostic report.
+- `README.md` contains the fixed `review_required: true` warning, the fixed archive-content and
+  omission description, instructions to inspect both entries, and GitHub issue attachment guidance.
+- `report.json` contains the versioned machine-readable diagnostic report, including the status
+  summary.
 
 The default bundle contains no Compose, Quadlet, environment-file, generated-artifact, runtime-
 inspection, or other source-file contents. It also does not run Docker, Podman, systemd, Git, or a
@@ -48,13 +57,24 @@ network request to collect additional information.
 - a sanitized invocation command kind and actual command-line option names, without values;
 - operating-system family and architecture, without hostname or username;
 - aliased input order and directory-selection decisions;
+- those aliased inputs and decisions also when Compose project-root resolution, target-version
+  selection, or interpolation setup fails after input resolution;
 - source and target kinds, project/profile/grouping choices, and loss policy;
-- requested and resolved finite target-version bounds;
+- route-specific target choices: finite Podman bounds for Quadlet output, or the rolling Compose
+  Specification target for Compose output;
+- every retained Quadlet native syntax, typed-model, and document-set diagnostic in native order,
+  with its stable code, severity, static summary, repeatable static label messages, and spans
+  rewritten to invocation-local input aliases; and
+- requested and resolved route target versions or `rolling` target labels;
 - ordered safe diagnostic events and fidelity counts;
 - every structured diagnostic currently exposed by the public report DTO; and
 - generated artifact names and sizes, but not their contents;
 - redaction counts, applied redaction classes, and known limitations; and
 - explicit truncation metadata for every bounded collection or field.
+
+The conversion-report v1 JSON Schema validates both the persisted public DTO and the console JSON
+variant's optional `error_report_path`. That path is presentation-only: `--report-file` output and
+the archive's `report.json` must omit it.
 
 Absolute paths are replaced with stable invocation-local aliases such as `<project>`, `<input-1>`,
 `<output>`, and `<absolute-path>/basename`. Raw runtime IDs, current-working-directory parents,
@@ -116,18 +136,22 @@ remain excluded unless they receive their own separately reviewed contracts.
 
 After a failed or suspicious conversion, the user:
 
-1. reruns the same command with `--generate-error-report PATH`;
+1. reruns the same command with `--generate-error-report`, optionally adding
+   `--error-report-directory DIR`;
 2. opens the bundle and reviews `README.md` and `report.json`;
 3. removes the bundle instead of uploading it when it contains unwanted context; and
 4. creates a GitHub issue with a short problem description and attaches the reviewed ZIP file.
 
-Scripts may request the report together with `--console-format json`. Report generation does not
-change the conversion result. If conversion succeeds but the explicitly requested report cannot
-be written, the command fails because a requested output is missing. If conversion already fails
-and report creation also fails, BoxFerry preserves the primary conversion exit category and emits
-a separate redacted report-write error.
+Scripts may request the report together with `--console-format json`. After successful publication,
+normal and verbose output append `error report: /absolute/path.zip`; quiet output contains only the
+absolute path; and JSON output adds optional top-level `error_report_path`. The absolute path is a
+console-only presentation value: it is absent from `--report-file` output and the archive's
+`report.json`. Report generation does not change the conversion result. If conversion succeeds but
+the explicitly requested report cannot be written, the command fails because a requested output is
+missing. If conversion already fails and report creation also fails, BoxFerry preserves the primary
+conversion exit category and emits a separate redacted report-write error.
 
-`--report-file PATH` and `--generate-error-report PATH` may be used together. BoxFerry attempts
+`--report-file PATH` and `--generate-error-report` may be used together. BoxFerry attempts
 the report file first, then builds and publishes the support bundle from the resulting report. This
 deterministic order lets the bundle include a report-file write failure. A support-bundle failure
 occurs after the bundle's own `report.json` has been finalized, so it is recorded in the final
@@ -170,3 +194,8 @@ Tests must cover:
 - `README.md` is capped at 128 KiB, `report.json` at 4 MiB, and the stored ZIP at 5 MiB.
 - Raw panic payloads and backtraces are omitted in version one.
 - Sanitized input support and a GitHub attachment checklist remain deferred.
+
+Quadlet parse and document-set reports retain the value-free diagnostic DTOs exposed by
+`boxferry-quadlet`; formatted native terminal output is never parsed. Native spans use only
+`<input-N>` aliases, and summaries and label messages are static native text. Focused black-box
+tests seed path and secret canaries in console JSON, report files, and support bundles.

@@ -7,7 +7,10 @@ use boxferry_model::{
     ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
     StartupNotification, VolumeImageSource,
 };
-use boxferry_quadlet::{QuadletDocumentInput, QuadletImporter, QuadletSource, QuadletSourceError};
+use boxferry_quadlet::{
+    QuadletDetailedParseFailureStage, QuadletDocumentInput, QuadletImporter, QuadletParseDiagnosticOrigin,
+    QuadletParseDiagnosticSeverity, QuadletSource, QuadletSourceError,
+};
 use quadlet_lens::model::{NamedQuadletDocument, QuadletDocument, QuadletDocumentSet, QuadletUnitType};
 use quadlet_lens::source::SourceId as QuadletSourceId;
 
@@ -1429,6 +1432,110 @@ fn parse_boundary_rejects_malformed_input_before_import() -> Result<(), String> 
     .err()
     .ok_or("malformed source should fail")?;
     assert!(matches!(error, QuadletSourceError::InvalidDocument { .. }));
+    Ok(())
+}
+
+#[test]
+fn detailed_parse_retains_all_native_diagnostics_without_source_contents() -> Result<(), String> {
+    let error = QuadletSource::parse_detailed(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new("first.container", QuadletSourceId::new(7), "[Container]\nImage\n"),
+            QuadletDocumentInput::new(
+                "second.container",
+                QuadletSourceId::new(9),
+                "[Container]\nImage=secret-value-canary.image\n",
+            ),
+        ],
+    )
+    .err()
+    .ok_or("detailed source should fail")?;
+
+    let diagnostics = error.diagnostics();
+    assert_eq!(diagnostics[0].origin(), QuadletParseDiagnosticOrigin::Syntax);
+    assert_eq!(diagnostics[0].code(), "QLS0001");
+    assert_eq!(diagnostics[0].labels()[0].source_id(), 7);
+    assert!(diagnostics[0].labels()[0].start() < diagnostics[0].labels()[0].end());
+    assert_eq!(diagnostics[1].origin(), QuadletParseDiagnosticOrigin::Model);
+    assert_eq!(diagnostics[1].code(), "QLM0002");
+    assert_eq!(diagnostics[1].labels()[0].source_id(), 7);
+    assert!(diagnostics[1].labels()[0].start() < diagnostics[1].labels()[0].end());
+    assert_eq!(diagnostics[2].origin(), QuadletParseDiagnosticOrigin::DocumentSet);
+    assert_eq!(diagnostics[2].severity(), QuadletParseDiagnosticSeverity::Error);
+    assert_eq!(diagnostics[2].labels()[0].source_id(), 9);
+    for diagnostic in diagnostics {
+        assert!(!diagnostic.summary().is_empty());
+        for label in diagnostic.labels() {
+            assert!(label.start() <= label.end());
+            assert!(!label.message().is_empty());
+        }
+    }
+    let debug = format!("{error:?}");
+    assert!(!debug.contains("secret-value-canary"));
+    assert!(!debug.contains("first.container"));
+    assert!(error.failures().is_empty());
+
+    let legacy = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "first.container",
+            QuadletSourceId::new(7),
+            "[Container]\nImage\n",
+        )],
+    )
+    .err()
+    .ok_or("legacy source should fail")?;
+    assert!(matches!(
+        legacy,
+        QuadletSourceError::InvalidDocument {
+            name,
+            syntax_diagnostics: 1,
+            model_diagnostics: 1,
+        } if name == "first.container"
+    ));
+    Ok(())
+}
+
+#[test]
+fn detailed_parse_keeps_warnings_but_rejects_structured_fatal_metadata() -> Result<(), String> {
+    let detailed = QuadletSource::parse_detailed(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(8),
+            "[Container]\nImage=example.invalid/one:1\nImage=example.invalid/two:1\n",
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    assert!(detailed.source().documents().is_valid());
+    assert!(detailed.diagnostics().iter().any(|diagnostic| {
+        diagnostic.origin() == QuadletParseDiagnosticOrigin::Model
+            && diagnostic.severity() == QuadletParseDiagnosticSeverity::Warning
+    }));
+
+    let error = QuadletSource::parse_detailed(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new(
+                "private/path.container",
+                QuadletSourceId::new(15),
+                "[Container]\nImage=x\n",
+            ),
+            QuadletDocumentInput::new("later.container", QuadletSourceId::new(16), "[Container]\nImage=\n"),
+        ],
+    )
+    .err()
+    .ok_or("fatal filename should fail")?;
+    assert_eq!(error.failures()[0].stage(), QuadletDetailedParseFailureStage::Filename);
+    assert_eq!(error.failures()[0].input_index(), Some(0));
+    assert_eq!(error.failures()[0].source_id(), Some(15));
+    assert!(!format!("{error:?}").contains("private/path.container"));
+    assert!(
+        error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.labels().iter().any(|label| label.source_id() == 16))
+    );
     Ok(())
 }
 

@@ -54,14 +54,16 @@ BoxFerry owns the application model, conversion planning, runtime adapters, and 
 
 ## Command-line use
 
-The first command converts explicitly ordered Compose files into a new directory of validated
+The generic command converts explicitly ordered Compose files into a new directory of validated
 Quadlet files:
 
 ```shell
 cargo install boxferry
-boxferry compose-to-quadlet \
-  --file compose.yaml \
-  --file compose.production.yaml \
+boxferry convert \
+  --input-type compose \
+  --output-type quadlet \
+  --input-file compose.yaml \
+  --input-file compose.production.yaml \
   --project-name example \
   --profile production \
   --podman-minimum-version 5.4.0 \
@@ -73,10 +75,15 @@ boxferry compose-to-quadlet \
 The output directory must not already exist. `exact` is the default policy; `approximate` and
 `partial` authorize their corresponding documented losses. Compose interpolation is disabled by
 default, so expressions remain unresolved rather than silently capturing workstation values.
-Callers can opt in with `--interpolate`, add repeatable plain `--variable NAME=VALUE` inputs, and
-authorize individual sensitive process values with repeatable
-`--variable-from-environment NAME`. No other ambient variable or implicit `.env` file is read.
-See the [CLI contract](docs/cli.md).
+Callers can opt in with `--interpolate`, add repeatable `--env NAME=VALUE` inputs, and authorize
+individual sensitive process values with repeatable `--env NAME`. No other ambient variable or
+implicit `.env` file is read. Quadlet input is also available through `convert` with an explicit
+project name and the rolling Compose Specification target; it never inspects an installed provider
+or runtime.
+For a local, privacy-safe diagnostic archive, add the value-less `--generate-error-report` flag.
+It creates an automatically named ZIP in the current directory, or in an explicit existing
+directory selected by `--error-report-directory DIR`. See the [CLI contract](docs/cli.md) and
+[error-report contract](docs/error-reports.md).
 
 ## Library use
 
@@ -141,8 +148,9 @@ rendering and reparsing YAML, preserves every contributing source origin, requir
 ComposeLens profile selection whenever profiles are present, retains SELinux relabel intent, and
 reports unsupported source features as policy-controlled conversion outcomes.
 
-The exporter consumes the neutral application and an exact Docker Compose or `podman-compose`
-provider target, with an optional exact Docker Engine or Podman backend. ComposeLens 0.1.15 owns
+The exporter consumes the neutral application and either the rolling provider-neutral Compose
+Specification target or an exact Docker Compose or `podman-compose` provider target with an
+optional exact Docker Engine or Podman backend. ComposeLens 0.1.15 owns
 deterministic short/long syntax choices, sensitive-output redaction, and parse-back validation,
 including ordered short/long service `env_file` output.
 BoxFerry reports compatibility-sensitive tag-plus-digest images, `host-gateway`, Podman user

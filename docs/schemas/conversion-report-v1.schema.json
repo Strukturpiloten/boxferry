@@ -21,12 +21,13 @@
     "diagnostics": {"type": "array", "maxItems": 2048, "items": {"$ref": "#/$defs/diagnostic"}},
     "events": {"type": "array", "maxItems": 2048, "items": {"$ref": "#/$defs/text"}},
     "output_artifacts": {"type": "array", "maxItems": 2048, "items": {"$ref": "#/$defs/artifact"}},
+    "error_report_path": {"$ref": "#/$defs/text"},
     "review_required": {"const": true}, "redaction": {"$ref": "#/$defs/redaction"},
     "truncations": {"type": "array", "maxItems": 2048, "items": {"$ref": "#/$defs/truncation"}}
   },
   "$defs": {
     "text": {"type": "string", "maxLength": 16384},
-    "failed_stage": {"enum": ["input-discovery", "input-read", "interpolation", "compose-load", "compose-merge", "profile-selection", "conversion", "output-write", "report-write"]},
+    "failed_stage": {"enum": ["input-discovery", "input-read", "interpolation", "compose-load", "compose-merge", "profile-selection", "quadlet-parse", "quadlet-document-set", "conversion", "output-write", "report-write"]},
     "version_bounds": {"type": "object", "additionalProperties": false, "required": ["minimum", "maximum"], "properties": {"minimum": {"$ref": "#/$defs/text"}, "maximum": {"$ref": "#/$defs/text"}}},
     "input": {"type": "object", "additionalProperties": false, "required": ["alias", "kind"], "properties": {"alias": {"$ref": "#/$defs/text"}, "kind": {"$ref": "#/$defs/text"}}},
     "discovery": {"type": "object", "additionalProperties": false, "required": ["selected", "ignored"], "properties": {"selected": {"$ref": "#/$defs/text"}, "ignored": {"type": "array", "maxItems": 2048, "items": {"$ref": "#/$defs/text"}}}},

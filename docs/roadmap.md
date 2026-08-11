@@ -60,12 +60,14 @@ as sixteen unrelated converters.
 ### Route orchestration
 
 - [x] Prove the shared importer → neutral model → exporter path in the public library API.
-- [x] Expose Compose-to-Quadlet through the CLI.
+- [x] Expose the implemented Compose-to-Quadlet and Quadlet-to-Compose routes through the generic CLI registry.
 - [x] Add the [generic CLI route contract](cli-vnext.md) with explicit source and target selection.
 - [ ] Expose Docker-runtime, Podman-runtime, Compose, and Quadlet sources and targets through that
   contract without duplicating conversion rules in the CLI.
 - [x] Add the [privacy-safe local error-report bundle](error-reports.md) without automatic upload
   or raw input collection.
+- [x] Preserve structured `boxferry-quadlet` syntax, typed-model, and document-set diagnostics in
+  CLI reports with input aliases, static label detail, and path/secret redaction coverage.
 - [ ] Add offline golden tests for every source/target combination over their shared supported
   subset.
 
@@ -350,12 +352,13 @@ boundary for pre-existing external Podman secrets.
 
 - [x] Keep interpolation disabled by default and preserve the no-ambient-access CLI contract.
 - [x] Add opt-in per-file ComposeLens interpolation before merge through `--interpolate`.
-- [x] Accept repeatable non-sensitive `--variable NAME=VALUE` values without reading the process
+- [x] Accept repeatable non-sensitive `--env NAME=VALUE` values without reading the process
   environment.
-- [x] Read only individually authorized `--variable-from-environment NAME` values and mark them
+- [x] Read only individually authorized `--env NAME` values and mark them
   sensitive before interpolation.
-- [x] Reject invalid names, missing/non-Unicode authorized values, and duplicate sources without
-  implicit precedence or output creation.
+- [x] Reject invalid names and missing/non-Unicode authorized values without output creation;
+  explicit interpolation sources apply in documented order, with later values overriding earlier
+  values.
 - [x] Add an authored fixture and black-box tests proving defaults ignore unauthorized ambient
   values, sensitive named input reaches exact output, and interpolation never occurs without
   opt-in.

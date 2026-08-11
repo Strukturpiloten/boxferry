@@ -73,7 +73,8 @@ pub use boxferry_model::{
 
 #[cfg(feature = "compose")]
 pub use boxferry_compose::{
-    ComposeExporter, ComposeImporter, ComposeRuntime, ComposeSource, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeImporter,
+    ComposeRuntime, ComposeSource, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
 };
 #[cfg(feature = "docker-runtime")]
 pub use boxferry_docker::{
@@ -84,8 +85,10 @@ pub use boxferry_docker::{
 };
 #[cfg(feature = "quadlet")]
 pub use boxferry_quadlet::{
-    QuadletDocumentInput, QuadletExporter, QuadletExporterError, QuadletFile, QuadletGroupingPolicy, QuadletImporter,
-    QuadletOutput, QuadletSource, QuadletSourceError,
+    QuadletDetailedParseError, QuadletDetailedParseFailure, QuadletDetailedParseFailureStage,
+    QuadletDetailedParseResult, QuadletDocumentInput, QuadletExporter, QuadletExporterError, QuadletFile,
+    QuadletGroupingPolicy, QuadletImporter, QuadletOutput, QuadletParseDiagnostic, QuadletParseDiagnosticLabel,
+    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource, QuadletSourceError,
 };
 
 #[cfg(feature = "podman-runtime")]

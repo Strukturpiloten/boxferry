@@ -47,6 +47,8 @@ pub enum FailedStage {
     ComposeLoad,
     ComposeMerge,
     ProfileSelection,
+    QuadletParse,
+    QuadletDocumentSet,
     Conversion,
     OutputWrite,
     ReportWrite,

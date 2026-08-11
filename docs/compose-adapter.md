@@ -6,7 +6,26 @@ ComposeLens 0.1.15. The `boxferry` facade exposes `ComposeExporter`, `ComposeRun
 
 ## Target selection
 
-The caller must identify one exact provider release:
+The provider-neutral target uses the rolling Compose Specification compatibility profile:
+
+```rust
+use boxferry::{
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, TargetProfile,
+};
+
+let target = TargetProfile::new(
+    COMPOSE_SPECIFICATION_TARGET,
+    COMPOSE_SPECIFICATION_PROFILE_REVISION,
+    Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Its revision is an internal BoxFerry token, not a Compose Specification release version or a
+historical-consumer compatibility guarantee. It accepts no backend runtime. The generic
+Quadlet-to-Compose CLI route uses this target and reports it as `rolling`.
+
+Embedded callers may instead identify one exact provider release:
 
 ```rust
 use boxferry::{
@@ -29,7 +48,8 @@ executable or environment value is inspected.
 
 Open-ended or multi-version provider ranges are invalid in this adapter. ComposeLens evidence is
 classified for an exact provider/runtime context, so collapsing a range to one version would make
-an unsupported compatibility claim.
+an unsupported compatibility claim. The specification target instead requires exactly its
+documented internal profile revision.
 
 ## Generated subset
 
@@ -73,8 +93,9 @@ policy-controlled source-only losses rather than becoming synthesized Podman arg
 
 ## Compatibility and loss policy
 
-Compatibility-sensitive fields are evaluated against ComposeLens's finite rules for the exact
-provider and optional runtime. Supported fields remain exact. Implementation-specific or
+Compatibility-sensitive fields are evaluated against ComposeLens's selected profile: the rolling
+specification profile, or the finite rules for an exact provider and optional runtime. Supported
+fields remain exact. Implementation-specific or
 deprecated behavior becomes an approximate `BFC0009` outcome. Unsupported or unknown behavior
 becomes an unsupported `BFC0009` outcome. The latter requires `LossPolicy::AllowPartial` even when
 the generated syntax can retain the value.

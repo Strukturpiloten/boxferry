@@ -20,12 +20,13 @@ boxferry/
 ├── crates/
 │   ├── boxferry/                 # public library facade and CLI executable
 │   │   ├── src/lib.rs            # re-exports supported core and optional adapter APIs
-│   │   ├── src/main.rs           # implemented Compose-to-Quadlet CLI and presentation
+│   │   ├── src/main.rs           # generic CLI, route dispatch, reports, and presentation
+│   │   ├── src/route.rs          # finite typed CLI route registry
 │   │   └── tests/                # facade contracts and repository-policy tests
 │   ├── boxferry-model/           # ordered application graph, provenance, protected values
 │   ├── boxferry-engine/          # adapters, planning, loss policy, targets, diagnostics
 │   ├── boxferry-compose/         # implemented: ComposeLens import/export mapping
-│   ├── boxferry-quadlet/         # implemented: validated QuadletLens export mapping
+│   ├── boxferry-quadlet/         # implemented: validated QuadletLens import/export mapping
 │   ├── boxferry-runtime/         # implemented: runtime-neutral observations and reconstruction
 │   ├── boxferry-kubernetes/      # planned: Kubernetes mapping and target policy
 │   ├── boxferry-docker/          # implemented: versioned Docker inspection and acquisition

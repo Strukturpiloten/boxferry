@@ -25,11 +25,17 @@ use boxferry::report::{
     redact_text,
 };
 use boxferry::{
-    ComposeImporter, ComposeSource, ConversionKind, Diagnostic, Identifier, LossPolicy, PlatformVersion,
-    QuadletExporter, QuadletGroupingPolicy, SourceId, TargetProfile, convert,
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeImporter,
+    ComposeSource, ConversionKind, Diagnostic, Identifier, LossPolicy, PlatformVersion, QuadletDetailedParseError,
+    QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletParseDiagnostic,
+    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource, SourceId, TargetProfile, convert,
 };
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
+use jiff::{Timestamp, Zoned, tz::TimeZone};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+mod route;
+use route::{InputOptions, InputType, OutputType, RouteExecutor, RouteSpec, TargetSelector};
 
 const CONVENTIONAL_COMPOSE_FILES: [&str; 6] = [
     "compose.yaml",
@@ -39,8 +45,10 @@ const CONVENTIONAL_COMPOSE_FILES: [&str; 6] = [
     "docker-compose.yaml",
     "docker-compose.yml",
 ];
+const QUADLET_EXTENSIONS: [&str; 6] = ["container", "pod", "network", "volume", "build", "image"];
 const MAX_README_BYTES: usize = 128 * 1024;
 const MAX_ARCHIVE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_ERROR_REPORT_COLLISIONS: u8 = 99;
 const SUPPORT_BUNDLE_README: &str = "# BoxFerry diagnostic support bundle\n\nreview_required: true\n\nInspect both files before uploading this archive. It is generated locally and BoxFerry never uploads it.\n\n## Contents\n\n- `report.json` is the complete structured diagnostic report.\n- This archive intentionally omits source and generated-file contents, environment values, runtime inspection data, raw panic payloads, backtraces, hostname, username, and the ambient process environment.\n\n## Attaching to an issue\n\nAfter review, create a GitHub issue using your normal browser or GitHub client, describe the problem, and attach this ZIP. Do not upload it if the review finds unwanted context. This archive contains no network instructions or automatic submission.\n";
 static SUPPORT_BUNDLE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -68,8 +76,6 @@ enum Command {
     Help { command: Option<String> },
     /// Print `BoxFerry` version information.
     Version,
-    /// Convert one explicitly ordered Compose project into Quadlet files.
-    ComposeToQuadlet(ComposeToQuadlet),
 }
 
 #[derive(Clone, Copy, Debug, Args)]
@@ -100,8 +106,12 @@ struct GenericConversion {
     report_file: Option<PathBuf>,
 
     /// Write a locally reviewable ZIP with fixed README.md and report.json entries.
-    #[arg(long, value_name = "PATH")]
-    generate_error_report: Option<PathBuf>,
+    #[arg(long)]
+    generate_error_report: bool,
+
+    /// Existing non-symlink directory for the generated error report.
+    #[arg(long, value_name = "DIR", requires = "generate_error_report")]
+    error_report_directory: Option<PathBuf>,
 
     /// Native format of every supplied input.
     #[arg(long, value_enum)]
@@ -112,22 +122,22 @@ struct GenericConversion {
     /// Explicit input document in merge order; repeat as needed.
     #[arg(long = "input-file", value_name = "PATH")]
     input_files: Vec<PathBuf>,
-    /// Directory that contributes one conventional Compose document at this position.
+    /// Route-specific input directory expanded at this position.
     #[arg(long = "input-directory", value_name = "PATH")]
     input_directories: Vec<PathBuf>,
-    /// Explicit Compose project root for relative source paths.
+    /// Compose-input-only project root for relative source paths.
     #[arg(long)]
     project_directory: Option<PathBuf>,
-    /// Fallback name when the Compose document has no top-level name.
+    /// Compose fallback name, or the required Quadlet-input application name.
     #[arg(long)]
     project_name: Option<String>,
-    /// Resolve Compose interpolation using only explicitly supplied variables.
+    /// Compose-input-only interpolation using explicitly supplied variables.
     #[arg(long)]
     interpolate: bool,
-    /// Strict `BoxFerry` interpolation assignments; later files override earlier files.
+    /// Compose-input-only interpolation assignments; later files override earlier files.
     #[arg(long = "env-file", value_name = "PATH", requires = "interpolate")]
     env_files: Vec<PathBuf>,
-    /// Interpolation NAME=VALUE or authorized process NAME; repeat as needed.
+    /// Compose-input-only interpolation NAME=VALUE or authorized process NAME.
     #[arg(
         long = "env",
         value_name = "NAME[=VALUE]",
@@ -136,22 +146,22 @@ struct GenericConversion {
         requires = "interpolate"
     )]
     environment: Vec<EnvironmentInput>,
-    /// Activate one Compose profile; repeat to activate more than one.
+    /// Compose-input-only active profile; repeat to activate more than one.
     #[arg(long = "profile", conflicts_with = "all_profiles")]
     profiles: Vec<String>,
-    /// Activate every declared Compose profile.
+    /// Compose-input-only activation of every declared profile.
     #[arg(long)]
     all_profiles: bool,
-    /// Minimum reviewed Podman version, as major.minor or major.minor.patch.
+    /// Compose-to-Quadlet-only minimum Podman version, as major.minor or major.minor.patch.
     #[arg(long, default_value = "5.4")]
     podman_minimum_version: PodmanSelector,
-    /// Maximum reviewed Podman version, as major.minor or major.minor.patch.
+    /// Compose-to-Quadlet-only maximum Podman version, as major.minor or major.minor.patch.
     #[arg(long, default_value = "6.0")]
     podman_maximum_version: PodmanSelector,
-    /// Keep services separate or request one explicit pod.
+    /// Compose-to-Quadlet-only service grouping request.
     #[arg(long = "quadlet-grouping", value_enum, default_value_t = Grouping::Separate)]
     grouping: Grouping,
-    /// Native name for the requested single Podman pod.
+    /// Compose-to-Quadlet-only native name for the requested single Podman pod.
     #[arg(long)]
     pod_name: Option<String>,
     /// Native physical output layout.
@@ -166,64 +176,14 @@ struct GenericConversion {
 struct ConvertCommand {
     #[command(flatten)]
     conversion: GenericConversion,
-    /// New absent directory that will receive generated Quadlet files.
+    /// New absent directory that will receive generated route artifacts.
     #[arg(long, required = true)]
     output_directory: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
-enum InputType {
-    Compose,
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum OutputType {
-    Quadlet,
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
 enum OutputLayout {
     Files,
-}
-
-#[derive(Debug, Args)]
-struct ComposeToQuadlet {
-    /// Compose files in merge order; repeat for overrides.
-    #[arg(short = 'f', long = "file", required = true)]
-    files: Vec<PathBuf>,
-    /// Fallback application name when the Compose project has no top-level name.
-    #[arg(long)]
-    project_name: String,
-    /// Activate one Compose profile; repeat to activate more than one.
-    #[arg(long = "profile", conflicts_with = "all_profiles")]
-    profiles: Vec<String>,
-    /// Activate every valid profile declared by the project.
-    #[arg(long)]
-    all_profiles: bool,
-    /// Resolve Compose interpolation using only explicitly supplied variables and defaults.
-    #[arg(long)]
-    interpolate: bool,
-    /// Supply one non-sensitive interpolation variable as NAME=VALUE; repeat as needed.
-    #[arg(long = "variable", value_name = "NAME=VALUE", requires = "interpolate")]
-    variables: Vec<VariableAssignment>,
-    /// Read one explicitly named process variable as sensitive interpolation input; repeat as needed.
-    #[arg(long = "variable-from-environment", value_name = "NAME", requires = "interpolate", value_parser = parse_variable_name)]
-    environment_variables: Vec<String>,
-    /// Compatibility floor for generated Quadlet files.
-    #[arg(long, default_value = "5.4.0")]
-    podman_minimum_version: PlatformVersion,
-    /// Optional inclusive compatibility ceiling.
-    #[arg(long)]
-    podman_maximum_version: Option<PlatformVersion>,
-    /// Authorization for documented non-exact conversion outcomes.
-    #[arg(long, value_enum, default_value_t = CliLossPolicy::Exact)]
-    loss_policy: CliLossPolicy,
-    /// Keep services separate or explicitly request one shared Podman pod.
-    #[arg(long, value_enum, default_value_t = Grouping::Separate)]
-    grouping: Grouping,
-    /// New directory that will receive the generated Quadlet files.
-    #[arg(long)]
-    output_directory: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -335,9 +295,18 @@ impl ReportAliases {
         if let Some(project) = &arguments.project_directory {
             values.push((project.display().to_string(), "<project>".to_owned()));
         }
+        if let Some(path) = &arguments.report_file {
+            values.push((path.display().to_string(), "<report-file>".to_owned()));
+        }
+        if let Some(path) = &arguments.error_report_directory {
+            values.push((path.display().to_string(), "<error-report-directory>".to_owned()));
+        }
         for (index, path) in arguments.input_files.iter().enumerate() {
             if path != Path::new("-") {
                 values.push((path.display().to_string(), format!("<input-{}>", index + 1)));
+                if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                    values.push((name.to_owned(), format!("<input-{}>", index + 1)));
+                }
             }
         }
         for (index, path) in arguments.input_directories.iter().enumerate() {
@@ -356,10 +325,17 @@ impl ReportAliases {
     fn add_resolved(&mut self, project_root: &Path, inputs: &[ResolvedInput]) {
         self.values
             .push((project_root.display().to_string(), "<project>".into()));
+        self.add_inputs(inputs);
+    }
+
+    fn add_inputs(&mut self, inputs: &[ResolvedInput]) {
         for (index, input) in inputs.iter().enumerate() {
             if let Some(path) = input.path() {
                 self.values
                     .push((path.display().to_string(), format!("<input-{}>", index + 1)));
+                if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                    self.values.push((name.to_owned(), format!("<input-{}>", index + 1)));
+                }
             }
             for (ignored_index, ignored) in input.ignored().iter().enumerate() {
                 self.values.push((
@@ -395,34 +371,45 @@ impl ReportAliases {
     }
 }
 
-fn new_report(arguments: &GenericConversion) -> ConversionReport {
-    let mut report = ConversionReport::new(
-        env!("CARGO_PKG_VERSION"),
-        "compose",
-        "quadlet",
-        VersionBounds {
+fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionReport {
+    let requested_versions = match route.target_selector {
+        TargetSelector::PodmanRange => VersionBounds {
             minimum: arguments.podman_minimum_version.requested.clone(),
             maximum: arguments.podman_maximum_version.requested.clone(),
         },
+        TargetSelector::ComposeSpecification => VersionBounds {
+            minimum: "rolling".into(),
+            maximum: "rolling".into(),
+        },
+    };
+    let mut report = ConversionReport::new(
+        env!("CARGO_PKG_VERSION"),
+        route.source_name(),
+        route.target_name(),
+        requested_versions,
     );
-    report.choices = vec![
-        ReportChoice {
-            name: "loss_policy".into(),
-            value: format!("{:?}", arguments.loss_policy).to_lowercase(),
-        },
-        ReportChoice {
-            name: "grouping".into(),
-            value: format!("{:?}", arguments.grouping).to_lowercase(),
-        },
-        ReportChoice {
+    report.choices.push(ReportChoice {
+        name: "loss_policy".into(),
+        value: format!("{:?}", arguments.loss_policy).to_lowercase(),
+    });
+    match route.input {
+        InputType::Compose => report.choices.push(ReportChoice {
             name: "profiles".into(),
             value: if arguments.all_profiles {
                 "all".into()
             } else {
                 arguments.profiles.join(",")
             },
-        },
-    ];
+        }),
+        InputType::Quadlet => {}
+    }
+    match route.target_selector {
+        TargetSelector::PodmanRange => report.choices.push(ReportChoice {
+            name: "grouping".into(),
+            value: format!("{:?}", arguments.grouping).to_lowercase(),
+        }),
+        TargetSelector::ComposeSpecification => {}
+    }
     report.host = HostMetadata {
         os_family: env::consts::FAMILY.into(),
         architecture: env::consts::ARCH.into(),
@@ -452,6 +439,7 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("loss_policy", "--loss-policy"),
         ("report_file", "--report-file"),
         ("generate_error_report", "--generate-error-report"),
+        ("error_report_directory", "--error-report-directory"),
         ("verbose", "--verbose"),
         ("quiet", "--quiet"),
         ("console_format", "--console-format"),
@@ -472,15 +460,36 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
 
 fn report_failure(
     arguments: &GenericConversion,
+    route: Option<RouteSpec>,
     summary: &str,
     stage: FailedStage,
     aliases: &ReportAliases,
 ) -> ConversionReport {
-    let mut report = new_report(arguments);
+    let mut report = route.map_or_else(
+        || new_unavailable_report(arguments),
+        |route| new_report(arguments, route),
+    );
     report.failed_stage = Some(stage);
     report
         .diagnostics
         .push(sanitized_diagnostic("BFC0019", "error", summary, &[], aliases));
+    report
+}
+
+fn new_unavailable_report(arguments: &GenericConversion) -> ConversionReport {
+    let mut report = ConversionReport::new(
+        env!("CARGO_PKG_VERSION"),
+        arguments.input_type.name(),
+        arguments.output_type.name(),
+        VersionBounds {
+            minimum: "unavailable".into(),
+            maximum: "unavailable".into(),
+        },
+    );
+    report.host = HostMetadata {
+        os_family: env::consts::FAMILY.into(),
+        architecture: env::consts::ARCH.into(),
+    };
     report
 }
 
@@ -527,7 +536,6 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli, matches: &clap::ArgMatches) -> Result<ExitCode, Box<dyn Error>> {
     match cli.command {
-        Command::ComposeToQuadlet(arguments) => convert_compose_to_quadlet(&arguments),
         Command::Convert(arguments) => {
             run_generic(&arguments.conversion, matches, Some(&arguments.output_directory), false)
         }
@@ -564,29 +572,53 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
             "{}",
             serde_json::to_string(&serde_json::json!({
                 "schema_version": 1,
-                "routes": [{
-                    "input_type": "compose",
-                    "output_type": "quadlet",
-                    "podman_minimum": minimum,
-                    "podman_maximum": maximum,
-                    "fidelity_boundaries": {
-                        "exact": "supported-compose-quadlet-intersection",
-                        "approximate": ["pod-grouping"],
-                        "policy_controlled": ["unsupported-fields"]
-                    }
-                }]
+                "routes": route::routes().iter().map(|route| capability_json(*route, &minimum, &maximum)).collect::<Vec<_>>()
             }))?
         );
     } else if !presentation.quiet {
-        println!("compose -> quadlet (Podman {minimum} through {maximum})");
-        if presentation.verbose {
-            println!("fidelity: exact for the supported Compose and Quadlet intersection");
-            println!(
-                "fidelity boundary: pod grouping is approximate; unsupported fields require the selected loss policy"
-            );
+        for route in route::routes() {
+            match route.target_selector {
+                TargetSelector::PodmanRange => println!(
+                    "{} -> {} (Podman {minimum} through {maximum})",
+                    route.source_name(),
+                    route.target_name()
+                ),
+                TargetSelector::ComposeSpecification => println!(
+                    "{} -> {} (rolling Compose Specification)",
+                    route.source_name(),
+                    route.target_name()
+                ),
+            }
+            if presentation.verbose {
+                println!("fidelity: exact for {}", route.exact_boundary);
+                println!(
+                    "fidelity boundary: approximate {:?}; policy controlled {:?}",
+                    route.approximate_boundaries, route.policy_controlled_boundaries
+                );
+            }
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn capability_json(route: RouteSpec, minimum: &str, maximum: &str) -> serde_json::Value {
+    let fidelity = serde_json::json!({
+        "exact": route.exact_boundary,
+        "approximate": route.approximate_boundaries,
+        "policy_controlled": route.policy_controlled_boundaries,
+    });
+    match route.target_selector {
+        TargetSelector::PodmanRange => serde_json::json!({
+            "input_type": route.source_name(), "output_type": route.target_name(),
+            "target_selector": "podman-range", "podman_minimum": minimum,
+            "podman_maximum": maximum, "fidelity_boundaries": fidelity,
+        }),
+        TargetSelector::ComposeSpecification => serde_json::json!({
+            "input_type": route.source_name(), "output_type": route.target_name(),
+            "target_selector": "compose-specification-rolling", "requested_version": "rolling",
+            "resolved_version": "rolling", "fidelity_boundaries": fidelity,
+        }),
+    }
 }
 
 fn generic_input_order(matches: &clap::ArgMatches) -> io::Result<Vec<OrderedInput>> {
@@ -628,32 +660,100 @@ enum OrderedInput {
 struct StructuredFailure {
     stage: FailedStage,
     diagnostics: Vec<ReportDiagnostic>,
+    inputs: Vec<ReportInput>,
+    discovery: Vec<DiscoveryDecision>,
+    presentation_inputs: Vec<ResolvedInput>,
+}
+
+impl StructuredFailure {
+    fn with_context(stage: FailedStage, diagnostics: Vec<ReportDiagnostic>, inputs: &[ResolvedInput]) -> Self {
+        let presentation_inputs = inputs.to_vec();
+        let (inputs, discovery) = resolved_report_context(inputs);
+        Self {
+            stage,
+            diagnostics,
+            inputs,
+            discovery,
+            presentation_inputs,
+        }
+    }
 }
 
 impl std::fmt::Display for StructuredFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("Compose preprocessing failed")
+        formatter.write_str("source preprocessing failed")
     }
 }
 
 impl Error for StructuredFailure {}
 
+fn resolved_report_context(resolved: &[ResolvedInput]) -> (Vec<ReportInput>, Vec<DiscoveryDecision>) {
+    let inputs = resolved
+        .iter()
+        .enumerate()
+        .map(|(index, input)| ReportInput {
+            alias: if matches!(input, ResolvedInput::Stdin) {
+                "<stdin>".into()
+            } else {
+                format!("<input-{}>", index + 1)
+            },
+            kind: if matches!(input, ResolvedInput::Discovered { .. }) {
+                "discovered".into()
+            } else {
+                "file".into()
+            },
+        })
+        .collect();
+    let discovery = resolved
+        .iter()
+        .enumerate()
+        .filter_map(|(index, input)| match input {
+            ResolvedInput::Discovered { ignored, .. } => Some(DiscoveryDecision {
+                selected: format!("<input-{}>", index + 1),
+                ignored: ignored
+                    .iter()
+                    .enumerate()
+                    .map(|(ignored_index, _)| format!("<input-{}-ignored-{}>", index + 1, ignored_index + 1))
+                    .collect(),
+            }),
+            _ => None,
+        })
+        .collect();
+    (inputs, discovery)
+}
+
+fn post_discovery_failure(
+    stage: FailedStage,
+    code: &str,
+    summary: &str,
+    error: &dyn Error,
+    aliases: &ReportAliases,
+    inputs: &[ResolvedInput],
+) -> Box<dyn Error> {
+    Box::new(StructuredFailure::with_context(
+        stage,
+        vec![sanitized_diagnostic(
+            code,
+            "error",
+            summary,
+            &[("reason", &error.to_string(), false)],
+            aliases,
+        )],
+        inputs,
+    ))
+}
+
 #[allow(clippy::too_many_lines)]
 fn generic_convert(
     arguments: &GenericConversion,
     ordered: Vec<OrderedInput>,
+    matches: &clap::ArgMatches,
     output_directory: Option<&Path>,
     validate_only: bool,
 ) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
-    if !matches!(
-        (arguments.input_type, arguments.output_type),
-        (InputType::Compose, OutputType::Quadlet)
-    ) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the requested generic route is not implemented",
-        )
-        .into());
+    let route = validate_route(arguments, matches, &ordered)?;
+    if route.executor == RouteExecutor::QuadletToCompose {
+        return generic_quadlet_convert(arguments, ordered, route, output_directory, validate_only);
     }
     if arguments.pod_name.is_some() && !matches!(arguments.grouping, Grouping::Pod) {
         return Err(io::Error::new(
@@ -663,13 +763,44 @@ fn generic_convert(
         .into());
     }
     let discovered = resolve_compose_inputs(ordered)?;
-    let project_root = resolve_project_root(arguments.project_directory.as_deref(), &discovered)?;
+    let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
+    aliases.add_inputs(&discovered);
+    let project_root = resolve_project_root(arguments.project_directory.as_deref(), &discovered).map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            "BFC0026",
+            "Compose project root could not be resolved",
+            &error,
+            &aliases,
+            &discovered,
+        )
+    })?;
+    aliases.add_resolved(&project_root, &discovered);
     let fallback_name = arguments
         .project_name
         .as_deref()
         .map_or_else(|| derive_project_name(&project_root), str::to_owned);
-    let (minimum, maximum) = resolve_versions(&arguments.podman_minimum_version, &arguments.podman_maximum_version)?;
-    let interpolation = generic_interpolation_environment(arguments)?;
+    let (minimum, maximum) = resolve_versions(&arguments.podman_minimum_version, &arguments.podman_maximum_version)
+        .map_err(|error| {
+            post_discovery_failure(
+                FailedStage::Conversion,
+                "BFC0027",
+                "Podman target version selection failed",
+                &error,
+                &aliases,
+                &discovered,
+            )
+        })?;
+    let interpolation = generic_interpolation_environment(arguments).map_err(|error| {
+        post_discovery_failure(
+            FailedStage::Interpolation,
+            "BFC0028",
+            "Compose interpolation inputs could not be resolved",
+            error.as_ref(),
+            &aliases,
+            &discovered,
+        )
+    })?;
     let conversion = ComposeConversion {
         inputs: &discovered,
         project_root: &project_root,
@@ -683,13 +814,11 @@ fn generic_convert(
         maximum: Some(maximum),
         policy: arguments.loss_policy.into(),
     };
-    let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
-    aliases.add_resolved(&project_root, &discovered);
     let loaded_conversion = convert_loaded_compose(&conversion, &aliases)?;
     let result = loaded_conversion.result;
     let diagnostics = result.diagnostics();
     let output = result.output();
-    let mut report = new_report(arguments);
+    let mut report = new_report(arguments, route);
     report.application = Some(loaded_conversion.application);
     report.status = if output.is_some() {
         ReportStatus::Success
@@ -710,37 +839,7 @@ fn generic_convert(
         minimum: minimum.to_string(),
         maximum: maximum.to_string(),
     };
-    report.inputs = discovered
-        .iter()
-        .enumerate()
-        .map(|(index, input)| ReportInput {
-            alias: if matches!(input, ResolvedInput::Stdin) {
-                "<stdin>".into()
-            } else {
-                format!("<input-{}>", index + 1)
-            },
-            kind: if matches!(input, ResolvedInput::Discovered { .. }) {
-                "discovered".into()
-            } else {
-                "file".into()
-            },
-        })
-        .collect();
-    report.discovery = discovered
-        .iter()
-        .enumerate()
-        .filter_map(|(index, input)| match input {
-            ResolvedInput::Discovered { ignored, .. } => Some(DiscoveryDecision {
-                selected: format!("<input-{}>", index + 1),
-                ignored: ignored
-                    .iter()
-                    .enumerate()
-                    .map(|(ignored_index, _)| format!("<input-{}-ignored-{}>", index + 1, ignored_index + 1))
-                    .collect(),
-            }),
-            _ => None,
-        })
-        .collect();
+    (report.inputs, report.discovery) = resolved_report_context(&discovered);
     report.diagnostics = loaded_conversion.diagnostics;
     report.diagnostics.extend(
         diagnostics
@@ -783,6 +882,344 @@ fn generic_convert(
     Ok((report, ExitCode::SUCCESS, discovered))
 }
 
+fn command_matches(matches: &clap::ArgMatches) -> &clap::ArgMatches {
+    matches.subcommand().map_or(matches, |(_, command)| command)
+}
+
+fn explicitly_supplied(matches: &clap::ArgMatches, id: &str) -> bool {
+    command_matches(matches).value_source(id) == Some(ValueSource::CommandLine)
+}
+
+fn validate_route(
+    arguments: &GenericConversion,
+    matches: &clap::ArgMatches,
+    ordered: &[OrderedInput],
+) -> io::Result<RouteSpec> {
+    let route = route::find(arguments.input_type, arguments.output_type).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the requested generic route is not implemented",
+        )
+    })?;
+    let rejected = |names: &[(&str, &str)]| -> io::Result<()> {
+        if let Some((_, option)) = names.iter().find(|(id, _)| explicitly_supplied(matches, id)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{option} is not applicable to {} -> {}",
+                    route.source_name(),
+                    route.target_name()
+                ),
+            ));
+        }
+        Ok(())
+    };
+    match route.input_options {
+        InputOptions::Compose => {}
+        InputOptions::Quadlet => {
+            rejected(&[
+                ("project_directory", "--project-directory"),
+                ("interpolate", "--interpolate"),
+                ("env_files", "--env-file"),
+                ("environment", "--env"),
+                ("profiles", "--profile"),
+                ("all_profiles", "--all-profiles"),
+            ])?;
+            let name = arguments.project_name.as_deref().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "--project-name is required for Quadlet input",
+                )
+            })?;
+            Identifier::new(name).map_err(io::Error::other)?;
+            if ordered
+                .iter()
+                .any(|input| matches!(input, OrderedInput::File(path) if path == Path::new("-")))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "stdin is not supported for Quadlet input",
+                ));
+            }
+        }
+    }
+    match route.target_selector {
+        TargetSelector::PodmanRange => {
+            if arguments.pod_name.is_some() && !matches!(arguments.grouping, Grouping::Pod) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "--pod-name requires --quadlet-grouping pod",
+                ));
+            }
+        }
+        TargetSelector::ComposeSpecification => {
+            rejected(&[
+                ("podman_minimum_version", "--podman-minimum-version"),
+                ("podman_maximum_version", "--podman-maximum-version"),
+                ("grouping", "--quadlet-grouping"),
+                ("pod_name", "--pod-name"),
+            ])?;
+        }
+    }
+    Ok(route)
+}
+
+fn generic_quadlet_convert(
+    arguments: &GenericConversion,
+    ordered: Vec<OrderedInput>,
+    route: RouteSpec,
+    output_directory: Option<&Path>,
+    validate_only: bool,
+) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+    let discovered = resolve_quadlet_inputs(ordered)?;
+    let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
+    aliases.add_inputs(&discovered);
+    let (application_name, source, native_diagnostics) = load_quadlet_source(arguments, &discovered, &aliases)?;
+    let target = TargetProfile::new(
+        COMPOSE_SPECIFICATION_TARGET,
+        COMPOSE_SPECIFICATION_PROFILE_REVISION,
+        Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
+    )?;
+    let exporter = ComposeExporter::new()?;
+    let result = convert(
+        &QuadletImporter::new()?,
+        &source,
+        &exporter,
+        &target,
+        arguments.loss_policy.into(),
+    )?;
+    finish_quadlet_conversion(
+        arguments,
+        route,
+        output_directory,
+        validate_only,
+        QuadletExecution {
+            discovered,
+            aliases,
+            application_name,
+            native_diagnostics,
+            result,
+        },
+    )
+}
+
+fn load_quadlet_source(
+    arguments: &GenericConversion,
+    discovered: &[ResolvedInput],
+    aliases: &ReportAliases,
+) -> Result<(Identifier, QuadletSource, Vec<QuadletParseDiagnostic>), Box<dyn Error>> {
+    let application_name = Identifier::new(
+        arguments
+            .project_name
+            .as_deref()
+            .ok_or_else(|| io::Error::other("missing project name"))?,
+    )?;
+    let mut documents = Vec::with_capacity(discovered.len());
+    for (index, input) in discovered.iter().enumerate() {
+        let path = input
+            .path()
+            .ok_or_else(|| io::Error::other("Quadlet input has no path"))?;
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Quadlet input filename is not UTF-8"))?;
+        let text = fs::read_to_string(path).map_err(|error| {
+            Box::new(StructuredFailure::with_context(
+                FailedStage::InputRead,
+                vec![sanitized_diagnostic(
+                    "BFC0024",
+                    "error",
+                    "Quadlet input could not be read",
+                    &[("input", name, false), ("reason", &error.to_string(), false)],
+                    aliases,
+                )],
+                discovered,
+            )) as Box<dyn Error>
+        })?;
+        documents.push(QuadletDocumentInput::new(
+            name,
+            boxferry::quadlet::quadlet_lens::source::SourceId::new(
+                u32::try_from(index + 1).map_err(|_| io::Error::other("too many Quadlet input files"))?,
+            ),
+            text,
+        ));
+    }
+    let detailed = QuadletSource::parse_detailed(application_name.clone(), documents)
+        .map_err(|error| Box::new(quadlet_source_failure(&error, aliases, discovered)) as Box<dyn Error>)?;
+    let native_diagnostics = detailed.diagnostics().to_vec();
+    Ok((application_name, detailed.into_source(), native_diagnostics))
+}
+
+fn quadlet_source_failure(
+    error: &QuadletDetailedParseError,
+    aliases: &ReportAliases,
+    inputs: &[ResolvedInput],
+) -> StructuredFailure {
+    let document_set_only = error
+        .diagnostics()
+        .iter()
+        .all(|diagnostic| diagnostic.origin() == QuadletParseDiagnosticOrigin::DocumentSet)
+        && error
+            .failures()
+            .iter()
+            .all(|failure| matches!(failure.stage(), boxferry::QuadletDetailedParseFailureStage::DocumentSet));
+    let stage = if document_set_only {
+        FailedStage::QuadletDocumentSet
+    } else {
+        FailedStage::QuadletParse
+    };
+    let mut diagnostics = error
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| report_quadlet_native_diagnostic(diagnostic, aliases))
+        .collect::<Vec<_>>();
+    diagnostics.extend(error.failures().iter().map(|failure| {
+        let native_stage = format!("{:?}", failure.stage()).to_lowercase();
+        let input = quadlet_input_alias(failure.source_id(), failure.input_index());
+        let mut report = sanitized_diagnostic(
+            "BFC0023",
+            "error",
+            failure.summary(),
+            &[("native_stage", &native_stage, false), ("input", &input, false)],
+            aliases,
+        );
+        report.spans = failure.span().map_or_else(Vec::new, |label| {
+            vec![boxferry::report::ReportSpan {
+                source: format!("<input-{}>", label.source_id()),
+                start: label.start(),
+                end: label.end(),
+            }]
+        });
+        report
+    }));
+    StructuredFailure::with_context(stage, diagnostics, inputs)
+}
+
+fn report_quadlet_native_diagnostic(diagnostic: &QuadletParseDiagnostic, aliases: &ReportAliases) -> ReportDiagnostic {
+    let mut report = sanitized_diagnostic(
+        diagnostic.code(),
+        match diagnostic.severity() {
+            QuadletParseDiagnosticSeverity::Warning => "warning",
+            QuadletParseDiagnosticSeverity::Note => "note",
+            _ => "error",
+        },
+        diagnostic.summary(),
+        &[],
+        aliases,
+    );
+    report.spans = diagnostic
+        .labels()
+        .iter()
+        .map(|label| boxferry::report::ReportSpan {
+            source: format!("<input-{}>", label.source_id()),
+            start: label.start(),
+            end: label.end(),
+        })
+        .collect();
+    report.fields = diagnostic
+        .labels()
+        .iter()
+        .map(|label| ReportField {
+            name: "label_message".into(),
+            value: aliases.value(label.message()),
+        })
+        .collect();
+    report
+}
+
+fn quadlet_input_alias(source_id: Option<u32>, input_index: Option<usize>) -> String {
+    source_id.map_or_else(
+        || input_index.map_or_else(|| "unknown".into(), |index| format!("<input-{}>", index + 1)),
+        |source_id| format!("<input-{source_id}>"),
+    )
+}
+
+struct QuadletExecution {
+    discovered: Vec<ResolvedInput>,
+    aliases: ReportAliases,
+    application_name: Identifier,
+    native_diagnostics: Vec<QuadletParseDiagnostic>,
+    result: boxferry::ConversionResult<boxferry::compose::compose_lens::render::GeneratedComposeDocument>,
+}
+
+fn finish_quadlet_conversion(
+    arguments: &GenericConversion,
+    route: RouteSpec,
+    output_directory: Option<&Path>,
+    validate_only: bool,
+    execution: QuadletExecution,
+) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+    let QuadletExecution {
+        discovered,
+        aliases,
+        application_name,
+        native_diagnostics,
+        result,
+    } = execution;
+    let output = result.output();
+    let mut report = new_report(arguments, route);
+    report.application = Some(application_name.as_str().into());
+    report.resolved_versions = VersionBounds {
+        minimum: "rolling".into(),
+        maximum: "rolling".into(),
+    };
+    report.inputs = discovered
+        .iter()
+        .enumerate()
+        .map(|(index, input)| ReportInput {
+            alias: format!("<input-{}>", index + 1),
+            kind: if matches!(input, ResolvedInput::Discovered { .. }) {
+                "discovered".into()
+            } else {
+                "file".into()
+            },
+        })
+        .collect();
+    report.discovery = discovery_report(&discovered);
+    report.diagnostics = native_diagnostics
+        .iter()
+        .map(|diagnostic| report_quadlet_native_diagnostic(diagnostic, &aliases))
+        .collect();
+    report.diagnostics.extend(
+        result
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| report_diagnostic(diagnostic, &aliases)),
+    );
+    report.fidelity = fidelity_counts(result.outcomes());
+    if let Some(output) = output {
+        report.output_artifacts.push(OutputArtifact {
+            name: "compose.yaml".into(),
+            size: u64::try_from(output.text().len()).unwrap_or(u64::MAX),
+        });
+        if !validate_only {
+            let directory = output_directory.ok_or_else(|| io::Error::other("missing convert output directory"))?;
+            if let Err(error) = write_new_compose_output(directory, output.text()) {
+                report.diagnostics.push(sanitized_diagnostic(
+                    "BFC0021",
+                    "error",
+                    &format!("output could not be written: {error}"),
+                    &[],
+                    &aliases,
+                ));
+                report.events.push("output-write-failed".into());
+                report.status = ReportStatus::Failure;
+                report.exit_category = ExitCategory::OutputWrite;
+                report.failed_stage = Some(FailedStage::OutputWrite);
+                return Ok((report, ExitCode::FAILURE, discovered));
+            }
+        }
+        report.status = ReportStatus::Success;
+        report.exit_category = ExitCategory::Success;
+        Ok((report, ExitCode::SUCCESS, discovered))
+    } else {
+        report.status = ReportStatus::Blocked;
+        report.exit_category = ExitCategory::PolicyBlocked;
+        report.failed_stage = Some(FailedStage::Conversion);
+        Ok((report, ExitCode::from(2), discovered))
+    }
+}
+
 fn fidelity_counts(outcomes: &[boxferry::ConversionOutcome]) -> FidelityCounts {
     let mut counts = FidelityCounts::default();
     for outcome in outcomes {
@@ -806,21 +1243,30 @@ fn run_generic(
     let aliases = ReportAliases::for_invocation(arguments, output_directory);
     let result = generic_input_order(matches)
         .map_err(Box::<dyn Error>::from)
-        .and_then(|ordered| generic_convert(arguments, ordered, output_directory, validate_only));
+        .and_then(|ordered| generic_convert(arguments, ordered, matches, output_directory, validate_only));
     let (mut report, primary_code, inputs) = match result {
         Ok(result) => result,
         Err(error) => {
             if let Some(structured) = error.downcast_ref::<StructuredFailure>() {
-                let mut report = report_failure(arguments, &error.to_string(), structured.stage, &aliases);
+                let mut report = report_failure(
+                    arguments,
+                    route::find(arguments.input_type, arguments.output_type),
+                    &error.to_string(),
+                    structured.stage,
+                    &aliases,
+                );
                 report.diagnostics.clone_from(&structured.diagnostics);
+                report.inputs.clone_from(&structured.inputs);
+                report.discovery.clone_from(&structured.discovery);
                 if structured.stage == FailedStage::OutputWrite {
                     report.exit_category = ExitCategory::OutputWrite;
                 }
-                (report, ExitCode::FAILURE, Vec::new())
+                (report, ExitCode::FAILURE, structured.presentation_inputs.clone())
             } else {
                 (
                     report_failure(
                         arguments,
+                        route::find(arguments.input_type, arguments.output_type),
                         &error.to_string(),
                         failure_stage(&error.to_string()),
                         &aliases,
@@ -852,26 +1298,41 @@ fn run_generic(
             }
         }
     }
-    if let Some(path) = &arguments.generate_error_report {
+    let mut error_report_path = None;
+    if arguments.generate_error_report {
         let encoded = serialize_report(&mut report)?;
-        if let Err(error) = write_support_bundle(path, &encoded) {
-            report.diagnostics.push(sanitized_diagnostic(
-                "BFC0022",
-                "error",
-                &format!("diagnostic support bundle could not be written: {error}"),
-                &[],
-                &aliases,
-            ));
-            report.events.push("support-bundle-write-failed".into());
-            if final_code == ExitCode::SUCCESS {
-                report.failed_stage = Some(FailedStage::ReportWrite);
-                report.status = ReportStatus::Failure;
-                report.exit_category = ExitCategory::ReportWrite;
-                final_code = ExitCode::FAILURE;
+        match write_generated_error_report(
+            arguments.error_report_directory.as_deref(),
+            &encoded,
+            local_error_report_time,
+            env::current_dir,
+        ) {
+            Ok(path) => error_report_path = Some(path),
+            Err(_error) => {
+                report.diagnostics.push(sanitized_diagnostic(
+                    "BFC0022",
+                    "error",
+                    "diagnostic support bundle could not be written",
+                    &[],
+                    &aliases,
+                ));
+                report.events.push("support-bundle-write-failed".into());
+                if final_code == ExitCode::SUCCESS {
+                    report.failed_stage = Some(FailedStage::ReportWrite);
+                    report.status = ReportStatus::Failure;
+                    report.exit_category = ExitCategory::ReportWrite;
+                    final_code = ExitCode::FAILURE;
+                }
             }
         }
     }
-    present(arguments, &mut report, &inputs, validate_only)?;
+    present(
+        arguments,
+        &mut report,
+        &inputs,
+        validate_only,
+        error_report_path.as_deref(),
+    )?;
     Ok(final_code)
 }
 
@@ -893,10 +1354,11 @@ fn present(
     report: &mut ConversionReport,
     inputs: &[ResolvedInput],
     validate_only: bool,
+    error_report_path: Option<&Path>,
 ) -> Result<(), Box<dyn Error>> {
     let presentation = arguments.presentation;
     if matches!(presentation.console_format, Some(ConsoleFormat::Json)) {
-        println!("{}", serialize_report(report)?);
+        println!("{}", serialize_console_report(report, error_report_path)?);
         return Ok(());
     }
     if !presentation.quiet {
@@ -905,28 +1367,36 @@ fn present(
             println!("input: {}", input.label());
         }
         if presentation.verbose {
-            println!(
-                "Podman requested: {} through {}",
-                report.requested_versions.minimum, report.requested_versions.maximum
-            );
-            println!(
-                "Podman resolved: {} through {}",
-                report.resolved_versions.minimum, report.resolved_versions.maximum
-            );
-            if arguments.all_profiles {
-                println!("profiles: all");
-            } else {
-                for profile in &arguments.profiles {
-                    println!("profile: {profile}");
+            match route::find(arguments.input_type, arguments.output_type).map(|route| route.target_selector) {
+                Some(TargetSelector::PodmanRange) => {
+                    println!(
+                        "Podman requested: {} through {}",
+                        report.requested_versions.minimum, report.requested_versions.maximum
+                    );
+                    println!(
+                        "Podman resolved: {} through {}",
+                        report.resolved_versions.minimum, report.resolved_versions.maximum
+                    );
                 }
+                Some(TargetSelector::ComposeSpecification) => println!("Compose Specification: rolling"),
+                None => {}
             }
-            for path in &arguments.env_files {
-                println!("interpolation source: env-file {}", path.display());
-            }
-            for value in &arguments.environment {
-                match value {
-                    EnvironmentInput::Literal(value) => println!("interpolation source: explicit {}", value.name),
-                    EnvironmentInput::Process(name) => println!("interpolation source: process {name}"),
+            if arguments.input_type == InputType::Compose {
+                if arguments.all_profiles {
+                    println!("profiles: all");
+                } else {
+                    for profile in &arguments.profiles {
+                        println!("profile: {profile}");
+                    }
+                }
+                for path in &arguments.env_files {
+                    println!("interpolation source: env-file {}", path.display());
+                }
+                for value in &arguments.environment {
+                    match value {
+                        EnvironmentInput::Literal(value) => println!("interpolation source: explicit {}", value.name),
+                        EnvironmentInput::Process(name) => println!("interpolation source: process {name}"),
+                    }
                 }
             }
             for input in inputs {
@@ -962,6 +1432,13 @@ fn present(
             }
         }
     }
+    if presentation.quiet {
+        if let Some(path) = error_report_path {
+            println!("{}", path.display());
+        }
+    } else if let Some(path) = error_report_path {
+        println!("error report: {}", path.display());
+    }
     print_report_diagnostics(&report.diagnostics);
     if report.exit_category == ExitCategory::PolicyBlocked {
         eprintln!("boxferry: output blocked by the selected loss policy");
@@ -977,6 +1454,8 @@ const fn failed_stage_name(stage: FailedStage) -> &'static str {
         FailedStage::ComposeLoad => "Compose load",
         FailedStage::ComposeMerge => "Compose merge",
         FailedStage::ProfileSelection => "profile selection",
+        FailedStage::QuadletParse => "Quadlet parse",
+        FailedStage::QuadletDocumentSet => "Quadlet document set",
         FailedStage::Conversion => "conversion",
         FailedStage::OutputWrite => "output write",
         FailedStage::ReportWrite => "report write",
@@ -1003,17 +1482,34 @@ struct LoadedComposeConversion {
     application: String,
 }
 
-fn convert_loaded_compose(
+struct LoadedComposeInputs {
+    documents: Vec<DocumentInput>,
+    identities: Vec<(ComposeSourceId, SourceId)>,
+}
+
+fn load_compose_inputs(
     conversion: &ComposeConversion<'_>,
     aliases: &ReportAliases,
-) -> Result<LoadedComposeConversion, Box<dyn Error>> {
+) -> Result<LoadedComposeInputs, Box<dyn Error>> {
     let mut identities = Vec::with_capacity(conversion.inputs.len());
     let mut documents = Vec::with_capacity(conversion.inputs.len());
     for (index, input) in conversion.inputs.iter().enumerate() {
         let id = ComposeSourceId::new(
             u32::try_from(index + 1).map_err(|_| io::Error::other("too many Compose input files"))?,
         );
-        let (label, directory, text) = input.read(conversion.project_root)?;
+        let (label, directory, text) = input.read(conversion.project_root).map_err(|error| {
+            Box::new(StructuredFailure::with_context(
+                FailedStage::InputRead,
+                vec![sanitized_diagnostic(
+                    "BFC0024",
+                    "error",
+                    "Compose input could not be read",
+                    &[("reason", &error.to_string(), false)],
+                    aliases,
+                )],
+                conversion.inputs,
+            )) as Box<dyn Error>
+        })?;
         documents.push(DocumentInput::new(
             id,
             DocumentOrigin::new(label.clone(), directory),
@@ -1021,7 +1517,27 @@ fn convert_loaded_compose(
         ));
         identities.push((id, SourceId::new(label)?));
     }
-    let loaded = LoadedProject::load(documents)?;
+    Ok(LoadedComposeInputs { documents, identities })
+}
+
+fn convert_loaded_compose(
+    conversion: &ComposeConversion<'_>,
+    aliases: &ReportAliases,
+) -> Result<LoadedComposeConversion, Box<dyn Error>> {
+    let inputs = load_compose_inputs(conversion, aliases)?;
+    let loaded = LoadedProject::load(inputs.documents).map_err(|error| {
+        Box::new(StructuredFailure::with_context(
+            FailedStage::ComposeLoad,
+            vec![sanitized_diagnostic(
+                "BFC0025",
+                "error",
+                "Compose input could not be loaded",
+                &[("reason", &error.to_string(), false)],
+                aliases,
+            )],
+            conversion.inputs,
+        )) as Box<dyn Error>
+    })?;
     let interpolated = conversion
         .interpolation
         .map(|environment| loaded.interpolate(environment));
@@ -1033,10 +1549,11 @@ fn convert_loaded_compose(
             .map(|diagnostic| compose_diagnostic(diagnostic, aliases))
             .collect();
         deduplicate_report_diagnostics(&mut diagnostics);
-        return Err(Box::new(StructuredFailure {
-            stage: FailedStage::ComposeMerge,
+        return Err(Box::new(StructuredFailure::with_context(
+            FailedStage::ComposeMerge,
             diagnostics,
-        }));
+            conversion.inputs,
+        )));
     }
     let project = merged
         .project()
@@ -1064,10 +1581,11 @@ fn convert_loaded_compose(
                 .map(|diagnostic| compose_diagnostic(diagnostic, aliases)),
         );
         deduplicate_report_diagnostics(&mut diagnostics);
-        return Err(Box::new(StructuredFailure {
-            stage: FailedStage::ProfileSelection,
+        return Err(Box::new(StructuredFailure::with_context(
+            FailedStage::ProfileSelection,
             diagnostics,
-        }));
+            conversion.inputs,
+        )));
     }
     let mut preprocessing_diagnostics = merged
         .diagnostics()
@@ -1087,7 +1605,7 @@ fn convert_loaded_compose(
         .and_then(|name| Identifier::new(name.value().clone()).ok())
         .map_or_else(|| conversion.fallback_name.to_owned(), |name| name.as_str().to_owned());
     let mut source = ComposeSource::new(project, Identifier::new(conversion.fallback_name)?)?;
-    for (compose, neutral) in identities {
+    for (compose, neutral) in inputs.identities {
         source = source.with_source_id(compose, neutral);
     }
     source = source.with_profile_selection(selection);
@@ -1138,6 +1656,123 @@ fn resolve_compose_inputs(ordered: Vec<OrderedInput>) -> io::Result<Vec<Resolved
     Ok(resolved)
 }
 
+fn resolve_quadlet_inputs(ordered: Vec<OrderedInput>) -> io::Result<Vec<ResolvedInput>> {
+    let mut resolved = Vec::new();
+    let mut paths = BTreeSet::new();
+    let mut basenames = BTreeSet::new();
+    for item in ordered {
+        match item {
+            OrderedInput::File(path) => {
+                if path == Path::new("-") {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "stdin is not supported for Quadlet input",
+                    ));
+                }
+                let path = resolve_regular_file(&path)?;
+                if !is_supported_quadlet_path(&path) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Quadlet input must use a supported lower-case unit extension",
+                    ));
+                }
+                resolved.push(ResolvedInput::File(path));
+            }
+            OrderedInput::Directory(path) => resolved.extend(discover_quadlet_directory(&path)?),
+        }
+    }
+    for input in &resolved {
+        let path = input
+            .path()
+            .ok_or_else(|| io::Error::other("Quadlet input has no path"))?;
+        let canonical = fs::canonicalize(path)?;
+        if !paths.insert(canonical) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "duplicate resolved Quadlet input",
+            ));
+        }
+        let basename = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Quadlet input filename is not UTF-8"))?;
+        if !basenames.insert(basename.to_owned()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "duplicate Quadlet unit basename",
+            ));
+        }
+    }
+    Ok(resolved)
+}
+
+fn discover_quadlet_directory(directory: &Path) -> io::Result<Vec<ResolvedInput>> {
+    let metadata = fs::symlink_metadata(directory)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "input directory must be a non-symlink directory: {}",
+                directory.display()
+            ),
+        ));
+    }
+    let mut selected = Vec::new();
+    let mut ignored = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let supported = is_supported_quadlet_path(&path);
+        let metadata = fs::symlink_metadata(&path)?;
+        if supported && metadata.is_file() && !metadata.file_type().is_symlink() {
+            selected.push(path);
+        } else {
+            ignored.push(path);
+        }
+    }
+    selected.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
+    ignored.sort();
+    if selected.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no supported Quadlet unit files in {}", directory.display()),
+        ));
+    }
+    Ok(selected
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| ResolvedInput::Discovered {
+            selected: path,
+            ignored: if index == 0 { ignored.clone() } else { Vec::new() },
+        })
+        .collect())
+}
+
+fn is_supported_quadlet_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| QUADLET_EXTENSIONS.contains(&extension))
+}
+
+fn discovery_report(inputs: &[ResolvedInput]) -> Vec<DiscoveryDecision> {
+    inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, input)| match input {
+            ResolvedInput::Discovered { ignored, .. } if !ignored.is_empty() => Some(DiscoveryDecision {
+                selected: format!("<input-{}>", index + 1),
+                ignored: ignored
+                    .iter()
+                    .enumerate()
+                    .map(|(ignored_index, _)| format!("<input-{}-ignored-{}>", index + 1, ignored_index + 1))
+                    .collect(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug)]
 enum ResolvedInput {
     File(PathBuf),
     Discovered { selected: PathBuf, ignored: Vec<PathBuf> },
@@ -1464,6 +2099,25 @@ fn serialize_report(report: &mut ConversionReport) -> Result<String, Box<dyn Err
     Ok(encoded)
 }
 
+fn serialize_console_report(
+    report: &mut ConversionReport,
+    error_report_path: Option<&Path>,
+) -> Result<String, Box<dyn Error>> {
+    let encoded = serialize_report(report)?;
+    let Some(path) = error_report_path else {
+        return Ok(encoded);
+    };
+    let mut value: serde_json::Value = serde_json::from_str(&encoded)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "serialized report is not a JSON object"))?;
+    object.insert(
+        "error_report_path".into(),
+        serde_json::Value::String(path.display().to_string()),
+    );
+    Ok(serde_json::to_string(&value)?)
+}
+
 fn write_report_file(path: &Path, report: &str) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let metadata = fs::symlink_metadata(parent)?;
@@ -1482,6 +2136,86 @@ fn write_support_bundle(path: &Path, report: &str) -> io::Result<()> {
     validate_support_bundle_entries(SUPPORT_BUNDLE_README.as_bytes(), report.as_bytes())?;
     let archive = build_support_bundle(SUPPORT_BUNDLE_README.as_bytes(), report.as_bytes())?;
     publish_new_file(path, &archive)
+}
+
+fn local_error_report_time() -> io::Result<Zoned> {
+    let time_zone = TimeZone::try_system().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("local wall-clock time is unavailable: {error}"),
+        )
+    })?;
+    let timestamp = Timestamp::try_from(std::time::SystemTime::now()).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("local wall-clock time is unavailable: {error}"),
+        )
+    })?;
+    Ok(timestamp.to_zoned(time_zone))
+}
+
+fn write_generated_error_report<Clock, CurrentDirectory>(
+    configured_directory: Option<&Path>,
+    report: &str,
+    clock: Clock,
+    current_directory: CurrentDirectory,
+) -> io::Result<PathBuf>
+where
+    Clock: FnOnce() -> io::Result<Zoned>,
+    CurrentDirectory: FnOnce() -> io::Result<PathBuf>,
+{
+    let directory = resolve_error_report_directory(configured_directory, current_directory)?;
+    let time = clock()?;
+    for collision in 0..=MAX_ERROR_REPORT_COLLISIONS {
+        let path = directory.join(error_report_filename(&time, collision));
+        match write_support_bundle(&path, report) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not publish a unique error report after exhausting all 100 same-second candidates",
+    ))
+}
+
+fn resolve_error_report_directory<CurrentDirectory>(
+    configured_directory: Option<&Path>,
+    current_directory: CurrentDirectory,
+) -> io::Result<PathBuf>
+where
+    CurrentDirectory: FnOnce() -> io::Result<PathBuf>,
+{
+    let directory = match configured_directory {
+        Some(directory) => directory.to_path_buf(),
+        None => current_directory()?,
+    };
+    let metadata = fs::symlink_metadata(&directory)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "error-report directory must be an existing non-symlink directory",
+        ));
+    }
+    fs::canonicalize(directory)
+}
+
+fn error_report_filename(time: &Zoned, collision: u8) -> String {
+    let suffix = if collision == 0 {
+        String::new()
+    } else {
+        format!("-{collision:02}")
+    };
+    format!(
+        "boxferry-error-report-{:04}-{:02}-{:02}_{:02}-{:02}-{:02}{suffix}.zip",
+        time.year(),
+        time.month(),
+        time.day(),
+        time.hour(),
+        time.minute(),
+        time.second(),
+    )
 }
 
 fn validate_support_bundle_entries(readme: &[u8], report: &[u8]) -> io::Result<()> {
@@ -1599,81 +2333,6 @@ impl Drop for SupportBundleTemporary {
     }
 }
 
-fn convert_compose_to_quadlet(arguments: &ComposeToQuadlet) -> Result<ExitCode, Box<dyn Error>> {
-    let legacy_diagnostic = Diagnostic::new(
-        boxferry::DiagnosticCode::new("BFC0018")?,
-        boxferry::Severity::Warning,
-        "compose-to-quadlet is deprecated; use the generic convert command",
-    )
-    .with_field(boxferry::DiagnosticField::new(
-        "migration",
-        boxferry::DiagnosticValue::plain(
-            "boxferry convert --input-type compose --output-type quadlet --input-file <FILE> --output-directory <DIR>",
-        ),
-    ));
-    eprintln!("{legacy_diagnostic}");
-    let project_root = absolute_parent(&arguments.files[0])?;
-    let inputs = arguments
-        .files
-        .iter()
-        .cloned()
-        .map(ResolvedInput::File)
-        .collect::<Vec<_>>();
-    let interpolation = legacy_interpolation_environment(arguments)?;
-    let conversion = ComposeConversion {
-        inputs: &inputs,
-        project_root: &project_root,
-        fallback_name: &arguments.project_name,
-        profiles: &arguments.profiles,
-        all_profiles: arguments.all_profiles,
-        interpolation: interpolation.as_ref(),
-        grouping: arguments.grouping,
-        pod_name: None,
-        minimum: arguments.podman_minimum_version,
-        maximum: arguments.podman_maximum_version,
-        policy: arguments.loss_policy.into(),
-    };
-    let loaded = match convert_loaded_compose(&conversion, &ReportAliases::default()) {
-        Ok(loaded) => loaded,
-        Err(error) => {
-            if let Some(structured) = error.downcast_ref::<StructuredFailure>() {
-                print_report_diagnostics(&structured.diagnostics);
-                return Ok(ExitCode::from(2));
-            }
-            return Err(error);
-        }
-    };
-    let result = loaded.result;
-    print_diagnostics(result.diagnostics());
-    let Some(output) = result.output() else {
-        eprintln!("boxferry: output blocked by the selected loss policy");
-        return Ok(ExitCode::from(2));
-    };
-    write_new_output_directory(&arguments.output_directory, output.files())?;
-    for file in output.files() {
-        println!("{}", arguments.output_directory.join(file.name().as_str()).display());
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-fn legacy_interpolation_environment(arguments: &ComposeToQuadlet) -> Result<Option<MapEnvironment>, Box<dyn Error>> {
-    if !arguments.interpolate {
-        return Ok(None);
-    }
-    let mut names = BTreeSet::new();
-    let mut environment = MapEnvironment::new();
-    for variable in &arguments.variables {
-        register_variable_name(&mut names, &variable.name)?;
-        let _ = environment.insert(variable.name.clone(), variable.value.clone());
-    }
-    for name in &arguments.environment_variables {
-        register_variable_name(&mut names, name)?;
-        let value = env::var(name).map_err(|error| authorized_environment_error(name, &error))?;
-        let _ = environment.insert_sensitive(name.clone(), value);
-    }
-    Ok(Some(environment))
-}
-
 fn authorized_environment_error(name: &str, error: &env::VarError) -> io::Error {
     match error {
         env::VarError::NotPresent => io::Error::new(
@@ -1684,17 +2343,6 @@ fn authorized_environment_error(name: &str, error: &env::VarError) -> io::Error 
             io::ErrorKind::InvalidData,
             format!("authorized interpolation variable `{name}` is not valid Unicode"),
         ),
-    }
-}
-
-fn register_variable_name(names: &mut BTreeSet<String>, name: &str) -> io::Result<()> {
-    if names.insert(name.to_owned()) {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("interpolation variable `{name}` was supplied more than once"),
-        ))
     }
 }
 
@@ -1754,10 +2402,29 @@ fn write_new_output_directory(directory: &Path, files: &[boxferry::QuadletFile])
     Ok(())
 }
 
-fn print_diagnostics(diagnostics: &[Diagnostic]) {
-    for diagnostic in diagnostics {
-        eprintln!("{diagnostic}");
+fn write_new_compose_output(directory: &Path, text: &str) -> io::Result<()> {
+    fs::create_dir(directory).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("output directory already exists: {}", directory.display()),
+            )
+        } else {
+            error
+        }
+    })?;
+    let path = directory.join("compose.yaml");
+    let result = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(text.as_bytes()));
+    if let Err(error) = result {
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(directory);
+        return Err(error);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1767,6 +2434,108 @@ mod tests {
         interpolation::EnvironmentProvider,
         project::{ProjectValue, build_project_view},
     };
+    fn fixed_error_report_time() -> io::Result<Zoned> {
+        "2026-08-11T09:07:05Z"
+            .parse::<Timestamp>()
+            .map(|timestamp| timestamp.to_zoned(TimeZone::UTC))
+            .map_err(io::Error::other)
+    }
+
+    #[test]
+    fn generated_error_report_names_are_local_and_collision_safe() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-generated-error-report-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let time = fixed_error_report_time()?;
+        assert_eq!(
+            error_report_filename(&time, 0),
+            "boxferry-error-report-2026-08-11_09-07-05.zip"
+        );
+        assert_eq!(
+            error_report_filename(&time, 1),
+            "boxferry-error-report-2026-08-11_09-07-05-01.zip"
+        );
+        fs::write(directory.join(error_report_filename(&time, 0)), "existing")?;
+        fs::write(directory.join(error_report_filename(&time, 1)), "existing")?;
+        let report = write_generated_error_report(
+            Some(&directory),
+            "{}",
+            || Ok(time.clone()),
+            || unreachable!("configured directory does not use cwd"),
+        )?;
+        assert_eq!(
+            report.file_name().and_then(|name| name.to_str()),
+            Some("boxferry-error-report-2026-08-11_09-07-05-02.zip")
+        );
+        assert!(report.is_absolute());
+        assert_eq!(
+            fs::read_to_string(directory.join(error_report_filename(&time, 0)))?,
+            "existing"
+        );
+        for collision in 0..=MAX_ERROR_REPORT_COLLISIONS {
+            let path = directory.join(error_report_filename(&time, collision));
+            if !path.exists() {
+                fs::write(path, "existing")?;
+            }
+        }
+        let exhaustion = match write_generated_error_report(
+            Some(&directory),
+            "{}",
+            || Ok(time.clone()),
+            || unreachable!("configured directory does not use cwd"),
+        ) {
+            Ok(path) => return Err(io::Error::other(format!("unexpected report at {}", path.display()))),
+            Err(error) => error,
+        };
+        assert_eq!(exhaustion.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            exhaustion.to_string(),
+            "could not publish a unique error report after exhausting all 100 same-second candidates"
+        );
+        fs::remove_dir_all(directory)
+    }
+
+    #[test]
+    fn generated_error_report_rejects_bad_directories_and_clock_failures() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-generated-error-report-failure-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let clock_failure = write_generated_error_report(
+            Some(&directory),
+            "{}",
+            || Err(io::Error::other("clock unavailable")),
+            || unreachable!("configured directory does not use cwd"),
+        );
+        assert!(clock_failure.is_err());
+        assert!(fs::read_dir(&directory)?.next().is_none());
+        let file = directory.join("not-a-directory");
+        fs::write(&file, "not a directory")?;
+        let invalid = write_generated_error_report(Some(&file), "{}", fixed_error_report_time, || {
+            unreachable!("configured directory does not use cwd")
+        });
+        assert!(invalid.is_err());
+        fs::remove_dir_all(directory)
+    }
+
+    #[test]
+    fn generated_error_report_uses_the_current_directory_when_not_configured() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-generated-error-report-cwd-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let report = write_generated_error_report(None, "{}", fixed_error_report_time, || Ok(directory.clone()))?;
+        let canonical = fs::canonicalize(&directory)?;
+        assert_eq!(report.parent(), Some(canonical.as_path()));
+        fs::remove_dir_all(directory)
+    }
 
     #[test]
     fn generic_interpolation_inputs_propagate_sensitivity_to_compose_values() -> Result<(), Box<dyn Error>> {
@@ -1783,7 +2552,8 @@ mod tests {
                 console_format: None,
             },
             report_file: None,
-            generate_error_report: None,
+            generate_error_report: false,
+            error_report_directory: None,
             input_type: InputType::Compose,
             output_type: OutputType::Quadlet,
             input_files: Vec::new(),

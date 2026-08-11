@@ -3,9 +3,10 @@
 ## Status
 
 This is the accepted implementation contract recorded by
-[ADR 0018](decisions/0018-generic-cli-and-diagnostic-support-bundle.md). The implemented
-`compose-to-quadlet` behavior remains documented in the [current CLI contract](cli.md) until the
-generic command is available.
+[ADR 0018](decisions/0018-generic-cli-and-diagnostic-support-bundle.md) and amended by
+[ADR 0019](decisions/0019-generic-cli-route-registry.md) and
+[ADR 0021](decisions/0021-automatic-local-error-report-names.md). `convert` and `validate` are the only
+document-conversion commands.
 
 ## Command surface
 
@@ -32,6 +33,15 @@ boxferry convert \
   --input-file compose.yaml \
   --output-directory ./quadlet-output
 ```
+
+The current registry exposes only `compose -> quadlet` and `quadlet -> compose`; other selected
+pairs fail as unavailable. Quadlet input requires `--project-name` and does not accept stdin,
+Compose interpolation, profile, environment, or project-directory options. Quadlet output uses
+the Podman selectors and grouping options documented below. Compose output writes exactly
+`compose.yaml` against the rolling Compose Specification target. It requires no provider or
+runtime flags, never infers installed tools, and does not promise compatibility with every
+historical Compose consumer. Its internal BoxFerry profile revision is not a Compose
+Specification release version and is reported as `rolling`, never as a provider/version choice.
 
 `--input-file` and `--input-directory` are repeatable. Their occurrences form one ordered input
 sequence, even when the two options are interleaved:
@@ -93,8 +103,8 @@ visible in shell history, process lists, and CI logs, so documentation must disc
 
 Each Compose document is interpolated before the documents are merged. Service-level Compose
 `env_file` declarations are runtime configuration and are preserved without reading their
-contents. The existing `--variable` and `--variable-from-environment` names plus the earlier
-`--interpolation-env-file` proposal are replaced by the smaller input contract above.
+contents. Earlier `--variable`, `--variable-from-environment`, and `--interpolation-env-file`
+proposals are replaced by the smaller input contract above.
 
 The environment options require `--interpolate`. A future change to default interpolation needs a
 separate compatibility decision.
@@ -165,11 +175,13 @@ There is no `--silent` alias. Presentation modes are mutually exclusive:
 - `--quiet` suppresses progress and success text but retains warnings and errors; and
 - `--console-format json` writes one complete JSON result without human progress text.
 
-For `capabilities`, each JSON route includes stable fidelity-boundary fields:
-`exact` is `supported-compose-quadlet-intersection`, `approximate` contains `pod-grouping`, and
-`policy_controlled` contains `unsupported-fields`.
+For `capabilities`, each JSON route includes stable route-specific target selectors and
+fidelity-boundary fields. Compose-to-Quadlet reports finite Podman bounds and `pod-grouping` as
+approximate; Quadlet-to-Compose reports the rolling Compose Specification target and
+environment-file reconstruction as approximate. Both routes identify unsupported fields as
+policy-controlled.
 
-Normal output includes selected inputs, the route, the resolved Compose application name, stage
+Normal output includes selected inputs, the route, the resolved application name, stage
 summaries, every non-exact diagnostic, and the write summary. Verbose output additionally includes resolved input
 order, ignored directory candidates, selected profiles, environment variable names and sources
 without values, resolved target bounds, concise route fidelity boundaries, and every written path.
@@ -193,8 +205,13 @@ resolved input order, source and target types, application identity, compatibili
 fidelity counts, structured diagnostics, output paths, and redacted provenance.
 
 `--report-file PATH` writes the same complete canonical JSON report independently of console mode.
-`--generate-error-report PATH` writes a local stored ZIP with exactly `README.md` and `report.json`.
-Both options use create-new semantics. When both are requested, BoxFerry writes `--report-file`
+The value-less `--generate-error-report` creates a local stored ZIP with exactly `README.md` and
+`report.json`; `--error-report-directory DIR` optionally selects its existing non-symlink output
+directory, otherwise the current directory is used. The local-clock name is
+`boxferry-error-report-YYYY-MM-DD_HH-MM-SS.zip`, with create-new retries through `-99` for a
+same-second collision (the base name plus 99 suffixes, 100 candidates). Normal and verbose output append its absolute path, quiet output contains
+only that path, and JSON console output adds optional `error_report_path`. Saved and bundled reports
+exclude that host-local path. When both outputs are requested, BoxFerry writes `--report-file`
 first and then the support bundle; the bundle therefore records a report-file failure, while a
 later bundle-write failure is present in the final console report only. Either requested-output
 failure makes an otherwise successful conversion fail. The privacy-safe diagnostic support bundle

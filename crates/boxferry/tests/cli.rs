@@ -7,327 +7,12 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
 };
 use zip::{CompressionMethod, ZipArchive};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-
-#[test]
-fn cli_writes_reviewed_output_through_the_public_conversion_path() -> Result<(), Box<dyn Error>> {
-    let fixture = fixture_directory("compose-to-quadlet-dependencies");
-    let output = TemporaryOutput::new("exact");
-    let compose = fixture.join("compose.yaml");
-    let result = boxferry_command()
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--project-name",
-            "dependencies",
-            "--podman-minimum-version",
-            "5.4.0",
-            "--podman-maximum-version",
-            "6.0.2",
-            "--loss-policy",
-            "exact",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
-    let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stderr.contains("BFC0018"));
-    assert!(stderr.contains("boxferry convert --input-type compose --output-type quadlet"));
-    for name in ["database.container", "cache.container", "web.container"] {
-        assert_eq!(fs::read(output.path().join(name))?, fs::read(fixture.join(name))?);
-    }
-    Ok(())
-}
-
-#[test]
-fn cli_refuses_to_overwrite_an_existing_output_directory() -> Result<(), Box<dyn Error>> {
-    let fixture = fixture_directory("compose-to-quadlet-dependencies");
-    let output = TemporaryOutput::new("existing");
-    let compose = fixture.join("compose.yaml");
-    fs::create_dir_all(output.path())?;
-    let result = boxferry_command()
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--project-name",
-            "dependencies",
-            "--podman-maximum-version",
-            "6.0.2",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert_eq!(result.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&result.stderr).contains("output directory already exists"));
-    assert!(fs::read_dir(output.path())?.next().is_none());
-    Ok(())
-}
-
-#[test]
-fn legacy_preprocessing_failures_keep_the_deprecation_and_policy_exit_contract() -> Result<(), Box<dyn Error>> {
-    let project = TemporaryOutput::new("legacy-preprocessing-failures");
-    fs::create_dir_all(project.path())?;
-    let malformed = project.path().join("malformed.yaml");
-    fs::write(&malformed, "services: [broken\n")?;
-    let malformed_result = boxferry_command()
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&malformed)?,
-            "--project-name",
-            "legacy",
-            "--output-directory",
-            path_text(&project.path().join("malformed-output"))?,
-        ])
-        .output()?;
-    assert_eq!(malformed_result.status.code(), Some(2));
-    let malformed_stderr = String::from_utf8_lossy(&malformed_result.stderr);
-    assert_eq!(malformed_stderr.matches("BFC0018").count(), 1);
-    assert!(malformed_stderr.contains("compose.yaml.unclosed-flow-sequence"));
-    assert!(!malformed_stderr.contains("Compose preprocessing failed"));
-
-    let invalid_profile = project.path().join("invalid-profile.yaml");
-    fs::write(
-        &invalid_profile,
-        "services:\n  app:\n    image: example.invalid/app:1\n    profiles: [only]\n",
-    )?;
-    let profile_result = boxferry_command()
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&invalid_profile)?,
-            "--project-name",
-            "legacy",
-            "--profile",
-            "@invalid",
-            "--output-directory",
-            path_text(&project.path().join("profile-output"))?,
-        ])
-        .output()?;
-    assert_eq!(profile_result.status.code(), Some(2));
-    let profile_stderr = String::from_utf8_lossy(&profile_result.stderr);
-    assert_eq!(profile_stderr.matches("BFC0018").count(), 1);
-    assert!(profile_stderr.contains("compose.profiles.invalid-name"));
-    assert!(profile_stderr.contains("active profile name does not follow the Compose profile grammar"));
-    assert!(!profile_stderr.contains("Compose preprocessing failed"));
-    Ok(())
-}
-
-#[test]
-fn cli_blocks_partial_output_before_creating_the_directory() -> Result<(), Box<dyn Error>> {
-    let fixture = fixture_directory("compose-to-quadlet-core");
-    let output = TemporaryOutput::new("blocked");
-    let compose = fixture.join("compose.yaml");
-    let override_file = fixture.join("compose.override.yaml");
-    let result = boxferry_command()
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--file",
-            path_text(&override_file)?,
-            "--project-name",
-            "core",
-            "--podman-maximum-version",
-            "6.0.2",
-            "--loss-policy",
-            "exact",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert_eq!(result.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&result.stderr).contains("output blocked by the selected loss policy"));
-    assert!(!output.path().exists());
-    Ok(())
-}
-
-#[test]
-fn cli_interpolates_only_explicitly_authorized_values() -> Result<(), Box<dyn Error>> {
-    let fixture = fixture_directory("compose-to-quadlet-interpolation");
-    let output = TemporaryOutput::new("interpolation");
-    let compose = fixture.join("compose.yaml");
-    let result = boxferry_command()
-        .env("TOKEN", "explicit-secret")
-        .env("UNAUTHORIZED", "ambient-secret-must-not-be-used")
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--project-name",
-            "interpolation",
-            "--interpolate",
-            "--variable",
-            "TAG=2.1",
-            "--variable-from-environment",
-            "TOKEN",
-            "--podman-maximum-version",
-            "6.0.2",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
-    assert_eq!(
-        fs::read(output.path().join("app.container"))?,
-        fs::read(fixture.join("app.container"))?
-    );
-    assert!(!String::from_utf8_lossy(&result.stderr).contains("ambient-secret-must-not-be-used"));
-    Ok(())
-}
-
-#[test]
-fn cli_never_interpolates_ambient_values_without_opt_in() -> Result<(), Box<dyn Error>> {
-    let fixture = fixture_directory("compose-to-quadlet-interpolation");
-    let output = TemporaryOutput::new("no-ambient-interpolation");
-    let compose = fixture.join("compose.yaml");
-    let result = boxferry_command()
-        .env("TAG", "ambient-tag-must-not-be-used")
-        .env("TOKEN", "ambient-token-must-not-be-used")
-        .env("RESTART_POLICY", "always")
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--project-name",
-            "interpolation",
-            "--podman-maximum-version",
-            "6.0.2",
-            "--loss-policy",
-            "partial",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert_eq!(result.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(!stderr.contains("ambient-tag-must-not-be-used"));
-    assert!(!stderr.contains("ambient-token-must-not-be-used"));
-    assert!(!output.path().exists());
-    Ok(())
-}
-
-#[test]
-fn cli_fails_closed_when_an_authorized_process_variable_is_missing() -> Result<(), Box<dyn Error>> {
-    let fixture = fixture_directory("compose-to-quadlet-interpolation");
-    let output = TemporaryOutput::new("missing-interpolation-variable");
-    let compose = fixture.join("compose.yaml");
-    let variable = "BOXFERRY_TEST_MISSING_INTERPOLATION_VALUE";
-    let result = boxferry_command()
-        .env_remove(variable)
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--project-name",
-            "interpolation",
-            "--interpolate",
-            "--variable",
-            "TAG=2.1",
-            "--variable-from-environment",
-            variable,
-            "--podman-maximum-version",
-            "6.0.2",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert_eq!(result.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&result.stderr).contains(variable));
-    assert!(!output.path().exists());
-    Ok(())
-}
-
-#[test]
-fn cli_rejects_duplicate_interpolation_sources() -> Result<(), Box<dyn Error>> {
-    let fixture = fixture_directory("compose-to-quadlet-interpolation");
-    let output = TemporaryOutput::new("duplicate-interpolation-variable");
-    let compose = fixture.join("compose.yaml");
-    let result = boxferry_command()
-        .env("TAG", "ignored")
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--project-name",
-            "interpolation",
-            "--interpolate",
-            "--variable",
-            "TAG=2.1",
-            "--variable-from-environment",
-            "TAG",
-            "--podman-maximum-version",
-            "6.0.2",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert_eq!(result.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&result.stderr).contains("`TAG` was supplied more than once"));
-    assert!(!output.path().exists());
-    Ok(())
-}
-
-#[test]
-fn cli_converts_environment_file_declarations_without_reading_missing_files() -> Result<(), Box<dyn Error>> {
-    let project = TemporaryOutput::new("environment-file-project");
-    let output = TemporaryOutput::new("environment-file-output");
-    fs::create_dir_all(project.path())?;
-    let compose = project.path().join("compose.yaml");
-    fs::write(
-        &compose,
-        concat!(
-            "services:\n",
-            "  web:\n",
-            "    image: example.invalid/web:1\n",
-            "    env_file:\n",
-            "      - ./missing-but-declared.env\n",
-        ),
-    )?;
-
-    let result = boxferry_command()
-        .args([
-            "compose-to-quadlet",
-            "--file",
-            path_text(&compose)?,
-            "--project-name",
-            "environment-files",
-            "--podman-maximum-version",
-            "6.0.2",
-            "--loss-policy",
-            "approximate",
-            "--output-directory",
-            path_text(output.path())?,
-        ])
-        .output()?;
-
-    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
-    let container = fs::read_to_string(output.path().join("web.container"))?;
-    assert_eq!(
-        container,
-        format!(
-            "[Container]\nImage=example.invalid/web:1\nEnvironmentFile={}/missing-but-declared.env\n",
-            path_text(project.path())?,
-        )
-    );
-    assert!(!project.path().join("missing-but-declared.env").exists());
-    Ok(())
-}
 
 #[test]
 fn generic_convert_preserves_mixed_input_occurrence_order_and_directory_priority() -> Result<(), Box<dyn Error>> {
@@ -436,12 +121,36 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     assert!(capabilities_json.status.success());
     assert_eq!(std::str::from_utf8(&capabilities_json.stdout)?.lines().count(), 1);
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
+    assert_eq!(capabilities_json["routes"].as_array().map(Vec::len), Some(2));
     let boundaries = &capabilities_json["routes"][0]["fidelity_boundaries"];
     assert_eq!(boundaries["exact"], "supported-compose-quadlet-intersection");
     assert_eq!(boundaries["approximate"], serde_json::json!(["pod-grouping"]));
     assert_eq!(
         boundaries["policy_controlled"],
         serde_json::json!(["unsupported-fields"])
+    );
+    assert_eq!(capabilities_json["routes"][1]["input_type"], "quadlet");
+    assert_eq!(capabilities_json["routes"][1]["output_type"], "compose");
+    assert_eq!(
+        capabilities_json["routes"][1]["target_selector"],
+        "compose-specification-rolling"
+    );
+    assert_eq!(capabilities_json["routes"][1]["requested_version"], "rolling");
+    assert_eq!(capabilities_json["routes"][1]["resolved_version"], "rolling");
+    assert!(
+        capabilities_json["routes"][1]
+            .get("accepted_compose_providers")
+            .is_none()
+    );
+    assert!(
+        capabilities_json["routes"][1]
+            .get("exact_provider_version_required")
+            .is_none()
+    );
+    assert!(capabilities_json["routes"][1].get("podman_minimum").is_none());
+    assert_eq!(
+        capabilities_json["routes"][1]["fidelity_boundaries"]["approximate"],
+        serde_json::json!(["environment-file-reconstruction"])
     );
 
     let project = TemporaryOutput::new("human-conversion-summary");
@@ -619,7 +328,6 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
     let compose = project.path().join("compose.yaml");
     let environment = project.path().join("values.env");
     let report = report_directory.path().join("result.json");
-    let bundle = report_directory.path().join("result.zip");
     fs::write(
         &compose,
         "name: canaries\nservices:\n  app:\n    image: example.invalid/${FILE_VALUE}-${LITERAL_VALUE}-${PROCESS_VALUE}\n",
@@ -646,7 +354,8 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
             "--report-file",
             path_text(&report)?,
             "--generate-error-report",
-            path_text(&bundle)?,
+            "--error-report-directory",
+            path_text(report_directory.path())?,
             "--console-format",
             "json",
         ])
@@ -654,6 +363,7 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
     assert_eq!(result.status.code(), Some(1));
     let json = String::from_utf8(result.stdout)?;
     let file = fs::read_to_string(&report)?;
+    let bundle = generated_error_report(report_directory.path())?;
     let mut archive = ZipArchive::new(Cursor::new(fs::read(&bundle)?))?;
     let mut bundled = String::new();
     for index in 0..archive.len() {
@@ -684,7 +394,6 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
     fs::create_dir_all(report_directory.path())?;
     let compose = project.path().join("compose.yaml");
     let report = report_directory.path().join("result.json");
-    let bundle = report_directory.path().join("result.zip");
     fs::write(
         &compose,
         "name: complete-report\nservices:\n  app:\n    image: example.invalid/app:1\n",
@@ -703,7 +412,8 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
             "--report-file",
             path_text(&report)?,
             "--generate-error-report",
-            path_text(&bundle)?,
+            "--error-report-directory",
+            path_text(report_directory.path())?,
             "--console-format",
             "json",
         ])
@@ -711,7 +421,8 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
     assert_eq!(result.status.code(), Some(1));
     let console: serde_json::Value = serde_json::from_slice(&result.stdout)?;
     let file: serde_json::Value = serde_json::from_str(&fs::read_to_string(&report)?)?;
-    let mut archive = ZipArchive::new(Cursor::new(fs::read(&bundle)?))?;
+    let bundle_path = generated_error_report(report_directory.path())?;
+    let mut archive = ZipArchive::new(Cursor::new(fs::read(&bundle_path)?))?;
     let mut bundled = String::new();
     std::io::Read::read_to_string(&mut archive.by_name("report.json")?, &mut bundled)?;
     let bundle: serde_json::Value = serde_json::from_str(&bundled)?;
@@ -936,6 +647,8 @@ fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Bo
         assert!(result.stderr.is_empty());
         assert!(!result.stdout.is_empty());
     }
+    let help = boxferry_command().args(["--help"]).output()?;
+    assert!(!String::from_utf8(help.stdout)?.contains("compose-to-quadlet"));
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
     let json = boxferry_command()
         .args([
@@ -962,6 +675,36 @@ fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Bo
 #[test]
 fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
+    let unexpected_error_report_value = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-file",
+            path_text(&fixture)?,
+            "--generate-error-report",
+            "report.zip",
+        ])
+        .output()?;
+    assert_eq!(unexpected_error_report_value.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unexpected_error_report_value.stderr).contains("unexpected argument"));
+    let directory_without_error_report = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-file",
+            path_text(&fixture)?,
+            "--error-report-directory",
+            ".",
+        ])
+        .output()?;
+    assert_eq!(directory_without_error_report.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&directory_without_error_report.stderr).contains("--generate-error-report"));
     let missing_output = boxferry_command()
         .args([
             "convert",
@@ -1052,6 +795,7 @@ fn generic_json_preprocessing_failure_is_one_redacted_document() -> Result<(), B
     fs::create_dir_all(project.path())?;
     let compose = project.path().join("compose.yaml");
     fs::write(&compose, "services: [not-valid\n")?;
+    fs::write(project.path().join("compose.yml"), "services: {}\n")?;
     let result = boxferry_command()
         .args([
             "validate",
@@ -1059,8 +803,8 @@ fn generic_json_preprocessing_failure_is_one_redacted_document() -> Result<(), B
             "compose",
             "--output-type",
             "quadlet",
-            "--input-file",
-            path_text(&compose)?,
+            "--input-directory",
+            path_text(project.path())?,
             "--console-format",
             "json",
         ])
@@ -1069,7 +813,105 @@ fn generic_json_preprocessing_failure_is_one_redacted_document() -> Result<(), B
     assert!(result.stderr.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
     assert_eq!(report["status"], "failure");
+    assert_eq!(report["inputs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(report["inputs"][0]["alias"], "<input-1>");
+    assert_eq!(report["discovery"].as_array().map(Vec::len), Some(1));
     assert_eq!(std::str::from_utf8(&result.stdout)?.lines().count(), 1);
+    Ok(())
+}
+
+#[test]
+fn compose_post_discovery_failures_preserve_context_without_serializing_paths() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("post-resolution-input-canary");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    let environment = project.path().join("post-resolution-environment-canary.env");
+    fs::write(
+        &compose,
+        "name: post-resolution\nservices:\n  app:\n    image: example.invalid/app:1\n",
+    )?;
+    fs::write(&environment, "not a valid environment assignment\n")?;
+
+    let target_failure = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-directory",
+            path_text(project.path())?,
+            "--podman-minimum-version",
+            "5.9",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(target_failure.status.code(), Some(1));
+    assert!(target_failure.stderr.is_empty());
+    let target_report: serde_json::Value = serde_json::from_slice(&target_failure.stdout)?;
+    assert_eq!(target_report["failed_stage"], "conversion");
+    assert_eq!(target_report["inputs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(target_report["inputs"][0]["alias"], "<input-1>");
+    assert_eq!(target_report["discovery"].as_array().map(Vec::len), Some(1));
+    assert!(
+        target_report["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFC0027"))
+    );
+    let target_json = String::from_utf8(target_failure.stdout)?;
+    assert_eq!(target_json.lines().count(), 1);
+    assert!(!target_json.contains("post-resolution-input-canary"));
+
+    let human_failure = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-directory",
+            path_text(project.path())?,
+            "--podman-minimum-version",
+            "5.9",
+        ])
+        .output()?;
+    assert_eq!(human_failure.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&human_failure.stdout).contains(&format!("input: {}", compose.display())));
+    assert!(String::from_utf8_lossy(&human_failure.stdout).contains("stage: conversion failed"));
+    assert!(String::from_utf8_lossy(&human_failure.stderr).contains("BFC0027"));
+
+    let interpolation_failure = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-directory",
+            path_text(project.path())?,
+            "--interpolate",
+            "--env-file",
+            path_text(&environment)?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(interpolation_failure.status.code(), Some(1));
+    assert!(interpolation_failure.stderr.is_empty());
+    let interpolation_json = String::from_utf8(interpolation_failure.stdout)?;
+    let interpolation_report: serde_json::Value = serde_json::from_str(&interpolation_json)?;
+    assert_eq!(interpolation_report["failed_stage"], "interpolation");
+    assert_eq!(interpolation_report["inputs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(interpolation_report["discovery"].as_array().map(Vec::len), Some(1));
+    assert!(
+        interpolation_report["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFC0028"))
+    );
+    assert_eq!(interpolation_json.lines().count(), 1);
+    assert!(!interpolation_json.contains("post-resolution-input-canary"));
+    assert!(!interpolation_json.contains("post-resolution-environment-canary.env"));
     Ok(())
 }
 
@@ -1194,7 +1036,6 @@ fn report_json_never_contains_seeded_input_or_interpolation_canaries() -> Result
         fs::remove_file(report.path())?;
     }
     fs::create_dir_all(bundle_directory.path())?;
-    let bundle = bundle_directory.path().join("report.zip");
     fs::create_dir_all(project.path())?;
     let compose = project.path().join("compose.yaml");
     let environment = project.path().join("canary.env");
@@ -1232,7 +1073,8 @@ fn report_json_never_contains_seeded_input_or_interpolation_canaries() -> Result
             "--report-file",
             path_text(report.path())?,
             "--generate-error-report",
-            path_text(&bundle)?,
+            "--error-report-directory",
+            path_text(bundle_directory.path())?,
             "--console-format",
             "json",
         ])
@@ -1245,6 +1087,7 @@ fn report_json_never_contains_seeded_input_or_interpolation_canaries() -> Result
     );
     let json = String::from_utf8(result.stdout)?;
     let file = fs::read_to_string(report.path())?;
+    let bundle = generated_error_report(bundle_directory.path())?;
     let mut archive = ZipArchive::new(Cursor::new(fs::read(bundle)?))?;
     let mut bundled_contents = String::new();
     for index in 0..archive.len() {
@@ -1300,20 +1143,30 @@ fn support_bundle_refuses_a_symlink_parent() -> Result<(), Box<dyn Error>> {
             "--input-file",
             path_text(&fixture)?,
             "--generate-error-report",
-            path_text(&directory.path().join("report.zip"))?,
+            "--error-report-directory",
+            path_text(directory.path())?,
             "--console-format",
             "json",
         ])
         .output()?;
     assert_eq!(result.status.code(), Some(1));
-    assert!(!target.path().join("report.zip").exists());
+    assert!(fs::read_dir(target.path())?.next().is_none());
     fs::remove_file(directory.path())?;
+    Ok(())
+}
 
-    let destination = target.path().join("existing-link.zip");
-    let existing = target.path().join("existing.zip");
-    fs::write(&existing, "existing archive")?;
-    symlink(&existing, &destination)?;
+#[cfg(target_os = "linux")]
+#[test]
+fn invalid_tzif_environment_fails_closed_without_leaking_its_path() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
+    let directory = TemporaryOutput::new("support-bundle-invalid-tzif");
+    fs::create_dir_all(directory.path())?;
+    let canary = "timezone-path-canary";
+    let tzif = directory.path().join(format!("{canary}.tzif"));
+    fs::write(&tzif, "not a TZif file")?;
+    let report_file = directory.path().join("report.json");
     let result = boxferry_command()
+        .env("TZ", path_text(&tzif)?)
         .args([
             "validate",
             "--input-type",
@@ -1322,14 +1175,34 @@ fn support_bundle_refuses_a_symlink_parent() -> Result<(), Box<dyn Error>> {
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
+            "--report-file",
+            path_text(&report_file)?,
             "--generate-error-report",
-            path_text(&destination)?,
+            "--error-report-directory",
+            path_text(directory.path())?,
             "--console-format",
             "json",
         ])
         .output()?;
     assert_eq!(result.status.code(), Some(1));
-    assert_eq!(fs::read_to_string(&existing)?, "existing archive");
+    let console = String::from_utf8(result.stdout)?;
+    let persisted = fs::read_to_string(&report_file)?;
+    let stderr = String::from_utf8(result.stderr)?;
+    for rendered in [&console, &persisted, &stderr] {
+        assert!(!rendered.contains(canary), "timezone path leaked into {rendered}");
+    }
+    let console_report: serde_json::Value = serde_json::from_str(&console)?;
+    assert_eq!(console_report["failed_stage"], "report-write");
+    assert!(
+        console_report["diagnostics"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFC0022"))
+    );
+    assert!(
+        fs::read_dir(directory.path())?.all(|entry| {
+            entry.is_ok_and(|entry| entry.path().extension().is_none_or(|extension| extension != "zip"))
+        })
+    );
     Ok(())
 }
 
@@ -1339,7 +1212,6 @@ fn report_file_is_attempted_before_the_support_bundle() -> Result<(), Box<dyn Er
     let directory = TemporaryOutput::new("support-bundle-ordering");
     fs::create_dir_all(directory.path())?;
     let report = directory.path().join("report.json");
-    let bundle = directory.path().join("report.zip");
     fs::write(&report, "existing")?;
     let result = boxferry_command()
         .args([
@@ -1353,13 +1225,14 @@ fn report_file_is_attempted_before_the_support_bundle() -> Result<(), Box<dyn Er
             "--report-file",
             path_text(&report)?,
             "--generate-error-report",
-            path_text(&bundle)?,
+            "--error-report-directory",
+            path_text(directory.path())?,
             "--console-format",
             "json",
         ])
         .output()?;
     assert_eq!(result.status.code(), Some(1));
-    let mut archive = ZipArchive::new(Cursor::new(fs::read(bundle)?))?;
+    let mut archive = ZipArchive::new(Cursor::new(fs::read(generated_error_report(directory.path())?)?))?;
     let mut entry = archive.by_name("report.json")?;
     let mut bundled = String::new();
     std::io::Read::read_to_string(&mut entry, &mut bundled)?;
@@ -1416,7 +1289,6 @@ fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentati
     ] {
         let directory = TemporaryOutput::new(&format!("support-bundle-{label}"));
         fs::create_dir_all(directory.path())?;
-        let archive = directory.path().join("report.zip");
         let result = boxferry_command()
             .args([
                 "validate",
@@ -1429,7 +1301,8 @@ fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentati
                 "--loss-policy",
                 "partial",
                 "--generate-error-report",
-                path_text(&archive)?,
+                "--error-report-directory",
+                path_text(directory.path())?,
             ])
             .args(presentation)
             .output()?;
@@ -1438,7 +1311,18 @@ fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentati
             "{label}: {}",
             String::from_utf8_lossy(&result.stderr)
         );
-        let mut zip = ZipArchive::new(Cursor::new(fs::read(&archive)?))?;
+        let archive = generated_error_report(directory.path())?;
+        let stdout = String::from_utf8(result.stdout)?;
+        let absolute_archive = archive.canonicalize()?;
+        match label {
+            "quiet" => assert_eq!(stdout, format!("{}\n", absolute_archive.display())),
+            "json" => {
+                let console: serde_json::Value = serde_json::from_str(&stdout)?;
+                assert_eq!(console["error_report_path"], absolute_archive.display().to_string());
+            }
+            _ => assert!(stdout.contains(&format!("error report: {}", absolute_archive.display()))),
+        }
+        let mut zip = ZipArchive::new(Cursor::new(fs::read(archive)?))?;
         assert_eq!(zip.len(), 2);
         for (index, name) in ["README.md", "report.json"].iter().enumerate() {
             let mut entry = zip.by_index(index)?;
@@ -1451,6 +1335,7 @@ fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentati
                 assert!(contents.contains("Inspect both files before uploading"));
             } else {
                 let report: serde_json::Value = serde_json::from_str(&contents)?;
+                assert!(report.get("error_report_path").is_none());
                 assert_eq!(report["review_required"], true);
                 assert_eq!(report["invocation"]["command_kind"], "validate");
                 let option_names = report["invocation"]["provided_option_names"]
@@ -1490,7 +1375,6 @@ fn support_bundle_is_created_for_blocked_and_failed_conversions() -> Result<(), 
     ] {
         let directory = TemporaryOutput::new(&format!("support-bundle-{label}-result"));
         fs::create_dir_all(directory.path())?;
-        let archive = directory.path().join("report.zip");
         let result = boxferry_command()
             .args([
                 "validate",
@@ -1501,13 +1385,14 @@ fn support_bundle_is_created_for_blocked_and_failed_conversions() -> Result<(), 
                 "--input-file",
                 path_text(&input)?,
                 "--generate-error-report",
-                path_text(&archive)?,
+                "--error-report-directory",
+                path_text(directory.path())?,
                 "--console-format",
                 "json",
             ])
             .output()?;
         assert_eq!(result.status.code(), Some(expected_exit));
-        let mut zip = ZipArchive::new(Cursor::new(fs::read(&archive)?))?;
+        let mut zip = ZipArchive::new(Cursor::new(fs::read(generated_error_report(directory.path())?)?))?;
         let mut entry = zip.by_name("report.json")?;
         let mut contents = String::new();
         std::io::Read::read_to_string(&mut entry, &mut contents)?;
@@ -1520,11 +1405,11 @@ fn support_bundle_is_created_for_blocked_and_failed_conversions() -> Result<(), 
 }
 
 #[test]
-fn support_bundle_refuses_existing_paths_without_leaving_a_temporary_file() -> Result<(), Box<dyn Error>> {
+fn support_bundle_retries_existing_names_without_leaving_a_temporary_file() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
     let directory = TemporaryOutput::new("support-bundle-existing");
     fs::create_dir_all(directory.path())?;
-    let archive = directory.path().join("report.zip");
+    let archive = directory.path().join("unrelated-existing.zip");
     fs::write(&archive, "existing archive")?;
     let result = boxferry_command()
         .args([
@@ -1536,24 +1421,840 @@ fn support_bundle_refuses_existing_paths_without_leaving_a_temporary_file() -> R
             "--input-file",
             path_text(&fixture)?,
             "--generate-error-report",
-            path_text(&archive)?,
+            "--error-report-directory",
+            path_text(directory.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(result.status.success());
+    assert_eq!(fs::read_to_string(&archive)?, "existing archive");
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert!(report.get("error_report_path").is_some());
+    assert!(
+        fs::read_dir(directory.path())?
+            .all(|entry| entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")))
+    );
+    Ok(())
+}
+
+#[test]
+fn quadlet_to_compose_generic_route_writes_canonical_document_and_complete_report() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-to-compose-project");
+    let output = TemporaryOutput::new("quadlet-to-compose-output");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("web.container");
+    fs::write(
+        &input,
+        "[Service]\nRestart=no\n[Container]\nImage=example.invalid/web:1\n",
+    )?;
+    let result = boxferry_command()
+        .args([
+            "convert",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--output-directory",
+            path_text(output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(report["source_type"], "quadlet");
+    assert_eq!(report["target_type"], "compose");
+    assert_eq!(report["requested_versions"]["minimum"], "rolling");
+    assert_eq!(report["requested_versions"]["maximum"], "rolling");
+    assert_eq!(report["resolved_versions"]["minimum"], "rolling");
+    assert_eq!(report["resolved_versions"]["maximum"], "rolling");
+    assert!(report["choices"].as_array().is_some_and(|choices| {
+        choices.iter().all(|choice| {
+            !matches!(
+                choice["name"].as_str(),
+                Some("compose_provider" | "compose_provider_version" | "compose_runtime" | "compose_runtime_version")
+            )
+        })
+    }));
+    assert_eq!(report["output_artifacts"][0]["name"], "compose.yaml");
+    assert!(
+        report["output_artifacts"][0]["size"]
+            .as_u64()
+            .is_some_and(|size| size > 0)
+    );
+    let document = fs::read_to_string(output.path().join("compose.yaml"))?;
+    assert!(document.contains("name: \"example\""));
+    assert!(document.contains("\"web\""));
+    let verbose = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--verbose",
+        ])
+        .output()?;
+    assert!(verbose.status.success());
+    assert!(String::from_utf8(verbose.stdout)?.contains("Compose Specification: rolling"));
+    let collision = boxferry_command()
+        .args([
+            "convert",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+    assert_eq!(collision.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&collision.stderr).contains("output directory already exists"));
+    Ok(())
+}
+
+#[test]
+fn quadlet_route_validates_without_writing_and_rejects_inapplicable_or_removed_options() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-route-validation");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("web.container");
+    fs::write(&input, "[Container]\nImage=example.invalid/web:1\n")?;
+    let base = [
+        "validate",
+        "--input-type",
+        "quadlet",
+        "--output-type",
+        "compose",
+        "--input-file",
+        path_text(&input)?,
+        "--project-name",
+        "example",
+        "--console-format",
+        "json",
+    ];
+    let validated = boxferry_command().args(base).output()?;
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    assert!(!project.path().join("compose.yaml").exists());
+    let missing_project = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+        ])
+        .output()?;
+    assert_eq!(missing_project.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing_project.stderr).contains("--project-name is required"));
+    let irrelevant = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--podman-minimum-version",
+            "5.4",
+        ])
+        .output()?;
+    assert_eq!(irrelevant.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&irrelevant.stderr).contains("not applicable"));
+    let removed_provider = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--compose-provider",
+            "docker-compose",
+        ])
+        .output()?;
+    assert_eq!(removed_provider.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&removed_provider.stderr).contains("unexpected argument '--compose-provider'"));
+    let removed_runtime = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--compose-runtime",
+            "docker-engine",
+        ])
+        .output()?;
+    assert_eq!(removed_runtime.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&removed_runtime.stderr).contains("unexpected argument '--compose-runtime'"));
+    Ok(())
+}
+
+#[test]
+fn quadlet_directory_discovery_is_lowercase_lexical_and_refuses_duplicate_unit_names() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-directory-discovery");
+    let second = TemporaryOutput::new("quadlet-directory-second");
+    let middle = TemporaryOutput::new("quadlet-directory-middle");
+    let output = TemporaryOutput::new("quadlet-directory-output");
+    fs::create_dir_all(project.path())?;
+    fs::create_dir_all(second.path())?;
+    fs::create_dir_all(middle.path())?;
+    fs::write(
+        project.path().join("z.container"),
+        "[Container]\nImage=example.invalid/z:1\n",
+    )?;
+    fs::write(
+        project.path().join("a.container"),
+        "[Container]\nImage=example.invalid/a:1\n",
+    )?;
+    fs::write(project.path().join("ignored.CONTAINER"), "not a unit\n")?;
+    let middle_input = middle.path().join("middle.container");
+    fs::write(&middle_input, "[Container]\nImage=example.invalid/middle:1\n")?;
+    fs::write(
+        second.path().join("a.container"),
+        "[Container]\nImage=example.invalid/other:1\n",
+    )?;
+    let result = boxferry_command()
+        .args([
+            "convert",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&middle_input)?,
+            "--input-directory",
+            path_text(project.path())?,
+            "--project-name",
+            "example",
+            "--output-directory",
+            path_text(output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(report["inputs"].as_array().map(Vec::len), Some(3));
+    assert_eq!(report["discovery"][0]["ignored"].as_array().map(Vec::len), Some(1));
+    let document = fs::read_to_string(output.path().join("compose.yaml"))?;
+    let middle = document.find("\"middle\"").ok_or("missing middle")?;
+    let first = document.find("\"a\"").ok_or("missing a")?;
+    let last = document.find("\"z\"").ok_or("missing z")?;
+    assert!(middle < first && first < last, "unexpected service order: {document}");
+    let duplicate = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-directory",
+            path_text(project.path())?,
+            "--input-directory",
+            path_text(second.path())?,
+            "--project-name",
+            "example",
+        ])
+        .output()?;
+    assert_eq!(duplicate.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("duplicate Quadlet unit basename"));
+    Ok(())
+}
+
+#[test]
+fn quadlet_parse_failure_uses_the_route_specific_report_stage() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-parse-report");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("broken-source-canary.container");
+    fs::write(&input, "[Container]\nImage=\n")?;
+    fs::write(project.path().join("ignored.txt"), "not a unit\n")?;
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-directory",
+            path_text(project.path())?,
+            "--project-name",
+            "example",
             "--console-format",
             "json",
         ])
         .output()?;
     assert_eq!(result.status.code(), Some(1));
-    assert_eq!(fs::read_to_string(&archive)?, "existing archive");
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
-    assert_eq!(report["exit_category"], "report-write");
+    assert_eq!(report["failed_stage"], "quadlet-parse");
+    assert!(!report["diagnostics"].as_array().unwrap_or(&Vec::new()).is_empty());
+    assert_eq!(report["inputs"].as_array().map(Vec::len), Some(1));
+    assert_eq!(report["discovery"].as_array().map(Vec::len), Some(1));
     assert!(
-        report["diagnostics"]
+        !result
+            .stdout
+            .windows(b"broken-source-canary".len())
+            .any(|window| window == b"broken-source-canary")
+    );
+    Ok(())
+}
+
+fn assert_detailed_quadlet_console_and_persisted_reports(
+    result: Output,
+    report_file: &Path,
+    reports_directory: &Path,
+    source_canary: &str,
+    value_canary: &str,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    assert_eq!(result.status.code(), Some(1));
+    let console = String::from_utf8(result.stdout)?;
+    let bundle = generated_error_report(reports_directory)?;
+    let console_report: serde_json::Value = serde_json::from_str(&console)?;
+    let mut persisted_console = console_report.clone();
+    let error_report_path = persisted_console
+        .as_object_mut()
+        .and_then(|object| object.remove("error_report_path"))
+        .ok_or("missing console error report path")?;
+    assert!(
+        error_report_path
+            .as_str()
+            .is_some_and(|path| Path::new(path).is_absolute())
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(report_file)?)?,
+        persisted_console
+    );
+    let mut archive = ZipArchive::new(fs::File::open(bundle)?)?;
+    let mut archived = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name("report.json")?, &mut archived)?;
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&archived)?, persisted_console);
+    for rendered in [&console, &fs::read_to_string(report_file)?, &archived] {
+        assert!(!rendered.contains(source_canary));
+        assert!(!rendered.contains(value_canary));
+        assert!(!rendered.contains("missing.network"));
+    }
+    Ok(console_report)
+}
+
+fn assert_quadlet_document_set_failure(input: &Path) -> Result<(), Box<dyn Error>> {
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(input)?,
+            "--project-name",
+            "example",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(result.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(report["failed_stage"], "quadlet-document-set");
+    Ok(())
+}
+
+#[test]
+fn quadlet_detailed_native_diagnostics_are_ordered_aliased_and_redacted_everywhere() -> Result<(), Box<dyn Error>> {
+    let inputs = TemporaryOutput::new("quadlet-detailed-canary-inputs");
+    let reports = TemporaryOutput::new("quadlet-detailed-canary-reports");
+    fs::create_dir_all(inputs.path())?;
+    fs::create_dir_all(reports.path())?;
+    let source_canary = "raw-source-canary";
+    let value_canary = "secret-value-canary";
+    let first = inputs.path().join(format!("{source_canary}-first.container"));
+    let second = inputs.path().join(format!("{source_canary}-second.container"));
+    fs::write(&first, "[Container]\nImage\n")?;
+    fs::write(
+        &second,
+        format!("[Container]\nImage={value_canary}.image\nNetwork=missing.network\n"),
+    )?;
+    let report_file = reports.path().join("report.json");
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&first)?,
+            "--input-file",
+            path_text(&second)?,
+            "--project-name",
+            "example",
+            "--report-file",
+            path_text(&report_file)?,
+            "--generate-error-report",
+            "--error-report-directory",
+            path_text(reports.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    let console_report = assert_detailed_quadlet_console_and_persisted_reports(
+        result,
+        &report_file,
+        reports.path(),
+        source_canary,
+        value_canary,
+    )?;
+    assert_eq!(console_report["failed_stage"], "quadlet-parse");
+    let diagnostics = console_report["diagnostics"].as_array().ok_or("missing diagnostics")?;
+    assert_eq!(diagnostics[0]["code"], "QLS0001");
+    assert_eq!(diagnostics[1]["code"], "QLM0002");
+    assert!(diagnostics.len() >= 3);
+    assert_eq!(diagnostics[0]["spans"][0]["source"], "<input-1>");
+    assert_eq!(diagnostics[1]["spans"][0]["source"], "<input-1>");
+    assert!(
+        diagnostics[2]["spans"]
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFC0022"))
+            .is_some_and(|spans| { spans.iter().any(|span| span["source"] == "<input-2>") })
     );
+    assert!(diagnostics[..3].iter().all(|diagnostic| {
+        diagnostic["fields"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field["name"] == "label_message"))
+    }));
+    let human = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&first)?,
+            "--input-file",
+            path_text(&second)?,
+            "--project-name",
+            "example",
+        ])
+        .output()?;
+    assert_eq!(human.status.code(), Some(1));
+    let stderr = String::from_utf8(human.stderr)?;
+    assert!(stderr.contains("QLS0001:"));
+    assert!(stderr.contains(diagnostics[0]["summary"].as_str().ok_or("missing summary")?));
     assert!(
-        fs::read_dir(directory.path())?
-            .all(|entry| entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")))
+        stderr.contains(
+            diagnostics[0]["fields"][0]["value"]
+                .as_str()
+                .ok_or("missing label message")?
+        )
     );
+
+    assert_quadlet_document_set_failure(&second)?;
+    Ok(())
+}
+
+#[test]
+fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-native-warning");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("web.container");
+    fs::write(&input, "[Container]\nImage=example.invalid/web:1\n[Network]\n")?;
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(report["status"], "success");
+    let warning = report["diagnostics"]
+        .as_array()
+        .and_then(|diagnostics| {
+            diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic["severity"] == "warning")
+        })
+        .ok_or("missing recoverable native warning")?;
+    assert!(warning["code"].as_str().is_some_and(|code| code.starts_with("QLM")));
+    assert_eq!(warning["spans"][0]["source"], "<input-1>");
+    assert!(
+        warning["fields"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| field["name"] == "label_message"))
+    );
+
+    let human = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+        ])
+        .output()?;
+    assert!(human.status.success(), "{}", String::from_utf8_lossy(&human.stderr));
+    let stderr = String::from_utf8(human.stderr)?;
+    assert!(stderr.contains(warning["code"].as_str().ok_or("missing warning code")?));
+    assert!(stderr.contains(warning["summary"].as_str().ok_or("missing warning summary")?));
+    Ok(())
+}
+
+#[test]
+fn quadlet_environment_file_requires_approximate_authorization() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-environment-file-policy");
+    let exact_output = TemporaryOutput::new("quadlet-environment-file-exact");
+    let approximate_output = TemporaryOutput::new("quadlet-environment-file-approximate");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("web.container");
+    fs::write(
+        &input,
+        "[Container]\nImage=example.invalid/web:1\nEnvironmentFile=/etc/example/default.env\n",
+    )?;
+    let exact = boxferry_command()
+        .args([
+            "convert",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--output-directory",
+            path_text(exact_output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(exact.status.code(), Some(2));
+    assert!(!exact_output.path().exists());
+    let exact_report: serde_json::Value = serde_json::from_slice(&exact.stdout)?;
+    assert!(
+        exact_report["fidelity"]["approximate"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    let approximate = boxferry_command()
+        .args([
+            "convert",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--loss-policy",
+            "approximate",
+            "--output-directory",
+            path_text(approximate_output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        approximate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&approximate.stderr)
+    );
+    assert!(approximate_output.path().join("compose.yaml").exists());
+    Ok(())
+}
+
+#[test]
+fn unavailable_routes_and_cross_route_options_fail_without_misreporting_the_route() -> Result<(), Box<dyn Error>> {
+    let unavailable = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "compose",
+            "--input-file",
+            "-",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(unavailable.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&unavailable.stdout)?;
+    assert_eq!(report["source_type"], "compose");
+    assert_eq!(report["target_type"], "compose");
+    assert!(report["choices"].as_array().is_some_and(Vec::is_empty));
+    let compose = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
+    let removed_provider = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-file",
+            path_text(&compose)?,
+            "--compose-provider",
+            "docker-compose",
+            "--compose-provider-version",
+            "2.24.4",
+        ])
+        .output()?;
+    assert_eq!(removed_provider.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&removed_provider.stderr).contains("unexpected argument '--compose-provider'"));
+    let project = TemporaryOutput::new("quadlet-cross-options");
+    fs::create_dir_all(project.path())?;
+    let quadlet = project.path().join("web.container");
+    fs::write(&quadlet, "[Container]\nImage=example.invalid/web:1\n")?;
+    let quadlet_flag = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&quadlet)?,
+            "--project-name",
+            "example",
+            "--interpolate",
+        ])
+        .output()?;
+    assert_eq!(quadlet_flag.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&quadlet_flag.stderr).contains("not applicable"));
+    Ok(())
+}
+
+#[test]
+fn quadlet_input_rejects_stdin_empty_discovery_duplicate_paths_and_unsupported_extensions() -> Result<(), Box<dyn Error>>
+{
+    let project = TemporaryOutput::new("quadlet-input-rejections");
+    let empty = TemporaryOutput::new("quadlet-empty-discovery");
+    fs::create_dir_all(project.path())?;
+    fs::create_dir_all(empty.path())?;
+    let input = project.path().join("web.container");
+    let unsupported = project.path().join("web.txt");
+    fs::write(&input, "[Container]\nImage=example.invalid/web:1\n")?;
+    fs::write(&unsupported, "ignored\n")?;
+    let common = [
+        "--input-type",
+        "quadlet",
+        "--output-type",
+        "compose",
+        "--project-name",
+        "example",
+    ];
+    let stdin = boxferry_command()
+        .args([
+            "validate",
+            common[0],
+            common[1],
+            common[2],
+            common[3],
+            "--input-file",
+            "-",
+            common[4],
+            common[5],
+        ])
+        .output()?;
+    assert_eq!(stdin.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&stdin.stderr).contains("stdin is not supported"));
+    let empty = boxferry_command()
+        .args([
+            "validate",
+            common[0],
+            common[1],
+            common[2],
+            common[3],
+            "--input-directory",
+            path_text(empty.path())?,
+            common[4],
+            common[5],
+        ])
+        .output()?;
+    assert_eq!(empty.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&empty.stderr).contains("no supported Quadlet unit files"));
+    let duplicate = boxferry_command()
+        .args([
+            "validate",
+            common[0],
+            common[1],
+            common[2],
+            common[3],
+            "--input-file",
+            path_text(&input)?,
+            "--input-file",
+            path_text(&input)?,
+            common[4],
+            common[5],
+        ])
+        .output()?;
+    assert_eq!(duplicate.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("duplicate resolved Quadlet input"));
+    let extension = boxferry_command()
+        .args([
+            "validate",
+            common[0],
+            common[1],
+            common[2],
+            common[3],
+            "--input-file",
+            path_text(&unsupported)?,
+            common[4],
+            common[5],
+        ])
+        .output()?;
+    assert_eq!(extension.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&extension.stderr).contains("supported lower-case unit extension"));
+    Ok(())
+}
+
+#[test]
+fn duplicate_quadlet_basenames_are_redacted_in_json_report_file_and_bundle() -> Result<(), Box<dyn Error>> {
+    let first = TemporaryOutput::new("quadlet-duplicate-canary-first");
+    let second = TemporaryOutput::new("quadlet-duplicate-canary-second");
+    let reports = TemporaryOutput::new("quadlet-duplicate-canary-reports");
+    fs::create_dir_all(first.path())?;
+    fs::create_dir_all(second.path())?;
+    fs::create_dir_all(reports.path())?;
+    let canary = "raw-duplicate-canary";
+    for directory in [first.path(), second.path()] {
+        fs::write(
+            directory.join(format!("{canary}.container")),
+            "[Container]\nImage=example.invalid/web:1\n",
+        )?;
+    }
+    let report_file = reports.path().join("report.json");
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-directory",
+            path_text(first.path())?,
+            "--input-directory",
+            path_text(second.path())?,
+            "--project-name",
+            "example",
+            "--report-file",
+            path_text(&report_file)?,
+            "--generate-error-report",
+            "--error-report-directory",
+            path_text(reports.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(result.status.code(), Some(1));
+    let console = String::from_utf8(result.stdout)?;
+    let file = fs::read_to_string(report_file)?;
+    let bundle = generated_error_report(reports.path())?;
+    assert!(!console.contains(canary));
+    assert!(!file.contains(canary));
+    let mut archive = ZipArchive::new(fs::File::open(bundle)?)?;
+    assert_eq!(archive.len(), 2);
+    let mut bundled = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name("report.json")?, &mut bundled)?;
+    assert!(!bundled.contains(canary));
+    Ok(())
+}
+
+#[test]
+fn quadlet_to_compose_support_bundle_excludes_source_canaries() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-compose-bundle-project");
+    let output = TemporaryOutput::new("quadlet-compose-bundle-output");
+    let reports = TemporaryOutput::new("quadlet-compose-bundle-reports");
+    fs::create_dir_all(project.path())?;
+    fs::create_dir_all(reports.path())?;
+    let input = project.path().join("raw-path-canary.container");
+    let canary = "quadlet-source-canary-never-report";
+    fs::write(
+        &input,
+        format!("[Container]\nImage=example.invalid/web:1\nEnvironment=SECRET={canary}\n"),
+    )?;
+    let report_file = reports.path().join("report.json");
+    let result = boxferry_command()
+        .args([
+            "convert",
+            "--input-type",
+            "quadlet",
+            "--output-type",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--project-name",
+            "example",
+            "--loss-policy",
+            "partial",
+            "--output-directory",
+            path_text(output.path())?,
+            "--generate-error-report",
+            "--error-report-directory",
+            path_text(reports.path())?,
+            "--report-file",
+            path_text(&report_file)?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let console = String::from_utf8(result.stdout)?;
+    let file_report = fs::read_to_string(report_file)?;
+    let bundle = generated_error_report(reports.path())?;
+    assert!(!console.contains(canary));
+    assert!(!console.contains("raw-path-canary"));
+    assert!(!file_report.contains(canary));
+    assert!(!file_report.contains("raw-path-canary"));
+    let mut archive = ZipArchive::new(fs::File::open(bundle)?)?;
+    let mut report = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name("report.json")?, &mut report)?;
+    assert!(!report.contains(canary));
+    assert!(!report.contains("raw-path-canary"));
+    assert_eq!(archive.len(), 2);
+    assert_eq!(archive.by_index(0)?.name(), "README.md");
+    assert_eq!(archive.by_index(1)?.name(), "report.json");
     Ok(())
 }
 
@@ -1570,6 +2271,18 @@ fn fixture_directory(name: &str) -> PathBuf {
 fn path_text(path: &Path) -> Result<&str, Box<dyn Error>> {
     path.to_str()
         .ok_or_else(|| format!("test path is not UTF-8: {}", path.display()).into())
+}
+
+fn generated_error_report(directory: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let mut reports = fs::read_dir(directory)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "zip"));
+    let report = reports.next().ok_or("missing generated error report")?;
+    if reports.next().is_some() {
+        return Err("more than one generated error report".into());
+    }
+    Ok(report)
 }
 
 struct TemporaryOutput {

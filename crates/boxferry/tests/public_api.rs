@@ -288,13 +288,19 @@ fn facade_exposes_runtime_reconstruction_additively() -> Result<(), String> {
 
 #[cfg(feature = "compose")]
 #[test]
-fn facade_exposes_the_compose_import_adapter_additively() -> Result<(), String> {
+fn facade_exposes_compose_adapters_and_specification_target_additively() -> Result<(), String> {
     use boxferry::compose::compose_lens::{
         loader::{DocumentInput, DocumentOrigin, LoadedProject},
         merge::merge_project,
         source::SourceId as ComposeSourceId,
     };
-    use boxferry::{ComposeImporter, ComposeSource, ImportAdapter, SourceId};
+    use boxferry::{
+        COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeImporter, ComposeSource,
+        ImportAdapter, SourceId,
+    };
+
+    assert_eq!(COMPOSE_SPECIFICATION_TARGET, "compose-specification");
+    assert_eq!(COMPOSE_SPECIFICATION_PROFILE_REVISION.to_string(), "1.0.0");
 
     let compose_source_id = ComposeSourceId::new(1);
     let loaded = LoadedProject::load([DocumentInput::new(
@@ -332,6 +338,33 @@ fn facade_exposes_the_compose_import_adapter_additively() -> Result<(), String> 
         Some(1)
     );
     assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    Ok(())
+}
+
+#[cfg(feature = "quadlet")]
+#[test]
+fn facade_exposes_detailed_quadlet_parse_diagnostics_additively() -> Result<(), String> {
+    use boxferry::quadlet::quadlet_lens::source::SourceId as QuadletSourceId;
+    use boxferry::{QuadletDocumentInput, QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource};
+
+    let error = QuadletSource::parse_detailed(
+        Identifier::new("example").map_err(|error| error.to_string())?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(41),
+            "[Container]\nImage=\n",
+        )],
+    )
+    .err()
+    .ok_or("invalid Quadlet source should fail")?;
+    let diagnostic = error
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.origin() == QuadletParseDiagnosticOrigin::Model)
+        .ok_or("native model diagnostic expected")?;
+    assert_eq!(diagnostic.code(), "QLM0005");
+    assert_eq!(diagnostic.severity(), QuadletParseDiagnosticSeverity::Error);
+    assert_eq!(diagnostic.labels()[0].source_id(), 41);
     Ok(())
 }
 

@@ -95,16 +95,21 @@ The Compose adapter consumes a `MergedProject`, an optional matching ComposeLens
 ComposeLens's native project view directly, without canonical rendering or reparsing. BoxFerry does
 not infer active profiles or read the process environment.
 
-In the reverse direction, `ComposeExporter` accepts an exact Docker Compose or `podman-compose`
-provider target plus an optional exact Docker Engine or Podman backend. It maps the neutral graph
-into ComposeLens's generated values and returns deterministic, parse-back-validated YAML. Provider
-and runtime identity remain separate, compatibility-sensitive constructs become policy-controlled
-outcomes, and no installed tool is inspected. See [ADR 0013](decisions/0013-explicit-compose-provider-and-runtime.md).
+In the reverse direction, `ComposeExporter` accepts a rolling provider-neutral Compose
+Specification target or an exact Docker Compose or `podman-compose` provider target plus an
+optional exact Docker Engine or Podman backend. It maps the neutral graph into ComposeLens's
+generated values and returns deterministic, parse-back-validated YAML. Provider and runtime
+identity remain separate for embedded provider-aware targets; the generic CLI uses only the
+rolling specification target and does not inspect installed tools. See
+[ADR 0013](decisions/0013-explicit-compose-provider-and-runtime.md) and
+[ADR 0020](decisions/0020-rolling-compose-specification-cli-target.md).
 
 The Quadlet importer consumes explicit in-memory unit inputs through `QuadletSource::parse`, or a
 caller-validated named `QuadletDocumentSet`; it does not search systemd or Quadlet directories.
 The recommended parse boundary rejects invalid native syntax/model results before diagnostics can
-be discarded. Its current exact slice maps direct container images, explicit container names,
+be discarded. `QuadletSource::parse_detailed` additionally preserves BoxFerry-owned, value-free
+native diagnostic DTOs for callers that need syntax, model, and document-set recovery detail;
+error-severity diagnostics never yield a usable source boundary. Its current exact slice maps direct container images, explicit container names,
 safe unquoted exec arguments, single explicit environment assignments, scalar port publications,
 named or absolute-bind mounts, named network attachments, and application-owned or explicitly
 external network and volume resources. Metadata labels, IPv4/bracketed-IPv6/`host-gateway` host
@@ -183,9 +188,10 @@ deterministic implementations.
 ### Target profiles and capability providers
 
 A target profile describes the environment for which output must work. Examples include Podman
-and systemd version ranges, an exact Compose provider release, Kubernetes versions and API
-resources, rootless mode, and allowed fallbacks. Compose backend runtime identity is an additional
-explicit exporter input because it is distinct from the provider.
+and systemd version ranges, the rolling Compose Specification compatibility profile, an exact
+Compose provider release, Kubernetes versions and API resources, rootless mode, and allowed
+fallbacks. Compose backend runtime identity is an additional explicit exporter input only for
+provider-aware targets because it is distinct from the provider.
 
 Each adapter owns its relevant capability provider. The engine combines capability results but does not contain a global list of platform-specific keys.
 

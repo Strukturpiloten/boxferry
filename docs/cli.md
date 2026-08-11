@@ -4,30 +4,38 @@ The `boxferry` executable is a thin consumer of the public library facade. It ow
 parsing, authorized file reads and writes, diagnostic presentation, and process status; conversion
 rules remain in the reusable adapters and engine.
 
-This document describes the legacy compatibility command. The implemented generic `convert` and
-`validate` interface, ordered file/directory discovery, presentation modes, canonical
-`--report-file`, and local `--generate-error-report` support bundle are documented in the
+`convert` and `validate` are the only document-conversion commands. The typed route registry
+currently exposes Compose-to-Quadlet and Quadlet-to-Compose; every other selected pair is
+unavailable. Ordered file/directory discovery, presentation modes, canonical `--report-file`,
+and the automatically named local `--generate-error-report` support bundle are documented in the
 [vNext CLI contract](cli-vnext.md) and [Error reports](error-reports.md).
 
-## Compose to Quadlet
+## Generic routes
 
-`boxferry compose-to-quadlet` accepts:
+Compose-to-Quadlet uses:
 
-- one or more `--file` values in explicit Compose merge order;
-- a required fallback `--project-name`;
+- one or more `--input-file` or `--input-directory` values in explicit global order;
+- an optional fallback `--project-name` when the Compose project has no top-level name;
 - repeated `--profile` values or `--all-profiles`;
-- optional explicit Compose interpolation through `--interpolate`, repeatable plain
-  `--variable NAME=VALUE` inputs, and repeatable sensitive
-  `--variable-from-environment NAME` authorizations;
-- an inclusive `--podman-minimum-version`, defaulting to `5.4.0`;
-- an optional inclusive `--podman-maximum-version`;
-- `--grouping separate` or an explicit `--grouping pod` request;
+- optional explicit Compose interpolation through `--interpolate`, repeatable `--env NAME=VALUE`
+  inputs, and repeatable sensitive `--env NAME` authorizations;
+- an inclusive `--podman-minimum-version`, defaulting to `5.4`;
+- an inclusive `--podman-maximum-version`, defaulting to `6.0`;
+- `--quadlet-grouping separate` or an explicit `--quadlet-grouping pod` request;
 - `--loss-policy exact`, `approximate`, or `partial`; and
 - a required `--output-directory` that must not already exist and whose parent must exist.
 
-Versions use the exact numeric `major.minor.patch` form. File order, profile selection, grouping,
-target range, and loss authorization are never inferred from an installed Docker or Podman
-runtime.
+Quadlet-to-Compose requires a non-stdin `--project-name` and writes one deterministic,
+parse-back-validated `compose.yaml` for the rolling Compose Specification. It does not accept
+provider or runtime selection flags, infer installed tools, or guarantee that every historical
+Compose consumer accepts the result. The internal BoxFerry profile revision is not a Compose
+Specification release version and is never emitted as a CLI provider or version choice.
+
+```console
+boxferry convert --input-type quadlet --output-type compose \
+  --input-directory ./quadlet --project-name example \
+  --output-directory ./compose-output
+```
 
 Compose interpolation is disabled unless `--interpolate` is present. With interpolation disabled,
 BoxFerry does not read any process variable and unresolved expressions remain available to the
@@ -37,18 +45,20 @@ With `--interpolate`, ComposeLens evaluates each source file before merge using 
 that starts empty. Compose default, required, and alternative operators therefore work without
 giving the conversion ambient process access. Inputs are additive and explicit:
 
-- `--variable NAME=VALUE` supplies a non-sensitive literal. The first `=` separates the name, so
+- `--env NAME=VALUE` supplies a literal. The first `=` separates the name, so
   the value may be empty or contain more `=` characters. Command-line arguments may be visible to
-  other local processes and CI logs; do not use this option for secrets.
-- `--variable-from-environment NAME` authorizes BoxFerry to read exactly that named process
+  other local processes and CI logs; all interpolation values are protected in reports, but do not
+  use this option for secrets.
+- `--env NAME` authorizes BoxFerry to read exactly that named process
   variable. Its value is marked sensitive before interpolation and is not included in errors or
   diagnostic formatting.
 
 Names use ComposeLens's interpolation grammar: an ASCII letter or underscore followed by ASCII
 letters, digits, or underscores. A missing or non-Unicode authorized process variable fails
-before conversion. Supplying one name more than once, including once through each source, also
-fails instead of defining an implicit precedence rule. `--variable` and
-`--variable-from-environment` require `--interpolate`.
+before conversion. Environment files are applied in their supplied order, so later files override
+earlier files. Explicit `--env` values are applied afterward and override values from every
+environment file; repeated explicit `--env` values are applied in command-line order, so the last
+value for a name wins. `--env` requires `--interpolate`.
 
 This boundary does not read an implicit `.env` file or the contents of service-level `env_file`
 paths. BoxFerry converts those declarations without opening them: required files with safe paths

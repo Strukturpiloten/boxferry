@@ -8,7 +8,7 @@ The [real-world Compose corpus](real-world-compose-corpus.md) turns source-side 
 into pinned application-level tests and an ordered compatibility backlog. The separate
 [QuadletLens real-world corpus](https://github.com/Strukturpiloten/quadlet-lens/blob/main/docs/real-world-quadlet-corpus.md)
 provides target-format pressure from public Quadlet deployments. Passing that corpus proves
-loss-aware Quadlet ingestion; it does not mean BoxFerry can yet import Quadlet or generate every
+loss-aware Quadlet ingestion; it does not mean BoxFerry can import every Quadlet feature or generate every
 typed and untyped native key found there.
 
 Coverage was audited against the current official
@@ -26,9 +26,9 @@ the resulting route supports only their shared semantic subset.
 | Boundary | Import to neutral model | Export from neutral model | CLI orchestration |
 | --- | --- | --- | --- |
 | Docker runtime | Inspect decoder and reconstruction library implemented for the reviewed API range | Deployment planning and execution open | Open |
-| Docker Compose | Implemented for the documented subset | Implemented for the documented subset | Compose-to-Quadlet only |
+| Docker Compose | Implemented for the documented subset | Implemented for the documented subset | Compose-to-Quadlet and Quadlet-to-Compose; the latter targets the rolling Compose Specification, not a selected historical provider |
 | Podman runtime | Inspect decoder and reconstruction library implemented for Podman 5.4.0–6.0.2 | Deployment planning and execution open | Open |
-| Podman Quadlet | Shared service/resource subset implemented, including labels, host mappings, and execution context; broader native surface open | Implemented for the documented subset | Compose-to-Quadlet only |
+| Podman Quadlet | Shared service/resource subset implemented, including labels, host mappings, and execution context; broader native surface open | Implemented for the documented subset | Compose-to-Quadlet and Quadlet-to-Compose |
 | Kubernetes | Open | Open | Open |
 
 Runtime export means generating and validating a reviewable create/update plan before an optional
@@ -61,7 +61,7 @@ field as a policy-controlled unsupported outcome.
 | Published ports | `ports` | `partial` | Single numeric publications are supported; ranges, deferred values, unsupported host-address forms, and target-only options are reported. |
 | Storage | `volumes` plus top-level `volumes` | `partial` | Named, bind, and anonymous mounts cover the first slice, including short-syntax SELinux relabel intent; other mount types/options are reported. |
 | Networking | `networks` plus top-level `networks` | `partial` | Owned definitions retain logical/runtime names, driver, ordered options/labels, `internal`, IPv6, and associated IPAM rows. Compose-authored rows emit to Quadlet; Quadlet import reconstructs only one unambiguous row. Compose generation reports retained IPAM until ComposeLens provides that API; resets, duplicates, and ambiguous native rows remain explicit. |
-| Project interpolation | `${NAME}` and supported operators | `not applicable` | The CLI leaves interpolation disabled by default. `--interpolate` evaluates per-file overlays from an empty environment plus repeatable plain `--variable NAME=VALUE` and individually authorized sensitive `--variable-from-environment NAME` inputs. No implicit process or `.env` lookup occurs. Embedded callers use the same explicit ComposeLens overlay before constructing `ComposeSource`. |
+| Project interpolation | `${NAME}` and supported operators | `not applicable` | The CLI leaves interpolation disabled by default. `--interpolate` evaluates per-file overlays from an empty environment plus repeatable `--env NAME=VALUE` and individually authorized sensitive `--env NAME` inputs. No implicit process or `.env` lookup occurs. Embedded callers use the same explicit ComposeLens overlay before constructing `ComposeSource`. |
 | Profile selection | `profiles` | `not applicable` | The caller must explicitly select profiles before import; profiles do not become Quadlet fields. |
 | Health checks | `healthcheck` | `partial` | `CMD`, `CMD-SHELL`, `NONE`/`disable`, interval, timeout, retries, and start period are source-aware and version-checked end to end. Compose `start_interval`, deferred/invalid scalars, conflicting disable/command intent, and systemd-percent-bearing commands produce explicit non-exact outcomes. |
 | Dependencies | `depends_on` | `partial` | Ordered required/optional `service_started` edges map to `Requires`/`Wants` plus `After`. `service_healthy` also maps through `Notify=healthy` when the target has an explicit encodable health command. Restart propagation, successful completion, provider-specific conditions, absent optional services, missing required services, and cycles produce explicit unsupported or invalid outcomes. |
@@ -206,9 +206,9 @@ with independent `BFD` diagnostics and additionally reports the lost entrypoint/
 The Compose export path covers the same supported effective subset for images, commands,
 environment, explicit runtime names, service labels, identity/context, container restart policies,
 ports, mounts, networks, volumes, and ordered environment-file declarations. It uses ComposeLens 0.1.15's
-deterministic generated-document boundary and requires an exact Docker Compose or
-`podman-compose` provider version; the optional exact Docker Engine or Podman backend remains a
-separate input. Short/long `env_file` syntax, order, explicit `required`/`raw` options, and path
+deterministic generated-document boundary. The generic Quadlet-to-Compose route targets the rolling
+Compose Specification; embedded callers may instead select an exact Docker Compose or
+`podman-compose` provider version with an optional exact backend. Short/long `env_file` syntax, order, explicit `required`/`raw` options, and path
 sensitivity survive generated output and parse-back validation.
 Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,
 unresolved lifecycle, structural pod grouping, and fields outside the generated subset remain

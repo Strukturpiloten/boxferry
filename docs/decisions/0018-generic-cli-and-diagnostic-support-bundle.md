@@ -2,6 +2,8 @@
 
 - Status: accepted
 - Date: 2026-08-10
+- Amended by: [ADR 0019](0019-generic-cli-route-registry.md)
+- Amended by: [ADR 0021](0021-automatic-local-error-report-names.md)
 
 ## Context
 
@@ -20,11 +22,10 @@ single-file bundle. A BoxFerry transport archive must not be described as native
 ## Decision
 
 1. Add visible `convert`, `validate`, `capabilities`, `help`, and `version` commands. Standard
-   `-h`, `--help`, and `--version` forms remain visible. The generic route initially exposes only
-   the implemented Compose-input to Quadlet-output pair and fails closed for unavailable routes.
-2. Preserve `compose-to-quadlet` as a compatibility wrapper for at least one pre-1.0 minor release.
-   It retains its option grammar and emits one structured deprecation diagnostic with the generic
-   equivalent. It is not a plain Clap alias because the old and new grammars differ.
+   `-h`, `--help`, and `--version` forms remain visible. ADR 0019 supersedes the initial route
+   scope: the generic interface exposes the reviewed routes and fails closed for unavailable pairs.
+2. ADR 0019 removes the unreleased `compose-to-quadlet` command; `convert` and `validate` are the
+   only document-conversion commands.
 3. `--input-file` and `--input-directory` form one occurrence-ordered source sequence. Compose
    directory discovery is non-recursive and selects exactly one conventional file using the order
    documented in `docs/cli-vnext.md`. Overrides remain explicit. Duplicate resolved files are
@@ -58,10 +59,12 @@ single-file bundle. A BoxFerry transport archive must not be described as native
 11. Add a public, versioned report DTO derived from the same structured diagnostics and outcomes
     used by embedded callers. Schema version 1 permits additive fields but not changed or removed
     meaning. Publish its JSON Schema. Terminal text is never reparsed into JSON.
-12. `--report-file` writes canonical JSON with create-new behavior. `--generate-error-report PATH`
-    writes a local ZIP containing only fixed `README.md` and `report.json` entries. It never uploads,
-    invokes a runtime, captures raw sources or outputs, or reads ambient state beyond an explicit
-    allowlist.
+12. `--report-file` writes canonical JSON with create-new behavior. `--generate-error-report`
+    writes a local ZIP containing only fixed `README.md` and `report.json` entries. ADR 0021 defines
+    its automatic local name, optional output directory, and console-only published-path field. It
+    never uploads, invokes a runtime, captures raw sources or outputs, or reads ambient state beyond
+    an explicit allowlist. Local filename selection may inspect `TZ` (including a TZif path) and OS
+    time-zone configuration, but never persists or reports those values or paths.
 13. Report redaction always replaces `ProtectedString`, environment, command, authorization,
     metadata-label, config/secret material, and runtime-protected values with `<redacted>`. A
     normalized credential-name filter and URL/header/private-key filters add defense in depth.
@@ -87,7 +90,7 @@ single-file bundle. A BoxFerry transport archive must not be described as native
 
 - Scripts receive one stable JSON boundary while human progress no longer appears as an error
   stream.
-- Existing scripts keep the legacy command during a documented migration window.
+- ADR 0019 establishes the generic command surface; the unreleased legacy command is not retained.
 - BoxFerry's interpolation inputs remain explicit and reproducible, but they intentionally do not
   reproduce Docker Compose's ambient shell and `.env` precedence.
 - The support bundle is useful for diagnosis without making a false secret-free guarantee.

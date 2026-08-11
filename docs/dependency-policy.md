@@ -47,11 +47,19 @@ remain separate. Unknown meaningful Docker fields receive structured loss report
 payload diagnostics do not echo input values.
 
 The `boxferry` CLI feature uses ZIP 6.0.0 with default features disabled to create the local
-diagnostic support bundle recorded in ADR 0018. It writes only fixed, stored entries in bounded
+diagnostic support bundle recorded in ADR 0018 and ADR 0021. It writes only fixed, stored entries in bounded
 memory and enables no compression, encryption, timestamp, or runtime-inspection feature. ZIP is
 MIT-licensed and supports Rust 1.83.0, below BoxFerry's 1.85.0 MSRV. The lockfile necessarily
 records ZIP's mandatory crates (`arbitrary`, `crc32fast`, `indexmap`, and `memchr`), while a
 no-default embedded build does not activate ZIP or those CLI-only dependencies.
+
+The same CLI feature uses exactly pinned `jiff` 0.2.24 with default features disabled and only its
+`std` and `tz-system` features. It supplies the fallible local wall clock required for automatic
+error-report names and is unavailable to no-default embedded consumers. The exact pin documents
+the reviewed Rust 1.85-compatible local-time API; its MIT licensing is allowed by the workspace
+policy. For filename selection only, its system-time-zone support may inspect the standard `TZ`
+setting (including a TZif path) and operating-system time-zone configuration. BoxFerry never
+persists or reports a time-zone setting, name, path, or value.
 
 ## Automation
 

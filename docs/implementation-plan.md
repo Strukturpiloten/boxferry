@@ -259,10 +259,11 @@ approximation. Optional files, unsafe paths, authorized file-content processing,
 encoders, and the TYPO3 showcase remain.
 
 Runtime observations can also flow through the public engine into deterministic Compose output.
-The exporter consumes ComposeLens 0.1.15's parse-back-validated generated-document API, requires one
-exact Docker Compose or `podman-compose` provider release, keeps an optional exact Docker Engine or
-Podman backend separate, preserves observed resource names and container restart policies, and
-emits ordered short/long environment-file declarations with their explicit options and
+The exporter consumes ComposeLens 0.1.15's parse-back-validated generated-document API. Embedded
+callers may require one exact Docker Compose or `podman-compose` provider release and an optional
+separate exact Docker Engine or Podman backend; the generic Quadlet-to-Compose CLI route instead
+uses the rolling provider-neutral Compose Specification target. Both preserve observed resource
+names and container restart policies, and emit ordered short/long environment-file declarations with their explicit options and
 sensitivity. It reports every compatibility or unsupported field decision before
 authorization. Health checks, dependencies, configs, secrets, and structural groups remain
 explicit partial losses until the native generated subset expands.

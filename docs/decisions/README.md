@@ -25,12 +25,15 @@ Architecture decision records capture choices that constrain future development.
 | [0010](0010-isolated-docker-runtime-conformance.md) | accepted | Digest-pinned nested Docker conformance without a host runtime socket |
 | [0011](0011-neutral-service-group-relationships.md) | accepted | Structural service grouping without inferred namespace or lifecycle semantics |
 | [0012](0012-explicit-runtime-lifecycle-resolution.md) | accepted | Provenance-bearing runtime lifecycle choices and one preserved Quadlet group |
-| [0013](0013-explicit-compose-provider-and-runtime.md) | accepted | Exact Compose provider/runtime selection and ComposeLens-generated output |
+| [0013](0013-explicit-compose-provider-and-runtime.md) | accepted | Provider-aware embedded Compose targets and generated output |
 | [0014](0014-runtime-regular-health-observations.md) | accepted | Regular runtime health inference without conflating Podman startup health |
 | [0015](0015-runtime-container-restart-policy.md) | accepted | Container restart observations with conservative systemd approximation |
 | [0016](0016-runtime-metadata-label-reconstruction.md) | accepted | Protected runtime metadata labels with image-default and provider-metadata boundaries |
 | [0017](0017-n-to-n-adapter-matrix.md) | accepted | N-to-N import/export adapters with reviewable runtime deployment plans |
 | [0018](0018-generic-cli-and-diagnostic-support-bundle.md) | accepted | Generic CLI migration and privacy-safe local diagnostic support bundle |
+| [0019](0019-generic-cli-route-registry.md) | accepted | Extensible CLI route registry with Compose and Quadlet document routes |
+| [0020](0020-rolling-compose-specification-cli-target.md) | accepted | Rolling Compose Specification target and detailed Quadlet CLI diagnostics |
+| [0021](0021-automatic-local-error-report-names.md) | accepted | Automatic local diagnostic report names and publication |
 
 ## Adding an ADR
 
