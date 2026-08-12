@@ -35,6 +35,8 @@ Architecture decision records capture choices that constrain future development.
 | [0020](0020-rolling-compose-specification-cli-target.md) | accepted | Rolling Compose Specification target and detailed Quadlet CLI diagnostics |
 | [0021](0021-automatic-local-error-report-names.md) | accepted | Automatic local diagnostic report names and publication |
 | [0022](0022-sole-quadlet-parser-and-deterministic-test-contract.md) | accepted | Sole Quadlet parser and deterministic test contract |
+| [0023](0023-windows-local-time-zone-database.md) | superseded | Temporary native-Windows Jiff time-zone database decision |
+| [0024](0024-linux-cli-and-wsl-on-windows.md) | accepted | Support the CLI on Linux and require WSL2 on Windows |
 
 ## Adding an ADR
 

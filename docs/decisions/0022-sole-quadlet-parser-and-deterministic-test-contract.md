@@ -22,8 +22,9 @@ document-set diagnostics that explained it.
    offline small, medium, and large CLI scenarios. They add no fuzzing, mutation, Miri, or test
    dependency requirement.
 4. A pinned `cargo-llvm-cov` 0.8.7 workspace/all-feature/all-target coverage job is a coarse
-   regression ratchet, not correctness evidence. macOS and Windows run the pure deterministic
-   check/test lanes, and an always-running aggregate PR gate is the branch-protection check.
+   regression ratchet, not correctness evidence. macOS runs the pure deterministic check/test
+   lane, and an always-running aggregate PR gate is the branch-protection check. ADR 0024 removes
+   the native Windows lane.
 
 ## Consequences
 

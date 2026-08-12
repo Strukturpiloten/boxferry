@@ -42,16 +42,36 @@ jobs:
           fi
 
           metadata="$(cargo metadata --locked --no-deps --format-version 1)"
-          version="$(
+          if ! version="$(
             jq -er '[.packages[].version] | unique | if length == 1 then .[0] else error("workspace packages must use one version") end' \
-              <<< "${metadata}"
-          )"
+              <<< "${metadata}" 2>/dev/null
+          )"; then
+            echo 'Release metadata must declare one common workspace package version.' >&2
+            exit 1
+          fi
           packages='["boxferry-model","boxferry-engine","boxferry-compose","boxferry-quadlet","boxferry-runtime","boxferry-docker","boxferry-podman","boxferry"]'
 
-          jq --exit-status --argjson expected "${packages}" '
-            ([.packages[].name] | sort) == ($expected | sort) and
-            all(.packages[]; .publish != [])
-          ' <<< "${metadata}" >/dev/null
+          if ! metadata_validation="$(
+            jq -er --argjson expected "${packages}" '
+              ([.packages[].name] | sort) as $actual |
+              ([.packages[] | select(.publish == []) | .name] | sort) as $unpublishable |
+              if $actual != ($expected | sort) then
+                "expected packages " + ($expected | sort | join(", ")) +
+                "; found " + ($actual | join(", "))
+              elif ($unpublishable | length) != 0 then
+                "packages must be publishable: " + ($unpublishable | join(", "))
+              else
+                "ok"
+              end
+            ' <<< "${metadata}" 2>/dev/null
+          )"; then
+            echo 'Could not inspect Cargo release package metadata.' >&2
+            exit 1
+          fi
+          if [[ "${metadata_validation}" != "ok" ]]; then
+            echo "Release package metadata is invalid: ${metadata_validation}." >&2
+            exit 1
+          fi
 
           release_notes="docs/releases/${version}.md"
           if [[ ! -f "${release_notes}" ]]; then
@@ -305,7 +325,13 @@ jobs:
           case "${draft_count}" in
             0) ;;
             1)
-              previous_release_id="$(jq --exit-status --raw-output '.[0].id' <<< "${drafts}")"
+              if ! previous_release_id="$(
+                jq -er 'if type == "array" and length == 1 and (.[0].id | type == "number") then .[0].id else error("missing numeric draft release ID") end' \
+                  <<< "${drafts}" 2>/dev/null
+              )"; then
+                echo "Could not read the numeric ID of the existing draft release for ${TAG}." >&2
+                exit 1
+              fi
               gh api --method DELETE \
                 --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
                 "repos/${GITHUB_REPOSITORY}/releases/${previous_release_id}"
@@ -328,10 +354,24 @@ jobs:
                 "repos/${GITHUB_REPOSITORY}/releases" \
                 --input -
           )"
-          release_id="$(jq --exit-status --raw-output '.id' <<< "${release}")"
-          upload_url="$(
-            jq --exit-status --raw-output '.upload_url | sub("\\{\\?name,label\\}$"; "")' <<< "${release}"
-          )"
+          if ! release_id="$(
+            jq -er 'if (.id | type) == "number" then .id else error("missing numeric release ID") end' \
+              <<< "${release}" 2>/dev/null
+          )"; then
+            echo "GitHub did not return a numeric release ID after creating draft ${TAG}." >&2
+            exit 1
+          fi
+          if ! upload_url="$(
+            jq -er '
+              if (.upload_url | type) == "string" and (.upload_url | endswith("{?name,label}"))
+              then .upload_url | sub("\\{\\?name,label\\}$"; "")
+              else error("missing release asset upload URL template")
+              end
+            ' <<< "${release}" 2>/dev/null
+          )"; then
+            echo "GitHub did not return a valid release asset upload URL for draft ${TAG}." >&2
+            exit 1
+          fi
           expected_upload_url="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets"
           if [[ "${upload_url}" != "${expected_upload_url}" ]]; then
             echo "GitHub returned an unexpected release asset upload URL." >&2
@@ -481,7 +521,10 @@ jobs:
             local content_type="$2"
             local asset_name="${asset_path##*/}"
             local response
-            test -f "${asset_path}"
+            if [[ ! -f "${asset_path}" ]]; then
+              echo "Release asset is missing: ${asset_path}." >&2
+              return 1
+            fi
             if [[ ! "${asset_name}" =~ ^[A-Za-z0-9._-]+$ ]]; then
               echo "Unsafe release asset name: ${asset_name}" >&2
               return 1
@@ -502,9 +545,17 @@ jobs:
                 --data-binary "@${asset_path}" \
                 "${UPLOAD_URL}?name=${asset_name}"
             )"
-            jq --exit-status --arg name "${asset_name}" \
-              '.name == $name and .state == "uploaded" and (.id | type == "number")' \
-              <<< "${response}" >/dev/null
+            if ! jq -er --arg name "${asset_name}" '
+              if type != "object" then error("response is not an object")
+              elif .name != $name then error("asset name does not match")
+              elif .state != "uploaded" then error("asset was not uploaded")
+              elif (.id | type) != "number" then error("asset ID is not numeric")
+              else "ok"
+              end
+            ' <<< "${response}" >/dev/null 2>&1; then
+              echo "GitHub did not confirm upload of release asset ${asset_name}." >&2
+              return 1
+            fi
           }
 
           expected_upload_url="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets"
@@ -525,9 +576,18 @@ jobs:
           RELEASE_ID: ${{ steps.release.outputs.release_id }}
         run: |
           set -euo pipefail
-          jq --null-input '{draft: false, make_latest: "true"}' |
-            gh api --method PATCH \
-              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
-              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-              --input - \
-              --jq 'if .draft == false then .html_url else error("GitHub release remained a draft") end'
+          response="$(
+            jq --null-input '{draft: false, make_latest: "true"}' |
+              gh api --method PATCH \
+                --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+                "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+                --input -
+          )"
+          if ! release_url="$(
+            jq -er 'if .draft == false and (.html_url | type) == "string" then .html_url else error("release remained a draft or has no URL") end' \
+              <<< "${response}" 2>/dev/null
+          )"; then
+            echo "GitHub did not confirm publication of release ID ${RELEASE_ID}." >&2
+            exit 1
+          fi
+          echo "Published GitHub release: ${release_url}"

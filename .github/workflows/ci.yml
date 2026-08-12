@@ -69,13 +69,9 @@ jobs:
           --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
 
   portability:
-    name: Portability (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Portability (macOS)
+    runs-on: macos-14
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-14, windows-2025]
     steps:
       - *checkout
       - name: Check all deterministic targets
@@ -208,12 +204,46 @@ jobs:
     steps:
       - name: Require every deterministic PR job to succeed
         shell: bash
+        env:
+          RUST_RESULT: ${{ needs.rust.result }}
+          MSRV_RESULT: ${{ needs.msrv.result }}
+          DEPENDENCIES_RESULT: ${{ needs.dependencies.result }}
+          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          SEMVER_RESULT: ${{ needs.semver.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          PORTABILITY_RESULT: ${{ needs.portability.result }}
         run: |
           set -euo pipefail
-          test "${{ needs.rust.result }}" = success
-          test "${{ needs.msrv.result }}" = success
-          test "${{ needs.dependencies.result }}" = success
-          test "${{ needs.documentation.result }}" = success
-          test "${{ needs.semver.result }}" = success
-          test "${{ needs.coverage.result }}" = success
-          test "${{ needs.portability.result }}" = success
+          jobs=(
+            "Rust quality|${RUST_RESULT}"
+            "MSRV|${MSRV_RESULT}"
+            "Dependency and license policy|${DEPENDENCIES_RESULT}"
+            "Documentation|${DOCUMENTATION_RESULT}"
+            "SemVer|${SEMVER_RESULT}"
+            "Coverage ratchet|${COVERAGE_RESULT}"
+            "macOS portability|${PORTABILITY_RESULT}"
+          )
+
+          {
+            printf '## Required PR job results\n\n'
+            printf '| Job | Result |\n'
+            printf '| --- | --- |\n'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          failures=0
+          for job in "${jobs[@]}"; do
+            name="${job%%|*}"
+            result="${job#*|}"
+            printf '| %s | `%s` |\n' "${name}" "${result}" >> "${GITHUB_STEP_SUMMARY}"
+            printf 'Required PR job %s: %s\n' "${name}" "${result}"
+            if [[ "${result}" != "success" ]]; then
+              echo "::error title=Required PR job did not succeed::${name} concluded ${result}."
+              echo "Required PR job did not succeed: ${name} concluded ${result}." >&2
+              failures=1
+            fi
+          done
+
+          if (( failures != 0 )); then
+            echo 'One or more required PR jobs did not succeed; see the result table and annotations above.' >&2
+            exit 1
+          fi

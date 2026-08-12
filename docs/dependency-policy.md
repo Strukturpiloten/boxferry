@@ -59,7 +59,8 @@ error-report names and is unavailable to no-default embedded consumers. The exac
 the reviewed Rust 1.85-compatible local-time API; its MIT licensing is allowed by the workspace
 policy. For filename selection only, its system-time-zone support may inspect the standard `TZ`
 setting (including a TZif path) and operating-system time-zone configuration. BoxFerry never
-persists or reports a time-zone setting, name, path, or value.
+persists or reports a time-zone setting, name, path, or value. ADR 0024 supersedes the temporary
+native-Windows dependency decision in ADR 0023.
 
 ## Automation
 

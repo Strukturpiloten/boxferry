@@ -4,6 +4,10 @@ The `boxferry` executable is a thin consumer of the public library facade. It ow
 parsing, authorized file reads and writes, diagnostic presentation, and process status; conversion
 rules remain in the reusable adapters and engine.
 
+The executable supports Linux. Windows users run it inside WSL2; see
+[platform support](platform-support.md). Native Windows binaries and Windows containers are not
+supported.
+
 `convert` and `validate` are the only document-conversion commands. The typed route registry
 currently exposes Compose-to-Quadlet and Quadlet-to-Compose; every other selected pair is
 unavailable. Ordered file/directory discovery, presentation modes, canonical `--report-file`,

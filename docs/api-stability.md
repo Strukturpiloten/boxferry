@@ -40,6 +40,14 @@ The MSRV is part of the public contract. Raising it requires a pre-1.0 minor rel
 and CI evidence for the new floor. Normal development and the explicit MSRV job must both remain
 green.
 
+## Platform support
+
+The CLI supports Linux. Windows users run the Linux executable inside WSL2; native Windows CLI
+behavior is not part of the compatibility contract. macOS remains a deterministic POSIX
+portability lane, not a claim of native systemd or container-runtime availability. Component
+library compilation on other targets is incidental unless the platform is listed in the supported
+CI matrix. See [platform support](platform-support.md).
+
 ## Deprecation
 
 When practical, a replaced public API remains available and deprecated for at least one minor

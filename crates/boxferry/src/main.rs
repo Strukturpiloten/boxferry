@@ -1,5 +1,8 @@
 //! Command-line interface for `BoxFerry`.
 
+#[cfg(target_os = "windows")]
+compile_error!("the native Windows BoxFerry CLI is unsupported; install and run BoxFerry inside WSL2");
+
 use std::{
     collections::BTreeSet,
     env,

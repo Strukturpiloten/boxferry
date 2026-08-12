@@ -43,8 +43,8 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         "rustup component add llvm-tools-preview",
         "cargo install --locked --version 0.8.7 cargo-llvm-cov",
         "cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
-        "  portability:\n    name: Portability (${{ matrix.os }})",
-        "os: [macos-14, windows-2025]",
+        "  portability:\n    name: Portability (macOS)",
+        "runs-on: macos-14",
         "run: cargo ci-check",
         "run: cargo ci-test",
         "  pr-gate:\n    name: PR gate\n    if: always()",
@@ -56,17 +56,66 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
     }
 
     for job in [
-        "rust",
-        "msrv",
-        "dependencies",
-        "documentation",
-        "semver",
-        "coverage",
-        "portability",
+        ("Rust quality", "RUST_RESULT", "rust"),
+        ("MSRV", "MSRV_RESULT", "msrv"),
+        ("Dependency and license policy", "DEPENDENCIES_RESULT", "dependencies"),
+        ("Documentation", "DOCUMENTATION_RESULT", "documentation"),
+        ("SemVer", "SEMVER_RESULT", "semver"),
+        ("Coverage ratchet", "COVERAGE_RESULT", "coverage"),
+        ("macOS portability", "PORTABILITY_RESULT", "portability"),
     ] {
-        let required = format!("test \"${{{{ needs.{job}.result }}}}\" = success");
+        let (job_name, result_variable, needs_job) = job;
+        let required = format!("{result_variable}: ${{{{ needs.{needs_job}.result }}}}");
         if !workflow.contains(&required) {
-            return Err(format!("PR gate does not require `{job}` to succeed"));
+            return Err(format!("PR gate does not expose a result variable for `{job_name}`"));
+        }
+    }
+
+    for required in [
+        "printf '| Job | Result |\\n'",
+        "printf '| %s | `%s` |\\n' \"${name}\" \"${result}\" >> \"${GITHUB_STEP_SUMMARY}\"",
+        "::error title=Required PR job did not succeed::${name} concluded ${result}.",
+        "Required PR job did not succeed: ${name} concluded ${result}.",
+        "if (( failures != 0 )); then",
+        "One or more required PR jobs did not succeed; see the result table and annotations above.",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("PR gate is missing actionable failure diagnostic `{required}`"));
+        }
+    }
+    if workflow.contains("test \"${{ needs.") {
+        return Err("PR gate must not use opaque success test predicates".to_owned());
+    }
+    if workflow.contains("windows-") {
+        return Err("CI must not claim unsupported native Windows portability".to_owned());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn platform_support_contract_requires_wsl_for_windows_cli() -> Result<(), String> {
+    let root = repository_root();
+    let cli = fs::read_to_string(root.join("crates/boxferry/src/main.rs"))
+        .map_err(|error| format!("failed to read CLI source: {error}"))?;
+    let platform_support = fs::read_to_string(root.join("docs/platform-support.md"))
+        .map_err(|error| format!("failed to read platform support: {error}"))?;
+
+    for required in [
+        "#[cfg(target_os = \"windows\")]",
+        "the native Windows BoxFerry CLI is unsupported; install and run BoxFerry inside WSL2",
+    ] {
+        if !cli.contains(required) {
+            return Err(format!("CLI is missing native-Windows guard `{required}`"));
+        }
+    }
+    for required in [
+        "The BoxFerry CLI is supported on Linux.",
+        "Windows users must install and run the Linux CLI inside",
+        "Such compilation is incidental unless that platform appears in the supported CI",
+    ] {
+        if !platform_support.contains(required) {
+            return Err(format!("platform documentation is missing contract `{required}`"));
         }
     }
 
@@ -218,6 +267,13 @@ fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
         "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1",
         "Create or verify annotated release tag",
         "Publish immutable GitHub release",
+        "Release package metadata is invalid:",
+        "Could not read the numeric ID of the existing draft release",
+        "GitHub did not return a numeric release ID after creating draft",
+        "GitHub did not return a valid release asset upload URL",
+        "Release asset is missing:",
+        "GitHub did not confirm upload of release asset",
+        "GitHub did not confirm publication of release ID",
     ] {
         if !workflow.contains(required) {
             return Err(format!("release workflow is missing guard `{required}`"));

@@ -54,6 +54,9 @@ BoxFerry owns the application model, conversion planning, runtime adapters, and 
 
 ## Command-line use
 
+The CLI supports Linux. On Windows, install and run BoxFerry inside WSL2; native Windows binaries
+and Windows containers are not supported. See [platform support](docs/platform-support.md).
+
 The generic command converts explicitly ordered Compose files into a new directory of validated
 Quadlet files:
 

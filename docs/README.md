@@ -19,6 +19,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Testing strategy](testing.md) — unit, fixture, compatibility, and runtime testing
 - [Real-world Compose corpus](real-world-compose-corpus.md) — pinned applications, feature goals, and opt-in ingestion
 - [Development environment](development-environment.md) — reproducible VS Code tooling and update policy
+- [Platform support](platform-support.md) — Linux CLI support and WSL2 use on Windows
 - [Parallel agent workflows](agent-workflow.md) — human prompts for batched BoxFerry and Lens implementation
 - [Release policy](releasing.md) — library publication order and future binary automation boundary
 - [Fixture format](fixture-format.md) — shared metadata, provenance, and secrets contract
