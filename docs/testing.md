@@ -305,7 +305,7 @@ development toolchain; the explicit MSRV command prevents that pin from hiding a
 newer language or library features.
 
 For the complete local deterministic suite, including Rust, Markdown, JSON, YAML, TOML, shell, and
-Dockerfile formatting or linting, coverage, MSRV, dependencies, links, and published-API
+Dockerfile formatting or linting, coverage, MSRV, dependencies, local links, and published-API
 compatibility, run:
 
 ```shell
@@ -345,11 +345,15 @@ command supports them. The core, Compose-only, Docker-runtime-only, Podman-runti
 Quadlet-only facade aliases protect additive feature boundaries independently. All-feature tests
 include black-box CLI checks for reviewed
 output, loss-policy blocking before writes, and refusal to overwrite an existing directory. CI
-also runs the shared non-Rust file checker in non-mutating mode and lychee over the documentation.
+also runs the shared non-Rust file checker in non-mutating mode and checks local documentation
+links with Lychee's network-disabled mode. The weekly/manual `External documentation link health`
+workflow owns HTTP(S) validation. It reuses successful responses for up to fourteen days, does not
+cache HTTP failures, and rate-limits each host. External availability therefore remains visible
+without making a third-party outage or developer network condition a pull-request failure.
 The Docker and Podman runtime matrices are isolated, opt-in locally, and scheduled separately from
 pull-request CI. The deterministic PR contract runs the pure-library and black-box CLI suite on
-Ubuntu and macOS; privileged runtime conformance and the network-dependent remote corpus remain
-scheduled/manual evidence. Native Windows CLI execution is outside the supported platform
+Ubuntu and macOS; privileged runtime conformance, external link health, and the network-dependent
+remote corpus remain scheduled/manual evidence. Native Windows CLI execution is outside the supported platform
 contract; Windows users run the Linux CLI in WSL2. Small unit cases, medium
 component/public-facade cases, and a repository-owned large offline CLI scenario cover positive
 and negative paths. The Quadlet parser also has a bounded fixed-seed 0..=256 corpus that contains

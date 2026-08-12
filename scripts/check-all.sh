@@ -103,7 +103,7 @@ fi
 
 run_step "Format Rust" cargo fmt --all
 run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
-run_step "Check whitespace errors" git diff --check
+run_step "Check whitespace errors" git --no-pager diff --check
 run_step "Lint GitHub Actions syntax" actionlint
 run_step "Audit GitHub Actions security" zizmor .github/workflows
 run_step "Check all workspace targets and features" cargo ci-check
@@ -124,8 +124,7 @@ run_step "Enforce coverage ratchets" cargo llvm-cov --locked --workspace --all-f
 run_step "Check all targets with the MSRV" cargo "+${msrv}" ci-check
 run_step "Check repository policies with the MSRV" cargo "+${msrv}" ci-policy
 run_step "Audit dependencies, licenses, bans, and sources" cargo deny --all-features check
-run_step "Check documentation links" lychee --root-dir . --no-progress --max-retries 2 \
-  --retry-wait-time 2 --accept "100..=103,200..=299,429" \
+run_step "Check local documentation links" lychee --config lychee.toml --root-dir . --offline \
   "${markdown_files[@]}"
 run_step "Check published API compatibility" cargo semver-checks check-release --workspace \
   --all-features

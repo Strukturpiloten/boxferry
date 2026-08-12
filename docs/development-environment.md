@@ -156,10 +156,11 @@ root:
 The script formats Rust; safely fixes and lints Markdown; formats and parses JSON, JSONC, YAML, and
 TOML; formats and lints shell scripts; and lints Dockerfiles before checking the resulting tree. It
 then runs the complete feature-boundary, policy, Clippy, unit, integration, black-box CLI, doctest,
-documentation, coverage, MSRV, dependency, workflow, link, and published-API validation. It
+documentation, coverage, MSRV, dependency, workflow, local-link, and published-API validation. It
 derives the MSRV from Cargo metadata and installs that Rust toolchain on first use.
-Link, advisory-database, and published-API checks require outbound network access. Every command and
-its normal output remain visible; execution stops at the first failing step with its name.
+Advisory-database and published-API checks require outbound network access. Local documentation
+links are checked without network access. Every command and its normal output remain visible;
+execution stops at the first failing step with its name.
 
 File discovery uses `git ls-files --cached --others --exclude-standard` and passes literal paths to
 the tools. Do not replace it with a recursive `**/*.md` or similar workspace glob: the Dev
@@ -193,17 +194,17 @@ cargo deny --all-features check
 actionlint
 zizmor .github/workflows
 markdownlint-cli2 "**/*.md" "#target/**" "#.boxferry-workspace/**"
-lychee --root-dir . --no-progress --max-retries 2 --retry-wait-time 2 \
-  --accept '100..=103,200..=299,429' \
-  --exclude-path '(^|/)(target|\.boxferry-workspace)(/|$)' './**/*.md'
+lychee --config lychee.toml --root-dir . --offline './**/*.md'
 cargo semver-checks check-release --workspace --all-features
 ```
 
 The all-checks script intentionally excludes the macOS portability job, privileged Docker/Podman
-conformance, installed-current Podman mutation, and the network-fetched real-world corpus. Those
-tiers cannot run safely or reproducibly in the normal unprivileged Linux Dev Container. CI runs the
-macOS job; the explicitly opt-in tiers and their prerequisites are in
-[the testing strategy](testing.md).
+conformance, installed-current Podman mutation, network-fetched real-world corpus, and external
+documentation-link health. Those tiers cannot run safely or reproducibly in the normal
+unprivileged Linux Dev Container. CI runs the macOS job. A weekly/manual workflow checks external
+links with a fourteen-day success cache, two concurrent requests per host, and a delay between
+requests; transient remote outages therefore do not block local work or pull requests. The
+explicitly opt-in tiers and their prerequisites are in [the testing strategy](testing.md).
 
 ## Compile and test the CLI
 

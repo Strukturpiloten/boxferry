@@ -91,7 +91,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
     for required in [
         "cargo fmt --all",
         "bash scripts/check-files.sh --fix",
-        "git diff --check",
+        "git --no-pager diff --check",
         "actionlint",
         "zizmor .github/workflows",
         "cargo ci-check",
@@ -111,7 +111,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "cargo \"+${msrv}\" ci-check",
         "cargo \"+${msrv}\" ci-policy",
         "cargo deny --all-features check",
-        "lychee --root-dir .",
+        "lychee --config lychee.toml --root-dir . --offline",
         "cargo semver-checks check-release --workspace",
     ] {
         if !script.contains(required) {
@@ -130,6 +130,10 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
                 "local validation runner must not invoke opt-in tier `{opt_in}`"
             ));
         }
+    }
+
+    if script.contains("lychee --config lychee.toml --root-dir . --cache") {
+        return Err("local validation runner must not perform cached external link checks".to_owned());
     }
 
     Ok(())
@@ -187,6 +191,56 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
     for package in ["markdownlint-cli2", "prettier"] {
         if !lock.contains(&format!("\"{package}\"")) {
             return Err(format!("{} must lock `{package}`", lock_path.display()));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn documentation_link_checks_separate_local_validity_from_external_health() -> Result<(), String> {
+    let root = repository_root();
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    let external_path = root.join(".github/workflows/documentation-links.yml");
+    let external = fs::read_to_string(&external_path)
+        .map_err(|error| format!("failed to read {}: {error}", external_path.display()))?;
+    let config_path = root.join("lychee.toml");
+    let config = fs::read_to_string(&config_path)
+        .map_err(|error| format!("failed to read {}: {error}", config_path.display()))?;
+
+    for required in ["--config lychee.toml", "--offline"] {
+        if !ci.contains(required) {
+            return Err(format!("CI local-link check is missing `{required}`"));
+        }
+    }
+    if ci.contains("--cache") {
+        return Err("pull-request CI must not perform cached external link checks".to_owned());
+    }
+
+    for required in [
+        "schedule:",
+        "workflow_dispatch:",
+        "path: .lycheecache",
+        "--config lychee.toml",
+        "--cache",
+    ] {
+        if !external.contains(required) {
+            return Err(format!("external link-health workflow is missing `{required}`"));
+        }
+    }
+    if external.contains("--offline") {
+        return Err("external link-health workflow must not use offline mode".to_owned());
+    }
+
+    for required in [
+        "max_cache_age = \"14d\"",
+        "cache_exclude_status = \"400..=599\"",
+        "host_concurrency = 2",
+        "host_request_interval = \"500ms\"",
+    ] {
+        if !config.contains(required) {
+            return Err(format!("Lychee policy is missing `{required}`"));
         }
     }
 

@@ -74,3 +74,8 @@ validation run the same `scripts/check-files.sh --check` boundary, and Renovate 
 install it with `npm ci --ignore-scripts`. The native Linux tools are release-asset and
 SHA-256-pinned by `scripts/install-file-tools.sh`. These tools do not enter any crate package or
 affect the library MSRV.
+
+Lychee validates local documentation links without network access in local and pull-request gates.
+External URL health is isolated in a weekly/manual workflow that caches only successful responses
+and rate-limits requests per host. This keeps link evidence visible without turning external
+availability into a deterministic build dependency or repeatedly loading third-party services.

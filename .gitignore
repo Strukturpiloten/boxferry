@@ -480,5 +480,6 @@ rustc-ice-*.txt
 # Project specific additions
 
 .boxferry-workspace/
+.lycheecache
 *.profraw
 *.profdata

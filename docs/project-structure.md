@@ -14,6 +14,7 @@ boxferry/
 ├── rustfmt.toml
 ├── clippy.toml
 ├── deny.toml
+├── lychee.toml                    # local/offline and rate-limited external link policy
 ├── .cargo/
 │   └── config.toml              # canonical Cargo aliases
 ├── AGENTS.md
@@ -55,6 +56,7 @@ boxferry/
     ├── renovate.json
     └── workflows/
         ├── ci.yml
+        ├── documentation-links.yml
         ├── docker-runtime-conformance.yml
         ├── podman-runtime-conformance.yml
         └── release.yml            # protected lockstep crate publication
