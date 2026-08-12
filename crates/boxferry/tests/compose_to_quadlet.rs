@@ -139,7 +139,7 @@ fn assert_image_build_output(output: &boxferry::QuadletOutput) {
 fn public_compose_to_quadlet_route_emits_released_container_settings() -> Result<(), Box<dyn Error>> {
     let text = concat!(
         "services:\n  web:\n    image: example.invalid/web:1\n    hostname: web.example\n",
-        "    pids_limit: '00042'\n    shm_size: 64m\n    cap_drop: [NET_RAW]\n",
+        "    pids_limit: '00042'\n    shm_size: 64mb\n    cap_drop: [NET_RAW]\n",
         "    cap_add: [SYS_PTRACE]\n    tmpfs: [/run:mode=1777]\n",
         "    sysctls: { net.ipv4.ip_forward: '1' }\n",
         "    ulimits:\n      nofile:\n        soft: 1024\n        hard: 4096\n",

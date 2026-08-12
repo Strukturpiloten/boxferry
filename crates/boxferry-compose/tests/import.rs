@@ -73,12 +73,13 @@ fn keeps_compose_runtime_fields_on_the_service_without_inventing_a_group_runtime
     let project = merged_project([(
         id,
         "service-scope.yaml",
-        "services:\n  web:\n    image: example.invalid/web:1\n    extra_hosts: [host.docker.internal:host-gateway]\n    ports: [127.0.0.1:18080:8080]\n    userns_mode: keep-id\n    volumes: [cache:/var/cache/web]\n    shm_size: 64m\n    stop_grace_period: 30s\n    networks: [front]\nnetworks: {front: {}}\nvolumes: {cache: {}}\n",
+        "services:\n  web:\n    image: example.invalid/web:1\n    extra_hosts: [host.docker.internal:host-gateway]\n    ports: [127.0.0.1:18080:8080]\n    userns_mode: keep-id\n    volumes: [cache:/var/cache/web]\n    shm_size: 64mb\n    stop_grace_period: 30s\n    networks: [front]\nnetworks: {front: {}}\nvolumes: {cache: {}}\n",
     )])?;
     let source = ComposeSource::new(project, Identifier::new("service-scope")?)?
         .with_source_id(id, SourceId::new("service-scope.yaml")?);
 
     let result = ComposeImporter::new()?.import(&source);
+    assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
     let application = result.application().ok_or("application")?;
     let service = application.services().first().ok_or("service")?.value();
     assert!(application.service_groups().is_empty());

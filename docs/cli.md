@@ -91,5 +91,7 @@ require a separate explicit workflow.
 | `1` | Arguments passed Clap validation but processing or file I/O failed. |
 | `2` | Source/profile diagnostics or the selected loss policy blocked output. |
 
-BoxFerry diagnostics are written to standard error with sensitive fields redacted. Successful
-output paths are written to standard output, one per line.
+BoxFerry writes every retained structured diagnostic to standard error with sensitive fields
+redacted; an aggregate error count never replaces the individual diagnostic codes, summaries, and
+safe fields. Successful output paths are written to standard output, one per line. JSON console
+mode contains the same diagnostic sequence in its `diagnostics` array and writes no human text.

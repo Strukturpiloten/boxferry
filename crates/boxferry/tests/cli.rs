@@ -16,6 +16,63 @@ use zip::{CompressionMethod, ZipArchive};
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("compose-import-diagnostics");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    fs::write(
+        &compose,
+        concat!(
+            "name: diagnostic-example\nservices:\n",
+            "  first:\n    image: example.invalid/first:1\n    volumes: ['${FIRST}:/data']\n",
+            "  second:\n    image: example.invalid/second:1\n    volumes: ['${SECOND}:/data']\n",
+            "  third:\n    image: example.invalid/third:1\n    shm_size: invalid\n",
+        ),
+    )?;
+    let common = [
+        "validate",
+        "--input-type",
+        "compose",
+        "--input-file",
+        path_text(&compose)?,
+        "--output-type",
+        "quadlet",
+    ];
+
+    let human = boxferry_command().args(common).output()?;
+    assert_eq!(human.status.code(), Some(1));
+    let stdout = String::from_utf8(human.stdout)?;
+    let stderr = String::from_utf8(human.stderr)?;
+    assert!(stdout.contains("stage: conversion failed"), "{stdout}");
+    assert_eq!(stderr.matches("BFC0004:").count(), 2, "{stderr}");
+    assert_eq!(stderr.matches("BFC0005:").count(), 2, "{stderr}");
+    for subject in [
+        "services.first.volumes[0]",
+        "services.second.volumes[0]",
+        "services.third.shm_size",
+    ] {
+        assert!(stderr.contains(subject), "missing {subject} in {stderr}");
+    }
+    assert!(!stderr.contains("source import failed with"), "{stderr}");
+
+    let json = boxferry_command()
+        .args(common)
+        .args(["--console-format", "json"])
+        .output()?;
+    assert_eq!(json.status.code(), Some(1));
+    assert!(json.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+    assert_eq!(report["failed_stage"], "conversion");
+    let diagnostics = report["diagnostics"].as_array().ok_or("missing diagnostics")?;
+    assert_eq!(diagnostics.len(), 4);
+    assert_eq!(diagnostics[0]["code"], "BFC0005");
+    assert_eq!(diagnostics[1]["code"], "BFC0004");
+    assert_eq!(diagnostics[2]["code"], "BFC0004");
+    assert_eq!(diagnostics[3]["code"], "BFC0005");
+    Ok(())
+}
+
+#[test]
 fn generic_convert_preserves_mixed_input_occurrence_order_and_directory_priority() -> Result<(), Box<dyn Error>> {
     let project = TemporaryOutput::new("mixed-inputs");
     let output = TemporaryOutput::new("mixed-output");

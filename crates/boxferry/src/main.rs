@@ -1652,11 +1652,38 @@ fn convert_loaded_compose(
         exporter = exporter.with_pod_name(pod_name);
     }
     let target = TargetProfile::new("podman", conversion.minimum, conversion.maximum)?;
+    let result = convert(&ComposeImporter::new()?, &source, &exporter, &target, conversion.policy)
+        .map_err(|error| compose_conversion_failure(&error, aliases, conversion.inputs))?;
     Ok(LoadedComposeConversion {
-        result: convert(&ComposeImporter::new()?, &source, &exporter, &target, conversion.policy)?,
+        result,
         diagnostics: preprocessing_diagnostics,
         application,
     })
+}
+
+fn compose_conversion_failure(
+    error: &ConversionError,
+    aliases: &ReportAliases,
+    inputs: &[ResolvedInput],
+) -> Box<dyn Error> {
+    let diagnostics = match error {
+        ConversionError::Import(diagnostics) => diagnostics
+            .iter()
+            .map(|diagnostic| report_diagnostic(diagnostic, aliases))
+            .collect(),
+        _ => vec![sanitized_diagnostic(
+            "BFC0019",
+            "error",
+            &error.to_string(),
+            &[],
+            aliases,
+        )],
+    };
+    Box::new(StructuredFailure::with_context(
+        FailedStage::Conversion,
+        diagnostics,
+        inputs,
+    ))
 }
 
 fn resolve_compose_inputs(ordered: Vec<OrderedInput>) -> io::Result<Vec<ResolvedInput>> {

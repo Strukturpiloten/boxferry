@@ -1730,18 +1730,20 @@ impl<'a> Mapping<'a> {
         }
         if let Some(size) = native.shm_size() {
             let subject = format!("{service_subject}.shm_size");
+            let normalized = quadlet_shm_size(size.value().kind());
             service.set_shm_size(self.sourced_provenance(
-                Self::protected(size.value().raw().value(), size.is_sensitive()),
+                Self::protected(
+                    normalized.as_deref().unwrap_or_else(|| size.value().raw().value()),
+                    size.is_sensitive(),
+                ),
                 size.provenance(),
             ));
-            let exact = matches!(size.value().kind(), ShmSizeKind::Documented { amount_raw, unit: ShmSizeUnit::B | ShmSizeUnit::K | ShmSizeUnit::M | ShmSizeUnit::G }
-                if amount_raw.bytes().any(|byte| byte != b'0') && amount_raw.bytes().all(|byte| byte.is_ascii_digit()));
-            if exact {
+            if normalized.is_some() {
                 self.exact_provenance(subject, size.provenance());
             } else {
                 self.invalid_value_optional(
                     &subject,
-                    "shared-memory size must be a positive ASCII decimal with b, k, m, or g",
+                    "shared-memory size must be a positive ASCII decimal with b, k, kb, m, mb, g, or gb",
                     size.effective_source(),
                 );
             }
@@ -3874,6 +3876,23 @@ impl<'a> Mapping<'a> {
             .ok()
             .map(|span| Provenance::spanned(source_id, span))
     }
+}
+
+fn quadlet_shm_size(value: &ShmSizeKind) -> Option<String> {
+    let ShmSizeKind::Documented { amount_raw, unit } = value else {
+        return None;
+    };
+    if !amount_raw.bytes().any(|byte| byte != b'0') || !amount_raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let unit = match unit {
+        ShmSizeUnit::B => "b",
+        ShmSizeUnit::K | ShmSizeUnit::Kb => "k",
+        ShmSizeUnit::M | ShmSizeUnit::Mb => "m",
+        ShmSizeUnit::G | ShmSizeUnit::Gb => "g",
+        _ => return None,
+    };
+    Some(format!("{amount_raw}{unit}"))
 }
 
 fn scalar_text(value: &ComposeScalar) -> String {

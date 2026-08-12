@@ -146,10 +146,12 @@ The adapter currently reports rather than guesses:
   resolution.
 
 The released container-setting keys do not make runtime claims: hostname output requires a resolved
-safe value without host-UTS conflict; PID and shared-memory values retain arbitrary-precision raw
-spelling but emit only the reviewed positive forms; capability order, duplication, and explicit
-empty collections remain evidence without reconciliation; and sysctl, ulimit, tmpfs, and device
-values are not interpreted as kernel, mount, privilege, rootless, or host-inspection assertions.
+safe value without host-UTS conflict; PID and shared-memory values retain arbitrary-precision
+amounts and emit only the reviewed positive forms. Compose `kb`, `mb`, and `gb` shared-memory
+suffixes are losslessly normalized to Podman's equivalent `k`, `m`, and `g` spellings. Capability
+order, duplication, and explicit empty collections remain evidence without reconciliation; and
+sysctl, ulimit, tmpfs, and device values are not interpreted as kernel, mount, privilege, rootless,
+or host-inspection assertions.
 
 Missing required dependency services, dependency-ordering cycles, missing secret declarations,
 and incompatible explicit grouping requests are invalid. Optional absent services and unsupported
