@@ -12,6 +12,13 @@ use boxferry::{
     TargetProfile, Volume, VolumeImageSource, convert,
 };
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(application_name, inputs)?.into_source())
+}
+
 #[test]
 fn facade_preserves_all_typed_volume_settings_at_their_podman_floors() -> Result<(), Box<dyn Error>> {
     let source = all_volume_settings_source()?;
@@ -121,7 +128,7 @@ fn facade_preserves_all_typed_volume_settings_at_their_podman_floors() -> Result
 
 #[test]
 fn facade_rejects_unrepresentable_volume_resets_duplicates_and_dependencies() -> Result<(), Box<dyn Error>> {
-    let invalid = QuadletSource::parse(
+    let invalid = parse_source(
         Identifier::new("invalid")?,
         [QuadletDocumentInput::new(
             "data.volume",
@@ -155,7 +162,7 @@ fn facade_rejects_unrepresentable_volume_resets_duplicates_and_dependencies() ->
         );
     }
 
-    let options_only = QuadletSource::parse(
+    let options_only = parse_source(
         Identifier::new("options")?,
         [QuadletDocumentInput::new(
             "data.volume",
@@ -246,7 +253,7 @@ fn facade_distinguishes_literal_and_typed_volume_images_and_fails_closed() -> Re
         outcome.subject() == "volumes.copy-image.image" && outcome.kind() == ConversionKind::Unsupported
     }));
 
-    let missing = QuadletSource::parse(
+    let missing = parse_source(
         Identifier::new("missing")?,
         [QuadletDocumentInput::new(
             "data.volume",
@@ -290,7 +297,7 @@ fn facade_distinguishes_literal_and_typed_volume_images_and_fails_closed() -> Re
 }
 
 fn all_volume_settings_source() -> Result<QuadletSource, Box<dyn Error>> {
-    Ok(QuadletSource::parse(
+    parse_source(
         Identifier::new("volumes")?,
         [
             QuadletDocumentInput::new(
@@ -310,11 +317,11 @@ fn all_volume_settings_source() -> Result<QuadletSource, Box<dyn Error>> {
                 "[Volume]\nImage=example.invalid/private-base:1\n",
             ),
         ],
-    )?)
+    )
 }
 
 fn volume_artifact_source() -> Result<QuadletSource, Box<dyn Error>> {
-    Ok(QuadletSource::parse(
+    parse_source(
         Identifier::new("artifacts")?,
         [
             QuadletDocumentInput::new(
@@ -333,7 +340,7 @@ fn volume_artifact_source() -> Result<QuadletSource, Box<dyn Error>> {
                 "[Volume]\nImage=base.image\n",
             ),
         ],
-    )?)
+    )
 }
 
 fn typed_build_volume_application() -> Result<Application, Box<dyn Error>> {

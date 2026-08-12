@@ -20,6 +20,13 @@ use boxferry_model::{
 use boxferry_quadlet::{QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletSource};
 use quadlet_lens::source::SourceId as QuadletSourceId;
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(application_name, inputs)?.into_source())
+}
+
 #[test]
 fn exports_the_exact_first_conversion_subset_and_resolves_native_references() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("example")?);
@@ -402,7 +409,7 @@ fn exhaustively_maps_typed_image_and_build_keys_across_capability_floors() -> Re
 }
 
 fn all_artifact_source() -> Result<QuadletSource, Box<dyn Error>> {
-    Ok(QuadletSource::parse(
+    parse_source(
         id("all-artifacts")?,
         [
             QuadletDocumentInput::new(
@@ -438,7 +445,7 @@ fn all_artifact_source() -> Result<QuadletSource, Box<dyn Error>> {
                 "[Container]\nImage=web.build\n",
             ),
         ],
-    )?)
+    )
 }
 
 fn expected_image_entries() -> [&'static str; 12] {
@@ -2294,7 +2301,7 @@ fn preserves_authoritative_native_group_runtime_without_merging_member_settings(
 
 #[test]
 fn preserves_an_omitted_native_pod_name_without_synthesizing_one() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         id("imported")?,
         [
             QuadletDocumentInput::new("native.pod", QuadletSourceId::new(1), "[Pod]\nServiceName=chosen\n"),

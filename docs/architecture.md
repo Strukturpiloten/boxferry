@@ -106,10 +106,10 @@ rolling specification target and does not inspect installed tools. See
 
 The Quadlet importer consumes explicit in-memory unit inputs through `QuadletSource::parse`, or a
 caller-validated named `QuadletDocumentSet`; it does not search systemd or Quadlet directories.
-The recommended parse boundary rejects invalid native syntax/model results before diagnostics can
-be discarded. `QuadletSource::parse_detailed` additionally preserves BoxFerry-owned, value-free
-native diagnostic DTOs for callers that need syntax, model, and document-set recovery detail;
-error-severity diagnostics never yield a usable source boundary. Its current exact slice maps direct container images, explicit container names,
+The sole parse boundary is `QuadletSource::parse`. Its `QuadletParseResult` preserves BoxFerry-owned,
+value-free native syntax, model, and document-set diagnostic DTOs in collection order; recoverable
+document-set diagnostics retain an incomplete graph. Syntax/model errors and non-recoverable
+construction failures return `QuadletParseError`. Its current exact slice maps direct container images, explicit container names,
 safe unquoted exec arguments, single explicit environment assignments, scalar port publications,
 named or absolute-bind mounts, named network attachments, and application-owned or explicitly
 external network and volume resources. Metadata labels, IPv4/bracketed-IPv6/`host-gateway` host

@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Changed
+
+- The next lockstep version, 0.2.0, replaces the aggregate
+  `QuadletSource::parse -> Result<QuadletSource, QuadletSourceError>` contract. The sole parser
+  returns `QuadletParseResult` or `QuadletParseError` and retains recoverable native diagnostics.
+
 ## [0.1.1] - 2026-08-10
 
 ### Added

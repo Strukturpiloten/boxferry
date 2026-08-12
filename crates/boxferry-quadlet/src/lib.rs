@@ -9,9 +9,9 @@ pub use export::{QuadletExporter, QuadletExporterError, QuadletGroupingPolicy};
 pub use import::QuadletImporter;
 pub use output::{QuadletFile, QuadletOutput};
 pub use source::{
-    QuadletDetailedParseError, QuadletDetailedParseFailure, QuadletDetailedParseFailureStage,
-    QuadletDetailedParseResult, QuadletDocumentInput, QuadletParseDiagnostic, QuadletParseDiagnosticLabel,
-    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource, QuadletSourceError,
+    QuadletDocumentInput, QuadletParseDiagnostic, QuadletParseDiagnosticLabel, QuadletParseDiagnosticOrigin,
+    QuadletParseDiagnosticSeverity, QuadletParseError, QuadletParseFailure, QuadletParseFailureStage,
+    QuadletParseResult, QuadletSource,
 };
 
 /// The native Quadlet library consumed by this adapter.

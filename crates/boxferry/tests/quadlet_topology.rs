@@ -11,6 +11,13 @@ use boxferry::{
     QuadletSource, Service, ServiceGroupRuntime, Sourced, StartupNotification, TargetProfile, convert,
 };
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(application_name, inputs)?.into_source())
+}
+
 #[test]
 fn facade_reexports_topology_model_types_and_rejects_rootfs_image_conflicts() -> Result<(), Box<dyn Error>> {
     let mut service = Service::new(Identifier::new("web")?);
@@ -127,7 +134,7 @@ fn facade_preserves_topology_keys_with_their_documented_podman_floors() -> Resul
 
 #[test]
 fn facade_retains_pod_resets_and_omitted_runtime_name_without_synthesis() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("resets")?,
         [
             QuadletDocumentInput::new(
@@ -176,7 +183,7 @@ fn facade_retains_pod_resets_and_omitted_runtime_name_without_synthesis() -> Res
 
 #[test]
 fn facade_rejects_host_network_with_published_ports() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("conflict")?,
         [
             QuadletDocumentInput::new(
@@ -199,7 +206,7 @@ fn facade_rejects_host_network_with_published_ports() -> Result<(), Box<dyn Erro
 }
 
 fn topology_source() -> Result<QuadletSource, Box<dyn Error>> {
-    Ok(QuadletSource::parse(
+    parse_source(
         Identifier::new("topology")?,
         [
             QuadletDocumentInput::new("frontend.network", QuadletSourceId::new(1), "[Network]\n"),
@@ -220,11 +227,11 @@ fn topology_source() -> Result<QuadletSource, Box<dyn Error>> {
                 "[Container]\nImage=example.invalid/member:1\nPod=topology.pod\n",
             ),
         ],
-    )?)
+    )
 }
 
 fn rootfs_source() -> Result<QuadletSource, Box<dyn Error>> {
-    Ok(QuadletSource::parse(
+    parse_source(
         Identifier::new("rootfs")?,
         [QuadletDocumentInput::new(
             "rootfs.container",
@@ -234,7 +241,7 @@ fn rootfs_source() -> Result<QuadletSource, Box<dyn Error>> {
                 "PodmanArgs=--replace\nPodmanArgs=--secret=private-value\n",
             ),
         )],
-    )?)
+    )
 }
 
 fn podman_target(

@@ -33,6 +33,47 @@ fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
 }
 
 #[test]
+fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<(), String> {
+    let workflow_path = repository_root().join(".github/workflows/ci.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
+
+    for required in [
+        "  coverage:\n    name: Coverage ratchet",
+        "rustup component add llvm-tools-preview",
+        "cargo install --locked --version 0.8.7 cargo-llvm-cov",
+        "cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
+        "  portability:\n    name: Portability (${{ matrix.os }})",
+        "os: [macos-14, windows-2025]",
+        "run: cargo ci-check",
+        "run: cargo ci-test",
+        "  pr-gate:\n    name: PR gate\n    if: always()",
+        "needs: [rust, msrv, dependencies, documentation, semver, coverage, portability]",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("CI workflow is missing contract `{required}`"));
+        }
+    }
+
+    for job in [
+        "rust",
+        "msrv",
+        "dependencies",
+        "documentation",
+        "semver",
+        "coverage",
+        "portability",
+    ] {
+        let required = format!("test \"${{{{ needs.{job}.result }}}}\" = success");
+        if !workflow.contains(&required) {
+            return Err(format!("PR gate does not require `{job}` to succeed"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn repository_supply_chain_has_single_sources_and_immutable_pins() -> Result<(), String> {
     support::validate_repository_supply_chain(&repository_root())
 }

@@ -53,6 +53,36 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo ci-doc
 
+  coverage:
+    name: Coverage ratchet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - name: Install LLVM coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Install pinned cargo-llvm-cov
+        run: cargo install --locked --version 0.8.7 cargo-llvm-cov
+      - name: Measure and enforce coarse coverage ratchet
+        run: >-
+          cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only
+          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
+
+  portability:
+    name: Portability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2025]
+    steps:
+      - *checkout
+      - name: Check all deterministic targets
+        run: cargo ci-check
+      - name: Run deterministic tests
+        run: cargo ci-test
+
   msrv:
     name: MSRV
     runs-on: ubuntu-24.04
@@ -169,3 +199,21 @@ jobs:
         with:
           package: ${{ matrix.package }}
           feature-group: all-features
+
+  pr-gate:
+    name: PR gate
+    if: always()
+    needs: [rust, msrv, dependencies, documentation, semver, coverage, portability]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every deterministic PR job to succeed
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ needs.rust.result }}" = success
+          test "${{ needs.msrv.result }}" = success
+          test "${{ needs.dependencies.result }}" = success
+          test "${{ needs.documentation.result }}" = success
+          test "${{ needs.semver.result }}" = success
+          test "${{ needs.coverage.result }}" = success
+          test "${{ needs.portability.result }}" = success

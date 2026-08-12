@@ -65,7 +65,7 @@ The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-ru
 `docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
 current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
 `ComposeRuntime`, Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
-`QuadletSource`, `QuadletSourceError`, `QuadletDetailedParseResult`, `QuadletDetailedParseError`,
+`QuadletSource`, `QuadletParseResult`, `QuadletParseError`, `QuadletParseFailure`, `QuadletParseFailureStage`,
 the `QuadletParseDiagnostic` DTO family, `QuadletExporter`, `QuadletGroupingPolicy`, and
 `QuadletOutput`. It also exposes each adapter and matching native
 dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
@@ -97,14 +97,12 @@ structured unsupported outcomes. Duplicate singleton keys and source combination
 itself cannot execute, such as `Group=` without `User=`, are invalid rather than last-write-wins
 guesses.
 
-`QuadletSource::parse_detailed` is the additive diagnostic boundary for callers that need native
-recovery detail. It retains every recoverable QuadletLens syntax and typed-model diagnostic in
-caller input order, followed by document-set diagnostics. The BoxFerry-owned DTOs preserve native
-code, severity, static summary, static label messages, numeric source IDs, and byte spans, but
-never retain source text, filenames or paths, protected values, or terminal-rendered diagnostics.
-Any error-severity native diagnostic or non-recoverable native metadata failure returns a detailed
-error without a usable `QuadletSource`; `QuadletSource::parse` remains source-compatible and
-continues to expose only its legacy aggregate invalid-document summary.
+`QuadletSource::parse` is the sole diagnostic boundary. It retains every recoverable QuadletLens
+syntax/model diagnostic in caller input order, followed by document-set diagnostics. Document-set
+diagnostics can return an incomplete graph in `QuadletParseResult`; syntax/model errors and
+non-recoverable construction failures return `QuadletParseError`. DTOs retain native code,
+severity, static summaries/labels, numeric source IDs, and byte spans, never source text, paths,
+protected values, or terminal-rendered diagnostics.
 
 The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types including
 `RuntimeHealthcheck` and `RuntimeMetadataLabel`, plus the neutral `RestartPolicy`, `MetadataLabel`, `OverrideReconstruction`,

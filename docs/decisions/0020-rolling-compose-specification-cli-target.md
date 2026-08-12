@@ -31,7 +31,7 @@ before its privacy-safe report boundary.
 4. `ComposeExporter` continues to support the exact provider-aware targets and optional exact
    backend runtime specified by ADR 0013 for embedded callers. This decision supersedes ADR 0013
    only where that ADR described the generic CLI contract.
-5. `QuadletSource::parse_detailed` is the CLI parse boundary. Reports preserve each native stable
+5. `QuadletSource::parse` is the CLI parse boundary. Reports preserve each native stable
    code, severity, static summary, label message, and byte span in native collection order. Source
    names become invocation-local `<input-N>` aliases; source text, filenames, paths, and protected
    values remain excluded. Structured fatal parse failures carry only static stage and alias-safe

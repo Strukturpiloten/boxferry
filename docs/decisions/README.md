@@ -34,6 +34,7 @@ Architecture decision records capture choices that constrain future development.
 | [0019](0019-generic-cli-route-registry.md) | accepted | Extensible CLI route registry with Compose and Quadlet document routes |
 | [0020](0020-rolling-compose-specification-cli-target.md) | accepted | Rolling Compose Specification target and detailed Quadlet CLI diagnostics |
 | [0021](0021-automatic-local-error-report-names.md) | accepted | Automatic local diagnostic report names and publication |
+| [0022](0022-sole-quadlet-parser-and-deterministic-test-contract.md) | accepted | Sole Quadlet parser and deterministic test contract |
 
 ## Adding an ADR
 

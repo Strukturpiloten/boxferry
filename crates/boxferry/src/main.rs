@@ -26,9 +26,10 @@ use boxferry::report::{
 };
 use boxferry::{
     COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeImporter,
-    ComposeSource, ConversionKind, Diagnostic, Identifier, LossPolicy, PlatformVersion, QuadletDetailedParseError,
+    ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, LossPolicy, PlatformVersion,
     QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletParseDiagnostic,
-    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource, SourceId, TargetProfile, convert,
+    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletParseError, QuadletSource, SourceId,
+    TargetProfile, convert,
 };
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
@@ -987,7 +988,39 @@ fn generic_quadlet_convert(
         &exporter,
         &target,
         arguments.loss_policy.into(),
-    )?;
+    )
+    .map_err(|error| {
+        let mut diagnostics = native_diagnostics
+            .iter()
+            .map(|diagnostic| report_quadlet_native_diagnostic(diagnostic, &aliases))
+            .collect::<Vec<_>>();
+        match error {
+            ConversionError::Import(import_diagnostics) => diagnostics.extend(
+                import_diagnostics
+                    .iter()
+                    .map(|diagnostic| report_diagnostic(diagnostic, &aliases)),
+            ),
+            ConversionError::InvalidPlan(_) => diagnostics.push(sanitized_diagnostic(
+                "BFC0025",
+                "error",
+                "the Quadlet conversion produced an invalid conversion plan",
+                &[],
+                &aliases,
+            )),
+            _ => diagnostics.push(sanitized_diagnostic(
+                "BFC0025",
+                "error",
+                "the Quadlet conversion could not produce a valid plan",
+                &[],
+                &aliases,
+            )),
+        }
+        Box::new(StructuredFailure::with_context(
+            FailedStage::Conversion,
+            diagnostics,
+            &discovered,
+        )) as Box<dyn Error>
+    })?;
     finish_quadlet_conversion(
         arguments,
         route,
@@ -1044,14 +1077,14 @@ fn load_quadlet_source(
             text,
         ));
     }
-    let detailed = QuadletSource::parse_detailed(application_name.clone(), documents)
+    let parsed = QuadletSource::parse(application_name.clone(), documents)
         .map_err(|error| Box::new(quadlet_source_failure(&error, aliases, discovered)) as Box<dyn Error>)?;
-    let native_diagnostics = detailed.diagnostics().to_vec();
-    Ok((application_name, detailed.into_source(), native_diagnostics))
+    let native_diagnostics = parsed.diagnostics().to_vec();
+    Ok((application_name, parsed.into_source(), native_diagnostics))
 }
 
 fn quadlet_source_failure(
-    error: &QuadletDetailedParseError,
+    error: &QuadletParseError,
     aliases: &ReportAliases,
     inputs: &[ResolvedInput],
 ) -> StructuredFailure {
@@ -1062,7 +1095,7 @@ fn quadlet_source_failure(
         && error
             .failures()
             .iter()
-            .all(|failure| matches!(failure.stage(), boxferry::QuadletDetailedParseFailureStage::DocumentSet));
+            .all(|failure| matches!(failure.stage(), boxferry::QuadletParseFailureStage::DocumentSet));
     let stage = if document_set_only {
         FailedStage::QuadletDocumentSet
     } else {
@@ -2439,6 +2472,30 @@ mod tests {
             .parse::<Timestamp>()
             .map(|timestamp| timestamp.to_zoned(TimeZone::UTC))
             .map_err(io::Error::other)
+    }
+
+    #[test]
+    fn cli_definition_is_internally_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn report_file_creation_is_cross_platform_and_never_overwrites() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-report-create-new-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let report = directory.join("report.json");
+        fs::write(&report, "original")?;
+        let error = match write_report_file(&report, "replacement") {
+            Ok(()) => return Err(io::Error::other("existing report was unexpectedly replaced")),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&report)?, "original");
+        fs::remove_dir_all(directory)
     }
 
     #[test]

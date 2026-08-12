@@ -2,6 +2,7 @@
 
 #![cfg(all(feature = "cli", feature = "compose", feature = "quadlet"))]
 
+use std::fmt::Write as _;
 use std::{
     error::Error,
     fs,
@@ -105,6 +106,74 @@ fn generic_discovery_reports_ignored_candidates_in_verbose_mode() -> Result<(), 
     assert!(report.status.success(), "{}", String::from_utf8_lossy(&report.stderr));
     let report: serde_json::Value = serde_json::from_slice(&report.stdout)?;
     assert_eq!(report["discovery"][0]["ignored"].as_array().map(Vec::len), Some(1));
+    Ok(())
+}
+
+#[test]
+fn generic_convert_handles_a_large_repository_owned_offline_scenario() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("large-offline-project");
+    let output = TemporaryOutput::new("large-offline-output");
+    fs::create_dir_all(project.path())?;
+    let mut compose = String::from("name: large-offline\nservices:\n");
+    for service in 0..48 {
+        writeln!(
+            compose,
+            "  service-{service}:\n    image: example.invalid/service-{service}:1\n    environment:\n      ROLE: service-{service}"
+        )?;
+    }
+    fs::write(project.path().join("compose.yaml"), compose)?;
+    let result = boxferry_command()
+        .args([
+            "convert",
+            "--input-type=compose",
+            "--output-type=quadlet",
+            "--input-directory",
+            path_text(project.path())?,
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert!(result.stderr.is_empty());
+    let stdout = String::from_utf8(result.stdout)?;
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        [
+            "route: compose -> quadlet",
+            format!("input: {}", path_text(&project.path().join("compose.yaml"))?).as_str(),
+            "application: large-offline",
+            "stage: conversion complete",
+            "result: wrote 48 file(s) to output directory",
+        ]
+    );
+
+    let mut generated = fs::read_dir(output.path())?
+        .map(|entry| {
+            entry
+                .map_err(|error| error.to_string())?
+                .file_name()
+                .into_string()
+                .map_err(|name| format!("non-UTF-8 artifact name: {name:?}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut expected = (0..48)
+        .map(|service| format!("service-{service}.container"))
+        .collect::<Vec<_>>();
+    generated.sort();
+    expected.sort();
+    assert_eq!(generated, expected);
+
+    for service in 0..48 {
+        let document = fs::read_to_string(output.path().join(format!("service-{service}.container")))?;
+        assert!(
+            document.contains(&format!("Image=example.invalid/service-{service}:1")),
+            "service-{service} image intent is missing"
+        );
+        assert!(
+            document.contains(&format!("Environment=ROLE=service-{service}")),
+            "service-{service} environment intent is missing"
+        );
+    }
     Ok(())
 }
 
@@ -1783,7 +1852,12 @@ fn assert_quadlet_document_set_failure(input: &Path) -> Result<(), Box<dyn Error
         .output()?;
     assert_eq!(result.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
-    assert_eq!(report["failed_stage"], "quadlet-document-set");
+    assert_eq!(report["failed_stage"], "conversion");
+    assert!(report["diagnostics"].as_array().is_some_and(|diagnostics| {
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"].as_str().is_some_and(|code| code.starts_with("QL")))
+    }));
     Ok(())
 }
 

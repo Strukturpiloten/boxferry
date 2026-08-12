@@ -10,6 +10,13 @@ use boxferry::{
     QuadletSource, TargetProfile, convert,
 };
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(application_name, inputs)?.into_source())
+}
+
 #[test]
 fn public_quadlet_route_preserves_iteration_one_keys_at_the_5_5_floor() -> Result<(), Box<dyn Error>> {
     let source = iteration_one_source()?;
@@ -113,7 +120,7 @@ fn public_quadlet_route_reports_5_4_floors_and_attachment_ambiguity_without_leak
         );
     }
 
-    let ambiguous = QuadletSource::parse(
+    let ambiguous = parse_source(
         Identifier::new("ambiguous")?,
         [
             QuadletDocumentInput::new("front.network", SourceId::new(11), "[Network]\n"),
@@ -165,7 +172,7 @@ fn public_quadlet_route_reports_5_4_floors_and_attachment_ambiguity_without_leak
 }
 
 fn iteration_one_source() -> Result<QuadletSource, Box<dyn Error>> {
-    Ok(QuadletSource::parse(
+    parse_source(
         Identifier::new("iteration-one")?,
         [
             QuadletDocumentInput::new("frontend.network", SourceId::new(1), "[Network]\n"),
@@ -189,7 +196,7 @@ fn iteration_one_source() -> Result<QuadletSource, Box<dyn Error>> {
                 "[Container]\nImage=example.invalid/worker:1\nReloadCmd=/bin/worker reload\n",
             ),
         ],
-    )?)
+    )
 }
 
 fn podman_target(

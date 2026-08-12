@@ -85,10 +85,10 @@ pub use boxferry_docker::{
 };
 #[cfg(feature = "quadlet")]
 pub use boxferry_quadlet::{
-    QuadletDetailedParseError, QuadletDetailedParseFailure, QuadletDetailedParseFailureStage,
-    QuadletDetailedParseResult, QuadletDocumentInput, QuadletExporter, QuadletExporterError, QuadletFile,
-    QuadletGroupingPolicy, QuadletImporter, QuadletOutput, QuadletParseDiagnostic, QuadletParseDiagnosticLabel,
-    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource, QuadletSourceError,
+    QuadletDocumentInput, QuadletExporter, QuadletExporterError, QuadletFile, QuadletGroupingPolicy, QuadletImporter,
+    QuadletOutput, QuadletParseDiagnostic, QuadletParseDiagnosticLabel, QuadletParseDiagnosticOrigin,
+    QuadletParseDiagnosticSeverity, QuadletParseError, QuadletParseFailure, QuadletParseFailureStage,
+    QuadletParseResult, QuadletSource,
 };
 
 #[cfg(feature = "podman-runtime")]

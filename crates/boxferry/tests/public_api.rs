@@ -343,11 +343,11 @@ fn facade_exposes_compose_adapters_and_specification_target_additively() -> Resu
 
 #[cfg(feature = "quadlet")]
 #[test]
-fn facade_exposes_detailed_quadlet_parse_diagnostics_additively() -> Result<(), String> {
+fn facade_exposes_quadlet_parse_diagnostics() -> Result<(), String> {
     use boxferry::quadlet::quadlet_lens::source::SourceId as QuadletSourceId;
     use boxferry::{QuadletDocumentInput, QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource};
 
-    let error = QuadletSource::parse_detailed(
+    let error = QuadletSource::parse(
         Identifier::new("example").map_err(|error| error.to_string())?,
         [QuadletDocumentInput::new(
             "web.container",

@@ -331,5 +331,17 @@ include black-box CLI checks for reviewed
 output, loss-policy blocking before writes, and refusal to overwrite an existing directory. CI
 also runs markdownlint and lychee over the documentation.
 The Docker and Podman runtime matrices are isolated, opt-in locally, and scheduled separately from
-pull-request CI. Other runtime and cross-platform/version matrices remain opt-in until their
-isolated harnesses and exact commands exist.
+pull-request CI. The deterministic PR contract runs the pure-library and black-box CLI suite on
+Ubuntu, macOS, and Windows; privileged runtime conformance and the network-dependent remote corpus
+remain scheduled/manual evidence. Small unit cases, medium component/public-facade cases, and a
+repository-owned large offline CLI scenario cover positive and negative paths. The Quadlet parser
+also has a bounded fixed-seed 0..=256 corpus that contains no fuzzing dependency, catches panics,
+checks repeatability, diagnostic/failure span bounds, ordering, and secret-canary redaction.
+
+Ubuntu runs `cargo-llvm-cov` 0.8.7 with Rust 1.97.1 over the locked workspace, all features, and
+all targets, without source exclusions. Its integer coarse-ratchet floors are 82% regions, 87%
+functions, and 82% lines; coverage is a regression signal, not correctness evidence. The
+always-running `PR gate` requires successful Rust, MSRV, dependency, documentation, SemVer,
+coverage, and macOS/Windows portability jobs. Repository branch protection must require that
+`PR gate` check. Every promoted issue receives a deterministic offline regression before it is
+considered covered.
