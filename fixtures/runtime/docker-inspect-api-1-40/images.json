@@ -9,7 +9,7 @@
       "Entrypoint": ["/usr/local/bin/entrypoint"],
       "User": "1000:1000",
       "WorkingDir": "/srv/app",
-      "Labels": {"org.opencontainers.image.title": "fixture"}
+      "Labels": { "org.opencontainers.image.title": "fixture" }
     }
   }
 ]

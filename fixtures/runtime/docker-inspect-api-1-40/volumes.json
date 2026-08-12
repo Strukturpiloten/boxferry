@@ -3,6 +3,6 @@
     "Name": "data",
     "Driver": "local",
     "Mountpoint": "/var/lib/docker/volumes/data/_data",
-    "Labels": {"com.example.purpose": "fixture"}
+    "Labels": { "com.example.purpose": "fixture" }
   }
 ]

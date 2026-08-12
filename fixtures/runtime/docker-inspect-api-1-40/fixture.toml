@@ -3,12 +3,7 @@ id = "docker-inspect-api-1-40"
 suite = "runtime"
 description = "Protects the reviewed Docker Engine API 1.40 inspect boundary and representative resource relationships."
 secrets_reviewed = true
-files = [
-  "containers.json",
-  "images.json",
-  "networks.json",
-  "volumes.json",
-]
+files = ["containers.json", "images.json", "networks.json", "volumes.json"]
 
 [provenance]
 source = "authored"

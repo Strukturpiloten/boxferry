@@ -67,4 +67,3 @@ done
 
 echo "Timed out waiting for ${package} ${version} to become visible on crates.io." >&2
 exit 1
-

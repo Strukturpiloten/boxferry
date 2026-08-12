@@ -1,0 +1,13 @@
+{
+  "name": "boxferry-repository-tools",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Locked non-Rust file-quality tools for BoxFerry development and CI.",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.2",
+    "prettier": "3.9.6"
+  }
+}

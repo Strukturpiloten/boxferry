@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "DavidAnson.vscode-markdownlint",
+    "esbenp.prettier-vscode",
+    "exiasr.hadolint",
+    "mkhl.shfmt",
+    "ms-vscode-remote.remote-containers",
+    "redhat.vscode-yaml",
+    "rust-lang.rust-analyzer",
+    "streetsidesoftware.code-spell-checker",
+    "tamasfe.even-better-toml",
+    "timonwong.shellcheck",
+    "vadimcn.vscode-lldb"
+  ]
+}

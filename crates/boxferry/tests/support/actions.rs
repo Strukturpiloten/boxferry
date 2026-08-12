@@ -8,6 +8,7 @@ pub(crate) fn validate_repository_supply_chain(repository_root: &Path) -> Result
     validate_msrv_source(repository_root, &mut errors)?;
     validate_devcontainer_image(repository_root, &mut errors)?;
     validate_devcontainer_features(repository_root, &mut errors)?;
+    validate_devcontainer_tooling(repository_root, &mut errors)?;
     finish(&errors)
 }
 
@@ -162,6 +163,63 @@ fn validate_devcontainer_features(repository_root: &Path, errors: &mut Vec<Strin
             errors.push(format!(
                 "{} feature {reference} must lock the same exact version and matching sha256 integrity",
                 lock_path.display()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_devcontainer_tooling(repository_root: &Path, errors: &mut Vec<String>) -> Result<(), String> {
+    let config_path = repository_root.join(".devcontainer/devcontainer.json");
+    let config = fs::read_to_string(&config_path)
+        .map_err(|error| format!("failed to read {}: {error}", config_path.display()))?;
+
+    let build = json_object_for_key(&config, "build").unwrap_or_default();
+    for (field, actual, expected) in [
+        ("build.dockerfile", json_string_field(build, "dockerfile"), "Dockerfile"),
+        ("build.context", json_string_field(build, "context"), ".."),
+        ("remoteUser", json_string_field(&config, "remoteUser"), "vscode"),
+        (
+            "postCreateCommand",
+            json_string_field(&config, "postCreateCommand"),
+            "bash .devcontainer/verify-tools.sh",
+        ),
+    ] {
+        if actual != Some(expected) {
+            errors.push(format!("{} must set {field} to `{expected}`", config_path.display()));
+        }
+    }
+
+    let dockerfile_path = repository_root.join(".devcontainer/Dockerfile");
+    let dockerfile = fs::read_to_string(&dockerfile_path)
+        .map_err(|error| format!("failed to read {}: {error}", dockerfile_path.display()))?;
+    for required in [
+        "ARG CARGO_LLVM_COV_VERSION=0.8.7",
+        "rustup component add llvm-tools-preview",
+        "cargo install --locked --version \"${CARGO_LLVM_COV_VERSION}\" cargo-llvm-cov",
+    ] {
+        if !dockerfile.contains(required) {
+            errors.push(format!(
+                "{} is missing required tooling `{required}`",
+                dockerfile_path.display()
+            ));
+        }
+    }
+
+    let verifier_path = repository_root.join(".devcontainer/verify-tools.sh");
+    let verifier = fs::read_to_string(&verifier_path)
+        .map_err(|error| format!("failed to read {}: {error}", verifier_path.display()))?;
+    for required in [
+        "cargo-llvm-cov",
+        "cargo-semver-checks",
+        "llvm-tools-preview",
+        "markdownlint-cli2",
+    ] {
+        if !verifier.contains(required) {
+            errors.push(format!(
+                "{} does not verify required tool `{required}`",
+                verifier_path.display()
             ));
         }
     }

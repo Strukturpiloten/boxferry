@@ -120,15 +120,26 @@ jobs:
           arguments: --all-features
 
   documentation:
-    name: Documentation
+    name: Repository files and documentation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - *checkout
-      - name: Lint Markdown
-        uses: DavidAnson/markdownlint-cli2-action@6bf21b07787794f89a243495939cd651942aeabe # v24.1.0
+      - name: Install pinned Node.js toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          globs: "**/*.md"
+          node-version: 24.18.1
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked Node file-quality tools
+        run: |
+          npm ci --ignore-scripts
+          printf '%s\n' "${GITHUB_WORKSPACE}/node_modules/.bin" >> "${GITHUB_PATH}"
+      - name: Install checksum-pinned native file-quality tools
+        run: |
+          sudo bash scripts/install-file-tools.sh /usr/local/bin
+      - name: Check non-Rust file formatting and lint
+        run: bash scripts/check-files.sh --check
       - name: Check links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
@@ -234,7 +245,7 @@ jobs:
           for job in "${jobs[@]}"; do
             name="${job%%|*}"
             result="${job#*|}"
-            printf '| %s | `%s` |\n' "${name}" "${result}" >> "${GITHUB_STEP_SUMMARY}"
+            printf "| %s | \`%s\` |\n" "${name}" "${result}" >> "${GITHUB_STEP_SUMMARY}"
             printf 'Required PR job %s: %s\n' "${name}" "${result}"
             if [[ "${result}" != "success" ]]; then
               echo "::error title=Required PR job did not succeed::${name} concluded ${result}."

@@ -50,9 +50,7 @@
     ],
     "NetworkSettings": {
       "Ports": {
-        "8080/tcp": [
-          {"HostIp": "127.0.0.1", "HostPort": "18080"}
-        ]
+        "8080/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "18080" }]
       },
       "Networks": {
         "frontend": {

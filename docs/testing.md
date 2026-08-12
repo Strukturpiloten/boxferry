@@ -300,10 +300,24 @@ explicit neutral service runtime name and is re-emitted by both Compose and Quad
 
 ## Canonical commands
 
-The workspace uses Rust 2024 with an MSRV of 1.85.0. `rust-toolchain.toml` pins the normal development toolchain; the explicit MSRV command prevents that pin from hiding accidental use of newer language or library features.
+The workspace uses Rust 2024 with an MSRV of 1.85.0. `rust-toolchain.toml` pins the normal
+development toolchain; the explicit MSRV command prevents that pin from hiding accidental use of
+newer language or library features.
+
+For the complete local deterministic suite, including Rust, Markdown, JSON, YAML, TOML, shell, and
+Dockerfile formatting or linting, coverage, MSRV, dependencies, links, and published-API
+compatibility, run:
+
+```shell
+./scripts/check-all.sh
+```
+
+The commands below remain the individually runnable validation boundaries. Privileged conformance
+and remote-corpus commands are opt-in and are not called by `check-all.sh`.
 
 ```shell
 cargo fmt --all -- --check
+./scripts/check-files.sh --check
 cargo ci-check
 cargo ci-core
 cargo ci-compose
@@ -319,9 +333,11 @@ cargo ci-clippy
 cargo ci-test
 cargo ci-doctest
 RUSTDOCFLAGS="-D warnings" cargo ci-doc
+cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only \
+  --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
 cargo +1.85.0 ci-check
 cargo +1.85.0 ci-policy
-cargo deny check
+cargo deny --all-features check
 ```
 
 The main `ci-*` aliases use `--locked`, all workspace features, and all targets where the Cargo
@@ -329,7 +345,7 @@ command supports them. The core, Compose-only, Docker-runtime-only, Podman-runti
 Quadlet-only facade aliases protect additive feature boundaries independently. All-feature tests
 include black-box CLI checks for reviewed
 output, loss-policy blocking before writes, and refusal to overwrite an existing directory. CI
-also runs markdownlint and lychee over the documentation.
+also runs the shared non-Rust file checker in non-mutating mode and lychee over the documentation.
 The Docker and Podman runtime matrices are isolated, opt-in locally, and scheduled separately from
 pull-request CI. The deterministic PR contract runs the pure-library and black-box CLI suite on
 Ubuntu and macOS; privileged runtime conformance and the network-dependent remote corpus remain
@@ -347,3 +363,6 @@ always-running `PR gate` requires successful Rust, MSRV, dependency, documentati
 coverage, and macOS portability jobs. Repository branch protection must require that
 `PR gate` check. Every promoted issue receives a deterministic offline regression before it is
 considered covered.
+
+The full copy/paste local sequence, including workflow, Markdown, link, and SemVer checks, is in
+[Development environment](development-environment.md).

@@ -6,7 +6,7 @@
       "Env": ["BASE=image"],
       "Cmd": ["server"],
       "WorkingDir": "/srv/app",
-      "Labels": {"org.opencontainers.image.title": "fixture"}
+      "Labels": { "org.opencontainers.image.title": "fixture" }
     }
   }
 ]

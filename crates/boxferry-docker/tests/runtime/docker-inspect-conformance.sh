@@ -18,13 +18,13 @@ volume_name="${resource_prefix}-data"
 dockerd_pid=""
 
 cleanup() {
-  docker container rm --force "$container_name" >/dev/null 2>&1 || true
-  docker volume rm --force "$volume_name" >/dev/null 2>&1 || true
-  docker network rm "$network_name" >/dev/null 2>&1 || true
-  docker image rm --force "$image_name" >/dev/null 2>&1 || true
+  docker container rm --force "$container_name" > /dev/null 2>&1 || true
+  docker volume rm --force "$volume_name" > /dev/null 2>&1 || true
+  docker network rm "$network_name" > /dev/null 2>&1 || true
+  docker image rm --force "$image_name" > /dev/null 2>&1 || true
   if [ -n "$dockerd_pid" ]; then
-    kill "$dockerd_pid" >/dev/null 2>&1 || true
-    wait "$dockerd_pid" >/dev/null 2>&1 || true
+    kill "$dockerd_pid" > /dev/null 2>&1 || true
+    wait "$dockerd_pid" > /dev/null 2>&1 || true
   fi
   rm -rf -- "$work_directory"
 }
@@ -32,17 +32,17 @@ trap cleanup EXIT INT TERM
 
 export DOCKER_HOST="unix:///var/run/docker.sock"
 export DOCKER_TLS_CERTDIR=""
-dockerd-entrypoint.sh --host="$DOCKER_HOST" --tls=false >"$work_directory/dockerd.log" 2>&1 &
+dockerd-entrypoint.sh --host="$DOCKER_HOST" --tls=false > "$work_directory/dockerd.log" 2>&1 &
 dockerd_pid="$!"
 
 ready="false"
 attempt=0
 while [ "$attempt" -lt 60 ]; do
-  if docker info >/dev/null 2>&1; then
+  if docker info > /dev/null 2>&1; then
     ready="true"
     break
   fi
-  if ! kill -0 "$dockerd_pid" >/dev/null 2>&1; then
+  if ! kill -0 "$dockerd_pid" > /dev/null 2>&1; then
     break
   fi
   attempt=$((attempt + 1))
@@ -73,9 +73,9 @@ docker image import \
   --change 'LABEL com.example.image=runtime-matrix' \
   "$work_directory/rootfs.tar" \
   "$image_name" \
-  >/dev/null
-docker network create "$network_name" >/dev/null
-docker volume create "$volume_name" >/dev/null
+  > /dev/null
+docker network create "$network_name" > /dev/null
+docker volume create "$volume_name" > /dev/null
 docker container create \
   --name "$container_name" \
   --network "$network_name" \
@@ -96,18 +96,18 @@ docker container create \
   --volume "$work_directory/bind-source:/srv/fixture:ro" \
   "$image_name" \
   --serve \
-  >/dev/null
+  > /dev/null
 
 for api_version in "$@"; do
   api_directory="$output_directory/api-${api_version}"
   mkdir -p -- "$api_directory"
-  DOCKER_API_VERSION="$api_version" docker container inspect -- "$container_name" >"$api_directory/containers.json"
-  DOCKER_API_VERSION="$api_version" docker image inspect -- "$image_name" >"$api_directory/images.json"
-  DOCKER_API_VERSION="$api_version" docker network inspect -- "$network_name" >"$api_directory/networks.json"
-  DOCKER_API_VERSION="$api_version" docker volume inspect -- "$volume_name" >"$api_directory/volumes.json"
+  DOCKER_API_VERSION="$api_version" docker container inspect -- "$container_name" > "$api_directory/containers.json"
+  DOCKER_API_VERSION="$api_version" docker image inspect -- "$image_name" > "$api_directory/images.json"
+  DOCKER_API_VERSION="$api_version" docker network inspect -- "$network_name" > "$api_directory/networks.json"
+  DOCKER_API_VERSION="$api_version" docker volume inspect -- "$volume_name" > "$api_directory/volumes.json"
 done
 
-printf '%s\n' "$server_version" >"$output_directory/engine-version.txt"
-printf '%s\n' "$server_api" >"$output_directory/engine-api.txt"
-printf '%s\n' "$server_minimum_api" >"$output_directory/engine-minimum-api.txt"
+printf '%s\n' "$server_version" > "$output_directory/engine-version.txt"
+printf '%s\n' "$server_api" > "$output_directory/engine-api.txt"
+printf '%s\n' "$server_minimum_api" > "$output_directory/engine-minimum-api.txt"
 find "$output_directory" -type f -exec chmod 0644 {} \;

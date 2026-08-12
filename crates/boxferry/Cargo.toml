@@ -33,7 +33,10 @@ boxferry-podman = { path = "../boxferry-podman", version = "0.2.0", optional = t
 boxferry-quadlet = { path = "../boxferry-quadlet", version = "0.2.0", optional = true }
 boxferry-runtime = { path = "../boxferry-runtime", version = "0.2.0", optional = true }
 clap = { version = "4.6.5", features = ["derive"], optional = true }
-jiff = { version = "=0.2.24", default-features = false, features = ["std", "tz-system"], optional = true }
+jiff = { version = "=0.2.24", default-features = false, features = [
+  "std",
+  "tz-system",
+], optional = true }
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 serde_json = { version = "1.0.151", optional = true }
 zip = { version = "6.0.0", default-features = false, optional = true }

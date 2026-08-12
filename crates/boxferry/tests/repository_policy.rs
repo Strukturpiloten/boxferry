@@ -33,6 +33,230 @@ fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
 }
 
 #[test]
+fn vscode_workspace_configuration_covers_local_development() -> Result<(), String> {
+    let root = repository_root();
+    for (path, required) in [
+        (
+            ".vscode/settings.json",
+            &[
+                "rust-analyzer.check.command",
+                "rust-analyzer.cargo.features",
+                "editor.formatOnSave",
+            ][..],
+        ),
+        (
+            ".vscode/extensions.json",
+            &[
+                "DavidAnson.vscode-markdownlint",
+                "esbenp.prettier-vscode",
+                "exiasr.hadolint",
+                "mkhl.shfmt",
+                "ms-vscode-remote.remote-containers",
+                "rust-lang.rust-analyzer",
+                "tamasfe.even-better-toml",
+                "timonwong.shellcheck",
+                "vadimcn.vscode-lldb",
+            ][..],
+        ),
+        (".vscode/launch.json", &["BoxFerry: CLI help", "lldb", "boxferry"][..]),
+        (
+            ".vscode/tasks.json",
+            &[
+                "BoxFerry: Format, lint, and test all",
+                "scripts/check-all.sh",
+                "BoxFerry: Required Rust checks",
+                "BoxFerry: Build workspace",
+                "BoxFerry: Test",
+                "cargo",
+            ][..],
+        ),
+    ] {
+        let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        for expected in required {
+            if !text.contains(expected) {
+                return Err(format!("{path} must contain `{expected}`"));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn local_validation_runner_covers_deterministic_repository_checks() -> Result<(), String> {
+    let script_path = repository_root().join("scripts/check-all.sh");
+    let script = fs::read_to_string(&script_path)
+        .map_err(|error| format!("failed to read {}: {error}", script_path.display()))?;
+
+    for required in [
+        "cargo fmt --all",
+        "bash scripts/check-files.sh --fix",
+        "git diff --check",
+        "actionlint",
+        "zizmor .github/workflows",
+        "cargo ci-check",
+        "cargo ci-core",
+        "cargo ci-compose",
+        "cargo ci-docker",
+        "cargo ci-quadlet",
+        "cargo ci-podman",
+        "cargo ci-runtime",
+        "cargo ci-policy",
+        "cargo ci-clippy",
+        "cargo ci-test",
+        "cargo ci-doctest",
+        "RUSTDOCFLAGS=\"-D warnings\" cargo ci-doc",
+        "cargo llvm-cov --locked --workspace --all-features",
+        "--fail-under-regions 82 --fail-under-functions 87",
+        "cargo \"+${msrv}\" ci-check",
+        "cargo \"+${msrv}\" ci-policy",
+        "cargo deny --all-features check",
+        "lychee --root-dir .",
+        "cargo semver-checks check-release --workspace",
+    ] {
+        if !script.contains(required) {
+            return Err(format!("local validation runner missing `{required}`"));
+        }
+    }
+
+    for opt_in in [
+        "ci-docker-conformance",
+        "ci-podman-conformance",
+        "ci-podman-current-conformance",
+        "ci-real-world-compose",
+    ] {
+        if script.contains(opt_in) {
+            return Err(format!(
+                "local validation runner must not invoke opt-in tier `{opt_in}`"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs() -> Result<(), String> {
+    let root = repository_root();
+    let script_path = root.join("scripts/check-files.sh");
+    let script = fs::read_to_string(&script_path)
+        .map_err(|error| format!("failed to read {}: {error}", script_path.display()))?;
+
+    for required in [
+        "git ls-files --cached --others --exclude-standard",
+        "markdownlint-cli2 --fix",
+        "prettier --write",
+        "prettier --check",
+        "taplo fmt",
+        "taplo check",
+        "shfmt -w",
+        "shellcheck --",
+        "hadolint",
+    ] {
+        if !script.contains(required) {
+            return Err(format!("non-Rust file runner missing `{required}`"));
+        }
+    }
+    if script.contains("**/*.md") {
+        return Err("non-Rust file runner must not traverse sibling or generated Markdown trees".to_owned());
+    }
+
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    let release_path = root.join(".github/workflows/release.yml");
+    let release = fs::read_to_string(&release_path)
+        .map_err(|error| format!("failed to read {}: {error}", release_path.display()))?;
+    for (path, workflow) in [(ci_path, ci), (release_path, release)] {
+        for required in [
+            "npm ci --ignore-scripts",
+            "bash scripts/install-file-tools.sh /usr/local/bin",
+            "bash scripts/check-files.sh --check",
+        ] {
+            if !workflow.contains(required) {
+                return Err(format!(
+                    "{} must enforce the non-Rust file contract `{required}`",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    let lock_path = root.join("package-lock.json");
+    let lock =
+        fs::read_to_string(&lock_path).map_err(|error| format!("failed to read {}: {error}", lock_path.display()))?;
+    for package in ["markdownlint-cli2", "prettier"] {
+        if !lock.contains(&format!("\"{package}\"")) {
+            return Err(format!("{} must lock `{package}`", lock_path.display()));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), String> {
+    let root = repository_root();
+    let workspace_path = root.join("boxferry-lenses.code-workspace");
+    let workspace = fs::read_to_string(&workspace_path)
+        .map_err(|error| format!("failed to read {}: {error}", workspace_path.display()))?;
+    let devcontainer_path = root.join(".devcontainer/devcontainer.json");
+    let devcontainer = fs::read_to_string(&devcontainer_path)
+        .map_err(|error| format!("failed to read {}: {error}", devcontainer_path.display()))?;
+
+    for required in [
+        "\"name\": \"BoxFerry\"",
+        "\"path\": \".\"",
+        "\"name\": \"ComposeLens\"",
+        "\"path\": \".boxferry-workspace/compose-lens\"",
+        "\"name\": \"QuadletLens\"",
+        "\"path\": \".boxferry-workspace/quadlet-lens\"",
+    ] {
+        if !workspace.contains(required) {
+            return Err(format!("multi-root workspace is missing `{required}`"));
+        }
+    }
+    for required in [
+        "\"workspaceMount\": \"source=${localWorkspaceFolder},target=/workspaces/boxferry,type=bind\"",
+        "\"workspaceFolder\": \"/workspaces/boxferry\"",
+        "\"CARGO_HOME\": \"/workspaces/.boxferry-cargo\"",
+        "\"CARGO_TARGET_DIR\": \"/workspaces/.boxferry-target\"",
+        "source=boxferry-cargo-${devcontainerId},target=/workspaces/.boxferry-cargo,type=volume",
+        "source=boxferry-target-${devcontainerId},target=/workspaces/.boxferry-target,type=volume",
+        "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
+        "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind",
+    ] {
+        if !devcontainer.contains(required) {
+            return Err(format!("BoxFerry Dev Container is missing sibling mount `{required}`"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching() -> Result<(), String> {
+    let script_path = repository_root().join(".devcontainer/verify-tools.sh");
+    let script = fs::read_to_string(&script_path)
+        .map_err(|error| format!("failed to read {}: {error}", script_path.display()))?;
+
+    for required in [
+        "CARGO_HOME",
+        "CARGO_TARGET_DIR",
+        "[[ ! -w \"${cargo_directory}\" ]]",
+        "sudo chown -R",
+    ] {
+        if !script.contains(required) {
+            return Err(format!("Dev Container lifecycle check is missing `{required}`"));
+        }
+    }
+    if script.contains("sudo -u") {
+        return Err("Dev Container lifecycle check must not require forbidden sudo user switching".to_owned());
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<(), String> {
     let workflow_path = repository_root().join(".github/workflows/ci.yml");
     let workflow = fs::read_to_string(&workflow_path)
@@ -73,7 +297,7 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
 
     for required in [
         "printf '| Job | Result |\\n'",
-        "printf '| %s | `%s` |\\n' \"${name}\" \"${result}\" >> \"${GITHUB_STEP_SUMMARY}\"",
+        "printf \"| %s | \\`%s\\` |\\n\" \"${name}\" \"${result}\" >> \"${GITHUB_STEP_SUMMARY}\"",
         "::error title=Required PR job did not succeed::${name} concluded ${result}.",
         "Required PR job did not succeed: ${name} concluded ${result}.",
         "if (( failures != 0 )); then",

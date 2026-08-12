@@ -3,11 +3,7 @@ id = "compose-to-quadlet-secrets"
 suite = "conversion"
 description = "Protects exact external Podman secret grants and explicit manual actions for Compose configs and application-owned secret material."
 secrets_reviewed = true
-files = [
-  "compose.yaml",
-  "web.container",
-  "expected-diagnostics.txt",
-]
+files = ["compose.yaml", "web.container", "expected-diagnostics.txt"]
 
 [provenance]
 source = "authored"

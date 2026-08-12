@@ -8,6 +8,8 @@ boxferry/
 ├── .devcontainer/                   # digest-pinned VS Code environment and feature lock
 ├── Cargo.toml
 ├── Cargo.lock
+├── package.json                    # non-Rust Node development tools only
+├── package-lock.json               # locked Markdownlint and Prettier graph
 ├── rust-toolchain.toml
 ├── rustfmt.toml
 ├── clippy.toml
@@ -38,6 +40,10 @@ boxferry/
 │   └── README.md                  # fixture location and safety rules
 ├── tests/
 │   └── README.md                  # cross-crate scenario ownership
+├── scripts/
+│   ├── check-all.sh               # complete deterministic local validation
+│   ├── check-files.sh             # tracked non-Rust formatting and lint contract
+│   └── install-file-tools.sh      # pinned Linux file-quality tool installer
 ├── tools/
 │   ├── docker-runtime-matrix.toml # exact Engine image and reviewed API bounds
 │   └── podman-runtime-matrix.toml # exact executable lanes and explicit evidence gaps

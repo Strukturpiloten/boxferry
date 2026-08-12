@@ -1,0 +1,33 @@
+{
+  "folders": [
+    {
+      "name": "BoxFerry",
+      "path": ".",
+    },
+    {
+      "name": "ComposeLens",
+      "path": ".boxferry-workspace/compose-lens",
+    },
+    {
+      "name": "QuadletLens",
+      "path": ".boxferry-workspace/quadlet-lens",
+    },
+  ],
+  "settings": {
+    "cSpell.words": [
+      "Beckert",
+      "boxferry",
+      "buildx",
+      "Clippy",
+      "healthcheck",
+      "LLDB",
+      "MSRV",
+      "Podlet",
+      "quadlet",
+      "reauthor",
+      "reparsing",
+      "Strukturpiloten",
+      "unreviewed",
+    ],
+  },
+}
