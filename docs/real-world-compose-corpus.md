@@ -11,18 +11,18 @@ project does not imply complete Compose compatibility.
 
 ## Selected projects
 
-| Tier | Project | Why it belongs in the corpus | Main goals not already exact end to end |
-| --- | --- | --- | --- |
-| Baseline | [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx/blob/47727de11673c2a08d27b144048bd5f1a2ac8179/docker/compose/docker-compose.postgres.yml) | Small, understandable application/database/broker stack | `env_file` |
-| Migration | [Immich](https://github.com/immich-app/immich/blob/1c7c28bb0d5c4a2edba062806efff50921b489b2/docker/docker-compose.yml) | Popular self-hosted application with release-oriented Compose installation | interpolation input, `env_file`, `shm_size` |
-| Migration | [LibreChat](https://github.com/danny-avila/LibreChat/blob/120ee2afa6579fa1efa28dfb69d99fa7e9a4c040/docker-compose.yml) | Exercises `host-gateway`, deferred identity, and both mount syntaxes | interpolation, `env_file` |
-| Migration | [Mattermost](https://github.com/mattermost/docker/blob/497414659ee7127677d2b91b44bb4f3ea9d14695/docker-compose.yml) | Official deployment with hardening and resource settings | caller-supplied interpolation, `tmpfs`, `security_opt`, memory limits |
-| Migration | [Nextcloud](https://github.com/nextcloud/docker/blob/4de1eed65a44c61ecce601ef1d27abd2059b52e6/.examples/docker-compose/with-nginx-proxy/postgres/fpm/compose.yaml) | Multi-service example using the SELinux short-volume forms BoxFerry must retain | build, entrypoint, `env_file` |
-| Migration | [Plausible CE](https://github.com/plausible/community-edition/blob/ec6c4da776547516d8f48159ce1a704df4f475ad/compose.yml) | Compact health-gated production-style topology | shell command, `ulimits`, host environment |
-| Stress | [Apache Superset](https://github.com/apache/superset/blob/816f37f5b97b2e060a30cc53eaa6ac87f58320b3/docker-compose.yml) | Anchors, merge keys, profiles, build definitions, and long `env_file` syntax | build, env files, shell command, `network_mode` |
-| Stress | [Appwrite](https://github.com/appwrite/appwrite/blob/9595616bdad93e3e2579348afea645f244a9062c/docker-compose.yml) | Very large graph with labels, lifecycle controls, logging, and a Docker socket | entrypoint, logging, socket policy, stop signal |
-| Stress | [mailcow](https://github.com/mailcow/mailcow-dockerized/blob/06424670fa5d60fee851f58bfc49f66086d5f0a6/docker-compose.yml) | Production-oriented network and security torture case | static IPs, DNS, capabilities, privileged mode, sysctls, `tmpfs`, `ulimits` |
-| Stress | [Supabase](https://github.com/supabase/supabase/blob/9952d6f10fb9a7b2d9d8c3312b279bfab2c4ba96/docker/docker-compose.yml) | Large official self-hosting stack that documents a nested-interpolation Podman boundary | interpolation, aliases, entrypoint, large dependency graph |
+| Tier      | Project                                                                                                                                                            | Why it belongs in the corpus                                                            | Main goals not already exact end to end                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Baseline  | [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx/blob/47727de11673c2a08d27b144048bd5f1a2ac8179/docker/compose/docker-compose.postgres.yml)           | Small, understandable application/database/broker stack                                 | `env_file`                                                                  |
+| Migration | [Immich](https://github.com/immich-app/immich/blob/1c7c28bb0d5c4a2edba062806efff50921b489b2/docker/docker-compose.yml)                                             | Popular self-hosted application with release-oriented Compose installation              | interpolation input, `env_file`, `shm_size`                                 |
+| Migration | [LibreChat](https://github.com/danny-avila/LibreChat/blob/120ee2afa6579fa1efa28dfb69d99fa7e9a4c040/docker-compose.yml)                                             | Exercises `host-gateway`, deferred identity, and both mount syntaxes                    | interpolation, `env_file`                                                   |
+| Migration | [Mattermost](https://github.com/mattermost/docker/blob/497414659ee7127677d2b91b44bb4f3ea9d14695/docker-compose.yml)                                                | Official deployment with hardening and resource settings                                | caller-supplied interpolation, `tmpfs`, `security_opt`, memory limits       |
+| Migration | [Nextcloud](https://github.com/nextcloud/docker/blob/4de1eed65a44c61ecce601ef1d27abd2059b52e6/.examples/docker-compose/with-nginx-proxy/postgres/fpm/compose.yaml) | Multi-service example using the SELinux short-volume forms BoxFerry must retain         | build, entrypoint, `env_file`                                               |
+| Migration | [Plausible CE](https://github.com/plausible/community-edition/blob/ec6c4da776547516d8f48159ce1a704df4f475ad/compose.yml)                                           | Compact health-gated production-style topology                                          | shell command, `ulimits`, host environment                                  |
+| Stress    | [Apache Superset](https://github.com/apache/superset/blob/816f37f5b97b2e060a30cc53eaa6ac87f58320b3/docker-compose.yml)                                             | Anchors, merge keys, profiles, build definitions, and long `env_file` syntax            | build, env files, shell command, `network_mode`                             |
+| Stress    | [Appwrite](https://github.com/appwrite/appwrite/blob/9595616bdad93e3e2579348afea645f244a9062c/docker-compose.yml)                                                  | Very large graph with labels, lifecycle controls, logging, and a Docker socket          | entrypoint, logging, socket policy, stop signal                             |
+| Stress    | [mailcow](https://github.com/mailcow/mailcow-dockerized/blob/06424670fa5d60fee851f58bfc49f66086d5f0a6/docker-compose.yml)                                          | Production-oriented network and security torture case                                   | static IPs, DNS, capabilities, privileged mode, sysctls, `tmpfs`, `ulimits` |
+| Stress    | [Supabase](https://github.com/supabase/supabase/blob/9952d6f10fb9a7b2d9d8c3312b279bfab2c4ba96/docker/docker-compose.yml)                                           | Large official self-hosting stack that documents a nested-interpolation Podman boundary | interpolation, aliases, entrypoint, large dependency graph                  |
 
 ## Verified ingestion result
 
@@ -30,19 +30,19 @@ The complete pinned corpus passed on 2026-08-05 against released ComposeLens 0.1
 covers 95 imported services and 2,423 explicit
 source-to-neutral conversion outcomes:
 
-| Project | Services | Exact outcomes | Unsupported outcomes | Invalid outcomes |
-| --- | ---: | ---: | ---: | ---: |
-| Paperless-ngx | 3 | 29 | 1 | 0 |
-| Immich | 4 | 31 | 5 | 0 |
-| LibreChat | 6 | 71 | 3 | 0 |
-| Mattermost | 2 | 16 | 13 | 3 |
-| Nextcloud | 7 | 62 | 4 | 0 |
-| Plausible CE | 3 | 63 | 2 | 0 |
-| Apache Superset | 10 | 130 | 26 | 0 |
-| Appwrite | 31 | 1,070 | 57 | 0 |
-| mailcow | 18 | 484 | 49 | 0 |
-| Supabase | 11 | 299 | 5 | 0 |
-| **Total** | **95** | **2,255** | **165** | **3** |
+| Project         | Services | Exact outcomes | Unsupported outcomes | Invalid outcomes |
+| --------------- | -------: | -------------: | -------------------: | ---------------: |
+| Paperless-ngx   |        3 |             29 |                    1 |                0 |
+| Immich          |        4 |             31 |                    5 |                0 |
+| LibreChat       |        6 |             71 |                    3 |                0 |
+| Mattermost      |        2 |             16 |                   13 |                3 |
+| Nextcloud       |        7 |             62 |                    4 |                0 |
+| Plausible CE    |        3 |             63 |                    2 |                0 |
+| Apache Superset |       10 |            130 |                   26 |                0 |
+| Appwrite        |       31 |          1,070 |                   57 |                0 |
+| mailcow         |       18 |            484 |                   49 |                0 |
+| Supabase        |       11 |            299 |                    5 |                0 |
+| **Total**       |   **95** |      **2,255** |              **165** |            **3** |
 
 No outcome was approximate at this import boundary. Mattermost's three invalid outcomes are the
 deliberately unresolved `${MATTERMOST_CONTAINER_READONLY}` boolean and two

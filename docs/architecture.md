@@ -93,18 +93,26 @@ Adapters map between a native model and the application model. They own semantic
 The Compose adapter consumes a `MergedProject`, an optional matching ComposeLens
 `ProfileSelection`, and caller-owned identities for every contributing source document. It builds
 ComposeLens's native project view directly, without canonical rendering or reparsing. BoxFerry does
-not infer active profiles or read the process environment.
+not infer active profiles or read the process environment. `ComposeSource` also retains explicitly
+staged loader, interpolation, merge, profile, project-model, validation, or rendering findings so
+the importer and CLI cannot observe different source evidence.
 
-In the reverse direction, `ComposeExporter` accepts an exact Docker Compose or `podman-compose`
-provider target plus an optional exact Docker Engine or Podman backend. It maps the neutral graph
-into ComposeLens's generated values and returns deterministic, parse-back-validated YAML. Provider
-and runtime identity remain separate, compatibility-sensitive constructs become policy-controlled
-outcomes, and no installed tool is inspected. See [ADR 0013](decisions/0013-explicit-compose-provider-and-runtime.md).
+In the reverse direction, `ComposeExporter` accepts a rolling provider-neutral Compose
+Specification target or an exact Docker Compose or `podman-compose` provider target plus an
+optional exact Docker Engine or Podman backend. It maps the neutral graph into ComposeLens's
+generated values and returns deterministic, parse-back-validated YAML. Provider and runtime
+identity remain separate for embedded provider-aware targets; the document conversion CLI uses only the
+rolling specification target and does not inspect installed tools. See
+[ADR 0013](decisions/0013-explicit-compose-provider-and-runtime.md) and
+[ADR 0020](decisions/0020-rolling-compose-specification-cli-target.md).
 
 The Quadlet importer consumes explicit in-memory unit inputs through `QuadletSource::parse`, or a
 caller-validated named `QuadletDocumentSet`; it does not search systemd or Quadlet directories.
-The recommended parse boundary rejects invalid native syntax/model results before diagnostics can
-be discarded. Its current exact slice maps direct container images, explicit container names,
+The sole parse boundary is `QuadletSource::parse`. Its `QuadletParseResult` and resulting
+`QuadletSource` preserve BoxFerry-owned, value-free native syntax, model, and document-set findings
+in collection order; recoverable document-set diagnostics retain an incomplete graph. The
+importer forwards those findings to embedded callers. Syntax/model errors and non-recoverable
+construction failures return `QuadletParseError`. Its current exact slice maps direct container images, explicit container names,
 safe unquoted exec arguments, single explicit environment assignments, scalar port publications,
 named or absolute-bind mounts, named network attachments, and application-owned or explicitly
 external network and volume resources. Metadata labels, IPv4/bracketed-IPv6/`host-gateway` host
@@ -163,6 +171,11 @@ version. Separate opt-in conformance harnesses run digest-pinned nested runtimes
 runtime sockets. Native response types never cross into the shared runtime crate or application
 model.
 
+All native adapters translate producer diagnostics into the engine's protected `NativeFinding`
+envelope. This is provenance, not a replacement for BoxFerry rules or fidelity outcomes. The same
+boundary applies to future Docker, Podman, and Kubernetes findings; see
+[ADR 0027](decisions/0027-format-neutral-native-findings.md).
+
 Neutral provenance distinguishes effective runtime observations from authored documents,
 implementation defaults, caller overrides, and BoxFerry conversion decisions. Optional creation
 commands may support an inference, but effective inspection data remains the primary observation.
@@ -183,9 +196,10 @@ deterministic implementations.
 ### Target profiles and capability providers
 
 A target profile describes the environment for which output must work. Examples include Podman
-and systemd version ranges, an exact Compose provider release, Kubernetes versions and API
-resources, rootless mode, and allowed fallbacks. Compose backend runtime identity is an additional
-explicit exporter input because it is distinct from the provider.
+and systemd version ranges, the rolling Compose Specification compatibility profile, an exact
+Compose provider release, Kubernetes versions and API resources, rootless mode, and allowed
+fallbacks. Compose backend runtime identity is an additional explicit exporter input only for
+provider-aware targets because it is distinct from the provider.
 
 Each adapter owns its relevant capability provider. The engine combines capability results but does not contain a global list of platform-specific keys.
 
@@ -199,6 +213,16 @@ integrations they need.
 The executable owns argument parsing, terminal presentation, configuration-file discovery, and
 process exit codes. It calls public library orchestration APIs for every conversion. A behavior
 that can only be reached through private CLI code is an architectural defect.
+
+Document routes use `convert <INPUT_TYPE> <OUTPUT_TYPE>` and
+`validate <INPUT_TYPE> <OUTPUT_TYPE>`. Compose and Quadlet currently form four route leaves.
+Cross-format routes and Quadlet-to-Quadlet import into the neutral model and export a canonical
+native result. Compose-to-Compose instead uses ComposeLens's public native canonical renderer so
+valid unresolved expressions and extension data survive normalization. It still loads, optionally
+interpolates, merges, applies profile selection, and canonicalizes; it is not byte passthrough.
+Route-specific help exposes only the applicable input and output option families. See
+[ADR 0029](decisions/0029-nested-input-output-cli-routes.md) and
+[ADR 0030](decisions/0030-native-compose-same-format-canonicalization.md).
 
 ## Dependency rules
 

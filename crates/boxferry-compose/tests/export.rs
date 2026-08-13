@@ -2,7 +2,10 @@
 
 use std::error::Error;
 
-use boxferry_compose::{ComposeExporter, ComposeRuntime, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET};
+use boxferry_compose::{
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeRuntime,
+    DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+};
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, TargetProfile};
 use boxferry_model::{
     Annotation, Application, Command, Config, Device, Entrypoint, EnvironmentFile, EnvironmentFileFormat,
@@ -708,6 +711,37 @@ fn requires_an_exact_recognized_compose_provider_target() -> Result<(), Box<dyn 
             diagnostic.code().as_str() == "BFC0006" && diagnostic.severity() == boxferry_engine::Severity::Error
         }));
     }
+    Ok(())
+}
+
+#[test]
+fn supports_the_provider_neutral_compose_specification_target() -> Result<(), Box<dyn Error>> {
+    let application = minimal_application()?;
+    let target = exact_target(COMPOSE_SPECIFICATION_TARGET, COMPOSE_SPECIFICATION_PROFILE_REVISION)?;
+    let exporter = ComposeExporter::new()?;
+    let plan = exporter.plan(&application, &target)?;
+    assert!(plan.candidate().is_some());
+    assert!(plan.diagnostics().is_empty());
+
+    let wrong_revision = exact_target(COMPOSE_SPECIFICATION_TARGET, version(1, 0, 1))?;
+    let rejected = exporter.plan(&application, &wrong_revision)?;
+    assert!(rejected.candidate().is_none());
+    assert!(
+        rejected
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code().as_str() == "BFC0006")
+    );
+
+    let runtime_rejected = ComposeExporter::new()?.with_runtime(ComposeRuntime::DockerEngine(version(29, 7, 1)));
+    let rejected = runtime_rejected.plan(&application, &target)?;
+    assert!(rejected.candidate().is_none());
+    assert!(
+        rejected
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code().as_str() == "BFC0006")
+    );
     Ok(())
 }
 

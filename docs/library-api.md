@@ -64,8 +64,10 @@ no-default core, every supported individual feature, and all features.
 The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-runtime`, and
 `docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
 current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
-`ComposeRuntime`, Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
-`QuadletSource`, `QuadletSourceError`, `QuadletExporter`, `QuadletGroupingPolicy`, and
+`ComposeCanonicalization`, `CanonicalComposeDocument`, `ComposeFindingStage`, `ComposeRuntime`,
+Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
+`QuadletSource`, `QuadletParseResult`, `QuadletParseError`, `QuadletParseFailure`, `QuadletParseFailureStage`,
+the `QuadletParseDiagnostic` DTO family, `QuadletExporter`, `QuadletGroupingPolicy`, and
 `QuadletOutput`. It also exposes each adapter and matching native
 dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
 `boxferry::docker`, so embedded callers do not need to guess a second crate version.
@@ -95,6 +97,14 @@ application services. Values that require native quoting, shell or path interpre
 structured unsupported outcomes. Duplicate singleton keys and source combinations that Quadlet
 itself cannot execute, such as `Group=` without `User=`, are invalid rather than last-write-wins
 guesses.
+
+`QuadletSource::parse` is the sole diagnostic boundary. It retains every recoverable QuadletLens
+syntax/model diagnostic in caller input order, followed by document-set diagnostics. Document-set
+diagnostics can return an incomplete graph in `QuadletParseResult`; syntax/model errors and
+non-recoverable construction failures return `QuadletParseError`. DTOs retain native code,
+severity, static summaries/labels, numeric source IDs, and byte spans, never source text, paths,
+protected values, or terminal-rendered diagnostics. Successful findings also remain inside
+`QuadletSource`, so `QuadletParseResult::into_source` and the importer cannot discard them.
 
 The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types including
 `RuntimeHealthcheck` and `RuntimeMetadataLabel`, plus the neutral `RestartPolicy`, `MetadataLabel`, `OverrideReconstruction`,
@@ -149,14 +159,16 @@ T4 provides the first tested public surface:
 - tolerant `ImageReference` parsing that retains `name:tag@digest` forms;
 - `ProtectedString` and structured diagnostics whose sensitive fields redact debug and display
   output;
+- the typed `RuleId`, `DiagnosticRule`, `RULES`, and `find_rule` catalogue surface used by official
+  adapters and diagnostic consumers;
 - inclusive `PlatformVersion` and `TargetProfile` minimum/optional-maximum ranges;
 - exact, approximate, unsupported, and invalid `ConversionOutcome` values;
 - `LossPolicy`, validated `ConversionPlan`, and policy-authorized `ConversionResult` values;
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.15;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.11;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.16;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.12;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
 - an optional `docker-runtime` facade feature backed by `boxferry-docker`.
@@ -260,7 +272,17 @@ the facade does not discover files, read environment variables, or invoke runtim
 The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A caller-created
 `ProfileSelection` is required when the project contains profiled services and must belong to that
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
-replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
+replaced with a caller-owned path or URI through `ComposeSource::with_source_id`. Callers attach
+native processing diagnostics with `ComposeSource::with_native_diagnostics` and an explicit
+`ComposeFindingStage`; the importer forwards them through the same public result as mapping
+diagnostics. `ComposeFindingStage::native_finding` provides the same conversion for failure paths
+that cannot construct a source.
+
+`ComposeSource::canonicalize` is the public Compose-to-Compose normalization boundary. It delegates
+rendering to ComposeLens, retains valid unresolved expressions and defaults without ambient
+environment access, and returns `ComposeCanonicalization`. Error-level native findings suppress
+the `CanonicalComposeDocument`; warnings and notes remain attached. This native same-format API is
+separate from `ComposeExporter`, which maps a neutral application to Compose.
 
 Embedded callers control Compose interpolation before merge. They construct a ComposeLens
 `MapEnvironment`, distinguish plain from sensitive entries, create the loaded project's
@@ -276,18 +298,21 @@ Compose-relative path resolution. The Compose exporter preserves ordered short/l
 explicit `required`/`raw` options, and path sensitivity through ComposeLens's validated generator.
 Loading file contents and applying Compose parser semantics remains a separate caller-authorized API.
 
-The importer consumes ComposeLens 0.1.15's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.1.16's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
 
-The Compose exporter accepts a neutral `Application`, an exact `docker-compose` or
-`podman-compose` provider `TargetProfile`, and an optional exact Docker Engine or Podman backend
-through `ComposeRuntime`. It returns a policy-controlled
+The Compose exporter accepts a neutral `Application`, either the provider-neutral
+`COMPOSE_SPECIFICATION_TARGET` with its documented internal profile revision or an exact
+`docker-compose`/`podman-compose` provider `TargetProfile`. Provider-aware targets may attach an
+optional exact Docker Engine or Podman backend through `ComposeRuntime`; the specification target
+does not. It returns a policy-controlled
 `ConversionPlan<compose_lens::render::GeneratedComposeDocument>`. ComposeLens owns deterministic
-syntax selection and parse-back validation; BoxFerry owns semantic mapping, provider/runtime
-compatibility outcomes, provenance, and authorization. Runtime-observed resource names are emitted
-explicitly so Compose project scoping cannot rename them. See the
+syntax selection and parse-back validation; BoxFerry owns semantic mapping, target compatibility
+outcomes, provenance, and authorization. The internal specification profile revision is not a
+Compose Specification release version or a claim about historical consumers. Runtime-observed
+resource names are emitted explicitly so Compose project scoping cannot rename them. See the
 [Compose exporter contract](compose-adapter.md).
 
 The Quadlet exporter accepts the neutral `Application` and an explicit Podman `TargetProfile`. It
@@ -307,7 +332,7 @@ group using the group name and rejects missing, multiple, unresolved, external, 
 It remains approximate because structural membership does not itself assert shared namespaces.
 Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
 container restart policies, explicit container names, external secret grants, and service
-metadata labels convert through QuadletLens 0.1.11. `Never`
+metadata labels convert through QuadletLens 0.1.12. `Never`
 maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
 limits remain manual actions. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an

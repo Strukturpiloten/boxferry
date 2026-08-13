@@ -20,6 +20,13 @@ use boxferry_model::{
 use boxferry_quadlet::{QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletSource};
 use quadlet_lens::source::SourceId as QuadletSourceId;
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(application_name, inputs)?.into_source())
+}
+
 #[test]
 fn exports_the_exact_first_conversion_subset_and_resolves_native_references() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("example")?);
@@ -402,7 +409,7 @@ fn exhaustively_maps_typed_image_and_build_keys_across_capability_floors() -> Re
 }
 
 fn all_artifact_source() -> Result<QuadletSource, Box<dyn Error>> {
-    Ok(QuadletSource::parse(
+    parse_source(
         id("all-artifacts")?,
         [
             QuadletDocumentInput::new(
@@ -438,7 +445,7 @@ fn all_artifact_source() -> Result<QuadletSource, Box<dyn Error>> {
                 "[Container]\nImage=web.build\n",
             ),
         ],
-    )?)
+    )
 }
 
 fn expected_image_entries() -> [&'static str; 12] {
@@ -1078,6 +1085,43 @@ fn rejects_an_explicit_container_name_outside_the_podman_grammar() -> Result<(),
 }
 
 #[test]
+fn unresolved_source_variable_in_an_image_has_actionable_rule_and_is_never_authorized() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("unresolved-image")?);
+    let mut service = image_service("web")?;
+    service.set_image(sourced(ImageReference::parse(
+        "example.invalid/web:${IMAGE_VERSION:-latest}",
+    )?)?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    let outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.image")
+        .ok_or("missing image outcome")?;
+    assert_eq!(outcome.kind(), ConversionKind::Invalid);
+    assert_eq!(
+        outcome.diagnostic().map(boxferry_engine::DiagnosticCode::as_str),
+        Some("BFQ0014")
+    );
+    let diagnostic = plan
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0014")
+        .ok_or("missing unresolved-variable diagnostic")?;
+    assert_eq!(
+        diagnostic
+            .fields()
+            .iter()
+            .find(|field| field.name() == "reason")
+            .map(|field| field.value().expose()),
+        Some("Quadlet does not evaluate source-format variable expressions")
+    );
+    assert!(plan.authorize(LossPolicy::AllowPartial).is_blocked());
+    Ok(())
+}
+
+#[test]
 fn reports_a_named_primary_group_instead_of_claiming_an_exact_quadlet_mapping() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("named-primary-group")?);
     let mut service = image_service("web")?;
@@ -1432,7 +1476,7 @@ fn rejects_missing_required_dependencies_and_ordering_cycles() -> Result<(), Box
         cycle_plan
             .diagnostics()
             .iter()
-            .all(|diagnostic| { diagnostic.code().as_str() == "BFQ0008" && diagnostic.severity() == Severity::Error })
+            .all(|diagnostic| { diagnostic.code().as_str() == "BFQ0012" && diagnostic.severity() == Severity::Error })
     );
     Ok(())
 }
@@ -1840,7 +1884,7 @@ fn rejects_incompatible_single_pod_grouping_without_falling_back() -> Result<(),
     assert!(
         plan.diagnostics()
             .iter()
-            .any(|diagnostic| { diagnostic.code().as_str() == "BFQ0007" && diagnostic.severity() == Severity::Error })
+            .any(|diagnostic| { diagnostic.code().as_str() == "BFQ0011" && diagnostic.severity() == Severity::Error })
     );
     assert!(plan.authorize(LossPolicy::AllowPartial).is_blocked());
     Ok(())
@@ -1867,7 +1911,7 @@ fn rejects_single_pod_grouping_that_would_erase_network_isolation() -> Result<()
     let diagnostic = plan
         .diagnostics()
         .iter()
-        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0007")
+        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0011")
         .ok_or("grouping diagnostic expected")?;
     assert_eq!(diagnostic.severity(), Severity::Error);
     assert!(diagnostic.fields().iter().any(|field| {
@@ -1893,7 +1937,7 @@ fn rejects_single_pod_grouping_with_different_service_host_mappings() -> Result<
     let diagnostic = plan
         .diagnostics()
         .iter()
-        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0007")
+        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0011")
         .ok_or("host grouping diagnostic expected")?;
     assert_eq!(diagnostic.severity(), Severity::Error);
     assert!(
@@ -2294,7 +2338,7 @@ fn preserves_authoritative_native_group_runtime_without_merging_member_settings(
 
 #[test]
 fn preserves_an_omitted_native_pod_name_without_synthesizing_one() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         id("imported")?,
         [
             QuadletDocumentInput::new("native.pod", QuadletSourceId::new(1), "[Pod]\nServiceName=chosen\n"),
@@ -2575,7 +2619,7 @@ fn assert_grouping_rejected(plan: &boxferry_engine::ConversionPlan<boxferry_quad
     assert!(plan.outcomes().iter().any(|outcome| {
         outcome.subject() == "application.grouping"
             && outcome.kind() == ConversionKind::Invalid
-            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0007")
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0011")
     }));
 }
 

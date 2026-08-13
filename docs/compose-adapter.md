@@ -1,12 +1,31 @@
 # Compose exporter
 
 `boxferry-compose` maps a neutral `Application` into deterministic Compose YAML through
-ComposeLens 0.1.15. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
+ComposeLens 0.1.16. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
 `DOCKER_COMPOSE_TARGET`, and `PODMAN_COMPOSE_TARGET` through the additive `compose` feature.
 
 ## Target selection
 
-The caller must identify one exact provider release:
+The provider-neutral target uses the rolling Compose Specification compatibility profile:
+
+```rust
+use boxferry::{
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, TargetProfile,
+};
+
+let target = TargetProfile::new(
+    COMPOSE_SPECIFICATION_TARGET,
+    COMPOSE_SPECIFICATION_PROFILE_REVISION,
+    Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Its revision is an internal BoxFerry token, not a Compose Specification release version or a
+historical-consumer compatibility guarantee. It accepts no backend runtime. The generic
+Quadlet-to-Compose CLI route uses this target and reports it as `rolling`.
+
+Embedded callers may instead identify one exact provider release:
 
 ```rust
 use boxferry::{
@@ -29,7 +48,8 @@ executable or environment value is inspected.
 
 Open-ended or multi-version provider ranges are invalid in this adapter. ComposeLens evidence is
 classified for an exact provider/runtime context, so collapsing a range to one version would make
-an unsupported compatibility claim.
+an unsupported compatibility claim. The specification target instead requires exactly its
+documented internal profile revision.
 
 ## Generated subset
 
@@ -53,6 +73,12 @@ The first slice generates:
 - ordered network attachments and aliases; and
 - application-owned or external top-level networks and volumes.
 
+The importer preserves unresolved image spellings in the neutral model and emits source-side
+`BFC0105` evidence containing the Compose variable name and service-image subject. Target adapters
+remain source-format neutral: for example, the Quadlet exporter independently emits `BFQ0014` when
+that preserved value cannot become a native image line. The shared subject correlates the findings
+without teaching the Quadlet adapter Compose interpolation syntax.
+
 ComposeLens selects native short/long forms, renders canonical two-space/LF YAML, reparses its own
 bytes through the syntax and typed-model layers, and returns `GeneratedComposeDocument`. Sensitive
 command, environment-file path, environment, service-label, identity, and context values cause the
@@ -73,8 +99,9 @@ policy-controlled source-only losses rather than becoming synthesized Podman arg
 
 ## Compatibility and loss policy
 
-Compatibility-sensitive fields are evaluated against ComposeLens's finite rules for the exact
-provider and optional runtime. Supported fields remain exact. Implementation-specific or
+Compatibility-sensitive fields are evaluated against ComposeLens's selected profile: the rolling
+specification profile, or the finite rules for an exact provider and optional runtime. Supported
+fields remain exact. Implementation-specific or
 deprecated behavior becomes an approximate `BFC0009` outcome. Unsupported or unknown behavior
 becomes an unsupported `BFC0009` outcome. The latter requires `LossPolicy::AllowPartial` even when
 the generated syntax can retain the value.
@@ -83,7 +110,7 @@ Current compatibility-sensitive constructs are tag-plus-digest images, `host-gat
 user-namespace values, and short-form SELinux relabeling. SCTP syntax is generated but remains an
 unsupported outcome until the selected provider/runtime pair has reviewed execution evidence.
 
-The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.15 output:
+The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.16 output:
 
 - a primary group without a primary user;
 - environment values that must be absent;
@@ -104,8 +131,10 @@ Specification's `restart_policy`. `no`, `always`, unbounded or positive retry-li
 `on-failure`, and `unless-stopped` retain complete merge provenance. The exporter emits every
 neutral variant exactly through ComposeLens's parse-back-validated generator.
 
-An unresolved expression, `on-failure:0`, or a retry count outside the neutral `u64` range is a
-field-specific `BFC0005` invalid outcome. BoxFerry does not reinterpret an explicitly authored
+For cross-format import, an unresolved expression, `on-failure:0`, or a retry count outside the
+neutral `u64` range is a field-specific `BFC0005` invalid outcome. Compose-to-Compose native
+canonicalization instead retains a valid unresolved expression and its default because no neutral
+restart-policy interpretation is required. BoxFerry does not reinterpret an explicitly authored
 zero as an omitted retry limit. Runtime API decoders may independently interpret a native zero
 counter as the provider's absent/default representation because that is runtime observation, not
 authored Compose syntax.

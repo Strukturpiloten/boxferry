@@ -479,5 +479,8 @@ rustc-ice-*.txt
 ##############################
 # Project specific additions
 
+temp*/
 *.profraw
 *.profdata
+.boxferry-workspace/
+.lycheecache

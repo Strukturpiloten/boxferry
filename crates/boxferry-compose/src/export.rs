@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue,
-    ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, Severity, TargetProfile,
+    ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, RuleId, Severity, TargetProfile,
 };
 use boxferry_model::{
     Application, Command, Device, Entrypoint, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
@@ -37,6 +37,15 @@ pub const DOCKER_COMPOSE_TARGET: &str = "docker-compose";
 /// Target implementation name for the independent `containers/podman-compose` provider.
 pub const PODMAN_COMPOSE_TARGET: &str = "podman-compose";
 
+/// Provider-neutral target for the rolling Compose Specification.
+///
+/// The internal profile revision is a `BoxFerry` compatibility token, not a Compose Specification
+/// release or a claim that every historical Compose consumer accepts generated output.
+pub const COMPOSE_SPECIFICATION_TARGET: &str = "compose-specification";
+
+/// Internal revision used with [`COMPOSE_SPECIFICATION_TARGET`].
+pub const COMPOSE_SPECIFICATION_PROFILE_REVISION: PlatformVersion = PlatformVersion::new(1, 0, 0);
+
 /// Exact backend runtime used by the selected Compose provider.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -63,10 +72,10 @@ impl ComposeExporter {
     pub fn new() -> Result<Self, InvalidDiagnosticCode> {
         Ok(Self {
             codes: Codes {
-                invalid_target: DiagnosticCode::new("BFC0006")?,
-                unsupported: DiagnosticCode::new("BFC0007")?,
-                generation: DiagnosticCode::new("BFC0008")?,
-                compatibility: DiagnosticCode::new("BFC0009")?,
+                invalid_target: RuleId::ComposeTargetInvalid.definition().diagnostic_code()?,
+                unsupported: RuleId::ComposeOutputUnsupported.definition().diagnostic_code()?,
+                generation: RuleId::ComposeGenerationFailed.definition().diagnostic_code()?,
+                compatibility: RuleId::ComposeCompatibilityConstraint.definition().diagnostic_code()?,
             },
             runtime: None,
         })
@@ -138,6 +147,32 @@ impl<'a> Mapping<'a> {
 
     fn validate_target(&mut self) -> bool {
         let versions = self.target.versions();
+        if self.target.implementation() == COMPOSE_SPECIFICATION_TARGET {
+            if versions.maximum() != Some(versions.minimum())
+                || versions.minimum() != COMPOSE_SPECIFICATION_PROFILE_REVISION
+            {
+                self.invalid(
+                    self.exporter.codes.invalid_target.clone(),
+                    "target.versions",
+                    "Compose Specification output requires the BoxFerry compatibility-profile revision",
+                    "use the documented exact BoxFerry Compose Specification profile revision",
+                    &[],
+                );
+                return false;
+            }
+            if self.exporter.runtime.is_some() {
+                self.invalid(
+                    self.exporter.codes.invalid_target.clone(),
+                    "target.runtime",
+                    "Compose Specification output does not select a backend runtime",
+                    "select a provider-aware target before attaching a runtime",
+                    &[],
+                );
+                return false;
+            }
+            self.compatibility = Some(CompatibilityProfile::specification());
+            return true;
+        }
         let Some(maximum) = versions.maximum() else {
             self.invalid(
                 self.exporter.codes.invalid_target.clone(),

@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-05
+- Amended by: [ADR 0019](0019-generic-cli-route-registry.md)
 
 ## Context
 
@@ -51,8 +52,8 @@ review and authorization boundary.
   diagnostics even when no format change occurs.
 - Runtime writes require additional planning, conflict, idempotency, rollback, and executor
   contracts beyond the existing read-only inspection adapters.
-- The current `compose-to-quadlet` command remains a valid first route but is not the final CLI
-  architecture.
+- ADR 0019 removes the unreleased `compose-to-quadlet` command; reviewed routes use the generic CLI
+  surface defined by this architecture.
 
 ## Alternatives considered
 

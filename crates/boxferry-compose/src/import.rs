@@ -2,7 +2,7 @@
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
-    ImportResult, InvalidDiagnosticCode, Severity,
+    ImportResult, InvalidDiagnosticCode, NativeFinding, RuleId, Severity,
 };
 use std::collections::BTreeSet;
 
@@ -57,11 +57,21 @@ impl ComposeImporter {
     pub fn new() -> Result<Self, InvalidDiagnosticCode> {
         Ok(Self {
             codes: Codes {
-                invalid_model: DiagnosticCode::new("BFC0001")?,
-                profile_required: DiagnosticCode::new("BFC0002")?,
-                profile_mismatch: DiagnosticCode::new("BFC0003")?,
-                unsupported: DiagnosticCode::new("BFC0004")?,
-                invalid_value: DiagnosticCode::new("BFC0005")?,
+                invalid_model: RuleId::ComposeModelInvalid.definition().diagnostic_code()?,
+                profile_required: RuleId::ComposeProfileRequired.definition().diagnostic_code()?,
+                profile_mismatch: RuleId::ComposeProfileMismatch.definition().diagnostic_code()?,
+                unsupported: RuleId::ComposeIntentUnsupported.definition().diagnostic_code()?,
+                invalid_value: RuleId::ComposeValueInvalid.definition().diagnostic_code()?,
+                unset_variable: RuleId::ComposeUnsetVariable.definition().diagnostic_code()?,
+                required_variable: RuleId::ComposeRequiredVariable.definition().diagnostic_code()?,
+                interpolation_invalid: RuleId::ComposeInterpolationInvalid.definition().diagnostic_code()?,
+                interpolation_nesting: RuleId::ComposeInterpolationNestingLimit
+                    .definition()
+                    .diagnostic_code()?,
+                unresolved_variable: RuleId::ComposeUnresolvedVariable.definition().diagnostic_code()?,
+                native_error: RuleId::ComposeNativeError.definition().diagnostic_code()?,
+                native_warning: RuleId::ComposeNativeWarning.definition().diagnostic_code()?,
+                native_note: RuleId::ComposeNativeNote.definition().diagnostic_code()?,
             },
         })
     }
@@ -72,6 +82,7 @@ impl ImportAdapter for ComposeImporter {
 
     fn import(&self, source: &Self::Source) -> ImportResult {
         let mut mapping = Mapping::new(&self.codes, source);
+        mapping.report_native_findings(source.native_findings());
         let project_result = build_project_view(source.project(), source.profile_selection());
         let Some(view) = project_result.view() else {
             mapping.invalid_optional_span(
@@ -179,6 +190,14 @@ struct Codes {
     profile_mismatch: DiagnosticCode,
     unsupported: DiagnosticCode,
     invalid_value: DiagnosticCode,
+    unset_variable: DiagnosticCode,
+    required_variable: DiagnosticCode,
+    interpolation_invalid: DiagnosticCode,
+    interpolation_nesting: DiagnosticCode,
+    unresolved_variable: DiagnosticCode,
+    native_error: DiagnosticCode,
+    native_warning: DiagnosticCode,
+    native_note: DiagnosticCode,
 }
 
 enum SecurityOptionMapping {
@@ -246,17 +265,7 @@ impl<'a> Mapping<'a> {
 
         self.map_runtime_name(&subject, native, &mut service);
         self.map_restart_policy(&subject, native, &mut service);
-        if let Some(image) = native.image() {
-            match ImageReference::parse(image.value().raw()) {
-                Ok(value) => {
-                    service.set_image(self.sourced_provenance(value, image.provenance()));
-                    self.exact_provenance(format!("{subject}.image"), image.provenance());
-                }
-                Err(error) => {
-                    self.invalid_model_optional(&format!("{subject}.image"), &error, image.effective_source());
-                }
-            }
-        }
+        self.map_service_image(&subject, native, &mut service);
         if let Some(command) = native.command() {
             if let Some(value) = Self::map_command(command.value(), command.is_sensitive()) {
                 service.set_command(self.sourced_provenance(value, command.provenance()));
@@ -337,6 +346,27 @@ impl<'a> Mapping<'a> {
         self.report_service_unsupported(&subject, native);
         self.exact_provenance(&subject, native.provenance());
         Some(self.sourced_provenance(service, native.provenance()))
+    }
+
+    fn map_service_image(&mut self, service_subject: &str, native: &ProjectService, service: &mut Service) {
+        let Some(image) = native.image() else {
+            return;
+        };
+        let subject = format!("{service_subject}.image");
+        if image.value().raw().contains('$') {
+            self.report_unresolved_variable(
+                &subject,
+                image.value().raw(),
+                "image reference contains unresolved Compose variable syntax",
+            );
+        }
+        match ImageReference::parse(image.value().raw()) {
+            Ok(value) => {
+                service.set_image(self.sourced_provenance(value, image.provenance()));
+                self.exact_provenance(subject, image.provenance());
+            }
+            Err(error) => self.invalid_model_optional(&subject, &error, image.effective_source()),
+        }
     }
 
     fn map_runtime_name(&mut self, subject: &str, native: &ProjectService, service: &mut Service) {
@@ -1730,18 +1760,20 @@ impl<'a> Mapping<'a> {
         }
         if let Some(size) = native.shm_size() {
             let subject = format!("{service_subject}.shm_size");
+            let normalized = quadlet_shm_size(size.value().kind());
             service.set_shm_size(self.sourced_provenance(
-                Self::protected(size.value().raw().value(), size.is_sensitive()),
+                Self::protected(
+                    normalized.as_deref().unwrap_or_else(|| size.value().raw().value()),
+                    size.is_sensitive(),
+                ),
                 size.provenance(),
             ));
-            let exact = matches!(size.value().kind(), ShmSizeKind::Documented { amount_raw, unit: ShmSizeUnit::B | ShmSizeUnit::K | ShmSizeUnit::M | ShmSizeUnit::G }
-                if amount_raw.bytes().any(|byte| byte != b'0') && amount_raw.bytes().all(|byte| byte.is_ascii_digit()));
-            if exact {
+            if normalized.is_some() {
                 self.exact_provenance(subject, size.provenance());
             } else {
                 self.invalid_value_optional(
                     &subject,
-                    "shared-memory size must be a positive ASCII decimal with b, k, m, or g",
+                    "shared-memory size must be a positive ASCII decimal with b, k, kb, m, mb, g, or gb",
                     size.effective_source(),
                 );
             }
@@ -2391,6 +2423,13 @@ impl<'a> Mapping<'a> {
                     EnvironmentValue::Literal(ProtectedString::sensitive(value.to_string()))
                 }
                 ComposeScalar::Number(value) | ComposeScalar::String(value) => {
+                    if value.contains('$') {
+                        self.report_unresolved_variable(
+                            &subject,
+                            value,
+                            "environment value contains unresolved Compose variable syntax",
+                        );
+                    }
                     EnvironmentValue::Literal(ProtectedString::sensitive(value.clone()))
                 }
             };
@@ -2624,7 +2663,7 @@ impl<'a> Mapping<'a> {
             None => MountSource::Anonymous,
             Some(value) if is_host_path(value) => MountSource::HostPath(value.to_owned()),
             Some(value) if value.contains('$') => {
-                self.unsupported(subject, "unresolved ambiguous volume source", mount.raw().span());
+                self.unresolved_volume_variable(subject, value, mount.raw().span());
                 return None;
             }
             Some(value) => MountSource::Volume(self.identifier(subject, value, mount.raw().span())?),
@@ -3747,6 +3786,33 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn report_unresolved_variable(&mut self, subject: &str, value: &str, reason: &str) {
+        let code = self.codes.unresolved_variable.clone();
+        let mut diagnostic = Diagnostic::new(
+            code,
+            Severity::Warning,
+            "Compose variable expression remains unresolved at the adapter boundary",
+        )
+        .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject)))
+        .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)));
+        if let Some(variable) = first_compose_variable(value) {
+            diagnostic = diagnostic.with_field(DiagnosticField::new("variable", DiagnosticValue::plain(variable)));
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    fn unresolved_volume_variable(&mut self, subject: &str, value: &str, span: ComposeSpan) {
+        self.report_unresolved_variable(
+            subject,
+            value,
+            "volume source could resolve to either a host path or a named volume",
+        );
+        let code = self.codes.unresolved_variable.clone();
+        if let Ok(outcome) = ConversionOutcome::loss(subject, ConversionKind::Unsupported, code) {
+            self.outcomes.push(self.with_optional_origin(outcome, Some(span)));
+        }
+    }
+
     fn invalid_model(&mut self, subject: &str, error: &ModelError, span: ComposeSpan) {
         self.invalid_model_optional(subject, error, Some(span));
     }
@@ -3817,21 +3883,19 @@ impl<'a> Mapping<'a> {
                 compose_lens::diagnostic::Severity::Warning => Severity::Warning,
                 compose_lens::diagnostic::Severity::Note => Severity::Note,
             };
-            let code = self.codes.invalid_value.clone();
+            let native = crate::source::native_project_finding(diagnostic);
+            let code = if severity == Severity::Error {
+                self.codes.invalid_value.clone()
+            } else {
+                self.native_code(&native)
+            };
             self.diagnostics.push(
                 Diagnostic::new(
                     code.clone(),
                     severity,
                     "ComposeLens could not fully type the merged project",
                 )
-                .with_field(DiagnosticField::new(
-                    "compose_code",
-                    DiagnosticValue::plain(diagnostic.code().as_str()),
-                ))
-                .with_field(DiagnosticField::new(
-                    "reason",
-                    DiagnosticValue::plain(diagnostic.message()),
-                )),
+                .with_native_finding(native),
             );
             let kind = if severity == Severity::Error {
                 ConversionKind::Invalid
@@ -3844,6 +3908,32 @@ impl<'a> Mapping<'a> {
                 }
                 self.outcomes.push(outcome);
             }
+        }
+    }
+
+    fn report_native_findings(&mut self, findings: &[NativeFinding]) {
+        for finding in findings {
+            let diagnostic = Diagnostic::new(
+                self.native_code(finding),
+                finding.severity(),
+                "ComposeLens reported a native Compose finding",
+            )
+            .with_native_finding(finding.clone());
+            self.diagnostics.push(diagnostic);
+        }
+    }
+
+    fn native_code(&self, finding: &NativeFinding) -> DiagnosticCode {
+        match finding.code() {
+            "compose.interpolation.unset-variable" => self.codes.unset_variable.clone(),
+            "compose.interpolation.required-variable" => self.codes.required_variable.clone(),
+            "compose.interpolation.invalid-expression" => self.codes.interpolation_invalid.clone(),
+            "compose.interpolation.nesting-limit" => self.codes.interpolation_nesting.clone(),
+            _ => match finding.severity() {
+                Severity::Error => self.codes.native_error.clone(),
+                Severity::Note => self.codes.native_note.clone(),
+                _ => self.codes.native_warning.clone(),
+            },
         }
     }
 
@@ -3876,6 +3966,23 @@ impl<'a> Mapping<'a> {
     }
 }
 
+fn quadlet_shm_size(value: &ShmSizeKind) -> Option<String> {
+    let ShmSizeKind::Documented { amount_raw, unit } = value else {
+        return None;
+    };
+    if !amount_raw.bytes().any(|byte| byte != b'0') || !amount_raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let unit = match unit {
+        ShmSizeUnit::B => "b",
+        ShmSizeUnit::K | ShmSizeUnit::Kb => "k",
+        ShmSizeUnit::M | ShmSizeUnit::Mb => "m",
+        ShmSizeUnit::G | ShmSizeUnit::Gb => "g",
+        _ => return None,
+    };
+    Some(format!("{amount_raw}{unit}"))
+}
+
 fn scalar_text(value: &ComposeScalar) -> String {
     match value {
         ComposeScalar::Null => String::new(),
@@ -3897,6 +4004,20 @@ fn literal_assignment(value: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((name, value))
+}
+
+fn first_compose_variable(value: &str) -> Option<&str> {
+    let (_, remainder) = value.split_once('$')?;
+    let remainder = remainder.strip_prefix('{').unwrap_or(remainder);
+    let end = remainder
+        .bytes()
+        .position(|byte| byte != b'_' && !byte.is_ascii_alphanumeric())
+        .unwrap_or(remainder.len());
+    let variable = &remainder[..end];
+    let mut bytes = variable.bytes();
+    let first = bytes.next()?;
+    ((first == b'_' || first.is_ascii_alphabetic()) && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric()))
+        .then_some(variable)
 }
 
 fn map_protocol(protocol: Option<&str>) -> Protocol {

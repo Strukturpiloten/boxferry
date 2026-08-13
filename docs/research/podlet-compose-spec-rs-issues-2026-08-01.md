@@ -125,18 +125,18 @@ version when the maximum is omitted.
 
 ### Cases already protected by ComposeLens 0.1
 
-| Behavior | Issue evidence | Current protection |
-| --- | --- | --- |
-| Image registry ports | [`compose_spec_rs` #22](https://github.com/k9withabone/compose_spec_rs/issues/22), [Podlet #91](https://github.com/containers/podlet/issues/91) | tolerant image parser unit tests |
-| Combined image tag and digest | [Podlet #101](https://github.com/containers/podlet/issues/101) | typed model plus provider conformance |
-| Bracketed IPv6 short ports | [`compose_spec_rs` #24](https://github.com/k9withabone/compose_spec_rs/issues/24), [Podlet #96](https://github.com/containers/podlet/issues/96) | short-port parser regression |
-| Mixed short/long mounts | [Podlet #26](https://github.com/containers/podlet/issues/26) | field-specific volume variants |
-| Long-form ports and retained metadata | [Podlet #207](https://github.com/containers/podlet/issues/207) | typed long-port fields and unknown retention |
-| YAML anchors/fragments | [`compose_spec_rs` #2](https://github.com/k9withabone/compose_spec_rs/issues/2), [Podlet #58](https://github.com/containers/podlet/issues/58) and [#154](https://github.com/containers/podlet/issues/154) | loss-aware syntax and merge-key tests |
-| Explicit interpolation | [`compose_spec_rs` #3](https://github.com/k9withabone/compose_spec_rs/issues/3), [Podlet #81](https://github.com/containers/podlet/issues/81) | caller-owned interpolation stage |
-| Multi-file merge | [`compose_spec_rs` #4](https://github.com/k9withabone/compose_spec_rs/issues/4), [Podlet #59](https://github.com/containers/podlet/issues/59) | provenance-preserving merge stage |
-| Non-string/empty label values | [Podlet #62](https://github.com/containers/podlet/issues/62) and [#191](https://github.com/containers/podlet/issues/191) | list/map label forms and scalar-kind retention |
-| Source reference validation | [`compose_spec_rs` #18](https://github.com/k9withabone/compose_spec_rs/issues/18) | selected-service reference validation |
+| Behavior                              | Issue evidence                                                                                                                                                                                            | Current protection                             |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Image registry ports                  | [`compose_spec_rs` #22](https://github.com/k9withabone/compose_spec_rs/issues/22), [Podlet #91](https://github.com/containers/podlet/issues/91)                                                           | tolerant image parser unit tests               |
+| Combined image tag and digest         | [Podlet #101](https://github.com/containers/podlet/issues/101)                                                                                                                                            | typed model plus provider conformance          |
+| Bracketed IPv6 short ports            | [`compose_spec_rs` #24](https://github.com/k9withabone/compose_spec_rs/issues/24), [Podlet #96](https://github.com/containers/podlet/issues/96)                                                           | short-port parser regression                   |
+| Mixed short/long mounts               | [Podlet #26](https://github.com/containers/podlet/issues/26)                                                                                                                                              | field-specific volume variants                 |
+| Long-form ports and retained metadata | [Podlet #207](https://github.com/containers/podlet/issues/207)                                                                                                                                            | typed long-port fields and unknown retention   |
+| YAML anchors/fragments                | [`compose_spec_rs` #2](https://github.com/k9withabone/compose_spec_rs/issues/2), [Podlet #58](https://github.com/containers/podlet/issues/58) and [#154](https://github.com/containers/podlet/issues/154) | loss-aware syntax and merge-key tests          |
+| Explicit interpolation                | [`compose_spec_rs` #3](https://github.com/k9withabone/compose_spec_rs/issues/3), [Podlet #81](https://github.com/containers/podlet/issues/81)                                                             | caller-owned interpolation stage               |
+| Multi-file merge                      | [`compose_spec_rs` #4](https://github.com/k9withabone/compose_spec_rs/issues/4), [Podlet #59](https://github.com/containers/podlet/issues/59)                                                             | provenance-preserving merge stage              |
+| Non-string/empty label values         | [Podlet #62](https://github.com/containers/podlet/issues/62) and [#191](https://github.com/containers/podlet/issues/191)                                                                                  | list/map label forms and scalar-kind retention |
+| Source reference validation           | [`compose_spec_rs` #18](https://github.com/k9withabone/compose_spec_rs/issues/18)                                                                                                                         | selected-service reference validation          |
 
 These links are additional regression provenance, not proof that ComposeLens reproduces the other
 projects' internal behavior.

@@ -3,6 +3,36 @@
 use boxferry::{Application, Identifier, InMemoryAdapter, LossPolicy, PlatformVersion, TargetProfile, convert};
 
 #[test]
+fn facade_exposes_report_dto_without_cli_features() {
+    use boxferry::report::{ConversionReport, ExitCategory, FixFirst, ReportStatus, VersionBounds, redact_text};
+
+    let mut report = ConversionReport::new(
+        "test",
+        "compose",
+        "quadlet",
+        VersionBounds {
+            minimum: "5.4".into(),
+            maximum: "6.0".into(),
+        },
+    );
+    report.status = ReportStatus::Blocked;
+    report.exit_category = ExitCategory::PolicyBlocked;
+    report.fix_first = Some(FixFirst {
+        code: "BFC0001".into(),
+        name: "compose-model-invalid".into(),
+        description: "The Compose model is invalid.".into(),
+        help: "Correct the Compose value.".into(),
+        next_step: "Rerun BoxFerry.".into(),
+    });
+    assert_eq!(redact_text("databasePassword", "canary", false).0, "<redacted>");
+    assert!(report.review_required);
+    assert_eq!(
+        report.fix_first.as_ref().map(|guidance| guidance.code.as_str()),
+        Some("BFC0001")
+    );
+}
+
+#[test]
 fn facade_converts_through_public_adapter_contracts() -> Result<(), String> {
     let application = Application::new(Identifier::new("example").map_err(|error| error.to_string())?);
     let adapter = InMemoryAdapter::exact("rendered target".to_owned());
@@ -269,13 +299,19 @@ fn facade_exposes_runtime_reconstruction_additively() -> Result<(), String> {
 
 #[cfg(feature = "compose")]
 #[test]
-fn facade_exposes_the_compose_import_adapter_additively() -> Result<(), String> {
+fn facade_exposes_compose_adapters_and_specification_target_additively() -> Result<(), String> {
     use boxferry::compose::compose_lens::{
         loader::{DocumentInput, DocumentOrigin, LoadedProject},
         merge::merge_project,
         source::SourceId as ComposeSourceId,
     };
-    use boxferry::{ComposeImporter, ComposeSource, ImportAdapter, SourceId};
+    use boxferry::{
+        COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeImporter, ComposeSource,
+        ImportAdapter, SourceId,
+    };
+
+    assert_eq!(COMPOSE_SPECIFICATION_TARGET, "compose-specification");
+    assert_eq!(COMPOSE_SPECIFICATION_PROFILE_REVISION.to_string(), "1.0.0");
 
     let compose_source_id = ComposeSourceId::new(1);
     let loaded = LoadedProject::load([DocumentInput::new(
@@ -298,6 +334,8 @@ fn facade_exposes_the_compose_import_adapter_additively() -> Result<(), String> 
             compose_source_id,
             SourceId::new("compose.yaml").map_err(|error| error.to_string())?,
         );
+    let canonical: boxferry::ComposeCanonicalization = source.canonicalize().map_err(|error| error.to_string())?;
+    assert!(canonical.document().is_some());
     let importer = ComposeImporter::new().map_err(|error| error.to_string())?;
     let result = importer.import(&source);
 
@@ -313,6 +351,33 @@ fn facade_exposes_the_compose_import_adapter_additively() -> Result<(), String> 
         Some(1)
     );
     assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    Ok(())
+}
+
+#[cfg(feature = "quadlet")]
+#[test]
+fn facade_exposes_quadlet_parse_diagnostics() -> Result<(), String> {
+    use boxferry::quadlet::quadlet_lens::source::SourceId as QuadletSourceId;
+    use boxferry::{QuadletDocumentInput, QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletSource};
+
+    let error = QuadletSource::parse(
+        Identifier::new("example").map_err(|error| error.to_string())?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(41),
+            "[Container]\nImage=\n",
+        )],
+    )
+    .err()
+    .ok_or("invalid Quadlet source should fail")?;
+    let diagnostic = error
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.origin() == QuadletParseDiagnosticOrigin::Model)
+        .ok_or("native model diagnostic expected")?;
+    assert_eq!(diagnostic.code(), "QLM0005");
+    assert_eq!(diagnostic.severity(), QuadletParseDiagnosticSeverity::Error);
+    assert_eq!(diagnostic.labels()[0].source_id(), 41);
     Ok(())
 }
 

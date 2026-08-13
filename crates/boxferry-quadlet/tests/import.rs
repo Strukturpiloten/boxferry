@@ -7,13 +7,23 @@ use boxferry_model::{
     ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
     StartupNotification, VolumeImageSource,
 };
-use boxferry_quadlet::{QuadletDocumentInput, QuadletImporter, QuadletSource, QuadletSourceError};
+use boxferry_quadlet::{
+    QuadletDocumentInput, QuadletImporter, QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity,
+    QuadletParseError, QuadletParseFailureStage, QuadletParseResult, QuadletSource,
+};
 use quadlet_lens::model::{NamedQuadletDocument, QuadletDocument, QuadletDocumentSet, QuadletUnitType};
 use quadlet_lens::source::SourceId as QuadletSourceId;
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, QuadletParseError> {
+    QuadletSource::parse(application_name, inputs).map(QuadletParseResult::into_source)
+}
+
 #[test]
 fn imports_the_first_direct_quadlet_subset_with_provenance() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -84,7 +94,7 @@ fn imports_the_first_direct_quadlet_subset_with_provenance() -> Result<(), Strin
 
 #[test]
 fn imports_owned_pod_membership_independently_of_document_order() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -153,7 +163,7 @@ fn imports_owned_pod_membership_independently_of_document_order() -> Result<(), 
 
 #[test]
 fn keeps_unrepresentable_pod_defaults_and_pod_scoped_values_explicit() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -204,7 +214,7 @@ fn keeps_unrepresentable_pod_defaults_and_pod_scoped_values_explicit() -> Result
 
 #[test]
 fn retains_rootfs_notify_and_ordered_podman_args_without_synthesizing_them() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -242,7 +252,7 @@ fn retains_rootfs_notify_and_ordered_podman_args_without_synthesizing_them() -> 
 
 #[test]
 fn retains_pod_resets_omitted_name_and_host_network_conflict() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -290,7 +300,7 @@ fn retains_pod_resets_omitted_name_and_host_network_conflict() -> Result<(), Str
 
 #[test]
 fn reports_pod_host_network_and_published_port_conflict_independently_of_entry_order() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -317,7 +327,7 @@ fn reports_pod_host_network_and_published_port_conflict_independently_of_entry_o
 
 #[test]
 fn retains_ordered_absolute_environment_file_declarations_without_reading_them() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -372,7 +382,7 @@ fn retains_ordered_absolute_environment_file_declarations_without_reading_them()
 
 #[test]
 fn leaves_context_dependent_environment_file_paths_explicit() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -411,7 +421,7 @@ fn leaves_context_dependent_environment_file_paths_explicit() -> Result<(), Stri
 
 #[test]
 fn reports_every_unmapped_quadlet_entry_instead_of_dropping_it() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -452,7 +462,7 @@ fn reports_every_unmapped_quadlet_entry_instead_of_dropping_it() -> Result<(), S
 
 #[test]
 fn imports_released_container_settings_with_order_and_provenance() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -492,7 +502,7 @@ fn imports_released_container_settings_with_order_and_provenance() -> Result<(),
 
 #[test]
 fn retains_unreviewed_native_container_values_without_classifying_them_as_exact() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -538,7 +548,7 @@ fn retains_unreviewed_native_container_values_without_classifying_them_as_exact(
 
 #[test]
 fn imports_extended_container_keys_and_redacts_sensitive_values() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new("frontend.network", QuadletSourceId::new(2), "[Network]\n"),
@@ -595,7 +605,7 @@ fn imports_extended_container_keys_and_redacts_sensitive_values() -> Result<(), 
 #[test]
 fn network_attachment_values_before_or_after_network_have_identical_meaning() -> Result<(), String> {
     let import = |container: &str| -> Result<_, String> {
-        let source = QuadletSource::parse(
+        let source = parse_source(
             identifier("example")?,
             [
                 QuadletDocumentInput::new("frontend.network", QuadletSourceId::new(2), "[Network]\n"),
@@ -636,7 +646,7 @@ fn network_attachment_values_before_or_after_network_have_identical_meaning() ->
 
 #[test]
 fn imports_the_shared_command_environment_port_mount_and_network_subset() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -816,7 +826,7 @@ fn assert_ports_mounts_and_networks(application: &Application) {
 
 #[test]
 fn ambiguous_native_forms_remain_explicit_and_do_not_enter_the_neutral_model() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -861,7 +871,7 @@ fn ambiguous_native_forms_remain_explicit_and_do_not_enter_the_neutral_model() -
 
 #[test]
 fn continued_scalar_values_are_not_silently_truncated() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -903,7 +913,7 @@ fn continued_scalar_values_are_not_silently_truncated() -> Result<(), String> {
 
 #[test]
 fn invalid_singleton_and_execution_context_combinations_do_not_enter_the_model() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -942,7 +952,7 @@ fn invalid_singleton_and_execution_context_combinations_do_not_enter_the_model()
 
 #[test]
 fn imports_complete_sibling_dependencies_and_the_exact_no_restart_policy() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -1018,7 +1028,7 @@ fn imports_complete_sibling_dependencies_and_the_exact_no_restart_policy() -> Re
 
 #[test]
 fn reports_systemd_restart_approximations_and_non_application_dependencies() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -1093,7 +1103,7 @@ fn reports_systemd_restart_approximations_and_non_application_dependencies() -> 
 
 #[test]
 fn incomplete_or_conflicting_systemd_dependency_pairs_do_not_enter_the_model() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -1155,7 +1165,7 @@ fn incomplete_or_conflicting_systemd_dependency_pairs_do_not_enter_the_model() -
 
 #[test]
 fn imports_regular_quadlet_health_checks_and_explicit_disable_intent() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -1227,7 +1237,7 @@ fn imports_regular_quadlet_health_checks_and_explicit_disable_intent() -> Result
 
 #[test]
 fn rejects_ambiguous_or_invalid_quadlet_health_values_without_leaking_commands() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -1275,7 +1285,7 @@ fn rejects_ambiguous_or_invalid_quadlet_health_values_without_leaking_commands()
 
 #[test]
 fn imports_external_podman_mount_secrets_and_ordered_grant_options() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new(
@@ -1352,7 +1362,7 @@ fn imports_external_podman_mount_secrets_and_ordered_grant_options() -> Result<(
 
 #[test]
 fn leaves_environment_and_unreviewed_secret_forms_explicit() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -1394,8 +1404,8 @@ fn leaves_environment_and_unreviewed_secret_forms_explicit() -> Result<(), Strin
 }
 
 #[test]
-fn rejects_an_unresolved_native_document_graph() -> Result<(), String> {
-    let source = QuadletSource::parse(
+fn parse_keeps_an_incomplete_native_document_graph_with_ordered_document_set_diagnostics() -> Result<(), String> {
+    let parsed = QuadletSource::parse(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -1404,21 +1414,43 @@ fn rejects_an_unresolved_native_document_graph() -> Result<(), String> {
         )],
     )
     .map_err(|error| error.to_string())?;
-    assert!(!source.documents().is_valid());
+    assert!(!parsed.source().documents().is_valid());
+    assert_eq!(parsed.diagnostics().len(), 1);
+    assert_eq!(
+        parsed.diagnostics()[0].origin(),
+        QuadletParseDiagnosticOrigin::DocumentSet
+    );
+    assert_eq!(
+        parsed.diagnostics()[0].severity(),
+        QuadletParseDiagnosticSeverity::Error
+    );
+    let source = parsed.into_source();
+    assert_eq!(source.native_findings().len(), 1);
+    assert_eq!(source.native_findings()[0].code(), "QLG0001");
+    assert_eq!(source.native_findings()[0].stage(), "document-set");
     let result = QuadletImporter::new()
         .map_err(|error| error.to_string())?
         .import(&source);
 
     assert!(result.application().is_none());
     assert_eq!(result.outcomes()[0].kind(), ConversionKind::Invalid);
-    assert_eq!(result.diagnostics()[0].code().as_str(), "BFQ1001");
+    assert_eq!(result.diagnostics().len(), 2);
+    assert_eq!(result.diagnostics()[0].code().as_str(), "BFQ1103");
     assert_eq!(result.diagnostics()[0].severity(), Severity::Error);
+    assert_eq!(
+        result.diagnostics()[0]
+            .native_finding()
+            .ok_or("missing native finding")?
+            .code(),
+        "QLG0001"
+    );
+    assert_eq!(result.diagnostics()[1].code().as_str(), "BFQ1001");
     Ok(())
 }
 
 #[test]
 fn parse_boundary_rejects_malformed_input_before_import() -> Result<(), String> {
-    let error = QuadletSource::parse(
+    let error = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -1428,13 +1460,164 @@ fn parse_boundary_rejects_malformed_input_before_import() -> Result<(), String> 
     )
     .err()
     .ok_or("malformed source should fail")?;
-    assert!(matches!(error, QuadletSourceError::InvalidDocument { .. }));
+    assert!(error.failures().is_empty());
+    assert!(
+        error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.origin() == QuadletParseDiagnosticOrigin::Syntax)
+    );
+    Ok(())
+}
+
+#[test]
+fn parse_retains_all_native_diagnostics_without_source_contents() -> Result<(), String> {
+    let error = QuadletSource::parse(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new("first.container", QuadletSourceId::new(7), "[Container]\nImage\n"),
+            QuadletDocumentInput::new(
+                "second.container",
+                QuadletSourceId::new(9),
+                "[Container]\nImage=secret-value-canary.image\n",
+            ),
+        ],
+    )
+    .err()
+    .ok_or("detailed source should fail")?;
+
+    let diagnostics = error.diagnostics();
+    assert_eq!(diagnostics[0].origin(), QuadletParseDiagnosticOrigin::Syntax);
+    assert_eq!(diagnostics[0].code(), "QLS0001");
+    assert_eq!(diagnostics[0].labels()[0].source_id(), 7);
+    assert!(diagnostics[0].labels()[0].start() < diagnostics[0].labels()[0].end());
+    assert_eq!(diagnostics[1].origin(), QuadletParseDiagnosticOrigin::Model);
+    assert_eq!(diagnostics[1].code(), "QLM0002");
+    assert_eq!(diagnostics[1].labels()[0].source_id(), 7);
+    assert!(diagnostics[1].labels()[0].start() < diagnostics[1].labels()[0].end());
+    assert_eq!(diagnostics[2].origin(), QuadletParseDiagnosticOrigin::DocumentSet);
+    assert_eq!(diagnostics[2].severity(), QuadletParseDiagnosticSeverity::Error);
+    assert_eq!(diagnostics[2].labels()[0].source_id(), 9);
+    for diagnostic in diagnostics {
+        assert!(!diagnostic.summary().is_empty());
+        for label in diagnostic.labels() {
+            assert!(label.start() <= label.end());
+            assert!(!label.message().is_empty());
+        }
+    }
+    let debug = format!("{error:?}");
+    assert!(!debug.contains("secret-value-canary"));
+    assert!(!debug.contains("first.container"));
+    assert!(error.failures().is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn parse_keeps_warnings_but_rejects_structured_fatal_metadata() -> Result<(), String> {
+    let parsed = QuadletSource::parse(
+        identifier("example")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(8),
+            "[Container]\nImage=example.invalid/one:1\nImage=example.invalid/two:1\n",
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    assert!(parsed.source().documents().is_valid());
+    assert!(parsed.diagnostics().iter().any(|diagnostic| {
+        diagnostic.origin() == QuadletParseDiagnosticOrigin::Model
+            && diagnostic.severity() == QuadletParseDiagnosticSeverity::Warning
+    }));
+
+    let error = QuadletSource::parse(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new(
+                "private/path.container",
+                QuadletSourceId::new(15),
+                "[Container]\nImage=x\n",
+            ),
+            QuadletDocumentInput::new("later.container", QuadletSourceId::new(16), "[Container]\nImage=\n"),
+        ],
+    )
+    .err()
+    .ok_or("fatal filename should fail")?;
+    assert_eq!(error.failures()[0].stage(), QuadletParseFailureStage::Filename);
+    assert_eq!(error.failures()[0].input_index(), Some(0));
+    assert_eq!(error.failures()[0].source_id(), Some(15));
+    assert!(!format!("{error:?}").contains("private/path.container"));
+    assert!(
+        error
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.labels().iter().any(|label| label.source_id() == 16))
+    );
+    Ok(())
+}
+
+#[test]
+fn parse_fixed_seed_corpus_is_panic_free_deterministic_and_span_bounded() -> Result<(), String> {
+    for seed in 0_u32..=256 {
+        let text = if seed == 191 {
+            "[Container]\nImage=\nLabel=seeded-secret-canary\n".to_owned()
+        } else {
+            match seed % 7 {
+                0 => format!("[Container]\nImage=example.invalid/{seed:x}:1\n"),
+                1 => "[Container]\nImage=\n".to_owned(),
+                2 => "[Container]\nImage\n".to_owned(),
+                3 => format!("[Container]\nImage={seed:x}\nNetwork=missing.network\n"),
+                4 => format!("[Container]\nImage={seed:x}\nImage={:x}\n", seed + 1),
+                5 => format!("[Container]\nImage={seed:x}\nLabel=seed-{seed:x}\n"),
+                _ => format!("[Container]\nImage={seed:x}\nEnvironment=K={seed:x}\n"),
+            }
+        };
+        assert!(text.len() <= 64, "seed {seed} exceeded the bounded corpus size");
+        let input = QuadletDocumentInput::new("web.container", QuadletSourceId::new(seed + 1), text.clone());
+        let application_name = identifier("seeded")?;
+        let first = std::panic::catch_unwind({
+            let input = input.clone();
+            let application_name = application_name.clone();
+            move || QuadletSource::parse(application_name, [input])
+        })
+        .map_err(|_| format!("parser panicked for seed {seed}"))?;
+        let second = std::panic::catch_unwind({
+            let input = input.clone();
+            move || QuadletSource::parse(application_name, [input])
+        })
+        .map_err(|_| format!("parser panicked for seed {seed}"))?;
+        assert_eq!(first, second, "parser classification changed for seed {seed}");
+        let diagnostics = match &first {
+            Ok(result) => result.diagnostics(),
+            Err(error) => error.diagnostics(),
+        };
+        for diagnostic in diagnostics {
+            for label in diagnostic.labels() {
+                assert_eq!(label.source_id(), seed + 1);
+                assert!(label.start() <= label.end());
+                assert!(label.end() <= text.len());
+            }
+        }
+        if let Err(error) = &first {
+            for failure in error.failures() {
+                if let Some(span) = failure.span() {
+                    assert_eq!(span.source_id(), seed + 1);
+                    assert!(span.start() <= span.end());
+                    assert!(span.end() <= text.len());
+                }
+            }
+        }
+        if seed == 191 {
+            let error = first.err().ok_or("seeded invalid input should fail")?;
+            assert!(!format!("{error:?}").contains("seeded-secret-canary"));
+        }
+    }
     Ok(())
 }
 
 #[test]
 fn imports_ordered_dns_keys_and_treats_empty_assignments_as_resets() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -1475,7 +1658,7 @@ fn imports_ordered_dns_keys_and_treats_empty_assignments_as_resets() -> Result<(
 
 #[test]
 fn imports_security_options_in_native_order_with_sensitive_provenance() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -1542,7 +1725,7 @@ fn imports_security_options_in_native_order_with_sensitive_provenance() -> Resul
 
 #[test]
 fn keeps_security_option_resets_unsafe_values_singletons_and_selinux_conflicts_explicit() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -1591,7 +1774,7 @@ fn keeps_security_option_resets_unsafe_values_singletons_and_selinux_conflicts_e
 
 #[test]
 fn imports_image_and_build_resources_before_their_container_references() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("artifacts")?,
         [
             QuadletDocumentInput::new(
@@ -1685,7 +1868,7 @@ fn duplicate_artifact_singletons_produce_one_invalid_import_outcome_without_last
 
 #[test]
 fn imports_safe_network_settings_without_conflating_the_unit_stem_and_runtime_name() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "logical.network",
@@ -1731,7 +1914,7 @@ fn imports_safe_network_settings_without_conflating_the_unit_stem_and_runtime_na
 
 #[test]
 fn retains_network_resets_and_rejects_duplicate_option_and_label_names() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "logical.network",
@@ -1780,7 +1963,7 @@ fn retains_network_resets_and_rejects_duplicate_option_and_label_names() -> Resu
 
 #[test]
 fn rejects_ambiguous_network_ipam_and_noncanonical_booleans_without_positional_zipping() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
             "logical.network",
@@ -1805,7 +1988,7 @@ fn rejects_ambiguous_network_ipam_and_noncanonical_booleans_without_positional_z
 
 #[test]
 fn imports_typed_volume_settings_and_retains_resets_and_raw_evidence() -> Result<(), String> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         identifier("example")?,
         [
             QuadletDocumentInput::new("base.image", QuadletSourceId::new(101), "[Image]\nImage=example.invalid/base:1\n"),

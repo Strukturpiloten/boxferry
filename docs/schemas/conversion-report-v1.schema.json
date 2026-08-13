@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boxferry.dev/schemas/conversion-report-v1.schema.json",
+  "title": "BoxFerry conversion report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "boxferry_version",
+    "status",
+    "exit_category",
+    "failed_stage",
+    "primary_diagnostic_code",
+    "failure_summary",
+    "fix_first",
+    "source_type",
+    "target_type",
+    "application",
+    "inputs",
+    "discovery",
+    "choices",
+    "invocation",
+    "host",
+    "fidelity",
+    "requested_versions",
+    "resolved_versions",
+    "diagnostics",
+    "events",
+    "output_artifacts",
+    "review_required",
+    "redaction",
+    "truncations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "boxferry_version": { "$ref": "#/$defs/text" },
+    "status": { "enum": ["success", "blocked", "failure"] },
+    "exit_category": {
+      "enum": ["success", "policy-blocked", "input-or-execution", "output-write", "report-write"]
+    },
+    "failed_stage": { "anyOf": [{ "$ref": "#/$defs/failed_stage" }, { "type": "null" }] },
+    "primary_diagnostic_code": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+    "failure_summary": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+    "fix_first": { "anyOf": [{ "$ref": "#/$defs/fix_first" }, { "type": "null" }] },
+    "source_type": { "$ref": "#/$defs/text" },
+    "target_type": { "$ref": "#/$defs/text" },
+    "application": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+    "inputs": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/input" } },
+    "discovery": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/discovery" } },
+    "choices": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/choice" } },
+    "invocation": { "$ref": "#/$defs/invocation" },
+    "host": { "$ref": "#/$defs/host" },
+    "fidelity": { "$ref": "#/$defs/fidelity" },
+    "requested_versions": { "$ref": "#/$defs/version_bounds" },
+    "resolved_versions": { "$ref": "#/$defs/version_bounds" },
+    "diagnostics": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/diagnostic" } },
+    "events": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/text" } },
+    "output_artifacts": {
+      "type": "array",
+      "maxItems": 2048,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "error_report_path": { "$ref": "#/$defs/text" },
+    "review_required": { "const": true },
+    "redaction": { "$ref": "#/$defs/redaction" },
+    "truncations": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/truncation" } }
+  },
+  "$defs": {
+    "text": { "type": "string", "maxLength": 16384 },
+    "fix_first": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name", "description", "help", "next_step"],
+      "properties": {
+        "code": { "$ref": "#/$defs/text" },
+        "name": { "$ref": "#/$defs/text" },
+        "description": { "$ref": "#/$defs/text" },
+        "help": { "$ref": "#/$defs/text" },
+        "next_step": { "$ref": "#/$defs/text" }
+      }
+    },
+    "failed_stage": {
+      "enum": [
+        "input-discovery",
+        "input-read",
+        "interpolation",
+        "compose-load",
+        "compose-merge",
+        "profile-selection",
+        "quadlet-parse",
+        "quadlet-document-set",
+        "conversion",
+        "output-write",
+        "report-write"
+      ]
+    },
+    "version_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum"],
+      "properties": { "minimum": { "$ref": "#/$defs/text" }, "maximum": { "$ref": "#/$defs/text" } }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alias", "kind"],
+      "properties": { "alias": { "$ref": "#/$defs/text" }, "kind": { "$ref": "#/$defs/text" } }
+    },
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected", "ignored"],
+      "properties": {
+        "selected": { "$ref": "#/$defs/text" },
+        "ignored": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/text" } }
+      }
+    },
+    "choice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": { "name": { "$ref": "#/$defs/text" }, "value": { "$ref": "#/$defs/text" } }
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command_kind", "provided_option_names"],
+      "properties": {
+        "command_kind": { "enum": ["convert", "validate", "unknown"] },
+        "provided_option_names": {
+          "type": "array",
+          "maxItems": 2048,
+          "items": { "$ref": "#/$defs/text" }
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os_family", "architecture"],
+      "properties": {
+        "os_family": { "$ref": "#/$defs/text" },
+        "architecture": { "$ref": "#/$defs/text" }
+      }
+    },
+    "fidelity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exact", "approximate", "unsupported", "invalid", "other"],
+      "properties": {
+        "exact": { "type": "integer", "minimum": 0 },
+        "approximate": { "type": "integer", "minimum": 0 },
+        "unsupported": { "type": "integer", "minimum": 0 },
+        "invalid": { "type": "integer", "minimum": 0 },
+        "other": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "start", "end"],
+      "properties": {
+        "source": { "$ref": "#/$defs/text" },
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": { "name": { "$ref": "#/$defs/text" }, "value": { "$ref": "#/$defs/text" } }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "name",
+        "source_code",
+        "severity",
+        "summary",
+        "help",
+        "fields",
+        "spans",
+        "native_finding"
+      ],
+      "properties": {
+        "code": { "$ref": "#/$defs/text" },
+        "name": { "$ref": "#/$defs/text" },
+        "source_code": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+        "severity": { "enum": ["error", "warning", "note"] },
+        "summary": { "$ref": "#/$defs/text" },
+        "help": { "$ref": "#/$defs/text" },
+        "fields": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/field" } },
+        "spans": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/span" } },
+        "native_finding": {
+          "anyOf": [{ "$ref": "#/$defs/native_finding" }, { "type": "null" }]
+        }
+      }
+    },
+    "native_label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "start", "end", "message"],
+      "properties": {
+        "kind": { "enum": ["primary", "secondary", "unknown"] },
+        "source": { "$ref": "#/$defs/text" },
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 },
+        "message": { "$ref": "#/$defs/text" }
+      }
+    },
+    "native_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_format",
+        "producer",
+        "producer_version",
+        "code",
+        "stage",
+        "severity",
+        "summary",
+        "fields",
+        "labels",
+        "notes",
+        "help"
+      ],
+      "properties": {
+        "source_format": { "$ref": "#/$defs/text" },
+        "producer": { "$ref": "#/$defs/text" },
+        "producer_version": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+        "code": { "$ref": "#/$defs/text" },
+        "stage": { "$ref": "#/$defs/text" },
+        "severity": { "enum": ["error", "warning", "note"] },
+        "summary": { "$ref": "#/$defs/text" },
+        "fields": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/field" } },
+        "labels": {
+          "type": "array",
+          "maxItems": 2048,
+          "items": { "$ref": "#/$defs/native_label" }
+        },
+        "notes": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/text" } },
+        "help": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "size"],
+      "properties": {
+        "name": { "$ref": "#/$defs/text" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classes", "count", "review_required"],
+      "properties": {
+        "classes": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/text" } },
+        "count": { "type": "integer", "minimum": 0 },
+        "review_required": { "const": true }
+      }
+    },
+    "truncation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "original", "retained"],
+      "properties": {
+        "field": { "$ref": "#/$defs/text" },
+        "original": { "type": "integer", "minimum": 0 },
+        "retained": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

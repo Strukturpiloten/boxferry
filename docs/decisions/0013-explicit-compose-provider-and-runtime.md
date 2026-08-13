@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-04
+- Amended by: [ADR 0020](0020-rolling-compose-specification-cli-target.md) for the generic CLI
 
 ## Context
 
@@ -51,6 +52,12 @@ Exact lifecycle resolutions supplied to the runtime importer remain the preferre
   unknown receive stable `BFC0009` outcomes before output authorization.
 - Health checks, dependencies, configs, secrets, service groups, and newer neutral variants remain
   explicit `BFC0007` partial losses until ComposeLens generation exposes reviewed equivalents.
+
+## CLI amendment (2026-08-11)
+
+ADR 0020 supersedes this decision's provider and runtime selection requirement for the generic
+Quadlet-to-Compose CLI route only. The public embedded `ComposeExporter` API and its exact
+provider-aware targets remain governed by this ADR.
 
 ## Alternatives considered
 

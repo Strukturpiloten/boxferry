@@ -3,10 +3,7 @@ id = "compose-to-quadlet-interpolation"
 suite = "conversion"
 description = "Protects opt-in Compose interpolation from explicit plain and individually authorized sensitive process variables."
 secrets_reviewed = true
-files = [
-  "compose.yaml",
-  "app.container",
-]
+files = ["compose.yaml", "app.container"]
 
 [provenance]
 source = "authored"

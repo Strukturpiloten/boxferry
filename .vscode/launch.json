@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "BoxFerry: CLI help",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--locked", "--bin", "boxferry"],
+        "filter": {
+          "name": "boxferry",
+          "kind": "bin"
+        }
+      },
+      "args": ["help"],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
-    ImportResult, InvalidDiagnosticCode, Severity,
+    ImportResult, InvalidDiagnosticCode, NativeFinding, RuleId, Severity,
 };
 use boxferry_model::{
     Annotation, Application, BuildSettingValues, BuildSyntax, Command, Device, Entrypoint, EnvironmentFile,
@@ -39,10 +39,14 @@ impl QuadletImporter {
     pub fn new() -> Result<Self, InvalidDiagnosticCode> {
         Ok(Self {
             codes: Codes {
-                invalid_source: DiagnosticCode::new("BFQ1001")?,
-                invalid_model: DiagnosticCode::new("BFQ1002")?,
-                unsupported: DiagnosticCode::new("BFQ1003")?,
-                approximate: DiagnosticCode::new("BFQ1004")?,
+                invalid_source: RuleId::QuadletSourceInvalid.definition().diagnostic_code()?,
+                invalid_model: RuleId::QuadletModelInvalid.definition().diagnostic_code()?,
+                unsupported: RuleId::QuadletInputUnsupported.definition().diagnostic_code()?,
+                approximate: RuleId::QuadletInputApproximation.definition().diagnostic_code()?,
+                native_syntax: RuleId::QuadletNativeSyntax.definition().diagnostic_code()?,
+                native_model: RuleId::QuadletNativeModel.definition().diagnostic_code()?,
+                native_document_set: RuleId::QuadletNativeDocumentSet.definition().diagnostic_code()?,
+                native_failure: RuleId::QuadletNativeFailure.definition().diagnostic_code()?,
             },
         })
     }
@@ -53,6 +57,7 @@ impl ImportAdapter for QuadletImporter {
 
     fn import(&self, source: &Self::Source) -> ImportResult {
         let mut mapping = Mapping::new(&self.codes, source);
+        mapping.report_native_findings(source.native_findings());
         if !source.documents().is_valid() {
             mapping.invalid_source();
             return ImportResult::new(None, mapping.outcomes, mapping.diagnostics);
@@ -125,6 +130,10 @@ struct Codes {
     invalid_model: DiagnosticCode,
     unsupported: DiagnosticCode,
     approximate: DiagnosticCode,
+    native_syntax: DiagnosticCode,
+    native_model: DiagnosticCode,
+    native_document_set: DiagnosticCode,
+    native_failure: DiagnosticCode,
 }
 
 struct Mapping<'a> {
@@ -207,6 +216,25 @@ impl<'a> Mapping<'a> {
             source,
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
+        }
+    }
+
+    fn report_native_findings(&mut self, findings: &[NativeFinding]) {
+        for finding in findings {
+            let code = match finding.code().get(..3) {
+                Some("QLS") => self.codes.native_syntax.clone(),
+                Some("QLM") => self.codes.native_model.clone(),
+                Some("QLG") => self.codes.native_document_set.clone(),
+                _ => self.codes.native_failure.clone(),
+            };
+            self.diagnostics.push(
+                Diagnostic::new(
+                    code,
+                    finding.severity(),
+                    "QuadletLens reported a native Quadlet finding",
+                )
+                .with_native_finding(finding.clone()),
+            );
         }
     }
 

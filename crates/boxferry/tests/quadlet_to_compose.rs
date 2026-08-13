@@ -8,9 +8,16 @@ use boxferry::{
     QuadletDocumentInput, QuadletImporter, QuadletSource, TargetProfile, convert,
 };
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(application_name, inputs)?.into_source())
+}
+
 #[test]
 fn quadlet_input_composes_with_the_existing_compose_exporter() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("example")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -42,7 +49,7 @@ fn quadlet_input_composes_with_the_existing_compose_exporter() -> Result<(), Box
 
 #[test]
 fn pod_runtime_settings_remain_group_scoped_and_never_leak_into_compose_services() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("grouped")?,
         [
             QuadletDocumentInput::new("frontend.network", SourceId::new(1), "[Network]\n"),
@@ -97,7 +104,7 @@ fn pod_runtime_settings_remain_group_scoped_and_never_leak_into_compose_services
 
 #[test]
 fn shared_quadlet_service_fields_convert_to_compose_without_loss() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("example")?,
         [
             QuadletDocumentInput::new(
@@ -180,7 +187,7 @@ fn shared_quadlet_service_fields_convert_to_compose_without_loss() -> Result<(),
 
 #[test]
 fn public_quadlet_to_compose_route_reconstructs_canonical_security_options() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("security")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -233,7 +240,7 @@ fn public_quadlet_to_compose_route_reconstructs_canonical_security_options() -> 
 
 #[test]
 fn false_quadlet_selinux_booleans_remain_neutral_but_are_not_invented_in_compose() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("security-false")?,
         [QuadletDocumentInput::new(
             "web.container",
@@ -272,7 +279,7 @@ fn false_quadlet_selinux_booleans_remain_neutral_but_are_not_invented_in_compose
 
 #[test]
 fn converts_quadlet_environment_files_after_parser_parity_authorization() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("example")?,
         [QuadletDocumentInput::new(
             "web.container",

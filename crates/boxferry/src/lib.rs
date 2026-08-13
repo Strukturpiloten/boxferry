@@ -29,6 +29,9 @@
 //! # }
 //! ```
 
+/// Versioned, presentation-independent conversion reports.
+pub mod report;
+
 /// Compose native-model adapter APIs, enabled by the additive `compose` feature.
 #[cfg(feature = "compose")]
 pub use boxferry_compose as compose;
@@ -51,8 +54,9 @@ pub use boxferry_runtime as runtime;
 
 pub use boxferry_engine::{
     ConversionError, ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, Diagnostic, DiagnosticCode,
-    DiagnosticField, DiagnosticValue, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter, LossPolicy,
-    ParsePlatformVersionError, PlatformVersion, Severity, TargetProfile, VersionRange, convert,
+    DiagnosticField, DiagnosticRule, DiagnosticValue, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter,
+    LossPolicy, NativeFinding, NativeFindingLabel, NativeFindingLabelKind, ParsePlatformVersionError, PlatformVersion,
+    RULES, RuleId, Severity, TargetProfile, VersionRange, convert, find_rule,
 };
 pub use boxferry_model::{
     Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildAttestation, BuildContext,
@@ -70,7 +74,9 @@ pub use boxferry_model::{
 
 #[cfg(feature = "compose")]
 pub use boxferry_compose::{
-    ComposeExporter, ComposeImporter, ComposeRuntime, ComposeSource, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, CanonicalComposeDocument,
+    ComposeCanonicalization, ComposeExporter, ComposeFindingStage, ComposeImporter, ComposeRuntime, ComposeSource,
+    DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
 };
 #[cfg(feature = "docker-runtime")]
 pub use boxferry_docker::{
@@ -82,7 +88,9 @@ pub use boxferry_docker::{
 #[cfg(feature = "quadlet")]
 pub use boxferry_quadlet::{
     QuadletDocumentInput, QuadletExporter, QuadletExporterError, QuadletFile, QuadletGroupingPolicy, QuadletImporter,
-    QuadletOutput, QuadletSource, QuadletSourceError,
+    QuadletOutput, QuadletParseDiagnostic, QuadletParseDiagnosticLabel, QuadletParseDiagnosticOrigin,
+    QuadletParseDiagnosticSeverity, QuadletParseError, QuadletParseFailure, QuadletParseFailureStage,
+    QuadletParseResult, QuadletSource,
 };
 
 #[cfg(feature = "podman-runtime")]

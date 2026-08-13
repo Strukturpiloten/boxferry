@@ -4,6 +4,8 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/boxferry,type=bind",
+  "workspaceFolder": "/workspaces/boxferry",
   "remoteUser": "vscode",
   "updateRemoteUserUID": true,
   "features": {
@@ -12,9 +14,17 @@
     }
   },
   "containerEnv": {
+    "CARGO_HOME": "/workspaces/.boxferry-cargo",
+    "CARGO_TARGET_DIR": "/workspaces/.boxferry-target",
     "PATH": "/home/vscode/.local/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   },
-  "postCreateCommand": "cargo fetch --locked",
+  "mounts": [
+    "source=boxferry-cargo-${devcontainerId},target=/workspaces/.boxferry-cargo,type=volume",
+    "source=boxferry-target-${devcontainerId},target=/workspaces/.boxferry-target,type=volume",
+    "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
+    "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind"
+  ],
+  "postCreateCommand": "bash .devcontainer/verify-tools.sh",
   "waitFor": "postCreateCommand",
   "hostRequirements": {
     "cpus": 2,
@@ -30,14 +40,7 @@
         "streetsidesoftware.code-spell-checker",
         "tamasfe.even-better-toml",
         "vadimcn.vscode-lldb"
-      ],
-      "settings": {
-        "editor.formatOnSave": true,
-        "files.watcherExclude": {
-          "**/target/**": true
-        },
-        "rust-analyzer.check.command": "clippy"
-      }
+      ]
     }
   }
 }

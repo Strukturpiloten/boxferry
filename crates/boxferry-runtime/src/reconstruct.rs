@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
-    ImportResult, InvalidDiagnosticCode, Severity,
+    ImportResult, InvalidDiagnosticCode, RuleId, Severity,
 };
 use boxferry_model::{
     Application, Command, EnvironmentValue, EnvironmentVariable, Healthcheck, MetadataLabel, ModelError, MountSource,
@@ -50,16 +50,18 @@ impl RuntimeImporter {
             override_reconstruction,
             resolutions: RuntimeResolutions::new(),
             codes: Codes {
-                reconstruction_uncertain: DiagnosticCode::new("BFR0001")?,
-                inferred_override: DiagnosticCode::new("BFR0002")?,
-                comparison_incomplete: DiagnosticCode::new("BFR0003")?,
-                ownership_uncertain: DiagnosticCode::new("BFR0004")?,
-                pod_relationship: DiagnosticCode::new("BFR0005")?,
-                image_missing: DiagnosticCode::new("BFR0006")?,
-                invalid_model: DiagnosticCode::new("BFR0007")?,
-                group_relationship_conflict: DiagnosticCode::new("BFR0008")?,
-                lifecycle_resolution: DiagnosticCode::new("BFR0009")?,
-                runtime_managed_metadata: DiagnosticCode::new("BFR0010")?,
+                reconstruction_uncertain: RuleId::RuntimeReconstructionUncertain.definition().diagnostic_code()?,
+                inferred_override: RuleId::RuntimeOverrideInferred.definition().diagnostic_code()?,
+                comparison_incomplete: RuleId::RuntimeComparisonIncomplete.definition().diagnostic_code()?,
+                ownership_uncertain: RuleId::RuntimeOwnershipUncertain.definition().diagnostic_code()?,
+                pod_relationship: RuleId::RuntimePodRelationshipIncomplete
+                    .definition()
+                    .diagnostic_code()?,
+                image_missing: RuleId::RuntimeImageMissing.definition().diagnostic_code()?,
+                invalid_model: RuleId::RuntimeModelInvalid.definition().diagnostic_code()?,
+                group_relationship_conflict: RuleId::RuntimeGroupConflict.definition().diagnostic_code()?,
+                lifecycle_resolution: RuleId::RuntimeLifecycleResolved.definition().diagnostic_code()?,
+                runtime_managed_metadata: RuleId::RuntimeManagedMetadata.definition().diagnostic_code()?,
             },
         })
     }

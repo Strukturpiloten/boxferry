@@ -146,10 +146,12 @@ The adapter currently reports rather than guesses:
   resolution.
 
 The released container-setting keys do not make runtime claims: hostname output requires a resolved
-safe value without host-UTS conflict; PID and shared-memory values retain arbitrary-precision raw
-spelling but emit only the reviewed positive forms; capability order, duplication, and explicit
-empty collections remain evidence without reconciliation; and sysctl, ulimit, tmpfs, and device
-values are not interpreted as kernel, mount, privilege, rootless, or host-inspection assertions.
+safe value without host-UTS conflict; PID and shared-memory values retain arbitrary-precision
+amounts and emit only the reviewed positive forms. Compose `kb`, `mb`, and `gb` shared-memory
+suffixes are losslessly normalized to Podman's equivalent `k`, `m`, and `g` spellings. Capability
+order, duplication, and explicit empty collections remain evidence without reconciliation; and
+sysctl, ulimit, tmpfs, and device values are not interpreted as kernel, mount, privilege, rootless,
+or host-inspection assertions.
 
 Missing required dependency services, dependency-ordering cycles, missing secret declarations,
 and incompatible explicit grouping requests are invalid. Optional absent services and unsupported
@@ -185,16 +187,21 @@ note that later releases remain an assumption.
 
 ## Diagnostics
 
-| Code      | Severity      | Meaning                                                                  |
-| --------- | ------------- | ------------------------------------------------------------------------ |
-| `BFQ0001` | error         | Target implementation or Podman range cannot be planned safely.          |
-| `BFQ0002` | note          | Maximum is omitted; the report names the finite verified ceiling.        |
-| `BFQ0003` | warning       | Neutral intent is unsupported by the current target mapping.             |
-| `BFQ0004` | error         | A required value cannot be emitted safely as native Quadlet.             |
-| `BFQ0005` | error         | QuadletLens rejected a generated document or document set.               |
-| `BFQ0006` | warning/note  | A required capability is unavailable or deprecated for the target range. |
-| `BFQ0007` | warning/error | Explicit pod grouping is approximate or incompatible with source intent. |
-| `BFQ0008` | warning/error | Dependency semantics are partial, missing, cyclic, or otherwise unsafe.  |
+| Code      | Severity | Meaning                                                                  |
+| --------- | -------- | ------------------------------------------------------------------------ |
+| `BFQ0001` | error    | Target implementation or Podman range cannot be planned safely.          |
+| `BFQ0002` | note     | Maximum is omitted; the report names the finite verified ceiling.        |
+| `BFQ0003` | warning  | Neutral intent is unsupported by the current target mapping.             |
+| `BFQ0004` | error    | A required value cannot be emitted safely as native Quadlet.             |
+| `BFQ0005` | error    | QuadletLens rejected a generated document or document set.               |
+| `BFQ0006` | warning  | A required capability is unavailable for the target range.               |
+| `BFQ0007` | warning  | Explicit pod grouping approximates source isolation.                     |
+| `BFQ0008` | warning  | Dependency semantics are not represented exactly.                        |
+| `BFQ0011` | error    | The requested grouping is incompatible with source intent.               |
+| `BFQ0012` | error    | A service or artifact dependency graph is invalid.                       |
+| `BFQ0013` | note     | A required capability is deprecated for the target range.                |
+| `BFQ0014` | error    | A source variable expression must be resolved before Quadlet generation. |
 
 Every warning/error fidelity decision carries the contributing neutral-model provenance. Sensitive
-values are not copied into diagnostic fields.
+values are not copied into diagnostic fields. The generated complete catalogue and explanation
+commands are documented in [Diagnostic rules](diagnostic-rules.md).

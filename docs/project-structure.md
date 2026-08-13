@@ -8,10 +8,13 @@ boxferry/
 ├── .devcontainer/                   # digest-pinned VS Code environment and feature lock
 ├── Cargo.toml
 ├── Cargo.lock
+├── package.json                    # non-Rust Node development tools only
+├── package-lock.json               # locked Markdownlint and Prettier graph
 ├── rust-toolchain.toml
 ├── rustfmt.toml
 ├── clippy.toml
 ├── deny.toml
+├── lychee.toml                    # local/offline and rate-limited external link policy
 ├── .cargo/
 │   └── config.toml              # canonical Cargo aliases
 ├── AGENTS.md
@@ -20,12 +23,13 @@ boxferry/
 ├── crates/
 │   ├── boxferry/                 # public library facade and CLI executable
 │   │   ├── src/lib.rs            # re-exports supported core and optional adapter APIs
-│   │   ├── src/main.rs           # implemented Compose-to-Quadlet CLI and presentation
+│   │   ├── src/main.rs           # CLI, route dispatch, reports, and presentation
+│   │   ├── src/route.rs          # finite typed CLI route registry
 │   │   └── tests/                # facade contracts and repository-policy tests
 │   ├── boxferry-model/           # ordered application graph, provenance, protected values
 │   ├── boxferry-engine/          # adapters, planning, loss policy, targets, diagnostics
 │   ├── boxferry-compose/         # implemented: ComposeLens import/export mapping
-│   ├── boxferry-quadlet/         # implemented: validated QuadletLens export mapping
+│   ├── boxferry-quadlet/         # implemented: validated QuadletLens import/export mapping
 │   ├── boxferry-runtime/         # implemented: runtime-neutral observations and reconstruction
 │   ├── boxferry-kubernetes/      # planned: Kubernetes mapping and target policy
 │   ├── boxferry-docker/          # implemented: versioned Docker inspection and acquisition
@@ -37,6 +41,10 @@ boxferry/
 │   └── README.md                  # fixture location and safety rules
 ├── tests/
 │   └── README.md                  # cross-crate scenario ownership
+├── scripts/
+│   ├── check-all.sh               # complete deterministic local validation
+│   ├── check-files.sh             # tracked non-Rust formatting and lint contract
+│   └── install-file-tools.sh      # pinned Linux file-quality tool installer
 ├── tools/
 │   ├── docker-runtime-matrix.toml # exact Engine image and reviewed API bounds
 │   └── podman-runtime-matrix.toml # exact executable lanes and explicit evidence gaps
@@ -48,6 +56,7 @@ boxferry/
     ├── renovate.json
     └── workflows/
         ├── ci.yml
+        ├── documentation-links.yml
         ├── docker-runtime-conformance.yml
         ├── podman-runtime-conformance.yml
         └── release.yml            # protected lockstep crate publication

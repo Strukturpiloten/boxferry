@@ -1,0 +1,101 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "BoxFerry: Format, lint, and test all",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/check-all.sh",
+      "problemMatcher": "$rustc",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "BoxFerry: Format check",
+      "type": "process",
+      "command": "cargo",
+      "args": ["fmt", "--all", "--", "--check"],
+      "problemMatcher": []
+    },
+    {
+      "label": "BoxFerry: Check",
+      "type": "process",
+      "command": "cargo",
+      "args": ["ci-check"],
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "BoxFerry: Policy",
+      "type": "process",
+      "command": "cargo",
+      "args": ["ci-policy"],
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "BoxFerry: Clippy",
+      "type": "process",
+      "command": "cargo",
+      "args": ["ci-clippy"],
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "BoxFerry: Test",
+      "type": "process",
+      "command": "cargo",
+      "args": ["ci-test"],
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "BoxFerry: Doctest",
+      "type": "process",
+      "command": "cargo",
+      "args": ["ci-doctest"],
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "BoxFerry: Documentation",
+      "type": "process",
+      "command": "cargo",
+      "args": ["ci-doc"],
+      "options": {
+        "env": {
+          "RUSTDOCFLAGS": "-D warnings"
+        }
+      },
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "BoxFerry: Required Rust checks",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "BoxFerry: Format check",
+        "BoxFerry: Check",
+        "BoxFerry: Policy",
+        "BoxFerry: Clippy",
+        "BoxFerry: Test",
+        "BoxFerry: Doctest",
+        "BoxFerry: Documentation"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "BoxFerry: Build workspace",
+      "type": "process",
+      "command": "cargo",
+      "args": ["build", "--locked", "--workspace", "--all-features"],
+      "problemMatcher": "$rustc",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "BoxFerry: Build release CLI",
+      "type": "process",
+      "command": "cargo",
+      "args": ["build", "--locked", "--release", "--bin", "boxferry"],
+      "problemMatcher": "$rustc"
+    }
+  ]
+}

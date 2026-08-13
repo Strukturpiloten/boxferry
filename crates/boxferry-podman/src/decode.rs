@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
-    ImportResult, InvalidDiagnosticCode, PlatformVersion, Severity,
+    ImportResult, InvalidDiagnosticCode, PlatformVersion, RuleId, Severity,
 };
 use boxferry_model::{
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference, ModelError, Mount,
@@ -80,10 +80,10 @@ impl PodmanImporter {
         Ok(Self {
             runtime: RuntimeImporter::new(override_reconstruction)?,
             codes: Codes {
-                invalid_data: DiagnosticCode::new("BFP0001")?,
-                unmodeled_configuration: DiagnosticCode::new("BFP0002")?,
-                unsupported_version: DiagnosticCode::new("BFP0003")?,
-                missing_relationship: DiagnosticCode::new("BFP0004")?,
+                invalid_data: RuleId::PodmanDataInvalid.definition().diagnostic_code()?,
+                unmodeled_configuration: RuleId::PodmanConfigurationUnsupported.definition().diagnostic_code()?,
+                unsupported_version: RuleId::PodmanVersionUnsupported.definition().diagnostic_code()?,
+                missing_relationship: RuleId::PodmanRelationshipMissing.definition().diagnostic_code()?,
             },
         })
     }

@@ -16,6 +16,13 @@ use boxferry::{
     QuadletFile, QuadletImporter, QuadletSource, SourceId, TargetProfile, convert,
 };
 
+fn parse_source(
+    application_name: Identifier,
+    inputs: impl IntoIterator<Item = QuadletDocumentInput>,
+) -> Result<QuadletSource, Box<dyn Error>> {
+    Ok(QuadletSource::parse(application_name, inputs)?.into_source())
+}
+
 #[test]
 fn compose_network_slice_emits_all_ten_keys_at_the_floor_and_ceiling() -> Result<(), Box<dyn Error>> {
     let source = compose_network_source()?;
@@ -61,7 +68,7 @@ fn compose_network_slice_emits_all_ten_keys_at_the_floor_and_ceiling() -> Result
 
 #[test]
 fn quadlet_network_import_keeps_one_row_and_reports_compose_ipam_loss() -> Result<(), Box<dyn Error>> {
-    let source = QuadletSource::parse(
+    let source = parse_source(
         Identifier::new("network")?,
         [
             QuadletDocumentInput::new(
@@ -139,7 +146,7 @@ fn quadlet_network_resets_duplicates_and_multi_row_ipam_stay_explicit() -> Resul
             ),
         ),
     ] {
-        let source = QuadletSource::parse(
+        let source = parse_source(
             Identifier::new(name)?,
             [QuadletDocumentInput::new(
                 format!("{name}.network"),

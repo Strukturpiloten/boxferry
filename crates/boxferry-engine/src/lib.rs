@@ -3,11 +3,16 @@
 mod adapter;
 mod diagnostic;
 mod outcome;
+mod rule;
 mod target;
 
 pub use adapter::{ConversionError, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter, convert};
-pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, InvalidDiagnosticCode, Severity};
+pub use diagnostic::{
+    Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, InvalidDiagnosticCode, NativeFinding,
+    NativeFindingLabel, NativeFindingLabelKind, Severity,
+};
 pub use outcome::{ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, LossPolicy, PlanError};
+pub use rule::{DiagnosticRule, RULES, RuleId, find_rule};
 pub use target::{ParsePlatformVersionError, PlatformVersion, TargetProfile, TargetProfileError, VersionRange};
 
 #[cfg(test)]

@@ -9,9 +9,12 @@ mod export;
 mod import;
 mod source;
 
-pub use export::{ComposeExporter, ComposeRuntime, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET};
+pub use export::{
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeRuntime,
+    DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+};
 pub use import::ComposeImporter;
-pub use source::ComposeSource;
+pub use source::{CanonicalComposeDocument, ComposeCanonicalization, ComposeFindingStage, ComposeSource};
 
 /// The native Compose library consumed by this adapter.
 pub use compose_lens;

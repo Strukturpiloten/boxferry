@@ -14,10 +14,10 @@ podman_command=("$podman_executable")
 work_directory="$(mktemp -d)"
 
 cleanup() {
-  "${podman_command[@]}" pod rm --force "${resource_prefix}-pod" >/dev/null 2>&1 || true
-  "${podman_command[@]}" volume rm --force "${resource_prefix}-data" >/dev/null 2>&1 || true
-  "${podman_command[@]}" network rm --force "${resource_prefix}-network" >/dev/null 2>&1 || true
-  "${podman_command[@]}" image rm --force "localhost/${resource_prefix}:1" >/dev/null 2>&1 || true
+  "${podman_command[@]}" pod rm --force "${resource_prefix}-pod" > /dev/null 2>&1 || true
+  "${podman_command[@]}" volume rm --force "${resource_prefix}-data" > /dev/null 2>&1 || true
+  "${podman_command[@]}" network rm --force "${resource_prefix}-network" > /dev/null 2>&1 || true
+  "${podman_command[@]}" image rm --force "localhost/${resource_prefix}:1" > /dev/null 2>&1 || true
   rm -rf -- "$work_directory"
 }
 trap cleanup EXIT
@@ -34,14 +34,14 @@ tar -C "$work_directory/rootfs" -cf "$work_directory/rootfs.tar" .
   --change LABEL=com.example.image=runtime-matrix \
   "$work_directory/rootfs.tar" \
   "localhost/${resource_prefix}:1" \
-  >/dev/null
-"${podman_command[@]}" network create "${resource_prefix}-network" >/dev/null
-"${podman_command[@]}" volume create "${resource_prefix}-data" >/dev/null
+  > /dev/null
+"${podman_command[@]}" network create "${resource_prefix}-network" > /dev/null
+"${podman_command[@]}" volume create "${resource_prefix}-data" > /dev/null
 "${podman_command[@]}" pod create \
   --name "${resource_prefix}-pod" \
   --network "${resource_prefix}-network" \
   --publish 127.0.0.1:18080:8080 \
-  >/dev/null
+  > /dev/null
 "${podman_command[@]}" create \
   --name "${resource_prefix}-web" \
   --pod "${resource_prefix}-pod" \
@@ -60,16 +60,16 @@ tar -C "$work_directory/rootfs" -cf "$work_directory/rootfs.tar" .
   --volume "${resource_prefix}-data:/data:ro,Z" \
   "localhost/${resource_prefix}:1" \
   --serve \
-  >/dev/null
+  > /dev/null
 
 read -r -a pod_member_ids <<< "$(
   "${podman_command[@]}" pod inspect "${resource_prefix}-pod" --format '{{range .Containers}}{{.Id}} {{end}}'
 )"
 
-"${podman_command[@]}" container inspect -- "${pod_member_ids[@]}" >"${output_directory}/containers.json"
-"${podman_command[@]}" image inspect -- "localhost/${resource_prefix}:1" >"${output_directory}/images.json"
-"${podman_command[@]}" network inspect -- "${resource_prefix}-network" >"${output_directory}/networks.json"
-"${podman_command[@]}" volume inspect -- "${resource_prefix}-data" >"${output_directory}/volumes.json"
-"${podman_command[@]}" pod inspect -- "${resource_prefix}-pod" >"${output_directory}/pods.json"
-printf '%s\n' "$actual_version" >"${output_directory}/version.txt"
+"${podman_command[@]}" container inspect -- "${pod_member_ids[@]}" > "${output_directory}/containers.json"
+"${podman_command[@]}" image inspect -- "localhost/${resource_prefix}:1" > "${output_directory}/images.json"
+"${podman_command[@]}" network inspect -- "${resource_prefix}-network" > "${output_directory}/networks.json"
+"${podman_command[@]}" volume inspect -- "${resource_prefix}-data" > "${output_directory}/volumes.json"
+"${podman_command[@]}" pod inspect -- "${resource_prefix}-pod" > "${output_directory}/pods.json"
+printf '%s\n' "$actual_version" > "${output_directory}/version.txt"
 chmod 0644 "${output_directory}"/*

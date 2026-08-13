@@ -2,9 +2,9 @@
 
 ## Current status
 
-BoxFerry 0.1.1 is the first crates.io release. The facade and seven supported component crates use
-one lockstep version and the pre-1.0 contract below. A Git dependency remains bound to its exact
-revision rather than an arbitrary branch.
+BoxFerry 0.1.1 is the first crates.io release. The next lockstep pre-1.0 minor version is 0.2.0;
+it intentionally removes the legacy Quadlet parser surface. The facade and seven supported
+component crates use one lockstep version and the pre-1.0 contract below.
 
 The additive `compose`, `quadlet`, pure `runtime`, `podman-runtime`, and `docker-runtime` facade
 features are exercised as external callers use them,
@@ -30,6 +30,10 @@ The initial `ServiceGroup` contract guarantees ordered structural membership and
 Adding portable namespace or target-workload semantics requires new additive fields or types; it
 must not silently reinterpret existing groups.
 
+`NativeFinding` is the format-neutral provenance boundary for producer diagnostics. Its
+non-exhaustive enums and private fields may grow additively; native codes do not become BoxFerry
+rule codes, and source adapters must not drop retained findings when consumed or imported.
+
 ## Features and dependencies
 
 Adapter and runtime Cargo features are additive: enabling one must not disable or reinterpret
@@ -39,6 +43,14 @@ another. Default features will be fixed before the first BoxFerry release and do
 The MSRV is part of the public contract. Raising it requires a pre-1.0 minor release, release notes,
 and CI evidence for the new floor. Normal development and the explicit MSRV job must both remain
 green.
+
+## Platform support
+
+The CLI supports Linux. Windows users run the Linux executable inside WSL2; native Windows CLI
+behavior is not part of the compatibility contract. macOS remains a deterministic POSIX
+portability lane, not a claim of native systemd or container-runtime availability. Component
+library compilation on other targets is incidental unless the platform is listed in the supported
+CI matrix. See [platform support](platform-support.md).
 
 ## Deprecation
 

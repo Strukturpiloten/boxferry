@@ -15,16 +15,16 @@ The repository that owns a task is authoritative for its detailed status. Update
 
 ## Program status
 
-| Task | Owner | Status | Deliverable |
-| --- | --- | --- | --- |
-| T1 | All repositories | completed | Executable testing and fixture foundations |
-| T2 | ComposeLens | completed | Loss-aware YAML syntax and diagnostic kernel |
-| T3 | QuadletLens | completed | Ordered Quadlet syntax and rendering kernel |
-| T4 | BoxFerry | completed | Independent neutral model and conversion engine |
-| T5 | All repositories | in progress | Minimum native typed subsets for the first conversion |
-| T6 | BoxFerry, integrating both Lens libraries | in progress | First Compose-to-Quadlet vertical slice |
-| T7 | All repositories | in progress | Expanded conformance, runtime, and release testing tiers |
-| T8 | BoxFerry, integrating all adapters | in progress | First N-to-N Docker/Compose/Podman/Quadlet milestone |
+| Task | Owner                                     | Status      | Deliverable                                              |
+| ---- | ----------------------------------------- | ----------- | -------------------------------------------------------- |
+| T1   | All repositories                          | completed   | Executable testing and fixture foundations               |
+| T2   | ComposeLens                               | completed   | Loss-aware YAML syntax and diagnostic kernel             |
+| T3   | QuadletLens                               | completed   | Ordered Quadlet syntax and rendering kernel              |
+| T4   | BoxFerry                                  | completed   | Independent neutral model and conversion engine          |
+| T5   | All repositories                          | in progress | Minimum native typed subsets for the first conversion    |
+| T6   | BoxFerry, integrating both Lens libraries | in progress | First Compose-to-Quadlet vertical slice                  |
+| T7   | All repositories                          | in progress | Expanded conformance, runtime, and release testing tiers |
+| T8   | BoxFerry, integrating all adapters        | in progress | First N-to-N Docker/Compose/Podman/Quadlet milestone     |
 
 ## T1: Testing foundations
 
@@ -108,7 +108,7 @@ network, profile, config, secret, and label forms. QuadletLens has completed its
 with ordered source-aware `.container`, `.pod`, `.network`, and `.volume` documents, generic systemd
 and unknown entry preservation, native key enums, conservative path/reference forms,
 separate syntax/model diagnostics, and exact document-set dependency resolution. BoxFerry now
-consumes ComposeLens 0.1.15 from crates.io through its independent `boxferry-compose` crate. The
+consumes ComposeLens 0.1.16 from crates.io through its independent `boxferry-compose` crate. The
 adapter maps images, commands, execution identity/context, health checks, environment, extra
 hosts, single ports, named volumes, bind mounts, networks, explicit profiles, config/secret
 resources and grants, service labels, container restart policies, provenance, and short/long
@@ -122,12 +122,12 @@ The neutral model retains ordered explicit hostname mappings, distinguishes `hos
 ordinary IP address spellings, and keeps unsupported `start_interval` intent for target-specific
 reporting.
 
-The implemented input boundary is ComposeLens 0.1.15's native `build_project_view` over a
+The implemented input boundary is ComposeLens 0.1.16's native `build_project_view` over a
 `MergedProject` and optional matching `ProfileSelection`. BoxFerry maps it without canonical
 rendering or reparsing and retains all contributing source origins in neutral values and outcomes.
 
-ComposeLens 0.1.15 is published on crates.io with a documented pre-1.0 compatibility contract.
-BoxFerry consumes ComposeLens 0.1.15 through a compatible crates.io requirement and commits its
+ComposeLens 0.1.16 is published on crates.io with a documented pre-1.0 compatibility contract.
+BoxFerry consumes ComposeLens 0.1.16 through a compatible crates.io requirement and commits its
 application lockfile. Commit-pinned Git dependencies remain an emergency-only fallback.
 
 The Compose adapter fixture also exposed a ComposeLens 0.1 YAML-backend defect: an unquoted short
@@ -138,7 +138,7 @@ future backend omissions; that behavior remains present in the consumed 0.1.13 r
 BoxFerry can now use the unquoted real-world spelling and the released source-aware merged-project
 view without a canonical render-and-reparse bridge.
 
-QuadletLens 0.1.11 is published on crates.io and BoxFerry consumes it through the independent
+QuadletLens 0.1.12 is published on crates.io and BoxFerry consumes it through the independent
 `boxferry-quadlet` crate. The exporter uses typed native construction and capability evaluation,
 generates exact separate container units or an explicitly authorized compatible pod plus
 application-owned network and volume units, references external resources directly, validates the
@@ -259,10 +259,11 @@ approximation. Optional files, unsafe paths, authorized file-content processing,
 encoders, and the TYPO3 showcase remain.
 
 Runtime observations can also flow through the public engine into deterministic Compose output.
-The exporter consumes ComposeLens 0.1.15's parse-back-validated generated-document API, requires one
-exact Docker Compose or `podman-compose` provider release, keeps an optional exact Docker Engine or
-Podman backend separate, preserves observed resource names and container restart policies, and
-emits ordered short/long environment-file declarations with their explicit options and
+The exporter consumes ComposeLens 0.1.16's parse-back-validated generated-document API. Embedded
+callers may require one exact Docker Compose or `podman-compose` provider release and an optional
+separate exact Docker Engine or Podman backend; the generic Quadlet-to-Compose CLI route instead
+uses the rolling provider-neutral Compose Specification target. Both preserve observed resource
+names and container restart policies, and emit ordered short/long environment-file declarations with their explicit options and
 sensitivity. It reports every compatibility or unsupported field decision before
 authorization. Health checks, dependencies, configs, secrets, and structural groups remain
 explicit partial losses until the native generated subset expands.
@@ -329,9 +330,11 @@ named-network, metadata-label, host-mapping, and execution-context slice. It ret
 identity for systemd restart policy and complete sibling activation-plus-ordering dependencies;
 regular native health commands and scalars also enter the protected, source-aware health model.
 Host-unit references and incomplete relationships remain explicit. Docker and Podman runtime
-importers plus Compose and Quadlet exporters already exist as library APIs. Adapter-level fixtures
-and exact Quadlet-to-Compose golden tests exercise the expanded path; the remaining semantic
-fields, runtime targets, generic CLI, and full route matrix are still open.
+importers plus Compose and Quadlet exporters already exist as library APIs. The nested CLI exposes
+all four Compose/Quadlet document routes. Compose-to-Compose uses public native canonicalization to
+retain expressions and extension data; cross-format and Quadlet-to-Quadlet routes use the neutral
+model. Remaining semantic fields, runtime targets, and the full Docker/Podman/Compose/
+Quadlet route matrix are still open.
 
 Docker runtime resources, Docker Compose, Podman runtime resources, and Podman Quadlet must each
 be available as a source and a target. Routes compose through the neutral model rather than using
@@ -341,7 +344,7 @@ plans; applying a plan remains a separate explicit side effect.
 Exit criteria:
 
 - All four boundaries have importers and exporters for one documented shared semantic subset.
-- The CLI can select each source and target explicitly without owning conversion rules.
+- The CLI can select each input and output explicitly without owning conversion rules.
 - Every one of the sixteen source/target combinations has an offline golden contract test.
 - Runtime acquisition and application require explicit endpoints and resources and never enumerate
   or mutate ambient state implicitly.
