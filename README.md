@@ -75,9 +75,11 @@ boxferry convert \
   --output-directory ./quadlet-output
 ```
 
-The output directory must not already exist. `exact` is the default policy; `approximate` and
-`partial` authorize their corresponding documented losses. Compose interpolation is disabled by
-default, so expressions remain unresolved rather than silently capturing workstation values.
+The output directory may be absent or an existing empty, non-symlink directory. BoxFerry creates
+an absent directory and refuses any directory containing an entry, including a dotfile. `exact` is
+the default policy; `approximate` and `partial` authorize their corresponding documented losses.
+Compose interpolation is disabled by default, so expressions remain unresolved rather than
+silently capturing workstation values.
 Callers can opt in with `--interpolate`, add repeatable `--env NAME=VALUE` inputs, and authorize
 individual sensitive process values with repeatable `--env NAME`. No other ambient variable or
 implicit `.env` file is read. Quadlet input is also available through `convert` with an explicit
@@ -286,6 +288,7 @@ Start with the [documentation index](docs/README.md). Important design documents
 - [Library API and publication policy](docs/library-api.md)
 - [API stability](docs/api-stability.md)
 - [Conversion model and diagnostics](docs/conversion-model.md)
+- [Diagnostic rule reference](docs/diagnostic-rules.md)
 - [Format coverage](docs/format-coverage.md)
 - [Quadlet exporter](docs/quadlet-adapter.md)
 - [Runtime reconstruction](docs/runtime-reconstruction.md)

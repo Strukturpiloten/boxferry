@@ -54,8 +54,9 @@ pub use boxferry_runtime as runtime;
 
 pub use boxferry_engine::{
     ConversionError, ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, Diagnostic, DiagnosticCode,
-    DiagnosticField, DiagnosticValue, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter, LossPolicy,
-    ParsePlatformVersionError, PlatformVersion, Severity, TargetProfile, VersionRange, convert,
+    DiagnosticField, DiagnosticRule, DiagnosticValue, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter,
+    LossPolicy, ParsePlatformVersionError, PlatformVersion, RULES, RuleId, Severity, TargetProfile, VersionRange,
+    convert, find_rule,
 };
 pub use boxferry_model::{
     Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildAttestation, BuildContext,

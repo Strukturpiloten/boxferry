@@ -4,6 +4,8 @@
 - Date: 2026-08-10
 - Amended by: [ADR 0019](0019-generic-cli-route-registry.md)
 - Amended by: [ADR 0021](0021-automatic-local-error-report-names.md)
+- Amended by: [ADR 0025](0025-empty-output-directories-and-final-human-status.md)
+- Amended by: [ADR 0026](0026-typed-diagnostic-rule-catalogue.md)
 
 ## Context
 

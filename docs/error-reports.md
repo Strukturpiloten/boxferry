@@ -62,9 +62,9 @@ network request to collect additional information.
 - source and target kinds, project/profile/grouping choices, and loss policy;
 - route-specific target choices: finite Podman bounds for Quadlet output, or the rolling Compose
   Specification target for Compose output;
-- every retained Quadlet native syntax, typed-model, and document-set diagnostic in native order,
-  with its stable code, severity, static summary, repeatable static label messages, and spans
-  rewritten to invocation-local input aliases; and
+- every retained Quadlet native syntax, typed-model, and document-set diagnostic, with its native
+  source code, severity, static summary, repeatable static label messages, and spans rewritten to
+  invocation-local input aliases;
 - requested and resolved route target versions or `rolling` target labels;
 - ordered safe diagnostic events and fidelity counts;
 - every structured diagnostic currently exposed by the public report DTO; and
@@ -159,14 +159,14 @@ console report (and not retroactively in an already published report file). In e
 earlier conversion failure retains its category and stage while the report-write diagnostic is
 added as a secondary event.
 
-The first implementation emits the version-one report DTO with its command kind and allowlisted
-actual invocation option names,
-operating-system family and architecture, finite target bounds, fidelity counts, structured diagnostics, output
-artifact metadata, redaction summary, and truncation metadata. Source contents, generated
-contents, process environment, runtime inspection, hostname, username, panic payloads, and
-backtraces remain excluded. Per-stage durations, a distinct capability-decision collection, and
-dedicated suggested-action fields remain deferred until the public diagnostics expose them without
-terminal parsing or invented CLI-only semantics.
+The version-one report DTO contains its command kind and allowlisted actual option names,
+operating-system family and architecture, finite target bounds, fidelity counts, output artifact
+metadata, redaction summary, and truncation metadata. Structured diagnostics contain the BoxFerry
+rule code and name, optional native source code, severity, summary, static help, safe fields, and
+aliased spans. Blocked and failed reports also contain the primary diagnostic code and causal
+failure summary. Source contents, generated contents, process environment, runtime inspection,
+hostname, username, panic payloads, and backtraces remain excluded. Per-stage durations and a
+distinct capability-decision collection remain deferred.
 
 ## Ownership and testing
 

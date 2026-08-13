@@ -125,8 +125,11 @@ pub struct ReportField {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReportDiagnostic {
     pub code: String,
+    pub name: String,
+    pub source_code: Option<String>,
     pub severity: String,
     pub summary: String,
+    pub help: String,
     pub fields: Vec<ReportField>,
     pub spans: Vec<ReportSpan>,
 }
@@ -163,6 +166,8 @@ pub struct ConversionReport {
     pub status: ReportStatus,
     pub exit_category: ExitCategory,
     pub failed_stage: Option<FailedStage>,
+    pub primary_diagnostic_code: Option<String>,
+    pub failure_summary: Option<String>,
     pub source_type: String,
     pub target_type: String,
     pub application: Option<String>,
@@ -197,6 +202,8 @@ impl ConversionReport {
             status: ReportStatus::Failure,
             exit_category: ExitCategory::InputOrExecution,
             failed_stage: None,
+            primary_diagnostic_code: None,
+            failure_summary: None,
             source_type: source_type.into(),
             target_type: target_type.into(),
             application: None,
@@ -248,9 +255,13 @@ impl ConversionReport {
         truncate_text(&mut self.boxferry_version, "boxferry_version", &mut self.truncations);
         truncate_text(&mut self.source_type, "source_type", &mut self.truncations);
         truncate_text(&mut self.target_type, "target_type", &mut self.truncations);
-        if let Some(application) = &mut self.application {
-            truncate_text(application, "application", &mut self.truncations);
-        }
+        truncate_optional_text(
+            &mut self.primary_diagnostic_code,
+            "primary_diagnostic_code",
+            &mut self.truncations,
+        );
+        truncate_optional_text(&mut self.failure_summary, "failure_summary", &mut self.truncations);
+        truncate_optional_text(&mut self.application, "application", &mut self.truncations);
         truncate_text(
             &mut self.requested_versions.minimum,
             "requested_versions.minimum",
@@ -300,8 +311,13 @@ impl ConversionReport {
             truncate_collection(&mut diagnostic.fields, "diagnostics.fields", &mut self.truncations);
             truncate_collection(&mut diagnostic.spans, "diagnostics.spans", &mut self.truncations);
             truncate_text(&mut diagnostic.code, "diagnostics.code", &mut self.truncations);
+            truncate_text(&mut diagnostic.name, "diagnostics.name", &mut self.truncations);
+            if let Some(source_code) = &mut diagnostic.source_code {
+                truncate_text(source_code, "diagnostics.source_code", &mut self.truncations);
+            }
             truncate_text(&mut diagnostic.severity, "diagnostics.severity", &mut self.truncations);
             truncate_text(&mut diagnostic.summary, "diagnostics.summary", &mut self.truncations);
+            truncate_text(&mut diagnostic.help, "diagnostics.help", &mut self.truncations);
             for field in &mut diagnostic.fields {
                 truncate_text(&mut field.name, "diagnostics.fields.name", &mut self.truncations);
                 truncate_text(&mut field.value, "diagnostics.fields.value", &mut self.truncations);
@@ -437,6 +453,12 @@ fn truncate_text(value: &mut String, field: &str, truncations: &mut Vec<Truncati
     record_truncation(truncations, field, original, retained);
 }
 
+fn truncate_optional_text(value: &mut Option<String>, field: &str, truncations: &mut Vec<Truncation>) {
+    if let Some(value) = value {
+        truncate_text(value, field, truncations);
+    }
+}
+
 fn record_truncation(truncations: &mut Vec<Truncation>, field: &str, original: usize, retained: usize) {
     if let Some(existing) = truncations.iter_mut().find(|existing| existing.field == field) {
         existing.original = existing.original.max(original);
@@ -559,8 +581,11 @@ mod tests {
         report.events = (0..=MAX_COLLECTION_ITEMS).map(|item| item.to_string()).collect();
         report.diagnostics.push(ReportDiagnostic {
             code: "BFC0001".into(),
+            name: "compose-model-invalid".into(),
+            source_code: None,
             severity: "error".into(),
             summary: "x".repeat(MAX_TEXT_BYTES + 1),
+            help: "correct the value".into(),
             fields: Vec::new(),
             spans: Vec::new(),
         });

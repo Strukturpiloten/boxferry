@@ -37,6 +37,8 @@ Architecture decision records capture choices that constrain future development.
 | [0022](0022-sole-quadlet-parser-and-deterministic-test-contract.md) | accepted | Sole Quadlet parser and deterministic test contract |
 | [0023](0023-windows-local-time-zone-database.md) | superseded | Temporary native-Windows Jiff time-zone database decision |
 | [0024](0024-linux-cli-and-wsl-on-windows.md) | accepted | Support the CLI on Linux and require WSL2 on Windows |
+| [0025](0025-empty-output-directories-and-final-human-status.md) | accepted | Empty output-directory reuse and ordered final human status |
+| [0026](0026-typed-diagnostic-rule-catalogue.md) | accepted | Typed diagnostic rules, native-code provenance, grouped help, and causal final status |
 
 ## Adding an ADR
 

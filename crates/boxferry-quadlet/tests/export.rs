@@ -1439,7 +1439,7 @@ fn rejects_missing_required_dependencies_and_ordering_cycles() -> Result<(), Box
         cycle_plan
             .diagnostics()
             .iter()
-            .all(|diagnostic| { diagnostic.code().as_str() == "BFQ0008" && diagnostic.severity() == Severity::Error })
+            .all(|diagnostic| { diagnostic.code().as_str() == "BFQ0012" && diagnostic.severity() == Severity::Error })
     );
     Ok(())
 }
@@ -1847,7 +1847,7 @@ fn rejects_incompatible_single_pod_grouping_without_falling_back() -> Result<(),
     assert!(
         plan.diagnostics()
             .iter()
-            .any(|diagnostic| { diagnostic.code().as_str() == "BFQ0007" && diagnostic.severity() == Severity::Error })
+            .any(|diagnostic| { diagnostic.code().as_str() == "BFQ0011" && diagnostic.severity() == Severity::Error })
     );
     assert!(plan.authorize(LossPolicy::AllowPartial).is_blocked());
     Ok(())
@@ -1874,7 +1874,7 @@ fn rejects_single_pod_grouping_that_would_erase_network_isolation() -> Result<()
     let diagnostic = plan
         .diagnostics()
         .iter()
-        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0007")
+        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0011")
         .ok_or("grouping diagnostic expected")?;
     assert_eq!(diagnostic.severity(), Severity::Error);
     assert!(diagnostic.fields().iter().any(|field| {
@@ -1900,7 +1900,7 @@ fn rejects_single_pod_grouping_with_different_service_host_mappings() -> Result<
     let diagnostic = plan
         .diagnostics()
         .iter()
-        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0007")
+        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0011")
         .ok_or("host grouping diagnostic expected")?;
     assert_eq!(diagnostic.severity(), Severity::Error);
     assert!(
@@ -2582,7 +2582,7 @@ fn assert_grouping_rejected(plan: &boxferry_engine::ConversionPlan<boxferry_quad
     assert!(plan.outcomes().iter().any(|outcome| {
         outcome.subject() == "application.grouping"
             && outcome.kind() == ConversionKind::Invalid
-            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0007")
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0011")
     }));
 }
 

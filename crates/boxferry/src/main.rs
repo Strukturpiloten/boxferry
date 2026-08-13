@@ -31,8 +31,8 @@ use boxferry::{
     COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeImporter,
     ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, LossPolicy, PlatformVersion,
     QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletParseDiagnostic,
-    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletParseError, QuadletSource, SourceId,
-    TargetProfile, convert,
+    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletParseError, QuadletSource, RULES, RuleId,
+    SourceId, TargetProfile, convert, find_rule,
 };
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
@@ -76,6 +76,10 @@ enum Command {
     Validate(GenericConversion),
     /// List generic routes implemented by this build.
     Capabilities(Presentation),
+    /// List every `BoxFerry` diagnostic rule in stable code order.
+    Rules(CataloguePresentation),
+    /// Explain one diagnostic rule by code or human-readable name.
+    Explain(ExplainCommand),
     /// Show contextual command help.
     Help { command: Option<String> },
     /// Print `BoxFerry` version information.
@@ -98,6 +102,21 @@ struct Presentation {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum ConsoleFormat {
     Json,
+}
+
+#[derive(Clone, Copy, Debug, Args)]
+struct CataloguePresentation {
+    /// Select machine-readable console output.
+    #[arg(long, value_enum)]
+    console_format: Option<ConsoleFormat>,
+}
+
+#[derive(Debug, Args)]
+struct ExplainCommand {
+    /// Exact rule code or human-readable rule name.
+    rule: String,
+    #[command(flatten)]
+    presentation: CataloguePresentation,
 }
 
 #[derive(Debug, Args)]
@@ -180,7 +199,7 @@ struct GenericConversion {
 struct ConvertCommand {
     #[command(flatten)]
     conversion: GenericConversion,
-    /// New absent directory that will receive generated route artifacts.
+    /// Absent or existing empty directory that will receive generated route artifacts.
     #[arg(long, required = true)]
     output_directory: PathBuf,
 }
@@ -474,9 +493,13 @@ fn report_failure(
         |route| new_report(arguments, route),
     );
     report.failed_stage = Some(stage);
-    report
-        .diagnostics
-        .push(sanitized_diagnostic("BFC0019", "error", summary, &[], aliases));
+    report.diagnostics.push(sanitized_diagnostic(
+        RuleId::OrchestrationFailed,
+        "error",
+        summary,
+        &[],
+        aliases,
+    ));
     report
 }
 
@@ -498,12 +521,13 @@ fn new_unavailable_report(arguments: &GenericConversion) -> ConversionReport {
 }
 
 fn sanitized_diagnostic(
-    code: &str,
+    rule: RuleId,
     severity: &str,
     summary: &str,
     fields: &[(&str, &str, bool)],
     aliases: &ReportAliases,
 ) -> ReportDiagnostic {
+    let definition = rule.definition();
     let (summary, _) = redact_text("summary", &aliases.value(summary), false);
     let mut safe_fields = Vec::new();
     for (name, value, sensitive) in fields {
@@ -515,9 +539,12 @@ fn sanitized_diagnostic(
         let _ = redacted;
     }
     ReportDiagnostic {
-        code: code.into(),
+        code: definition.code().into(),
+        name: definition.name().into(),
+        source_code: None,
         severity: severity.into(),
         summary,
+        help: definition.help().into(),
         fields: safe_fields,
         spans: Vec::new(),
     }
@@ -545,12 +572,78 @@ fn run(cli: Cli, matches: &clap::ArgMatches) -> Result<ExitCode, Box<dyn Error>>
         }
         Command::Validate(arguments) => run_generic(&arguments, matches, None, true),
         Command::Capabilities(presentation) => print_capabilities(presentation),
+        Command::Rules(presentation) => print_rules(presentation),
+        Command::Explain(arguments) => print_rule_explanation(&arguments),
         Command::Help { command } => print_help(command),
         Command::Version => {
             println!("boxferry {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+fn sorted_rules() -> Vec<&'static boxferry::DiagnosticRule> {
+    let mut rules = RULES.iter().collect::<Vec<_>>();
+    rules.sort_by_key(|rule| rule.code());
+    rules
+}
+
+fn rule_json(rule: &boxferry::DiagnosticRule) -> serde_json::Value {
+    serde_json::json!({
+        "code": rule.code(),
+        "name": rule.name(),
+        "owner": rule.owner(),
+        "default_severity": severity_name(rule.default_severity()),
+        "description": rule.description(),
+        "help": rule.help(),
+    })
+}
+
+fn print_rules(presentation: CataloguePresentation) -> Result<ExitCode, Box<dyn Error>> {
+    let rules = sorted_rules();
+    if matches!(presentation.console_format, Some(ConsoleFormat::Json)) {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "schema_version": 1,
+                "rules": rules.into_iter().map(rule_json).collect::<Vec<_>>(),
+            }))?
+        );
+    } else {
+        for rule in rules {
+            println!(
+                "{} {} [{}]",
+                rule.code(),
+                rule.name(),
+                severity_name(rule.default_severity())
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn print_rule_explanation(arguments: &ExplainCommand) -> Result<ExitCode, Box<dyn Error>> {
+    let rule = find_rule(&arguments.rule).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "unknown diagnostic rule `{}`; run `boxferry rules` to list valid rules",
+                arguments.rule
+            ),
+        )
+    })?;
+    if matches!(arguments.presentation.console_format, Some(ConsoleFormat::Json)) {
+        println!("{}", serde_json::to_string(&rule_json(rule))?);
+    } else {
+        println!("{} {}", rule.code(), rule.name());
+        println!("owner: {}", rule.owner());
+        println!("severity: {}", severity_name(rule.default_severity()));
+        println!();
+        println!("{}", rule.description());
+        println!();
+        println!("help: {}", rule.help());
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn print_help(command: Option<String>) -> Result<ExitCode, Box<dyn Error>> {
@@ -728,7 +821,7 @@ fn resolved_report_context(resolved: &[ResolvedInput]) -> (Vec<ReportInput>, Vec
 
 fn post_discovery_failure(
     stage: FailedStage,
-    code: &str,
+    rule: RuleId,
     summary: &str,
     error: &dyn Error,
     aliases: &ReportAliases,
@@ -737,7 +830,7 @@ fn post_discovery_failure(
     Box::new(StructuredFailure::with_context(
         stage,
         vec![sanitized_diagnostic(
-            code,
+            rule,
             "error",
             summary,
             &[("reason", &error.to_string(), false)],
@@ -772,7 +865,7 @@ fn generic_convert(
     let project_root = resolve_project_root(arguments.project_directory.as_deref(), &discovered).map_err(|error| {
         post_discovery_failure(
             FailedStage::InputDiscovery,
-            "BFC0026",
+            RuleId::ComposeProjectRootInvalid,
             "Compose project root could not be resolved",
             &error,
             &aliases,
@@ -788,7 +881,7 @@ fn generic_convert(
         .map_err(|error| {
             post_discovery_failure(
                 FailedStage::Conversion,
-                "BFC0027",
+                RuleId::PodmanTargetSelectionInvalid,
                 "Podman target version selection failed",
                 &error,
                 &aliases,
@@ -798,7 +891,7 @@ fn generic_convert(
     let interpolation = generic_interpolation_environment(arguments).map_err(|error| {
         post_discovery_failure(
             FailedStage::Interpolation,
-            "BFC0028",
+            RuleId::InterpolationInputInvalid,
             "Compose interpolation inputs could not be resolved",
             error.as_ref(),
             &aliases,
@@ -851,6 +944,9 @@ fn generic_convert(
             .map(|diagnostic| report_diagnostic(diagnostic, &aliases)),
     );
     report.fidelity = fidelity_counts(result.outcomes());
+    if output.is_none() {
+        report.primary_diagnostic_code = blocking_diagnostic_code(result.outcomes(), arguments.loss_policy);
+    }
     deduplicate_report_diagnostics(&mut report.diagnostics);
     report.output_artifacts = output.zip(output_directory).map_or_else(Vec::new, |(value, _)| {
         value
@@ -867,14 +963,8 @@ fn generic_convert(
     };
     if !validate_only {
         let output_directory = output_directory.ok_or_else(|| io::Error::other("missing convert output directory"))?;
-        if let Err(error) = write_new_output_directory(output_directory, output.files()) {
-            report.diagnostics.push(sanitized_diagnostic(
-                "BFC0021",
-                "error",
-                &format!("output could not be written: {error}"),
-                &[],
-                &aliases,
-            ));
+        if let Err(error) = write_output_directory(output_directory, output.files()) {
+            report.diagnostics.push(output_write_diagnostic(&error, &aliases));
             report.events.push("output-write-failed".into());
             report.status = ReportStatus::Failure;
             report.exit_category = ExitCategory::OutputWrite;
@@ -1004,14 +1094,14 @@ fn generic_quadlet_convert(
                     .map(|diagnostic| report_diagnostic(diagnostic, &aliases)),
             ),
             ConversionError::InvalidPlan(_) => diagnostics.push(sanitized_diagnostic(
-                "BFC0025",
+                RuleId::ConversionFailed,
                 "error",
                 "the Quadlet conversion produced an invalid conversion plan",
                 &[],
                 &aliases,
             )),
             _ => diagnostics.push(sanitized_diagnostic(
-                "BFC0025",
+                RuleId::ConversionFailed,
                 "error",
                 "the Quadlet conversion could not produce a valid plan",
                 &[],
@@ -1063,7 +1153,7 @@ fn load_quadlet_source(
             Box::new(StructuredFailure::with_context(
                 FailedStage::InputRead,
                 vec![sanitized_diagnostic(
-                    "BFC0024",
+                    RuleId::InputReadFailed,
                     "error",
                     "Quadlet input could not be read",
                     &[("input", name, false), ("reason", &error.to_string(), false)],
@@ -1113,7 +1203,7 @@ fn quadlet_source_failure(
         let native_stage = format!("{:?}", failure.stage()).to_lowercase();
         let input = quadlet_input_alias(failure.source_id(), failure.input_index());
         let mut report = sanitized_diagnostic(
-            "BFC0023",
+            RuleId::QuadletParseFailed,
             "error",
             failure.summary(),
             &[("native_stage", &native_stage, false), ("input", &input, false)],
@@ -1132,8 +1222,14 @@ fn quadlet_source_failure(
 }
 
 fn report_quadlet_native_diagnostic(diagnostic: &QuadletParseDiagnostic, aliases: &ReportAliases) -> ReportDiagnostic {
+    let rule = match diagnostic.code().get(..3) {
+        Some("QLS") => RuleId::QuadletNativeSyntax,
+        Some("QLM") => RuleId::QuadletNativeModel,
+        Some("QLG") => RuleId::QuadletNativeDocumentSet,
+        _ => RuleId::QuadletNativeFailure,
+    };
     let mut report = sanitized_diagnostic(
-        diagnostic.code(),
+        rule,
         match diagnostic.severity() {
             QuadletParseDiagnosticSeverity::Warning => "warning",
             QuadletParseDiagnosticSeverity::Note => "note",
@@ -1143,6 +1239,7 @@ fn report_quadlet_native_diagnostic(diagnostic: &QuadletParseDiagnostic, aliases
         &[],
         aliases,
     );
+    report.source_code = Some(diagnostic.code().into());
     report.spans = diagnostic
         .labels()
         .iter()
@@ -1223,6 +1320,9 @@ fn finish_quadlet_conversion(
             .map(|diagnostic| report_diagnostic(diagnostic, &aliases)),
     );
     report.fidelity = fidelity_counts(result.outcomes());
+    if output.is_none() {
+        report.primary_diagnostic_code = blocking_diagnostic_code(result.outcomes(), arguments.loss_policy);
+    }
     if let Some(output) = output {
         report.output_artifacts.push(OutputArtifact {
             name: "compose.yaml".into(),
@@ -1230,14 +1330,8 @@ fn finish_quadlet_conversion(
         });
         if !validate_only {
             let directory = output_directory.ok_or_else(|| io::Error::other("missing convert output directory"))?;
-            if let Err(error) = write_new_compose_output(directory, output.text()) {
-                report.diagnostics.push(sanitized_diagnostic(
-                    "BFC0021",
-                    "error",
-                    &format!("output could not be written: {error}"),
-                    &[],
-                    &aliases,
-                ));
+            if let Err(error) = write_compose_output(directory, output.text()) {
+                report.diagnostics.push(output_write_diagnostic(&error, &aliases));
                 report.events.push("output-write-failed".into());
                 report.status = ReportStatus::Failure;
                 report.exit_category = ExitCategory::OutputWrite;
@@ -1256,6 +1350,27 @@ fn finish_quadlet_conversion(
     }
 }
 
+fn output_write_diagnostic(error: &io::Error, aliases: &ReportAliases) -> ReportDiagnostic {
+    let message = error.to_string();
+    let rule = if message.contains("output directory is not empty") {
+        RuleId::OutputDirectoryNotEmpty
+    } else if error.kind() == io::ErrorKind::InvalidInput
+        || message.contains("not a non-symlink directory")
+        || message.contains("output path")
+    {
+        RuleId::OutputPathInvalid
+    } else {
+        RuleId::OutputWriteFailed
+    };
+    sanitized_diagnostic(
+        rule,
+        "error",
+        rule.definition().description(),
+        &[("reason", &message, false)],
+        aliases,
+    )
+}
+
 fn fidelity_counts(outcomes: &[boxferry::ConversionOutcome]) -> FidelityCounts {
     let mut counts = FidelityCounts::default();
     for outcome in outcomes {
@@ -1268,6 +1383,19 @@ fn fidelity_counts(outcomes: &[boxferry::ConversionOutcome]) -> FidelityCounts {
         }
     }
     counts
+}
+
+fn blocking_diagnostic_code(outcomes: &[boxferry::ConversionOutcome], policy: CliLossPolicy) -> Option<String> {
+    outcomes
+        .iter()
+        .find(|outcome| match outcome.kind() {
+            ConversionKind::Exact => false,
+            ConversionKind::Approximate => matches!(policy, CliLossPolicy::Exact),
+            ConversionKind::Unsupported => !matches!(policy, CliLossPolicy::Partial),
+            _ => true,
+        })
+        .and_then(|outcome| outcome.diagnostic())
+        .map(|code| code.as_str().to_owned())
 }
 
 fn run_generic(
@@ -1319,10 +1447,10 @@ fn run_generic(
         let encoded = serialize_report(&mut report)?;
         if let Err(error) = write_report_file(path, &encoded) {
             report.diagnostics.push(sanitized_diagnostic(
-                "BFC0020",
+                RuleId::ReportWriteFailed,
                 "error",
-                &format!("report file could not be written: {error}"),
-                &[],
+                RuleId::ReportWriteFailed.definition().description(),
+                &[("reason", &error.to_string(), false)],
                 &aliases,
             ));
             report.events.push("report-file-write-failed".into());
@@ -1344,12 +1472,12 @@ fn run_generic(
             env::current_dir,
         ) {
             Ok(path) => error_report_path = Some(path),
-            Err(_error) => {
+            Err(error) => {
                 report.diagnostics.push(sanitized_diagnostic(
-                    "BFC0022",
+                    RuleId::SupportBundleWriteFailed,
                     "error",
-                    "diagnostic support bundle could not be written",
-                    &[],
+                    RuleId::SupportBundleWriteFailed.definition().description(),
+                    &[("reason", &error.to_string(), false)],
                     &aliases,
                 ));
                 report.events.push("support-bundle-write-failed".into());
@@ -1392,6 +1520,7 @@ fn present(
     validate_only: bool,
     error_report_path: Option<&Path>,
 ) -> Result<(), Box<dyn Error>> {
+    refresh_report_outcome(report);
     let presentation = arguments.presentation;
     if matches!(presentation.console_format, Some(ConsoleFormat::Json)) {
         println!("{}", serialize_console_report(report, error_report_path)?);
@@ -1452,19 +1581,9 @@ fn present(
                 report.failed_stage.map_or("unknown", failed_stage_name)
             ),
         }
-        if report.status == ReportStatus::Success {
-            if validate_only {
-                println!("result: validation succeeded");
-            } else {
-                println!(
-                    "result: wrote {} file(s) to output directory",
-                    report.output_artifacts.len()
-                );
-            }
-            if presentation.verbose {
-                for artifact in &report.output_artifacts {
-                    println!("wrote: {}", artifact.name);
-                }
+        if report.status == ReportStatus::Success && presentation.verbose && !validate_only {
+            for artifact in &report.output_artifacts {
+                println!("wrote: {}", artifact.name);
             }
         }
     }
@@ -1475,11 +1594,43 @@ fn present(
     } else if let Some(path) = error_report_path {
         println!("error report: {}", path.display());
     }
+    if !presentation.quiet && !report.diagnostics.is_empty() {
+        println!();
+        io::stdout().flush()?;
+    }
     print_report_diagnostics(&report.diagnostics);
-    if report.exit_category == ExitCategory::PolicyBlocked {
-        eprintln!("boxferry: output blocked by the selected loss policy");
+    io::stderr().flush()?;
+    if !presentation.quiet {
+        println!();
+        print_final_result(report, validate_only);
+        io::stdout().flush()?;
     }
     Ok(())
+}
+
+fn print_final_result(report: &ConversionReport, validate_only: bool) {
+    match report.status {
+        ReportStatus::Success if validate_only => println!("boxferry: command succeeded; validation complete"),
+        ReportStatus::Success => println!(
+            "boxferry: command succeeded; wrote {} file(s) to output directory",
+            report.output_artifacts.len()
+        ),
+        ReportStatus::Blocked => println!(
+            "boxferry: command blocked by the selected loss policy: {}",
+            report
+                .failure_summary
+                .as_deref()
+                .unwrap_or("no structured cause was recorded")
+        ),
+        ReportStatus::Failure => println!(
+            "boxferry: command failed during {}: {}",
+            report.failed_stage.map_or("unknown stage", failed_stage_name),
+            report
+                .failure_summary
+                .as_deref()
+                .unwrap_or("no structured cause was recorded")
+        ),
+    }
 }
 
 const fn failed_stage_name(stage: FailedStage) -> &'static str {
@@ -1537,7 +1688,7 @@ fn load_compose_inputs(
             Box::new(StructuredFailure::with_context(
                 FailedStage::InputRead,
                 vec![sanitized_diagnostic(
-                    "BFC0024",
+                    RuleId::InputReadFailed,
                     "error",
                     "Compose input could not be read",
                     &[("reason", &error.to_string(), false)],
@@ -1565,7 +1716,7 @@ fn convert_loaded_compose(
         Box::new(StructuredFailure::with_context(
             FailedStage::ComposeLoad,
             vec![sanitized_diagnostic(
-                "BFC0025",
+                RuleId::ComposeLoadFailed,
                 "error",
                 "Compose input could not be loaded",
                 &[("reason", &error.to_string(), false)],
@@ -1653,7 +1804,7 @@ fn convert_loaded_compose(
     }
     let target = TargetProfile::new("podman", conversion.minimum, conversion.maximum)?;
     let result = convert(&ComposeImporter::new()?, &source, &exporter, &target, conversion.policy)
-        .map_err(|error| compose_conversion_failure(&error, aliases, conversion.inputs))?;
+        .map_err(|error| compose_conversion_failure(&error, &preprocessing_diagnostics, aliases, conversion.inputs))?;
     Ok(LoadedComposeConversion {
         result,
         diagnostics: preprocessing_diagnostics,
@@ -1663,22 +1814,26 @@ fn convert_loaded_compose(
 
 fn compose_conversion_failure(
     error: &ConversionError,
+    preprocessing_diagnostics: &[ReportDiagnostic],
     aliases: &ReportAliases,
     inputs: &[ResolvedInput],
 ) -> Box<dyn Error> {
-    let diagnostics = match error {
-        ConversionError::Import(diagnostics) => diagnostics
-            .iter()
-            .map(|diagnostic| report_diagnostic(diagnostic, aliases))
-            .collect(),
-        _ => vec![sanitized_diagnostic(
-            "BFC0019",
+    let mut diagnostics = preprocessing_diagnostics.to_vec();
+    match error {
+        ConversionError::Import(import_diagnostics) => diagnostics.extend(
+            import_diagnostics
+                .iter()
+                .map(|diagnostic| report_diagnostic(diagnostic, aliases)),
+        ),
+        _ => diagnostics.push(sanitized_diagnostic(
+            RuleId::ConversionFailed,
             "error",
             &error.to_string(),
             &[],
             aliases,
-        )],
-    };
+        )),
+    }
+    deduplicate_report_diagnostics(&mut diagnostics);
     Box::new(StructuredFailure::with_context(
         FailedStage::Conversion,
         diagnostics,
@@ -2081,18 +2236,40 @@ fn resolve_versions(
 }
 
 fn report_diagnostic(diagnostic: &Diagnostic, aliases: &ReportAliases) -> ReportDiagnostic {
+    let compose_source_code = diagnostic
+        .fields()
+        .iter()
+        .find(|field| field.name() == "compose_code")
+        .map(|field| field.value().expose());
+    let promoted_summary = compose_source_code.and_then(|_| {
+        diagnostic
+            .fields()
+            .iter()
+            .find(|field| field.name() == "reason")
+            .map(|field| field.value().expose())
+    });
     let fields: Vec<_> = diagnostic
         .fields()
         .iter()
+        .filter(|field| compose_source_code.is_none() || !matches!(field.name(), "compose_code" | "reason"))
         .map(|field| (field.name(), field.value().expose(), field.value().is_sensitive()))
         .collect();
-    sanitized_diagnostic(
-        diagnostic.code().as_str(),
+    let catalogue_rule = find_rule(diagnostic.code().as_str()).map(|rule| rule.id());
+    let rule = compose_source_code.map_or_else(
+        || catalogue_rule.unwrap_or(RuleId::OrchestrationFailed),
+        |source_code| compose_native_rule(source_code, severity_name(diagnostic.severity())),
+    );
+    let mut report = sanitized_diagnostic(
+        rule,
         &format!("{:?}", diagnostic.severity()).to_lowercase(),
-        diagnostic.summary(),
+        promoted_summary.unwrap_or_else(|| diagnostic.summary()),
         &fields,
         aliases,
-    )
+    );
+    report.source_code = compose_source_code
+        .map(str::to_owned)
+        .or_else(|| catalogue_rule.is_none().then(|| diagnostic.code().as_str().to_owned()));
+    report
 }
 
 fn compose_diagnostic(
@@ -2109,12 +2286,53 @@ fn compose_diagnostic(
             end: label.span().end(),
         })
         .collect();
-    ReportDiagnostic {
-        code: diagnostic.code().as_str().into(),
-        severity: format!("{:?}", diagnostic.severity()).to_lowercase(),
-        summary,
-        fields: Vec::new(),
-        spans,
+    let source_code = diagnostic.code().as_str();
+    let severity = format!("{:?}", diagnostic.severity()).to_lowercase();
+    let rule = compose_native_rule(source_code, &severity);
+    let variable = compose_interpolation_variable(source_code, diagnostic.message());
+    let fields = variable
+        .map(|variable| [("variable", variable, false)])
+        .unwrap_or_default();
+    let mut report = sanitized_diagnostic(rule, &severity, &summary, &fields, aliases);
+    report.source_code = Some(source_code.into());
+    report.spans = spans;
+    report
+}
+
+fn compose_interpolation_variable<'a>(source_code: &str, message: &'a str) -> Option<&'a str> {
+    if !matches!(
+        source_code,
+        "compose.interpolation.unset-variable" | "compose.interpolation.required-variable"
+    ) {
+        return None;
+    }
+    let (_, remainder) = message.split_once('`')?;
+    let (variable, _) = remainder.split_once('`')?;
+    let mut bytes = variable.bytes();
+    let first = bytes.next()?;
+    ((first == b'_' || first.is_ascii_alphabetic()) && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric()))
+        .then_some(variable)
+}
+
+fn severity_name(severity: boxferry::Severity) -> &'static str {
+    match severity {
+        boxferry::Severity::Error => "error",
+        boxferry::Severity::Note => "note",
+        _ => "warning",
+    }
+}
+
+fn compose_native_rule(code: &str, severity: &str) -> RuleId {
+    match code {
+        "compose.interpolation.unset-variable" => RuleId::ComposeUnsetVariable,
+        "compose.interpolation.required-variable" => RuleId::ComposeRequiredVariable,
+        "compose.interpolation.invalid-expression" => RuleId::ComposeInterpolationInvalid,
+        "compose.interpolation.nesting-limit" => RuleId::ComposeInterpolationNestingLimit,
+        _ => match severity {
+            "error" => RuleId::ComposeNativeError,
+            "note" => RuleId::ComposeNativeNote,
+            _ => RuleId::ComposeNativeWarning,
+        },
     }
 }
 
@@ -2123,16 +2341,175 @@ fn deduplicate_report_diagnostics(diagnostics: &mut Vec<ReportDiagnostic>) {
     diagnostics.retain(|diagnostic| seen.insert(format!("{diagnostic:?}")));
 }
 
+fn diagnostic_occurrence_key(diagnostic: &ReportDiagnostic) -> (usize, usize) {
+    diagnostic.spans.first().map_or((usize::MAX, usize::MAX), |span| {
+        let input = span
+            .source
+            .strip_prefix("<input-")
+            .and_then(|value| value.strip_suffix('>'))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(usize::MAX);
+        (input, span.start)
+    })
+}
+
+fn normalize_report_diagnostics(diagnostics: &mut Vec<ReportDiagnostic>) {
+    deduplicate_report_diagnostics(diagnostics);
+    diagnostics.sort_by(|left, right| {
+        left.code
+            .cmp(&right.code)
+            .then_with(|| diagnostic_occurrence_key(left).cmp(&diagnostic_occurrence_key(right)))
+    });
+}
+
+fn refresh_report_outcome(report: &mut ConversionReport) {
+    normalize_report_diagnostics(&mut report.diagnostics);
+    if report.status == ReportStatus::Success {
+        report.primary_diagnostic_code = None;
+        report.failure_summary = None;
+        return;
+    }
+
+    let stage_code = match report.failed_stage {
+        Some(FailedStage::InputRead) => Some("BFO1001"),
+        Some(FailedStage::Interpolation) => Some("BFO1004"),
+        Some(FailedStage::ComposeLoad | FailedStage::ComposeMerge | FailedStage::ProfileSelection) => Some("BFO1005"),
+        Some(FailedStage::QuadletParse | FailedStage::QuadletDocumentSet) => Some("BFO1007"),
+        Some(FailedStage::OutputWrite) => Some("BFO2"),
+        Some(FailedStage::ReportWrite) => Some("BFO3"),
+        _ => None,
+    };
+    let retained = report
+        .primary_diagnostic_code
+        .as_deref()
+        .and_then(|code| report.diagnostics.iter().find(|diagnostic| diagnostic.code == code));
+    let primary = if report.status == ReportStatus::Blocked {
+        retained.or_else(|| {
+            report
+                .diagnostics
+                .iter()
+                .find(|diagnostic| matches!(diagnostic.severity.as_str(), "error" | "warning"))
+        })
+    } else {
+        stage_code
+            .and_then(|code| {
+                report
+                    .diagnostics
+                    .iter()
+                    .find(|diagnostic| diagnostic.code == code || diagnostic.code.starts_with(code))
+            })
+            .or_else(|| {
+                report
+                    .diagnostics
+                    .iter()
+                    .find(|diagnostic| diagnostic.severity == "error")
+            })
+            .or(retained)
+    };
+    if let Some(primary) = primary {
+        report.primary_diagnostic_code = Some(primary.code.clone());
+        report.failure_summary = Some(format!("{} {} — {}", primary.code, primary.name, primary.summary));
+    } else {
+        report.primary_diagnostic_code = None;
+        report.failure_summary = None;
+    }
+}
+
 fn print_report_diagnostics(diagnostics: &[ReportDiagnostic]) {
-    for diagnostic in diagnostics {
-        eprintln!("{}: {}", diagnostic.code, diagnostic.summary);
-        for field in &diagnostic.fields {
-            eprintln!("  {}: {}", field.name, field.value);
+    let mut start = 0;
+    while start < diagnostics.len() {
+        let code = &diagnostics[start].code;
+        let mut end = start + 1;
+        while end < diagnostics.len() && diagnostics[end].code == *code {
+            end += 1;
         }
+        if start > 0 {
+            eprintln!();
+        }
+        let group = &diagnostics[start..end];
+        let first = &group[0];
+        if group.len() == 1 {
+            eprintln!("{} {} [{}]", first.code, first.name, first.severity);
+        } else {
+            eprintln!(
+                "{} {} [{}] ({} findings)",
+                first.code,
+                first.name,
+                first.severity,
+                group.len()
+            );
+        }
+
+        let summary_is_common = group.iter().all(|diagnostic| diagnostic.summary == first.summary);
+        let summary = if summary_is_common {
+            first.summary.as_str()
+        } else {
+            find_rule(&first.code).map_or(first.summary.as_str(), |rule| rule.description())
+        };
+        eprintln!("  {summary}");
+
+        let common_fields = common_report_fields(group);
+        for field in &common_fields {
+            eprintln!("  {}: {}", human_field_name(&field.name), field.value);
+        }
+
+        eprintln!("  findings:");
+        for (offset, diagnostic) in group.iter().enumerate() {
+            let mut details = diagnostic
+                .fields
+                .iter()
+                .filter(|field| !common_fields.contains(field))
+                .map(|field| (human_field_name(&field.name), field.value.clone()))
+                .collect::<Vec<_>>();
+            if !summary_is_common && !summary_is_represented_by_fields(diagnostic) {
+                details.push(("message", diagnostic.summary.clone()));
+            }
+            for span in &diagnostic.spans {
+                details.push(("location", format!("{}:{}-{}", span.source, span.start, span.end)));
+            }
+
+            if let Some((name, value)) = details.first() {
+                eprintln!("    {}. {name}: {value}", offset + 1);
+                for (name, value) in &details[1..] {
+                    eprintln!("       {name}: {value}");
+                }
+            } else {
+                eprintln!("    {}. condition reported", offset + 1);
+            }
+        }
+        eprintln!("  help: {}", first.help);
+        eprintln!("  explain: boxferry explain {}", first.code);
+        start = end;
+    }
+}
+
+fn common_report_fields(group: &[ReportDiagnostic]) -> Vec<ReportField> {
+    if group.len() < 2 {
+        return Vec::new();
+    }
+    group[0]
+        .fields
+        .iter()
+        .filter(|field| group[1..].iter().all(|diagnostic| diagnostic.fields.contains(field)))
+        .cloned()
+        .collect()
+}
+
+fn summary_is_represented_by_fields(diagnostic: &ReportDiagnostic) -> bool {
+    matches!(diagnostic.code.as_str(), "BFC0101" | "BFC0102")
+        && diagnostic.fields.iter().any(|field| field.name == "variable")
+}
+
+fn human_field_name(name: &str) -> &str {
+    match name {
+        "label_message" => "detail",
+        "native_stage" => "native stage",
+        other => other,
     }
 }
 
 fn serialize_report(report: &mut ConversionReport) -> Result<String, Box<dyn Error>> {
+    refresh_report_outcome(report);
     report.enforce_v1_limits();
     let redacted_summaries = report
         .diagnostics
@@ -2154,6 +2531,7 @@ fn serialize_report(report: &mut ConversionReport) -> Result<String, Box<dyn Err
     };
     let mut encoded = serde_json::to_string(report)?;
     while encoded.len() > boxferry::report::MAX_JSON_BYTES && report.reduce_for_json() {
+        refresh_report_outcome(report);
         encoded = serde_json::to_string(report)?;
     }
     if encoded.len() > boxferry::report::MAX_JSON_BYTES {
@@ -2435,29 +2813,53 @@ fn absolute_parent(path: &Path) -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other(format!("input path has no parent: {}", path.display())))
 }
 
-fn write_new_output_directory(directory: &Path, files: &[boxferry::QuadletFile]) -> io::Result<()> {
-    if let Err(error) = fs::create_dir(directory) {
-        if error.kind() == io::ErrorKind::AlreadyExists {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("output directory already exists: {}", directory.display()),
-            ));
+fn prepare_output_directory(directory: &Path) -> io::Result<bool> {
+    match fs::create_dir(directory) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(directory)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("output path is not a non-symlink directory: {}", directory.display()),
+                ));
+            }
+            if fs::read_dir(directory)?.next().transpose()?.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("output directory is not empty: {}", directory.display()),
+                ));
+            }
+            Ok(false)
         }
-        return Err(error);
+        Err(error) => Err(error),
     }
+}
+
+fn cleanup_output_write(directory: &Path, created_directory: bool, created_files: &[PathBuf]) {
+    for path in created_files {
+        let _ = fs::remove_file(path);
+    }
+    if created_directory {
+        let _ = fs::remove_dir(directory);
+    }
+}
+
+fn write_output_directory(directory: &Path, files: &[boxferry::QuadletFile]) -> io::Result<()> {
+    let created_directory = prepare_output_directory(directory)?;
     let mut created = Vec::with_capacity(files.len());
     for file in files {
         let path = directory.join(file.name().as_str());
-        let written = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .and_then(|mut destination| destination.write_all(file.text().as_bytes()));
-        if let Err(error) = written {
-            for created_path in &created {
-                let _ = fs::remove_file(created_path);
+        let mut destination = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(destination) => destination,
+            Err(error) => {
+                cleanup_output_write(directory, created_directory, &created);
+                return Err(error);
             }
-            let _ = fs::remove_dir(directory);
+        };
+        if let Err(error) = destination.write_all(file.text().as_bytes()) {
+            created.push(path);
+            cleanup_output_write(directory, created_directory, &created);
             return Err(error);
         }
         created.push(path);
@@ -2465,17 +2867,8 @@ fn write_new_output_directory(directory: &Path, files: &[boxferry::QuadletFile])
     Ok(())
 }
 
-fn write_new_compose_output(directory: &Path, text: &str) -> io::Result<()> {
-    fs::create_dir(directory).map_err(|error| {
-        if error.kind() == io::ErrorKind::AlreadyExists {
-            io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("output directory already exists: {}", directory.display()),
-            )
-        } else {
-            error
-        }
-    })?;
+fn write_compose_output(directory: &Path, text: &str) -> io::Result<()> {
+    let created_directory = prepare_output_directory(directory)?;
     let path = directory.join("compose.yaml");
     let result = OpenOptions::new()
         .write(true)
@@ -2483,8 +2876,7 @@ fn write_new_compose_output(directory: &Path, text: &str) -> io::Result<()> {
         .open(&path)
         .and_then(|mut file| file.write_all(text.as_bytes()));
     if let Err(error) = result {
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_dir(directory);
+        cleanup_output_write(directory, created_directory, &[path]);
         return Err(error);
     }
     Ok(())
@@ -2507,6 +2899,103 @@ mod tests {
     #[test]
     fn cli_definition_is_internally_consistent() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn output_write_conditions_have_distinct_catalogued_rules() {
+        let aliases = ReportAliases::default();
+        for (error, expected) in [
+            (
+                io::Error::new(io::ErrorKind::AlreadyExists, "output directory is not empty"),
+                "BFO2001",
+            ),
+            (
+                io::Error::new(io::ErrorKind::InvalidInput, "output path is not a directory"),
+                "BFO2002",
+            ),
+            (
+                io::Error::new(io::ErrorKind::PermissionDenied, "write denied"),
+                "BFO2003",
+            ),
+        ] {
+            let diagnostic = output_write_diagnostic(&error, &aliases);
+            assert_eq!(diagnostic.code, expected);
+            assert_ne!(diagnostic.name, "uncatalogued-diagnostic");
+            assert!(!diagnostic.help.is_empty());
+        }
+    }
+
+    #[test]
+    fn unknown_adapter_codes_fail_into_orchestration_with_source_provenance() -> Result<(), Box<dyn Error>> {
+        let diagnostic = Diagnostic::new(
+            boxferry::DiagnosticCode::new("BFX0001")?,
+            boxferry::Severity::Warning,
+            "extension diagnostic",
+        );
+        let report = report_diagnostic(&diagnostic, &ReportAliases::default());
+        assert_eq!(report.code, "BFO1000");
+        assert_eq!(report.source_code.as_deref(), Some("BFX0001"));
+        Ok(())
+    }
+
+    #[test]
+    fn finite_cli_values_accept_every_documented_spelling_and_reject_unknown_values() {
+        fn value_names<T: ValueEnum>() -> Vec<String> {
+            T::value_variants()
+                .iter()
+                .map(|value| {
+                    value
+                        .to_possible_value()
+                        .map_or_else(|| "<hidden>".to_owned(), |value| value.get_name().to_owned())
+                })
+                .collect()
+        }
+
+        assert_eq!(value_names::<InputType>(), vec!["compose", "quadlet"]);
+        assert_eq!(value_names::<OutputType>(), vec!["quadlet", "compose"]);
+        assert_eq!(value_names::<ConsoleFormat>(), vec!["json"]);
+        assert_eq!(value_names::<OutputLayout>(), vec!["files"]);
+        assert_eq!(value_names::<Grouping>(), vec!["separate", "pod"]);
+        assert_eq!(value_names::<CliLossPolicy>(), vec!["exact", "approximate", "partial"]);
+
+        let parse = |option: &str, value: &str| {
+            let mut arguments = vec!["boxferry", "validate"];
+            if option != "--input-type" {
+                arguments.extend(["--input-type", "compose"]);
+            }
+            if option != "--output-type" {
+                arguments.extend(["--output-type", "quadlet"]);
+            }
+            arguments.extend(["--input-file", "compose.yaml", option, value]);
+            Cli::try_parse_from(arguments)
+        };
+        for (option, values) in [
+            ("--input-type", ["compose", "quadlet"].as_slice()),
+            ("--output-type", ["quadlet", "compose"].as_slice()),
+            ("--console-format", ["json"].as_slice()),
+            ("--output-layout", ["files"].as_slice()),
+            ("--quadlet-grouping", ["separate", "pod"].as_slice()),
+            ("--loss-policy", ["exact", "approximate", "partial"].as_slice()),
+        ] {
+            for value in values {
+                assert!(parse(option, value).is_ok(), "{option}={value}");
+            }
+            assert!(parse(option, "unknown").is_err(), "{option} accepted an unknown value");
+        }
+        for option in ["--podman-minimum-version", "--podman-maximum-version"] {
+            for value in ["5.4", "5.4.0", "6.0", "6.0.2"] {
+                assert!(parse(option, value).is_ok(), "{option}={value}");
+            }
+            for value in ["5", "5.4.0.1", "five.four"] {
+                assert!(parse(option, value).is_err(), "{option} accepted {value}");
+            }
+        }
+        for value in ["NAME", "NAME=value", "NAME="] {
+            assert!(value.parse::<EnvironmentInput>().is_ok(), "--env={value}");
+        }
+        for value in ["", "=value", "1NAME", "NAME-WITH-DASH"] {
+            assert!(value.parse::<EnvironmentInput>().is_err(), "--env accepted {value:?}");
+        }
     }
 
     #[test]

@@ -44,8 +44,23 @@ fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() 
     let stdout = String::from_utf8(human.stdout)?;
     let stderr = String::from_utf8(human.stderr)?;
     assert!(stdout.contains("stage: conversion failed"), "{stdout}");
-    assert_eq!(stderr.matches("BFC0004:").count(), 2, "{stderr}");
-    assert_eq!(stderr.matches("BFC0005:").count(), 2, "{stderr}");
+    assert_eq!(
+        stderr.matches("BFC0004 compose-intent-unsupported [warning]").count(),
+        1,
+        "{stderr}"
+    );
+    assert!(stderr.contains("(2 findings)"), "{stderr}");
+    assert_eq!(
+        stderr.matches("BFC0005 compose-value-invalid [error]").count(),
+        1,
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("BFC0198 compose-native-warning [warning]").count(),
+        1,
+        "{stderr}"
+    );
+    assert!(!stderr.contains("source rule:"), "{stderr}");
     for subject in [
         "services.first.volumes[0]",
         "services.second.volumes[0]",
@@ -64,11 +79,16 @@ fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() 
     let report: serde_json::Value = serde_json::from_slice(&json.stdout)?;
     assert_eq!(report["failed_stage"], "conversion");
     let diagnostics = report["diagnostics"].as_array().ok_or("missing diagnostics")?;
-    assert_eq!(diagnostics.len(), 4);
-    assert_eq!(diagnostics[0]["code"], "BFC0005");
+    assert_eq!(diagnostics.len(), 5);
+    assert_eq!(diagnostics[0]["code"], "BFC0004");
     assert_eq!(diagnostics[1]["code"], "BFC0004");
-    assert_eq!(diagnostics[2]["code"], "BFC0004");
-    assert_eq!(diagnostics[3]["code"], "BFC0005");
+    assert_eq!(diagnostics[2]["code"], "BFC0005");
+    assert_eq!(diagnostics[3]["code"], "BFC0198");
+    assert_eq!(diagnostics[4]["code"], "BFC0198");
+    assert_eq!(
+        diagnostics[3]["source_code"],
+        "compose.shm-size.provider-dependent-string"
+    );
     Ok(())
 }
 
@@ -200,7 +220,8 @@ fn generic_convert_handles_a_large_repository_owned_offline_scenario() -> Result
             format!("input: {}", path_text(&project.path().join("compose.yaml"))?).as_str(),
             "application: large-offline",
             "stage: conversion complete",
-            "result: wrote 48 file(s) to output directory",
+            "",
+            "boxferry: command succeeded; wrote 48 file(s) to output directory",
         ]
     );
 
@@ -308,7 +329,10 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     let stdout = String::from_utf8(conversion.stdout)?;
     assert!(stdout.contains("application: human-summary"));
     assert!(stdout.contains("stage: conversion complete"));
-    assert!(stdout.contains("result: wrote 1 file(s)"));
+    assert_eq!(
+        stdout.lines().next_back(),
+        Some("boxferry: command succeeded; wrote 1 file(s) to output directory")
+    );
     Ok(())
 }
 
@@ -443,6 +467,238 @@ fn generic_environment_files_and_explicit_inputs_have_documented_precedence_with
     Ok(())
 }
 
+fn write_interpolation_diagnostic_fixture(project: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    fs::create_dir_all(project)?;
+    let compose = project.join("compose.yaml");
+    fs::write(
+        &compose,
+        concat!(
+            "name: interpolation-diagnostics\nservices:\n",
+            "  application:\n",
+            "    image: example.invalid/application:${IMMICH_VERSION-latest}\n",
+            "    environment:\n",
+            "      DB_PASSWORD: ${DB_PASSWORD}\n",
+            "      DB_USERNAME: ${DB_USERNAME}\n",
+            "    volumes:\n",
+            "      - ${UPLOAD_LOCATION}:/data\n",
+            "  database:\n",
+            "    image: example.invalid/database:1\n",
+            "    environment:\n",
+            "      DB_DATABASE_NAME: ${DB_DATABASE_NAME}\n",
+            "    volumes:\n",
+            "      - ${DB_DATA_LOCATION}:/database\n",
+        ),
+    )?;
+    Ok(compose)
+}
+
+const INTERPOLATION_VARIABLES: [&str; 5] = [
+    "UPLOAD_LOCATION",
+    "DB_DATA_LOCATION",
+    "DB_PASSWORD",
+    "DB_USERNAME",
+    "DB_DATABASE_NAME",
+];
+
+#[test]
+fn empty_interpolation_environment_preserves_native_warnings_before_import_errors() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("empty-interpolation-environment");
+    let compose = write_interpolation_diagnostic_fixture(project.path())?;
+    let common = [
+        "validate",
+        "--input-type",
+        "compose",
+        "--input-file",
+        path_text(&compose)?,
+        "--output-type",
+        "quadlet",
+        "--interpolate",
+    ];
+    let mut command = boxferry_command();
+    command.args(common);
+    for variable in INTERPOLATION_VARIABLES {
+        command.env_remove(variable);
+    }
+    let result = command.output()?;
+
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8(result.stderr)?;
+    for variable in INTERPOLATION_VARIABLES {
+        assert!(stderr.contains(&format!("variable: {variable}")), "{stderr}");
+    }
+    assert!(stderr.contains("(5 findings)"), "{stderr}");
+    assert_eq!(
+        stderr.matches("A Compose interpolation variable is not set.").count(),
+        1,
+        "{stderr}"
+    );
+    assert!(!stderr.contains("source rule:"), "{stderr}");
+    assert!(stderr.contains("BFC0001 compose-model-invalid [error]"), "{stderr}");
+    assert_eq!(
+        stderr
+            .matches("help: Provide the missing value with --env-file PATH or --env NAME=VALUE.")
+            .count(),
+        1,
+        "{stderr}"
+    );
+
+    let mut json_command = boxferry_command();
+    json_command.args(common).args(["--console-format", "json"]);
+    for variable in INTERPOLATION_VARIABLES {
+        json_command.env_remove(variable);
+    }
+    let json = json_command.output()?;
+    assert_eq!(json.status.code(), Some(1));
+    assert!(json.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+    let diagnostics = report["diagnostics"].as_array().ok_or("missing diagnostics")?;
+    for variable in INTERPOLATION_VARIABLES {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic["summary"] == format!("interpolation variable `{variable}` is not set"))
+        );
+    }
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFC0001"));
+    assert!(!String::from_utf8(json.stdout)?.contains("IMMICH_VERSION"));
+    Ok(())
+}
+
+#[test]
+fn partial_interpolation_environment_is_complete_in_human_and_json_diagnostics_without_value_leaks()
+-> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("partial-interpolation-environment");
+    let compose = write_interpolation_diagnostic_fixture(project.path())?;
+    let environment = project.path().join("partial.env");
+    fs::write(
+        &environment,
+        "UPLOAD_LOCATION=/provided-upload-value-canary\nDB_DATA_LOCATION=/provided-database-value-canary\n",
+    )?;
+    let common = [
+        "validate",
+        "--input-type",
+        "compose",
+        "--input-file",
+        path_text(&compose)?,
+        "--output-type",
+        "quadlet",
+        "--interpolate",
+        "--env-file",
+        path_text(&environment)?,
+    ];
+
+    let mut human_command = boxferry_command();
+    human_command.args(common);
+    for variable in INTERPOLATION_VARIABLES {
+        human_command.env_remove(variable);
+    }
+    let human = human_command.output()?;
+    assert!(human.status.success(), "{}", String::from_utf8_lossy(&human.stderr));
+    let human_stdout = String::from_utf8(human.stdout)?;
+    let human_stderr = String::from_utf8(human.stderr)?;
+    for variable in ["DB_PASSWORD", "DB_USERNAME", "DB_DATABASE_NAME"] {
+        assert!(human_stderr.contains(&format!("variable: {variable}")));
+    }
+    for variable in ["UPLOAD_LOCATION", "DB_DATA_LOCATION"] {
+        assert!(!human_stderr.contains(&format!("variable: {variable}")));
+    }
+    assert!(human_stderr.contains("(3 findings)"));
+    assert_eq!(
+        human_stderr
+            .matches("help: Provide the missing value with --env-file PATH or --env NAME=VALUE.")
+            .count(),
+        1
+    );
+    for canary in ["provided-upload-value-canary", "provided-database-value-canary"] {
+        assert!(!human_stdout.contains(canary));
+        assert!(!human_stderr.contains(canary));
+    }
+
+    let mut json_command = boxferry_command();
+    json_command.args(common).args(["--console-format", "json"]);
+    for variable in INTERPOLATION_VARIABLES {
+        json_command.env_remove(variable);
+    }
+    let json = json_command.output()?;
+    assert!(json.status.success(), "{}", String::from_utf8_lossy(&json.stderr));
+    assert!(json.stderr.is_empty());
+    let encoded = String::from_utf8(json.stdout)?;
+    let report: serde_json::Value = serde_json::from_str(&encoded)?;
+    let diagnostics = report["diagnostics"].as_array().ok_or("missing diagnostics")?;
+    for variable in ["DB_PASSWORD", "DB_USERNAME", "DB_DATABASE_NAME"] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic["summary"] == format!("interpolation variable `{variable}` is not set"))
+        );
+    }
+    for canary in ["provided-upload-value-canary", "provided-database-value-canary"] {
+        assert!(!encoded.contains(canary));
+    }
+    Ok(())
+}
+
+#[test]
+fn repeated_human_rules_hoist_shared_context_and_list_only_finding_evidence() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("grouped-human-diagnostics");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    fs::write(
+        &compose,
+        concat!(
+            "name: grouped-diagnostics\nservices:\n",
+            "  first:\n",
+            "    image: example.invalid/first:1\n",
+            "    restart: unless-stopped\n",
+            "    environment:\n      VALUE: ${FIRST_VALUE}\n",
+            "  second:\n",
+            "    image: example.invalid/second:1\n",
+            "    restart: unless-stopped\n",
+            "    environment:\n      VALUE: ${SECOND_VALUE}\n",
+        ),
+    )?;
+    let output = boxferry_command()
+        .env_remove("FIRST_VALUE")
+        .env_remove("SECOND_VALUE")
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--input-file",
+            path_text(&compose)?,
+            "--output-type",
+            "quadlet",
+            "--interpolate",
+            "--loss-policy",
+            "approximate",
+        ])
+        .output()?;
+
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("BFC0101 compose-unset-variable [warning] (2 findings)"));
+    assert_eq!(
+        stderr.matches("A Compose interpolation variable is not set.").count(),
+        1
+    );
+    assert!(stderr.contains("1. variable: FIRST_VALUE"));
+    assert!(stderr.contains("2. variable: SECOND_VALUE"));
+    assert!(!stderr.contains("interpolation variable `"));
+    assert!(!stderr.contains("source rule:"));
+
+    assert!(stderr.contains("BFQ0009 quadlet-restart-policy-approximation [warning] (2 findings)"));
+    assert_eq!(
+        stderr
+            .matches("container restart behavior is approximated by the systemd service manager")
+            .count(),
+        1
+    );
+    assert_eq!(stderr.matches("\n  reason:").count(), 1, "{stderr}");
+    assert!(stderr.contains("1. subject: services.first.restart_policy"));
+    assert!(stderr.contains("2. subject: services.second.restart_policy"));
+    Ok(())
+}
+
 #[test]
 fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_outputs() -> Result<(), Box<dyn Error>> {
     let project = TemporaryOutput::new("interpolation-failure-canaries");
@@ -450,6 +706,7 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
     let report_directory = TemporaryOutput::new("interpolation-failure-report");
     fs::create_dir_all(project.path())?;
     fs::create_dir_all(output.path())?;
+    fs::write(output.path().join("sentinel"), "keep")?;
     fs::create_dir_all(report_directory.path())?;
     let compose = project.path().join("compose.yaml");
     let environment = project.path().join("values.env");
@@ -505,7 +762,7 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
     assert!(
         value["diagnostics"]
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFC0021"))
+            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO2001"))
     );
     Ok(())
 }
@@ -517,6 +774,7 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
     let report_directory = TemporaryOutput::new("output-write-report-files");
     fs::create_dir_all(project.path())?;
     fs::create_dir_all(output.path())?;
+    fs::write(output.path().join("sentinel"), "keep")?;
     fs::create_dir_all(report_directory.path())?;
     let compose = project.path().join("compose.yaml");
     let report = report_directory.path().join("result.json");
@@ -556,6 +814,12 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
         assert_eq!(value["status"], "failure");
         assert_eq!(value["exit_category"], "output-write");
         assert_eq!(value["failed_stage"], "output-write");
+        assert_eq!(value["primary_diagnostic_code"], "BFO2001");
+        assert!(
+            value["failure_summary"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("output-directory-not-empty"))
+        );
         assert_eq!(value["application"], "complete-report");
         assert_eq!(value["inputs"].as_array().map(Vec::len), Some(1));
         assert_eq!(value["discovery"].as_array().map(Vec::len), Some(1));
@@ -569,7 +833,7 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
         assert!(
             value["diagnostics"]
                 .as_array()
-                .is_some_and(|items| items.iter().any(|item| item["code"] == "BFC0021"))
+                .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO2001"))
         );
     }
     Ok(())
@@ -665,7 +929,98 @@ fn generic_rejects_profile_and_presentation_conflicts() -> Result<(), Box<dyn Er
         ])
         .output()?;
     assert_eq!(profile.status.code(), Some(2));
-    let mode = boxferry_command()
+    for presentation in [
+        ["--verbose", "--quiet", ""],
+        ["--verbose", "--console-format", "json"],
+        ["--quiet", "--console-format", "json"],
+    ] {
+        let mode = boxferry_command()
+            .args([
+                "validate",
+                "--input-type",
+                "compose",
+                "--output-type",
+                "quadlet",
+                "--input-file",
+                path_text(&fixture)?,
+            ])
+            .args(presentation.into_iter().filter(|value| !value.is_empty()))
+            .output()?;
+        assert_eq!(mode.status.code(), Some(2), "{presentation:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn compose_profile_and_project_directory_options_have_successful_cli_paths() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("compose-profile-project-directory");
+    let inputs = project.path().join("inputs");
+    fs::create_dir_all(&inputs)?;
+    let compose = inputs.join("compose.yaml");
+    fs::write(
+        &compose,
+        concat!(
+            "name: option-paths\nservices:\n",
+            "  base:\n    image: example.invalid/base:1\n    volumes: ['./data:/data']\n",
+            "  optional:\n    image: example.invalid/optional:1\n    profiles: [optional]\n",
+        ),
+    )?;
+    let run = |selection: &[&str]| -> Result<serde_json::Value, Box<dyn Error>> {
+        let result = boxferry_command()
+            .args([
+                "validate",
+                "--input-type",
+                "compose",
+                "--output-type",
+                "quadlet",
+                "--input-file",
+                path_text(&compose)?,
+                "--project-directory",
+                path_text(project.path())?,
+                "--console-format",
+                "json",
+            ])
+            .args(selection)
+            .output()?;
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        Ok(serde_json::from_slice(&result.stdout)?)
+    };
+
+    let default = run(&[])?;
+    assert!(default["choices"].as_array().is_some_and(|choices| {
+        choices
+            .iter()
+            .any(|choice| choice["name"] == "profiles" && choice["value"] == "")
+    }));
+    let profile = run(&["--profile", "optional"])?;
+    assert!(profile["choices"].as_array().is_some_and(|choices| {
+        choices
+            .iter()
+            .any(|choice| choice["name"] == "profiles" && choice["value"] == "optional")
+    }));
+    let all = run(&["--all-profiles"])?;
+    assert!(all["choices"].as_array().is_some_and(|choices| {
+        choices
+            .iter()
+            .any(|choice| choice["name"] == "profiles" && choice["value"] == "all")
+    }));
+    Ok(())
+}
+
+fn write_loss_policy_fixture(project: &Path, service_fields: &str) -> Result<PathBuf, Box<dyn Error>> {
+    fs::create_dir_all(project)?;
+    let compose = project.join("compose.yaml");
+    fs::write(
+        &compose,
+        format!(
+            "name: policy-matrix\nservices:\n  application:\n    image: example.invalid/application:1\n{service_fields}"
+        ),
+    )?;
+    Ok(compose)
+}
+
+fn validate_with_loss_policy(input: &Path, policy: &str) -> Result<Output, Box<dyn Error>> {
+    Ok(boxferry_command()
         .args([
             "validate",
             "--input-type",
@@ -673,13 +1028,255 @@ fn generic_rejects_profile_and_presentation_conflicts() -> Result<(), Box<dyn Er
             "--output-type",
             "quadlet",
             "--input-file",
-            path_text(&fixture)?,
-            "--quiet",
-            "--console-format",
-            "json",
+            path_text(input)?,
+            "--loss-policy",
+            policy,
+        ])
+        .output()?)
+}
+
+#[test]
+fn every_loss_policy_value_has_positive_and_negative_cli_behavior() -> Result<(), Box<dyn Error>> {
+    let exact_project = TemporaryOutput::new("loss-policy-exact");
+    let approximate_project = TemporaryOutput::new("loss-policy-approximate");
+    let partial_project = TemporaryOutput::new("loss-policy-partial");
+    let invalid_project = TemporaryOutput::new("loss-policy-invalid");
+    let exact = write_loss_policy_fixture(exact_project.path(), "")?;
+    let approximate = write_loss_policy_fixture(approximate_project.path(), "    restart: unless-stopped\n")?;
+    let partial = write_loss_policy_fixture(partial_project.path(), "    ports: ['8000-8002:80-82']\n")?;
+    let invalid = write_loss_policy_fixture(invalid_project.path(), "    shm_size: invalid\n")?;
+
+    let exact_success = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-file",
+            path_text(&exact)?,
+            "--quadlet-grouping",
+            "separate",
+            "--output-layout",
+            "files",
+            "--loss-policy",
+            "exact",
         ])
         .output()?;
-    assert_eq!(mode.status.code(), Some(2));
+    assert!(
+        exact_success.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exact_success.stderr)
+    );
+
+    let exact_blocks_approximation = validate_with_loss_policy(&approximate, "exact")?;
+    assert_eq!(exact_blocks_approximation.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&exact_blocks_approximation.stderr)
+            .contains("BFQ0009 quadlet-restart-policy-approximation [warning]")
+    );
+    assert_eq!(
+        String::from_utf8(exact_blocks_approximation.stdout)?
+            .lines()
+            .next_back(),
+        Some(
+            "boxferry: command blocked by the selected loss policy: BFQ0009 quadlet-restart-policy-approximation — container restart behavior is approximated by the systemd service manager"
+        )
+    );
+
+    let approximate_success = validate_with_loss_policy(&approximate, "approximate")?;
+    assert!(
+        approximate_success.status.success(),
+        "{}",
+        String::from_utf8_lossy(&approximate_success.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&approximate_success.stderr)
+            .contains("BFQ0009 quadlet-restart-policy-approximation [warning]")
+    );
+
+    let approximate_blocks_partial = validate_with_loss_policy(&partial, "approximate")?;
+    assert_eq!(approximate_blocks_partial.status.code(), Some(2));
+    let approximate_blocks_partial_stderr = String::from_utf8_lossy(&approximate_blocks_partial.stderr);
+    assert!(approximate_blocks_partial_stderr.contains("BFC0004 compose-intent-unsupported [warning]"));
+    assert!(!approximate_blocks_partial_stderr.contains("if the Compose input contains ${...}"));
+
+    let partial_success = validate_with_loss_policy(&partial, "partial")?;
+    assert!(
+        partial_success.status.success(),
+        "{}",
+        String::from_utf8_lossy(&partial_success.stderr)
+    );
+    assert!(String::from_utf8_lossy(&partial_success.stderr).contains("BFC0004 compose-intent-unsupported [warning]"));
+
+    let partial_rejects_invalid = validate_with_loss_policy(&invalid, "partial")?;
+    assert_eq!(partial_rejects_invalid.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&partial_rejects_invalid.stderr).contains("BFC0005 compose-value-invalid [error]"));
+    Ok(())
+}
+
+#[test]
+fn output_directory_accepts_absent_and_empty_but_rejects_nonempty_and_dotfile_content() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("approximate-output-collision-project");
+    let existing_output = TemporaryOutput::new("approximate-output-collision-existing");
+    let dotfile_output = TemporaryOutput::new("approximate-output-collision-dotfile");
+    let child_directory_output = TemporaryOutput::new("approximate-output-collision-child-directory");
+    let empty_output = TemporaryOutput::new("approximate-output-existing-empty");
+    let fresh_output = TemporaryOutput::new("approximate-output-collision-fresh");
+    let file_output = TemporaryOutput::new("approximate-output-regular-file");
+    let compose = write_loss_policy_fixture(project.path(), "    restart: unless-stopped\n")?;
+    fs::create_dir_all(existing_output.path())?;
+    fs::write(existing_output.path().join("sentinel"), "keep")?;
+    fs::create_dir_all(dotfile_output.path())?;
+    fs::write(dotfile_output.path().join(".keep"), "keep")?;
+    fs::create_dir_all(child_directory_output.path().join("nested"))?;
+    fs::create_dir_all(empty_output.path())?;
+    fs::write(file_output.path(), "keep")?;
+    let run = |output: &Path| -> Result<Output, Box<dyn Error>> {
+        Ok(boxferry_command()
+            .args([
+                "convert",
+                "--input-type",
+                "compose",
+                "--output-type",
+                "quadlet",
+                "--input-file",
+                path_text(&compose)?,
+                "--loss-policy",
+                "approximate",
+                "--output-directory",
+                path_text(output)?,
+            ])
+            .output()?)
+    };
+
+    let collision: Output = run(existing_output.path())?;
+    assert_eq!(collision.status.code(), Some(1));
+    let collision_stdout = String::from_utf8(collision.stdout)?;
+    let collision_stderr = String::from_utf8(collision.stderr)?;
+    assert!(collision_stdout.contains("stage: output write failed"));
+    assert_eq!(
+        collision_stdout.lines().next_back(),
+        Some(
+            "boxferry: command failed during output write: BFO2001 output-directory-not-empty — The selected output directory is not empty."
+        )
+    );
+    assert!(collision_stderr.contains("BFQ0009 quadlet-restart-policy-approximation [warning]"));
+    assert!(collision_stderr.contains("BFO2001 output-directory-not-empty [error]"));
+    assert!(collision_stderr.contains("help: Empty the selected --output-directory or choose a new path."));
+    assert_eq!(fs::read_to_string(existing_output.path().join("sentinel"))?, "keep");
+
+    let dotfile: Output = run(dotfile_output.path())?;
+    assert_eq!(dotfile.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&dotfile.stderr).contains("output directory is not empty"));
+    assert_eq!(fs::read_to_string(dotfile_output.path().join(".keep"))?, "keep");
+
+    let child_directory: Output = run(child_directory_output.path())?;
+    assert_eq!(child_directory.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&child_directory.stderr).contains("output directory is not empty"));
+    assert!(child_directory_output.path().join("nested").is_dir());
+
+    let regular_file: Output = run(file_output.path())?;
+    assert_eq!(regular_file.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&regular_file.stderr).contains("not a non-symlink directory"));
+    assert_eq!(fs::read_to_string(file_output.path())?, "keep");
+
+    let existing_empty: Output = run(empty_output.path())?;
+    assert!(
+        existing_empty.status.success(),
+        "{}",
+        String::from_utf8_lossy(&existing_empty.stderr)
+    );
+    assert!(empty_output.path().join("application.container").exists());
+
+    let success: Output = run(fresh_output.path())?;
+    assert!(success.status.success(), "{}", String::from_utf8_lossy(&success.stderr));
+    assert!(
+        String::from_utf8_lossy(&success.stderr).contains("BFQ0009 quadlet-restart-policy-approximation [warning]")
+    );
+    assert!(!String::from_utf8_lossy(&success.stderr).contains("BFO2001"));
+    assert!(fresh_output.path().join("application.container").exists());
+    assert_eq!(
+        String::from_utf8(success.stdout)?.lines().next_back(),
+        Some("boxferry: command succeeded; wrote 1 file(s) to output directory")
+    );
+    Ok(())
+}
+
+#[test]
+fn human_sections_are_ordered_and_end_with_success_or_failure() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("human-section-order-project");
+    let output = TemporaryOutput::new("human-section-order-output");
+    let success_transcript = TemporaryOutput::new("human-section-order-success");
+    let failure_transcript = TemporaryOutput::new("human-section-order-failure");
+    let compose = write_loss_policy_fixture(
+        project.path(),
+        concat!(
+            "    restart: unless-stopped\n",
+            "    environment:\n",
+            "      MISSING: ${BOXFERRY_TRANSCRIPT_MISSING}\n",
+        ),
+    )?;
+    let command_arguments = [
+        "convert",
+        "--input-type",
+        "compose",
+        "--output-type",
+        "quadlet",
+        "--input-file",
+        path_text(&compose)?,
+        "--interpolate",
+        "--loss-policy",
+        "approximate",
+        "--output-directory",
+        path_text(output.path())?,
+    ];
+    let run = |transcript: &Path| -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        let file = fs::File::create(transcript)?;
+        Ok(boxferry_command()
+            .env_remove("BOXFERRY_TRANSCRIPT_MISSING")
+            .args(command_arguments)
+            .stdout(std::process::Stdio::from(file.try_clone()?))
+            .stderr(std::process::Stdio::from(file))
+            .status()?)
+    };
+
+    assert!(run(success_transcript.path())?.success());
+    let success = fs::read_to_string(success_transcript.path())?;
+    let stage = success.find("stage: conversion complete").ok_or("success stage")?;
+    let interpolation = success
+        .find("BFC0101 compose-unset-variable [warning]")
+        .ok_or("interpolation warning")?;
+    let interpolation_help = success
+        .find("help: Provide the missing value with --env-file PATH or --env NAME=VALUE.")
+        .ok_or("interpolation help")?;
+    let approximation = success
+        .find("BFQ0009 quadlet-restart-policy-approximation [warning]")
+        .ok_or("approximation warning")?;
+    let final_line = "boxferry: command succeeded; wrote 1 file(s) to output directory";
+    let final_status = success.find(final_line).ok_or("success status")?;
+    assert!(
+        stage < interpolation
+            && interpolation < interpolation_help
+            && interpolation_help < approximation
+            && approximation < final_status
+    );
+    assert!(success.contains("stage: conversion complete\n\nBFC0101"), "{success}");
+    assert!(success.contains("boxferry explain BFC0101\n\nBFQ0009"), "{success}");
+    assert_eq!(success.lines().next_back(), Some(final_line));
+
+    assert!(!run(failure_transcript.path())?.success());
+    let failure = fs::read_to_string(failure_transcript.path())?;
+    let output_error = failure
+        .find("BFO2001 output-directory-not-empty [error]")
+        .ok_or("output error")?;
+    let output_help = failure
+        .find("help: Empty the selected --output-directory or choose a new path.")
+        .ok_or("output help")?;
+    let failure_line = "boxferry: command failed during output write: BFO2001 output-directory-not-empty — The selected output directory is not empty.";
+    let final_failure = failure.find(failure_line).ok_or("failure status")?;
+    assert!(output_error < output_help && output_help < final_failure);
+    assert_eq!(failure.lines().next_back(), Some(failure_line));
     Ok(())
 }
 
@@ -765,8 +1362,13 @@ fn generic_pod_name_is_applied_only_to_explicit_pod_grouping() -> Result<(), Box
 fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Box<dyn Error>> {
     for arguments in [
         ["--help"].as_slice(),
+        ["-h"].as_slice(),
         ["convert", "--help"].as_slice(),
+        ["convert", "-h"].as_slice(),
         ["--version"].as_slice(),
+        ["help"].as_slice(),
+        ["help", "convert"].as_slice(),
+        ["version"].as_slice(),
     ] {
         let result = boxferry_command().args(arguments).output()?;
         assert!(result.status.success());
@@ -775,6 +1377,9 @@ fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Bo
     }
     let help = boxferry_command().args(["--help"]).output()?;
     assert!(!String::from_utf8(help.stdout)?.contains("compose-to-quadlet"));
+    let unknown_help = boxferry_command().args(["help", "unknown"]).output()?;
+    assert_eq!(unknown_help.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown_help.stderr).contains("unknown command"));
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
     let json = boxferry_command()
         .args([
@@ -795,6 +1400,86 @@ fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Bo
     assert!(json.stderr.is_empty());
     let _: serde_json::Value = serde_json::from_slice(&json.stdout)?;
     assert_eq!(std::str::from_utf8(&json.stdout)?.lines().count(), 1);
+    Ok(())
+}
+
+#[test]
+fn rules_and_explain_expose_one_sorted_machine_readable_catalogue() -> Result<(), Box<dyn Error>> {
+    let human = boxferry_command().args(["rules"]).output()?;
+    assert!(human.status.success());
+    assert!(human.stderr.is_empty());
+    let human = String::from_utf8(human.stdout)?;
+    let lines = human.lines().collect::<Vec<_>>();
+    assert!(lines.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert!(human.contains("BFC0101 compose-unset-variable [warning]"));
+    assert!(human.contains("BFQ0009 quadlet-restart-policy-approximation [warning]"));
+    assert!(human.contains("BFO2001 output-directory-not-empty [error]"));
+
+    for rule in ["BFQ0009", "quadlet-restart-policy-approximation"] {
+        let explained = boxferry_command().args(["explain", rule]).output()?;
+        assert!(explained.status.success());
+        let explained = String::from_utf8(explained.stdout)?;
+        assert!(explained.contains("BFQ0009 quadlet-restart-policy-approximation"));
+        assert!(explained.contains("owner: Quadlet adapter"));
+        assert!(explained.contains("help:"));
+    }
+
+    let json = boxferry_command()
+        .args(["rules", "--console-format", "json"])
+        .output()?;
+    assert!(json.status.success());
+    assert!(json.stderr.is_empty());
+    let catalogue: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+    let rules = catalogue["rules"].as_array().ok_or("rules array")?;
+    assert!(rules.iter().any(|rule| {
+        rule["code"] == "BFQ0009" && rule["name"] == "quadlet-restart-policy-approximation" && rule["help"].is_string()
+    }));
+
+    let unknown = boxferry_command().args(["explain", "NOT-A-RULE"]).output()?;
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("run `boxferry rules`"));
+    Ok(())
+}
+
+#[test]
+fn generic_input_and_interpolation_argument_failures_are_fail_closed() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
+    let missing_input = boxferry_command()
+        .args(["validate", "--input-type", "compose", "--output-type", "quadlet"])
+        .output()?;
+    assert_eq!(missing_input.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing_input.stderr).contains("at least one --input-file"));
+    let env_file_without_interpolation = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-file",
+            path_text(&fixture)?,
+            "--env-file",
+            "values.env",
+        ])
+        .output()?;
+    assert_eq!(env_file_without_interpolation.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&env_file_without_interpolation.stderr).contains("--interpolate"));
+    for environment in ["", "1INVALID", "INVALID-NAME"] {
+        let invalid_environment = boxferry_command()
+            .args([
+                "validate",
+                "--input-type",
+                "compose",
+                "--output-type",
+                "quadlet",
+                "--input-file",
+                path_text(&fixture)?,
+                "--interpolate",
+                &format!("--env={environment}"),
+            ])
+            .output()?;
+        assert_eq!(invalid_environment.status.code(), Some(2), "{environment:?}");
+    }
     Ok(())
 }
 
@@ -861,6 +1546,7 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
     assert!(String::from_utf8_lossy(&stdin_later.stderr).contains("--project-directory"));
     let existing = TemporaryOutput::new("json-write-failure");
     fs::create_dir_all(existing.path())?;
+    fs::write(existing.path().join("sentinel"), "keep")?;
     let json = boxferry_command()
         .args([
             "convert",
@@ -887,7 +1573,7 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
 #[test]
 fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
-    for maximum in ["5.8", "6.0.2"] {
+    for (minimum, maximum) in [("5.4", "5.8"), ("5.4.0", "6.0.2")] {
         let result = boxferry_command()
             .args([
                 "validate",
@@ -897,6 +1583,8 @@ fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<d
                 "quadlet",
                 "--input-file",
                 path_text(&fixture)?,
+                "--podman-minimum-version",
+                minimum,
                 "--podman-maximum-version",
                 maximum,
                 "--loss-policy",
@@ -907,10 +1595,37 @@ fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<d
             .output()?;
         assert!(
             result.status.success(),
-            "{maximum}: {}",
+            "{minimum} through {maximum}: {}",
             String::from_utf8_lossy(&result.stderr)
         );
         assert!(result.stderr.is_empty());
+    }
+    for (minimum, maximum) in [("5.3", "6.0"), ("5.4", "6.1"), ("6.0", "5.4")] {
+        let result = boxferry_command()
+            .args([
+                "validate",
+                "--input-type",
+                "compose",
+                "--output-type",
+                "quadlet",
+                "--input-file",
+                path_text(&fixture)?,
+                "--podman-minimum-version",
+                minimum,
+                "--podman-maximum-version",
+                maximum,
+                "--console-format",
+                "json",
+            ])
+            .output()?;
+        assert_eq!(result.status.code(), Some(1), "{minimum} through {maximum}");
+        assert!(result.stderr.is_empty());
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+        assert!(
+            report["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFO1003"))
+        );
     }
     Ok(())
 }
@@ -983,7 +1698,7 @@ fn compose_post_discovery_failures_preserve_context_without_serializing_paths() 
     assert!(
         target_report["diagnostics"]
             .as_array()
-            .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFC0027"))
+            .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFO1003"))
     );
     let target_json = String::from_utf8(target_failure.stdout)?;
     assert_eq!(target_json.lines().count(), 1);
@@ -1005,7 +1720,7 @@ fn compose_post_discovery_failures_preserve_context_without_serializing_paths() 
     assert_eq!(human_failure.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&human_failure.stdout).contains(&format!("input: {}", compose.display())));
     assert!(String::from_utf8_lossy(&human_failure.stdout).contains("stage: conversion failed"));
-    assert!(String::from_utf8_lossy(&human_failure.stderr).contains("BFC0027"));
+    assert!(String::from_utf8_lossy(&human_failure.stderr).contains("BFO1003"));
 
     let interpolation_failure = boxferry_command()
         .args([
@@ -1033,7 +1748,7 @@ fn compose_post_discovery_failures_preserve_context_without_serializing_paths() 
     assert!(
         interpolation_report["diagnostics"]
             .as_array()
-            .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFC0028"))
+            .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFO1004"))
     );
     assert_eq!(interpolation_json.lines().count(), 1);
     assert!(!interpolation_json.contains("post-resolution-input-canary"));
@@ -1101,6 +1816,8 @@ fn report_schema_declares_the_emitted_v1_shape() -> Result<(), Box<dyn Error>> {
         "status",
         "exit_category",
         "failed_stage",
+        "primary_diagnostic_code",
+        "failure_summary",
         "source_type",
         "target_type",
         "application",
@@ -1149,6 +1866,24 @@ fn report_schema_declares_the_emitted_v1_shape() -> Result<(), Box<dyn Error>> {
             .collect::<Option<Vec<_>>>(),
         Some(vec!["command_kind", "provided_option_names"])
     );
+    let diagnostic_required = schema["$defs"]["diagnostic"]["required"]
+        .as_array()
+        .ok_or("diagnostic required fields")?;
+    for field in [
+        "code",
+        "name",
+        "source_code",
+        "severity",
+        "summary",
+        "help",
+        "fields",
+        "spans",
+    ] {
+        assert!(
+            diagnostic_required.iter().any(|value| value == field),
+            "missing diagnostic {field}"
+        );
+    }
     Ok(())
 }
 
@@ -1322,7 +2057,7 @@ fn invalid_tzif_environment_fails_closed_without_leaking_its_path() -> Result<()
     assert!(
         console_report["diagnostics"]
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFC0022"))
+            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO3002"))
     );
     assert!(
         fs::read_dir(directory.path())?.all(|entry| {
@@ -1365,7 +2100,7 @@ fn report_file_is_attempted_before_the_support_bundle() -> Result<(), Box<dyn Er
     assert!(
         serde_json::from_str::<serde_json::Value>(&bundled)?["diagnostics"]
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFC0020"))
+            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO3001"))
     );
     Ok(())
 }
@@ -1399,7 +2134,7 @@ fn report_write_failure_preserves_a_primary_failure_category_and_stage() -> Resu
     assert!(
         value["diagnostics"]
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFC0020"))
+            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO3001"))
     );
     Ok(())
 }
@@ -1569,6 +2304,7 @@ fn quadlet_to_compose_generic_route_writes_canonical_document_and_complete_repor
     let project = TemporaryOutput::new("quadlet-to-compose-project");
     let output = TemporaryOutput::new("quadlet-to-compose-output");
     fs::create_dir_all(project.path())?;
+    fs::create_dir_all(output.path())?;
     let input = project.path().join("web.container");
     fs::write(
         &input,
@@ -1648,7 +2384,7 @@ fn quadlet_to_compose_generic_route_writes_canonical_document_and_complete_repor
         ])
         .output()?;
     assert_eq!(collision.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&collision.stderr).contains("output directory already exists"));
+    assert!(String::from_utf8_lossy(&collision.stderr).contains("output directory is not empty"));
     Ok(())
 }
 
@@ -1911,9 +2647,11 @@ fn assert_quadlet_document_set_failure(input: &Path) -> Result<(), Box<dyn Error
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
     assert_eq!(report["failed_stage"], "conversion");
     assert!(report["diagnostics"].as_array().is_some_and(|diagnostics| {
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic["code"].as_str().is_some_and(|code| code.starts_with("QL")))
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["source_code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("QL"))
+        })
     }));
     Ok(())
 }
@@ -1965,8 +2703,10 @@ fn quadlet_detailed_native_diagnostics_are_ordered_aliased_and_redacted_everywhe
     )?;
     assert_eq!(console_report["failed_stage"], "quadlet-parse");
     let diagnostics = console_report["diagnostics"].as_array().ok_or("missing diagnostics")?;
-    assert_eq!(diagnostics[0]["code"], "QLS0001");
-    assert_eq!(diagnostics[1]["code"], "QLM0002");
+    assert_eq!(diagnostics[0]["code"], "BFQ1101");
+    assert_eq!(diagnostics[0]["source_code"], "QLS0001");
+    assert_eq!(diagnostics[1]["code"], "BFQ1102");
+    assert_eq!(diagnostics[1]["source_code"], "QLM0002");
     assert!(diagnostics.len() >= 3);
     assert_eq!(diagnostics[0]["spans"][0]["source"], "<input-1>");
     assert_eq!(diagnostics[1]["spans"][0]["source"], "<input-1>");
@@ -1997,7 +2737,8 @@ fn quadlet_detailed_native_diagnostics_are_ordered_aliased_and_redacted_everywhe
         .output()?;
     assert_eq!(human.status.code(), Some(1));
     let stderr = String::from_utf8(human.stderr)?;
-    assert!(stderr.contains("QLS0001:"));
+    assert!(stderr.contains("BFQ1101 quadlet-native-syntax [error]"));
+    assert!(!stderr.contains("source rule:"));
     assert!(stderr.contains(diagnostics[0]["summary"].as_str().ok_or("missing summary")?));
     assert!(
         stderr.contains(
@@ -2043,7 +2784,12 @@ fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<()
                 .find(|diagnostic| diagnostic["severity"] == "warning")
         })
         .ok_or("missing recoverable native warning")?;
-    assert!(warning["code"].as_str().is_some_and(|code| code.starts_with("QLM")));
+    assert_eq!(warning["code"], "BFQ1102");
+    assert!(
+        warning["source_code"]
+            .as_str()
+            .is_some_and(|code| code.starts_with("QLM"))
+    );
     assert_eq!(warning["spans"][0]["source"], "<input-1>");
     assert!(
         warning["fields"]

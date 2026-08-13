@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue,
-    ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, Severity, TargetProfile,
+    ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, RuleId, Severity, TargetProfile,
 };
 use boxferry_model::{
     Application, Command, Device, Entrypoint, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
@@ -72,10 +72,10 @@ impl ComposeExporter {
     pub fn new() -> Result<Self, InvalidDiagnosticCode> {
         Ok(Self {
             codes: Codes {
-                invalid_target: DiagnosticCode::new("BFC0006")?,
-                unsupported: DiagnosticCode::new("BFC0007")?,
-                generation: DiagnosticCode::new("BFC0008")?,
-                compatibility: DiagnosticCode::new("BFC0009")?,
+                invalid_target: RuleId::ComposeTargetInvalid.definition().diagnostic_code()?,
+                unsupported: RuleId::ComposeOutputUnsupported.definition().diagnostic_code()?,
+                generation: RuleId::ComposeGenerationFailed.definition().diagnostic_code()?,
+                compatibility: RuleId::ComposeCompatibilityConstraint.definition().diagnostic_code()?,
             },
             runtime: None,
         })

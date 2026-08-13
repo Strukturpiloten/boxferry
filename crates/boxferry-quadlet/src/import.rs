@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
-    ImportResult, InvalidDiagnosticCode, Severity,
+    ImportResult, InvalidDiagnosticCode, RuleId, Severity,
 };
 use boxferry_model::{
     Annotation, Application, BuildSettingValues, BuildSyntax, Command, Device, Entrypoint, EnvironmentFile,
@@ -39,10 +39,10 @@ impl QuadletImporter {
     pub fn new() -> Result<Self, InvalidDiagnosticCode> {
         Ok(Self {
             codes: Codes {
-                invalid_source: DiagnosticCode::new("BFQ1001")?,
-                invalid_model: DiagnosticCode::new("BFQ1002")?,
-                unsupported: DiagnosticCode::new("BFQ1003")?,
-                approximate: DiagnosticCode::new("BFQ1004")?,
+                invalid_source: RuleId::QuadletSourceInvalid.definition().diagnostic_code()?,
+                invalid_model: RuleId::QuadletModelInvalid.definition().diagnostic_code()?,
+                unsupported: RuleId::QuadletInputUnsupported.definition().diagnostic_code()?,
+                approximate: RuleId::QuadletInputApproximation.definition().diagnostic_code()?,
             },
         })
     }

@@ -10,6 +10,8 @@
     "status",
     "exit_category",
     "failed_stage",
+    "primary_diagnostic_code",
+    "failure_summary",
     "source_type",
     "target_type",
     "application",
@@ -36,6 +38,8 @@
       "enum": ["success", "policy-blocked", "input-or-execution", "output-write", "report-write"]
     },
     "failed_stage": { "anyOf": [{ "$ref": "#/$defs/failed_stage" }, { "type": "null" }] },
+    "primary_diagnostic_code": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+    "failure_summary": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
     "source_type": { "$ref": "#/$defs/text" },
     "target_type": { "$ref": "#/$defs/text" },
     "application": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
@@ -156,11 +160,14 @@
     "diagnostic": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "severity", "summary", "fields", "spans"],
+      "required": ["code", "name", "source_code", "severity", "summary", "help", "fields", "spans"],
       "properties": {
         "code": { "$ref": "#/$defs/text" },
+        "name": { "$ref": "#/$defs/text" },
+        "source_code": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
         "severity": { "enum": ["error", "warning", "note"] },
         "summary": { "$ref": "#/$defs/text" },
+        "help": { "$ref": "#/$defs/text" },
         "fields": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/field" } },
         "spans": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/span" } }
       }

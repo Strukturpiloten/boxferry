@@ -96,6 +96,10 @@ grammar. The value is otherwise literal after removal of a trailing carriage ret
 escaping, `export`, multiline values, and nested interpolation are not interpreted. This is a
 strict BoxFerry input format, not a claim of full Docker Compose `.env` compatibility.
 
+An unset expression without a Compose default retains its native
+`compose.interpolation.unset-variable` warning and substitutes an empty string. The warning remains
+visible if that empty result subsequently causes an importer error.
+
 BoxFerry does not import the complete process environment or discover `.env` implicitly. Values
 from every explicit interpolation source are protected in reports. Command-line values may be
 visible in shell history, process lists, and CI logs, so documentation must discourage
@@ -162,9 +166,10 @@ Human and JSON reports include both the requested selectors and their resolved f
 `--output-directory` is required for every conversion. BoxFerry never writes generated artifacts
 to the working directory implicitly.
 
-The output path must be completely absent. BoxFerry creates it only after conversion and policy
-authorization and refuses any existing file, directory, or symbolic link. Existing-empty-directory
-and overwrite behavior remain deferred until they have an atomic, rollback-safe contract.
+The output path may be absent or an existing empty, non-symlink directory. BoxFerry creates an
+absent directory only after conversion and policy authorization. Every directory entry, including
+a dotfile or child directory, makes an existing directory nonempty. Generated files use create-new
+writes; merge and overwrite behavior remain unsupported.
 
 ## Console presentation
 
@@ -174,6 +179,19 @@ There is no `--silent` alias. Presentation modes are mutually exclusive:
 - `--verbose` adds discovery, resolution, route-fidelity, and per-file detail;
 - `--quiet` suppresses progress and success text but retains warnings and errors; and
 - `--console-format json` writes one complete JSON result without human progress text.
+
+Human modes group each stable rule with its findings and static help. Help is always visible
+with the related diagnostics and never requires `--verbose`; it contains option names but no
+source or environment values. JSON clients receive the same `help` field.
+
+Human diagnostic groups render as `CODE NAME [severity]`, one shared explanation, fields common to
+every finding, a numbered list of only the varying evidence, help, and `boxferry explain CODE`.
+Native Lens rule identifiers remain JSON provenance instead of terminal noise. Groups are sorted by
+code and findings by input and source position. Loss-policy authorization never removes the warning
+for an approximation or partial result. Progress, diagnostics, and the final result are separated
+by blank lines. Normal and verbose output flush diagnostics before writing an explicit success,
+blocked, or failure line as the last line. A blocked or failed final line names the primary causal
+rule and explanation.
 
 For `capabilities`, each JSON route includes stable route-specific target selectors and
 fidelity-boundary fields. Compose-to-Quadlet reports finite Podman bounds and `pod-grouping` as
@@ -200,9 +218,11 @@ does not mix in human progress. Standard error is reserved for failures that occ
 result can be constructed. Scripts should normally use JSON and stable exit statuses; `--quiet`
 is suitable when a script needs only filesystem effects and an exit status.
 
-The JSON result includes a schema version, BoxFerry version, status, stable exit category,
-resolved input order, source and target types, application identity, compatibility bounds,
-fidelity counts, structured diagnostics, output paths, and redacted provenance.
+The JSON result includes a schema version, BoxFerry version, status, stable exit category, primary
+diagnostic code, causal failure summary, resolved input order, source and target types, application
+identity, compatibility bounds, fidelity counts, structured diagnostics, output paths, and
+redacted provenance. Each diagnostic includes its BoxFerry code and name, optional native source
+code, severity, summary, help, fields, and spans.
 
 `--report-file PATH` writes the same complete canonical JSON report independently of console mode.
 The value-less `--generate-error-report` creates a local stored ZIP with exactly `README.md` and
@@ -254,6 +274,6 @@ it with the status of a later command.
 ## Deferred features
 
 - Additional generic source and target pairs as their adapters become complete.
-- Safe overwrite or existing-empty-directory output.
+- Overwrite or merge into nonempty output directories.
 - Default interpolation after the compatibility period.
 - A non-native BoxFerry single-file transport archive with an explicit unpack/install contract.

@@ -2,7 +2,7 @@
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
-    ImportResult, InvalidDiagnosticCode, Severity,
+    ImportResult, InvalidDiagnosticCode, RuleId, Severity,
 };
 use std::collections::BTreeSet;
 
@@ -57,11 +57,11 @@ impl ComposeImporter {
     pub fn new() -> Result<Self, InvalidDiagnosticCode> {
         Ok(Self {
             codes: Codes {
-                invalid_model: DiagnosticCode::new("BFC0001")?,
-                profile_required: DiagnosticCode::new("BFC0002")?,
-                profile_mismatch: DiagnosticCode::new("BFC0003")?,
-                unsupported: DiagnosticCode::new("BFC0004")?,
-                invalid_value: DiagnosticCode::new("BFC0005")?,
+                invalid_model: RuleId::ComposeModelInvalid.definition().diagnostic_code()?,
+                profile_required: RuleId::ComposeProfileRequired.definition().diagnostic_code()?,
+                profile_mismatch: RuleId::ComposeProfileMismatch.definition().diagnostic_code()?,
+                unsupported: RuleId::ComposeIntentUnsupported.definition().diagnostic_code()?,
+                invalid_value: RuleId::ComposeValueInvalid.definition().diagnostic_code()?,
             },
         })
     }

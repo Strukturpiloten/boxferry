@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
-    ImportResult, InvalidDiagnosticCode, Severity,
+    ImportResult, InvalidDiagnosticCode, RuleId, Severity,
 };
 use boxferry_model::{
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference, ModelError, Mount,
@@ -78,10 +78,10 @@ impl DockerImporter {
         Ok(Self {
             runtime: RuntimeImporter::new(override_reconstruction)?,
             codes: Codes {
-                invalid_data: DiagnosticCode::new("BFD0001")?,
-                unmodeled_configuration: DiagnosticCode::new("BFD0002")?,
-                unsupported_version: DiagnosticCode::new("BFD0003")?,
-                missing_relationship: DiagnosticCode::new("BFD0004")?,
+                invalid_data: RuleId::DockerDataInvalid.definition().diagnostic_code()?,
+                unmodeled_configuration: RuleId::DockerConfigurationUnsupported.definition().diagnostic_code()?,
+                unsupported_version: RuleId::DockerVersionUnsupported.definition().diagnostic_code()?,
+                missing_relationship: RuleId::DockerRelationshipMissing.definition().diagnostic_code()?,
             },
         })
     }

@@ -12,6 +12,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Error reports](error-reports.md) — accepted privacy-safe diagnostic support bundle
 - [API stability](api-stability.md) — published pre-1.0 compatibility contracts
 - [Conversion model](conversion-model.md) — application model, conversion outcomes, and diagnostics
+- [Diagnostic rules](diagnostic-rules.md) — stable codes, namespaces, explanations, and remediation
 - [Format coverage](format-coverage.md) — field-by-field pipeline coverage and promotion rules
 - [Compose exporter](compose-adapter.md) — generated fields, provider/runtime selection, and explicit limits
 - [Quadlet exporter](quadlet-adapter.md) — supported mappings, version evidence, and explicit limits

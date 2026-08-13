@@ -4,6 +4,7 @@
 - Date: 2026-08-11
 - Amends: [ADR 0013](0013-explicit-compose-provider-and-runtime.md) for the CLI contract and
   [ADR 0019](0019-generic-cli-route-registry.md)
+- Amended by: [ADR 0026](0026-typed-diagnostic-rule-catalogue.md)
 
 ## Context
 

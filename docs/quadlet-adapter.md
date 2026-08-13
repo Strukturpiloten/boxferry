@@ -194,9 +194,13 @@ note that later releases remain an assumption.
 | `BFQ0003` | warning       | Neutral intent is unsupported by the current target mapping.             |
 | `BFQ0004` | error         | A required value cannot be emitted safely as native Quadlet.             |
 | `BFQ0005` | error         | QuadletLens rejected a generated document or document set.               |
-| `BFQ0006` | warning/note  | A required capability is unavailable or deprecated for the target range. |
-| `BFQ0007` | warning/error | Explicit pod grouping is approximate or incompatible with source intent. |
-| `BFQ0008` | warning/error | Dependency semantics are partial, missing, cyclic, or otherwise unsafe.  |
+| `BFQ0006` | warning | A required capability is unavailable for the target range.                |
+| `BFQ0007` | warning | Explicit pod grouping approximates source isolation.                     |
+| `BFQ0008` | warning | Dependency semantics are not represented exactly.                        |
+| `BFQ0011` | error   | The requested grouping is incompatible with source intent.                |
+| `BFQ0012` | error   | A service or artifact dependency graph is invalid.                        |
+| `BFQ0013` | note    | A required capability is deprecated for the target range.                 |
 
 Every warning/error fidelity decision carries the contributing neutral-model provenance. Sensitive
-values are not copied into diagnostic fields.
+values are not copied into diagnostic fields. The generated complete catalogue and explanation
+commands are documented in [Diagnostic rules](diagnostic-rules.md).

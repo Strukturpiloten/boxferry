@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-08-03
+- Amended by: [ADR 0025](0025-empty-output-directories-and-final-human-status.md)
 
 ## Context
 

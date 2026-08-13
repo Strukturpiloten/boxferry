@@ -157,6 +157,8 @@ T4 provides the first tested public surface:
 - tolerant `ImageReference` parsing that retains `name:tag@digest` forms;
 - `ProtectedString` and structured diagnostics whose sensitive fields redact debug and display
   output;
+- the typed `RuleId`, `DiagnosticRule`, `RULES`, and `find_rule` catalogue surface used by official
+  adapters and diagnostic consumers;
 - inclusive `PlatformVersion` and `TargetProfile` minimum/optional-maximum ranges;
 - exact, approximate, unsupported, and invalid `ConversionOutcome` values;
 - `LossPolicy`, validated `ConversionPlan`, and policy-authorized `ConversionResult` values;

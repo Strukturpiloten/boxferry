@@ -27,7 +27,18 @@ Compose-to-Quadlet uses:
 - an inclusive `--podman-maximum-version`, defaulting to `6.0`;
 - `--quadlet-grouping separate` or an explicit `--quadlet-grouping pod` request;
 - `--loss-policy exact`, `approximate`, or `partial`; and
-- a required `--output-directory` that must not already exist and whose parent must exist.
+- a required `--output-directory` that is either absent with an existing parent or an existing
+  empty, non-symlink directory.
+
+BoxFerry creates an absent output directory. An existing directory is accepted only when reading it
+finds no entries; dotfiles and child directories count as content. Output files still use
+create-new writes, so BoxFerry never replaces an existing file. A failed write removes only files
+created by that invocation and removes the directory only when that invocation created it.
+
+A loss policy authorizes output; it never suppresses the diagnostic that explains a non-exact
+mapping. For example, `--loss-policy approximate` permits `BFQ0009` restart output while retaining
+that warning for review. `partial` additionally permits supported partial-output cases, but neither
+policy permits invalid input.
 
 Quadlet-to-Compose requires a non-stdin `--project-name` and writes one deterministic,
 parse-back-validated `compose.yaml` for the rolling Compose Specification. It does not accept
@@ -57,6 +68,11 @@ giving the conversion ambient process access. Inputs are additive and explicit:
   variable. Its value is marked sensitive before interpolation and is not included in errors or
   diagnostic formatting.
 
+An unset expression without a Compose default produces an individual
+`compose.interpolation.unset-variable` warning and substitutes an empty string. BoxFerry retains
+that warning even when the empty result also causes a later importer error, so the original missing
+variable and the derived model failure are both visible.
+
 Names use ComposeLens's interpolation grammar: an ASCII letter or underscore followed by ASCII
 letters, digits, or underscores. A missing or non-Unicode authorized process variable fails
 before conversion. Environment files are applied in their supplied order, so later files override
@@ -75,10 +91,9 @@ specifier semantics require partial output or block stricter policies.
 ## Output safety
 
 Conversion and loss-policy authorization complete before the output directory is created. The
-command creates the directory atomically and therefore refuses any existing file, directory, or
-symbolic link at that path. Every generated file
+command accepts an absent path or an existing empty, non-symlink directory. Every generated file
 uses create-new semantics. If a later file cannot be written, files created by that invocation are
-removed and the new directory is removed only when it is empty.
+removed. A directory is removed only when that invocation created it.
 
 Applying, enabling, or starting generated Quadlet units is outside this command. Those operations
 require a separate explicit workflow.
@@ -92,6 +107,17 @@ require a separate explicit workflow.
 | `2` | Source/profile diagnostics or the selected loss policy blocked output. |
 
 BoxFerry writes every retained structured diagnostic to standard error with sensitive fields
-redacted; an aggregate error count never replaces the individual diagnostic codes, summaries, and
-safe fields. Successful output paths are written to standard output, one per line. JSON console
-mode contains the same diagnostic sequence in its `diagnostics` array and writes no human text.
+redacted; an aggregate error count never replaces individual findings. Human output is separated
+into progress, diagnostic groups, and a final result. Groups use `CODE NAME [severity]`, print
+shared explanation and fields once, list only varying evidence per finding, sort by code and source
+position, and keep their static help and `boxferry explain CODE` command attached. Native Lens codes
+remain in JSON rather than normal human output. Loss authorization never hides an eligible warning.
+Normal and verbose modes finish with an explicit success, blocked, or failure line; blocked and
+failed lines name the primary causal rule and explanation. Quiet mode retains diagnostics only.
+JSON console mode contains the same sorted sequence, rule metadata, optional native `source_code`,
+`primary_diagnostic_code`, and `failure_summary`, and writes no human text. See
+[Diagnostic rules](diagnostic-rules.md).
+
+`boxferry rules` lists the catalogue for the installed build. `boxferry explain CODE_OR_NAME`
+shows one rule's owner, severity, explanation, and remediation. Both commands accept
+`--console-format json`.

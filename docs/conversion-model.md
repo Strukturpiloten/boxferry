@@ -80,26 +80,29 @@ must reference a diagnostic present in the plan.
 
 ## Diagnostics
 
-A structured diagnostic currently contains:
-
-- stable diagnostic code
-- severity
-- human-readable summary
-- ordered plain or sensitive fields
+A structured engine diagnostic contains a stable BoxFerry code, severity, summary, and ordered
+plain or sensitive fields. The central [diagnostic rule catalogue](diagnostic-rules.md) adds the
+stable name, owner, default severity, value-free explanation, and remediation used by reports and
+CLI presentation. Official adapters construct codes through the typed catalogue.
 
 Outcomes carry the source provenance that contributed to their decision. Adapter-specific
-diagnostics will add source feature, target capability, explanation, suggested action, and evidence
-fields without changing the redaction contract.
+diagnostics add source feature, target capability, explanation, and evidence fields without
+changing the redaction contract. ComposeLens and QuadletLens identifiers remain separately visible
+as native `source_code` provenance.
 
-Human and machine-readable renderers consume the same diagnostic objects. JSON output must not be reconstructed from terminal text.
+Human and machine-readable renderers consume the same diagnostic objects. JSON output is never
+reconstructed from terminal text. Human output groups equal codes, prints common context once,
+sorts its findings by input and source position, keeps remediation with the group, and finishes
+blocked or failed runs with the primary causal rule. JSON reports expose the same code, name, optional source code,
+severity, summary, help, fields, and spans plus `primary_diagnostic_code` and `failure_summary`.
+
 The implemented local [error-report bundle](error-reports.md) uses this structured boundary and adds
 only allowlisted, redacted invocation context; it does not capture terminal output or raw sources.
 
-The first target adapter assigns `BFQ0001` through `BFQ0008` to invalid target ranges, finite
-evidence notes, unsupported target mappings, invalid values, native generation failures,
-capability decisions, explicit grouping decisions, and dependency semantics. Its warning/error outcomes retain neutral-model
-provenance, while sensitive environment contents remain absent from diagnostic fields. The
-complete boundary is documented in the [Quadlet exporter](quadlet-adapter.md).
+Rule namespaces distinguish Compose (`BFC`), Quadlet (`BFQ`), Docker (`BFD`), Podman (`BFP`),
+runtime reconstruction (`BFR`), and orchestration/file/report (`BFO`) ownership. A code identifies
+one condition and is not reused; repeated source occurrences share it. The complete Quadlet
+boundary is documented in the [Quadlet exporter](quadlet-adapter.md).
 
 ## Target ranges
 

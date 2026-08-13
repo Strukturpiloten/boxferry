@@ -8,7 +8,7 @@ use std::{
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue,
-    ExportAdapter, InvalidDiagnosticCode, PlanError, Severity, TargetProfile,
+    ExportAdapter, InvalidDiagnosticCode, PlanError, RuleId, Severity, TargetProfile,
 };
 use boxferry_model::{
     Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildSettingValues, BuildSourceDeclaration,
@@ -73,16 +73,21 @@ impl QuadletExporter {
         Ok(Self {
             catalogue: CapabilityCatalogue::supported_range()?,
             codes: Codes {
-                invalid_target: DiagnosticCode::new("BFQ0001")?,
-                assumed_future: DiagnosticCode::new("BFQ0002")?,
-                unsupported: DiagnosticCode::new("BFQ0003")?,
-                invalid_value: DiagnosticCode::new("BFQ0004")?,
-                generation: DiagnosticCode::new("BFQ0005")?,
-                capability: DiagnosticCode::new("BFQ0006")?,
-                grouping: DiagnosticCode::new("BFQ0007")?,
-                dependency: DiagnosticCode::new("BFQ0008")?,
-                restart: DiagnosticCode::new("BFQ0009")?,
-                environment_file: DiagnosticCode::new("BFQ0010")?,
+                invalid_target: RuleId::QuadletTargetInvalid.definition().diagnostic_code()?,
+                assumed_future: RuleId::QuadletOpenEndedTarget.definition().diagnostic_code()?,
+                unsupported: RuleId::QuadletOutputUnsupported.definition().diagnostic_code()?,
+                invalid_value: RuleId::QuadletValueInvalid.definition().diagnostic_code()?,
+                generation: RuleId::QuadletGenerationFailed.definition().diagnostic_code()?,
+                capability_unavailable: RuleId::QuadletCapabilityUnavailable.definition().diagnostic_code()?,
+                grouping_approximation: RuleId::QuadletGroupingApproximation.definition().diagnostic_code()?,
+                dependency_unsupported: RuleId::QuadletDependencyUnsupported.definition().diagnostic_code()?,
+                restart: RuleId::QuadletRestartApproximation.definition().diagnostic_code()?,
+                environment_file: RuleId::QuadletEnvironmentFileApproximation
+                    .definition()
+                    .diagnostic_code()?,
+                grouping_invalid: RuleId::QuadletGroupingInvalid.definition().diagnostic_code()?,
+                dependency_invalid: RuleId::QuadletDependencyInvalid.definition().diagnostic_code()?,
+                capability_deprecated: RuleId::QuadletCapabilityDeprecated.definition().diagnostic_code()?,
             },
             relative_bind_root: None,
             bind_source_mappings: BTreeMap::new(),
@@ -314,11 +319,14 @@ struct Codes {
     unsupported: DiagnosticCode,
     invalid_value: DiagnosticCode,
     generation: DiagnosticCode,
-    capability: DiagnosticCode,
-    grouping: DiagnosticCode,
-    dependency: DiagnosticCode,
+    capability_unavailable: DiagnosticCode,
+    grouping_approximation: DiagnosticCode,
+    dependency_unsupported: DiagnosticCode,
     restart: DiagnosticCode,
     environment_file: DiagnosticCode,
+    grouping_invalid: DiagnosticCode,
+    dependency_invalid: DiagnosticCode,
+    capability_deprecated: DiagnosticCode,
 }
 
 struct Mapping<'a> {
@@ -434,7 +442,7 @@ impl<'a> Mapping<'a> {
             .validate_image_artifact_dependencies(&artifact_dependencies)
         {
             self.invalid(
-                self.exporter.codes.dependency.clone(),
+                self.exporter.codes.dependency_invalid.clone(),
                 "application.artifact_dependencies",
                 "image artifact references must form a complete acyclic graph",
                 &error.to_string(),
@@ -537,7 +545,7 @@ impl<'a> Mapping<'a> {
                 .flat_map(|group| group.origins().iter().cloned())
                 .collect::<Vec<_>>();
             self.invalid(
-                self.exporter.codes.grouping.clone(),
+                self.exporter.codes.grouping_invalid.clone(),
                 "application.grouping",
                 "preserving a neutral service group requires exactly one group",
                 if groups.is_empty() {
@@ -553,7 +561,7 @@ impl<'a> Mapping<'a> {
         let group = &groups[0];
         if group.value().ownership() != ResourceOwnership::Application {
             self.invalid(
-                self.exporter.codes.grouping.clone(),
+                self.exporter.codes.grouping_invalid.clone(),
                 "application.grouping",
                 "only an application-owned service group can be generated as a Quadlet pod",
                 "resolve the group lifecycle as application-owned before selecting preserve-single-group",
@@ -577,7 +585,7 @@ impl<'a> Mapping<'a> {
         if service_names != member_names || group.value().members().len() != self.application.services().len() {
             let origins = service_group_origins(group, self.application.services());
             self.invalid(
-                self.exporter.codes.grouping.clone(),
+                self.exporter.codes.grouping_invalid.clone(),
                 "application.grouping",
                 "preserved Quadlet pod membership must cover the complete application",
                 "the single service group does not contain every application service exactly once",
@@ -622,7 +630,7 @@ impl<'a> Mapping<'a> {
                 if !service_names.contains(target) {
                     if dependency.value().is_required() {
                         self.invalid(
-                            self.exporter.codes.dependency.clone(),
+                            self.exporter.codes.dependency_invalid.clone(),
                             &format!("services.{dependent}.dependencies[{index}]"),
                             "required service dependency does not exist in the application",
                             &format!("referenced service `{target}` is missing"),
@@ -681,7 +689,7 @@ impl<'a> Mapping<'a> {
             .cloned()
             .collect::<Vec<_>>();
         self.invalid(
-            self.exporter.codes.dependency.clone(),
+            self.exporter.codes.dependency_invalid.clone(),
             "application.dependencies",
             "service dependency graph contains an ordering cycle",
             &format!("cycle includes: {cycle_services}"),
@@ -695,7 +703,7 @@ impl<'a> Mapping<'a> {
         let origins = service_origins(services);
         let Some(first) = services.first() else {
             self.invalid(
-                self.exporter.codes.grouping.clone(),
+                self.exporter.codes.grouping_invalid.clone(),
                 "application.grouping",
                 "single-pod grouping requires at least one service",
                 "the neutral application contains no services",
@@ -707,7 +715,7 @@ impl<'a> Mapping<'a> {
         for service in services {
             if !same_network_attachments(service.value().networks(), first.value().networks()) {
                 self.invalid(
-                    self.exporter.codes.grouping.clone(),
+                    self.exporter.codes.grouping_invalid.clone(),
                     "application.grouping",
                     "single-pod grouping would change declared service networking",
                     "all services must have the same ordered network attachments and no aliases",
@@ -722,7 +730,7 @@ impl<'a> Mapping<'a> {
                 .any(|network| !network.value().aliases().is_empty())
             {
                 self.invalid(
-                    self.exporter.codes.grouping.clone(),
+                    self.exporter.codes.grouping_invalid.clone(),
                     "application.grouping",
                     "single-pod grouping cannot preserve per-service network aliases",
                     "remove aliases or retain separate containers",
@@ -732,7 +740,7 @@ impl<'a> Mapping<'a> {
             }
             if !same_host_mappings(service.value().host_mappings(), first.value().host_mappings()) {
                 self.invalid(
-                    self.exporter.codes.grouping.clone(),
+                    self.exporter.codes.grouping_invalid.clone(),
                     "application.grouping",
                     "single-pod grouping cannot preserve different per-service host mappings",
                     "all services must have the same ordered host mappings or retain separate containers",
@@ -754,7 +762,7 @@ impl<'a> Mapping<'a> {
             for port in service.value().ports() {
                 let Some(protocol) = protocol_name(port.value().protocol()) else {
                     self.invalid(
-                        self.exporter.codes.grouping.clone(),
+                        self.exporter.codes.grouping_invalid.clone(),
                         "application.grouping",
                         "single-pod grouping cannot validate an unknown port protocol",
                         "retain separate containers or use TCP, UDP, or SCTP",
@@ -765,7 +773,7 @@ impl<'a> Mapping<'a> {
                 let container_port = (port.value().container(), protocol);
                 if !service_container_ports.contains(&container_port) && container_ports.contains(&container_port) {
                     self.invalid(
-                        self.exporter.codes.grouping.clone(),
+                        self.exporter.codes.grouping_invalid.clone(),
                         "application.grouping",
                         "single-pod grouping has overlapping declared container ports",
                         "services in one pod share a network namespace; retain separate containers or remove the overlap",
@@ -779,7 +787,7 @@ impl<'a> Mapping<'a> {
                         && published_ports.contains(&(published, protocol))
                     {
                         self.invalid(
-                            self.exporter.codes.grouping.clone(),
+                            self.exporter.codes.grouping_invalid.clone(),
                             "application.grouping",
                             "single-pod grouping has overlapping published host ports",
                             "retain separate containers or assign distinct host ports",
@@ -803,7 +811,7 @@ impl<'a> Mapping<'a> {
             .any(|service| service.value().user_namespace().map(|value| value.value().expose()) != first_user_namespace)
         {
             self.invalid(
-                self.exporter.codes.grouping.clone(),
+                self.exporter.codes.grouping_invalid.clone(),
                 "application.grouping",
                 "single-pod grouping cannot preserve different per-service user namespaces",
                 "all services must declare the same user namespace, or every service must leave it implicit",
@@ -813,7 +821,7 @@ impl<'a> Mapping<'a> {
         }
         if first_user_namespace.is_some_and(|value| !is_safe_word(value, false)) {
             self.invalid(
-                self.exporter.codes.grouping.clone(),
+                self.exporter.codes.grouping_invalid.clone(),
                 "application.grouping",
                 "single-pod grouping cannot encode the shared user namespace safely",
                 "the shared user namespace contains unsupported whitespace or control syntax",
@@ -3481,7 +3489,7 @@ impl<'a> Mapping<'a> {
             .find(|candidate| candidate.value().name().as_str() == target_name)
         else {
             self.loss(
-                self.exporter.codes.dependency.clone(),
+                self.exporter.codes.dependency_unsupported.clone(),
                 &subject,
                 ConversionKind::Unsupported,
                 "optional service dependency is absent from the application",
@@ -3528,7 +3536,7 @@ impl<'a> Mapping<'a> {
             ServiceDependencyCondition::Healthy if service_has_renderable_healthcheck(target) => true,
             ServiceDependencyCondition::Healthy => {
                 self.loss(
-                    self.exporter.codes.dependency.clone(),
+                    self.exporter.codes.dependency_unsupported.clone(),
                     subject,
                     ConversionKind::Unsupported,
                     "healthy service dependency cannot be established for the target",
@@ -3539,7 +3547,7 @@ impl<'a> Mapping<'a> {
             }
             ServiceDependencyCondition::CompletedSuccessfully => {
                 self.loss(
-                    self.exporter.codes.dependency.clone(),
+                    self.exporter.codes.dependency_unsupported.clone(),
                     subject,
                     ConversionKind::Unsupported,
                     "successful-completion dependency has no verified Quadlet mapping",
@@ -3550,7 +3558,7 @@ impl<'a> Mapping<'a> {
             }
             ServiceDependencyCondition::Other(_) => {
                 self.loss(
-                    self.exporter.codes.dependency.clone(),
+                    self.exporter.codes.dependency_unsupported.clone(),
                     subject,
                     ConversionKind::Unsupported,
                     "source-specific dependency condition has no verified Quadlet mapping",
@@ -3561,7 +3569,7 @@ impl<'a> Mapping<'a> {
             }
             _ => {
                 self.loss(
-                    self.exporter.codes.dependency.clone(),
+                    self.exporter.codes.dependency_unsupported.clone(),
                     subject,
                     ConversionKind::Unsupported,
                     "unknown dependency condition has no verified Quadlet mapping",
@@ -3580,7 +3588,7 @@ impl<'a> Mapping<'a> {
         let restart_subject = format!("{subject}.restart");
         if *restart.value() {
             self.loss(
-                self.exporter.codes.dependency.clone(),
+                self.exporter.codes.dependency_unsupported.clone(),
                 &restart_subject,
                 ConversionKind::Unsupported,
                 "Compose-controlled dependency restart propagation has no verified Quadlet mapping",
@@ -4395,7 +4403,7 @@ impl<'a> Mapping<'a> {
             SupportClassification::Deprecated => {
                 self.diagnostics.push(
                     Diagnostic::new(
-                        self.exporter.codes.capability.clone(),
+                        self.exporter.codes.capability_deprecated.clone(),
                         Severity::Note,
                         "required Quadlet capability is deprecated for part of the target range",
                     )
@@ -4406,7 +4414,7 @@ impl<'a> Mapping<'a> {
             }
             classification => {
                 self.loss(
-                    self.exporter.codes.capability.clone(),
+                    self.exporter.codes.capability_unavailable.clone(),
                     subject,
                     ConversionKind::Unsupported,
                     "required Quadlet capability does not cover the complete target range",
@@ -4442,7 +4450,7 @@ impl<'a> Mapping<'a> {
             return true;
         }
         self.loss(
-            self.exporter.codes.capability.clone(),
+            self.exporter.codes.capability_unavailable.clone(),
             subject,
             ConversionKind::Unsupported,
             "required Quadlet capability does not cover the complete target range",
@@ -4780,7 +4788,7 @@ impl<'a> Mapping<'a> {
 
     fn approximate(&mut self, subject: &str, reason: &str, origins: &[Provenance]) {
         self.loss(
-            self.exporter.codes.grouping.clone(),
+            self.exporter.codes.grouping_approximation.clone(),
             subject,
             ConversionKind::Approximate,
             "generated Quadlet topology intentionally approximates source service isolation",
