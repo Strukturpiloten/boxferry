@@ -15,16 +15,16 @@ The repository that owns a task is authoritative for its detailed status. Update
 
 ## Program status
 
-| Task | Owner | Status | Deliverable |
-| --- | --- | --- | --- |
-| T1 | All repositories | completed | Executable testing and fixture foundations |
-| T2 | ComposeLens | completed | Loss-aware YAML syntax and diagnostic kernel |
-| T3 | QuadletLens | completed | Ordered Quadlet syntax and rendering kernel |
-| T4 | BoxFerry | completed | Independent neutral model and conversion engine |
-| T5 | All repositories | in progress | Minimum native typed subsets for the first conversion |
-| T6 | BoxFerry, integrating both Lens libraries | in progress | First Compose-to-Quadlet vertical slice |
-| T7 | All repositories | in progress | Expanded conformance, runtime, and release testing tiers |
-| T8 | BoxFerry, integrating all adapters | in progress | First N-to-N Docker/Compose/Podman/Quadlet milestone |
+| Task | Owner                                     | Status      | Deliverable                                              |
+| ---- | ----------------------------------------- | ----------- | -------------------------------------------------------- |
+| T1   | All repositories                          | completed   | Executable testing and fixture foundations               |
+| T2   | ComposeLens                               | completed   | Loss-aware YAML syntax and diagnostic kernel             |
+| T3   | QuadletLens                               | completed   | Ordered Quadlet syntax and rendering kernel              |
+| T4   | BoxFerry                                  | completed   | Independent neutral model and conversion engine          |
+| T5   | All repositories                          | in progress | Minimum native typed subsets for the first conversion    |
+| T6   | BoxFerry, integrating both Lens libraries | in progress | First Compose-to-Quadlet vertical slice                  |
+| T7   | All repositories                          | in progress | Expanded conformance, runtime, and release testing tiers |
+| T8   | BoxFerry, integrating all adapters        | in progress | First N-to-N Docker/Compose/Podman/Quadlet milestone     |
 
 ## T1: Testing foundations
 

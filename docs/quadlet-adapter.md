@@ -187,20 +187,20 @@ note that later releases remain an assumption.
 
 ## Diagnostics
 
-| Code      | Severity      | Meaning                                                                  |
-| --------- | ------------- | ------------------------------------------------------------------------ |
-| `BFQ0001` | error         | Target implementation or Podman range cannot be planned safely.          |
-| `BFQ0002` | note          | Maximum is omitted; the report names the finite verified ceiling.        |
-| `BFQ0003` | warning       | Neutral intent is unsupported by the current target mapping.             |
-| `BFQ0004` | error         | A required value cannot be emitted safely as native Quadlet.             |
-| `BFQ0005` | error         | QuadletLens rejected a generated document or document set.               |
-| `BFQ0006` | warning | A required capability is unavailable for the target range.                |
-| `BFQ0007` | warning | Explicit pod grouping approximates source isolation.                     |
-| `BFQ0008` | warning | Dependency semantics are not represented exactly.                        |
-| `BFQ0011` | error   | The requested grouping is incompatible with source intent.                |
-| `BFQ0012` | error   | A service or artifact dependency graph is invalid.                        |
-| `BFQ0013` | note    | A required capability is deprecated for the target range.                 |
-| `BFQ0014` | error   | A source variable expression must be resolved before Quadlet generation.  |
+| Code      | Severity | Meaning                                                                  |
+| --------- | -------- | ------------------------------------------------------------------------ |
+| `BFQ0001` | error    | Target implementation or Podman range cannot be planned safely.          |
+| `BFQ0002` | note     | Maximum is omitted; the report names the finite verified ceiling.        |
+| `BFQ0003` | warning  | Neutral intent is unsupported by the current target mapping.             |
+| `BFQ0004` | error    | A required value cannot be emitted safely as native Quadlet.             |
+| `BFQ0005` | error    | QuadletLens rejected a generated document or document set.               |
+| `BFQ0006` | warning  | A required capability is unavailable for the target range.               |
+| `BFQ0007` | warning  | Explicit pod grouping approximates source isolation.                     |
+| `BFQ0008` | warning  | Dependency semantics are not represented exactly.                        |
+| `BFQ0011` | error    | The requested grouping is incompatible with source intent.               |
+| `BFQ0012` | error    | A service or artifact dependency graph is invalid.                       |
+| `BFQ0013` | note     | A required capability is deprecated for the target range.                |
+| `BFQ0014` | error    | A source variable expression must be resolved before Quadlet generation. |
 
 Every warning/error fidelity decision carries the contributing neutral-model provenance. Sensitive
 values are not copied into diagnostic fields. The generated complete catalogue and explanation

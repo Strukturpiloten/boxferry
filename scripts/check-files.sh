@@ -66,6 +66,7 @@ run() {
 
 if [[ "${mode}" == "--fix" ]]; then
   printf '\nFormat Markdown\n'
+  run prettier --write --ignore-unknown "${markdown_files[@]}"
   run markdownlint-cli2 --fix "${markdown_literals[@]}"
 
   if ((${#structured_files[@]} != 0)); then
@@ -86,6 +87,9 @@ fi
 
 printf '\nLint Markdown\n'
 run markdownlint-cli2 "${markdown_literals[@]}"
+
+printf '\nCheck Markdown formatting\n'
+run prettier --check --ignore-unknown "${markdown_files[@]}"
 
 if ((${#structured_files[@]} != 0)); then
   printf '\nCheck JSON and YAML formatting and syntax\n'

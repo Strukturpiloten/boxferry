@@ -84,9 +84,7 @@ extension ID to their personal settings:
 
 ```json
 {
-  "dev.containers.defaultExtensions": [
-    "openai.chatgpt"
-  ]
+  "dev.containers.defaultExtensions": ["openai.chatgpt"]
 }
 ```
 
@@ -104,9 +102,7 @@ To use the live host configuration instead, remove `openai.chatgpt` from
 ```json
 {
   "remote.extensionKind": {
-    "openai.chatgpt": [
-      "ui"
-    ]
+    "openai.chatgpt": ["ui"]
   }
 }
 ```
@@ -153,8 +149,9 @@ root:
 ./scripts/check-all.sh
 ```
 
-The script formats Rust; safely fixes and lints Markdown; formats and parses JSON, JSONC, YAML, and
-TOML; formats and lints shell scripts; and lints Dockerfiles before checking the resulting tree. It
+The script formats Rust; formats Markdown with Prettier before applying and checking Markdownlint
+rules; formats and parses JSON, JSONC, YAML, and TOML; formats and lints shell scripts; and lints
+Dockerfiles before checking the resulting tree. It
 then runs the complete feature-boundary, policy, Clippy, unit, integration, black-box CLI, doctest,
 documentation, coverage, MSRV, dependency, workflow, local-link, and published-API validation. It
 derives the MSRV from Cargo metadata and installs that Rust toolchain on first use.

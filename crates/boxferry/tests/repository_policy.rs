@@ -165,6 +165,22 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
         return Err("non-Rust file runner must not traverse sibling or generated Markdown trees".to_owned());
     }
 
+    let markdown_format = script
+        .find(r#"prettier --write --ignore-unknown "${markdown_files[@]}""#)
+        .ok_or("non-Rust file runner must format Markdown with Prettier")?;
+    let markdown_fix = script
+        .find(r#"markdownlint-cli2 --fix "${markdown_literals[@]}""#)
+        .ok_or("non-Rust file runner must apply fixable Markdown lint rules")?;
+    let markdown_lint = script
+        .find(r#"markdownlint-cli2 "${markdown_literals[@]}""#)
+        .ok_or("non-Rust file runner must lint Markdown after formatting")?;
+    let markdown_check = script
+        .find(r#"prettier --check --ignore-unknown "${markdown_files[@]}""#)
+        .ok_or("non-Rust file runner must verify Markdown formatting")?;
+    if !(markdown_format < markdown_fix && markdown_fix < markdown_lint && markdown_lint < markdown_check) {
+        return Err("non-Rust file runner must format, fix, lint, then check Markdown in that order".to_owned());
+    }
+
     let ci_path = root.join(".github/workflows/ci.yml");
     let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
     let release_path = root.join(".github/workflows/release.yml");

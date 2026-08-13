@@ -67,7 +67,7 @@ native-Windows dependency decision in ADR 0023.
 Run `cargo deny check` after installing `cargo-deny`. CI checks advisories, licenses, bans, and sources. Renovate proposes Cargo, lockfile, Rust toolchain, and GitHub Actions updates; updates still require the same tests and review as human-authored dependency changes.
 
 Repository-only file quality uses pinned development tools outside the published Rust dependency
-graph: markdownlint-cli2 for Markdown, Prettier for JSON and YAML, Taplo for TOML, shfmt and
+graph: markdownlint-cli2 plus Prettier for Markdown, Prettier for JSON and YAML, Taplo for TOML, shfmt and
 ShellCheck for shell, and Hadolint for Dockerfiles. The Dev Container provides them, CI and release
 validation run the same `scripts/check-files.sh --check` boundary, and Renovate tracks their pins.
 `package-lock.json` fixes the complete markdownlint-cli2 and Prettier graph; CI and the Dev Container

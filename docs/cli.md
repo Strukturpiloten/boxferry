@@ -130,11 +130,11 @@ require a separate explicit workflow.
 
 ## Exit status
 
-| Status | Meaning |
-| ------ | ------- |
-| `0` | Conversion was authorized and every output file was written. |
-| `1` | Arguments passed Clap validation but processing or file I/O failed. |
-| `2` | Source/profile diagnostics or the selected loss policy blocked output. |
+| Status | Meaning                                                                |
+| ------ | ---------------------------------------------------------------------- |
+| `0`    | Conversion was authorized and every output file was written.           |
+| `1`    | Arguments passed Clap validation but processing or file I/O failed.    |
+| `2`    | Source/profile diagnostics or the selected loss policy blocked output. |
 
 BoxFerry writes every retained structured diagnostic to standard error with sensitive fields
 redacted; an aggregate error count never replaces individual findings. Human output is separated

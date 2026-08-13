@@ -16,14 +16,14 @@ boxferry explain BFQ0009 --console-format json
 
 ## Namespaces
 
-| Prefix | Owner |
-| --- | --- |
-| `BFC` | Compose adapter and Compose preprocessing |
-| `BFQ` | Quadlet adapter and native Quadlet diagnostics |
-| `BFD` | Docker inspection adapter |
-| `BFP` | Podman inspection adapter |
-| `BFR` | Runtime reconstruction |
-| `BFO` | BoxFerry orchestration, files, and reports |
+| Prefix | Owner                                          |
+| ------ | ---------------------------------------------- |
+| `BFC`  | Compose adapter and Compose preprocessing      |
+| `BFQ`  | Quadlet adapter and native Quadlet diagnostics |
+| `BFD`  | Docker inspection adapter                      |
+| `BFP`  | Podman inspection adapter                      |
+| `BFR`  | Runtime reconstruction                         |
+| `BFO`  | BoxFerry orchestration, files, and reports     |
 
 A code identifies one condition and is not reused. Multiple source locations that trigger the same
 condition are grouped as findings. A condition with different semantics or normal severity
