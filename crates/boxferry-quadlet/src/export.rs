@@ -88,6 +88,7 @@ impl QuadletExporter {
                 grouping_invalid: RuleId::QuadletGroupingInvalid.definition().diagnostic_code()?,
                 dependency_invalid: RuleId::QuadletDependencyInvalid.definition().diagnostic_code()?,
                 capability_deprecated: RuleId::QuadletCapabilityDeprecated.definition().diagnostic_code()?,
+                unresolved_variable: RuleId::QuadletUnresolvedVariable.definition().diagnostic_code()?,
             },
             relative_bind_root: None,
             bind_source_mappings: BTreeMap::new(),
@@ -327,6 +328,7 @@ struct Codes {
     grouping_invalid: DiagnosticCode,
     dependency_invalid: DiagnosticCode,
     capability_deprecated: DiagnosticCode,
+    unresolved_variable: DiagnosticCode,
 }
 
 struct Mapping<'a> {
@@ -2065,6 +2067,16 @@ impl<'a> Mapping<'a> {
         let (value, origins) = if let Some(build) = build.filter(|_| valid_direct_build_pair) {
             (format!("{}.build", build.value().as_str()), build.origins())
         } else if let Some(image) = direct_image {
+            if image.value().as_str().contains('$') {
+                self.invalid(
+                    self.exporter.codes.unresolved_variable.clone(),
+                    &format!("{subject}.image"),
+                    "image reference contains unresolved source variable syntax",
+                    "Quadlet does not evaluate source-format variable expressions",
+                    image.origins(),
+                );
+                return;
+            }
             if !is_safe_word(image.value().as_str(), false) {
                 self.invalid(
                     self.exporter.codes.invalid_value.clone(),

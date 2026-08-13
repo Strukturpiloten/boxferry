@@ -1085,6 +1085,43 @@ fn rejects_an_explicit_container_name_outside_the_podman_grammar() -> Result<(),
 }
 
 #[test]
+fn unresolved_source_variable_in_an_image_has_actionable_rule_and_is_never_authorized() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("unresolved-image")?);
+    let mut service = image_service("web")?;
+    service.set_image(sourced(ImageReference::parse(
+        "example.invalid/web:${IMAGE_VERSION:-latest}",
+    )?)?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    let outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.image")
+        .ok_or("missing image outcome")?;
+    assert_eq!(outcome.kind(), ConversionKind::Invalid);
+    assert_eq!(
+        outcome.diagnostic().map(boxferry_engine::DiagnosticCode::as_str),
+        Some("BFQ0014")
+    );
+    let diagnostic = plan
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code().as_str() == "BFQ0014")
+        .ok_or("missing unresolved-variable diagnostic")?;
+    assert_eq!(
+        diagnostic
+            .fields()
+            .iter()
+            .find(|field| field.name() == "reason")
+            .map(|field| field.value().expose()),
+        Some("Quadlet does not evaluate source-format variable expressions")
+    );
+    assert!(plan.authorize(LossPolicy::AllowPartial).is_blocked());
+    Ok(())
+}
+
+#[test]
 fn reports_a_named_primary_group_instead_of_claiming_an_exact_quadlet_mapping() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("named-primary-group")?);
     let mut service = image_service("web")?;

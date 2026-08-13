@@ -2,7 +2,7 @@
 
 use std::{error::Error, fs, path::PathBuf};
 
-use boxferry_compose::{ComposeImporter, ComposeSource};
+use boxferry_compose::{ComposeFindingStage, ComposeImporter, ComposeSource};
 use boxferry_engine::{ConversionKind, ImportAdapter, Severity};
 use boxferry_model::{
     BuildSourceDeclaration, BuildSyntax, Command, ConfigMaterial, Entrypoint, EnvironmentFileFormat,
@@ -237,11 +237,12 @@ fn redacts_network_values_when_sensitive_interpolation_marks_the_definition_sens
     Ok(())
 }
 use compose_lens::{
+    diagnostic::{Diagnostic as ComposeDiagnostic, DiagnosticCode as ComposeDiagnosticCode, DiagnosticLabel},
     interpolation::MapEnvironment,
     loader::{DocumentInput, DocumentOrigin, LoadedProject},
     merge::{MergedProject, merge_project},
     profiles::{ProfileRequest, ProfileSelection, select_profiles},
-    source::SourceId as ComposeSourceId,
+    source::{SourceId as ComposeSourceId, SourceSpan as ComposeSourceSpan},
 };
 
 const COMPOSE_SOURCE_ID: u32 = 71;
@@ -1945,6 +1946,99 @@ fn reports_nonlocal_and_malformed_volume_configuration() -> Result<(), Box<dyn E
     assert!(result.outcomes().iter().any(|outcome| {
         outcome.subject() == "volumes.local-data.driver_opts[1]" && outcome.kind() == ConversionKind::Unsupported
     }));
+    Ok(())
+}
+
+#[test]
+fn unresolved_variables_have_actionable_evidence_without_discarding_literal_values() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(198);
+    let project = merged_project([(
+        source_id,
+        "unresolved-volume.compose.yaml",
+        concat!(
+            "services:\n  web:\n    image: example.invalid/web:${IMAGE_VERSION:-latest}\n",
+            "    environment: {DB_PASSWORD: '${DB_PASSWORD}'}\n",
+            "    volumes: ['${DATA_ROOT}:/data']\n",
+        ),
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("unresolved-volume")?)?
+        .with_source_id(source_id, SourceId::new("unresolved-volume.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    let diagnostics = result
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code().as_str() == "BFC0105")
+        .collect::<Vec<_>>();
+    assert_eq!(diagnostics.len(), 3);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.severity() == Severity::Warning)
+    );
+    for variable in ["IMAGE_VERSION", "DB_PASSWORD", "DATA_ROOT"] {
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "variable" && field.value().expose() == variable)
+        }));
+    }
+    let service = result.application().ok_or("application")?.services()[0].value();
+    assert_eq!(
+        service.image().map(|image| image.value().as_str()),
+        Some("example.invalid/web:${IMAGE_VERSION:-latest}")
+    );
+    assert!(matches!(
+        service.environment()[0].value().value(),
+        EnvironmentValue::Literal(value) if value.expose() == "${DB_PASSWORD}"
+    ));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.volumes[0]"
+            && outcome.kind() == ConversionKind::Unsupported
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFC0105")
+    }));
+    Ok(())
+}
+
+#[test]
+fn forwards_retained_native_findings_with_stage_role_and_source_span() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(199);
+    let project = merged_project([(
+        source_id,
+        "native-finding.compose.yaml",
+        "services:\n  web:\n    image: example.invalid/web:1\n",
+    )])?;
+    let span = ComposeSourceSpan::new(source_id, 20, 27).ok_or("source span")?;
+    let native = ComposeDiagnostic::new(
+        ComposeDiagnosticCode::new("compose.test.native-warning"),
+        compose_lens::diagnostic::Severity::Warning,
+        "native Compose condition needs review",
+    )
+    .with_label(DiagnosticLabel::secondary(span, "related Compose value"))
+    .with_note("value-free native context");
+    let source = ComposeSource::new(project, Identifier::new("native-finding")?)?
+        .with_source_id(source_id, SourceId::new("native-finding.compose.yaml")?)
+        .with_native_diagnostics(ComposeFindingStage::Validation, [&native]);
+
+    let result = ComposeImporter::new()?.import(&source);
+    let diagnostic = result
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code().as_str() == "BFC0198")
+        .ok_or("native diagnostic")?;
+    let finding = diagnostic.native_finding().ok_or("native finding")?;
+    assert_eq!(finding.source_format(), "compose");
+    assert_eq!(finding.producer(), "compose-lens");
+    assert_eq!(finding.stage(), "validation");
+    assert_eq!(finding.code(), "compose.test.native-warning");
+    assert_eq!(finding.labels()[0].source_id(), 199);
+    assert_eq!(finding.labels()[0].start(), 20);
+    assert!(matches!(
+        finding.labels()[0].kind(),
+        boxferry_engine::NativeFindingLabelKind::Secondary
+    ));
+    assert_eq!(finding.notes(), ["value-free native context"]);
     Ok(())
 }
 

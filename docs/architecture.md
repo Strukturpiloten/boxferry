@@ -93,7 +93,9 @@ Adapters map between a native model and the application model. They own semantic
 The Compose adapter consumes a `MergedProject`, an optional matching ComposeLens
 `ProfileSelection`, and caller-owned identities for every contributing source document. It builds
 ComposeLens's native project view directly, without canonical rendering or reparsing. BoxFerry does
-not infer active profiles or read the process environment.
+not infer active profiles or read the process environment. `ComposeSource` also retains explicitly
+staged loader, interpolation, merge, profile, project-model, validation, or rendering findings so
+the importer and CLI cannot observe different source evidence.
 
 In the reverse direction, `ComposeExporter` accepts a rolling provider-neutral Compose
 Specification target or an exact Docker Compose or `podman-compose` provider target plus an
@@ -106,9 +108,10 @@ rolling specification target and does not inspect installed tools. See
 
 The Quadlet importer consumes explicit in-memory unit inputs through `QuadletSource::parse`, or a
 caller-validated named `QuadletDocumentSet`; it does not search systemd or Quadlet directories.
-The sole parse boundary is `QuadletSource::parse`. Its `QuadletParseResult` preserves BoxFerry-owned,
-value-free native syntax, model, and document-set diagnostic DTOs in collection order; recoverable
-document-set diagnostics retain an incomplete graph. Syntax/model errors and non-recoverable
+The sole parse boundary is `QuadletSource::parse`. Its `QuadletParseResult` and resulting
+`QuadletSource` preserve BoxFerry-owned, value-free native syntax, model, and document-set findings
+in collection order; recoverable document-set diagnostics retain an incomplete graph. The
+importer forwards those findings to embedded callers. Syntax/model errors and non-recoverable
 construction failures return `QuadletParseError`. Its current exact slice maps direct container images, explicit container names,
 safe unquoted exec arguments, single explicit environment assignments, scalar port publications,
 named or absolute-bind mounts, named network attachments, and application-owned or explicitly
@@ -167,6 +170,11 @@ Docker acquisition additionally requires an explicit daemon endpoint and forced 
 version. Separate opt-in conformance harnesses run digest-pinned nested runtimes without host
 runtime sockets. Native response types never cross into the shared runtime crate or application
 model.
+
+All native adapters translate producer diagnostics into the engine's protected `NativeFinding`
+envelope. This is provenance, not a replacement for BoxFerry rules or fidelity outcomes. The same
+boundary applies to future Docker, Podman, and Kubernetes findings; see
+[ADR 0027](decisions/0027-format-neutral-native-findings.md).
 
 Neutral provenance distinguishes effective runtime observations from authored documents,
 implementation defaults, caller overrides, and BoxFerry conversion decisions. Optional creation

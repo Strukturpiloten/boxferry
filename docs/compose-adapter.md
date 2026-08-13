@@ -1,7 +1,7 @@
 # Compose exporter
 
 `boxferry-compose` maps a neutral `Application` into deterministic Compose YAML through
-ComposeLens 0.1.15. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
+ComposeLens 0.1.16. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
 `DOCKER_COMPOSE_TARGET`, and `PODMAN_COMPOSE_TARGET` through the additive `compose` feature.
 
 ## Target selection
@@ -73,6 +73,12 @@ The first slice generates:
 - ordered network attachments and aliases; and
 - application-owned or external top-level networks and volumes.
 
+The importer preserves unresolved image spellings in the neutral model and emits source-side
+`BFC0105` evidence containing the Compose variable name and service-image subject. Target adapters
+remain source-format neutral: for example, the Quadlet exporter independently emits `BFQ0014` when
+that preserved value cannot become a native image line. The shared subject correlates the findings
+without teaching the Quadlet adapter Compose interpolation syntax.
+
 ComposeLens selects native short/long forms, renders canonical two-space/LF YAML, reparses its own
 bytes through the syntax and typed-model layers, and returns `GeneratedComposeDocument`. Sensitive
 command, environment-file path, environment, service-label, identity, and context values cause the
@@ -104,7 +110,7 @@ Current compatibility-sensitive constructs are tag-plus-digest images, `host-gat
 user-namespace values, and short-form SELinux relabeling. SCTP syntax is generated but remains an
 unsupported outcome until the selected provider/runtime pair has reviewed execution evidence.
 
-The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.15 output:
+The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.16 output:
 
 - a primary group without a primary user;
 - environment values that must be absent;

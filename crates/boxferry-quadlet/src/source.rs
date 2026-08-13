@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, error::Error, fmt};
 
+use boxferry_engine::{NativeFinding, NativeFindingLabel, NativeFindingLabelKind, Severity};
 use boxferry_model::{Identifier, ModelError, SourceId};
 use quadlet_lens::{
     diagnostic::{Diagnostic as NativeDiagnostic, Severity as NativeSeverity},
@@ -114,6 +115,12 @@ impl QuadletParseDiagnostic {
     #[must_use]
     pub fn labels(&self) -> &[QuadletParseDiagnosticLabel] {
         &self.labels
+    }
+
+    /// Converts this diagnostic into the shared protected finding envelope.
+    #[must_use]
+    pub fn native_finding(&self) -> NativeFinding {
+        native_finding(self)
     }
 }
 
@@ -282,6 +289,7 @@ pub struct QuadletSource {
     documents: QuadletDocumentSet,
     source_ids: BTreeMap<QuadletSourceId, SourceId>,
     fallback_source_id: SourceId,
+    native_findings: Vec<NativeFinding>,
 }
 
 impl QuadletSource {
@@ -405,6 +413,7 @@ impl QuadletSource {
             };
             source = source.with_source_id(native, neutral);
         }
+        source.native_findings = diagnostics.iter().map(native_finding).collect();
         Ok(QuadletParseResult { source, diagnostics })
     }
 
@@ -423,6 +432,10 @@ impl QuadletSource {
         documents: QuadletDocumentSet,
     ) -> Result<Self, ModelError> {
         let fallback_source_id = SourceId::new("quadlet-source")?;
+        let native_findings = copy_diagnostics(QuadletParseDiagnosticOrigin::DocumentSet, documents.diagnostics())
+            .iter()
+            .map(native_finding)
+            .collect();
         let source_ids = documents
             .documents()
             .iter()
@@ -436,6 +449,7 @@ impl QuadletSource {
             documents,
             source_ids,
             fallback_source_id,
+            native_findings,
         })
     }
 
@@ -463,6 +477,44 @@ impl QuadletSource {
     pub fn source_id(&self, quadlet: QuadletSourceId) -> &SourceId {
         self.source_ids.get(&quadlet).unwrap_or(&self.fallback_source_id)
     }
+
+    /// Returns every recoverable native finding retained by the source boundary.
+    ///
+    /// The findings contain stable native codes and value-free source metadata, but never source
+    /// contents or filenames. Importing this source forwards the same findings to embedded callers.
+    #[must_use]
+    pub fn native_findings(&self) -> &[NativeFinding] {
+        &self.native_findings
+    }
+}
+
+fn native_finding(diagnostic: &QuadletParseDiagnostic) -> NativeFinding {
+    let mut finding = NativeFinding::new(
+        "quadlet",
+        "quadlet-lens",
+        diagnostic.code(),
+        match diagnostic.origin() {
+            QuadletParseDiagnosticOrigin::Syntax => "syntax",
+            QuadletParseDiagnosticOrigin::Model => "model",
+            QuadletParseDiagnosticOrigin::DocumentSet => "document-set",
+        },
+        match diagnostic.severity() {
+            QuadletParseDiagnosticSeverity::Error => Severity::Error,
+            QuadletParseDiagnosticSeverity::Warning => Severity::Warning,
+            QuadletParseDiagnosticSeverity::Note => Severity::Note,
+        },
+        diagnostic.summary(),
+    );
+    for label in diagnostic.labels() {
+        finding = finding.with_label(NativeFindingLabel::new(
+            NativeFindingLabelKind::Primary,
+            label.source_id(),
+            label.start(),
+            label.end(),
+            label.message(),
+        ));
+    }
+    finding
 }
 
 fn copy_diagnostics(

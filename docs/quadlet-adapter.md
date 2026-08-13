@@ -200,6 +200,7 @@ note that later releases remain an assumption.
 | `BFQ0011` | error   | The requested grouping is incompatible with source intent.                |
 | `BFQ0012` | error   | A service or artifact dependency graph is invalid.                        |
 | `BFQ0013` | note    | A required capability is deprecated for the target range.                 |
+| `BFQ0014` | error   | A source variable expression must be resolved before Quadlet generation.  |
 
 Every warning/error fidelity decision carries the contributing neutral-model provenance. Sensitive
 values are not copied into diagnostic fields. The generated complete catalogue and explanation

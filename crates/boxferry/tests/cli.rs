@@ -45,11 +45,14 @@ fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() 
     let stderr = String::from_utf8(human.stderr)?;
     assert!(stdout.contains("stage: conversion failed"), "{stdout}");
     assert_eq!(
-        stderr.matches("BFC0004 compose-intent-unsupported [warning]").count(),
+        stderr.matches("BFC0105 compose-unresolved-variable [warning]").count(),
         1,
         "{stderr}"
     );
     assert!(stderr.contains("(2 findings)"), "{stderr}");
+    assert!(stderr.contains("Use --interpolate"), "{stderr}");
+    assert!(stderr.contains("variable: FIRST"), "{stderr}");
+    assert!(stderr.contains("variable: SECOND"), "{stderr}");
     assert_eq!(
         stderr.matches("BFC0005 compose-value-invalid [error]").count(),
         1,
@@ -80,15 +83,72 @@ fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() 
     assert_eq!(report["failed_stage"], "conversion");
     let diagnostics = report["diagnostics"].as_array().ok_or("missing diagnostics")?;
     assert_eq!(diagnostics.len(), 5);
-    assert_eq!(diagnostics[0]["code"], "BFC0004");
-    assert_eq!(diagnostics[1]["code"], "BFC0004");
-    assert_eq!(diagnostics[2]["code"], "BFC0005");
+    assert_eq!(diagnostics[0]["code"], "BFC0005");
+    assert_eq!(diagnostics[1]["code"], "BFC0105");
+    assert_eq!(diagnostics[2]["code"], "BFC0105");
     assert_eq!(diagnostics[3]["code"], "BFC0198");
     assert_eq!(diagnostics[4]["code"], "BFC0198");
     assert_eq!(
         diagnostics[3]["source_code"],
         "compose.shm-size.provider-dependent-string"
     );
+    assert_eq!(diagnostics[3]["native_finding"]["source_format"], "compose");
+    assert_eq!(diagnostics[3]["native_finding"]["producer"], "compose-lens");
+    assert_eq!(diagnostics[3]["native_finding"]["stage"], "load");
+    assert_eq!(diagnostics[3]["native_finding"]["labels"][0]["kind"], "primary");
+    Ok(())
+}
+
+#[test]
+fn unresolved_compose_environment_variables_are_paired_with_target_findings() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("unresolved-compose-environment");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    fs::write(
+        &compose,
+        concat!(
+            "name: unresolved-environment\nservices:\n  database:\n",
+            "    image: example.invalid/database:1\n",
+            "    environment:\n",
+            "      POSTGRES_PASSWORD: ${DB_PASSWORD}\n",
+            "      POSTGRES_USER: ${DB_USERNAME}\n",
+            "      POSTGRES_DB: ${DB_DATABASE_NAME}\n",
+        ),
+    )?;
+    let common = [
+        "validate",
+        "--input-type",
+        "compose",
+        "--input-file",
+        path_text(&compose)?,
+        "--output-type",
+        "quadlet",
+    ];
+
+    let exact = boxferry_command().args(common).output()?;
+    assert_eq!(exact.status.code(), Some(2));
+    let stderr = String::from_utf8(exact.stderr)?;
+    assert!(
+        stderr.contains("BFC0105 compose-unresolved-variable [warning] (3 findings)"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("BFQ0003 quadlet-output-unsupported [warning] (3 findings)"),
+        "{stderr}"
+    );
+    for variable in ["DB_PASSWORD", "DB_USERNAME", "DB_DATABASE_NAME"] {
+        assert!(stderr.contains(&format!("variable: {variable}")), "{stderr}");
+    }
+    assert!(stderr.contains("Use --interpolate"), "{stderr}");
+
+    let partial = boxferry_command()
+        .args(common)
+        .args(["--loss-policy", "partial"])
+        .output()?;
+    assert!(partial.status.success(), "{}", String::from_utf8_lossy(&partial.stderr));
+    let partial_stderr = String::from_utf8(partial.stderr)?;
+    assert!(partial_stderr.contains("BFC0105 compose-unresolved-variable [warning]"));
+    assert!(partial_stderr.contains("BFQ0003 quadlet-output-unsupported [warning]"));
     Ok(())
 }
 
@@ -135,6 +195,7 @@ fn generic_convert_preserves_mixed_input_occurrence_order_and_directory_priority
     assert!(!String::from_utf8_lossy(&result.stdout).contains(path_text(project.path())?));
     assert_eq!(report["resolved_versions"]["minimum"], "5.4.0");
     assert_eq!(report["resolved_versions"]["maximum"], "6.0.2");
+    assert!(report["fix_first"].is_null());
     assert!(output.path().join("web.container").exists());
     Ok(())
 }
@@ -815,6 +876,10 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
         assert_eq!(value["exit_category"], "output-write");
         assert_eq!(value["failed_stage"], "output-write");
         assert_eq!(value["primary_diagnostic_code"], "BFO2001");
+        assert_eq!(value["fix_first"]["code"], "BFO2001");
+        assert_eq!(value["fix_first"]["name"], "output-directory-not-empty");
+        assert!(value["fix_first"]["help"].is_string());
+        assert!(value["fix_first"]["next_step"].is_string());
         assert!(
             value["failure_summary"]
                 .as_str()
@@ -1019,6 +1084,16 @@ fn write_loss_policy_fixture(project: &Path, service_fields: &str) -> Result<Pat
     Ok(compose)
 }
 
+fn write_unresolved_image_fixture(project: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    fs::create_dir_all(project)?;
+    let compose = project.join("compose.yaml");
+    fs::write(
+        &compose,
+        "name: variables\nservices:\n  application:\n    image: example.invalid/application:${IMAGE_VERSION:-latest}\n",
+    )?;
+    Ok(compose)
+}
+
 fn validate_with_loss_policy(input: &Path, policy: &str) -> Result<Output, Box<dyn Error>> {
     Ok(boxferry_command()
         .args([
@@ -1112,6 +1187,128 @@ fn every_loss_policy_value_has_positive_and_negative_cli_behavior() -> Result<()
     let partial_rejects_invalid = validate_with_loss_policy(&invalid, "partial")?;
     assert_eq!(partial_rejects_invalid.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&partial_rejects_invalid.stderr).contains("BFC0005 compose-value-invalid [error]"));
+    Ok(())
+}
+
+#[test]
+fn loss_policy_never_authorizes_unresolved_image_variables_and_help_resolves_them() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("loss-policy-unresolved-image");
+    let compose = write_unresolved_image_fixture(project.path())?;
+
+    for policy in ["exact", "approximate", "partial"] {
+        let result = validate_with_loss_policy(&compose, policy)?;
+        assert_eq!(result.status.code(), Some(1), "{policy}");
+        let stdout = String::from_utf8(result.stdout)?;
+        let stderr = String::from_utf8(result.stderr)?;
+        assert!(
+            stderr.contains("BFQ0014 quadlet-unresolved-source-variable [error]"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("BFC0105 compose-unresolved-variable [warning]"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("subject: services.application.image"), "{stderr}");
+        assert!(stderr.contains("variable: IMAGE_VERSION"), "{stderr}");
+        assert!(stderr.contains("use --interpolate"), "{stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "invalid findings always block output and cannot be authorized by --loss-policy {policy}"
+            )),
+            "{stderr}"
+        );
+        assert!(stdout.contains("stage: conversion failed"), "{stdout}");
+        assert!(
+            stdout.lines().next_back().is_some_and(|line| {
+                line.starts_with(
+                    "boxferry: command failed during conversion: BFQ0014 quadlet-unresolved-source-variable",
+                )
+            }),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("blocked by the selected loss policy"), "{stdout}");
+        let fix_first = stderr.find("fix first:").ok_or("fix-first section")?;
+        let last_diagnostic = stderr
+            .rfind("explain: boxferry explain BFQ0014")
+            .ok_or("last diagnostic")?;
+        assert!(fix_first > last_diagnostic, "{stderr}");
+        assert!(
+            stderr[fix_first..].contains("BFQ0014 quadlet-unresolved-source-variable"),
+            "{stderr}"
+        );
+        assert!(
+            stderr[fix_first..].contains("remaining findings may disappear or change"),
+            "{stderr}"
+        );
+    }
+
+    let resolved = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-file",
+            path_text(&compose)?,
+            "--interpolate",
+            "--loss-policy",
+            "partial",
+        ])
+        .output()?;
+    assert!(
+        resolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolved.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&resolved.stderr).contains("BFQ0014"));
+    assert!(!String::from_utf8_lossy(&resolved.stderr).contains("BFC0105"));
+    Ok(())
+}
+
+#[test]
+fn json_reports_structured_fix_first_guidance_and_paired_source_target_findings() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("json-unresolved-image-guidance");
+    let compose = write_unresolved_image_fixture(project.path())?;
+    let json = boxferry_command()
+        .args([
+            "validate",
+            "--input-type",
+            "compose",
+            "--output-type",
+            "quadlet",
+            "--input-file",
+            path_text(&compose)?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(json.status.code(), Some(1));
+    assert!(json.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+    assert_eq!(report["primary_diagnostic_code"], "BFQ0014");
+    assert_eq!(report["fix_first"]["code"], "BFQ0014");
+    assert_eq!(report["fix_first"]["name"], "quadlet-unresolved-source-variable");
+    assert!(
+        report["fix_first"]["help"]
+            .as_str()
+            .is_some_and(|help| help.contains("--interpolate"))
+    );
+    assert!(
+        report["fix_first"]["next_step"]
+            .as_str()
+            .is_some_and(|step| step.contains("remaining findings may disappear or change"))
+    );
+    let diagnostics = report["diagnostics"].as_array().ok_or("diagnostics")?;
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "BFC0105"
+            && diagnostic["fields"].as_array().is_some_and(|fields| {
+                fields
+                    .iter()
+                    .any(|field| field["name"] == "variable" && field["value"] == "IMAGE_VERSION")
+            })
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFQ0014"));
     Ok(())
 }
 
@@ -1261,7 +1458,12 @@ fn human_sections_are_ordered_and_end_with_success_or_failure() -> Result<(), Bo
             && interpolation_help < approximation
             && approximation < final_status
     );
-    assert!(success.contains("stage: conversion complete\n\nBFC0101"), "{success}");
+    assert!(
+        success.contains(
+            "stage: conversion complete\n\npolicy: --loss-policy approximate authorized output; non-exact findings remain visible\n\nBFC0101"
+        ),
+        "{success}"
+    );
     assert!(success.contains("boxferry explain BFC0101\n\nBFQ0009"), "{success}");
     assert_eq!(success.lines().next_back(), Some(final_line));
 
@@ -1818,6 +2020,7 @@ fn report_schema_declares_the_emitted_v1_shape() -> Result<(), Box<dyn Error>> {
         "failed_stage",
         "primary_diagnostic_code",
         "failure_summary",
+        "fix_first",
         "source_type",
         "target_type",
         "application",
@@ -1846,9 +2049,12 @@ fn report_schema_declares_the_emitted_v1_shape() -> Result<(), Box<dyn Error>> {
         "invocation",
         "host",
         "fidelity",
+        "fix_first",
         "span",
         "field",
         "diagnostic",
+        "native_label",
+        "native_finding",
         "artifact",
         "redaction",
         "truncation",
@@ -1878,6 +2084,7 @@ fn report_schema_declares_the_emitted_v1_shape() -> Result<(), Box<dyn Error>> {
         "help",
         "fields",
         "spans",
+        "native_finding",
     ] {
         assert!(
             diagnostic_required.iter().any(|value| value == field),
@@ -2130,6 +2337,14 @@ fn report_write_failure_preserves_a_primary_failure_category_and_stage() -> Resu
     assert_eq!(result.status.code(), Some(1));
     let value: serde_json::Value = serde_json::from_slice(&result.stdout)?;
     assert_eq!(value["failed_stage"], "compose-merge");
+    let native = value["diagnostics"]
+        .as_array()
+        .and_then(|items| items.iter().find_map(|item| item["native_finding"].as_object()))
+        .ok_or("missing native Compose failure details")?;
+    assert_eq!(native["source_format"], "compose");
+    assert_eq!(native["producer"], "compose-lens");
+    assert_eq!(native["stage"], "load");
+    assert_eq!(native["labels"][0]["kind"], "primary");
     assert_ne!(value["exit_category"], "report-write");
     assert!(
         value["diagnostics"]
@@ -2705,6 +2920,10 @@ fn quadlet_detailed_native_diagnostics_are_ordered_aliased_and_redacted_everywhe
     let diagnostics = console_report["diagnostics"].as_array().ok_or("missing diagnostics")?;
     assert_eq!(diagnostics[0]["code"], "BFQ1101");
     assert_eq!(diagnostics[0]["source_code"], "QLS0001");
+    assert_eq!(diagnostics[0]["native_finding"]["source_format"], "quadlet");
+    assert_eq!(diagnostics[0]["native_finding"]["producer"], "quadlet-lens");
+    assert_eq!(diagnostics[0]["native_finding"]["stage"], "syntax");
+    assert_eq!(diagnostics[0]["native_finding"]["labels"][0]["kind"], "primary");
     assert_eq!(diagnostics[1]["code"], "BFQ1102");
     assert_eq!(diagnostics[1]["source_code"], "QLM0002");
     assert!(diagnostics.len() >= 3);
@@ -2785,6 +3004,8 @@ fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<()
         })
         .ok_or("missing recoverable native warning")?;
     assert_eq!(warning["code"], "BFQ1102");
+    assert_eq!(warning["native_finding"]["source_format"], "quadlet");
+    assert_eq!(warning["native_finding"]["stage"], "model");
     assert!(
         warning["source_code"]
             .as_str()

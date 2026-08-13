@@ -62,12 +62,12 @@ network request to collect additional information.
 - source and target kinds, project/profile/grouping choices, and loss policy;
 - route-specific target choices: finite Podman bounds for Quadlet output, or the rolling Compose
   Specification target for Compose output;
-- every retained Quadlet native syntax, typed-model, and document-set diagnostic, with its native
-  source code, severity, static summary, repeatable static label messages, and spans rewritten to
-  invocation-local input aliases;
+- every retained Compose and Quadlet native diagnostic, with its native source code, producer,
+  stage, severity, value-free summary, labels, notes, help, and aliased spans;
 - requested and resolved route target versions or `rolling` target labels;
 - ordered safe diagnostic events and fidelity counts;
-- every structured diagnostic currently exposed by the public report DTO; and
+- every structured diagnostic currently exposed by the public report DTO, including bounded
+  native producer, stage, protected fields, labelled ranges, notes, and help; and
 - generated artifact names and sizes, but not their contents;
 - redaction counts, applied redaction classes, and known limitations; and
 - explicit truncation metadata for every bounded collection or field.
@@ -162,9 +162,12 @@ added as a secondary event.
 The version-one report DTO contains its command kind and allowlisted actual option names,
 operating-system family and architecture, finite target bounds, fidelity counts, output artifact
 metadata, redaction summary, and truncation metadata. Structured diagnostics contain the BoxFerry
-rule code and name, optional native source code, severity, summary, static help, safe fields, and
-aliased spans. Blocked and failed reports also contain the primary diagnostic code and causal
-failure summary. Source contents, generated contents, process environment, runtime inspection,
+rule code and name, optional native source code, severity, summary, static help, safe fields,
+aliased spans, and an optional detailed native-finding object. Blocked and failed reports also
+contain the primary diagnostic code and causal failure summary plus a structured `fix_first`
+object with the selected rule's code, name, description, static help, and conservative rerun
+guidance. Successful reports use `null`. These catalogue-derived fields contain no source or
+environment values. Source contents, generated contents, process environment, runtime inspection,
 hostname, username, panic payloads, and backtraces remain excluded. Per-stage durations and a
 distinct capability-decision collection remain deferred.
 
@@ -195,7 +198,6 @@ Tests must cover:
 - Raw panic payloads and backtraces are omitted in version one.
 - Sanitized input support and a GitHub attachment checklist remain deferred.
 
-Quadlet parse and document-set reports retain the value-free diagnostic DTOs exposed by
-`boxferry-quadlet`; formatted native terminal output is never parsed. Native spans use only
-`<input-N>` aliases, and summaries and label messages are static native text. Focused black-box
-tests seed path and secret canaries in console JSON, report files, and support bundles.
+Compose and Quadlet reports retain the protected native findings exposed by their adapters;
+formatted terminal output is never parsed. Native spans use only `<input-N>` aliases. Focused
+black-box tests seed path and secret canaries in console JSON, report files, and support bundles.

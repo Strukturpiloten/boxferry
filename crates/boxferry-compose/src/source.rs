@@ -2,8 +2,87 @@
 
 use std::collections::BTreeMap;
 
+use boxferry_engine::{
+    DiagnosticField, DiagnosticValue, NativeFinding, NativeFindingLabel, NativeFindingLabelKind, Severity,
+};
 use boxferry_model::{Identifier, ModelError, SourceId};
-use compose_lens::{merge::MergedProject, profiles::ProfileSelection, source::SourceId as ComposeSourceId};
+use compose_lens::{
+    diagnostic::{Diagnostic as ComposeDiagnostic, LabelKind, Severity as ComposeSeverity},
+    merge::MergedProject,
+    profiles::ProfileSelection,
+    source::SourceId as ComposeSourceId,
+};
+
+/// Compose processing layer that emitted a retained native finding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ComposeFindingStage {
+    /// YAML syntax or single-document loading.
+    Load,
+    /// Explicit variable interpolation.
+    Interpolation,
+    /// Ordered multi-document merge.
+    Merge,
+    /// Explicit service profile selection.
+    ProfileSelection,
+    /// Native merged-project typing.
+    ProjectModel,
+    /// Provider/runtime compatibility validation.
+    Validation,
+    /// Native Compose generation or parse-back validation.
+    Rendering,
+}
+
+impl ComposeFindingStage {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Load => "load",
+            Self::Interpolation => "interpolation",
+            Self::Merge => "merge",
+            Self::ProfileSelection => "profile-selection",
+            Self::ProjectModel => "project-model",
+            Self::Validation => "validation",
+            Self::Rendering => "rendering",
+        }
+    }
+
+    /// Converts one native diagnostic into the shared protected finding envelope.
+    #[must_use]
+    pub fn native_finding(self, diagnostic: &ComposeDiagnostic) -> NativeFinding {
+        let severity = match diagnostic.severity() {
+            ComposeSeverity::Error => Severity::Error,
+            ComposeSeverity::Warning => Severity::Warning,
+            ComposeSeverity::Note => Severity::Note,
+        };
+        let mut finding = NativeFinding::new(
+            "compose",
+            "compose-lens",
+            diagnostic.code().as_str(),
+            self.as_str(),
+            severity,
+            diagnostic.message(),
+        );
+        if let Some(variable) = interpolation_variable(diagnostic.code().as_str(), diagnostic.message()) {
+            finding = finding.with_field(DiagnosticField::new("variable", DiagnosticValue::plain(variable)));
+        }
+        for label in diagnostic.labels() {
+            finding = finding.with_label(NativeFindingLabel::new(
+                match label.kind() {
+                    LabelKind::Primary => NativeFindingLabelKind::Primary,
+                    LabelKind::Secondary => NativeFindingLabelKind::Secondary,
+                },
+                label.span().source_id().get(),
+                label.span().start(),
+                label.span().end(),
+                label.message(),
+            ));
+        }
+        for note in diagnostic.notes() {
+            finding = finding.with_note(note);
+        }
+        finding
+    }
+}
 
 /// A merged Compose project and the caller-owned context needed to import it safely.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -12,6 +91,7 @@ pub struct ComposeSource {
     fallback_application_name: Identifier,
     source_ids: BTreeMap<ComposeSourceId, SourceId>,
     profile_selection: Option<ProfileSelection>,
+    native_findings: Vec<NativeFinding>,
 }
 
 impl ComposeSource {
@@ -42,6 +122,7 @@ impl ComposeSource {
             fallback_application_name,
             source_ids,
             profile_selection: None,
+            native_findings: Vec::new(),
         })
     }
 
@@ -59,6 +140,24 @@ impl ComposeSource {
     #[must_use]
     pub fn with_profile_selection(mut self, selection: ProfileSelection) -> Self {
         self.profile_selection = Some(selection);
+        self
+    }
+
+    /// Retains native Compose diagnostics without terminal rendering or source contents.
+    ///
+    /// Diagnostics should be attached at the stage where the caller obtained them. The adapter
+    /// keeps native codes as provenance and maps them to BoxFerry-owned rules during import.
+    #[must_use]
+    pub fn with_native_diagnostics<'a>(
+        mut self,
+        stage: ComposeFindingStage,
+        diagnostics: impl IntoIterator<Item = &'a ComposeDiagnostic>,
+    ) -> Self {
+        self.native_findings.extend(
+            diagnostics
+                .into_iter()
+                .map(|diagnostic| stage.native_finding(diagnostic)),
+        );
         self
     }
 
@@ -85,4 +184,29 @@ impl ComposeSource {
     pub const fn profile_selection(&self) -> Option<&ProfileSelection> {
         self.profile_selection.as_ref()
     }
+
+    /// Returns retained native Compose findings in processing order.
+    #[must_use]
+    pub fn native_findings(&self) -> &[NativeFinding] {
+        &self.native_findings
+    }
+}
+
+pub(crate) fn native_project_finding(diagnostic: &ComposeDiagnostic) -> NativeFinding {
+    ComposeFindingStage::ProjectModel.native_finding(diagnostic)
+}
+
+fn interpolation_variable<'a>(code: &str, message: &'a str) -> Option<&'a str> {
+    if !matches!(
+        code,
+        "compose.interpolation.unset-variable" | "compose.interpolation.required-variable"
+    ) {
+        return None;
+    }
+    let (_, remainder) = message.split_once('`')?;
+    let (variable, _) = remainder.split_once('`')?;
+    let mut bytes = variable.bytes();
+    let first = bytes.next()?;
+    ((first == b'_' || first.is_ascii_alphabetic()) && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric()))
+        .then_some(variable)
 }

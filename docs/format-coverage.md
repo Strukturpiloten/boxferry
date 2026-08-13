@@ -56,7 +56,7 @@ field as a policy-controlled unsupported outcome.
 | Runtime container name | `container_name` | `end to end` | The name remains distinct from the service key and emits as capability-checked `ContainerName=`. Compose and Podman target grammars are validated independently; invalid values block output. |
 | Command | `command` | `partial` | Safe exec-form arguments emit `Exec=`; shell form, clearing, and values needing target quoting are reported. |
 | Environment | `environment` | `partial` | Literal safe values emit `Environment=`; host lookup, unset intent, and values needing target encoding are reported. |
-| Environment files | `env_file` | `partial` | ComposeLens 0.1.15 imports and exports ordered short/long declarations with `required`, `format`, sensitivity, and provenance without reading files. Required safe absolute paths and relative paths resolved from an explicit project root emit repeatable capability-checked Quadlet `EnvironmentFile=` entries. Quadlet output and Quadlet-to-Compose reconstruction are approximate until Compose-default and `raw` parser parity with Podman is proven. Optional files, systemd-specifier ambiguity, and unsafe paths are reported instead of guessed. |
+| Environment files | `env_file` | `partial` | ComposeLens 0.1.16 imports and exports ordered short/long declarations with `required`, `format`, sensitivity, and provenance without reading files. Required safe absolute paths and relative paths resolved from an explicit project root emit repeatable capability-checked Quadlet `EnvironmentFile=` entries. Quadlet output and Quadlet-to-Compose reconstruction are approximate until Compose-default and `raw` parser parity with Podman is proven. Optional files, systemd-specifier ambiguity, and unsafe paths are reported instead of guessed. |
 | Host mappings | `extra_hosts` | `end to end` | Sequence/mapping syntax, IPv4, IPv6, and `host-gateway` reach container or compatible pod `AddHost=` entries. |
 | Published ports | `ports` | `partial` | Single numeric publications are supported; ranges, deferred values, unsupported host-address forms, and target-only options are reported. |
 | Storage | `volumes` plus top-level `volumes` | `partial` | Named, bind, and anonymous mounts cover the first slice, including short-syntax SELinux relabel intent; other mount types/options are reported. |
@@ -205,7 +205,7 @@ with independent `BFD` diagnostics and additionally reports the lost entrypoint/
 
 The Compose export path covers the same supported effective subset for images, commands,
 environment, explicit runtime names, service labels, identity/context, container restart policies,
-ports, mounts, networks, volumes, and ordered environment-file declarations. It uses ComposeLens 0.1.15's
+ports, mounts, networks, volumes, and ordered environment-file declarations. It uses ComposeLens 0.1.16's
 deterministic generated-document boundary. The generic Quadlet-to-Compose route targets the rolling
 Compose Specification; embedded callers may instead select an exact Docker Compose or
 `podman-compose` provider version with an optional exact backend. Short/long `env_file` syntax, order, explicit `required`/`raw` options, and path

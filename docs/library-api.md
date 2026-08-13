@@ -64,7 +64,7 @@ no-default core, every supported individual feature, and all features.
 The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-runtime`, and
 `docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
 current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
-`ComposeRuntime`, Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
+`ComposeFindingStage`, `ComposeRuntime`, Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
 `QuadletSource`, `QuadletParseResult`, `QuadletParseError`, `QuadletParseFailure`, `QuadletParseFailureStage`,
 the `QuadletParseDiagnostic` DTO family, `QuadletExporter`, `QuadletGroupingPolicy`, and
 `QuadletOutput`. It also exposes each adapter and matching native
@@ -102,7 +102,8 @@ syntax/model diagnostic in caller input order, followed by document-set diagnost
 diagnostics can return an incomplete graph in `QuadletParseResult`; syntax/model errors and
 non-recoverable construction failures return `QuadletParseError`. DTOs retain native code,
 severity, static summaries/labels, numeric source IDs, and byte spans, never source text, paths,
-protected values, or terminal-rendered diagnostics.
+protected values, or terminal-rendered diagnostics. Successful findings also remain inside
+`QuadletSource`, so `QuadletParseResult::into_source` and the importer cannot discard them.
 
 The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types including
 `RuntimeHealthcheck` and `RuntimeMetadataLabel`, plus the neutral `RestartPolicy`, `MetadataLabel`, `OverrideReconstruction`,
@@ -165,8 +166,8 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.15;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.11;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.16;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.12;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
 - an optional `docker-runtime` facade feature backed by `boxferry-docker`.
@@ -270,7 +271,11 @@ the facade does not discover files, read environment variables, or invoke runtim
 The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A caller-created
 `ProfileSelection` is required when the project contains profiled services and must belong to that
 same merged project. Each Compose source ID has a deterministic fallback identity and can be
-replaced with a caller-owned path or URI through `ComposeSource::with_source_id`.
+replaced with a caller-owned path or URI through `ComposeSource::with_source_id`. Callers attach
+native processing diagnostics with `ComposeSource::with_native_diagnostics` and an explicit
+`ComposeFindingStage`; the importer forwards them through the same public result as mapping
+diagnostics. `ComposeFindingStage::native_finding` provides the same conversion for failure paths
+that cannot construct a source.
 
 Embedded callers control Compose interpolation before merge. They construct a ComposeLens
 `MapEnvironment`, distinguish plain from sensitive entries, create the loaded project's
@@ -286,7 +291,7 @@ Compose-relative path resolution. The Compose exporter preserves ordered short/l
 explicit `required`/`raw` options, and path sensitivity through ComposeLens's validated generator.
 Loading file contents and applying Compose parser semantics remains a separate caller-authorized API.
 
-The importer consumes ComposeLens 0.1.15's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.1.16's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
@@ -320,7 +325,7 @@ group using the group name and rejects missing, multiple, unresolved, external, 
 It remains approximate because structural membership does not itself assert shared namespaces.
 Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
 container restart policies, explicit container names, external secret grants, and service
-metadata labels convert through QuadletLens 0.1.11. `Never`
+metadata labels convert through QuadletLens 0.1.12. `Never`
 maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
 limits remain manual actions. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an

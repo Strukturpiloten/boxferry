@@ -38,7 +38,15 @@ created by that invocation and removes the directory only when that invocation c
 A loss policy authorizes output; it never suppresses the diagnostic that explains a non-exact
 mapping. For example, `--loss-policy approximate` permits `BFQ0009` restart output while retaining
 that warning for review. `partial` additionally permits supported partial-output cases, but neither
-policy permits invalid input.
+policy permits invalid input. Human output states whether the selected policy authorized output,
+still blocks non-exact output, or cannot affect an invalid finding. Invalid findings are conversion
+failures with exit code `1`, not policy blocks with exit code `2`. An unresolved Compose variable in
+a Compose value uses `BFC0105`; an unresolved variable in a required
+Quadlet value uses `BFQ0014`. Both direct the caller to `--interpolate` plus `--env-file` or `--env`
+as needed. `BFC0105` may also identify intent that can be explicitly omitted under partial policy,
+such as an ambiguous volume source; `BFQ0014` remains invalid when no usable target value can be
+generated. For an unresolved Compose image, the source-side `BFC0105` finding names the variable
+and subject while the target-side `BFQ0014` finding explains why Quadlet output is impossible.
 
 Quadlet-to-Compose requires a non-stdin `--project-name` and writes one deterministic,
 parse-back-validated `compose.yaml` for the rolling Compose Specification. It does not accept
@@ -113,9 +121,14 @@ shared explanation and fields once, list only varying evidence per finding, sort
 position, and keep their static help and `boxferry explain CODE` command attached. Native Lens codes
 remain in JSON rather than normal human output. Loss authorization never hides an eligible warning.
 Normal and verbose modes finish with an explicit success, blocked, or failure line; blocked and
-failed lines name the primary causal rule and explanation. Quiet mode retains diagnostics only.
+failed output places a `fix first` section after every diagnostic group and before that final line.
+It repeats the selected rule's explanation and help, then asks the caller to rerun because other
+findings may disappear or change. The guidance chooses a primary condition; it does not hide other
+rules or claim a fully proven causal graph. Quiet mode retains diagnostics and this remediation.
 JSON console mode contains the same sorted sequence, rule metadata, optional native `source_code`,
-`primary_diagnostic_code`, and `failure_summary`, and writes no human text. See
+`primary_diagnostic_code`, `failure_summary`, and a `fix_first` object containing `code`, `name`,
+`description`, `help`, and `next_step`; successful reports use `null`. Report files and support
+bundles use the same DTO. JSON mode writes no human text. See
 [Diagnostic rules](diagnostic-rules.md).
 
 `boxferry rules` lists the catalogue for the installed build. `boxferry explain CODE_OR_NAME`

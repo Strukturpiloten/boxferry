@@ -16,23 +16,24 @@ use std::{
 };
 
 use boxferry::compose::compose_lens::{
+    diagnostic::Diagnostic as ComposeDiagnostic,
     interpolation::MapEnvironment,
-    loader::{DocumentInput, DocumentOrigin, LoadedProject},
-    merge::merge_project,
-    profiles::{ProfileRequest, select_profiles},
+    loader::{DocumentInput, DocumentOrigin, LoadedProject, ProjectInterpolation},
+    merge::{MergeResult, MergedProject, merge_project},
+    profiles::{ProfileRequest, ProfileSelection, select_profiles},
     source::SourceId as ComposeSourceId,
 };
 use boxferry::report::{
-    ConversionReport, DiscoveryDecision, ExitCategory, FailedStage, FidelityCounts, HostMetadata, OutputArtifact,
-    ReportChoice, ReportDiagnostic, ReportField, ReportInput, ReportStatus, SanitizedInvocation, VersionBounds,
-    redact_text,
+    ConversionReport, DiscoveryDecision, ExitCategory, FailedStage, FidelityCounts, FixFirst, HostMetadata,
+    OutputArtifact, ReportChoice, ReportDiagnostic, ReportField, ReportInput, ReportNativeFinding, ReportNativeLabel,
+    ReportStatus, SanitizedInvocation, VersionBounds, redact_text,
 };
 use boxferry::{
-    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeImporter,
-    ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, LossPolicy, PlatformVersion,
-    QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletParseDiagnostic,
-    QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity, QuadletParseError, QuadletSource, RULES, RuleId,
-    SourceId, TargetProfile, convert, find_rule,
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeFindingStage,
+    ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, LossPolicy, NativeFinding,
+    NativeFindingLabelKind, PlatformVersion, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy,
+    QuadletImporter, QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES,
+    RuleId, SourceId, TargetProfile, convert, find_rule,
 };
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
@@ -547,6 +548,7 @@ fn sanitized_diagnostic(
         help: definition.help().into(),
         fields: safe_fields,
         spans: Vec::new(),
+        native_finding: None,
     }
 }
 
@@ -917,15 +919,17 @@ fn generic_convert(
     let output = result.output();
     let mut report = new_report(arguments, route);
     report.application = Some(loaded_conversion.application);
-    report.status = if output.is_some() {
-        ReportStatus::Success
-    } else {
-        ReportStatus::Blocked
+    report.fidelity = fidelity_counts(result.outcomes());
+    let invalid = conversion_is_invalid(result.outcomes(), diagnostics);
+    report.status = match (output.is_some(), invalid) {
+        (true, _) => ReportStatus::Success,
+        (false, true) => ReportStatus::Failure,
+        (false, false) => ReportStatus::Blocked,
     };
-    report.exit_category = if output.is_some() {
-        ExitCategory::Success
-    } else {
-        ExitCategory::PolicyBlocked
+    report.exit_category = match report.status {
+        ReportStatus::Success => ExitCategory::Success,
+        ReportStatus::Blocked => ExitCategory::PolicyBlocked,
+        ReportStatus::Failure => ExitCategory::InputOrExecution,
     };
     report.failed_stage = if output.is_some() {
         None
@@ -937,13 +941,10 @@ fn generic_convert(
         maximum: maximum.to_string(),
     };
     (report.inputs, report.discovery) = resolved_report_context(&discovered);
-    report.diagnostics = loaded_conversion.diagnostics;
-    report.diagnostics.extend(
-        diagnostics
-            .iter()
-            .map(|diagnostic| report_diagnostic(diagnostic, &aliases)),
-    );
-    report.fidelity = fidelity_counts(result.outcomes());
+    report.diagnostics = diagnostics
+        .iter()
+        .map(|diagnostic| report_diagnostic(diagnostic, &aliases))
+        .collect();
     if output.is_none() {
         report.primary_diagnostic_code = blocking_diagnostic_code(result.outcomes(), arguments.loss_policy);
     }
@@ -959,7 +960,8 @@ fn generic_convert(
             .collect()
     });
     let Some(output) = output else {
-        return Ok((report, ExitCode::from(2), discovered));
+        let exit = if invalid { ExitCode::FAILURE } else { ExitCode::from(2) };
+        return Ok((report, exit, discovered));
     };
     if !validate_only {
         let output_directory = output_directory.ok_or_else(|| io::Error::other("missing convert output directory"))?;
@@ -1068,7 +1070,7 @@ fn generic_quadlet_convert(
     let discovered = resolve_quadlet_inputs(ordered)?;
     let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
     aliases.add_inputs(&discovered);
-    let (application_name, source, native_diagnostics) = load_quadlet_source(arguments, &discovered, &aliases)?;
+    let (application_name, source) = load_quadlet_source(arguments, &discovered, &aliases)?;
     let target = TargetProfile::new(
         COMPOSE_SPECIFICATION_TARGET,
         COMPOSE_SPECIFICATION_PROFILE_REVISION,
@@ -1083,10 +1085,7 @@ fn generic_quadlet_convert(
         arguments.loss_policy.into(),
     )
     .map_err(|error| {
-        let mut diagnostics = native_diagnostics
-            .iter()
-            .map(|diagnostic| report_quadlet_native_diagnostic(diagnostic, &aliases))
-            .collect::<Vec<_>>();
+        let mut diagnostics = Vec::new();
         match error {
             ConversionError::Import(import_diagnostics) => diagnostics.extend(
                 import_diagnostics
@@ -1123,7 +1122,6 @@ fn generic_quadlet_convert(
             discovered,
             aliases,
             application_name,
-            native_diagnostics,
             result,
         },
     )
@@ -1133,7 +1131,7 @@ fn load_quadlet_source(
     arguments: &GenericConversion,
     discovered: &[ResolvedInput],
     aliases: &ReportAliases,
-) -> Result<(Identifier, QuadletSource, Vec<QuadletParseDiagnostic>), Box<dyn Error>> {
+) -> Result<(Identifier, QuadletSource), Box<dyn Error>> {
     let application_name = Identifier::new(
         arguments
             .project_name
@@ -1172,8 +1170,7 @@ fn load_quadlet_source(
     }
     let parsed = QuadletSource::parse(application_name.clone(), documents)
         .map_err(|error| Box::new(quadlet_source_failure(&error, aliases, discovered)) as Box<dyn Error>)?;
-    let native_diagnostics = parsed.diagnostics().to_vec();
-    Ok((application_name, parsed.into_source(), native_diagnostics))
+    Ok((application_name, parsed.into_source()))
 }
 
 fn quadlet_source_failure(
@@ -1228,35 +1225,13 @@ fn report_quadlet_native_diagnostic(diagnostic: &QuadletParseDiagnostic, aliases
         Some("QLG") => RuleId::QuadletNativeDocumentSet,
         _ => RuleId::QuadletNativeFailure,
     };
-    let mut report = sanitized_diagnostic(
-        rule,
-        match diagnostic.severity() {
-            QuadletParseDiagnosticSeverity::Warning => "warning",
-            QuadletParseDiagnosticSeverity::Note => "note",
-            _ => "error",
-        },
-        diagnostic.summary(),
-        &[],
-        aliases,
-    );
+    let finding = diagnostic.native_finding();
+    let mut report = sanitized_diagnostic(rule, severity_name(finding.severity()), finding.summary(), &[], aliases);
+    let (native, fields, spans) = report_native_finding(&finding, aliases);
     report.source_code = Some(diagnostic.code().into());
-    report.spans = diagnostic
-        .labels()
-        .iter()
-        .map(|label| boxferry::report::ReportSpan {
-            source: format!("<input-{}>", label.source_id()),
-            start: label.start(),
-            end: label.end(),
-        })
-        .collect();
-    report.fields = diagnostic
-        .labels()
-        .iter()
-        .map(|label| ReportField {
-            name: "label_message".into(),
-            value: aliases.value(label.message()),
-        })
-        .collect();
+    report.fields = fields;
+    report.spans = spans;
+    report.native_finding = Some(native);
     report
 }
 
@@ -1271,7 +1246,6 @@ struct QuadletExecution {
     discovered: Vec<ResolvedInput>,
     aliases: ReportAliases,
     application_name: Identifier,
-    native_diagnostics: Vec<QuadletParseDiagnostic>,
     result: boxferry::ConversionResult<boxferry::compose::compose_lens::render::GeneratedComposeDocument>,
 }
 
@@ -1286,7 +1260,6 @@ fn finish_quadlet_conversion(
         discovered,
         aliases,
         application_name,
-        native_diagnostics,
         result,
     } = execution;
     let output = result.output();
@@ -1309,17 +1282,13 @@ fn finish_quadlet_conversion(
         })
         .collect();
     report.discovery = discovery_report(&discovered);
-    report.diagnostics = native_diagnostics
+    report.diagnostics = result
+        .diagnostics()
         .iter()
-        .map(|diagnostic| report_quadlet_native_diagnostic(diagnostic, &aliases))
+        .map(|diagnostic| report_diagnostic(diagnostic, &aliases))
         .collect();
-    report.diagnostics.extend(
-        result
-            .diagnostics()
-            .iter()
-            .map(|diagnostic| report_diagnostic(diagnostic, &aliases)),
-    );
     report.fidelity = fidelity_counts(result.outcomes());
+    let invalid = conversion_is_invalid(result.outcomes(), result.diagnostics());
     if output.is_none() {
         report.primary_diagnostic_code = blocking_diagnostic_code(result.outcomes(), arguments.loss_policy);
     }
@@ -1343,10 +1312,22 @@ fn finish_quadlet_conversion(
         report.exit_category = ExitCategory::Success;
         Ok((report, ExitCode::SUCCESS, discovered))
     } else {
-        report.status = ReportStatus::Blocked;
-        report.exit_category = ExitCategory::PolicyBlocked;
+        report.status = if invalid {
+            ReportStatus::Failure
+        } else {
+            ReportStatus::Blocked
+        };
+        report.exit_category = if invalid {
+            ExitCategory::InputOrExecution
+        } else {
+            ExitCategory::PolicyBlocked
+        };
         report.failed_stage = Some(FailedStage::Conversion);
-        Ok((report, ExitCode::from(2), discovered))
+        Ok((
+            report,
+            if invalid { ExitCode::FAILURE } else { ExitCode::from(2) },
+            discovered,
+        ))
     }
 }
 
@@ -1383,6 +1364,13 @@ fn fidelity_counts(outcomes: &[boxferry::ConversionOutcome]) -> FidelityCounts {
         }
     }
     counts
+}
+
+fn conversion_is_invalid(outcomes: &[boxferry::ConversionOutcome], diagnostics: &[Diagnostic]) -> bool {
+    outcomes.iter().any(|outcome| outcome.kind() == ConversionKind::Invalid)
+        || diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity() == boxferry::Severity::Error)
 }
 
 fn blocking_diagnostic_code(outcomes: &[boxferry::ConversionOutcome], policy: CliLossPolicy) -> Option<String> {
@@ -1598,7 +1586,8 @@ fn present(
         println!();
         io::stdout().flush()?;
     }
-    print_report_diagnostics(&report.diagnostics);
+    print_report_diagnostics(report);
+    print_fix_first(report);
     io::stderr().flush()?;
     if !presentation.quiet {
         println!();
@@ -1665,7 +1654,6 @@ struct ComposeConversion<'a> {
 
 struct LoadedComposeConversion {
     result: boxferry::ConversionResult<boxferry::QuadletOutput>,
-    diagnostics: Vec<ReportDiagnostic>,
     application: String,
 }
 
@@ -1730,11 +1718,13 @@ fn convert_loaded_compose(
         .map(|environment| loaded.interpolate(environment));
     let merged = merge_project(&loaded, interpolated.as_ref());
     if !merged.is_valid() {
-        let mut diagnostics = merged
-            .diagnostics()
-            .iter()
-            .map(|diagnostic| compose_diagnostic(diagnostic, aliases))
-            .collect();
+        let mut diagnostics = compose_diagnostics(
+            merged.diagnostics(),
+            &loaded,
+            interpolated.as_ref(),
+            ComposeFindingStage::Merge,
+            aliases,
+        );
         deduplicate_report_diagnostics(&mut diagnostics);
         return Err(Box::new(StructuredFailure::with_context(
             FailedStage::ComposeMerge,
@@ -1746,26 +1736,21 @@ fn convert_loaded_compose(
         .project()
         .ok_or_else(|| io::Error::other("Compose merge produced no project"))?
         .clone();
-    let request = if conversion.all_profiles {
-        ProfileRequest::all()
-    } else {
-        conversion
-            .profiles
-            .iter()
-            .fold(ProfileRequest::new(), ProfileRequest::with_profile)
-    };
+    let request = compose_profile_request(conversion);
     let selection = select_profiles(&project, &request);
     if !selection.is_valid() {
-        let mut diagnostics = merged
-            .diagnostics()
-            .iter()
-            .map(|diagnostic| compose_diagnostic(diagnostic, aliases))
-            .collect::<Vec<_>>();
+        let mut diagnostics = compose_diagnostics(
+            merged.diagnostics(),
+            &loaded,
+            interpolated.as_ref(),
+            ComposeFindingStage::Merge,
+            aliases,
+        );
         diagnostics.extend(
             selection
                 .diagnostics()
                 .iter()
-                .map(|diagnostic| compose_diagnostic(diagnostic, aliases)),
+                .map(|diagnostic| compose_diagnostic(diagnostic, ComposeFindingStage::ProfileSelection, aliases)),
         );
         deduplicate_report_diagnostics(&mut diagnostics);
         return Err(Box::new(StructuredFailure::with_context(
@@ -1774,16 +1759,18 @@ fn convert_loaded_compose(
             conversion.inputs,
         )));
     }
-    let mut preprocessing_diagnostics = merged
-        .diagnostics()
-        .iter()
-        .map(|diagnostic| compose_diagnostic(diagnostic, aliases))
-        .collect::<Vec<_>>();
+    let mut preprocessing_diagnostics = compose_diagnostics(
+        merged.diagnostics(),
+        &loaded,
+        interpolated.as_ref(),
+        ComposeFindingStage::Merge,
+        aliases,
+    );
     preprocessing_diagnostics.extend(
         selection
             .diagnostics()
             .iter()
-            .map(|diagnostic| compose_diagnostic(diagnostic, aliases)),
+            .map(|diagnostic| compose_diagnostic(diagnostic, ComposeFindingStage::ProfileSelection, aliases)),
     );
     deduplicate_report_diagnostics(&mut preprocessing_diagnostics);
     let application = boxferry::compose::compose_lens::project::build_project_view(&project, Some(&selection))
@@ -1791,11 +1778,15 @@ fn convert_loaded_compose(
         .and_then(|view| view.name())
         .and_then(|name| Identifier::new(name.value().clone()).ok())
         .map_or_else(|| conversion.fallback_name.to_owned(), |name| name.as_str().to_owned());
-    let mut source = ComposeSource::new(project, Identifier::new(conversion.fallback_name)?)?;
-    for (compose, neutral) in inputs.identities {
-        source = source.with_source_id(compose, neutral);
-    }
-    source = source.with_profile_selection(selection);
+    let source = compose_source(
+        project,
+        conversion.fallback_name,
+        inputs.identities,
+        selection,
+        &loaded,
+        interpolated.as_ref(),
+        &merged,
+    )?;
     let mut exporter = QuadletExporter::new()?
         .with_relative_host_path_root(conversion.project_root.to_string_lossy().into_owned())?
         .with_grouping_policy(conversion.grouping.into());
@@ -1805,11 +1796,77 @@ fn convert_loaded_compose(
     let target = TargetProfile::new("podman", conversion.minimum, conversion.maximum)?;
     let result = convert(&ComposeImporter::new()?, &source, &exporter, &target, conversion.policy)
         .map_err(|error| compose_conversion_failure(&error, &preprocessing_diagnostics, aliases, conversion.inputs))?;
-    Ok(LoadedComposeConversion {
-        result,
-        diagnostics: preprocessing_diagnostics,
-        application,
-    })
+    Ok(LoadedComposeConversion { result, application })
+}
+
+fn compose_profile_request(conversion: &ComposeConversion<'_>) -> ProfileRequest {
+    if conversion.all_profiles {
+        ProfileRequest::all()
+    } else {
+        conversion
+            .profiles
+            .iter()
+            .fold(ProfileRequest::new(), ProfileRequest::with_profile)
+    }
+}
+
+fn compose_diagnostics(
+    diagnostics: &[ComposeDiagnostic],
+    loaded: &LoadedProject,
+    interpolated: Option<&ProjectInterpolation>,
+    fallback: ComposeFindingStage,
+    aliases: &ReportAliases,
+) -> Vec<ReportDiagnostic> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| {
+            compose_diagnostic(
+                diagnostic,
+                compose_finding_stage(diagnostic, loaded, interpolated, fallback),
+                aliases,
+            )
+        })
+        .collect()
+}
+
+fn compose_source(
+    project: MergedProject,
+    fallback_name: &str,
+    identities: Vec<(ComposeSourceId, SourceId)>,
+    selection: ProfileSelection,
+    loaded: &LoadedProject,
+    interpolated: Option<&ProjectInterpolation>,
+    merged: &MergeResult,
+) -> Result<ComposeSource, boxferry::ModelError> {
+    let interpolation_diagnostics = interpolated.map_or(&[][..], ProjectInterpolation::diagnostics);
+    let merge_diagnostics = merged.diagnostics().iter().filter(|diagnostic| {
+        !loaded.diagnostics().contains(diagnostic) && !interpolation_diagnostics.contains(diagnostic)
+    });
+    let mut source = ComposeSource::new(project, Identifier::new(fallback_name)?)?;
+    for (compose, neutral) in identities {
+        source = source.with_source_id(compose, neutral);
+    }
+    Ok(source
+        .with_native_diagnostics(ComposeFindingStage::Load, loaded.diagnostics())
+        .with_native_diagnostics(ComposeFindingStage::Interpolation, interpolation_diagnostics)
+        .with_native_diagnostics(ComposeFindingStage::Merge, merge_diagnostics)
+        .with_native_diagnostics(ComposeFindingStage::ProfileSelection, selection.diagnostics())
+        .with_profile_selection(selection))
+}
+
+fn compose_finding_stage(
+    diagnostic: &ComposeDiagnostic,
+    loaded: &LoadedProject,
+    interpolated: Option<&ProjectInterpolation>,
+    fallback: ComposeFindingStage,
+) -> ComposeFindingStage {
+    if loaded.diagnostics().contains(diagnostic) {
+        ComposeFindingStage::Load
+    } else if interpolated.is_some_and(|result| result.diagnostics().contains(diagnostic)) {
+        ComposeFindingStage::Interpolation
+    } else {
+        fallback
+    }
 }
 
 fn compose_conversion_failure(
@@ -1818,20 +1875,22 @@ fn compose_conversion_failure(
     aliases: &ReportAliases,
     inputs: &[ResolvedInput],
 ) -> Box<dyn Error> {
-    let mut diagnostics = preprocessing_diagnostics.to_vec();
-    match error {
-        ConversionError::Import(import_diagnostics) => diagnostics.extend(
+    let mut diagnostics = Vec::new();
+    if let ConversionError::Import(import_diagnostics) = error {
+        diagnostics.extend(
             import_diagnostics
                 .iter()
                 .map(|diagnostic| report_diagnostic(diagnostic, aliases)),
-        ),
-        _ => diagnostics.push(sanitized_diagnostic(
+        );
+    } else {
+        diagnostics.extend_from_slice(preprocessing_diagnostics);
+        diagnostics.push(sanitized_diagnostic(
             RuleId::ConversionFailed,
             "error",
             &error.to_string(),
             &[],
             aliases,
-        )),
+        ));
     }
     deduplicate_report_diagnostics(&mut diagnostics);
     Box::new(StructuredFailure::with_context(
@@ -2236,82 +2295,126 @@ fn resolve_versions(
 }
 
 fn report_diagnostic(diagnostic: &Diagnostic, aliases: &ReportAliases) -> ReportDiagnostic {
-    let compose_source_code = diagnostic
-        .fields()
-        .iter()
-        .find(|field| field.name() == "compose_code")
-        .map(|field| field.value().expose());
-    let promoted_summary = compose_source_code.and_then(|_| {
-        diagnostic
-            .fields()
-            .iter()
-            .find(|field| field.name() == "reason")
-            .map(|field| field.value().expose())
-    });
     let fields: Vec<_> = diagnostic
         .fields()
         .iter()
-        .filter(|field| compose_source_code.is_none() || !matches!(field.name(), "compose_code" | "reason"))
         .map(|field| (field.name(), field.value().expose(), field.value().is_sensitive()))
         .collect();
     let catalogue_rule = find_rule(diagnostic.code().as_str()).map(|rule| rule.id());
-    let rule = compose_source_code.map_or_else(
-        || catalogue_rule.unwrap_or(RuleId::OrchestrationFailed),
-        |source_code| compose_native_rule(source_code, severity_name(diagnostic.severity())),
-    );
+    let rule = catalogue_rule.unwrap_or(RuleId::OrchestrationFailed);
     let mut report = sanitized_diagnostic(
         rule,
-        &format!("{:?}", diagnostic.severity()).to_lowercase(),
-        promoted_summary.unwrap_or_else(|| diagnostic.summary()),
+        severity_name(diagnostic.severity()),
+        diagnostic
+            .native_finding()
+            .map_or_else(|| diagnostic.summary(), NativeFinding::summary),
         &fields,
         aliases,
     );
-    report.source_code = compose_source_code
-        .map(str::to_owned)
-        .or_else(|| catalogue_rule.is_none().then(|| diagnostic.code().as_str().to_owned()));
+    if let Some(finding) = diagnostic.native_finding() {
+        let (native, native_fields, spans) = report_native_finding(finding, aliases);
+        for field in native_fields {
+            if !report.fields.contains(&field) {
+                report.fields.push(field);
+            }
+        }
+        report.spans = spans;
+        report.source_code = Some(finding.code().to_owned());
+        report.native_finding = Some(native);
+    } else if catalogue_rule.is_none() {
+        report.source_code = Some(diagnostic.code().as_str().to_owned());
+    }
     report
+}
+
+fn report_native_finding(
+    finding: &NativeFinding,
+    aliases: &ReportAliases,
+) -> (ReportNativeFinding, Vec<ReportField>, Vec<boxferry::report::ReportSpan>) {
+    let safe_text = |name: &str, value: &str| redact_text(name, &aliases.value(value), false).0;
+    let fields = finding
+        .fields()
+        .iter()
+        .map(|field| ReportField {
+            name: field.name().to_owned(),
+            value: redact_text(
+                field.name(),
+                &aliases.value(field.value().expose()),
+                field.value().is_sensitive(),
+            )
+            .0,
+        })
+        .collect::<Vec<_>>();
+    let labels = finding
+        .labels()
+        .iter()
+        .map(|label| ReportNativeLabel {
+            kind: match label.kind() {
+                NativeFindingLabelKind::Primary => "primary",
+                NativeFindingLabelKind::Secondary => "secondary",
+                _ => "unknown",
+            }
+            .into(),
+            source: format!("<input-{}>", label.source_id()),
+            start: label.start(),
+            end: label.end(),
+            message: safe_text("label_message", label.message()),
+        })
+        .collect::<Vec<_>>();
+    let spans = labels
+        .iter()
+        .map(|label| boxferry::report::ReportSpan {
+            source: label.source.clone(),
+            start: label.start,
+            end: label.end,
+        })
+        .collect();
+    let mut human_fields = fields.clone();
+    for label in &labels {
+        let field = ReportField {
+            name: "label_message".into(),
+            value: label.message.clone(),
+        };
+        if !human_fields.contains(&field) {
+            human_fields.push(field);
+        }
+    }
+    (
+        ReportNativeFinding {
+            source_format: safe_text("source_format", finding.source_format()),
+            producer: safe_text("producer", finding.producer()),
+            producer_version: finding
+                .producer_version()
+                .map(|version| safe_text("producer_version", version)),
+            code: safe_text("source_code", finding.code()),
+            stage: safe_text("native_stage", finding.stage()),
+            severity: severity_name(finding.severity()).into(),
+            summary: safe_text("summary", finding.summary()),
+            fields,
+            labels,
+            notes: finding.notes().iter().map(|note| safe_text("note", note)).collect(),
+            help: finding.help().map(|help| safe_text("help", help)),
+        },
+        human_fields,
+        spans,
+    )
 }
 
 fn compose_diagnostic(
     diagnostic: &boxferry::compose::compose_lens::diagnostic::Diagnostic,
+    stage: ComposeFindingStage,
     aliases: &ReportAliases,
 ) -> ReportDiagnostic {
-    let (summary, _) = redact_text("summary", &aliases.value(diagnostic.message()), false);
-    let spans = diagnostic
-        .labels()
-        .iter()
-        .map(|label| boxferry::report::ReportSpan {
-            source: format!("<input-{}>", label.span().source_id().get()),
-            start: label.span().start(),
-            end: label.span().end(),
-        })
-        .collect();
-    let source_code = diagnostic.code().as_str();
-    let severity = format!("{:?}", diagnostic.severity()).to_lowercase();
-    let rule = compose_native_rule(source_code, &severity);
-    let variable = compose_interpolation_variable(source_code, diagnostic.message());
-    let fields = variable
-        .map(|variable| [("variable", variable, false)])
-        .unwrap_or_default();
-    let mut report = sanitized_diagnostic(rule, &severity, &summary, &fields, aliases);
-    report.source_code = Some(source_code.into());
+    let finding = stage.native_finding(diagnostic);
+    let severity = severity_name(finding.severity());
+    let rule = compose_native_rule(finding.code(), severity);
+    let mut report = sanitized_diagnostic(rule, severity, finding.summary(), &[], aliases);
+    let (native, fields, spans) = report_native_finding(&finding, aliases);
+    report.source_code = Some(finding.code().into());
+    report.fields = fields;
     report.spans = spans;
+    report.native_finding = Some(native);
     report
-}
-
-fn compose_interpolation_variable<'a>(source_code: &str, message: &'a str) -> Option<&'a str> {
-    if !matches!(
-        source_code,
-        "compose.interpolation.unset-variable" | "compose.interpolation.required-variable"
-    ) {
-        return None;
-    }
-    let (_, remainder) = message.split_once('`')?;
-    let (variable, _) = remainder.split_once('`')?;
-    let mut bytes = variable.bytes();
-    let first = bytes.next()?;
-    ((first == b'_' || first.is_ascii_alphabetic()) && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric()))
-        .then_some(variable)
 }
 
 fn severity_name(severity: boxferry::Severity) -> &'static str {
@@ -2367,6 +2470,7 @@ fn refresh_report_outcome(report: &mut ConversionReport) {
     if report.status == ReportStatus::Success {
         report.primary_diagnostic_code = None;
         report.failure_summary = None;
+        report.fix_first = None;
         return;
     }
 
@@ -2406,16 +2510,34 @@ fn refresh_report_outcome(report: &mut ConversionReport) {
             })
             .or(retained)
     };
-    if let Some(primary) = primary {
+    if let Some(primary) = primary.cloned() {
+        let rule = find_rule(&primary.code);
+        let description = rule.map_or_else(|| primary.summary.clone(), |rule| rule.description().to_owned());
+        let help = rule.map_or_else(|| primary.help.clone(), |rule| rule.help().to_owned());
         report.primary_diagnostic_code = Some(primary.code.clone());
         report.failure_summary = Some(format!("{} {} — {}", primary.code, primary.name, primary.summary));
+        report.fix_first = Some(FixFirst {
+            code: primary.code,
+            name: primary.name,
+            description,
+            help,
+            next_step: "Apply this help, then rerun BoxFerry; remaining findings may disappear or change.".into(),
+        });
     } else {
         report.primary_diagnostic_code = None;
         report.failure_summary = None;
+        report.fix_first = None;
     }
 }
 
-fn print_report_diagnostics(diagnostics: &[ReportDiagnostic]) {
+fn print_report_diagnostics(report: &ConversionReport) {
+    if let Some(context) = loss_policy_context(report) {
+        eprintln!("policy: {context}");
+        if !report.diagnostics.is_empty() {
+            eprintln!();
+        }
+    }
+    let diagnostics = &report.diagnostics;
     let mut start = 0;
     while start < diagnostics.len() {
         let code = &diagnostics[start].code;
@@ -2483,6 +2605,40 @@ fn print_report_diagnostics(diagnostics: &[ReportDiagnostic]) {
     }
 }
 
+fn print_fix_first(report: &ConversionReport) {
+    let Some(fix_first) = &report.fix_first else {
+        return;
+    };
+    if !report.diagnostics.is_empty() || loss_policy_context(report).is_some() {
+        eprintln!();
+    }
+    eprintln!("fix first:");
+    eprintln!("  {} {}", fix_first.code, fix_first.name);
+    eprintln!("  {}", fix_first.description);
+    eprintln!("  help: {}", fix_first.help);
+    eprintln!("  next: {}", fix_first.next_step);
+}
+
+fn loss_policy_context(report: &ConversionReport) -> Option<String> {
+    let policy = report
+        .choices
+        .iter()
+        .find(|choice| choice.name == "loss_policy")
+        .map(|choice| choice.value.as_str())?;
+    if report.fidelity.invalid > 0 {
+        return Some(format!(
+            "invalid findings always block output and cannot be authorized by --loss-policy {policy}"
+        ));
+    }
+    if report.status == ReportStatus::Blocked {
+        return Some(format!(
+            "--loss-policy {policy} does not authorize every reported non-exact finding"
+        ));
+    }
+    ((report.fidelity.approximate > 0 || report.fidelity.unsupported > 0) && report.status == ReportStatus::Success)
+        .then(|| format!("--loss-policy {policy} authorized output; non-exact findings remain visible"))
+}
+
 fn common_report_fields(group: &[ReportDiagnostic]) -> Vec<ReportField> {
     if group.len() < 2 {
         return Vec::new();
@@ -2522,8 +2678,32 @@ fn serialize_report(report: &mut ConversionReport) -> Result<String, Box<dyn Err
         .flat_map(|diagnostic| diagnostic.fields.iter())
         .filter(|field| field.value == boxferry::report::REDACTED)
         .count();
-    report.redaction.count = redacted_summaries + redacted_fields;
-    report.redaction.classes = match (redacted_summaries > 0, redacted_fields > 0) {
+    let redacted_native = report
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| diagnostic.native_finding.as_ref())
+        .map(|native| {
+            usize::from(native.summary == boxferry::report::REDACTED)
+                + usize::from(native.help.as_deref() == Some(boxferry::report::REDACTED))
+                + native
+                    .fields
+                    .iter()
+                    .filter(|field| field.value == boxferry::report::REDACTED)
+                    .count()
+                + native
+                    .labels
+                    .iter()
+                    .filter(|label| label.message == boxferry::report::REDACTED)
+                    .count()
+                + native
+                    .notes
+                    .iter()
+                    .filter(|note| note.as_str() == boxferry::report::REDACTED)
+                    .count()
+        })
+        .sum::<usize>();
+    report.redaction.count = redacted_summaries + redacted_fields + redacted_native;
+    report.redaction.classes = match (redacted_summaries > 0, redacted_fields + redacted_native > 0) {
         (true, true) => vec!["plain-text-pattern".into(), "protected-value".into()],
         (true, false) => vec!["plain-text-pattern".into()],
         (false, true) => vec!["protected-value".into()],

@@ -39,6 +39,8 @@ Architecture decision records capture choices that constrain future development.
 | [0024](0024-linux-cli-and-wsl-on-windows.md) | accepted | Support the CLI on Linux and require WSL2 on Windows |
 | [0025](0025-empty-output-directories-and-final-human-status.md) | accepted | Empty output-directory reuse and ordered final human status |
 | [0026](0026-typed-diagnostic-rule-catalogue.md) | accepted | Typed diagnostic rules, native-code provenance, grouped help, and causal final status |
+| [0027](0027-format-neutral-native-findings.md) | accepted | Format-neutral native findings retained by every source adapter |
+| [0028](0028-primary-remediation-guidance.md) | accepted | Structured fix-first guidance without source syntax in target adapters |
 
 ## Adding an ADR
 

@@ -208,10 +208,26 @@ explicitly opt-in tiers and their prerequisites are in [the testing strategy](te
 
 ## Compile and test the CLI
 
-Compile the complete workspace and an optimized executable from the current checkout:
+Compile the complete workspace, then run the CLI through Cargo while developing:
 
 ```console
 cargo build --locked --workspace --all-features
+cargo run --locked --bin boxferry -- version
+```
+
+`cargo run` is the recommended checkout-local command because Cargo checks whether the executable
+matches the current sources and dependencies before starting it. Use the optimized profile when
+testing release behavior:
+
+```console
+cargo run --locked --release --bin boxferry -- version
+```
+
+Invoking `./target/release/boxferry` directly does not perform that freshness check. If a script or
+manual test needs the path itself, rebuild it immediately beforehand and rebuild it again after
+changing source code, features, or dependencies:
+
+```console
 cargo build --locked --release --bin boxferry
 ./target/release/boxferry version
 ```
@@ -220,7 +236,7 @@ Use the repository fixture for a non-privileged Compose-to-Quadlet smoke test:
 
 ```console
 smoke_root="$(mktemp -d)"
-./target/release/boxferry convert \
+cargo run --locked --release --bin boxferry -- convert \
   --input-type compose \
   --output-type quadlet \
   --input-file fixtures/conversion/compose-to-quadlet-dependencies/compose.yaml \

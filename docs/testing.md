@@ -100,7 +100,15 @@ dotfile rejection, non-directory rejection, create-new output files, and preserv
 content. An approximate-output collision test preserves its warning while identifying `BFO2001`
 as the actual error. Combined-stream black-box tests verify progress, common diagnostic context is
 printed once, varying finding evidence remains complete, native codes stay in JSON, attached help
-remains paired, and the causal final success or failure line stays in human reading order.
+remains paired, `fix first` follows every diagnostic group, and the final success or failure line
+stays in human reading order. JSON, report-file, and support-bundle tests assert the same structured
+remediation. Paired source/target tests retain an unresolved Compose image, expose its variable
+through `BFC0105`, and keep the source-neutral Quadlet failure under `BFQ0014`.
+
+Adapter and CLI tests also prove that successful Compose and Quadlet sources retain the same
+native producer, stage, code, protected fields, label roles, aliased spans, notes, and help seen by
+embedded callers. Seeded-canary tests cover both the top-level BoxFerry diagnostic and the nested
+native-finding report object.
 
 The first public-facade golden scenario processes a two-file Compose project with an explicit empty
 profile selection and converts it to a `.network`, `.volume`, and `.container` file for Podman

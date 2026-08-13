@@ -4,7 +4,7 @@ use boxferry::{Application, Identifier, InMemoryAdapter, LossPolicy, PlatformVer
 
 #[test]
 fn facade_exposes_report_dto_without_cli_features() {
-    use boxferry::report::{ConversionReport, ExitCategory, ReportStatus, VersionBounds, redact_text};
+    use boxferry::report::{ConversionReport, ExitCategory, FixFirst, ReportStatus, VersionBounds, redact_text};
 
     let mut report = ConversionReport::new(
         "test",
@@ -15,10 +15,21 @@ fn facade_exposes_report_dto_without_cli_features() {
             maximum: "6.0".into(),
         },
     );
-    report.status = ReportStatus::Success;
-    report.exit_category = ExitCategory::Success;
+    report.status = ReportStatus::Blocked;
+    report.exit_category = ExitCategory::PolicyBlocked;
+    report.fix_first = Some(FixFirst {
+        code: "BFC0001".into(),
+        name: "compose-model-invalid".into(),
+        description: "The Compose model is invalid.".into(),
+        help: "Correct the Compose value.".into(),
+        next_step: "Rerun BoxFerry.".into(),
+    });
     assert_eq!(redact_text("databasePassword", "canary", false).0, "<redacted>");
     assert!(report.review_required);
+    assert_eq!(
+        report.fix_first.as_ref().map(|guidance| guidance.code.as_str()),
+        Some("BFC0001")
+    );
 }
 
 #[test]

@@ -108,7 +108,7 @@ network, profile, config, secret, and label forms. QuadletLens has completed its
 with ordered source-aware `.container`, `.pod`, `.network`, and `.volume` documents, generic systemd
 and unknown entry preservation, native key enums, conservative path/reference forms,
 separate syntax/model diagnostics, and exact document-set dependency resolution. BoxFerry now
-consumes ComposeLens 0.1.15 from crates.io through its independent `boxferry-compose` crate. The
+consumes ComposeLens 0.1.16 from crates.io through its independent `boxferry-compose` crate. The
 adapter maps images, commands, execution identity/context, health checks, environment, extra
 hosts, single ports, named volumes, bind mounts, networks, explicit profiles, config/secret
 resources and grants, service labels, container restart policies, provenance, and short/long
@@ -122,12 +122,12 @@ The neutral model retains ordered explicit hostname mappings, distinguishes `hos
 ordinary IP address spellings, and keeps unsupported `start_interval` intent for target-specific
 reporting.
 
-The implemented input boundary is ComposeLens 0.1.15's native `build_project_view` over a
+The implemented input boundary is ComposeLens 0.1.16's native `build_project_view` over a
 `MergedProject` and optional matching `ProfileSelection`. BoxFerry maps it without canonical
 rendering or reparsing and retains all contributing source origins in neutral values and outcomes.
 
-ComposeLens 0.1.15 is published on crates.io with a documented pre-1.0 compatibility contract.
-BoxFerry consumes ComposeLens 0.1.15 through a compatible crates.io requirement and commits its
+ComposeLens 0.1.16 is published on crates.io with a documented pre-1.0 compatibility contract.
+BoxFerry consumes ComposeLens 0.1.16 through a compatible crates.io requirement and commits its
 application lockfile. Commit-pinned Git dependencies remain an emergency-only fallback.
 
 The Compose adapter fixture also exposed a ComposeLens 0.1 YAML-backend defect: an unquoted short
@@ -138,7 +138,7 @@ future backend omissions; that behavior remains present in the consumed 0.1.13 r
 BoxFerry can now use the unquoted real-world spelling and the released source-aware merged-project
 view without a canonical render-and-reparse bridge.
 
-QuadletLens 0.1.11 is published on crates.io and BoxFerry consumes it through the independent
+QuadletLens 0.1.12 is published on crates.io and BoxFerry consumes it through the independent
 `boxferry-quadlet` crate. The exporter uses typed native construction and capability evaluation,
 generates exact separate container units or an explicitly authorized compatible pod plus
 application-owned network and volume units, references external resources directly, validates the
@@ -259,7 +259,7 @@ approximation. Optional files, unsafe paths, authorized file-content processing,
 encoders, and the TYPO3 showcase remain.
 
 Runtime observations can also flow through the public engine into deterministic Compose output.
-The exporter consumes ComposeLens 0.1.15's parse-back-validated generated-document API. Embedded
+The exporter consumes ComposeLens 0.1.16's parse-back-validated generated-document API. Embedded
 callers may require one exact Docker Compose or `podman-compose` provider release and an optional
 separate exact Docker Engine or Podman backend; the generic Quadlet-to-Compose CLI route instead
 uses the rolling provider-neutral Compose Specification target. Both preserve observed resource

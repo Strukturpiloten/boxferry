@@ -30,6 +30,10 @@ The initial `ServiceGroup` contract guarantees ordered structural membership and
 Adding portable namespace or target-workload semantics requires new additive fields or types; it
 must not silently reinterpret existing groups.
 
+`NativeFinding` is the format-neutral provenance boundary for producer diagnostics. Its
+non-exhaustive enums and private fields may grow additively; native codes do not become BoxFerry
+rule codes, and source adapters must not drop retained findings when consumed or imported.
+
 ## Features and dependencies
 
 Adapter and runtime Cargo features are additive: enabling one must not disable or reinterpret

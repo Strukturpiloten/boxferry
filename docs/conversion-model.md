@@ -87,14 +87,21 @@ CLI presentation. Official adapters construct codes through the typed catalogue.
 
 Outcomes carry the source provenance that contributed to their decision. Adapter-specific
 diagnostics add source feature, target capability, explanation, and evidence fields without
-changing the redaction contract. ComposeLens and QuadletLens identifiers remain separately visible
-as native `source_code` provenance.
+changing the redaction contract. A diagnostic may attach one protected, format-neutral
+`NativeFinding` containing the producer, native code, processing stage, severity, structured
+fields, ordered labelled ranges, notes, and native help. ComposeLens and QuadletLens identifiers
+remain `source_code` provenance; future Docker, Podman, and Kubernetes adapters use the same
+envelope.
 
 Human and machine-readable renderers consume the same diagnostic objects. JSON output is never
 reconstructed from terminal text. Human output groups equal codes, prints common context once,
 sorts its findings by input and source position, keeps remediation with the group, and finishes
-blocked or failed runs with the primary causal rule. JSON reports expose the same code, name, optional source code,
-severity, summary, help, fields, and spans plus `primary_diagnostic_code` and `failure_summary`.
+blocked or failed runs with a `fix first` remediation section followed by the final result. JSON
+reports expose the same code, name,
+optional source code, severity, summary, help, fields, and spans plus optional detailed native-
+finding provenance, `primary_diagnostic_code`, `failure_summary`, and structured `fix_first`
+guidance. This is an ordered remediation recommendation, not a substitute for explicit causal
+edges; every finding remains visible and callers rerun after the primary correction.
 
 The implemented local [error-report bundle](error-reports.md) uses this structured boundary and adds
 only allowlisted, redacted invocation context; it does not capture terminal output or raw sources.

@@ -1424,14 +1424,27 @@ fn parse_keeps_an_incomplete_native_document_graph_with_ordered_document_set_dia
         parsed.diagnostics()[0].severity(),
         QuadletParseDiagnosticSeverity::Error
     );
+    let source = parsed.into_source();
+    assert_eq!(source.native_findings().len(), 1);
+    assert_eq!(source.native_findings()[0].code(), "QLG0001");
+    assert_eq!(source.native_findings()[0].stage(), "document-set");
     let result = QuadletImporter::new()
         .map_err(|error| error.to_string())?
-        .import(parsed.source());
+        .import(&source);
 
     assert!(result.application().is_none());
     assert_eq!(result.outcomes()[0].kind(), ConversionKind::Invalid);
-    assert_eq!(result.diagnostics()[0].code().as_str(), "BFQ1001");
+    assert_eq!(result.diagnostics().len(), 2);
+    assert_eq!(result.diagnostics()[0].code().as_str(), "BFQ1103");
     assert_eq!(result.diagnostics()[0].severity(), Severity::Error);
+    assert_eq!(
+        result.diagnostics()[0]
+            .native_finding()
+            .ok_or("missing native finding")?
+            .code(),
+        "QLG0001"
+    );
+    assert_eq!(result.diagnostics()[1].code().as_str(), "BFQ1001");
     Ok(())
 }
 

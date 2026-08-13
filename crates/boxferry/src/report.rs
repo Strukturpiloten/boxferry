@@ -123,6 +123,32 @@ pub struct ReportField {
 
 #[cfg_attr(feature = "cli", derive(serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportNativeLabel {
+    pub kind: String,
+    pub source: String,
+    pub start: usize,
+    pub end: usize,
+    pub message: String,
+}
+
+#[cfg_attr(feature = "cli", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReportNativeFinding {
+    pub source_format: String,
+    pub producer: String,
+    pub producer_version: Option<String>,
+    pub code: String,
+    pub stage: String,
+    pub severity: String,
+    pub summary: String,
+    pub fields: Vec<ReportField>,
+    pub labels: Vec<ReportNativeLabel>,
+    pub notes: Vec<String>,
+    pub help: Option<String>,
+}
+
+#[cfg_attr(feature = "cli", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReportDiagnostic {
     pub code: String,
     pub name: String,
@@ -132,6 +158,18 @@ pub struct ReportDiagnostic {
     pub help: String,
     pub fields: Vec<ReportField>,
     pub spans: Vec<ReportSpan>,
+    pub native_finding: Option<ReportNativeFinding>,
+}
+
+/// Structured remediation for the condition a caller should address before the others.
+#[cfg_attr(feature = "cli", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixFirst {
+    pub code: String,
+    pub name: String,
+    pub description: String,
+    pub help: String,
+    pub next_step: String,
 }
 
 #[cfg_attr(feature = "cli", derive(serde::Serialize))]
@@ -168,6 +206,7 @@ pub struct ConversionReport {
     pub failed_stage: Option<FailedStage>,
     pub primary_diagnostic_code: Option<String>,
     pub failure_summary: Option<String>,
+    pub fix_first: Option<FixFirst>,
     pub source_type: String,
     pub target_type: String,
     pub application: Option<String>,
@@ -204,6 +243,7 @@ impl ConversionReport {
             failed_stage: None,
             primary_diagnostic_code: None,
             failure_summary: None,
+            fix_first: None,
             source_type: source_type.into(),
             target_type: target_type.into(),
             application: None,
@@ -261,6 +301,17 @@ impl ConversionReport {
             &mut self.truncations,
         );
         truncate_optional_text(&mut self.failure_summary, "failure_summary", &mut self.truncations);
+        if let Some(fix_first) = &mut self.fix_first {
+            truncate_text(&mut fix_first.code, "fix_first.code", &mut self.truncations);
+            truncate_text(&mut fix_first.name, "fix_first.name", &mut self.truncations);
+            truncate_text(
+                &mut fix_first.description,
+                "fix_first.description",
+                &mut self.truncations,
+            );
+            truncate_text(&mut fix_first.help, "fix_first.help", &mut self.truncations);
+            truncate_text(&mut fix_first.next_step, "fix_first.next_step", &mut self.truncations);
+        }
         truncate_optional_text(&mut self.application, "application", &mut self.truncations);
         truncate_text(
             &mut self.requested_versions.minimum,
@@ -307,25 +358,7 @@ impl ConversionReport {
         }
         truncate_text(&mut self.host.os_family, "host.os_family", &mut self.truncations);
         truncate_text(&mut self.host.architecture, "host.architecture", &mut self.truncations);
-        for diagnostic in &mut self.diagnostics {
-            truncate_collection(&mut diagnostic.fields, "diagnostics.fields", &mut self.truncations);
-            truncate_collection(&mut diagnostic.spans, "diagnostics.spans", &mut self.truncations);
-            truncate_text(&mut diagnostic.code, "diagnostics.code", &mut self.truncations);
-            truncate_text(&mut diagnostic.name, "diagnostics.name", &mut self.truncations);
-            if let Some(source_code) = &mut diagnostic.source_code {
-                truncate_text(source_code, "diagnostics.source_code", &mut self.truncations);
-            }
-            truncate_text(&mut diagnostic.severity, "diagnostics.severity", &mut self.truncations);
-            truncate_text(&mut diagnostic.summary, "diagnostics.summary", &mut self.truncations);
-            truncate_text(&mut diagnostic.help, "diagnostics.help", &mut self.truncations);
-            for field in &mut diagnostic.fields {
-                truncate_text(&mut field.name, "diagnostics.fields.name", &mut self.truncations);
-                truncate_text(&mut field.value, "diagnostics.fields.value", &mut self.truncations);
-            }
-            for span in &mut diagnostic.spans {
-                truncate_text(&mut span.source, "diagnostics.spans.source", &mut self.truncations);
-            }
-        }
+        truncate_diagnostics(&mut self.diagnostics, &mut self.truncations);
         for event in &mut self.events {
             truncate_text(event, "events", &mut self.truncations);
         }
@@ -342,26 +375,7 @@ impl ConversionReport {
 
     /// Drops one deterministic bounded report item when JSON still exceeds v1.
     pub fn reduce_for_json(&mut self) -> bool {
-        if let Some(diagnostic) = self
-            .diagnostics
-            .iter_mut()
-            .rev()
-            .find(|diagnostic| !diagnostic.fields.is_empty())
-        {
-            let original = diagnostic.fields.len();
-            diagnostic.fields.pop();
-            record_truncation(&mut self.truncations, "diagnostics.fields", original, original - 1);
-            return true;
-        }
-        if let Some(diagnostic) = self
-            .diagnostics
-            .iter_mut()
-            .rev()
-            .find(|diagnostic| !diagnostic.spans.is_empty())
-        {
-            let original = diagnostic.spans.len();
-            diagnostic.spans.pop();
-            record_truncation(&mut self.truncations, "diagnostics.spans", original, original - 1);
+        if reduce_diagnostic_details(&mut self.diagnostics, &mut self.truncations) {
             return true;
         }
         if !self.diagnostics.is_empty() {
@@ -429,6 +443,131 @@ impl ConversionReport {
             return true;
         }
         false
+    }
+}
+
+fn truncate_diagnostics(diagnostics: &mut [ReportDiagnostic], truncations: &mut Vec<Truncation>) {
+    for diagnostic in diagnostics {
+        truncate_collection(&mut diagnostic.fields, "diagnostics.fields", truncations);
+        truncate_collection(&mut diagnostic.spans, "diagnostics.spans", truncations);
+        truncate_text(&mut diagnostic.code, "diagnostics.code", truncations);
+        truncate_text(&mut diagnostic.name, "diagnostics.name", truncations);
+        truncate_optional_text(&mut diagnostic.source_code, "diagnostics.source_code", truncations);
+        truncate_text(&mut diagnostic.severity, "diagnostics.severity", truncations);
+        truncate_text(&mut diagnostic.summary, "diagnostics.summary", truncations);
+        truncate_text(&mut diagnostic.help, "diagnostics.help", truncations);
+        for field in &mut diagnostic.fields {
+            truncate_text(&mut field.name, "diagnostics.fields.name", truncations);
+            truncate_text(&mut field.value, "diagnostics.fields.value", truncations);
+        }
+        for span in &mut diagnostic.spans {
+            truncate_text(&mut span.source, "diagnostics.spans.source", truncations);
+        }
+        if let Some(native) = &mut diagnostic.native_finding {
+            truncate_native_finding(native, truncations);
+        }
+    }
+}
+
+fn reduce_diagnostic_details(diagnostics: &mut [ReportDiagnostic], truncations: &mut Vec<Truncation>) -> bool {
+    if pop_native_collection(diagnostics, truncations, "diagnostics.native_finding.notes", |native| {
+        &mut native.notes
+    }) || pop_native_collection(
+        diagnostics,
+        truncations,
+        "diagnostics.native_finding.labels",
+        |native| &mut native.labels,
+    ) || pop_native_collection(
+        diagnostics,
+        truncations,
+        "diagnostics.native_finding.fields",
+        |native| &mut native.fields,
+    ) {
+        return true;
+    }
+    if let Some(diagnostic) = diagnostics
+        .iter_mut()
+        .rev()
+        .find(|diagnostic| !diagnostic.fields.is_empty())
+    {
+        let original = diagnostic.fields.len();
+        diagnostic.fields.pop();
+        record_truncation(truncations, "diagnostics.fields", original, original - 1);
+        return true;
+    }
+    if let Some(diagnostic) = diagnostics
+        .iter_mut()
+        .rev()
+        .find(|diagnostic| !diagnostic.spans.is_empty())
+    {
+        let original = diagnostic.spans.len();
+        diagnostic.spans.pop();
+        record_truncation(truncations, "diagnostics.spans", original, original - 1);
+        return true;
+    }
+    false
+}
+
+fn pop_native_collection<T>(
+    diagnostics: &mut [ReportDiagnostic],
+    truncations: &mut Vec<Truncation>,
+    field: &str,
+    select: impl Fn(&mut ReportNativeFinding) -> &mut Vec<T>,
+) -> bool {
+    let Some(values) = diagnostics
+        .iter_mut()
+        .rev()
+        .filter_map(|diagnostic| diagnostic.native_finding.as_mut())
+        .map(select)
+        .find(|values| !values.is_empty())
+    else {
+        return false;
+    };
+    let original = values.len();
+    values.pop();
+    record_truncation(truncations, field, original, original - 1);
+    true
+}
+
+fn truncate_native_finding(native: &mut ReportNativeFinding, truncations: &mut Vec<Truncation>) {
+    truncate_text(
+        &mut native.source_format,
+        "diagnostics.native_finding.source_format",
+        truncations,
+    );
+    truncate_text(&mut native.producer, "diagnostics.native_finding.producer", truncations);
+    truncate_optional_text(
+        &mut native.producer_version,
+        "diagnostics.native_finding.producer_version",
+        truncations,
+    );
+    truncate_text(&mut native.code, "diagnostics.native_finding.code", truncations);
+    truncate_text(&mut native.stage, "diagnostics.native_finding.stage", truncations);
+    truncate_text(&mut native.severity, "diagnostics.native_finding.severity", truncations);
+    truncate_text(&mut native.summary, "diagnostics.native_finding.summary", truncations);
+    truncate_optional_text(&mut native.help, "diagnostics.native_finding.help", truncations);
+    truncate_collection(&mut native.fields, "diagnostics.native_finding.fields", truncations);
+    truncate_collection(&mut native.labels, "diagnostics.native_finding.labels", truncations);
+    truncate_collection(&mut native.notes, "diagnostics.native_finding.notes", truncations);
+    for field in &mut native.fields {
+        truncate_text(&mut field.name, "diagnostics.native_finding.fields.name", truncations);
+        truncate_text(&mut field.value, "diagnostics.native_finding.fields.value", truncations);
+    }
+    for label in &mut native.labels {
+        truncate_text(&mut label.kind, "diagnostics.native_finding.labels.kind", truncations);
+        truncate_text(
+            &mut label.source,
+            "diagnostics.native_finding.labels.source",
+            truncations,
+        );
+        truncate_text(
+            &mut label.message,
+            "diagnostics.native_finding.labels.message",
+            truncations,
+        );
+    }
+    for note in &mut native.notes {
+        truncate_text(note, "diagnostics.native_finding.notes", truncations);
     }
 }
 
@@ -568,7 +707,7 @@ mod tests {
     }
 
     #[test]
-    fn v1_limits_are_explicit() {
+    fn v1_limits_are_explicit() -> Result<(), &'static str> {
         let mut report = ConversionReport::new(
             "version",
             "compose",
@@ -579,6 +718,13 @@ mod tests {
             },
         );
         report.events = (0..=MAX_COLLECTION_ITEMS).map(|item| item.to_string()).collect();
+        report.fix_first = Some(FixFirst {
+            code: "BFC0001".into(),
+            name: "compose-model-invalid".into(),
+            description: "z".repeat(MAX_TEXT_BYTES + 1),
+            help: "correct the value".into(),
+            next_step: "rerun BoxFerry".into(),
+        });
         report.diagnostics.push(ReportDiagnostic {
             code: "BFC0001".into(),
             name: "compose-model-invalid".into(),
@@ -588,6 +734,19 @@ mod tests {
             help: "correct the value".into(),
             fields: Vec::new(),
             spans: Vec::new(),
+            native_finding: Some(ReportNativeFinding {
+                source_format: "compose".into(),
+                producer: "compose-lens".into(),
+                producer_version: None,
+                code: "compose.test".into(),
+                stage: "load".into(),
+                severity: "error".into(),
+                summary: "y".repeat(MAX_TEXT_BYTES + 1),
+                fields: Vec::new(),
+                labels: Vec::new(),
+                notes: (0..=MAX_COLLECTION_ITEMS).map(|item| item.to_string()).collect(),
+                help: None,
+            }),
         });
         report.enforce_v1_limits();
         assert_eq!(report.events.len(), MAX_COLLECTION_ITEMS);
@@ -597,6 +756,59 @@ mod tests {
                 .truncations
                 .iter()
                 .any(|truncation| truncation.field == "diagnostics.summary")
+        );
+        assert_eq!(
+            report.fix_first.as_ref().ok_or("fix-first guidance")?.description.len(),
+            MAX_TEXT_BYTES
+        );
+        let native = report.diagnostics[0].native_finding.as_ref().ok_or("native finding")?;
+        assert_eq!(native.notes.len(), MAX_COLLECTION_ITEMS);
+        assert_eq!(native.summary.len(), MAX_TEXT_BYTES);
+        Ok(())
+    }
+
+    #[test]
+    fn json_reduction_drops_nested_native_details_before_the_rule() {
+        let mut report = ConversionReport::new(
+            "version",
+            "compose",
+            "quadlet",
+            VersionBounds {
+                minimum: "5.4".into(),
+                maximum: "6.0".into(),
+            },
+        );
+        report.diagnostics.push(ReportDiagnostic {
+            code: "BFC0198".into(),
+            name: "compose-native-warning".into(),
+            source_code: Some("compose.test".into()),
+            severity: "warning".into(),
+            summary: "native finding".into(),
+            help: "review it".into(),
+            fields: Vec::new(),
+            spans: Vec::new(),
+            native_finding: Some(ReportNativeFinding {
+                source_format: "compose".into(),
+                producer: "compose-lens".into(),
+                producer_version: None,
+                code: "compose.test".into(),
+                stage: "load".into(),
+                severity: "warning".into(),
+                summary: "native finding".into(),
+                fields: Vec::new(),
+                labels: Vec::new(),
+                notes: vec!["context".into()],
+                help: None,
+            }),
+        });
+
+        assert!(report.reduce_for_json());
+        assert_eq!(report.diagnostics.len(), 1);
+        assert!(
+            report.diagnostics[0]
+                .native_finding
+                .as_ref()
+                .is_some_and(|finding| finding.notes.is_empty())
         );
     }
 }
