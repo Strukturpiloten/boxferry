@@ -1,16 +1,14 @@
 //! Finite, typed CLI conversion routes.
 
-use clap::ValueEnum;
-
-/// Native input formats accepted by the generic CLI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+/// Native input formats accepted by the document conversion CLI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InputType {
     Compose,
     Quadlet,
 }
 
-/// Native output formats accepted by the generic CLI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+/// Native output formats accepted by the document conversion CLI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OutputType {
     Quadlet,
     Compose,
@@ -44,8 +42,10 @@ pub(crate) enum TargetSelector {
 /// Typed executor selected by a route entry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RouteExecutor {
+    ComposeToCompose,
     ComposeToQuadlet,
     QuadletToCompose,
+    QuadletToQuadlet,
 }
 
 /// Source-side CLI option family accepted by a route.
@@ -89,6 +89,17 @@ const COMPOSE_TO_QUADLET: RouteSpec = RouteSpec {
     policy_controlled_boundaries: &["unsupported-fields"],
 };
 
+const COMPOSE_TO_COMPOSE: RouteSpec = RouteSpec {
+    input: InputType::Compose,
+    output: OutputType::Compose,
+    executor: RouteExecutor::ComposeToCompose,
+    input_options: InputOptions::Compose,
+    target_selector: TargetSelector::ComposeSpecification,
+    exact_boundary: "supported-compose-canonical-subset",
+    approximate_boundaries: &[],
+    policy_controlled_boundaries: &["unsupported-fields"],
+};
+
 const QUADLET_TO_COMPOSE: RouteSpec = RouteSpec {
     input: InputType::Quadlet,
     output: OutputType::Compose,
@@ -100,7 +111,23 @@ const QUADLET_TO_COMPOSE: RouteSpec = RouteSpec {
     policy_controlled_boundaries: &["unsupported-fields"],
 };
 
-const ROUTES: &[RouteSpec] = &[COMPOSE_TO_QUADLET, QUADLET_TO_COMPOSE];
+const QUADLET_TO_QUADLET: RouteSpec = RouteSpec {
+    input: InputType::Quadlet,
+    output: OutputType::Quadlet,
+    executor: RouteExecutor::QuadletToQuadlet,
+    input_options: InputOptions::Quadlet,
+    target_selector: TargetSelector::PodmanRange,
+    exact_boundary: "supported-quadlet-canonical-subset",
+    approximate_boundaries: &["environment-file-reconstruction", "systemd-runtime-semantics"],
+    policy_controlled_boundaries: &["unsupported-fields"],
+};
+
+const ROUTES: &[RouteSpec] = &[
+    COMPOSE_TO_COMPOSE,
+    COMPOSE_TO_QUADLET,
+    QUADLET_TO_COMPOSE,
+    QUADLET_TO_QUADLET,
+];
 
 /// Returns every CLI route implemented by this build.
 pub(crate) const fn routes() -> &'static [RouteSpec] {

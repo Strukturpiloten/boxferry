@@ -86,19 +86,22 @@ Each scenario contains source input, BoxFerry configuration, expected native out
 
 ### CLI option and value contracts
 
-The CLI suite table-checks every finite value spelling for input type, output type, console format,
-output layout, Quadlet grouping, and loss policy, plus both accepted Podman version forms. Each
-finite parser also rejects an unknown or malformed value. Black-box tests separately prove the
+The CLI suite checks every nested Compose/Quadlet input/output pair, every finite value spelling
+for console format, output layout, Quadlet grouping, and loss policy, plus both accepted Podman
+version forms. Each finite parser also rejects an unknown or malformed value, and the removed
+`--input-type`/`--output-type` flags remain negative tests. Black-box tests separately prove the
 behavioral boundaries: `exact` succeeds for exact output and blocks approximations;
 `approximate` authorizes approximations and blocks partial output; and `partial` authorizes partial
 output but never invalid input. Path, identifier, interpolation, profile, report, presentation, and
 route options have successful cases plus representative missing, conflicting, inapplicable,
 malformed, duplicate, unsafe, or already-existing cases as appropriate.
 
-Output-directory tests cover absent and existing-empty success for both routes, visible-file and
+Output-directory tests cover absent and existing-empty success across document routes, visible-file and
 dotfile rejection, non-directory rejection, create-new output files, and preservation of existing
-content. An approximate-output collision test preserves its warning while identifying `BFO2001`
-as the actual error. Combined-stream black-box tests verify progress, common diagnostic context is
+content. Same-format tests prove Compose input is merged/interpolated and rebuilt as canonical
+Compose YAML, Quadlet input is rebuilt as a canonical document set, and `validate` writes neither
+form. An approximate-output collision test preserves its warning while identifying `BFO2001` as
+the actual error. Combined-stream black-box tests verify progress, common diagnostic context is
 printed once, varying finding evidence remains complete, native codes stay in JSON, attached help
 remains paired, `fix first` follows every diagnostic group, and the final success or failure line
 stays in human reading order. JSON, report-file, and support-bundle tests assert the same structured

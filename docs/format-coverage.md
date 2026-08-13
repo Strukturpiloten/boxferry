@@ -26,9 +26,9 @@ the resulting route supports only their shared semantic subset.
 | Boundary | Import to neutral model | Export from neutral model | CLI orchestration |
 | --- | --- | --- | --- |
 | Docker runtime | Inspect decoder and reconstruction library implemented for the reviewed API range | Deployment planning and execution open | Open |
-| Docker Compose | Implemented for the documented subset | Implemented for the documented subset | Compose-to-Quadlet and Quadlet-to-Compose; the latter targets the rolling Compose Specification, not a selected historical provider |
+| Docker Compose | Implemented for the documented subset | Implemented for the documented subset | All four Compose/Quadlet document routes; Compose output targets the rolling Compose Specification, not a selected historical provider |
 | Podman runtime | Inspect decoder and reconstruction library implemented for Podman 5.4.0–6.0.2 | Deployment planning and execution open | Open |
-| Podman Quadlet | Shared service/resource subset implemented, including labels, host mappings, and execution context; broader native surface open | Implemented for the documented subset | Compose-to-Quadlet and Quadlet-to-Compose |
+| Podman Quadlet | Shared service/resource subset implemented, including labels, host mappings, and execution context; broader native surface open | Implemented for the documented subset | All four Compose/Quadlet document routes, including same-format canonicalization |
 | Kubernetes | Open | Open | Open |
 
 Runtime export means generating and validating a reviewable create/update plan before an optional

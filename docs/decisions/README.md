@@ -41,6 +41,7 @@ Architecture decision records capture choices that constrain future development.
 | [0026](0026-typed-diagnostic-rule-catalogue.md) | accepted | Typed diagnostic rules, native-code provenance, grouped help, and causal final status |
 | [0027](0027-format-neutral-native-findings.md) | accepted | Format-neutral native findings retained by every source adapter |
 | [0028](0028-primary-remediation-guidance.md) | accepted | Structured fix-first guidance without source syntax in target adapters |
+| [0029](0029-nested-input-output-cli-routes.md) | accepted | Nested input/output CLI routes and same-format normalization |
 
 ## Adding an ADR
 

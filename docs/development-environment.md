@@ -236,9 +236,7 @@ Use the repository fixture for a non-privileged Compose-to-Quadlet smoke test:
 
 ```console
 smoke_root="$(mktemp -d)"
-cargo run --locked --release --bin boxferry -- convert \
-  --input-type compose \
-  --output-type quadlet \
+cargo run --locked --release --bin boxferry -- convert compose quadlet \
   --input-file fixtures/conversion/compose-to-quadlet-dependencies/compose.yaml \
   --output-directory "${smoke_root}/quadlet-output"
 find "${smoke_root}/quadlet-output" -maxdepth 1 -type f -print | sort
@@ -246,7 +244,8 @@ rm -r "${smoke_root}"
 ```
 
 This exercises the real CLI and public conversion facade but does not start containers or install
-the generated units. See the [CLI contract](cli.md) for Quadlet-to-Compose and other options.
+the generated units. See the [CLI contract](cli.md) for all four Compose/Quadlet routes and other
+options.
 
 ## Included tools and sources of truth
 

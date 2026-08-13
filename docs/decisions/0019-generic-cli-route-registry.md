@@ -5,6 +5,8 @@
 - Amends: [ADR 0017](0017-n-to-n-adapter-matrix.md) and
   [ADR 0018](0018-generic-cli-and-diagnostic-support-bundle.md)
 - Amended by: [ADR 0020](0020-rolling-compose-specification-cli-target.md)
+- Superseded for route selection, route scope, and Quadlet application naming by:
+  [ADR 0029](0029-nested-input-output-cli-routes.md)
 
 ## Context
 

@@ -5,6 +5,8 @@
 - Amends: [ADR 0013](0013-explicit-compose-provider-and-runtime.md) for the CLI contract and
   [ADR 0019](0019-generic-cli-route-registry.md)
 - Amended by: [ADR 0026](0026-typed-diagnostic-rule-catalogue.md)
+- Amended by: [ADR 0029](0029-nested-input-output-cli-routes.md) for nested routing and
+  `--application-name`
 
 ## Context
 

@@ -330,9 +330,10 @@ named-network, metadata-label, host-mapping, and execution-context slice. It ret
 identity for systemd restart policy and complete sibling activation-plus-ordering dependencies;
 regular native health commands and scalars also enter the protected, source-aware health model.
 Host-unit references and incomplete relationships remain explicit. Docker and Podman runtime
-importers plus Compose and Quadlet exporters already exist as library APIs. Adapter-level fixtures
-and exact Quadlet-to-Compose golden tests exercise the expanded path; the remaining semantic
-fields, runtime targets, generic CLI, and full route matrix are still open.
+importers plus Compose and Quadlet exporters already exist as library APIs. The nested CLI exposes
+all four Compose/Quadlet document routes, including same-format canonicalization through the
+neutral model. Remaining semantic fields, runtime targets, and the full Docker/Podman/Compose/
+Quadlet route matrix are still open.
 
 Docker runtime resources, Docker Compose, Podman runtime resources, and Podman Quadlet must each
 be available as a source and a target. Routes compose through the neutral model rather than using
@@ -342,7 +343,7 @@ plans; applying a plan remains a separate explicit side effect.
 Exit criteria:
 
 - All four boundaries have importers and exporters for one documented shared semantic subset.
-- The CLI can select each source and target explicitly without owning conversion rules.
+- The CLI can select each input and output explicitly without owning conversion rules.
 - Every one of the sixteen source/target combinations has an offline golden contract test.
 - Runtime acquisition and application require explicit endpoints and resources and never enumerate
   or mutate ambient state implicitly.

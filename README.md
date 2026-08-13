@@ -57,14 +57,12 @@ BoxFerry owns the application model, conversion planning, runtime adapters, and 
 The CLI supports Linux. On Windows, install and run BoxFerry inside WSL2; native Windows binaries
 and Windows containers are not supported. See [platform support](docs/platform-support.md).
 
-The generic command converts explicitly ordered Compose files into a new directory of validated
-Quadlet files:
+The `convert` command selects an input and output type positionally. This example converts explicitly
+ordered Compose input into validated Quadlet output:
 
 ```shell
 cargo install boxferry
-boxferry convert \
-  --input-type compose \
-  --output-type quadlet \
+boxferry convert compose quadlet \
   --input-file compose.yaml \
   --input-file compose.production.yaml \
   --project-name example \
@@ -82,9 +80,10 @@ Compose interpolation is disabled by default, so expressions remain unresolved r
 silently capturing workstation values.
 Callers can opt in with `--interpolate`, add repeatable `--env NAME=VALUE` inputs, and authorize
 individual sensitive process values with repeatable `--env NAME`. No other ambient variable or
-implicit `.env` file is read. Quadlet input is also available through `convert` with an explicit
-project name and the rolling Compose Specification target; it never inspects an installed provider
-or runtime.
+implicit `.env` file is read. Compose and Quadlet are both available as input and output, including
+same-format canonicalization through the neutral model. Quadlet input requires
+`--application-name`; Compose output uses the rolling Compose Specification target and never
+inspects an installed provider or runtime.
 For a local, privacy-safe diagnostic archive, add the value-less `--generate-error-report` flag.
 It creates an automatically named ZIP in the current directory, or in an explicit existing
 directory selected by `--error-report-directory DIR`. See the [CLI contract](docs/cli.md) and

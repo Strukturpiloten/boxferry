@@ -6,12 +6,12 @@ application formats and runtimes.
 The CLI supports Linux. Windows users must install and run it inside WSL2; native Windows binaries
 and Windows containers are unsupported. See the repository's platform-support documentation.
 
-The default features provide the generic `convert` command for the currently implemented
-Compose-to-Quadlet and Quadlet-to-Compose routes. Embedded users can disable default features and
-select only the adapters they need.
+The default features provide nested `convert <INPUT_TYPE> <OUTPUT_TYPE>` and
+`validate <INPUT_TYPE> <OUTPUT_TYPE>` commands for all four Compose/Quadlet document routes.
+Embedded users can disable default features and select only the adapters they need.
 
-The Quadlet-to-Compose CLI route targets the rolling Compose Specification and requires an
-explicit project name, not a provider or runtime version. Provider-aware Compose targets remain
+Compose output targets the rolling Compose Specification. Quadlet input requires an explicit
+application name, not a provider or runtime version. Provider-aware Compose targets remain
 available to embedded users through the public library API.
 
 For a local, privacy-safe diagnostic archive, add the value-less `--generate-error-report` flag to

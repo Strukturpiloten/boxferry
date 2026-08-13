@@ -29,15 +29,7 @@ fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() 
             "  third:\n    image: example.invalid/third:1\n    shm_size: invalid\n",
         ),
     )?;
-    let common = [
-        "validate",
-        "--input-type",
-        "compose",
-        "--input-file",
-        path_text(&compose)?,
-        "--output-type",
-        "quadlet",
-    ];
+    let common = ["validate", "compose", "quadlet", "--input-file", path_text(&compose)?];
 
     let human = boxferry_command().args(common).output()?;
     assert_eq!(human.status.code(), Some(1));
@@ -115,15 +107,7 @@ fn unresolved_compose_environment_variables_are_paired_with_target_findings() ->
             "      POSTGRES_DB: ${DB_DATABASE_NAME}\n",
         ),
     )?;
-    let common = [
-        "validate",
-        "--input-type",
-        "compose",
-        "--input-file",
-        path_text(&compose)?,
-        "--output-type",
-        "quadlet",
-    ];
+    let common = ["validate", "compose", "quadlet", "--input-file", path_text(&compose)?];
 
     let exact = boxferry_command().args(common).output()?;
     assert_eq!(exact.status.code(), Some(2));
@@ -171,8 +155,8 @@ fn generic_convert_preserves_mixed_input_occurrence_order_and_directory_priority
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type=compose",
-            "--output-type=quadlet",
+            "compose",
+            "quadlet",
             "--input-directory",
             path_text(project.path())?,
             override_argument.as_str(),
@@ -213,9 +197,7 @@ fn generic_discovery_reports_ignored_candidates_in_verbose_mode() -> Result<(), 
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(project.path())?,
@@ -231,9 +213,7 @@ fn generic_discovery_reports_ignored_candidates_in_verbose_mode() -> Result<(), 
     let report = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(project.path())?,
@@ -263,8 +243,8 @@ fn generic_convert_handles_a_large_repository_owned_offline_scenario() -> Result
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type=compose",
-            "--output-type=quadlet",
+            "compose",
+            "quadlet",
             "--input-directory",
             path_text(project.path())?,
             "--output-directory",
@@ -329,35 +309,33 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     assert!(capabilities_json.status.success());
     assert_eq!(std::str::from_utf8(&capabilities_json.stdout)?.lines().count(), 1);
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
-    assert_eq!(capabilities_json["routes"].as_array().map(Vec::len), Some(2));
-    let boundaries = &capabilities_json["routes"][0]["fidelity_boundaries"];
+    let routes = capabilities_json["routes"].as_array().ok_or("routes")?;
+    assert_eq!(routes.len(), 4);
+    let compose_to_quadlet = routes
+        .iter()
+        .find(|route| route["input_type"] == "compose" && route["output_type"] == "quadlet")
+        .ok_or("Compose-to-Quadlet route")?;
+    let boundaries = &compose_to_quadlet["fidelity_boundaries"];
     assert_eq!(boundaries["exact"], "supported-compose-quadlet-intersection");
     assert_eq!(boundaries["approximate"], serde_json::json!(["pod-grouping"]));
     assert_eq!(
         boundaries["policy_controlled"],
         serde_json::json!(["unsupported-fields"])
     );
-    assert_eq!(capabilities_json["routes"][1]["input_type"], "quadlet");
-    assert_eq!(capabilities_json["routes"][1]["output_type"], "compose");
+    let quadlet_to_compose = routes
+        .iter()
+        .find(|route| route["input_type"] == "quadlet" && route["output_type"] == "compose")
+        .ok_or("Quadlet-to-Compose route")?;
+    assert_eq!(quadlet_to_compose["input_type"], "quadlet");
+    assert_eq!(quadlet_to_compose["output_type"], "compose");
+    assert_eq!(quadlet_to_compose["target_selector"], "compose-specification-rolling");
+    assert_eq!(quadlet_to_compose["requested_version"], "rolling");
+    assert_eq!(quadlet_to_compose["resolved_version"], "rolling");
+    assert!(quadlet_to_compose.get("accepted_compose_providers").is_none());
+    assert!(quadlet_to_compose.get("exact_provider_version_required").is_none());
+    assert!(quadlet_to_compose.get("podman_minimum").is_none());
     assert_eq!(
-        capabilities_json["routes"][1]["target_selector"],
-        "compose-specification-rolling"
-    );
-    assert_eq!(capabilities_json["routes"][1]["requested_version"], "rolling");
-    assert_eq!(capabilities_json["routes"][1]["resolved_version"], "rolling");
-    assert!(
-        capabilities_json["routes"][1]
-            .get("accepted_compose_providers")
-            .is_none()
-    );
-    assert!(
-        capabilities_json["routes"][1]
-            .get("exact_provider_version_required")
-            .is_none()
-    );
-    assert!(capabilities_json["routes"][1].get("podman_minimum").is_none());
-    assert_eq!(
-        capabilities_json["routes"][1]["fidelity_boundaries"]["approximate"],
+        quadlet_to_compose["fidelity_boundaries"]["approximate"],
         serde_json::json!(["environment-file-reconstruction"])
     );
 
@@ -372,9 +350,7 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     let conversion = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -404,9 +380,7 @@ fn generic_rejects_duplicate_and_multiple_stdin_before_writes() -> Result<(), Bo
     let duplicate = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -422,9 +396,7 @@ fn generic_rejects_duplicate_and_multiple_stdin_before_writes() -> Result<(), Bo
     let stdin = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             "-",
@@ -445,9 +417,7 @@ fn generic_rejects_empty_discovery_unsafe_inputs_and_major_only_versions() -> Re
     let no_candidate = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(empty.path())?,
@@ -458,9 +428,7 @@ fn generic_rejects_empty_discovery_unsafe_inputs_and_major_only_versions() -> Re
     let non_regular = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(empty.path())?,
@@ -471,9 +439,7 @@ fn generic_rejects_empty_discovery_unsafe_inputs_and_major_only_versions() -> Re
     let major_only = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -503,9 +469,7 @@ fn generic_environment_files_and_explicit_inputs_have_documented_precedence_with
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -567,12 +531,10 @@ fn empty_interpolation_environment_preserves_native_warnings_before_import_error
     let compose = write_interpolation_diagnostic_fixture(project.path())?;
     let common = [
         "validate",
-        "--input-type",
         "compose",
+        "quadlet",
         "--input-file",
         path_text(&compose)?,
-        "--output-type",
-        "quadlet",
         "--interpolate",
     ];
     let mut command = boxferry_command();
@@ -637,12 +599,10 @@ fn partial_interpolation_environment_is_complete_in_human_and_json_diagnostics_w
     )?;
     let common = [
         "validate",
-        "--input-type",
         "compose",
+        "quadlet",
         "--input-file",
         path_text(&compose)?,
-        "--output-type",
-        "quadlet",
         "--interpolate",
         "--env-file",
         path_text(&environment)?,
@@ -723,12 +683,10 @@ fn repeated_human_rules_hoist_shared_context_and_list_only_finding_evidence() ->
         .env_remove("SECOND_VALUE")
         .args([
             "validate",
-            "--input-type",
             "compose",
+            "quadlet",
             "--input-file",
             path_text(&compose)?,
-            "--output-type",
-            "quadlet",
             "--interpolate",
             "--loss-policy",
             "approximate",
@@ -781,9 +739,7 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
         .env("BOXFERRY_TEST_PROCESS_VALUE", "process-value-canary")
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -846,9 +802,7 @@ fn output_write_failure_preserves_the_completed_conversion_report_everywhere() -
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(project.path())?,
@@ -917,9 +871,7 @@ fn generic_report_and_default_pod_name_use_the_resolved_compose_name() -> Result
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -955,9 +907,7 @@ fn generic_env_name_authorizes_only_that_process_value() -> Result<(), Box<dyn E
         .env("TAG", "ambient-secret")
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -982,9 +932,7 @@ fn generic_rejects_profile_and_presentation_conflicts() -> Result<(), Box<dyn Er
     let profile = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1000,15 +948,7 @@ fn generic_rejects_profile_and_presentation_conflicts() -> Result<(), Box<dyn Er
         ["--quiet", "--console-format", "json"],
     ] {
         let mode = boxferry_command()
-            .args([
-                "validate",
-                "--input-type",
-                "compose",
-                "--output-type",
-                "quadlet",
-                "--input-file",
-                path_text(&fixture)?,
-            ])
+            .args(["validate", "compose", "quadlet", "--input-file", path_text(&fixture)?])
             .args(presentation.into_iter().filter(|value| !value.is_empty()))
             .output()?;
         assert_eq!(mode.status.code(), Some(2), "{presentation:?}");
@@ -1034,9 +974,7 @@ fn compose_profile_and_project_directory_options_have_successful_cli_paths() -> 
         let result = boxferry_command()
             .args([
                 "validate",
-                "--input-type",
                 "compose",
-                "--output-type",
                 "quadlet",
                 "--input-file",
                 path_text(&compose)?,
@@ -1098,9 +1036,7 @@ fn validate_with_loss_policy(input: &Path, policy: &str) -> Result<Output, Box<d
     Ok(boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(input)?,
@@ -1124,9 +1060,7 @@ fn every_loss_policy_value_has_positive_and_negative_cli_behavior() -> Result<()
     let exact_success = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&exact)?,
@@ -1245,9 +1179,7 @@ fn loss_policy_never_authorizes_unresolved_image_variables_and_help_resolves_the
     let resolved = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -1273,9 +1205,7 @@ fn json_reports_structured_fix_first_guidance_and_paired_source_target_findings(
     let json = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -1333,9 +1263,7 @@ fn output_directory_accepts_absent_and_empty_but_rejects_nonempty_and_dotfile_co
         Ok(boxferry_command()
             .args([
                 "convert",
-                "--input-type",
                 "compose",
-                "--output-type",
                 "quadlet",
                 "--input-file",
                 path_text(&compose)?,
@@ -1416,9 +1344,7 @@ fn human_sections_are_ordered_and_end_with_success_or_failure() -> Result<(), Bo
     )?;
     let command_arguments = [
         "convert",
-        "--input-type",
         "compose",
-        "--output-type",
         "quadlet",
         "--input-file",
         path_text(&compose)?,
@@ -1489,9 +1415,7 @@ fn generic_grouping_validation_and_validate_mode_do_not_write() -> Result<(), Bo
     let invalid = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1506,9 +1430,7 @@ fn generic_grouping_validation_and_validate_mode_do_not_write() -> Result<(), Bo
     let validation = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1536,9 +1458,7 @@ fn generic_pod_name_is_applied_only_to_explicit_pod_grouping() -> Result<(), Box
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1586,9 +1506,7 @@ fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Bo
     let json = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1602,6 +1520,228 @@ fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Bo
     assert!(json.stderr.is_empty());
     let _: serde_json::Value = serde_json::from_slice(&json.stdout)?;
     assert_eq!(std::str::from_utf8(&json.stdout)?.lines().count(), 1);
+    Ok(())
+}
+
+#[test]
+fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error>> {
+    for arguments in [
+        ["convert", "--help"].as_slice(),
+        ["convert", "compose", "--help"].as_slice(),
+        ["convert", "compose", "compose", "--help"].as_slice(),
+        ["convert", "compose", "quadlet", "--help"].as_slice(),
+        ["convert", "quadlet", "compose", "--help"].as_slice(),
+        ["convert", "quadlet", "quadlet", "--help"].as_slice(),
+        ["validate", "compose", "compose", "--help"].as_slice(),
+        ["validate", "compose", "quadlet", "--help"].as_slice(),
+        ["validate", "quadlet", "compose", "--help"].as_slice(),
+        ["validate", "quadlet", "quadlet", "--help"].as_slice(),
+    ] {
+        let result = boxferry_command().args(arguments).output()?;
+        assert!(result.status.success(), "{arguments:?}");
+        assert!(result.stderr.is_empty(), "{arguments:?}");
+    }
+
+    let compose_quadlet = boxferry_command()
+        .args(["convert", "compose", "quadlet", "--help"])
+        .output()?;
+    let compose_quadlet = String::from_utf8(compose_quadlet.stdout)?;
+    assert!(compose_quadlet.contains("Usage: boxferry convert compose quadlet [OPTIONS]"));
+    let headings = [
+        "Input documents:",
+        "Compose input:",
+        "Quadlet output:",
+        "Conversion policy:",
+        "Output destination:",
+        "Diagnostics and reports:",
+    ];
+    for heading in headings {
+        assert!(compose_quadlet.contains(heading), "missing {heading}");
+    }
+    let positions = headings
+        .iter()
+        .map(|heading| compose_quadlet.find(heading).ok_or(*heading))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(!compose_quadlet.contains("Quadlet input:"));
+    assert!(!compose_quadlet.contains("Compose output:"));
+    assert!(!compose_quadlet.contains("--application-name"));
+    assert!(!compose_quadlet.contains("--input-type"));
+    assert!(!compose_quadlet.contains("--output-type"));
+
+    let quadlet_compose = boxferry_command()
+        .args(["validate", "quadlet", "compose", "--help"])
+        .output()?;
+    let quadlet_compose = String::from_utf8(quadlet_compose.stdout)?;
+    assert!(quadlet_compose.contains("Quadlet input:"));
+    assert!(quadlet_compose.contains("Compose output:"));
+    assert!(quadlet_compose.contains("--application-name"));
+    assert!(!quadlet_compose.contains("Compose input:"));
+    assert!(!quadlet_compose.contains("Quadlet output:"));
+    assert!(!quadlet_compose.contains("--interpolate"));
+    assert!(!quadlet_compose.contains("--podman-minimum-version"));
+    assert!(!quadlet_compose.contains("Output destination:"));
+
+    let contextual = boxferry_command()
+        .args(["help", "convert", "compose", "quadlet"])
+        .output()?;
+    assert!(contextual.status.success());
+    let contextual = String::from_utf8(contextual.stdout)?;
+    assert!(contextual.contains("Usage: boxferry convert compose quadlet [OPTIONS]"));
+    assert!(contextual.contains("-V, --version"));
+
+    for old_option in ["--input-type", "--output-type"] {
+        let rejected = boxferry_command()
+            .args(["validate", "compose", "quadlet", old_option, "compose"])
+            .output()?;
+        assert_eq!(rejected.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&rejected.stderr).contains("unexpected argument"));
+    }
+    Ok(())
+}
+
+#[test]
+fn compose_to_compose_merges_interpolates_and_writes_canonical_output() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("compose-normalization-project");
+    let output = TemporaryOutput::new("compose-normalization-output");
+    fs::create_dir_all(project.path())?;
+    let base = project.path().join("compose.yaml");
+    let override_file = project.path().join("compose.override.yaml");
+    fs::write(
+        &base,
+        concat!(
+            "name: normalization-example\n",
+            "services:\n",
+            "  web:\n",
+            "    image: example.invalid/web:${TAG:-1}\n",
+            "    environment:\n",
+            "      MODE: base\n",
+        ),
+    )?;
+    fs::write(
+        &override_file,
+        "services:\n  web:\n    environment:\n      MODE: override\n",
+    )?;
+    let converted = boxferry_command()
+        .args([
+            "convert",
+            "compose",
+            "compose",
+            "--input-file",
+            path_text(&base)?,
+            "--input-file",
+            path_text(&override_file)?,
+            "--interpolate",
+            "--env",
+            "TAG=2",
+            "--output-directory",
+            path_text(output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        converted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&converted.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&converted.stdout)?;
+    assert_eq!(report["source_type"], "compose");
+    assert_eq!(report["target_type"], "compose");
+    assert_eq!(report["status"], "success");
+    assert_eq!(report["output_artifacts"].as_array().map(Vec::len), Some(1));
+    let document = fs::read_to_string(output.path().join("compose.yaml"))?;
+    assert!(document.contains("example.invalid/web:2"));
+    assert!(document.contains("MODE=override"));
+    assert_eq!(fs::read_dir(output.path())?.count(), 1);
+
+    let validated = boxferry_command()
+        .args([
+            "validate",
+            "compose",
+            "compose",
+            "--input-file",
+            path_text(&base)?,
+            "--input-file",
+            path_text(&override_file)?,
+            "--interpolate",
+            "--env",
+            "TAG=2",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&validated.stdout)?;
+    assert_eq!(report["output_artifacts"].as_array().map(Vec::len), Some(1));
+    assert_eq!(fs::read_dir(project.path())?.count(), 2);
+    Ok(())
+}
+
+#[test]
+fn quadlet_to_quadlet_rebuilds_a_canonical_document_set() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("quadlet-normalization-project");
+    let output = TemporaryOutput::new("quadlet-normalization-output");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("web.container");
+    fs::write(
+        &input,
+        "[Service]\nRestart=no\n\n[Container]\nImage=example.invalid/web:1\n",
+    )?;
+    let converted = boxferry_command()
+        .args([
+            "convert",
+            "quadlet",
+            "quadlet",
+            "--input-file",
+            path_text(&input)?,
+            "--application-name",
+            "normalization-example",
+            "--output-directory",
+            path_text(output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        converted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&converted.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&converted.stdout)?;
+    assert_eq!(report["source_type"], "quadlet");
+    assert_eq!(report["target_type"], "quadlet");
+    assert_eq!(report["status"], "success");
+    let document = fs::read_to_string(output.path().join("web.container"))?;
+    assert!(document.contains("Image=example.invalid/web:1"));
+    assert!(document.contains("Restart=no"));
+    assert_eq!(fs::read_dir(output.path())?.count(), 1);
+
+    let validated = boxferry_command()
+        .args([
+            "validate",
+            "quadlet",
+            "quadlet",
+            "--input-file",
+            path_text(&input)?,
+            "--application-name",
+            "normalization-example",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&validated.stdout)?;
+    assert_eq!(report["output_artifacts"].as_array().map(Vec::len), Some(1));
+    assert_eq!(fs::read_dir(project.path())?.count(), 1);
     Ok(())
 }
 
@@ -1646,17 +1786,13 @@ fn rules_and_explain_expose_one_sorted_machine_readable_catalogue() -> Result<()
 #[test]
 fn generic_input_and_interpolation_argument_failures_are_fail_closed() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
-    let missing_input = boxferry_command()
-        .args(["validate", "--input-type", "compose", "--output-type", "quadlet"])
-        .output()?;
+    let missing_input = boxferry_command().args(["validate", "compose", "quadlet"]).output()?;
     assert_eq!(missing_input.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&missing_input.stderr).contains("at least one --input-file"));
     let env_file_without_interpolation = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1670,9 +1806,7 @@ fn generic_input_and_interpolation_argument_failures_are_fail_closed() -> Result
         let invalid_environment = boxferry_command()
             .args([
                 "validate",
-                "--input-type",
                 "compose",
-                "--output-type",
                 "quadlet",
                 "--input-file",
                 path_text(&fixture)?,
@@ -1691,9 +1825,7 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
     let unexpected_error_report_value = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1706,9 +1838,7 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
     let directory_without_error_report = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1719,24 +1849,14 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
     assert_eq!(directory_without_error_report.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&directory_without_error_report.stderr).contains("--generate-error-report"));
     let missing_output = boxferry_command()
-        .args([
-            "convert",
-            "--input-type",
-            "compose",
-            "--output-type",
-            "quadlet",
-            "--input-file",
-            path_text(&fixture)?,
-        ])
+        .args(["convert", "compose", "quadlet", "--input-file", path_text(&fixture)?])
         .output()?;
     assert_eq!(missing_output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&missing_output.stderr).contains("--output-directory"));
     let stdin_later = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1752,9 +1872,7 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
     let json = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1779,9 +1897,7 @@ fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<d
         let result = boxferry_command()
             .args([
                 "validate",
-                "--input-type",
                 "compose",
-                "--output-type",
                 "quadlet",
                 "--input-file",
                 path_text(&fixture)?,
@@ -1806,9 +1922,7 @@ fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<d
         let result = boxferry_command()
             .args([
                 "validate",
-                "--input-type",
                 "compose",
-                "--output-type",
                 "quadlet",
                 "--input-file",
                 path_text(&fixture)?,
@@ -1842,9 +1956,7 @@ fn generic_json_preprocessing_failure_is_one_redacted_document() -> Result<(), B
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(project.path())?,
@@ -1878,9 +1990,7 @@ fn compose_post_discovery_failures_preserve_context_without_serializing_paths() 
     let target_failure = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(project.path())?,
@@ -1909,9 +2019,7 @@ fn compose_post_discovery_failures_preserve_context_without_serializing_paths() 
     let human_failure = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(project.path())?,
@@ -1927,9 +2035,7 @@ fn compose_post_discovery_failures_preserve_context_without_serializing_paths() 
     let interpolation_failure = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-directory",
             path_text(project.path())?,
@@ -1966,9 +2072,7 @@ fn report_file_matches_json_and_refuses_existing_paths() -> Result<(), Box<dyn E
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -1987,9 +2091,7 @@ fn report_file_matches_json_and_refuses_existing_paths() -> Result<(), Box<dyn E
     let duplicate = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -2122,9 +2224,7 @@ fn report_json_never_contains_seeded_input_or_interpolation_canaries() -> Result
         .env("BOXFERRY_REPORT_PROCESS_CANARY", "PROCESS_CANARY")
         .args([
             "convert",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -2204,9 +2304,7 @@ fn support_bundle_refuses_a_symlink_parent() -> Result<(), Box<dyn Error>> {
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -2237,9 +2335,7 @@ fn invalid_tzif_environment_fails_closed_without_leaking_its_path() -> Result<()
         .env("TZ", path_text(&tzif)?)
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -2284,9 +2380,7 @@ fn report_file_is_attempted_before_the_support_bundle() -> Result<(), Box<dyn Er
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -2322,9 +2416,7 @@ fn report_write_failure_preserves_a_primary_failure_category_and_stage() -> Resu
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&project.path().join("compose.yaml"))?,
@@ -2368,9 +2460,7 @@ fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentati
         let result = boxferry_command()
             .args([
                 "validate",
-                "--input-type",
                 "compose",
-                "--output-type",
                 "quadlet",
                 "--input-file",
                 path_text(&fixture)?,
@@ -2454,9 +2544,7 @@ fn support_bundle_is_created_for_blocked_and_failed_conversions() -> Result<(), 
         let result = boxferry_command()
             .args([
                 "validate",
-                "--input-type",
                 "compose",
-                "--output-type",
                 "quadlet",
                 "--input-file",
                 path_text(&input)?,
@@ -2490,9 +2578,7 @@ fn support_bundle_retries_existing_names_without_leaving_a_temporary_file() -> R
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&fixture)?,
@@ -2528,13 +2614,11 @@ fn quadlet_to_compose_generic_route_writes_canonical_document_and_complete_repor
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--output-directory",
             path_text(output.path())?,
@@ -2570,13 +2654,11 @@ fn quadlet_to_compose_generic_route_writes_canonical_document_and_complete_repor
     let verbose = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--verbose",
         ])
@@ -2586,13 +2668,11 @@ fn quadlet_to_compose_generic_route_writes_canonical_document_and_complete_repor
     let collision = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--output-directory",
             path_text(output.path())?,
@@ -2611,13 +2691,11 @@ fn quadlet_route_validates_without_writing_and_rejects_inapplicable_or_removed_o
     fs::write(&input, "[Container]\nImage=example.invalid/web:1\n")?;
     let base = [
         "validate",
-        "--input-type",
         "quadlet",
-        "--output-type",
         "compose",
         "--input-file",
         path_text(&input)?,
-        "--project-name",
+        "--application-name",
         "example",
         "--console-format",
         "json",
@@ -2630,45 +2708,33 @@ fn quadlet_route_validates_without_writing_and_rejects_inapplicable_or_removed_o
     );
     assert!(!project.path().join("compose.yaml").exists());
     let missing_project = boxferry_command()
-        .args([
-            "validate",
-            "--input-type",
-            "quadlet",
-            "--output-type",
-            "compose",
-            "--input-file",
-            path_text(&input)?,
-        ])
+        .args(["validate", "quadlet", "compose", "--input-file", path_text(&input)?])
         .output()?;
-    assert_eq!(missing_project.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&missing_project.stderr).contains("--project-name is required"));
+    assert_eq!(missing_project.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&missing_project.stderr).contains("--application-name"));
     let irrelevant = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--podman-minimum-version",
             "5.4",
         ])
         .output()?;
-    assert_eq!(irrelevant.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&irrelevant.stderr).contains("not applicable"));
+    assert_eq!(irrelevant.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&irrelevant.stderr).contains("unexpected argument"));
     let removed_provider = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--compose-provider",
             "docker-compose",
@@ -2679,13 +2745,11 @@ fn quadlet_route_validates_without_writing_and_rejects_inapplicable_or_removed_o
     let removed_runtime = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--compose-runtime",
             "docker-engine",
@@ -2723,15 +2787,13 @@ fn quadlet_directory_discovery_is_lowercase_lexical_and_refuses_duplicate_unit_n
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&middle_input)?,
             "--input-directory",
             path_text(project.path())?,
-            "--project-name",
+            "--application-name",
             "example",
             "--output-directory",
             path_text(output.path())?,
@@ -2751,15 +2813,13 @@ fn quadlet_directory_discovery_is_lowercase_lexical_and_refuses_duplicate_unit_n
     let duplicate = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-directory",
             path_text(project.path())?,
             "--input-directory",
             path_text(second.path())?,
-            "--project-name",
+            "--application-name",
             "example",
         ])
         .output()?;
@@ -2778,13 +2838,11 @@ fn quadlet_parse_failure_uses_the_route_specific_report_stage() -> Result<(), Bo
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-directory",
             path_text(project.path())?,
-            "--project-name",
+            "--application-name",
             "example",
             "--console-format",
             "json",
@@ -2846,13 +2904,11 @@ fn assert_quadlet_document_set_failure(input: &Path) -> Result<(), Box<dyn Error
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--console-format",
             "json",
@@ -2890,15 +2946,13 @@ fn quadlet_detailed_native_diagnostics_are_ordered_aliased_and_redacted_everywhe
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&first)?,
             "--input-file",
             path_text(&second)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--report-file",
             path_text(&report_file)?,
@@ -2942,15 +2996,13 @@ fn quadlet_detailed_native_diagnostics_are_ordered_aliased_and_redacted_everywhe
     let human = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&first)?,
             "--input-file",
             path_text(&second)?,
-            "--project-name",
+            "--application-name",
             "example",
         ])
         .output()?;
@@ -2980,13 +3032,11 @@ fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<()
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--console-format",
             "json",
@@ -3021,13 +3071,11 @@ fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<()
     let human = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
         ])
         .output()?;
@@ -3052,13 +3100,11 @@ fn quadlet_environment_file_requires_approximate_authorization() -> Result<(), B
     let exact = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--output-directory",
             path_text(exact_output.path())?,
@@ -3077,13 +3123,11 @@ fn quadlet_environment_file_requires_approximate_authorization() -> Result<(), B
     let approximate = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--loss-policy",
             "approximate",
@@ -3103,32 +3147,12 @@ fn quadlet_environment_file_requires_approximate_authorization() -> Result<(), B
 }
 
 #[test]
-fn unavailable_routes_and_cross_route_options_fail_without_misreporting_the_route() -> Result<(), Box<dyn Error>> {
-    let unavailable = boxferry_command()
-        .args([
-            "validate",
-            "--input-type",
-            "compose",
-            "--output-type",
-            "compose",
-            "--input-file",
-            "-",
-            "--console-format",
-            "json",
-        ])
-        .output()?;
-    assert_eq!(unavailable.status.code(), Some(1));
-    let report: serde_json::Value = serde_json::from_slice(&unavailable.stdout)?;
-    assert_eq!(report["source_type"], "compose");
-    assert_eq!(report["target_type"], "compose");
-    assert!(report["choices"].as_array().is_some_and(Vec::is_empty));
+fn cross_route_options_are_rejected_by_the_selected_route() -> Result<(), Box<dyn Error>> {
     let compose = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
     let removed_provider = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "compose",
-            "--output-type",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
@@ -3147,19 +3171,17 @@ fn unavailable_routes_and_cross_route_options_fail_without_misreporting_the_rout
     let quadlet_flag = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&quadlet)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--interpolate",
         ])
         .output()?;
-    assert_eq!(quadlet_flag.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&quadlet_flag.stderr).contains("not applicable"));
+    assert_eq!(quadlet_flag.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&quadlet_flag.stderr).contains("unexpected argument '--interpolate'"));
     Ok(())
 }
 
@@ -3174,25 +3196,16 @@ fn quadlet_input_rejects_stdin_empty_discovery_duplicate_paths_and_unsupported_e
     let unsupported = project.path().join("web.txt");
     fs::write(&input, "[Container]\nImage=example.invalid/web:1\n")?;
     fs::write(&unsupported, "ignored\n")?;
-    let common = [
-        "--input-type",
-        "quadlet",
-        "--output-type",
-        "compose",
-        "--project-name",
-        "example",
-    ];
+    let common = ["quadlet", "compose", "--application-name", "example"];
     let stdin = boxferry_command()
         .args([
             "validate",
             common[0],
             common[1],
-            common[2],
-            common[3],
             "--input-file",
             "-",
-            common[4],
-            common[5],
+            common[2],
+            common[3],
         ])
         .output()?;
     assert_eq!(stdin.status.code(), Some(1));
@@ -3202,12 +3215,10 @@ fn quadlet_input_rejects_stdin_empty_discovery_duplicate_paths_and_unsupported_e
             "validate",
             common[0],
             common[1],
-            common[2],
-            common[3],
             "--input-directory",
             path_text(empty.path())?,
-            common[4],
-            common[5],
+            common[2],
+            common[3],
         ])
         .output()?;
     assert_eq!(empty.status.code(), Some(1));
@@ -3217,14 +3228,12 @@ fn quadlet_input_rejects_stdin_empty_discovery_duplicate_paths_and_unsupported_e
             "validate",
             common[0],
             common[1],
+            "--input-file",
+            path_text(&input)?,
+            "--input-file",
+            path_text(&input)?,
             common[2],
             common[3],
-            "--input-file",
-            path_text(&input)?,
-            "--input-file",
-            path_text(&input)?,
-            common[4],
-            common[5],
         ])
         .output()?;
     assert_eq!(duplicate.status.code(), Some(1));
@@ -3234,12 +3243,10 @@ fn quadlet_input_rejects_stdin_empty_discovery_duplicate_paths_and_unsupported_e
             "validate",
             common[0],
             common[1],
-            common[2],
-            common[3],
             "--input-file",
             path_text(&unsupported)?,
-            common[4],
-            common[5],
+            common[2],
+            common[3],
         ])
         .output()?;
     assert_eq!(extension.status.code(), Some(1));
@@ -3266,15 +3273,13 @@ fn duplicate_quadlet_basenames_are_redacted_in_json_report_file_and_bundle() -> 
     let result = boxferry_command()
         .args([
             "validate",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-directory",
             path_text(first.path())?,
             "--input-directory",
             path_text(second.path())?,
-            "--project-name",
+            "--application-name",
             "example",
             "--report-file",
             path_text(&report_file)?,
@@ -3316,13 +3321,11 @@ fn quadlet_to_compose_support_bundle_excludes_source_canaries() -> Result<(), Bo
     let result = boxferry_command()
         .args([
             "convert",
-            "--input-type",
             "quadlet",
-            "--output-type",
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--project-name",
+            "--application-name",
             "example",
             "--loss-policy",
             "partial",

@@ -8,13 +8,23 @@ The executable supports Linux. Windows users run it inside WSL2; see
 [platform support](platform-support.md). Native Windows binaries and Windows containers are not
 supported.
 
-`convert` and `validate` are the only document-conversion commands. The typed route registry
-currently exposes Compose-to-Quadlet and Quadlet-to-Compose; every other selected pair is
-unavailable. Ordered file/directory discovery, presentation modes, canonical `--report-file`,
-and the automatically named local `--generate-error-report` support bundle are documented in the
+`convert` and `validate` are the only document-conversion commands. Input and output types are
+positional subcommands, and the typed route registry exposes all four Compose/Quadlet document
+routes. Ordered file/directory discovery, presentation modes, canonical `--report-file`, and the
+automatically named local `--generate-error-report` support bundle are documented in the
 [vNext CLI contract](cli-vnext.md) and [Error reports](error-reports.md).
 
-## Generic routes
+## Document routes
+
+```console
+boxferry convert <INPUT_TYPE> <OUTPUT_TYPE> [OPTIONS]
+boxferry validate <INPUT_TYPE> <OUTPUT_TYPE> [OPTIONS]
+```
+
+The implemented pairs are `compose compose`, `compose quadlet`, `quadlet compose`, and
+`quadlet quadlet`. Route-specific help shows only applicable input and output options; for example,
+use `boxferry convert compose quadlet --help` or
+`boxferry help convert compose quadlet`.
 
 Compose-to-Quadlet uses:
 
@@ -48,17 +58,22 @@ such as an ambiguous volume source; `BFQ0014` remains invalid when no usable tar
 generated. For an unresolved Compose image, the source-side `BFC0105` finding names the variable
 and subject while the target-side `BFQ0014` finding explains why Quadlet output is impossible.
 
-Quadlet-to-Compose requires a non-stdin `--project-name` and writes one deterministic,
+Quadlet-to-Compose requires a non-stdin `--application-name` and writes one deterministic,
 parse-back-validated `compose.yaml` for the rolling Compose Specification. It does not accept
 provider or runtime selection flags, infer installed tools, or guarantee that every historical
 Compose consumer accepts the result. The internal BoxFerry profile revision is not a Compose
 Specification release version and is never emitted as a CLI provider or version choice.
 
 ```console
-boxferry convert --input-type quadlet --output-type compose \
-  --input-directory ./quadlet --project-name example \
+boxferry convert quadlet compose \
+  --input-directory ./quadlet --application-name example \
   --output-directory ./compose-output
 ```
+
+Same-format routes still pass through the native input adapter, neutral model, loss policy, and
+native output adapter. Compose-to-Compose loads, optionally interpolates, and merges the ordered
+input before writing canonical `compose.yaml`. Quadlet-to-Quadlet rebuilds a canonical document
+set. Neither route is a byte-for-byte passthrough, and unsupported intent remains visible.
 
 Compose interpolation is disabled unless `--interpolate` is present. With interpolation disabled,
 BoxFerry does not read any process variable and unresolved expressions remain available to the

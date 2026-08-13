@@ -60,9 +60,10 @@ as sixteen unrelated converters.
 ### Route orchestration
 
 - [x] Prove the shared importer → neutral model → exporter path in the public library API.
-- [x] Expose the implemented Compose-to-Quadlet and Quadlet-to-Compose routes through the generic CLI registry.
-- [x] Add the [generic CLI route contract](cli-vnext.md) with explicit source and target selection.
-- [ ] Expose Docker-runtime, Podman-runtime, Compose, and Quadlet sources and targets through that
+- [x] Expose all four Compose/Quadlet document routes through the CLI registry, including
+  same-format canonicalization through the neutral model.
+- [x] Add the [document conversion CLI contract](cli-vnext.md) with nested input and output selection.
+- [ ] Expose Docker-runtime, Podman-runtime, Compose, and Quadlet inputs and outputs through that
   contract without duplicating conversion rules in the CLI.
 - [x] Add the [privacy-safe local error-report bundle](error-reports.md) without automatic upload
   or raw input collection.
@@ -124,7 +125,7 @@ Current dependency gates:
   direct references; validates its native dependency graph; and redacts generated contents from
   `Debug` output. Single-pod grouping requires compatible declarations and explicit approximation
   authorization; incompatible requests fail without fallback.
-- Public-facade golden scenarios prove multi-file Compose processing, explicit profile selection,
+- Public-facade golden scenarios prove multi-file Compose input handling, explicit profile selection,
   strict/partial/approximate authorization, exact separate-container and pod-grouped file bytes,
   stable diagnostics, dependency graphs, and provenance.
 - Relative bind paths resolve lexically when the caller supplies their absolute Compose project

@@ -5,17 +5,18 @@
 This is the accepted implementation contract recorded by
 [ADR 0018](decisions/0018-generic-cli-and-diagnostic-support-bundle.md) and amended by
 [ADR 0019](decisions/0019-generic-cli-route-registry.md) and
-[ADR 0021](decisions/0021-automatic-local-error-report-names.md). `convert` and `validate` are the only
-document-conversion commands.
+[ADR 0021](decisions/0021-automatic-local-error-report-names.md). The nested route contract is
+defined by [ADR 0029](decisions/0029-nested-input-output-cli-routes.md). `convert` and `validate`
+are the only document-conversion commands.
 
 ## Command surface
 
 The implemented top-level commands are:
 
-- `boxferry convert` converts one explicit source type to one explicit target type.
+- `boxferry convert` converts one explicit input type to one explicit output type.
 - `boxferry validate` parses and plans without writing generated artifacts.
 - `boxferry capabilities` reports supported formats, versions, and fidelity boundaries.
-- `boxferry help` and `boxferry help <COMMAND>` show help.
+- `boxferry help` and `boxferry help <COMMAND_PATH...>` show contextual help.
 - `boxferry version` prints version information.
 
 `-h`, `--help`, and `--version` remain visible conventional forms.
@@ -27,21 +28,24 @@ command.
 `convert` requires all of the following:
 
 ```console
-boxferry convert \
-  --input-type compose \
-  --output-type quadlet \
+boxferry convert compose quadlet \
   --input-file compose.yaml \
   --output-directory ./quadlet-output
 ```
 
-The current registry exposes only `compose -> quadlet` and `quadlet -> compose`; other selected
-pairs fail as unavailable. Quadlet input requires `--project-name` and does not accept stdin,
-Compose interpolation, profile, environment, or project-directory options. Quadlet output uses
-the Podman selectors and grouping options documented below. Compose output writes exactly
+The registry exposes `compose compose`, `compose quadlet`, `quadlet compose`, and
+`quadlet quadlet`. Quadlet input requires `--application-name` and does not accept stdin. Each
+route leaf exposes only its applicable input and output option families. Quadlet output uses the
+Podman selectors and grouping options documented below. Compose output writes exactly
 `compose.yaml` against the rolling Compose Specification target. It requires no provider or
 runtime flags, never infers installed tools, and does not promise compatibility with every
 historical Compose consumer. Its internal BoxFerry profile revision is not a Compose
 Specification release version and is reported as `rolling`, never as a provider/version choice.
+
+Same-format routes are canonical conversions through the neutral model, not passthroughs.
+Compose-to-Compose performs normal loading, optional interpolation, ordered merge, import, and
+export. Quadlet-to-Quadlet parses the document set, imports it, and rebuilds canonical Quadlet
+files. The normal diagnostic and loss-policy contracts apply to both.
 
 `--input-file` and `--input-directory` are repeatable. Their occurrences form one ordered input
 sequence, even when the two options are interleaved:
@@ -193,10 +197,9 @@ by blank lines. Normal and verbose output flush diagnostics before writing an ex
 blocked, or failure line as the last line. A blocked or failed final line names the primary causal
 rule and explanation.
 
-For `capabilities`, each JSON route includes stable route-specific target selectors and
-fidelity-boundary fields. Compose-to-Quadlet reports finite Podman bounds and `pod-grouping` as
-approximate; Quadlet-to-Compose reports the rolling Compose Specification target and
-environment-file reconstruction as approximate. Both routes identify unsupported fields as
+For `capabilities`, each of the four JSON routes includes stable route-specific output selectors
+and fidelity-boundary fields. Compose output reports the rolling Compose Specification target;
+Quadlet output reports finite Podman bounds. Every route identifies unsupported fields as
 policy-controlled.
 
 Normal output includes selected inputs, the route, the resolved application name, stage
@@ -219,7 +222,8 @@ result can be constructed. Scripts should normally use JSON and stable exit stat
 is suitable when a script needs only filesystem effects and an exit status.
 
 The JSON result includes a schema version, BoxFerry version, status, stable exit category, primary
-diagnostic code, causal failure summary, resolved input order, source and target types, application
+diagnostic code, causal failure summary, resolved input order, input and output types (stored as
+`source_type` and `target_type` for report compatibility), application
 identity, compatibility bounds, fidelity counts, structured diagnostics, output paths, and
 redacted provenance. Each diagnostic includes its BoxFerry code and name, optional native source
 code, severity, summary, help, fields, and spans.
@@ -240,9 +244,7 @@ is independent of presentation modes; see [Error reports](error-reports.md).
 ## Full example
 
 ```console
-boxferry convert \
-  --input-type compose \
-  --output-type quadlet \
+boxferry convert compose quadlet \
   --input-directory ./deployment \
   --input-file ./production.override.yaml \
   --project-directory . \
@@ -273,7 +275,7 @@ it with the status of a later command.
 
 ## Deferred features
 
-- Additional generic source and target pairs as their adapters become complete.
+- Additional generic input and output pairs as their adapters become complete.
 - Overwrite or merge into nonempty output directories.
 - Default interpolation after the compatibility period.
 - A non-native BoxFerry single-file transport archive with an explicit unpack/install contract.

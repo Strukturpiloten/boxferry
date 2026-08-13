@@ -23,7 +23,7 @@ boxferry/
 ├── crates/
 │   ├── boxferry/                 # public library facade and CLI executable
 │   │   ├── src/lib.rs            # re-exports supported core and optional adapter APIs
-│   │   ├── src/main.rs           # generic CLI, route dispatch, reports, and presentation
+│   │   ├── src/main.rs           # CLI, route dispatch, reports, and presentation
 │   │   ├── src/route.rs          # finite typed CLI route registry
 │   │   └── tests/                # facade contracts and repository-policy tests
 │   ├── boxferry-model/           # ordered application graph, provenance, protected values

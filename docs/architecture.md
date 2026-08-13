@@ -101,7 +101,7 @@ In the reverse direction, `ComposeExporter` accepts a rolling provider-neutral C
 Specification target or an exact Docker Compose or `podman-compose` provider target plus an
 optional exact Docker Engine or Podman backend. It maps the neutral graph into ComposeLens's
 generated values and returns deterministic, parse-back-validated YAML. Provider and runtime
-identity remain separate for embedded provider-aware targets; the generic CLI uses only the
+identity remain separate for embedded provider-aware targets; the document conversion CLI uses only the
 rolling specification target and does not inspect installed tools. See
 [ADR 0013](decisions/0013-explicit-compose-provider-and-runtime.md) and
 [ADR 0020](decisions/0020-rolling-compose-specification-cli-target.md).
@@ -213,6 +213,12 @@ integrations they need.
 The executable owns argument parsing, terminal presentation, configuration-file discovery, and
 process exit codes. It calls public library orchestration APIs for every conversion. A behavior
 that can only be reached through private CLI code is an architectural defect.
+
+Document routes use `convert <INPUT_TYPE> <OUTPUT_TYPE>` and
+`validate <INPUT_TYPE> <OUTPUT_TYPE>`. Compose and Quadlet currently form four route leaves.
+Same-format routes still import into the neutral model and export a canonical native result; they
+are not syntax passthroughs. Route-specific help exposes only the applicable input and output
+option families. See [ADR 0029](decisions/0029-nested-input-output-cli-routes.md).
 
 ## Dependency rules
 
