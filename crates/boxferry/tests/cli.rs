@@ -571,7 +571,7 @@ fn empty_interpolation_environment_preserves_native_warnings_before_import_error
     assert!(stderr.contains("BFC0001 compose-model-invalid [error]"), "{stderr}");
     assert_eq!(
         stderr
-            .matches("help: Provide the missing value with --env-file PATH or --env NAME=VALUE.")
+            .matches("help: Provide the missing value with --env-file FILE or --env NAME=VALUE.")
             .count(),
         1,
         "{stderr}"
@@ -638,7 +638,7 @@ fn partial_interpolation_environment_is_complete_in_human_and_json_diagnostics_w
     assert!(human_stderr.contains("(3 findings)"));
     assert_eq!(
         human_stderr
-            .matches("help: Provide the missing value with --env-file PATH or --env NAME=VALUE.")
+            .matches("help: Provide the missing value with --env-file FILE or --env NAME=VALUE.")
             .count(),
         1
     );
@@ -1383,7 +1383,7 @@ fn human_sections_are_ordered_and_end_with_success_or_failure() -> Result<(), Bo
         .find("BFC0101 compose-unset-variable [warning]")
         .ok_or("interpolation warning")?;
     let interpolation_help = success
-        .find("help: Provide the missing value with --env-file PATH or --env NAME=VALUE.")
+        .find("help: Provide the missing value with --env-file FILE or --env NAME=VALUE.")
         .ok_or("interpolation help")?;
     let approximation = success
         .find("BFQ0009 quadlet-restart-policy-approximation [warning]")
@@ -1535,6 +1535,22 @@ fn help_version_and_json_stream_contracts_remain_conventional() -> Result<(), Bo
     Ok(())
 }
 
+fn assert_filesystem_metavariables_are_specific(help: &str) {
+    for file_option in ["--input-file <FILE>", "--env-file <FILE>", "--report-file <FILE>"] {
+        assert!(help.contains(file_option), "missing {file_option}");
+    }
+    for directory_option in [
+        "--input-directory <DIR>",
+        "--project-directory <DIR>",
+        "--output-directory <DIR>",
+        "--error-report-directory <DIR>",
+    ] {
+        assert!(help.contains(directory_option), "missing {directory_option}");
+    }
+    assert!(!help.contains("<PATH>"));
+    assert!(!help.contains("<PROJECT_DIRECTORY>"));
+}
+
 #[test]
 fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error>> {
     for arguments in [
@@ -1580,6 +1596,7 @@ fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error
     assert!(!compose_quadlet.contains("--input-type"));
     assert!(!compose_quadlet.contains("--output-type"));
     assert!(!compose_quadlet.contains("Output destination:"));
+    assert_filesystem_metavariables_are_specific(&compose_quadlet);
     let output_heading = compose_quadlet.find("Quadlet output:").ok_or("Quadlet output")?;
     let output_directory = output_heading
         + compose_quadlet[output_heading..]

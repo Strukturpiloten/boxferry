@@ -102,8 +102,10 @@ content. Same-format tests prove Compose input is merged, optionally interpolate
 canonical Compose YAML; non-interpolated cases retain expressions, defaults, typed native values,
 and extension data. Quadlet input is rebuilt as a canonical document set, and `validate` writes
 neither form. Help tests also prove every required `--output-directory` appears inside the selected
-output-format section. An approximate-output collision test preserves its warning while identifying `BFO2001` as
-the actual error. Combined-stream black-box tests verify progress, common diagnostic context is
+output-format section, file arguments use `FILE`, directory arguments use `DIR`, and filesystem
+options never fall back to an ambiguous `PATH` metavariable. An approximate-output collision test
+preserves its warning while identifying `BFO2001` as the actual error. Combined-stream black-box
+tests verify progress, common diagnostic context is
 printed once, varying finding evidence remains complete, native codes stay in JSON, attached help
 remains paired, `fix first` follows every diagnostic group, and the final success or failure line
 stays in human reading order. JSON, report-file, and support-bundle tests assert the same structured

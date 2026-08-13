@@ -127,17 +127,17 @@ struct ExplainCommand {
 #[derive(Debug, Args)]
 struct InputDocuments {
     /// Explicit input document in input order; repeat as needed.
-    #[arg(long = "input-file", value_name = "PATH")]
+    #[arg(long = "input-file", value_name = "FILE")]
     input_files: Vec<PathBuf>,
     /// Route-specific input directory expanded at this position.
-    #[arg(long = "input-directory", value_name = "PATH")]
+    #[arg(long = "input-directory", value_name = "DIR")]
     input_directories: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 struct ComposeInputOptions {
     /// Compose project root for resolving paths referenced by input documents.
-    #[arg(long)]
+    #[arg(long, value_name = "DIR")]
     project_directory: Option<PathBuf>,
     /// Fallback Compose project name when the input does not declare one.
     #[arg(long)]
@@ -146,7 +146,7 @@ struct ComposeInputOptions {
     #[arg(long)]
     interpolate: bool,
     /// Compose interpolation assignments; later files override earlier files.
-    #[arg(long = "env-file", value_name = "PATH", requires = "interpolate")]
+    #[arg(long = "env-file", value_name = "FILE", requires = "interpolate")]
     env_files: Vec<PathBuf>,
     /// Compose interpolation NAME=VALUE or authorized process NAME.
     #[arg(
@@ -210,7 +210,7 @@ struct DiagnosticOptions {
     #[command(flatten)]
     presentation: Presentation,
     /// Write the complete privacy-safe structured result to a new file.
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "FILE")]
     report_file: Option<PathBuf>,
     /// Write a locally reviewable ZIP with fixed README.md and report.json entries.
     #[arg(long)]

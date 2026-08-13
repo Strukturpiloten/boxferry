@@ -47,6 +47,10 @@ created by that invocation and removes the directory only when that invocation c
 Route help lists `--output-directory` inside the selected Compose or Quadlet output section while
 also showing it as required in `Usage`.
 
+Filesystem metavariables identify the required object kind consistently: `FILE` names a file and
+`DIR` names a directory. Route help does not use the ambiguous `PATH` metavariable for these
+options.
+
 A loss policy authorizes output; it never suppresses the diagnostic that explains a non-exact
 mapping. For example, `--loss-policy approximate` permits `BFQ0009` restart output while retaining
 that warning for review. `partial` additionally permits supported partial-output cases, but neither

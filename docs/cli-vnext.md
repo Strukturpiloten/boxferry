@@ -23,6 +23,9 @@ The implemented top-level commands are:
 Subcommand help is contextual: `boxferry convert --help` describes `convert`, not only the root
 command.
 
+Filesystem metavariables are type-specific throughout help output: `FILE` denotes a file and `DIR`
+denotes a directory. The CLI does not use the ambiguous `PATH` label for either kind.
+
 ## Generic conversion
 
 `convert` requires all of the following:
@@ -92,7 +95,7 @@ and are reported in verbose discovery details.
 Compose `${NAME}` interpolation and runtime container environment are separate concepts.
 Interpolation remains opt-in with `--interpolate` during the compatibility period and accepts:
 
-- repeatable `--env-file PATH`; later files override earlier files;
+- repeatable `--env-file FILE`; later files override earlier files;
 - repeatable `--env NAME=VALUE`; explicit values override environment files; and
 - `--env NAME`, which authorizes reading only that named process variable.
 
@@ -121,7 +124,7 @@ separate compatibility decision.
 
 ### Project directory
 
-`--project-directory PATH` supplies the base for relative bind mounts, build contexts, environment
+`--project-directory DIR` supplies the base for relative bind mounts, build contexts, environment
 file declarations, and other source paths. It does not change BoxFerry's process working
 directory. The default is the parent of the first resolved Compose input file. A project directory
 is required for stdin because stdin has no parent path.
@@ -231,7 +234,7 @@ identity, compatibility bounds, fidelity counts, structured diagnostics, output 
 redacted provenance. Each diagnostic includes its BoxFerry code and name, optional native source
 code, severity, summary, help, fields, and spans.
 
-`--report-file PATH` writes the same complete canonical JSON report independently of console mode.
+`--report-file FILE` writes the same complete canonical JSON report independently of console mode.
 The value-less `--generate-error-report` creates a local stored ZIP with exactly `README.md` and
 `report.json`; `--error-report-directory DIR` optionally selects its existing non-symlink output
 directory, otherwise the current directory is used. The local-clock name is

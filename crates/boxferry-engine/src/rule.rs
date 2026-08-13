@@ -248,7 +248,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "compose-unset-variable",
         Warning,
         "A Compose interpolation variable is not set.",
-        "Provide the missing value with --env-file PATH or --env NAME=VALUE."
+        "Provide the missing value with --env-file FILE or --env NAME=VALUE."
     ),
     rule!(
         ComposeRequiredVariable,
@@ -256,7 +256,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "compose-required-variable",
         Error,
         "A required Compose interpolation variable is not set.",
-        "Provide the required value with --env-file PATH or --env NAME=VALUE."
+        "Provide the required value with --env-file FILE or --env NAME=VALUE."
     ),
     rule!(
         ComposeInterpolationInvalid,
@@ -280,7 +280,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "compose-unresolved-variable",
         Warning,
         "A Compose variable expression remains unresolved at the adapter boundary.",
-        "Use --interpolate and provide missing values with --env-file PATH or --env NAME=VALUE; partial authorization applies only when the affected intent can be omitted."
+        "Use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE; partial authorization applies only when the affected intent can be omitted."
     ),
     rule!(
         ComposeNativeError,
@@ -584,7 +584,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "quadlet-unresolved-source-variable",
         Error,
         "A source variable expression cannot be emitted as a Quadlet value.",
-        "Resolve source variables before conversion; for Compose input, use --interpolate and provide missing values with --env-file PATH or --env NAME=VALUE."
+        "Resolve source variables before conversion; for Compose input, use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE."
     ),
     rule!(
         QuadletSourceInvalid,

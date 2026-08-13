@@ -151,7 +151,7 @@ the explicitly requested report cannot be written, the command fails because a r
 missing. If conversion already fails and report creation also fails, BoxFerry preserves the primary
 conversion exit category and emits a separate redacted report-write error.
 
-`--report-file PATH` and `--generate-error-report` may be used together. BoxFerry attempts
+`--report-file FILE` and `--generate-error-report` may be used together. BoxFerry attempts
 the report file first, then builds and publishes the support bundle from the resulting report. This
 deterministic order lets the bundle include a report-file write failure. A support-bundle failure
 occurs after the bundle's own `report.json` has been finalized, so it is recorded in the final
