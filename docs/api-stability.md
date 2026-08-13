@@ -2,8 +2,8 @@
 
 ## Current status
 
-BoxFerry 0.1.1 is the first crates.io release. The next lockstep pre-1.0 minor version is 0.2.0;
-it intentionally removes the legacy Quadlet parser surface. The facade and seven supported
+BoxFerry 0.2.0 is the current lockstep pre-1.0 release. It intentionally removes the legacy
+Quadlet parser surface. The facade and seven supported
 component crates use one lockstep version and the pre-1.0 contract below.
 
 The additive `compose`, `quadlet`, pure `runtime`, `podman-runtime`, and `docker-runtime` facade
