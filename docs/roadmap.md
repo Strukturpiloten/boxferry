@@ -394,6 +394,7 @@ boundary for pre-existing external Podman secrets.
 
 ## Phase 6: ecosystem hardening — open
 
+- [x] Consume released ComposeLens 0.1.17 and QuadletLens 0.1.13 from crates.io.
 - [x] Establish the first pinned, licensed real-world Compose corpus and an opt-in ingestion test.
 - [x] Use QuadletLens's first pinned, licensed real-world Quadlet corpus as target-format evidence,
       while keeping its parser result distinct from BoxFerry's end-to-end conversion coverage.
