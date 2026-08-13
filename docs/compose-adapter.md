@@ -131,8 +131,10 @@ Specification's `restart_policy`. `no`, `always`, unbounded or positive retry-li
 `on-failure`, and `unless-stopped` retain complete merge provenance. The exporter emits every
 neutral variant exactly through ComposeLens's parse-back-validated generator.
 
-An unresolved expression, `on-failure:0`, or a retry count outside the neutral `u64` range is a
-field-specific `BFC0005` invalid outcome. BoxFerry does not reinterpret an explicitly authored
+For cross-format import, an unresolved expression, `on-failure:0`, or a retry count outside the
+neutral `u64` range is a field-specific `BFC0005` invalid outcome. Compose-to-Compose native
+canonicalization instead retains a valid unresolved expression and its default because no neutral
+restart-policy interpretation is required. BoxFerry does not reinterpret an explicitly authored
 zero as an omitted retry limit. Runtime API decoders may independently interpret a native zero
 counter as the provider's absent/default representation because that is runtime observation, not
 authored Compose syntax.

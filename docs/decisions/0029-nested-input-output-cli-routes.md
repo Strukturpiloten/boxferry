@@ -6,6 +6,8 @@
   and Quadlet application naming
 - Amends: [ADR 0018](0018-generic-cli-and-diagnostic-support-bundle.md) and
   [ADR 0020](0020-rolling-compose-specification-cli-target.md)
+- Superseded for Compose-to-Compose execution by:
+  [ADR 0030](0030-native-compose-same-format-canonicalization.md)
 
 ## Context
 

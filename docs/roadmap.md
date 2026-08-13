@@ -60,8 +60,8 @@ as sixteen unrelated converters.
 ### Route orchestration
 
 - [x] Prove the shared importer → neutral model → exporter path in the public library API.
-- [x] Expose all four Compose/Quadlet document routes through the CLI registry, including
-  same-format canonicalization through the neutral model.
+- [x] Expose all four Compose/Quadlet document routes through the CLI registry, including native
+  Compose canonicalization and neutral-model Quadlet canonicalization.
 - [x] Add the [document conversion CLI contract](cli-vnext.md) with nested input and output selection.
 - [ ] Expose Docker-runtime, Podman-runtime, Compose, and Quadlet inputs and outputs through that
   contract without duplicating conversion rules in the CLI.
@@ -337,8 +337,9 @@ boundary for pre-existing external Podman secrets.
 - [x] Import `no`, `always`, unbounded or positive retry-limited `on-failure`, and
   `unless-stopped` into the distinct neutral container restart policy with complete merge
   provenance.
-- [x] Reject unresolved expressions, explicit zero retry limits, and retry counts outside the
-  neutral `u64` range without erasing their services.
+- [x] Reject unresolved expressions on cross-format routes, explicit zero retry limits, and retry
+  counts outside the neutral `u64` range without erasing their services; retain valid expressions
+  on Compose-to-Compose native canonicalization.
 - [x] Generate every neutral restart policy exactly back to Compose through ComposeLens's
   parse-back-validated document boundary.
 - [x] Convert authored Compose `restart: "no"` exactly into Quadlet `[Service] Restart=no` and
@@ -346,8 +347,8 @@ boundary for pre-existing external Podman secrets.
 - [x] Add offline import/export boundary tests, an end-to-end golden assertion, installed Podman
   6.0.2 generator validation, and a pinned real-world-corpus regression run.
 - [x] Promote 73 literal corpus policies from unsupported to exact; keep Mattermost's two
-  unresolved `${RESTART_POLICY}` values explicitly invalid until caller-supplied processing
-  context exists.
+  unresolved `${RESTART_POLICY}` values invalid for cross-format conversion while preserving them
+  in Compose-to-Compose output.
 
 ## Explicit Compose interpolation inputs — completed
 

@@ -331,8 +331,9 @@ identity for systemd restart policy and complete sibling activation-plus-orderin
 regular native health commands and scalars also enter the protected, source-aware health model.
 Host-unit references and incomplete relationships remain explicit. Docker and Podman runtime
 importers plus Compose and Quadlet exporters already exist as library APIs. The nested CLI exposes
-all four Compose/Quadlet document routes, including same-format canonicalization through the
-neutral model. Remaining semantic fields, runtime targets, and the full Docker/Podman/Compose/
+all four Compose/Quadlet document routes. Compose-to-Compose uses public native canonicalization to
+retain expressions and extension data; cross-format and Quadlet-to-Quadlet routes use the neutral
+model. Remaining semantic fields, runtime targets, and the full Docker/Podman/Compose/
 Quadlet route matrix are still open.
 
 Docker runtime resources, Docker Compose, Podman runtime resources, and Podman Quadlet must each

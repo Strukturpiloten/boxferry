@@ -74,8 +74,9 @@ pub use boxferry_model::{
 
 #[cfg(feature = "compose")]
 pub use boxferry_compose::{
-    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeFindingStage,
-    ComposeImporter, ComposeRuntime, ComposeSource, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, CanonicalComposeDocument,
+    ComposeCanonicalization, ComposeExporter, ComposeFindingStage, ComposeImporter, ComposeRuntime, ComposeSource,
+    DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
 };
 #[cfg(feature = "docker-runtime")]
 pub use boxferry_docker::{

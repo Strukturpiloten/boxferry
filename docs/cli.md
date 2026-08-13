@@ -44,6 +44,8 @@ BoxFerry creates an absent output directory. An existing directory is accepted o
 finds no entries; dotfiles and child directories count as content. Output files still use
 create-new writes, so BoxFerry never replaces an existing file. A failed write removes only files
 created by that invocation and removes the directory only when that invocation created it.
+Route help lists `--output-directory` inside the selected Compose or Quadlet output section while
+also showing it as required in `Usage`.
 
 A loss policy authorizes output; it never suppresses the diagnostic that explains a non-exact
 mapping. For example, `--loss-policy approximate` permits `BFQ0009` restart output while retaining
@@ -70,14 +72,15 @@ boxferry convert quadlet compose \
   --output-directory ./compose-output
 ```
 
-Same-format routes still pass through the native input adapter, neutral model, loss policy, and
-native output adapter. Compose-to-Compose loads, optionally interpolates, and merges the ordered
-input before writing canonical `compose.yaml`. Quadlet-to-Quadlet rebuilds a canonical document
-set. Neither route is a byte-for-byte passthrough, and unsupported intent remains visible.
+Compose-to-Compose loads, optionally interpolates, merges, applies profile selection, and uses the
+public ComposeLens-backed native canonicalization boundary. Without `--interpolate`, valid
+expressions and their defaults remain in canonical `compose.yaml`; source-native extension data is
+also retained. Quadlet-to-Quadlet continues through the neutral input and output adapters. Neither
+route is a byte-for-byte passthrough, and cross-format unsupported intent remains visible.
 
 Compose interpolation is disabled unless `--interpolate` is present. With interpolation disabled,
-BoxFerry does not read any process variable and unresolved expressions remain available to the
-import adapter or fail normal source validation.
+BoxFerry does not read any process variable. Compose-to-Compose preserves valid unresolved
+expressions, while cross-format routes pass them to normal source/target validation.
 
 With `--interpolate`, ComposeLens evaluates each source file before merge using an environment
 that starts empty. Compose default, required, and alternative operators therefore work without

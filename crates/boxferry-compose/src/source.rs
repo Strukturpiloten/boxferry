@@ -1,17 +1,85 @@
 //! Explicit input bundle for one processed Compose project.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 
 use boxferry_engine::{
-    DiagnosticField, DiagnosticValue, NativeFinding, NativeFindingLabel, NativeFindingLabelKind, Severity,
+    Diagnostic, DiagnosticField, DiagnosticValue, InvalidDiagnosticCode, NativeFinding, NativeFindingLabel,
+    NativeFindingLabelKind, RuleId, Severity,
 };
 use boxferry_model::{Identifier, ModelError, SourceId};
 use compose_lens::{
     diagnostic::{Diagnostic as ComposeDiagnostic, LabelKind, Severity as ComposeSeverity},
     merge::MergedProject,
     profiles::ProfileSelection,
+    render::render_canonical,
     source::SourceId as ComposeSourceId,
 };
+
+/// One canonical Compose document produced directly from a processed native Compose source.
+///
+/// Native canonicalization retains valid Compose-only values, including unresolved interpolation
+/// expressions, without reading ambient environment values. The document deliberately redacts its
+/// complete text from `Debug` output because source literals and expression defaults can contain
+/// secrets even when no interpolation input marked them sensitive.
+#[derive(Clone, Eq, PartialEq)]
+pub struct CanonicalComposeDocument {
+    text: String,
+    sensitive: bool,
+}
+
+impl CanonicalComposeDocument {
+    /// Returns deployable canonical Compose YAML.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Reports whether `ComposeLens` found protected rendered content.
+    #[must_use]
+    pub const fn is_sensitive(&self) -> bool {
+        self.sensitive
+    }
+}
+
+impl fmt::Debug for CanonicalComposeDocument {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CanonicalComposeDocument")
+            .field("text", &"<redacted>")
+            .field("sensitive", &self.sensitive)
+            .finish()
+    }
+}
+
+/// Result of native Compose-to-Compose canonicalization.
+///
+/// An error-level retained or rendering finding suppresses the document. Warnings and notes remain
+/// attached while allowing canonical output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComposeCanonicalization {
+    document: Option<CanonicalComposeDocument>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl ComposeCanonicalization {
+    /// Returns the canonical document when native validation succeeded.
+    #[must_use]
+    pub const fn document(&self) -> Option<&CanonicalComposeDocument> {
+        self.document.as_ref()
+    }
+
+    /// Returns retained processing and rendering diagnostics.
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    /// Consumes the result into its canonical document and diagnostics.
+    #[must_use]
+    pub fn into_parts(self) -> (Option<CanonicalComposeDocument>, Vec<Diagnostic>) {
+        (self.document, self.diagnostics)
+    }
+}
 
 /// Compose processing layer that emitted a retained native finding.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,10 +258,66 @@ impl ComposeSource {
     pub fn native_findings(&self) -> &[NativeFinding] {
         &self.native_findings
     }
+
+    /// Canonically renders this processed Compose project without evaluating unresolved variables.
+    ///
+    /// This same-format boundary delegates syntax generation to `ComposeLens`. Unlike export from
+    /// the neutral application model, it can retain valid source-native values that have no
+    /// format-independent representation, including interpolation expressions with defaults.
+    /// Loader, interpolation, merge, profile, and rendering findings remain structured.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidDiagnosticCode`] if `BoxFerry`'s static diagnostic catalogue contains an
+    /// invalid code.
+    pub fn canonicalize(&self) -> Result<ComposeCanonicalization, InvalidDiagnosticCode> {
+        let rendered = render_canonical(self.project(), self.profile_selection());
+        let mut findings = self.native_findings.clone();
+        findings.extend(
+            rendered
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| ComposeFindingStage::Rendering.native_finding(diagnostic)),
+        );
+        let diagnostics = findings
+            .into_iter()
+            .map(compose_native_diagnostic)
+            .collect::<Result<Vec<_>, _>>()?;
+        let valid = rendered.is_valid()
+            && diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity() != Severity::Error);
+        let sensitive = rendered.is_sensitive();
+        let document = valid.then(|| CanonicalComposeDocument {
+            text: rendered.into_output(),
+            sensitive,
+        });
+        Ok(ComposeCanonicalization { document, diagnostics })
+    }
 }
 
 pub(crate) fn native_project_finding(diagnostic: &ComposeDiagnostic) -> NativeFinding {
     ComposeFindingStage::ProjectModel.native_finding(diagnostic)
+}
+
+fn compose_native_diagnostic(finding: NativeFinding) -> Result<Diagnostic, InvalidDiagnosticCode> {
+    let rule = match finding.code() {
+        "compose.interpolation.unset-variable" => RuleId::ComposeUnsetVariable,
+        "compose.interpolation.required-variable" => RuleId::ComposeRequiredVariable,
+        "compose.interpolation.invalid-expression" => RuleId::ComposeInterpolationInvalid,
+        "compose.interpolation.nesting-limit" => RuleId::ComposeInterpolationNestingLimit,
+        _ => match finding.severity() {
+            Severity::Error => RuleId::ComposeNativeError,
+            Severity::Note => RuleId::ComposeNativeNote,
+            _ => RuleId::ComposeNativeWarning,
+        },
+    };
+    Ok(Diagnostic::new(
+        rule.definition().diagnostic_code()?,
+        finding.severity(),
+        "ComposeLens reported a native Compose finding",
+    )
+    .with_native_finding(finding))
 }
 
 fn interpolation_variable<'a>(code: &str, message: &'a str) -> Option<&'a str> {

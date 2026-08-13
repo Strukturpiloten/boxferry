@@ -311,6 +311,18 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
     let routes = capabilities_json["routes"].as_array().ok_or("routes")?;
     assert_eq!(routes.len(), 4);
+    let compose_to_compose = routes
+        .iter()
+        .find(|route| route["input_type"] == "compose" && route["output_type"] == "compose")
+        .ok_or("Compose-to-Compose route")?;
+    assert_eq!(
+        compose_to_compose["fidelity_boundaries"]["exact"],
+        "compose-lens-native-canonical-project"
+    );
+    assert_eq!(
+        compose_to_compose["fidelity_boundaries"]["policy_controlled"],
+        serde_json::json!([])
+    );
     let compose_to_quadlet = routes
         .iter()
         .find(|route| route["input_type"] == "compose" && route["output_type"] == "quadlet")
@@ -1552,7 +1564,6 @@ fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error
         "Compose input:",
         "Quadlet output:",
         "Conversion policy:",
-        "Output destination:",
         "Diagnostics and reports:",
     ];
     for heading in headings {
@@ -1568,6 +1579,14 @@ fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error
     assert!(!compose_quadlet.contains("--application-name"));
     assert!(!compose_quadlet.contains("--input-type"));
     assert!(!compose_quadlet.contains("--output-type"));
+    assert!(!compose_quadlet.contains("Output destination:"));
+    let output_heading = compose_quadlet.find("Quadlet output:").ok_or("Quadlet output")?;
+    let output_directory = output_heading
+        + compose_quadlet[output_heading..]
+            .find("--output-directory <DIR>")
+            .ok_or("output directory")?;
+    let policy_heading = compose_quadlet.find("Conversion policy:").ok_or("conversion policy")?;
+    assert!(output_heading < output_directory && output_directory < policy_heading);
 
     let quadlet_compose = boxferry_command()
         .args(["validate", "quadlet", "compose", "--help"])
@@ -1581,6 +1600,24 @@ fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error
     assert!(!quadlet_compose.contains("--interpolate"));
     assert!(!quadlet_compose.contains("--podman-minimum-version"));
     assert!(!quadlet_compose.contains("Output destination:"));
+
+    for (input, output, heading) in [
+        ("compose", "compose", "Compose output:"),
+        ("compose", "quadlet", "Quadlet output:"),
+        ("quadlet", "compose", "Compose output:"),
+        ("quadlet", "quadlet", "Quadlet output:"),
+    ] {
+        let help = boxferry_command().args(["convert", input, output, "--help"]).output()?;
+        let help = String::from_utf8(help.stdout)?;
+        let heading = help.find(heading).ok_or("output heading")?;
+        let destination = heading
+            + help[heading..]
+                .find("--output-directory <DIR>")
+                .ok_or("output directory")?;
+        let policy = help.find("Conversion policy:").ok_or("conversion policy")?;
+        assert!(heading < destination && destination < policy, "{input} -> {output}");
+        assert!(!help.contains("Output destination:"), "{input} -> {output}");
+    }
 
     let contextual = boxferry_command()
         .args(["help", "convert", "compose", "quadlet"])
@@ -1652,7 +1689,8 @@ fn compose_to_compose_merges_interpolates_and_writes_canonical_output() -> Resul
     assert_eq!(report["output_artifacts"].as_array().map(Vec::len), Some(1));
     let document = fs::read_to_string(output.path().join("compose.yaml"))?;
     assert!(document.contains("example.invalid/web:2"));
-    assert!(document.contains("MODE=override"));
+    assert!(document.contains("\"MODE\": \"override\""), "{document}");
+    assert!(!document.contains("\"MODE\": \"base\""));
     assert_eq!(fs::read_dir(output.path())?.count(), 1);
 
     let validated = boxferry_command()
@@ -1679,6 +1717,76 @@ fn compose_to_compose_merges_interpolates_and_writes_canonical_output() -> Resul
     let report: serde_json::Value = serde_json::from_slice(&validated.stdout)?;
     assert_eq!(report["output_artifacts"].as_array().map(Vec::len), Some(1));
     assert_eq!(fs::read_dir(project.path())?.count(), 2);
+    Ok(())
+}
+
+#[test]
+fn compose_to_compose_preserves_unresolved_expressions_and_defaults_without_interpolation() -> Result<(), Box<dyn Error>>
+{
+    let project = TemporaryOutput::new("compose-expression-preservation-project");
+    let output = TemporaryOutput::new("compose-expression-preservation-output");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("compose.yaml");
+    fs::write(
+        &input,
+        concat!(
+            "name: expression-preservation\n",
+            "x-boxferry-test: ${EXTENSION_VALUE:-extension-default}\n",
+            "services:\n",
+            "  web:\n",
+            "    image: example.invalid/web:${TAG:-latest}\n",
+            "    restart: ${RESTART_POLICY:-unless-stopped}\n",
+            "    read_only: ${READ_ONLY:-true}\n",
+            "    init: ${INIT:-true}\n",
+            "    stop_grace_period: ${STOP_TIMEOUT:-30s}\n",
+            "    pull_policy: ${PULL_POLICY:-missing}\n",
+            "    environment:\n",
+            "      VALUE: ${VALUE:-default-value}\n",
+            "    volumes:\n",
+            "      - ${DATA_PATH:-./data}:/srv/data\n",
+        ),
+    )?;
+
+    let converted = boxferry_command()
+        .args([
+            "convert",
+            "compose",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--output-directory",
+            path_text(output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        converted.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&converted.stdout),
+        String::from_utf8_lossy(&converted.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&converted.stdout)?;
+    assert_eq!(report["status"], "success");
+    assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
+    assert_eq!(report["fidelity"]["exact"], 0);
+    assert_eq!(report["fidelity"]["approximate"], 0);
+    assert_eq!(report["fidelity"]["unsupported"], 0);
+
+    let document = fs::read_to_string(output.path().join("compose.yaml"))?;
+    for expression in [
+        "${EXTENSION_VALUE:-extension-default}",
+        "${TAG:-latest}",
+        "${RESTART_POLICY:-unless-stopped}",
+        "${READ_ONLY:-true}",
+        "${INIT:-true}",
+        "${STOP_TIMEOUT:-30s}",
+        "${PULL_POLICY:-missing}",
+        "${VALUE:-default-value}",
+        "${DATA_PATH:-./data}",
+    ] {
+        assert!(document.contains(expression), "missing {expression}:\n{document}");
+    }
     Ok(())
 }
 

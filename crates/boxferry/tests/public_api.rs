@@ -334,6 +334,8 @@ fn facade_exposes_compose_adapters_and_specification_target_additively() -> Resu
             compose_source_id,
             SourceId::new("compose.yaml").map_err(|error| error.to_string())?,
         );
+    let canonical: boxferry::ComposeCanonicalization = source.canonicalize().map_err(|error| error.to_string())?;
+    assert!(canonical.document().is_some());
     let importer = ComposeImporter::new().map_err(|error| error.to_string())?;
     let result = importer.import(&source);
 

@@ -42,6 +42,7 @@ Architecture decision records capture choices that constrain future development.
 | [0027](0027-format-neutral-native-findings.md) | accepted | Format-neutral native findings retained by every source adapter |
 | [0028](0028-primary-remediation-guidance.md) | accepted | Structured fix-first guidance without source syntax in target adapters |
 | [0029](0029-nested-input-output-cli-routes.md) | accepted | Nested input/output CLI routes and same-format normalization |
+| [0030](0030-native-compose-same-format-canonicalization.md) | accepted | Native Compose same-format canonicalization preserves unresolved expressions |
 
 ## Adding an ADR
 

@@ -42,10 +42,12 @@ runtime flags, never infers installed tools, and does not promise compatibility 
 historical Compose consumer. Its internal BoxFerry profile revision is not a Compose
 Specification release version and is reported as `rolling`, never as a provider/version choice.
 
-Same-format routes are canonical conversions through the neutral model, not passthroughs.
-Compose-to-Compose performs normal loading, optional interpolation, ordered merge, import, and
-export. Quadlet-to-Quadlet parses the document set, imports it, and rebuilds canonical Quadlet
-files. The normal diagnostic and loss-policy contracts apply to both.
+Same-format routes are canonical conversions, not byte passthroughs. Compose-to-Compose performs
+normal loading, optional interpolation, ordered merge, profile selection, and ComposeLens native
+canonical rendering. Without `--interpolate`, valid Compose expressions, operators, defaults, and
+extension data remain intact. Quadlet-to-Quadlet parses the document set, imports it into the
+neutral model, and rebuilds canonical Quadlet files. Cross-format and Quadlet-to-Quadlet routes use
+the normal neutral-model diagnostic and loss-policy contract.
 
 `--input-file` and `--input-directory` are repeatable. Their occurrences form one ordered input
 sequence, even when the two options are interleaved:
@@ -199,8 +201,9 @@ rule and explanation.
 
 For `capabilities`, each of the four JSON routes includes stable route-specific output selectors
 and fidelity-boundary fields. Compose output reports the rolling Compose Specification target;
-Quadlet output reports finite Podman bounds. Every route identifies unsupported fields as
-policy-controlled.
+Quadlet output reports finite Podman bounds. Cross-format and Quadlet-to-Quadlet routes identify
+unsupported neutral-model fields as policy-controlled. Compose-to-Compose reports its native
+canonical-project boundary without a policy-controlled omission boundary.
 
 Normal output includes selected inputs, the route, the resolved application name, stage
 summaries, every non-exact diagnostic, and the write summary. Verbose output additionally includes resolved input

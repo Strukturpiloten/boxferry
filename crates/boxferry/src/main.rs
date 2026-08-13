@@ -388,7 +388,7 @@ struct ConvertComposeToCompose {
     output: ComposeOutputOptions,
     #[command(flatten, next_help_heading = "Conversion policy")]
     policy: ConversionPolicyOptions,
-    #[command(flatten, next_help_heading = "Output destination")]
+    #[command(flatten, next_help_heading = "Compose output")]
     destination: OutputDestination,
     #[command(flatten, next_help_heading = "Diagnostics and reports")]
     diagnostics: DiagnosticOptions,
@@ -405,7 +405,7 @@ struct ConvertComposeToQuadlet {
     output: QuadletOutputOptions,
     #[command(flatten, next_help_heading = "Conversion policy")]
     policy: ConversionPolicyOptions,
-    #[command(flatten, next_help_heading = "Output destination")]
+    #[command(flatten, next_help_heading = "Quadlet output")]
     destination: OutputDestination,
     #[command(flatten, next_help_heading = "Diagnostics and reports")]
     diagnostics: DiagnosticOptions,
@@ -422,7 +422,7 @@ struct ConvertQuadletToCompose {
     output: ComposeOutputOptions,
     #[command(flatten, next_help_heading = "Conversion policy")]
     policy: ConversionPolicyOptions,
-    #[command(flatten, next_help_heading = "Output destination")]
+    #[command(flatten, next_help_heading = "Compose output")]
     destination: OutputDestination,
     #[command(flatten, next_help_heading = "Diagnostics and reports")]
     diagnostics: DiagnosticOptions,
@@ -439,7 +439,7 @@ struct ConvertQuadletToQuadlet {
     output: QuadletOutputOptions,
     #[command(flatten, next_help_heading = "Conversion policy")]
     policy: ConversionPolicyOptions,
-    #[command(flatten, next_help_heading = "Output destination")]
+    #[command(flatten, next_help_heading = "Quadlet output")]
     destination: OutputDestination,
     #[command(flatten, next_help_heading = "Diagnostics and reports")]
     diagnostics: DiagnosticOptions,
@@ -1494,28 +1494,18 @@ fn generic_convert(
             )
         }
         RouteExecutor::ComposeToCompose => {
-            let target = TargetProfile::new(
-                COMPOSE_SPECIFICATION_TARGET,
-                COMPOSE_SPECIFICATION_PROFILE_REVISION,
-                Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
-            )?;
-            let result = convert(
-                &ComposeImporter::new()?,
-                &loaded.source,
-                &ComposeExporter::new()?,
-                &target,
-                arguments.loss_policy.into(),
-            )
-            .map_err(|error| {
-                compose_conversion_failure(&error, &loaded.preprocessing_diagnostics, &aliases, &discovered)
-            })?;
+            let (document, diagnostics) = loaded.source.canonicalize()?.into_parts();
             (
-                RenderedConversion::from_result(result, |output| {
-                    vec![RenderedFile {
-                        name: "compose.yaml".into(),
-                        text: output.text().to_owned(),
-                    }]
-                }),
+                RenderedConversion {
+                    output: document.map(|document| {
+                        vec![RenderedFile {
+                            name: "compose.yaml".into(),
+                            text: document.text().to_owned(),
+                        }]
+                    }),
+                    outcomes: Vec::new(),
+                    diagnostics,
+                },
                 VersionBounds {
                     minimum: "rolling".into(),
                     maximum: "rolling".into(),

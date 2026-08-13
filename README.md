@@ -80,8 +80,9 @@ Compose interpolation is disabled by default, so expressions remain unresolved r
 silently capturing workstation values.
 Callers can opt in with `--interpolate`, add repeatable `--env NAME=VALUE` inputs, and authorize
 individual sensitive process values with repeatable `--env NAME`. No other ambient variable or
-implicit `.env` file is read. Compose and Quadlet are both available as input and output, including
-same-format canonicalization through the neutral model. Quadlet input requires
+implicit `.env` file is read. Compose and Quadlet are both available as input and output. Native
+Compose-to-Compose canonicalization retains valid unresolved expressions and extension data;
+cross-format routes and Quadlet-to-Quadlet use the neutral model. Quadlet input requires
 `--application-name`; Compose output uses the rolling Compose Specification target and never
 inspects an installed provider or runtime.
 For a local, privacy-safe diagnostic archive, add the value-less `--generate-error-report` flag.

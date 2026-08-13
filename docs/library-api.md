@@ -64,7 +64,8 @@ no-default core, every supported individual feature, and all features.
 The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-runtime`, and
 `docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
 current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
-`ComposeFindingStage`, `ComposeRuntime`, Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
+`ComposeCanonicalization`, `CanonicalComposeDocument`, `ComposeFindingStage`, `ComposeRuntime`,
+Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
 `QuadletSource`, `QuadletParseResult`, `QuadletParseError`, `QuadletParseFailure`, `QuadletParseFailureStage`,
 the `QuadletParseDiagnostic` DTO family, `QuadletExporter`, `QuadletGroupingPolicy`, and
 `QuadletOutput`. It also exposes each adapter and matching native
@@ -276,6 +277,12 @@ native processing diagnostics with `ComposeSource::with_native_diagnostics` and 
 `ComposeFindingStage`; the importer forwards them through the same public result as mapping
 diagnostics. `ComposeFindingStage::native_finding` provides the same conversion for failure paths
 that cannot construct a source.
+
+`ComposeSource::canonicalize` is the public Compose-to-Compose normalization boundary. It delegates
+rendering to ComposeLens, retains valid unresolved expressions and defaults without ambient
+environment access, and returns `ComposeCanonicalization`. Error-level native findings suppress
+the `CanonicalComposeDocument`; warnings and notes remain attached. This native same-format API is
+separate from `ComposeExporter`, which maps a neutral application to Compose.
 
 Embedded callers control Compose interpolation before merge. They construct a ComposeLens
 `MapEnvironment`, distinguish plain from sensitive entries, create the loaded project's

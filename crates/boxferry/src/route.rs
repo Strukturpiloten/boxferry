@@ -95,9 +95,9 @@ const COMPOSE_TO_COMPOSE: RouteSpec = RouteSpec {
     executor: RouteExecutor::ComposeToCompose,
     input_options: InputOptions::Compose,
     target_selector: TargetSelector::ComposeSpecification,
-    exact_boundary: "supported-compose-canonical-subset",
+    exact_boundary: "compose-lens-native-canonical-project",
     approximate_boundaries: &[],
-    policy_controlled_boundaries: &["unsupported-fields"],
+    policy_controlled_boundaries: &[],
 };
 
 const QUADLET_TO_COMPOSE: RouteSpec = RouteSpec {

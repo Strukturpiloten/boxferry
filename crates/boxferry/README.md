@@ -10,6 +10,10 @@ The default features provide nested `convert <INPUT_TYPE> <OUTPUT_TYPE>` and
 `validate <INPUT_TYPE> <OUTPUT_TYPE>` commands for all four Compose/Quadlet document routes.
 Embedded users can disable default features and select only the adapters they need.
 
+Compose-to-Compose uses the public native canonicalization boundary so unresolved Compose
+expressions and defaults remain available without `--interpolate`. Cross-format routes continue
+through the neutral application model and normal loss policy.
+
 Compose output targets the rolling Compose Specification. Quadlet input requires an explicit
 application name, not a provider or runtime version. Provider-aware Compose targets remain
 available to embedded users through the public library API.

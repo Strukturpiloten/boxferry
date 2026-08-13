@@ -216,9 +216,13 @@ that can only be reached through private CLI code is an architectural defect.
 
 Document routes use `convert <INPUT_TYPE> <OUTPUT_TYPE>` and
 `validate <INPUT_TYPE> <OUTPUT_TYPE>`. Compose and Quadlet currently form four route leaves.
-Same-format routes still import into the neutral model and export a canonical native result; they
-are not syntax passthroughs. Route-specific help exposes only the applicable input and output
-option families. See [ADR 0029](decisions/0029-nested-input-output-cli-routes.md).
+Cross-format routes and Quadlet-to-Quadlet import into the neutral model and export a canonical
+native result. Compose-to-Compose instead uses ComposeLens's public native canonical renderer so
+valid unresolved expressions and extension data survive normalization. It still loads, optionally
+interpolates, merges, applies profile selection, and canonicalizes; it is not byte passthrough.
+Route-specific help exposes only the applicable input and output option families. See
+[ADR 0029](decisions/0029-nested-input-output-cli-routes.md) and
+[ADR 0030](decisions/0030-native-compose-same-format-canonicalization.md).
 
 ## Dependency rules
 
