@@ -18,6 +18,7 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Updates the published ComposeLens dependency to 0.1.17 and QuadletLens to 0.1.13.
 - Replaces the aggregate
   `QuadletSource::parse -> Result<QuadletSource, QuadletSourceError>` contract. The sole parser
   returns `QuadletParseResult` or `QuadletParseError` and retains recoverable native diagnostics.

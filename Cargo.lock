@@ -196,9 +196,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "compose-lens"
-version = "0.1.16"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78efd917532a3ed6b52c6a6c41e9772f045a0b538e9eb6be3a4be40758624ca6"
+checksum = "33be2cde41efbbe06f3903eca9a2f987a02ec4e2b6ecbbfe8d2d73b663a9accf"
 dependencies = [
  "yaml-edit",
 ]
@@ -344,9 +344,9 @@ dependencies = [
 
 [[package]]
 name = "quadlet-lens"
-version = "0.1.12"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abf491a9733aecb82c705f7575dc8f15d79bccb33f5b1ca9a3df5b7e012d1898"
+checksum = "a72961b87b7e244f647b84724775517c9ca336c39f4bd5fa7517691ffc18e73b"
 dependencies = [
  "serde",
  "toml",

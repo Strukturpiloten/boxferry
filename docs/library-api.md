@@ -167,8 +167,8 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.16;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.12;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.17;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.13;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
 - an optional `docker-runtime` facade feature backed by `boxferry-docker`.
@@ -298,7 +298,7 @@ Compose-relative path resolution. The Compose exporter preserves ordered short/l
 explicit `required`/`raw` options, and path sensitivity through ComposeLens's validated generator.
 Loading file contents and applying Compose parser semantics remains a separate caller-authorized API.
 
-The importer consumes ComposeLens 0.1.16's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.1.17's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
@@ -332,7 +332,7 @@ group using the group name and rejects missing, multiple, unresolved, external, 
 It remains approximate because structural membership does not itself assert shared namespaces.
 Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
 container restart policies, explicit container names, external secret grants, and service
-metadata labels convert through QuadletLens 0.1.12. `Never`
+metadata labels convert through QuadletLens 0.1.13. `Never`
 maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
 limits remain manual actions. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an
