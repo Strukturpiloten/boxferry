@@ -27,8 +27,8 @@ write operation is the `release-plz-*` preparation branch and pull request.
 
 ## Routine release
 
-1. Merge ordinary reviewed changes into the default branch. No release issue, local release
-   branch, or manually created release pull request is needed.
+1. Merge a reviewed release-worthy code change into the default branch. No release issue, local
+   release branch, or manually created release pull request is needed.
 2. Review the release-plz pull request. It updates the lockstep Cargo version, internal dependency
    requirements, lockfile, and root `CHANGELOG.md`. Normal CI must pass before merge.
 3. Merge the release-plz pull request. Only a merged pull request whose head starts with
@@ -37,9 +37,18 @@ write operation is the `release-plz-*` preparation branch and pull request.
    publishes the eight crates in dependency order, creates attestations and checksums, and
    publishes the immutable GitHub release.
 
-Use concise pull-request titles such as `feat: ...`, `fix: ...`, or `feat!: ...`. Release-plz also
-accepts other titles, but these prefixes make version selection and changelog grouping clearer.
-For intentional pre-1.0 public breaks, use a breaking title and review the resulting minor version.
+GitHub uses the pull-request title as the squash commit title, so the title is the release
+classification contract. Release-plz creates or updates a release pull request only when at least
+one unreleased squash commit uses `feat`, `fix`, `perf`, `refactor`, or `revert`, with an optional
+scope and optional breaking `!`. For example, `feat(cli): ...`, `fix!: ...`, and
+`refactor(model)!: ...` are release-worthy. For intentional pre-1.0 public breaks, use a breaking
+title and review the resulting minor version.
+
+Use `docs`, `test`, `ci`, `build`, `style`, or `chore` for non-code work. Those titles and every
+unmatched title neither trigger release preparation nor enter generated release notes. A code
+change with a non-release title will not be published automatically; dependency updates that
+change shipped behavior therefore need a release-worthy title such as `fix(deps): ...`, while
+maintenance-only updates remain `chore(deps): ...`.
 
 GitHub release notes are extracted from the matching version section in `CHANGELOG.md`, which is
 the only release-history source in the repository. Keep changelog entries short and move technical
