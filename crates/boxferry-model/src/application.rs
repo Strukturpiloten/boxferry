@@ -2390,25 +2390,17 @@ pub struct NetworkAttachment {
 }
 
 impl NetworkAttachment {
-    /// Creates a network attachment with ordered aliases.
+    /// Creates a network attachment with ordered provenance-bearing aliases.
     #[must_use]
-    pub const fn new(network: Identifier, aliases: Vec<String>) -> Self {
+    pub fn new(network: Identifier, aliases: Vec<Sourced<ProtectedString>>) -> Self {
         Self {
             network,
-            aliases,
-            alias_sensitivities: Vec::new(),
-            alias_origins: Vec::new(),
+            aliases: aliases.iter().map(|alias| alias.value().expose().to_owned()).collect(),
+            alias_sensitivities: aliases.iter().map(|alias| alias.value().is_sensitive()).collect(),
+            alias_origins: aliases.into_iter().map(|alias| alias.origins().to_vec()).collect(),
             ipv4_address: None,
             ipv6_address: None,
         }
-    }
-
-    /// Creates a network attachment from aliases that retain source provenance.
-    #[must_use]
-    pub fn with_sourced_aliases(network: Identifier, aliases: Vec<Sourced<ProtectedString>>) -> Self {
-        let mut attachment = Self::new(network, Vec::new());
-        attachment.set_aliases_with_provenance(aliases);
-        attachment
     }
 
     /// Returns the application network name.
@@ -2424,9 +2416,6 @@ impl NetworkAttachment {
     }
 
     /// Returns alias origins in the same order as [`Self::aliases`].
-    ///
-    /// Values created through [`Self::new`] have no individual origins; source adapters should
-    /// use [`Self::with_sourced_aliases`] or [`Self::add_alias`] when provenance is available.
     #[must_use]
     pub fn alias_origins(&self) -> &[Vec<Provenance>] {
         &self.alias_origins
@@ -2434,9 +2423,8 @@ impl NetworkAttachment {
 
     /// Returns per-alias sensitivity flags in the same order as [`Self::aliases`].
     ///
-    /// Values created through [`Self::new`] have no explicit sensitive aliases. Target adapters
-    /// use this boundary to avoid passing protected aliases into native APIs that cannot redact
-    /// them.
+    /// Target adapters use this boundary to avoid passing protected aliases into native APIs that
+    /// cannot redact them.
     #[must_use]
     pub fn alias_sensitivities(&self) -> &[bool] {
         &self.alias_sensitivities
@@ -4699,7 +4687,7 @@ mod tests {
         runtime.set_ports_with_origins(Vec::new(), vec![origin.clone()]);
         runtime.set_networks_with_origins(
             vec![Sourced::from_source(
-                NetworkAttachment::with_sourced_aliases(
+                NetworkAttachment::new(
                     id("edge")?,
                     vec![Sourced::from_source(
                         ProtectedString::sensitive("private-alias"),
@@ -5305,14 +5293,10 @@ mod tests {
     }
 
     #[test]
-    fn network_attachments_keep_legacy_constructor_and_add_source_aware_addresses_aliases() -> Result<(), String> {
+    fn network_attachments_retain_alias_provenance_and_redact_sensitive_values() -> Result<(), String> {
         let origin =
             crate::Provenance::source(crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?);
-        let legacy = NetworkAttachment::new(id("legacy")?, vec!["legacy.alias".to_owned()]);
-        assert_eq!(legacy.aliases(), ["legacy.alias"]);
-        assert!(legacy.alias_origins().is_empty());
-
-        let mut attachment = NetworkAttachment::with_sourced_aliases(
+        let mut attachment = NetworkAttachment::new(
             id("frontend")?,
             vec![
                 Sourced::from_source(ProtectedString::plain("web"), origin.clone()),
@@ -5323,7 +5307,10 @@ mod tests {
             ProtectedString::plain("192.0.2.10"),
             origin.clone(),
         ));
-        attachment.set_ipv6_address(Sourced::from_source(ProtectedString::plain("2001:db8::10"), origin));
+        attachment.set_ipv6_address(Sourced::from_source(
+            ProtectedString::plain("2001:db8::10"),
+            origin.clone(),
+        ));
         let metrics = Sourced::generated(ProtectedString::plain("metrics"));
         attachment.add_alias(&metrics);
 
@@ -5331,6 +5318,7 @@ mod tests {
         assert_eq!(attachment.alias_sensitivities(), [false, true, false]);
         assert_eq!(attachment.alias_origins().len(), 3);
         assert_eq!(attachment.alias_origins()[0].len(), 1);
+        assert_eq!(attachment.alias_origins()[1], std::slice::from_ref(&origin));
         assert!(attachment.alias_origins()[2].is_empty());
         assert_eq!(
             attachment.ipv4_address().map(|address| address.value().expose()),
@@ -5345,11 +5333,14 @@ mod tests {
         assert!(debug.contains("[REDACTED]"));
 
         let mut service = Service::new(id("web")?);
-        service.add_network(Sourced::generated(legacy));
+        service.add_network(Sourced::generated(NetworkAttachment::new(
+            id("previous")?,
+            vec![Sourced::generated(ProtectedString::plain("previous-alias"))],
+        )));
         let previous = service
             .replace_network(0, Sourced::generated(attachment))
             .map_err(|error| error.to_string())?;
-        assert_eq!(previous.value().network().as_str(), "legacy");
+        assert_eq!(previous.value().network().as_str(), "previous");
         assert_eq!(service.networks()[0].value().network().as_str(), "frontend");
         assert!(matches!(
             service.replace_network(1, Sourced::generated(NetworkAttachment::new(id("unused")?, Vec::new()))),

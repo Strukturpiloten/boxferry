@@ -2,9 +2,12 @@
 
 ## Current status
 
-BoxFerry 0.2.0 is the current lockstep pre-1.0 release. It intentionally removes the legacy
-Quadlet parser surface. The facade and seven supported
+BoxFerry 0.3.0 is the current lockstep pre-1.0 release. It intentionally adopts the released
+ComposeLens and QuadletLens 0.2 native API changes. The facade and seven supported
 component crates use one lockstep version and the pre-1.0 contract below.
+
+The 0.3.0 migration note records the native public reexport paths for
+`compose_lens::model::ResourceExternal` and `quadlet_lens::model::SystemdUnitKey`.
 
 The additive `compose`, `quadlet`, pure `runtime`, `podman-runtime`, and `docker-runtime` facade
 features are exercised as external callers use them,
@@ -22,8 +25,9 @@ SemVer conventions for `0.x` releases:
 - yanked releases are reserved for defects that make a published package unsafe or unusable.
 
 Public enums are non-exhaustive where future format and policy variants are expected. Callers must
-retain a fallback match arm. New trait methods require a compatibility-safe default or a minor
-release. The facade is the preferred compatibility boundary; component crates are supported for
+retain a fallback match arm. New trait methods, replacements, and removals land directly in the
+next minor release with concise migration notes; BoxFerry does not retain compatibility shims by
+default. The facade is the preferred compatibility boundary; component crates are supported for
 callers that deliberately need lower-level model, engine, or adapter APIs.
 
 The initial `ServiceGroup` contract guarantees ordered structural membership and provenance only.
@@ -52,8 +56,9 @@ portability lane, not a claim of native systemd or container-runtime availabilit
 library compilation on other targets is incidental unless the platform is listed in the supported
 CI matrix. See [platform support](platform-support.md).
 
-## Deprecation
+## Intentional API changes
 
-When practical, a replaced public API remains available and deprecated for at least one minor
-release. A removal or semantic change is documented in the changelog and migration notes. Native
-compatibility catalogue changes are evidence updates, not automatically Rust API breaks.
+This is new, evolving pre-1.0 software. An intentional public API replacement or removal lands in
+the next minor release without a deprecated compatibility path. Its changelog and release notes
+state the direct migration. Native compatibility catalogue changes are evidence updates, not
+automatically Rust API breaks.

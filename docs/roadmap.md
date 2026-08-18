@@ -45,7 +45,8 @@ as sixteen unrelated converters.
 - [ ] Extend Quadlet import across the remaining first-milestone semantic subset, including
       divergent runtime pod names and safely decoded native value forms not covered by the reviewed slices.
 - [x] Accept typed Quadlet `.image` and `.build` unit families.
-- [ ] Accept typed Quadlet `.kube` and `.artifact` unit families.
+- [x] Report every Quadlet `.kube` and `.artifact` document entry individually as native-only,
+      including generic and unknown sections; neutral Kubernetes and artifact semantics remain open.
 
 ### Target adapters
 
@@ -268,10 +269,10 @@ boundary for pre-existing external Podman secrets.
       unsupported diagnostic instead of importing infra containers or guessing portable intent.
 - [x] Add isolated, digest-pinned runtime conformance for every supported minor line with an
       official immutable local-runtime image: 5.4.0, 5.5.2, 5.6.2, 5.7.1, and 5.8.2.
-- [x] Add an opt-in exact-current-patch lane for an explicitly selected installed Podman 6.0.2;
+- [x] Add an opt-in exact-current-patch lane; it now requires an explicitly selected Podman 6.1.0;
       create only uniquely named test resources and remove them after inspection.
 - [ ] Add reproducible scheduled-image conformance for the exact current patch. The official
-      stable registry had no immutable Podman 6.0.2 local-runtime image on 2026-08-04.
+      stable registry had no immutable Podman 6.1.0 local-runtime image on 2026-08-17.
 - [x] Decode explicit Docker container, image, network, and volume inspect arrays across the finite
       Engine API 1.40-through-1.55 range, with closed explicit-endpoint acquisition and bounded
       container-resource expansion.
@@ -394,7 +395,7 @@ boundary for pre-existing external Podman secrets.
 
 ## Phase 6: ecosystem hardening — open
 
-- [x] Consume released ComposeLens 0.1.17 and QuadletLens 0.1.13 from crates.io.
+- [x] Consume released ComposeLens 0.2.0 and QuadletLens 0.2.0 from crates.io.
 - [x] Establish the first pinned, licensed real-world Compose corpus and an opt-in ingestion test.
 - [x] Use QuadletLens's first pinned, licensed real-world Quadlet corpus as target-format evidence,
       while keeping its parser result distinct from BoxFerry's end-to-end conversion coverage.

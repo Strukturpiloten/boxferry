@@ -8,13 +8,13 @@ use boxferry_compose::{
 };
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, TargetProfile};
 use boxferry_model::{
-    Annotation, Application, Command, Config, Device, Entrypoint, EnvironmentFile, EnvironmentFileFormat,
-    EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, GroupExitPolicy, Healthcheck, HostAddress,
-    HostMapping, Identifier, ImageAcquisition, ImageBuild, ImageReference, KernelParameter, Logging, LoggingOption,
-    MetadataLabel, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port,
-    ProtectedString, Protocol, Provenance, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecurityOption,
-    SelinuxRelabel, Service, ServiceGroup, ServiceGroupRuntime, SourceId, Sourced, StartupNotification, StopTimeout,
-    Volume,
+    Annotation, Application, Command, Config, ConfigMaterial, Device, Entrypoint, EnvironmentFile,
+    EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue, EnvironmentVariable, GroupExitPolicy, Healthcheck,
+    HostAddress, HostMapping, Identifier, ImageAcquisition, ImageBuild, ImageReference, KernelParameter, Logging,
+    LoggingOption, MetadataLabel, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption,
+    NetworkIpamConfig, Port, ProtectedString, Protocol, Provenance, ResourceLimit, ResourceOwnership, RestartPolicy,
+    Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceGroup, ServiceGroupRuntime, SourceId,
+    Sourced, StartupNotification, StopTimeout, Volume,
 };
 
 #[test]
@@ -108,7 +108,10 @@ fn generates_iteration_one_compose_fields_and_reports_reload_loss() -> Result<()
         ),
         origin.clone(),
     )]);
-    let mut attachment = NetworkAttachment::new(Identifier::new("front")?, vec!["web".to_owned()]);
+    let mut attachment = NetworkAttachment::new(
+        Identifier::new("front")?,
+        vec![Sourced::from_source(ProtectedString::plain("web"), origin.clone())],
+    );
     attachment.set_ipv4_address(Sourced::from_source(
         ProtectedString::plain("192.0.2.10"),
         origin.clone(),
@@ -289,7 +292,7 @@ fn exports_the_supported_subset_deterministically_and_redacts_sensitive_values()
         origin.clone(),
     ));
     service.add_network(Sourced::from_source(
-        NetworkAttachment::new(Identifier::new("frontend")?, vec!["web.local".to_owned()]),
+        NetworkAttachment::new(Identifier::new("frontend")?, vec![plain_alias("web.local", &origin)]),
         origin.clone(),
     ));
     application.add_service(Sourced::from_source(service, origin))?;
@@ -799,7 +802,7 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
     let target = exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?;
     let plan = exporter.plan(&application, &target)?;
     for subject in [
-        "configs.settings",
+        "configs.settings.material",
         "secrets.token",
         "service_groups.observed-pod",
         "services.web.environment.ABSENT",
@@ -822,6 +825,193 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
                 "    restart: \"unless-stopped\"\n",
             )
     }));
+    Ok(())
+}
+
+#[test]
+fn emits_application_owned_file_backed_configs_and_secrets_with_parse_back_and_redaction() -> Result<(), Box<dyn Error>>
+{
+    let origin = Provenance::source(SourceId::new("resource-files.compose.yaml")?);
+    let mut application = minimal_application()?;
+    let mut config = Config::new(Identifier::new("application-config")?, ResourceOwnership::Application);
+    config.set_material(Sourced::from_source(
+        ConfigMaterial::File(ProtectedString::plain("config/application.yaml")),
+        origin.clone(),
+    ));
+    application.add_config(Sourced::from_source(config, origin.clone()))?;
+    let mut secret = Secret::new(Identifier::new("database-password")?, ResourceOwnership::Application);
+    secret.set_material(Sourced::from_source(
+        SecretMaterial::File(ProtectedString::sensitive("secrets/database-password.txt")),
+        origin.clone(),
+    ));
+    application.add_secret(Sourced::from_source(secret, origin))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(2, 30, 0))?)?;
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "configs.application-config")
+    );
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == "secrets.database-password")
+    );
+    assert!(
+        plan.outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+    let result = plan.authorize(LossPolicy::ExactOnly);
+    let output = result.output().ok_or("exact Compose output")?;
+    assert!(
+        output
+            .text()
+            .contains("configs:\n  \"application-config\":\n    file: \"config/application.yaml\"")
+    );
+    assert!(
+        output
+            .text()
+            .contains("secrets:\n  \"database-password\":\n    file: \"secrets/database-password.txt\"")
+    );
+    assert_eq!(
+        output
+            .document()
+            .configs()
+            .iter()
+            .find(|config| config.name().value() == "application-config")
+            .and_then(compose_lens::model::ConfigDefinition::file)
+            .map(compose_lens::model::Located::value),
+        Some(&"config/application.yaml".to_owned())
+    );
+    assert_eq!(
+        output
+            .document()
+            .secrets()
+            .iter()
+            .find(|secret| secret.name().value() == "database-password")
+            .and_then(compose_lens::model::SecretDefinition::file)
+            .map(compose_lens::model::Located::value),
+        Some(&"secrets/database-password.txt".to_owned())
+    );
+    let debug = format!("{output:?}");
+    assert!(!debug.contains("secrets/database-password.txt"));
+    Ok(())
+}
+
+#[test]
+fn file_backed_resource_outcomes_combine_and_deduplicate_declaration_and_material_origins() -> Result<(), Box<dyn Error>>
+{
+    let declaration = Provenance::source(SourceId::new("resource-declaration.compose.yaml")?);
+    let name = Provenance::source(SourceId::new("resource-name.compose.yaml")?);
+    let material = Provenance::source(SourceId::new("resource-material.compose.yaml")?);
+    let mut application = minimal_application()?;
+
+    let mut config = Config::new(Identifier::new("settings")?, ResourceOwnership::Application);
+    let mut config_material = Sourced::from_source(
+        ConfigMaterial::File(ProtectedString::plain("config/settings.yaml")),
+        material.clone(),
+    );
+    config_material.add_origin(declaration.clone());
+    config.set_material(config_material);
+    let mut sourced_config = Sourced::from_source(config, declaration.clone());
+    sourced_config.add_origin(name.clone());
+    application.add_config(sourced_config)?;
+
+    let mut secret = Secret::new(Identifier::new("credentials")?, ResourceOwnership::Application);
+    let mut secret_material = Sourced::from_source(
+        SecretMaterial::File(ProtectedString::sensitive("secret/credentials.txt")),
+        material.clone(),
+    );
+    secret_material.add_origin(declaration.clone());
+    secret.set_material(secret_material);
+    let mut sourced_secret = Sourced::from_source(secret, declaration.clone());
+    sourced_secret.add_origin(name.clone());
+    application.add_secret(sourced_secret)?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(2, 30, 0))?)?;
+    for subject in ["configs.settings", "secrets.credentials"] {
+        let outcome = plan
+            .outcomes()
+            .iter()
+            .find(|outcome| outcome.subject() == subject)
+            .ok_or("file-backed resource outcome")?;
+        assert_eq!(outcome.kind(), ConversionKind::Exact);
+        assert_eq!(
+            outcome.origins(),
+            &[declaration.clone(), name.clone(), material.clone()]
+        );
+    }
+    assert!(!format!("{plan:?}").contains("secret/credentials.txt"));
+    Ok(())
+}
+
+#[test]
+fn keeps_non_file_and_non_application_resources_as_policy_controlled_losses() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("resource-boundaries.compose.yaml")?);
+    let mut application = minimal_application()?;
+    let mut inline = Config::new(Identifier::new("inline")?, ResourceOwnership::Application);
+    inline.set_material(Sourced::from_source(
+        ConfigMaterial::Content(ProtectedString::sensitive("do-not-render")),
+        origin.clone(),
+    ));
+    application.add_config(Sourced::from_source(inline, origin.clone()))?;
+    let mut environment = Secret::new(Identifier::new("environment")?, ResourceOwnership::Application);
+    environment.set_material(Sourced::from_source(
+        SecretMaterial::Environment(ProtectedString::sensitive("PRIVATE_TOKEN")),
+        origin.clone(),
+    ));
+    application.add_secret(Sourced::from_source(environment, origin.clone()))?;
+    let mut external = Config::new(Identifier::new("external")?, ResourceOwnership::External);
+    external.set_material(Sourced::from_source(
+        ConfigMaterial::File(ProtectedString::sensitive("private-external.yaml")),
+        origin,
+    ));
+    application.add_config(Sourced::generated(external))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(2, 30, 0))?)?;
+    for subject in [
+        "configs.inline.material",
+        "secrets.environment.material",
+        "configs.external",
+    ] {
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported),
+            "missing policy-controlled loss for {subject}: {:#?}",
+            plan.outcomes()
+        );
+    }
+    assert!(plan.clone().authorize(LossPolicy::ExactOnly).output().is_none());
+    let partial = plan.clone().authorize(LossPolicy::AllowPartial);
+    let output = partial.output().ok_or("partial Compose output")?;
+    assert!(!output.text().contains("configs:"));
+    assert!(!output.text().contains("secrets:"));
+    let debug = format!("{plan:?}");
+    assert!(!debug.contains("do-not-render"));
+    assert!(!debug.contains("PRIVATE_TOKEN"));
+    assert!(!debug.contains("private-external.yaml"));
+    Ok(())
+}
+
+#[test]
+fn rejects_unsafe_file_resource_paths_without_generating_a_candidate() -> Result<(), Box<dyn Error>> {
+    let origin = Provenance::source(SourceId::new("unsafe-resource.compose.yaml")?);
+    let mut application = minimal_application()?;
+    let mut config = Config::new(Identifier::new("settings")?, ResourceOwnership::Application);
+    config.set_material(Sourced::from_source(
+        ConfigMaterial::File(ProtectedString::sensitive("${UNRESOLVED_CONFIG_PATH}")),
+        origin,
+    ));
+    application.add_config(Sourced::generated(config))?;
+
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(2, 30, 0))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "configs.settings.material" && outcome.kind() == ConversionKind::Invalid
+    }));
+    assert!(plan.clone().authorize(LossPolicy::AllowPartial).output().is_none());
+    assert!(!format!("{plan:?}").contains("UNRESOLVED_CONFIG_PATH"));
     Ok(())
 }
 
@@ -1240,6 +1430,10 @@ fn add_environment_files(service: &mut Service, origin: &Provenance) -> Result<(
     private.set_format(Sourced::from_source(EnvironmentFileFormat::Raw, origin.clone()));
     service.add_environment_file(Sourced::from_source(private, origin.clone()));
     Ok(())
+}
+
+fn plain_alias(value: &str, origin: &Provenance) -> Sourced<ProtectedString> {
+    Sourced::from_source(ProtectedString::plain(value), origin.clone())
 }
 
 fn assert_sensitive_debug(debug: &str) {

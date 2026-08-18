@@ -1,0 +1,34 @@
+toml-version = "v1.0.0"
+
+[files]
+include = ["**/*.toml"]
+respect-ignore-files = true
+
+[format.rules]
+line-ending = "lf"
+
+[lint.rules]
+dotted-keys-out-of-order = "error"
+key-empty = "error"
+tables-out-of-order = "error"
+
+# Tombi 1.4.0's embedded Cargo schema references two non-embedded remote schemas. Use a local,
+# deliberately structural schema so fresh offline runners remain deterministic; Cargo commands
+# remain the authoritative semantic validation for every manifest.
+[[schemas]]
+path = "docs/schemas/tombi-cargo-offline.schema.json"
+include = ["Cargo.toml", "**/Cargo.toml"]
+
+# Fixture manifests and evidence matrices use deliberate domain ordering. Keep their keys in that
+# order while still applying syntax validation and the non-ordering formatter rules.
+[[overrides]]
+files.include = [
+  "fixtures/*.toml",
+  "fixtures/**/*.toml",
+  "tools/*.toml",
+  "tools/**/*.toml",
+]
+
+[overrides.lint.rules]
+dotted-keys-out-of-order = "off"
+tables-out-of-order = "off"

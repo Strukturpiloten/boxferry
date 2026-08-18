@@ -16,6 +16,22 @@ use zip::{CompressionMethod, ZipArchive};
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn quadlet_output_help_and_rejected_unknown_options_have_no_unused_systemd_selector() -> Result<(), Box<dyn Error>> {
+    let help = boxferry_command()
+        .args(["convert", "compose", "quadlet", "--help"])
+        .output()?;
+    assert!(help.status.success());
+    assert!(!String::from_utf8(help.stdout)?.contains("--systemd-version"));
+
+    let unknown = boxferry_command()
+        .args(["validate", "compose", "quadlet", "--systemd-version", "256"])
+        .output()?;
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8(unknown.stderr)?.contains("unexpected argument '--systemd-version'"));
+    Ok(())
+}
+
+#[test]
 fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() -> Result<(), Box<dyn Error>> {
     let project = TemporaryOutput::new("compose-import-diagnostics");
     fs::create_dir_all(project.path())?;

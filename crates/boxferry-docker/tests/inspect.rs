@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use boxferry_docker::{DockerApiVersion, DockerImporter, DockerInspectDocuments, DockerInspectSource};
 use boxferry_engine::{ConversionKind, DiagnosticCode, ImportAdapter, Severity};
 use boxferry_model::{
-    Command, EnvironmentValue, HealthcheckCommand, Identifier, MountSource, Protocol, Provenance, ResourceOwnership,
-    RestartPolicy, SelinuxRelabel, SourceId, Sourced,
+    Command, EnvironmentValue, HealthcheckCommand, Identifier, MountSource, Protocol, Provenance, ProvenanceKind,
+    ResourceOwnership, RestartPolicy, SelinuxRelabel, SourceId, Sourced,
 };
 use boxferry_runtime::{EffectiveCommand, OverrideReconstruction, RuntimeImplementation, RuntimeResolutions};
 
@@ -196,7 +196,7 @@ fn api_1_40_decodes_effective_state_and_relationships_without_raw_id_leaks() -> 
         Some("registry.example.invalid/team/web:1.2@sha256:abcd")
     );
     assert!(container.image_source_id().is_some());
-    assert_eq!(container.networks()[0].aliases(), ["web", "public-api"]);
+    assert_protected_runtime_aliases(&container.networks()[0], &["web", "public-api"]);
     assert_eq!(container.ports()[0].container(), 8080);
     assert_eq!(container.ports()[0].published(), Some(18080));
     assert_eq!(container.ports()[0].host_address(), Some("127.0.0.1"));
@@ -384,6 +384,7 @@ fn api_1_45_and_newer_preserve_exact_submitted_aliases() -> Result<(), String> {
     let snapshot = result.snapshot().ok_or("snapshot expected")?;
 
     assert_eq!(snapshot.containers()[0].networks()[0].aliases(), ["0123456789ab"]);
+    assert_eq!(snapshot.containers()[0].networks()[0].alias_sensitivities(), [true]);
     Ok(())
 }
 
@@ -504,6 +505,18 @@ fn fixture_source(name: &str, version: DockerApiVersion) -> Result<DockerInspect
             read(&root, "volumes.json")?,
         ),
     ))
+}
+
+fn assert_protected_runtime_aliases(attachment: &boxferry_model::NetworkAttachment, expected: &[&str]) {
+    assert_eq!(attachment.aliases(), expected);
+    assert!(attachment.alias_sensitivities().iter().all(|sensitive| *sensitive));
+    assert!(attachment.alias_origins().iter().all(|origins| {
+        origins
+            .iter()
+            .all(|origin| origin.kind() == ProvenanceKind::RuntimeObservation)
+    }));
+    let debug = format!("{attachment:?}");
+    assert!(debug.contains("[REDACTED]"));
 }
 
 fn fixture_root(name: &str) -> PathBuf {

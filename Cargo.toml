@@ -6,27 +6,21 @@ members = [
   "crates/boxferry-docker",
   "crates/boxferry-engine",
   "crates/boxferry-model",
-  "crates/boxferry-quadlet",
   "crates/boxferry-podman",
+  "crates/boxferry-quadlet",
   "crates/boxferry-runtime",
 ]
 default-members = ["crates/boxferry"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85.0"
 homepage = "https://www.strukturpiloten.de/"
 repository = "https://github.com/Strukturpiloten/boxferry"
 license = "MPL-2.0"
-keywords = ["containers", "compose", "podman", "quadlet", "migration"]
+keywords = ["compose", "containers", "migration", "podman", "quadlet"]
 categories = ["command-line-utilities", "config", "development-tools"]
-
-[workspace.metadata.strukturpiloten]
-company = "Strukturpiloten OHG"
-github = "https://github.com/TheRealBecks"
-maintainer = 'Martin "Becks" Beckert'
-website = "https://www.strukturpiloten.de/"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -44,3 +38,9 @@ rust_2018_idioms = { level = "warn", priority = -1 }
 unsafe_code = "forbid"
 unused_lifetimes = "warn"
 unused_qualifications = "warn"
+
+[workspace.metadata.strukturpiloten]
+company = "Strukturpiloten OHG"
+github = "https://github.com/TheRealBecks"
+maintainer = 'Martin "Becks" Beckert'
+website = "https://www.strukturpiloten.de/"

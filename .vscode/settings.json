@@ -24,7 +24,7 @@
     "editor.defaultFormatter": "mkhl.shfmt"
   },
   "[toml]": {
-    "editor.defaultFormatter": "tamasfe.even-better-toml"
+    "editor.defaultFormatter": "tombi-toml.tombi"
   },
   "[yaml]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"

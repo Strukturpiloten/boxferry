@@ -1,0 +1,53 @@
+[workspace]
+allow_dirty = false
+changelog_update = false
+dependencies_update = false
+git_release_enable = false
+git_tag_enable = false
+pr_branch_prefix = "release-plz-"
+publish = false
+release_always = false
+semver_check = true
+
+[[package]]
+name = "boxferry-model"
+version_group = "boxferry"
+
+[[package]]
+name = "boxferry-engine"
+version_group = "boxferry"
+
+[[package]]
+name = "boxferry-compose"
+version_group = "boxferry"
+
+[[package]]
+name = "boxferry-quadlet"
+version_group = "boxferry"
+
+[[package]]
+name = "boxferry-runtime"
+version_group = "boxferry"
+
+[[package]]
+name = "boxferry-docker"
+version_group = "boxferry"
+
+[[package]]
+name = "boxferry-podman"
+version_group = "boxferry"
+
+[[package]]
+name = "boxferry"
+changelog_include = [
+  "boxferry-compose",
+  "boxferry-docker",
+  "boxferry-engine",
+  "boxferry-model",
+  "boxferry-podman",
+  "boxferry-quadlet",
+  "boxferry-runtime",
+]
+changelog_path = "CHANGELOG.md"
+changelog_update = true
+version_group = "boxferry"

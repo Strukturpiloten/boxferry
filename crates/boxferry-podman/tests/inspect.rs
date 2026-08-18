@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use boxferry_engine::{ConversionKind, DiagnosticCode, ImportAdapter, PlatformVersion, Severity};
 use boxferry_model::{
-    Command, EnvironmentValue, HealthcheckCommand, Identifier, MountSource, Protocol, Provenance, ResourceOwnership,
-    RestartPolicy, SelinuxRelabel, SourceId, Sourced,
+    Command, EnvironmentValue, HealthcheckCommand, Identifier, MountSource, Protocol, Provenance, ProvenanceKind,
+    ResourceOwnership, RestartPolicy, SelinuxRelabel, SourceId, Sourced,
 };
 use boxferry_podman::{PodmanImporter, PodmanInspectDocuments, PodmanInspectSource};
 use boxferry_runtime::{EffectiveCommand, OverrideReconstruction, RuntimeImplementation, RuntimeResolutions};
@@ -177,7 +177,7 @@ fn podman_5_4_decodes_effective_state_and_relationships_without_raw_id_leaks() -
     assert!(container.image_source_id().is_some());
     assert!(container.pod_source_id().is_some());
     assert!(container.creation_evidence().is_some());
-    assert_eq!(container.networks()[0].aliases(), ["web", "public-api"]);
+    assert_protected_runtime_aliases(&container.networks()[0], &["web", "public-api"]);
     assert_eq!(container.ports()[0].container(), 8080);
     assert_eq!(container.ports()[0].published(), Some(18080));
     assert_eq!(container.ports()[0].host_address(), Some("127.0.0.1"));
@@ -352,7 +352,7 @@ fn podman_importer_forwards_explicit_runtime_lifecycle_resolutions() -> Result<(
 
 #[test]
 fn current_reviewed_podman_shape_is_accepted_and_additive_config_is_reported() -> Result<(), String> {
-    let source = fixture_source("podman-inspect-6-0", PlatformVersion::new(6, 0, 2))?;
+    let source = fixture_source("podman-inspect-6-1", PlatformVersion::new(6, 1, 0))?;
     let result = importer(OverrideReconstruction::PreserveObservedState)?.decode(&source);
 
     let snapshot = result.snapshot().ok_or("snapshot expected")?;
@@ -420,7 +420,7 @@ fn non_boolean_read_only_root_state_fails_closed() -> Result<(), String> {
 
 #[test]
 fn decoder_rejects_versions_outside_the_finite_reviewed_range() -> Result<(), String> {
-    for version in [PlatformVersion::new(5, 3, 9), PlatformVersion::new(6, 0, 3)] {
+    for version in [PlatformVersion::new(5, 3, 9), PlatformVersion::new(6, 1, 1)] {
         let source = PodmanInspectSource::new(
             id("example")?,
             version,
@@ -447,6 +447,18 @@ fn fixture_source(name: &str, version: PlatformVersion) -> Result<PodmanInspectS
             read(&root, "pods.json")?,
         ),
     ))
+}
+
+fn assert_protected_runtime_aliases(attachment: &boxferry_model::NetworkAttachment, expected: &[&str]) {
+    assert_eq!(attachment.aliases(), expected);
+    assert!(attachment.alias_sensitivities().iter().all(|sensitive| *sensitive));
+    assert!(attachment.alias_origins().iter().all(|origins| {
+        origins
+            .iter()
+            .all(|origin| origin.kind() == ProvenanceKind::RuntimeObservation)
+    }));
+    let debug = format!("{attachment:?}");
+    assert!(debug.contains("[REDACTED]"));
 }
 
 fn fixture_root(name: &str) -> PathBuf {

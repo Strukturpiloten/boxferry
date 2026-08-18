@@ -64,10 +64,23 @@ native-Windows dependency decision in ADR 0023.
 
 ## Automation
 
-Run `cargo deny check` after installing `cargo-deny`. CI checks advisories, licenses, bans, and sources. Renovate proposes Cargo, lockfile, Rust toolchain, and GitHub Actions updates; updates still require the same tests and review as human-authored dependency changes.
+Release preparation uses release-plz Action 0.5.131 at immutable commit
+`2eb1d8bcb770b4c48ccfaad919734b38b51958c9`, release-plz CLI 0.3.160, and SHA-pinned GitHub App
+token Action 3.2.0. These are repository-only workflow dependencies. The configuration disables
+publication, tags, and GitHub releases; the existing protected workflow retains those
+responsibilities. Renovate's GitHub Actions manager tracks the Action SHA and release comment, and
+a custom workflow-tool manager tracks the release-plz CLI input. Review the Action, CLI,
+least-privilege App token inputs, and preparation-only policy together.
+
+Run `cargo deny check` after installing `cargo-deny`. CI checks advisories, licenses, bans, and
+sources. Renovate proposes Cargo, npm development-tool, lockfile, Rust toolchain, Dev Container,
+GitHub Actions, directly pinned workflow-tool, checksum-pinned file-tool, base-image, GitHub CLI,
+and documented Dev Container CLI updates. Repository-specific runtime matrices have their own
+review-oriented custom managers. Updates still require the same tests and review as human-authored
+dependency changes.
 
 Repository-only file quality uses pinned development tools outside the published Rust dependency
-graph: markdownlint-cli2 plus Prettier for Markdown, Prettier for JSON and YAML, Taplo for TOML, shfmt and
+graph: markdownlint-cli2 plus Prettier for Markdown, Prettier for JSON and YAML, Tombi for TOML, shfmt and
 ShellCheck for shell, and Hadolint for Dockerfiles. The Dev Container provides them, CI and release
 validation run the same `scripts/check-files.sh --check` boundary, and Renovate tracks their pins.
 `package-lock.json` fixes the complete markdownlint-cli2 and Prettier graph; CI and the Dev Container

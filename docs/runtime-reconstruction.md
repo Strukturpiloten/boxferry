@@ -20,8 +20,8 @@ Podman additionally retains pod inspection and membership. Docker instead keys c
 the exact Engine API response version and requires an explicit daemon endpoint.
 
 Podman live conformance covers the official immutable 5.4-through-5.8 minor images; an opt-in
-installed-current lane covers exact 6.0.2 without claiming reproducible scheduled-image evidence.
-A scheduled Podman 6.0.2 image lane remains open. Docker fixtures and an isolated digest-pinned
+installed-current lane covers exact 6.1.0 without claiming reproducible scheduled-image evidence.
+A scheduled Podman 6.1.0 image lane remains open. Docker fixtures and an isolated digest-pinned
 Docker Engine 29.7.1 lane cover forced Engine API 1.40 and 1.55 responses. The common crate never
 guesses a runtime from the development machine.
 
@@ -32,7 +32,7 @@ resource family. `PodmanInspectSource` adds the caller-selected application name
 version. The additive, non-default `podman-runtime` facade feature exposes `PodmanImporter` and
 enables the shared `runtime` feature transitively.
 
-The decoder supports the finite inclusive range 5.4.0 through 6.0.2. `BFP0003` rejects versions
+The decoder supports the finite inclusive range 5.4.0 through 6.1.0. `BFP0003` rejects versions
 outside that range. Within it:
 
 - `BFP0001` marks malformed or invalid native data and prevents partial reconstruction;
@@ -274,11 +274,11 @@ Before a Docker or Podman inspector is marked supported, it must provide:
 6. opt-in isolated integration tests for the supported runtime versions; and
 7. evidence that inspection is read-only and cleanup is limited to test-owned resources.
 
-The Podman adapter satisfies items 1 through 5 at its reviewed 5.4.0 floor and 6.0.2 ceiling. Its
+The Podman adapter satisfies items 1 through 5 at its reviewed 5.4.0 floor and 6.1.0 ceiling. Its
 digest-pinned nested-runtime harness satisfies items 6 and 7 for the available exact 5.4.0,
-5.5.2, 5.6.2, 5.7.1, and 5.8.2 official images. A separately selected installed 6.0.2 executable
+5.5.2, 5.6.2, 5.7.1, and 5.8.2 official images. A separately selected installed 6.1.0 executable
 can run the same capture with a unique resource prefix and exact cleanup. The missing reproducible
-scheduled 6.0.2 image remains an explicit evidence gap; the normal Dev Container is not privileged
+scheduled 6.1.0 image remains an explicit evidence gap; the normal Dev Container is not privileged
 and receives no host runtime socket.
 
 The Docker adapter satisfies items 1 through 7 at its reviewed Engine API 1.40 floor and 1.55
@@ -289,7 +289,7 @@ current daemon's forced compatibility response; it does not reproduce every hist
 ### Live conformance boundary
 
 [`../tools/podman-runtime-matrix.toml`](../tools/podman-runtime-matrix.toml) separates three facts:
-the 5.4.0 support floor, the 6.0.2 source-reviewed decoder ceiling, and the 5.8.2 official runtime-
+the 5.4.0 support floor, the 6.1.0 source-reviewed decoder ceiling, and the 5.8.2 official runtime-
 image ceiling. A non-ignored contract test keeps those values aligned with the crate constants and
 requires a full digest for each executable lane. The ignored live test starts only when
 `BOXFERRY_CONTAINER_ENGINE` names an outer engine. An optional
@@ -333,7 +333,7 @@ The initial contract is based on the official
 the exact
 [Podman 5.4.2 container response source](https://github.com/podman-container-tools/podman/blob/v5.4.2/libpod/define/container_inspect.go),
 and the exact
-[Podman 6.0.2 container response source](https://github.com/podman-container-tools/podman/blob/v6.0.2/libpod/define/container_inspect.go),
+[Podman 6.1.0 container response source](https://github.com/podman-container-tools/podman/blob/v6.1.0/libpod/define/container_inspect.go),
 plus Docker's official [container inspection](https://docs.docker.com/reference/cli/docker/container/inspect/),
 [image inspection](https://docs.docker.com/reference/cli/docker/image/inspect/),
 [versioned Engine API](https://docs.docker.com/reference/api/engine/),

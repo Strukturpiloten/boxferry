@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boxferry-compose",
  "boxferry-docker",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry-compose"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -91,7 +91,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry-docker"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -103,18 +103,18 @@ dependencies = [
 
 [[package]]
 name = "boxferry-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boxferry-model",
 ]
 
 [[package]]
 name = "boxferry-model"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "boxferry-podman"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry-quadlet"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -196,9 +196,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "compose-lens"
-version = "0.1.17"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33be2cde41efbbe06f3903eca9a2f987a02ec4e2b6ecbbfe8d2d73b663a9accf"
+checksum = "ba1b4106be1aa0d1eaeafc5561f02a9fe196a0347ae8b83cc20dfc76cb8f4b21"
 dependencies = [
  "yaml-edit",
 ]
@@ -344,9 +344,9 @@ dependencies = [
 
 [[package]]
 name = "quadlet-lens"
-version = "0.1.13"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a72961b87b7e244f647b84724775517c9ca336c39f4bd5fa7517691ffc18e73b"
+checksum = "afa00958637772d835303689a902f9f1d7e280034cd58153586170ef4ae04ef2"
 dependencies = [
  "serde",
  "toml",

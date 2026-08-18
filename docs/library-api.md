@@ -136,7 +136,8 @@ named-volume references; explicit-only acquisition remains the default.
 
 Supported BoxFerry crates use a lockstep version. Workspace path dependencies also declare that
 version so crates.io packages resolve without the repository checkout. Intentional public breaks
-require a new pre-1.0 minor version, migration notes, and an ADR when the architecture changes.
+land directly in a new pre-1.0 minor version with migration notes; compatibility shims are not
+retained by default. An ADR records an architectural change.
 
 The supported crates publish in lockstep after their API and compatibility contracts pass the
 release gates. The [release policy](releasing.md) defines publication order; repository tools and
@@ -167,14 +168,19 @@ T4 provides the first tested public surface:
 - public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.1.17;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.1.13;
+- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.2.0;
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.2.0;
 - an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
 - an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
 - an optional `docker-runtime` facade feature backed by `boxferry-docker`.
 
 Version 0.1.1 establishes this surface as the first crates.io contract. Broader native value
 encoders remain T5/T6 work and continue to use structured fidelity outcomes.
+
+The 0.3.0 native-library upgrade keeps the dependencies publicly reachable only through their
+adapter modules. Native callers use `boxferry::compose::compose_lens::model::ResourceExternal`
+and `boxferry::quadlet::quadlet_lens::model::SystemdUnitKey`; the latter is a model type, not a
+render type.
 
 `HostMapping` retains an ordered hostname and raw-preserving `HostAddress`. Its conservative
 classification distinguishes IPv4, bracketed or unbracketed IPv6, the runtime-specific
@@ -298,7 +304,7 @@ Compose-relative path resolution. The Compose exporter preserves ordered short/l
 explicit `required`/`raw` options, and path sensitivity through ComposeLens's validated generator.
 Loading file contents and applying Compose parser semantics remains a separate caller-authorized API.
 
-The importer consumes ComposeLens 0.1.17's native `build_project_view` boundary directly. Effective
+The importer consumes ComposeLens 0.2.0's native `build_project_view` boundary directly. Effective
 multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
 conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
 interpretation is used.
@@ -332,7 +338,7 @@ group using the group name and rejects missing, multiple, unresolved, external, 
 It remains approximate because structural membership does not itself assert shared namespaces.
 Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
 container restart policies, explicit container names, external secret grants, and service
-metadata labels convert through QuadletLens 0.1.13. `Never`
+metadata labels convert through QuadletLens 0.2.0. `Never`
 maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
 limits remain manual actions. A single-pod request requires identical
 ordered mappings and compatible user-namespace intent on every service. Common mappings and an

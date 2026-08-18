@@ -7,21 +7,23 @@ use boxferry_engine::{
     ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, RuleId, Severity, TargetProfile,
 };
 use boxferry_model::{
-    Application, Command, Device, Entrypoint, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
-    HostAddressKind, MountSource, Network, ProtectedString, Protocol, Provenance, ProvenanceKind, PullPolicy,
-    ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service, Sourced, Volume,
+    Application, Command, Config, ConfigMaterial, Device, Entrypoint, EnvironmentFileFormat, EnvironmentFileSyntax,
+    EnvironmentValue, HostAddressKind, MountSource, Network, ProtectedString, Protocol, Provenance, ProvenanceKind,
+    PullPolicy, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
+    Sourced, Volume,
 };
 use compose_lens::{
     model::{MemLimitUnit, ShmSizeUnit},
     render::{
-        ComposeDocumentBuilder, GeneratedAnnotation, GeneratedCommand, GeneratedComposeDocument, GeneratedDevice,
-        GeneratedDns, GeneratedDnsSearch, GeneratedEntrypoint, GeneratedEnvironment, GeneratedEnvironmentFile,
-        GeneratedEnvironmentFileFormat, GeneratedExtraHost, GeneratedHostname, GeneratedLabel, GeneratedLogging,
-        GeneratedLoggingOption, GeneratedLoggingOptionValue, GeneratedLongDevice, GeneratedMemLimit, GeneratedMount,
-        GeneratedNetworkAttachment, GeneratedNetworkDefinition, GeneratedNetworkDriverOption,
-        GeneratedNetworkDriverOptionValue, GeneratedPidsLimit, GeneratedPort, GeneratedProtocol, GeneratedPullPolicy,
-        GeneratedResource, GeneratedRestartPolicy, GeneratedSelinux, GeneratedService, GeneratedShmSize,
-        GeneratedString, GeneratedSysctl, GeneratedSysctls, GeneratedTmpfs, GeneratedUlimit, GeneratedUlimits,
+        ComposeDocumentBuilder, GeneratedAnnotation, GeneratedCommand, GeneratedComposeDocument,
+        GeneratedConfigFileDefinition, GeneratedDevice, GeneratedDns, GeneratedDnsSearch, GeneratedEntrypoint,
+        GeneratedEnvironment, GeneratedEnvironmentFile, GeneratedEnvironmentFileFormat, GeneratedExtraHost,
+        GeneratedHostname, GeneratedLabel, GeneratedLogging, GeneratedLoggingOption, GeneratedLoggingOptionValue,
+        GeneratedLongDevice, GeneratedMemLimit, GeneratedMount, GeneratedNetworkAttachment, GeneratedNetworkDefinition,
+        GeneratedNetworkDriverOption, GeneratedNetworkDriverOptionValue, GeneratedPidsLimit, GeneratedPort,
+        GeneratedProtocol, GeneratedPullPolicy, GeneratedResource, GeneratedRestartPolicy,
+        GeneratedSecretFileDefinition, GeneratedSelinux, GeneratedService, GeneratedShmSize, GeneratedString,
+        GeneratedSysctl, GeneratedSysctls, GeneratedTmpfs, GeneratedUlimit, GeneratedUlimits,
         GeneratedVolumeDefinition, GeneratedVolumeDriverOption, GeneratedVolumeDriverOptionValue, GenerationError,
     },
     source::SourceId,
@@ -258,31 +260,23 @@ impl<'a> Mapping<'a> {
         for acquisition in self.application.image_acquisitions() {
             self.unsupported(
                 &format!("image_acquisitions.{}", acquisition.value().name().as_str()),
-                "ComposeLens 0.1.16 generation does not expose image-acquisition declarations",
+                "the current Compose generation boundary does not expose image-acquisition declarations",
                 acquisition.origins(),
             );
         }
         for build in self.application.image_builds() {
             self.unsupported(
                 &format!("image_builds.{}", build.value().name().as_str()),
-                "ComposeLens 0.1.16 generation does not expose build declarations",
+                "the current Compose generation boundary does not expose build declarations",
                 build.origins(),
             );
         }
 
         for config in self.application.configs() {
-            self.unsupported(
-                &format!("configs.{}", config.value().name().as_str()),
-                "the current Compose generation boundary does not yet expose top-level config definitions",
-                config.origins(),
-            );
+            self.map_config_definition(config, &mut builder);
         }
         for secret in self.application.secrets() {
-            self.unsupported(
-                &format!("secrets.{}", secret.value().name().as_str()),
-                "the current Compose generation boundary does not yet expose top-level secret definitions",
-                secret.origins(),
-            );
+            self.map_secret_definition(secret, &mut builder);
         }
         for group in self.application.service_groups() {
             self.report_service_group_loss(group);
@@ -297,6 +291,122 @@ impl<'a> Mapping<'a> {
             }
         }
         self.builder = Some(builder);
+    }
+
+    fn map_config_definition(&mut self, sourced: &Sourced<Config>, builder: &mut ComposeDocumentBuilder) {
+        let config = sourced.value();
+        let subject = format!("configs.{}", config.name().as_str());
+        if config.ownership() != ResourceOwnership::Application {
+            self.unsupported(
+                &subject,
+                "only application-owned file-backed configs can be generated by the current ComposeLens boundary",
+                sourced.origins(),
+            );
+            if let Some(runtime_name) = config.runtime_name() {
+                self.unsupported(
+                    &format!("{subject}.runtime_name"),
+                    "the current ComposeLens file-config generator cannot preserve a config runtime name",
+                    runtime_name.origins(),
+                );
+            }
+            if let Some(material) = config.material() {
+                self.unsupported(
+                    &format!("{subject}.material"),
+                    "external or uncertain config ownership does not authorize emitting application-managed material",
+                    material.origins(),
+                );
+            }
+            return;
+        }
+        if let Some(runtime_name) = config.runtime_name() {
+            self.unsupported(
+                &format!("{subject}.runtime_name"),
+                "the current ComposeLens file-config generator cannot preserve a config runtime name",
+                runtime_name.origins(),
+            );
+        }
+        let Some(material) = config.material() else {
+            self.unsupported(
+                &format!("{subject}.material"),
+                "application-owned config has no file-backed material to generate",
+                sourced.origins(),
+            );
+            return;
+        };
+        let ConfigMaterial::File(path) = material.value() else {
+            self.unsupported(
+                &format!("{subject}.material"),
+                "only file-backed application configs can be generated; inline and environment material remain outside this boundary",
+                material.origins(),
+            );
+            return;
+        };
+        let origins = combined_origins(sourced.origins(), material.origins());
+        match generated_string(path).and_then(|path| GeneratedConfigFileDefinition::new(config.name().as_str(), path)) {
+            Ok(generated) => match builder.add_config_file(generated) {
+                Ok(()) => self.exact(&subject, &origins),
+                Err(error) => self.generation_error(&subject, &error, &origins),
+            },
+            Err(error) => self.generation_error(&format!("{subject}.material"), &error, &origins),
+        }
+    }
+
+    fn map_secret_definition(&mut self, sourced: &Sourced<Secret>, builder: &mut ComposeDocumentBuilder) {
+        let secret = sourced.value();
+        let subject = format!("secrets.{}", secret.name().as_str());
+        if secret.ownership() != ResourceOwnership::Application {
+            self.unsupported(
+                &subject,
+                "only application-owned file-backed secrets can be generated by the current ComposeLens boundary",
+                sourced.origins(),
+            );
+            if let Some(runtime_name) = secret.runtime_name() {
+                self.unsupported(
+                    &format!("{subject}.runtime_name"),
+                    "the current ComposeLens file-secret generator cannot preserve a secret runtime name",
+                    runtime_name.origins(),
+                );
+            }
+            if let Some(material) = secret.material() {
+                self.unsupported(
+                    &format!("{subject}.material"),
+                    "external or uncertain secret ownership does not authorize emitting application-managed material",
+                    material.origins(),
+                );
+            }
+            return;
+        }
+        if let Some(runtime_name) = secret.runtime_name() {
+            self.unsupported(
+                &format!("{subject}.runtime_name"),
+                "the current ComposeLens file-secret generator cannot preserve a secret runtime name",
+                runtime_name.origins(),
+            );
+        }
+        let Some(material) = secret.material() else {
+            self.unsupported(
+                &format!("{subject}.material"),
+                "application-owned secret has no file-backed material to generate",
+                sourced.origins(),
+            );
+            return;
+        };
+        let SecretMaterial::File(path) = material.value() else {
+            self.unsupported(
+                &format!("{subject}.material"),
+                "only file-backed application secrets can be generated; environment material remains outside this boundary",
+                material.origins(),
+            );
+            return;
+        };
+        let origins = combined_origins(sourced.origins(), material.origins());
+        match generated_string(path).and_then(|path| GeneratedSecretFileDefinition::new(secret.name().as_str(), path)) {
+            Ok(generated) => match builder.add_secret_file(generated) {
+                Ok(()) => self.exact(&subject, &origins),
+                Err(error) => self.generation_error(&subject, &error, &origins),
+            },
+            Err(error) => self.generation_error(&format!("{subject}.material"), &error, &origins),
+        }
     }
 
     fn map_resource(
@@ -480,14 +590,14 @@ impl<'a> Mapping<'a> {
         if let Some(driver) = network.ipam_driver() {
             self.unsupported(
                 &format!("{subject}.ipam.driver"),
-                "ComposeLens 0.1.16 has no generated IPAM definition API",
+                "the current Compose generation boundary does not expose generated IPAM definitions",
                 driver.origins(),
             );
         }
         if let Some(configs) = network.ipam_configs() {
             self.unsupported(
                 &format!("{subject}.ipam.config"),
-                "ComposeLens 0.1.16 has no generated IPAM definition API",
+                "the current Compose generation boundary does not expose generated IPAM definitions",
                 &collection_or_item_origins(configs, network.ipam_configs_origins()),
             );
         }
@@ -2219,6 +2329,12 @@ fn collection_or_item_origins<T>(values: &[Sourced<T>], collection_origins: &[Pr
     for value in values {
         extend_origins(&mut origins, value.origins());
     }
+    origins
+}
+
+fn combined_origins(first: &[Provenance], second: &[Provenance]) -> Vec<Provenance> {
+    let mut origins = first.to_vec();
+    extend_origins(&mut origins, second);
     origins
 }
 

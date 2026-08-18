@@ -1,48 +1,68 @@
-# Release policy
+# Release process
 
-BoxFerry publishes eight crates in one lockstep version. The manual `Release` workflow validates
-the default branch, creates an annotated tag and draft GitHub release, publishes through crates.io
-trusted publishing, attaches attested crate archives and checksums, and then publishes the GitHub
-release. The initial 0.1.1 publication uses one temporary crates.io token because trusted
-publishers cannot be attached before the crate names exist.
+BoxFerry publishes its eight crates in one lockstep version. Release preparation is automated by
+release-plz; the protected `Release` workflow remains the only component allowed to publish
+crates, create tags, or create GitHub releases.
 
-## First-time setup
+## One-time GitHub setup
 
-1. Create a protected GitHub environment named `release`; require review and restrict it to the
-   default branch.
-2. Create a short-lived crates.io API token permitted to publish new crates.
-3. Add it to the GitHub `release` environment as the secret `CRATES_IO_BOOTSTRAP_TOKEN`.
-4. Merge the prepared release metadata, then run **Actions → Release → Run workflow** from the
-   default branch. Do not create the tag manually.
-5. After all eight crates are published, revoke the crates.io token and delete the GitHub secret.
-6. Add a trusted publisher to every crate using organization `Strukturpiloten`, repository
-   `boxferry`, workflow `release.yml`, and environment `release`.
+1. Create one organization-owned GitHub App for the three Strukturpiloten repositories. Disable
+   webhooks and grant repository **Contents: read and write** and **Pull requests: read and
+   write**.
+2. Install the App on `boxferry`, `compose-lens`, and `quadlet-lens`. Whenever repository
+   permissions change, review and approve the updated installation permissions in the
+   organization before rerunning the workflow.
+3. Store the App client ID as the organization Actions variable
+   `RELEASE_PLZ_APP_CLIENT_ID`. Store only the private key as the organization Actions secret
+   `RELEASE_PLZ_APP_PRIVATE_KEY`. Limit both to these three repositories.
+4. Keep the default workflow token read-only. The App token is used only to create or update the
+   release pull request so that normal pull-request CI runs.
+5. Keep the protected `release` environment, required reviewer, default-branch restriction,
+   trusted publishers, tag ruleset, and immutable-release setting unchanged.
+6. Require the stable `PR gate` status check in default-branch protection instead of enumerating
+   its implementation jobs individually.
 
-The workflow maps the bootstrap secret to Cargo's `CARGO_REGISTRY_TOKEN` only in publication
-steps and rejects it for every version other than 0.1.1. Later releases require the trusted
-publisher configuration and do not use a stored crates.io token.
+The release-plz configuration disables Cargo publication, Git tags, and GitHub releases. Its only
+write operation is the `release-plz-*` preparation branch and pull request.
 
-## Publication order
+## Routine release
 
-1. `boxferry-model`
-2. `boxferry-engine`
-3. `boxferry-compose`
-4. `boxferry-quadlet`
-5. `boxferry-runtime`
-6. `boxferry-docker`
-7. `boxferry-podman`
-8. `boxferry`
+1. Merge ordinary reviewed changes into the default branch. No release issue, local release
+   branch, or manually created release pull request is needed.
+2. Review the release-plz pull request. It updates the lockstep Cargo version, internal dependency
+   requirements, lockfile, and root `CHANGELOG.md`. Normal CI must pass before merge.
+3. Merge the release-plz pull request. Only a merged pull request whose head starts with
+   `release-plz-` dispatches the protected `Release` workflow.
+4. Approve the `release` environment deployment. The workflow revalidates the repository,
+   publishes the eight crates in dependency order, creates attestations and checksums, and
+   publishes the immutable GitHub release.
 
-The workflow waits for each version to become visible in the registry before publishing a
-dependent crate. A rerun skips versions already present on crates.io and resumes the same release;
-it refuses tags or published GitHub releases that point elsewhere.
+Use concise pull-request titles such as `feat: ...`, `fix: ...`, or `feat!: ...`. Release-plz also
+accepts other titles, but these prefixes make version selection and changelog grouping clearer.
+For intentional pre-1.0 public breaks, use a breaking title and review the resulting minor version.
 
-## Preparing later releases
+GitHub release notes are extracted from the matching version section in `CHANGELOG.md`, which is
+the only release-history source in the repository. Keep changelog entries short and move technical
+detail into the canonical topic documentation. After this transition, do not hand-maintain the
+`[Unreleased]` section; release-plz generates the reviewed version section from merged pull-request
+and commit titles.
 
-- Update the workspace version and every internal dependency requirement together.
-- Add a concise `CHANGELOG.md` entry and `docs/releases/<version>.md`.
-- Run the canonical checks and review `cargo package --list` for every crate.
-- Use a pre-1.0 minor version for intentional public breaks and include migration notes.
+## Current 0.3.0 transition
 
-Repository-only tools remain unpublished. Binary bundles are separate future artifacts; the
-0.1.1 workflow publishes the Rust crates and the installable `boxferry` binary they contain.
+The current tree already contains the BoxFerry 0.3.0 version and changelog section. Merging the
+automation setup pull request will not publish it because that branch is not named `release-plz-*`.
+After setup, review the first release-plz pull request and merge it only if it still prepares
+0.3.0. If release-plz has no preparation change to propose, run **Actions → Release → Run
+workflow** once from the reviewed default-branch commit and approve the environment. Later
+releases follow the routine automated path.
+
+## Recovery
+
+`workflow_dispatch` remains available for retries. Rerun `Release` from the same default-branch
+commit after a transient failure; the workflow verifies an existing tag, replaces only its own
+draft release, and skips crate versions already visible on crates.io. Never replace a published
+tag or release. If a corrected workflow needs a new commit after an unpublished tag was created,
+remove only that unpublished tag before retrying.
+
+The completed 0.1.1 bootstrap token must remain absent. Normal releases use only the existing
+crates.io trusted-publisher identities for `release.yml` and the protected `release` environment.

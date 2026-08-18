@@ -15,7 +15,7 @@ if [[ "${mode}" != "--check" && "${mode}" != "--fix" ]]; then
 fi
 readonly mode
 
-required_tools=(git hadolint markdownlint-cli2 prettier shellcheck shfmt taplo)
+required_tools=(git hadolint markdownlint-cli2 prettier shellcheck shfmt tombi)
 missing_tools=()
 for tool in "${required_tools[@]}"; do
   if ! command -v "${tool}" > /dev/null 2>&1; then
@@ -29,21 +29,29 @@ if ((${#missing_tools[@]} != 0)); then
   exit 2
 fi
 
+list_existing_files() {
+  while IFS= read -r -d '' file; do
+    if [[ -f "${file}" ]]; then
+      printf '%s\0' "${file}"
+    fi
+  done < <(git ls-files --cached --others --exclude-standard -z -- "$@")
+}
+
 mapfile -d '' markdown_files < <(
-  git ls-files --cached --others --exclude-standard -z -- '*.md'
+  list_existing_files '*.md'
 )
 mapfile -d '' structured_files < <(
-  git ls-files --cached --others --exclude-standard -z -- \
+  list_existing_files \
     '*.json' '*.jsonc' '*.yaml' '*.yml' '*.code-workspace'
 )
 mapfile -d '' toml_files < <(
-  git ls-files --cached --others --exclude-standard -z -- '*.toml'
+  list_existing_files '*.toml'
 )
 mapfile -d '' shell_files < <(
-  git ls-files --cached --others --exclude-standard -z -- '*.sh'
+  list_existing_files '*.sh'
 )
 mapfile -d '' dockerfiles < <(
-  git ls-files --cached --others --exclude-standard -z -- \
+  list_existing_files \
     ':(glob)Dockerfile' ':(glob)**/Dockerfile' ':(glob)**/Dockerfile.*'
 )
 
@@ -76,7 +84,7 @@ if [[ "${mode}" == "--fix" ]]; then
 
   if ((${#toml_files[@]} != 0)); then
     printf '\nFormat TOML\n'
-    run taplo fmt "${toml_files[@]}"
+    run tombi format --offline "${toml_files[@]}"
   fi
 
   if ((${#shell_files[@]} != 0)); then
@@ -98,8 +106,8 @@ fi
 
 if ((${#toml_files[@]} != 0)); then
   printf '\nCheck TOML formatting and validity\n'
-  run taplo fmt --check "${toml_files[@]}"
-  run taplo check "${toml_files[@]}"
+  run tombi format --check --offline "${toml_files[@]}"
+  run tombi lint --error-on-warnings --offline "${toml_files[@]}"
 fi
 
 if ((${#shell_files[@]} != 0)); then

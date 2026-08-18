@@ -342,13 +342,17 @@ fn preserve_policy_keeps_effective_values_without_requiring_image_inspection() -
 
 #[test]
 fn inference_preserves_effective_values_when_image_defaults_are_unavailable() -> Result<(), String> {
-    let mut container = complete_container(source("runtime:podman:container:web")?, "web")?;
+    let container_source = source("runtime:podman:container:web")?;
+    let mut container = complete_container(container_source.clone(), "web")?;
     container.set_image(image_reference()?, Some(source("runtime:podman:image:missing")?));
     container.set_command(EffectiveCommand::exec(["server", "--review-me"]));
     container.set_environment(vec![environment("MODE", "review-me")?]);
     container.set_user("1001:1002");
     container.set_working_directory("/srv/review-me");
-    container.add_network(NetworkAttachment::new(id("missing-network")?, vec!["web".to_owned()]));
+    container.add_network(NetworkAttachment::new(
+        id("missing-network")?,
+        vec![runtime_alias("web", &container_source)],
+    ));
 
     let mut snapshot = snapshot()?;
     snapshot.add_container(container).map_err(|error| error.to_string())?;
@@ -415,11 +419,15 @@ fn preserves_alias_order_and_storage_relationships_with_uncertain_lifecycle() ->
         ))
         .map_err(|error| error.to_string())?;
 
-    let mut container = complete_container(source("runtime:podman:container:web")?, "web")?;
+    let container_source = source("runtime:podman:container:web")?;
+    let mut container = complete_container(container_source.clone(), "web")?;
     container.set_image(image_reference()?, None);
     container.add_network(NetworkAttachment::new(
         id("frontend")?,
-        vec!["web".to_owned(), "public-api".to_owned()],
+        vec![
+            runtime_alias("web", &container_source),
+            runtime_alias("public-api", &container_source),
+        ],
     ));
     container.add_mount(
         Mount::new(MountSource::Volume(id("data")?), "/var/lib/example", false).map_err(|error| error.to_string())?,
@@ -439,6 +447,15 @@ fn preserves_alias_order_and_storage_relationships_with_uncertain_lifecycle() ->
         ResourceOwnership::Uncertain
     );
     assert_eq!(service.networks()[0].value().aliases(), ["web", "public-api"]);
+    assert_eq!(service.networks()[0].value().alias_sensitivities(), [true, true]);
+    assert!(
+        service.networks()[0]
+            .value()
+            .alias_origins()
+            .iter()
+            .all(|origins| origin_kinds(origins) == [ProvenanceKind::RuntimeObservation])
+    );
+    assert!(!format!("{service:?}").contains("public-api"));
     assert!(matches!(
         service.mounts()[0].value().source(),
         MountSource::Volume(name) if name.as_str() == "data"
@@ -732,6 +749,13 @@ fn id(value: &str) -> Result<Identifier, String> {
 
 fn source(value: &str) -> Result<SourceId, String> {
     SourceId::new(value).map_err(|error| error.to_string())
+}
+
+fn runtime_alias(value: &str, source_id: &SourceId) -> Sourced<ProtectedString> {
+    Sourced::from_source(
+        ProtectedString::sensitive(value),
+        Provenance::runtime_observation(source_id.clone()),
+    )
 }
 
 fn user_resolution(ownership: ResourceOwnership) -> Result<Sourced<ResourceOwnership>, String> {

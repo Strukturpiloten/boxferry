@@ -96,6 +96,17 @@
       "command": "cargo",
       "args": ["build", "--locked", "--release", "--bin", "boxferry"],
       "problemMatcher": "$rustc"
+    },
+    {
+      "label": "BoxFerry: Configure GitHub CLI authentication",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/configure-github-cli.sh",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
     }
   ]
 }

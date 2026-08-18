@@ -113,7 +113,7 @@ an ordered neutral `ServiceGroup`; it records structural membership without inve
 namespace or lifecycle semantics. Embedded callers can resolve exact observed network, volume,
 and group names as application-owned or external only through provenance-bearing
 `RuntimeResolutions`; there is no implicit lifecycle default. Podman response parsing is available
-behind the non-default `podman-runtime` feature for explicit 5.4.0-through-6.0.2 inspect arrays.
+behind the non-default `podman-runtime` feature for explicit 5.4.0-through-6.1.0 inspect arrays.
 Embedded callers can acquire explicitly selected resources through a replaceable read-only Podman
 executor. An explicit finite policy can add selected pods' member containers and selected
 containers' images, networks, and named volumes without enumerating ambient resources. A
@@ -135,10 +135,10 @@ implementation detail.
 An opt-in, separately scheduled conformance workflow decodes real inspect output from exact,
 digest-pinned official Podman images for the available supported 5.4-through-5.8 minor lines. It
 runs nested Podman in an ephemeral privileged container without mounting a host runtime socket.
-The source-reviewed 6.0.2 decoder ceiling remains an explicit reproducible scheduled-image
+The source-reviewed 6.1.0 decoder ceiling remains an explicit reproducible scheduled-image
 evidence gap until an exact immutable local-runtime image or reviewed build lane is available.
 
-Developers who already have the exact reviewed 6.0.2 ceiling may run a separate opt-in current-
+Developers who already have the exact reviewed 6.1.0 ceiling may run a separate opt-in current-
 runtime test. It verifies the version first, creates only uniquely named temporary resources, and
 removes those resources after inspection; it is not enabled by normal tests or pull-request CI.
 
@@ -155,7 +155,7 @@ reports unsupported source features as policy-controlled conversion outcomes.
 
 The exporter consumes the neutral application and either the rolling provider-neutral Compose
 Specification target or an exact Docker Compose or `podman-compose` provider target with an
-optional exact Docker Engine or Podman backend. ComposeLens 0.1.17 owns
+optional exact Docker Engine or Podman backend. ComposeLens 0.2.0 owns
 deterministic short/long syntax choices, sensitive-output redaction, and parse-back validation,
 including ordered short/long service `env_file` output.
 BoxFerry reports compatibility-sensitive tag-plus-digest images, `host-gateway`, Podman user
@@ -195,7 +195,7 @@ instead of becoming invented application services. Native forms that require sys
 shell parsing, path resolution,
 network-mode interpretation, or unsupported mount/port options remain policy-controlled
 unsupported outcomes; duplicate singleton keys and invalid resource graphs fail explicitly. The
-exporter uses QuadletLens 0.1.13 for typed native construction and capability evidence, supports
+exporter uses QuadletLens 0.2.0 for typed native construction and capability evidence, supports
 Podman 5.4.0 through the finite current catalogue ceiling, keeps each service in its own container
 unit by default, distinguishes application-owned and external resources, preserves absolute and
 systemd-specifier bind paths, and reports every omitted target feature through the same loss policy.
@@ -216,7 +216,7 @@ token and IPv4/IPv6 addresses. Compose `extra_hosts` convert to capability-check
 `AddHost` entries. Separate services retain container-level mappings; explicitly grouped services
 must declare identical ordered mappings, which move to the generated pod.
 
-ComposeLens 0.1.17 service `env_file` declarations enter the neutral graph without opening the
+ComposeLens 0.2.0 service `env_file` declarations enter the neutral graph without opening the
 referenced files. Short/long syntax, order, protected paths, explicit `required` and `format`
 options, and nested provenance remain available to embedded callers and generate back to Compose
 through the same syntax family. Required safe paths emit
@@ -238,20 +238,20 @@ Quadlet adapter emits the capability-checked regular health-check subset and rep
 
 Compose mapping and sequence service labels now enter the protected neutral model with complete
 multi-file provenance. BoxFerry generates deterministic Compose label mappings and native
-repeatable Quadlet `Label=` entries through ComposeLens 0.1.17 and QuadletLens 0.1.13. Empty and
+repeatable Quadlet `Label=` entries through ComposeLens 0.2.0 and QuadletLens 0.2.0. Empty and
 quoted values are preserved, and literal `%` is escaped so systemd cannot turn label metadata into
 a specifier expansion. Reserved `com.docker.compose.*` labels stay visible in diagnostics but are
 never re-authored. Resource, annotation, and label-file ownership remain separate follow-up work;
 image-build labels use the distinct image-artifact conversion contract.
 
-ComposeLens 0.1.17 service dependencies retain source order, short/long defaults, and field-level
+ComposeLens 0.2.0 service dependencies retain source order, short/long defaults, and field-level
 provenance in the neutral graph. Required and optional startup dependencies become capability-
 checked systemd `Requires`/`Wants` plus `After` directives. A healthy dependency additionally
 enables `Notify=healthy` only when BoxFerry can establish an explicit target health command.
 Compose-controlled restart propagation and successful-completion conditions remain explicit
 partial losses; missing required services and ordering cycles are invalid.
 
-ComposeLens 0.1.17 service `restart` values now map into the distinct neutral container restart
+ComposeLens 0.2.0 service `restart` values now map into the distinct neutral container restart
 policy and generate back to Compose without changing their meaning. Compose-to-Quadlet emits
 `restart: "no"` exactly as systemd `Restart=no`; `always`, unbounded `on-failure`, and
 `unless-stopped` remain explicit systemd approximations, while finite retry limits have no safe
@@ -260,7 +260,7 @@ neutral `u64` range are invalid rather than silently normalized.
 
 The neutral model and adapters retain provenance-aware primary user/group, user namespace, ordered
 supplementary groups, working directory, and read-only-root intent through ComposeLens and
-QuadletLens 0.1.13. Separate-container output maps numeric primary GIDs and named or numeric
+QuadletLens 0.2.0. Separate-container output maps numeric primary GIDs and named or numeric
 supplementary groups; named primary groups remain explicit losses because Quadlet's native
 `Group=` contract is numeric. Output is capability-checked across the supported Podman range.
 Explicit pod grouping moves one identical namespace choice declared by every service to the pod's
@@ -270,8 +270,8 @@ invalidate the requested grouping rather than selecting a value by service order
 The format-independent graph now also represents application-owned or external configuration and
 secret resources, optional runtime names and material origins, and ordered short/long service
 grants with per-option provenance. Sensitive material and grant values use the same redacting
-`ProtectedString` boundary as environment values. ComposeLens 0.1.17 imports these definitions and
-grants. QuadletLens 0.1.13 emits exact mounted-file `Secret=` references for pre-existing external
+`ProtectedString` boundary as environment values. ComposeLens 0.2.0 imports these definitions and
+grants. QuadletLens 0.2.0 emits exact mounted-file `Secret=` references for pre-existing external
 Podman secrets, including custom-name default preservation and validated target, UID, GID, and
 read-only mode options. Application-owned secret materialization and Compose config lifecycle are
 explicit manual actions because Quadlet container units cannot create those resources.

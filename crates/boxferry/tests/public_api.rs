@@ -32,6 +32,16 @@ fn facade_exposes_report_dto_without_cli_features() {
     );
 }
 
+#[cfg(all(feature = "compose", feature = "quadlet"))]
+#[test]
+fn facade_reexports_the_lens_020_native_model_paths() {
+    use boxferry::compose::compose_lens::model::ResourceExternal;
+    use boxferry::quadlet::quadlet_lens::model::SystemdUnitKey;
+
+    let _: Option<&ResourceExternal> = None;
+    let _ = SystemdUnitKey::After;
+}
+
 #[test]
 fn facade_converts_through_public_adapter_contracts() -> Result<(), String> {
     let application = Application::new(Identifier::new("example").map_err(|error| error.to_string())?);

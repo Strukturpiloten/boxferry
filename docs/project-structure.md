@@ -8,6 +8,7 @@ boxferry/
 ├── .devcontainer/                   # digest-pinned VS Code environment and feature lock
 ├── Cargo.toml
 ├── Cargo.lock
+├── release-plz.toml               # release-PR preparation only; publication stays protected
 ├── package.json                    # non-Rust Node development tools only
 ├── package-lock.json               # locked Markdownlint and Prettier graph
 ├── rust-toolchain.toml
@@ -44,6 +45,7 @@ boxferry/
 ├── scripts/
 │   ├── check-all.sh               # complete deterministic local validation
 │   ├── check-files.sh             # tracked non-Rust formatting and lint contract
+│   ├── extract-release-notes.sh   # validated CHANGELOG section extraction
 │   └── install-file-tools.sh      # pinned Linux file-quality tool installer
 ├── tools/
 │   ├── docker-runtime-matrix.toml # exact Engine image and reviewed API bounds
@@ -59,6 +61,7 @@ boxferry/
         ├── documentation-links.yml
         ├── docker-runtime-conformance.yml
         ├── podman-runtime-conformance.yml
+        ├── release-plz.yml        # release PR creation and guarded publication dispatch
         └── release.yml            # protected lockstep crate publication
 ```
 

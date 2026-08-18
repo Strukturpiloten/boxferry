@@ -16,10 +16,12 @@
   "containerEnv": {
     "CARGO_HOME": "/workspaces/.boxferry-cargo",
     "CARGO_TARGET_DIR": "/workspaces/.boxferry-target",
+    "GH_CONFIG_DIR": "/workspaces/.boxferry-gh",
     "PATH": "/home/vscode/.local/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   },
   "mounts": [
     "source=boxferry-cargo-${devcontainerId},target=/workspaces/.boxferry-cargo,type=volume",
+    "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
     "source=boxferry-target-${devcontainerId},target=/workspaces/.boxferry-target,type=volume",
     "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
     "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind"
@@ -38,7 +40,7 @@
         "redhat.vscode-yaml",
         "rust-lang.rust-analyzer",
         "streetsidesoftware.code-spell-checker",
-        "tamasfe.even-better-toml",
+        "tombi-toml.tombi",
         "vadimcn.vscode-lldb"
       ]
     }

@@ -21,4 +21,4 @@ pub use source::{PodmanInspectDocuments, PodmanInspectSource};
 pub const MINIMUM_PODMAN_VERSION: boxferry_engine::PlatformVersion = boxferry_engine::PlatformVersion::new(5, 4, 0);
 
 /// Inclusive newest Podman version whose inspect shape is covered by fixtures and source review.
-pub const MAXIMUM_PODMAN_VERSION: boxferry_engine::PlatformVersion = boxferry_engine::PlatformVersion::new(6, 0, 2);
+pub const MAXIMUM_PODMAN_VERSION: boxferry_engine::PlatformVersion = boxferry_engine::PlatformVersion::new(6, 1, 0);

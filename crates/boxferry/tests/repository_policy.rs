@@ -2,7 +2,11 @@
 
 mod support;
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
 
 const FIXTURE_SUITES: &[&str] = &[
     "model",
@@ -53,7 +57,7 @@ fn vscode_workspace_configuration_covers_local_development() -> Result<(), Strin
                 "mkhl.shfmt",
                 "ms-vscode-remote.remote-containers",
                 "rust-lang.rust-analyzer",
-                "tamasfe.even-better-toml",
+                "tombi-toml.tombi",
                 "timonwong.shellcheck",
                 "vadimcn.vscode-lldb",
             ][..],
@@ -67,6 +71,8 @@ fn vscode_workspace_configuration_covers_local_development() -> Result<(), Strin
                 "BoxFerry: Required Rust checks",
                 "BoxFerry: Build workspace",
                 "BoxFerry: Test",
+                "BoxFerry: Configure GitHub CLI authentication",
+                "scripts/configure-github-cli.sh",
                 "cargo",
             ][..],
         ),
@@ -83,12 +89,46 @@ fn vscode_workspace_configuration_covers_local_development() -> Result<(), Strin
 }
 
 #[test]
+fn github_cli_authentication_is_interactive_container_scoped_and_does_not_replace_git_credentials() -> Result<(), String>
+{
+    let script_path = repository_root().join("scripts/configure-github-cli.sh");
+    let script = fs::read_to_string(&script_path)
+        .map_err(|error| format!("failed to read {}: {error}", script_path.display()))?;
+
+    for required in [
+        r#"expected_config_directory="/workspaces/.boxferry-gh""#,
+        "[[ ! -t 0 ]]",
+        "IFS= read -r -s -p 'GitHub token: '",
+        "gh auth login --hostname \"${github_host}\" --with-token --insecure-storage",
+        r#"auth_file="${GH_CONFIG_DIR}/hosts.yml""#,
+        "chmod 0600 \"${auth_file}\"",
+        "gh auth status --hostname",
+        "The existing Git credential helpers were not changed.",
+    ] {
+        if !script.contains(required) {
+            return Err(format!("GitHub CLI authentication script is missing `{required}`"));
+        }
+    }
+
+    for forbidden in ["gh auth setup-git", "--show-token", "github_token=$1"] {
+        if script.contains(forbidden) {
+            return Err(format!(
+                "GitHub CLI authentication script must not contain `{forbidden}`"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn local_validation_runner_covers_deterministic_repository_checks() -> Result<(), String> {
     let script_path = repository_root().join("scripts/check-all.sh");
     let script = fs::read_to_string(&script_path)
         .map_err(|error| format!("failed to read {}: {error}", script_path.display()))?;
 
     for required in [
+        "list_existing_files",
         "cargo fmt --all",
         "bash scripts/check-files.sh --fix",
         "git --no-pager diff --check",
@@ -106,12 +146,24 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "cargo ci-test",
         "cargo ci-doctest",
         "RUSTDOCFLAGS=\"-D warnings\" cargo ci-doc",
-        "cargo llvm-cov --locked --workspace --all-features",
+        "cargo llvm-cov clean --locked",
+        "cargo llvm-cov --locked --no-clean --workspace --all-features",
         "--fail-under-regions 82 --fail-under-functions 87",
         "cargo \"+${msrv}\" ci-check",
         "cargo \"+${msrv}\" ci-policy",
         "cargo deny --all-features check",
         "lychee --config lychee.toml --root-dir . --offline",
+        "validation_storage_root",
+        "coverage_target_dir",
+        "semver_cargo_home",
+        "semver_target_dir",
+        "${CARGO_TARGET_DIR:-${repository_root}/target}/check-all/boxferry",
+        "${validation_storage_root}/coverage",
+        "${validation_storage_root}/cargo-home",
+        "${validation_storage_root}/cargo-semver-checks-target",
+        "env CARGO_TARGET_DIR=\"${coverage_target_dir}\"",
+        "env CARGO_HOME=\"${semver_cargo_home}\"",
+        "CARGO_TARGET_DIR=\"${semver_target_dir}\"",
         "cargo semver-checks check-release --workspace",
     ] {
         if !script.contains(required) {
@@ -140,6 +192,48 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
 }
 
 #[test]
+fn issue_to_pr_workflow_requires_sol_ownership_and_the_complete_local_gate() -> Result<(), String> {
+    let root = repository_root();
+    for (path, required) in [
+        (
+            "AGENTS.md",
+            &[
+                "## GitHub issue-to-PR workflow",
+                "Run `./scripts/check-all.sh`",
+                "hard gate against commit, push",
+                "primary Sol agent runs this workflow",
+                "high reasoning effort",
+                "Terra subagents",
+                "never execute the Git or GitHub",
+                "remains Sol's responsibility",
+            ][..],
+        ),
+        (
+            "docs/development-environment.md",
+            &[
+                "## Issue-to-PR contribution workflow",
+                "./scripts/check-all.sh",
+                "All steps must pass before the change is committed, pushed, or submitted",
+                "primary Sol agent uses high reasoning effort",
+                "Terra agents",
+                "never perform Git or GitHub writes",
+                "Sol's final responsibility",
+            ][..],
+        ),
+    ] {
+        let contents =
+            fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        for value in required {
+            if !contents.contains(value) {
+                return Err(format!("{path} is missing `{value}`"));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs() -> Result<(), String> {
     let root = repository_root();
     let script_path = root.join("scripts/check-files.sh");
@@ -148,11 +242,12 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
 
     for required in [
         "git ls-files --cached --others --exclude-standard",
+        "list_existing_files",
         "markdownlint-cli2 --fix",
         "prettier --write",
         "prettier --check",
-        "taplo fmt",
-        "taplo check",
+        "tombi format --check --offline",
+        "tombi lint --error-on-warnings --offline",
         "shfmt -w",
         "shellcheck --",
         "hadolint",
@@ -163,6 +258,30 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
     }
     if script.contains("**/*.md") {
         return Err("non-Rust file runner must not traverse sibling or generated Markdown trees".to_owned());
+    }
+
+    let tombi =
+        fs::read_to_string(root.join("tombi.toml")).map_err(|error| format!("failed to read tombi.toml: {error}"))?;
+    for required in [
+        "dotted-keys-out-of-order = \"error\"",
+        "key-empty = \"error\"",
+        "tables-out-of-order = \"error\"",
+        "docs/schemas/tombi-cargo-offline.schema.json",
+        "include = [\"Cargo.toml\", \"**/Cargo.toml\"]",
+        "fixtures/**/*.toml",
+        "tools/**/*.toml",
+    ] {
+        if !tombi.contains(required) {
+            return Err(format!("tombi.toml must contain `{required}`"));
+        }
+    }
+
+    let cargo_schema = fs::read_to_string(root.join("docs/schemas/tombi-cargo-offline.schema.json"))
+        .map_err(|error| format!("failed to read the offline Cargo schema: {error}"))?;
+    for required in [r#""type": "object""#, r#""additionalProperties": true"#] {
+        if !cargo_schema.contains(required) {
+            return Err(format!("offline Cargo schema must contain `{required}`"));
+        }
     }
 
     let markdown_format = script
@@ -280,6 +399,14 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "\"path\": \".boxferry-workspace/compose-lens\"",
         "\"name\": \"QuadletLens\"",
         "\"path\": \".boxferry-workspace/quadlet-lens\"",
+        "\"label\": \"Workspace: Format, lint, and test all repositories\"",
+        "\"dependsOrder\": \"sequence\"",
+        "\"label\": \"Workspace: Check BoxFerry\"",
+        "\"label\": \"Workspace: Check ComposeLens\"",
+        "\"label\": \"Workspace: Check QuadletLens\"",
+        "${workspaceFolder:BoxFerry}/scripts/check-all.sh",
+        "${workspaceFolder:ComposeLens}/scripts/check-all.sh",
+        "${workspaceFolder:QuadletLens}/scripts/check-all.sh",
     ] {
         if !workspace.contains(required) {
             return Err(format!("multi-root workspace is missing `{required}`"));
@@ -290,7 +417,9 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "\"workspaceFolder\": \"/workspaces/boxferry\"",
         "\"CARGO_HOME\": \"/workspaces/.boxferry-cargo\"",
         "\"CARGO_TARGET_DIR\": \"/workspaces/.boxferry-target\"",
+        "\"GH_CONFIG_DIR\": \"/workspaces/.boxferry-gh\"",
         "source=boxferry-cargo-${devcontainerId},target=/workspaces/.boxferry-cargo,type=volume",
+        "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
         "source=boxferry-target-${devcontainerId},target=/workspaces/.boxferry-target,type=volume",
         "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
         "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind",
@@ -312,8 +441,10 @@ fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching
     for required in [
         "CARGO_HOME",
         "CARGO_TARGET_DIR",
-        "[[ ! -w \"${cargo_directory}\" ]]",
+        "GH_CONFIG_DIR",
+        "[[ ! -w \"${persistent_directory}\" ]]",
         "sudo chown -R",
+        "chmod 0700 \"${GH_CONFIG_DIR}\"",
     ] {
         if !script.contains(required) {
             return Err(format!("Dev Container lifecycle check is missing `{required}`"));
@@ -336,7 +467,8 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         "  coverage:\n    name: Coverage ratchet",
         "rustup component add llvm-tools-preview",
         "cargo install --locked --version 0.8.7 cargo-llvm-cov",
-        "cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
+        "cargo llvm-cov clean --locked",
+        "cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
         "  portability:\n    name: Portability (macOS)",
         "runs-on: macos-14",
         "run: cargo ci-check",
@@ -382,6 +514,30 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
     }
     if workflow.contains("windows-") {
         return Err("CI must not claim unsupported native Windows portability".to_owned());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn release_workflow_rechecks_coverage_and_msrv_contracts() -> Result<(), String> {
+    let workflow_path = repository_root().join(".github/workflows/release.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
+
+    for required in [
+        "rustup component add llvm-tools-preview",
+        "cargo install --locked --version 0.8.7 cargo-llvm-cov",
+        "cargo llvm-cov clean --locked",
+        "cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
+        "- name: Read the workspace MSRV",
+        "rustup toolchain install \"${RUST_MSRV}\" --profile minimal",
+        "cargo \"+${RUST_MSRV}\" ci-check",
+        "cargo \"+${RUST_MSRV}\" ci-policy",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("release workflow is missing validation guard `{required}`"));
+        }
     }
 
     Ok(())
@@ -575,6 +731,214 @@ fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[test]
+fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
+    let root = repository_root();
+    if root.join("docs/releases").exists() {
+        return Err("CHANGELOG.md must remain the only release-history source".to_owned());
+    }
+    let config_text = fs::read_to_string(root.join("release-plz.toml"))
+        .map_err(|error| format!("failed to read release-plz.toml: {error}"))?;
+    let config = toml::from_str::<toml::Value>(&config_text)
+        .map_err(|error| format!("failed to parse release-plz.toml: {error}"))?;
+    let workspace = config["workspace"]
+        .as_table()
+        .ok_or_else(|| "release-plz.toml must contain [workspace]".to_owned())?;
+
+    for (name, expected) in [
+        ("allow_dirty", false),
+        ("changelog_update", false),
+        ("dependencies_update", false),
+        ("git_release_enable", false),
+        ("git_tag_enable", false),
+        ("publish", false),
+        ("release_always", false),
+        ("semver_check", true),
+    ] {
+        if workspace.get(name).and_then(toml::Value::as_bool) != Some(expected) {
+            return Err(format!("release-plz workspace setting {name} must be {expected}"));
+        }
+    }
+    if workspace.get("pr_branch_prefix").and_then(toml::Value::as_str) != Some("release-plz-") {
+        return Err("release-plz branches must use the guarded release-plz- prefix".to_owned());
+    }
+
+    let packages = config["package"]
+        .as_array()
+        .ok_or_else(|| "release-plz.toml must configure every published package".to_owned())?;
+    if packages.len() != PUBLISHED_PACKAGES.len() {
+        return Err("release-plz.toml must configure all eight lockstep packages".to_owned());
+    }
+    for package in PUBLISHED_PACKAGES {
+        let configured = packages.iter().find(|entry| entry["name"].as_str() == Some(package));
+        let configured = configured.ok_or_else(|| format!("release-plz.toml is missing {package}"))?;
+        if configured["version_group"].as_str() != Some("boxferry") {
+            return Err(format!("{package} must belong to the boxferry version group"));
+        }
+    }
+    let facade = packages
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some("boxferry"))
+        .ok_or_else(|| "release-plz.toml is missing the facade package".to_owned())?;
+    if facade["changelog_update"].as_bool() != Some(true)
+        || facade["changelog_path"].as_str() != Some("CHANGELOG.md")
+        || facade["changelog_include"].as_array().map(Vec::len) != Some(7)
+    {
+        return Err("the facade must aggregate all component changes into the root changelog".to_owned());
+    }
+
+    validate_release_plz_workflow(&root, "Strukturpiloten/boxferry")?;
+
+    let release = fs::read_to_string(root.join(".github/workflows/release.yml"))
+        .map_err(|error| format!("failed to read release workflow: {error}"))?;
+    if release.contains("docs/releases/${version}.md") || !release.contains("bash scripts/extract-release-notes.sh") {
+        return Err("protected publication must derive release notes from CHANGELOG.md".to_owned());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn release_note_extraction_is_strict_and_bounded() -> Result<(), String> {
+    let root = repository_root();
+    let directory = std::env::temp_dir().join(format!("boxferry-release-notes-{}", std::process::id()));
+    let changelog = directory.join("CHANGELOG.md");
+    fs::create_dir_all(&directory).map_err(|error| format!("failed to create {}: {error}", directory.display()))?;
+
+    fs::write(
+        &changelog,
+        "# Changelog\n\n## [Unreleased]\n\n## [1.2.3](https://example.invalid/v1.2.3) - 2026-08-17\n\n### Added\n\n- Useful change.\n\n## [1.2.2] - 2026-08-16\n\n- Older change.\n",
+    )
+    .map_err(|error| format!("failed to write {}: {error}", changelog.display()))?;
+    let valid = run_release_notes_script(&root, "1.2.3", &changelog)?;
+    let valid_stdout = String::from_utf8(valid.stdout).map_err(|error| error.to_string())?;
+    if !valid.status.success() || !valid_stdout.contains("Useful change") || valid_stdout.contains("Older change") {
+        return Err("valid release notes were not extracted as one bounded section".to_owned());
+    }
+
+    let missing = run_release_notes_script(&root, "9.9.9", &changelog)?;
+    if missing.status.success() || !String::from_utf8_lossy(&missing.stderr).contains("no release section") {
+        return Err("a missing release section must fail with an actionable diagnostic".to_owned());
+    }
+    let malformed_version = run_release_notes_script(&root, "v1.2.3", &changelog)?;
+    if malformed_version.status.success()
+        || !String::from_utf8_lossy(&malformed_version.stderr).contains("major.minor.patch")
+    {
+        return Err("a malformed release version must fail before extraction".to_owned());
+    }
+
+    fs::write(
+        &changelog,
+        "# Changelog\n\n## [1.2.3] - 2026-08-17\n\n## [1.2.2] - 2026-08-16\n",
+    )
+    .map_err(|error| format!("failed to write {}: {error}", changelog.display()))?;
+    let empty = run_release_notes_script(&root, "1.2.3", &changelog)?;
+    if empty.status.success() || !String::from_utf8_lossy(&empty.stderr).contains("is empty") {
+        return Err("an empty release section must fail".to_owned());
+    }
+
+    fs::write(&changelog, "# Changelog\n\n## [1.2.3] - not-a-date\n\n- Change.\n")
+        .map_err(|error| format!("failed to write {}: {error}", changelog.display()))?;
+    let malformed_heading = run_release_notes_script(&root, "1.2.3", &changelog)?;
+    if malformed_heading.status.success() || !String::from_utf8_lossy(&malformed_heading.stderr).contains("YYYY-MM-DD")
+    {
+        return Err("a malformed release heading must fail".to_owned());
+    }
+
+    fs::remove_dir_all(&directory).map_err(|error| format!("failed to remove {}: {error}", directory.display()))?;
+    Ok(())
+}
+
+fn validate_release_plz_workflow(root: &Path, repository: &str) -> Result<(), String> {
+    let workflow = fs::read_to_string(root.join(".github/workflows/release-plz.yml"))
+        .map_err(|error| format!("failed to read release-plz workflow: {error}"))?;
+    for required in [
+        repository,
+        "vars.RELEASE_PLZ_APP_CLIENT_ID",
+        "client-id:",
+        "secrets.RELEASE_PLZ_APP_PRIVATE_KEY",
+        "permission-contents: write",
+        "permission-pull-requests: write",
+        "continue-on-error: true",
+        "steps.app-token.outcome == 'failure'",
+        "approve the updated permissions for the App installation",
+        "command: release-pr",
+        "renovate: datasource=crate depName=release-plz",
+        "version: \"0.3.160\"",
+        "release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131",
+        "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0",
+        "(.head.ref | startswith(\"release-plz-\"))",
+        "actions/workflows/release.yml/dispatches",
+        "actions: write",
+        "No release was dispatched.",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("release-plz workflow is missing `{required}`"));
+        }
+    }
+    for forbidden in [
+        "secrets.RELEASE_PLZ_APP_ID",
+        "app-id:",
+        "command: release\n",
+        "cargo publish",
+        "git tag",
+        "gh release create",
+    ] {
+        if workflow.contains(forbidden) {
+            return Err(format!("release-plz workflow must not contain `{forbidden}`"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String> {
+    let root = repository_root();
+    let renovate = fs::read_to_string(root.join(".github/renovate.json"))
+        .map_err(|error| format!("failed to read Renovate configuration: {error}"))?;
+    for required in [
+        "Update versioned Dev Container tools",
+        "Signal updates for checksum-pinned file-quality tools",
+        "Update directly pinned workflow tool versions",
+        "Update the documented Dev Container CLI",
+        "Update the GitHub CLI installed in the Dev Container",
+        r#""matchManagers": ["cargo"]"#,
+        r#""matchManagers": ["npm"]"#,
+        r#""matchManagers": ["github-actions"]"#,
+        r#""matchManagers": ["devcontainer"]"#,
+        r#""matchManagers": ["rust-toolchain"]"#,
+    ] {
+        if !renovate.contains(required) {
+            return Err(format!("Renovate configuration is missing `{required}`"));
+        }
+    }
+
+    for workflow_name in ["ci.yml", "release.yml"] {
+        let workflow = fs::read_to_string(root.join(".github/workflows").join(workflow_name))
+            .map_err(|error| format!("failed to read {workflow_name}: {error}"))?;
+        for required in [
+            "renovate: datasource=crate depName=cargo-llvm-cov",
+            "renovate: datasource=node-version depName=node",
+        ] {
+            if !workflow.contains(required) {
+                return Err(format!("{workflow_name} is missing Renovate marker `{required}`"));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn run_release_notes_script(root: &Path, version: &str, changelog: &Path) -> Result<Output, String> {
+    Command::new("bash")
+        .arg(root.join("scripts/extract-release-notes.sh"))
+        .arg(version)
+        .arg(changelog)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("failed to run release-note extractor: {error}"))
 }
 
 #[test]
