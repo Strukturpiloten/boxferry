@@ -56,9 +56,13 @@ Release preparation uses release-plz Action 0.5.131 at immutable commit
 `2eb1d8bcb770b4c48ccfaad919734b38b51958c9`, release-plz CLI 0.3.160, and SHA-pinned GitHub App
 token Action 3.2.0. These are repository-only workflow dependencies. The configuration disables
 publication, tags, and GitHub releases; the existing protected workflow retains those
-responsibilities. Renovate's GitHub Actions manager tracks the Action SHA and release comment, and
-a custom workflow-tool manager tracks the release-plz CLI input. Review the Action, CLI,
-least-privilege App token inputs, and preparation-only policy together.
+responsibilities. All five published crates remain in one version group without package-level
+commit filtering so release-plz can reconcile inherited workspace versions and internal Cargo
+requirements atomically. A narrow default-branch path filter starts preparation for Rust source,
+package, dependency, build, and release-configuration changes while excluding ordinary
+documentation-only pushes. Renovate's GitHub Actions manager tracks the Action SHA and release
+comment, and a custom workflow-tool manager tracks the release-plz CLI input. Review the Action,
+CLI, least-privilege App token inputs, path filter, and preparation-only policy together.
 
 Run `cargo deny check` after installing `cargo-deny`. CI checks advisories, licenses, bans, and
 sources. Renovate proposes Cargo, npm development-tool, lockfile, Rust toolchain, Dev Container,
