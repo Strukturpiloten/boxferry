@@ -31,13 +31,7 @@ boxferry/
 │   ├── boxferry-engine/          # adapters, planning, loss policy, targets, diagnostics
 │   ├── boxferry-compose/         # implemented: ComposeLens import/export mapping
 │   ├── boxferry-quadlet/         # implemented: validated QuadletLens import/export mapping
-│   ├── boxferry-runtime/         # implemented: runtime-neutral observations and reconstruction
-│   ├── boxferry-kubernetes/      # planned: Kubernetes mapping and target policy
-│   ├── boxferry-docker/          # implemented: versioned Docker inspection and acquisition
-│   ├── boxferry-podman/          # implemented: Podman inspection and acquisition
-│   ├── boxferry-helm/            # planned: Helm rendering/generation integration
-│   ├── boxferry-kustomize/       # planned: Kustomize rendering/generation integration
-│   └── boxferry-testkit/         # planned: shared test builders; test-only
+│   └── ...                       # future adapters only after their Lens contracts exist
 ├── fixtures/
 │   └── README.md                  # fixture location and safety rules
 ├── tests/
@@ -47,9 +41,6 @@ boxferry/
 │   ├── check-files.sh             # tracked non-Rust formatting and lint contract
 │   ├── extract-release-notes.sh   # validated CHANGELOG section extraction
 │   └── install-file-tools.sh      # pinned Linux file-quality tool installer
-├── tools/
-│   ├── docker-runtime-matrix.toml # exact Engine image and reviewed API bounds
-│   └── podman-runtime-matrix.toml # exact executable lanes and explicit evidence gaps
 ├── docs/
 │   └── fixture-format.md          # versioned fixture manifest contract
 └── .github/
@@ -59,8 +50,6 @@ boxferry/
     └── workflows/
         ├── ci.yml
         ├── documentation-links.yml
-        ├── docker-runtime-conformance.yml
-        ├── podman-runtime-conformance.yml
         ├── release-plz.yml        # release PR creation and guarded publication dispatch
         └── release.yml            # protected lockstep crate publication
 ```
@@ -73,10 +62,8 @@ boxferry/
   publication once T4 establishes their supported API contracts.
 - Format adapters are independently testable and may be published when their first supported
   native mapping is complete.
-- `boxferry-runtime` is a reusable pure component whose observation and reconstruction contract
-  is exercised by both native runtime adapters.
-- Runtime adapters are published only when an embedded caller can use them safely without relying
-  on CLI-global state.
+- New native Docker, Podman, and Kubernetes behavior is deferred to future independent Lens
+  projects. Future BoxFerry adapters become thin semantic mappings after those libraries exist.
 - Test utilities and repository-only tools remain unpublished.
 - Publication remains enabled only for crates with API policy, documentation, package-content
   checks, and release automation.
@@ -85,18 +72,18 @@ boxferry/
 
 ## Placement rules
 
-| Concern                                      | Owner                    |
-| -------------------------------------------- | ------------------------ |
-| Public facade, CLI parsing, and presentation | `boxferry`               |
-| Neutral domain types                         | `boxferry-model`         |
-| Planning and loss policy                     | `boxferry-engine`        |
-| Compose semantic mapping                     | `boxferry-compose`       |
-| Quadlet semantic mapping                     | `boxferry-quadlet`       |
-| Kubernetes resource selection                | `boxferry-kubernetes`    |
-| Runtime-neutral observations and inference   | `boxferry-runtime`       |
-| Runtime command/API handling                 | Docker or Podman adapter |
-| Native Compose syntax                        | ComposeLens repository   |
-| Native Quadlet syntax and version catalogue  | QuadletLens repository   |
+| Concern                                      | Owner                  |
+| -------------------------------------------- | ---------------------- |
+| Public facade, CLI parsing, and presentation | `boxferry`             |
+| Neutral domain types                         | `boxferry-model`       |
+| Planning and loss policy                     | `boxferry-engine`      |
+| Compose semantic mapping                     | `boxferry-compose`     |
+| Quadlet semantic mapping                     | `boxferry-quadlet`     |
+| Docker protocol, plans, and execution        | Future DockerLens      |
+| Podman protocol, plans, and execution        | Future PodmanLens      |
+| Kubernetes native resources and versions     | Future KubernetesLens  |
+| Native Compose syntax                        | ComposeLens repository |
+| Native Quadlet syntax and version catalogue  | QuadletLens repository |
 
 Do not place conversion logic in the CLI, native syntax handling in an adapter, or target-specific
 fields in the neutral model merely to avoid defining a proper mapping. Public high-level behavior

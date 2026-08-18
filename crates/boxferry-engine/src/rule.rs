@@ -28,10 +28,6 @@ pub enum RuleId {
     ComposeNativeError = 1_000_197,
     ComposeNativeWarning = 1_000_198,
     ComposeNativeNote = 1_000_199,
-    DockerDataInvalid = 2_000_001,
-    DockerConfigurationUnsupported = 2_000_002,
-    DockerVersionUnsupported = 2_000_003,
-    DockerRelationshipMissing = 2_000_004,
     OrchestrationFailed = 3_001_000,
     InputReadFailed = 3_001_001,
     ComposeProjectRootInvalid = 3_001_002,
@@ -45,10 +41,6 @@ pub enum RuleId {
     OutputWriteFailed = 3_002_003,
     ReportWriteFailed = 3_003_001,
     SupportBundleWriteFailed = 3_003_002,
-    PodmanDataInvalid = 4_000_001,
-    PodmanConfigurationUnsupported = 4_000_002,
-    PodmanVersionUnsupported = 4_000_003,
-    PodmanRelationshipMissing = 4_000_004,
     QuadletTargetInvalid = 5_000_001,
     QuadletOpenEndedTarget = 5_000_002,
     QuadletOutputUnsupported = 5_000_003,
@@ -71,16 +63,6 @@ pub enum RuleId {
     QuadletNativeModel = 5_001_102,
     QuadletNativeDocumentSet = 5_001_103,
     QuadletNativeFailure = 5_001_104,
-    RuntimeReconstructionUncertain = 6_000_001,
-    RuntimeOverrideInferred = 6_000_002,
-    RuntimeComparisonIncomplete = 6_000_003,
-    RuntimeOwnershipUncertain = 6_000_004,
-    RuntimePodRelationshipIncomplete = 6_000_005,
-    RuntimeImageMissing = 6_000_006,
-    RuntimeModelInvalid = 6_000_007,
-    RuntimeGroupConflict = 6_000_008,
-    RuntimeLifecycleResolved = 6_000_009,
-    RuntimeManagedMetadata = 6_000_010,
 }
 
 /// Immutable metadata shared by human, JSON, and support-bundle presentation.
@@ -124,11 +106,8 @@ impl DiagnosticRule {
     pub fn owner(self) -> &'static str {
         match self.code.as_bytes().get(..3) {
             Some(b"BFC") => "Compose adapter",
-            Some(b"BFD") => "Docker adapter",
             Some(b"BFO") => "BoxFerry orchestration",
-            Some(b"BFP") => "Podman adapter",
             Some(b"BFQ") => "Quadlet adapter",
-            Some(b"BFR") => "runtime reconstruction",
             _ => "BoxFerry engine",
         }
     }
@@ -307,38 +286,6 @@ pub const RULES: &[DiagnosticRule] = &[
         "Review the retained source code when more context is needed."
     ),
     rule!(
-        DockerDataInvalid,
-        "BFD0001",
-        "docker-inspection-invalid",
-        Error,
-        "Docker inspection data is malformed or contradictory.",
-        "Inspect the selected Docker response and retry with a supported, valid payload."
-    ),
-    rule!(
-        DockerConfigurationUnsupported,
-        "BFD0002",
-        "docker-configuration-unsupported",
-        Warning,
-        "Docker inspection contains meaningful configuration outside the current model.",
-        "Review the named field; use partial output only when omission is acceptable."
-    ),
-    rule!(
-        DockerVersionUnsupported,
-        "BFD0003",
-        "docker-api-version-unsupported",
-        Error,
-        "The Docker Engine API version is outside the reviewed range.",
-        "Select a Docker Engine API version covered by BoxFerry."
-    ),
-    rule!(
-        DockerRelationshipMissing,
-        "BFD0004",
-        "docker-relationship-missing",
-        Warning,
-        "Docker inspection references a resource absent from the supplied snapshot.",
-        "Inspect and supply the referenced resource or accept partial reconstruction."
-    ),
-    rule!(
         OrchestrationFailed,
         "BFO1000",
         "orchestration-failed",
@@ -441,38 +388,6 @@ pub const RULES: &[DiagnosticRule] = &[
         Error,
         "The diagnostic support bundle could not be written safely.",
         "Choose a writable --error-report-directory with space for a new archive."
-    ),
-    rule!(
-        PodmanDataInvalid,
-        "BFP0001",
-        "podman-inspection-invalid",
-        Error,
-        "Podman inspection data is malformed or contradictory.",
-        "Inspect the selected Podman response and retry with a supported, valid payload."
-    ),
-    rule!(
-        PodmanConfigurationUnsupported,
-        "BFP0002",
-        "podman-configuration-unsupported",
-        Warning,
-        "Podman inspection contains meaningful configuration outside the current model.",
-        "Review the named field; use partial output only when omission is acceptable."
-    ),
-    rule!(
-        PodmanVersionUnsupported,
-        "BFP0003",
-        "podman-version-unsupported",
-        Error,
-        "The Podman version is outside the reviewed range.",
-        "Select a Podman version covered by BoxFerry."
-    ),
-    rule!(
-        PodmanRelationshipMissing,
-        "BFP0004",
-        "podman-relationship-missing",
-        Warning,
-        "Podman inspection references a resource absent from the supplied snapshot.",
-        "Inspect and supply the referenced resource or accept partial reconstruction."
     ),
     rule!(
         QuadletTargetInvalid,
@@ -650,86 +565,6 @@ pub const RULES: &[DiagnosticRule] = &[
         "QuadletLens could not construct the native input boundary.",
         "Correct the reported input and native stage before retrying."
     ),
-    rule!(
-        RuntimeReconstructionUncertain,
-        "BFR0001",
-        "runtime-reconstruction-uncertain",
-        Warning,
-        "Runtime inspection cannot prove the original authored definition.",
-        "Review the reconstructed definition and every field-level decision before deployment."
-    ),
-    rule!(
-        RuntimeOverrideInferred,
-        "BFR0002",
-        "runtime-override-inferred",
-        Warning,
-        "A runtime override was inferred by comparison with image defaults.",
-        "Review the inferred override before generating a reusable definition."
-    ),
-    rule!(
-        RuntimeComparisonIncomplete,
-        "BFR0003",
-        "runtime-comparison-incomplete",
-        Warning,
-        "Runtime-to-image comparison evidence is incomplete.",
-        "Supply the missing image evidence or review the affected field manually."
-    ),
-    rule!(
-        RuntimeOwnershipUncertain,
-        "BFR0004",
-        "runtime-ownership-uncertain",
-        Warning,
-        "Runtime resource lifecycle ownership is uncertain.",
-        "Choose application-owned or external lifecycle explicitly."
-    ),
-    rule!(
-        RuntimePodRelationshipIncomplete,
-        "BFR0005",
-        "runtime-pod-relationship-incomplete",
-        Warning,
-        "Runtime pod relationship evidence is incomplete or non-portable.",
-        "Review and explicitly resolve the service-group lifecycle."
-    ),
-    rule!(
-        RuntimeImageMissing,
-        "BFR0006",
-        "runtime-image-missing",
-        Warning,
-        "A runtime container has no reconstructable image reference.",
-        "Supply a reviewed image reference or return to an authored source definition."
-    ),
-    rule!(
-        RuntimeModelInvalid,
-        "BFR0007",
-        "runtime-model-invalid",
-        Error,
-        "Runtime observations cannot form a valid neutral application model.",
-        "Correct the reported observation or resource identity."
-    ),
-    rule!(
-        RuntimeGroupConflict,
-        "BFR0008",
-        "runtime-group-conflict",
-        Error,
-        "Runtime group relationship evidence is contradictory.",
-        "Correct or narrow the selected runtime snapshot."
-    ),
-    rule!(
-        RuntimeLifecycleResolved,
-        "BFR0009",
-        "runtime-lifecycle-resolved",
-        Warning,
-        "Caller policy resolved lifecycle intent that inspection could not prove.",
-        "Review the explicit lifecycle override before deployment."
-    ),
-    rule!(
-        RuntimeManagedMetadata,
-        "BFR0010",
-        "runtime-managed-metadata",
-        Warning,
-        "Runtime-managed metadata is unsafe to re-author as application metadata.",
-        "Keep the metadata as evidence and do not copy it into generated definitions."
-    ),
 ];
 
 impl RuleId {
@@ -754,59 +589,41 @@ impl RuleId {
             Self::ComposeNativeError => &RULES[14],
             Self::ComposeNativeWarning => &RULES[15],
             Self::ComposeNativeNote => &RULES[16],
-            Self::DockerDataInvalid => &RULES[17],
-            Self::DockerConfigurationUnsupported => &RULES[18],
-            Self::DockerVersionUnsupported => &RULES[19],
-            Self::DockerRelationshipMissing => &RULES[20],
-            Self::OrchestrationFailed => &RULES[21],
-            Self::InputReadFailed => &RULES[22],
-            Self::ComposeProjectRootInvalid => &RULES[23],
-            Self::PodmanTargetSelectionInvalid => &RULES[24],
-            Self::InterpolationInputInvalid => &RULES[25],
-            Self::ComposeLoadFailed => &RULES[26],
-            Self::ConversionFailed => &RULES[27],
-            Self::QuadletParseFailed => &RULES[28],
-            Self::OutputDirectoryNotEmpty => &RULES[29],
-            Self::OutputPathInvalid => &RULES[30],
-            Self::OutputWriteFailed => &RULES[31],
-            Self::ReportWriteFailed => &RULES[32],
-            Self::SupportBundleWriteFailed => &RULES[33],
-            Self::PodmanDataInvalid => &RULES[34],
-            Self::PodmanConfigurationUnsupported => &RULES[35],
-            Self::PodmanVersionUnsupported => &RULES[36],
-            Self::PodmanRelationshipMissing => &RULES[37],
-            Self::QuadletTargetInvalid => &RULES[38],
-            Self::QuadletOpenEndedTarget => &RULES[39],
-            Self::QuadletOutputUnsupported => &RULES[40],
-            Self::QuadletValueInvalid => &RULES[41],
-            Self::QuadletGenerationFailed => &RULES[42],
-            Self::QuadletCapabilityUnavailable => &RULES[43],
-            Self::QuadletGroupingApproximation => &RULES[44],
-            Self::QuadletDependencyUnsupported => &RULES[45],
-            Self::QuadletRestartApproximation => &RULES[46],
-            Self::QuadletEnvironmentFileApproximation => &RULES[47],
-            Self::QuadletGroupingInvalid => &RULES[48],
-            Self::QuadletDependencyInvalid => &RULES[49],
-            Self::QuadletCapabilityDeprecated => &RULES[50],
-            Self::QuadletUnresolvedVariable => &RULES[51],
-            Self::QuadletSourceInvalid => &RULES[52],
-            Self::QuadletModelInvalid => &RULES[53],
-            Self::QuadletInputUnsupported => &RULES[54],
-            Self::QuadletInputApproximation => &RULES[55],
-            Self::QuadletNativeSyntax => &RULES[56],
-            Self::QuadletNativeModel => &RULES[57],
-            Self::QuadletNativeDocumentSet => &RULES[58],
-            Self::QuadletNativeFailure => &RULES[59],
-            Self::RuntimeReconstructionUncertain => &RULES[60],
-            Self::RuntimeOverrideInferred => &RULES[61],
-            Self::RuntimeComparisonIncomplete => &RULES[62],
-            Self::RuntimeOwnershipUncertain => &RULES[63],
-            Self::RuntimePodRelationshipIncomplete => &RULES[64],
-            Self::RuntimeImageMissing => &RULES[65],
-            Self::RuntimeModelInvalid => &RULES[66],
-            Self::RuntimeGroupConflict => &RULES[67],
-            Self::RuntimeLifecycleResolved => &RULES[68],
-            Self::RuntimeManagedMetadata => &RULES[69],
+            Self::OrchestrationFailed => &RULES[17],
+            Self::InputReadFailed => &RULES[18],
+            Self::ComposeProjectRootInvalid => &RULES[19],
+            Self::PodmanTargetSelectionInvalid => &RULES[20],
+            Self::InterpolationInputInvalid => &RULES[21],
+            Self::ComposeLoadFailed => &RULES[22],
+            Self::ConversionFailed => &RULES[23],
+            Self::QuadletParseFailed => &RULES[24],
+            Self::OutputDirectoryNotEmpty => &RULES[25],
+            Self::OutputPathInvalid => &RULES[26],
+            Self::OutputWriteFailed => &RULES[27],
+            Self::ReportWriteFailed => &RULES[28],
+            Self::SupportBundleWriteFailed => &RULES[29],
+            Self::QuadletTargetInvalid => &RULES[30],
+            Self::QuadletOpenEndedTarget => &RULES[31],
+            Self::QuadletOutputUnsupported => &RULES[32],
+            Self::QuadletValueInvalid => &RULES[33],
+            Self::QuadletGenerationFailed => &RULES[34],
+            Self::QuadletCapabilityUnavailable => &RULES[35],
+            Self::QuadletGroupingApproximation => &RULES[36],
+            Self::QuadletDependencyUnsupported => &RULES[37],
+            Self::QuadletRestartApproximation => &RULES[38],
+            Self::QuadletEnvironmentFileApproximation => &RULES[39],
+            Self::QuadletGroupingInvalid => &RULES[40],
+            Self::QuadletDependencyInvalid => &RULES[41],
+            Self::QuadletCapabilityDeprecated => &RULES[42],
+            Self::QuadletUnresolvedVariable => &RULES[43],
+            Self::QuadletSourceInvalid => &RULES[44],
+            Self::QuadletModelInvalid => &RULES[45],
+            Self::QuadletInputUnsupported => &RULES[46],
+            Self::QuadletInputApproximation => &RULES[47],
+            Self::QuadletNativeSyntax => &RULES[48],
+            Self::QuadletNativeModel => &RULES[49],
+            Self::QuadletNativeDocumentSet => &RULES[50],
+            Self::QuadletNativeFailure => &RULES[51],
         }
     }
 }

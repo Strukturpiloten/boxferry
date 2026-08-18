@@ -1,6 +1,6 @@
 # Release process
 
-BoxFerry publishes its eight crates in one lockstep version. Release preparation is automated by
+BoxFerry publishes its five crates in one lockstep version. Release preparation is automated by
 release-plz; the protected `Release` workflow remains the only component allowed to publish
 crates, create tags, or create GitHub releases.
 
@@ -34,7 +34,7 @@ write operation is the `release-plz-*` preparation branch and pull request.
 3. Merge the release-plz pull request. Only a merged pull request whose head starts with
    `release-plz-` dispatches the protected `Release` workflow.
 4. Approve the `release` environment deployment. The workflow revalidates the repository,
-   publishes the eight crates in dependency order, creates attestations and checksums, and
+   publishes the five crates in dependency order, creates attestations and checksums, and
    publishes the immutable GitHub release.
 
 GitHub uses the pull-request title as the squash commit title, so the title is the release
@@ -49,6 +49,26 @@ unmatched title neither trigger release preparation nor enter generated release 
 change with a non-release title will not be published automatically; dependency updates that
 change shipped behavior therefore need a release-worthy title such as `fix(deps): ...`, while
 maintenance-only updates remain `chore(deps): ...`.
+
+## Public API compatibility during development
+
+Normal development and CI use inferred SemVer checks. Do not manually change Cargo package
+versions to make a compatibility check pass: release-plz owns the lockstep version, dependency,
+lockfile, and changelog edits in its release pull request.
+
+An ADR-recorded intentional public break may use
+`BOXFERRY_SEMVER_RELEASE_TYPE=major ./scripts/check-all.sh`. The local script accepts only
+`major`, `minor`, or `patch` as an explicit override and rejects every other nonempty value before
+it starts its numbered checks. This exception remains the complete local validation gate; it does
+not disable a compatibility check.
+
+For the same intentional break, the eventual squash commit and pull-request title must be a
+release-worthy Conventional Commit with a breaking marker: `feat!: ...`, `fix(scope)!: ...`,
+`perf!: ...`, `refactor!: ...`, or `revert!: ...`. CI derives the matching `major` check only from
+that exact title form; all other titles retain inferred checking. Release-plz still runs its own
+`semver_check = true` verification and chooses and writes the actual next 0.x lockstep version in
+its release pull request. [ADR 0032](decisions/0032-future-native-lens-boundaries.md) records the
+current intentional public break.
 
 GitHub release notes are extracted from the matching version section in `CHANGELOG.md`, which is
 the only release-history source in the repository. Keep changelog entries short and move technical

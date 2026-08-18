@@ -3,14 +3,13 @@
 ## Current status
 
 BoxFerry 0.3.0 is the current lockstep pre-1.0 release. It intentionally adopts the released
-ComposeLens and QuadletLens 0.2 native API changes. The facade and seven supported
+ComposeLens and QuadletLens 0.2 native API changes. The facade and five supported
 component crates use one lockstep version and the pre-1.0 contract below.
 
 The 0.3.0 migration note records the native public reexport paths for
 `compose_lens::model::ResourceExternal` and `quadlet_lens::model::SystemdUnitKey`.
 
-The additive `compose`, `quadlet`, pure `runtime`, `podman-runtime`, and `docker-runtime` facade
-features are exercised as external callers use them,
+The additive `compose` and `quadlet` facade features are exercised as external callers use them,
 and are part of this pre-1.0 contract. Generated Quadlet file contents require
 an explicit `QuadletFile::text` call and are redacted from adapter `Debug` output.
 
@@ -40,8 +39,8 @@ rule codes, and source adapters must not drop retained findings when consumed or
 
 ## Features and dependencies
 
-Adapter and runtime Cargo features are additive: enabling one must not disable or reinterpret
-another. Default features will be fixed before the first BoxFerry release and documented for both
+Adapter Cargo features are additive: enabling one must not disable or reinterpret another. Default
+features will be fixed before the first BoxFerry release and documented for both
 `cargo install boxferry` and embedded use with `default-features = false`.
 
 The MSRV is part of the public contract. Raising it requires a pre-1.0 minor release, release notes,

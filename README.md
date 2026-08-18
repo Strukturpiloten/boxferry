@@ -13,7 +13,6 @@ approximation, unsupported feature, and required manual action.
 
 - Import every supported source into one format-independent, provenance-aware application model.
 - Export that model to every supported target where the semantics allow it.
-- Import existing Docker and Podman resources through runtime inspection.
 - Produce actionable compatibility and loss reports instead of silently dropping configuration.
 - Account for target versions, including Podman and Kubernetes feature differences.
 - Keep format parsing in focused libraries rather than embedding every format in the application.
@@ -22,35 +21,36 @@ approximation, unsupported feature, and required manual action.
 
 ## Initial scope
 
-The first major milestone is the complete source/target matrix for Docker runtime resources,
-Docker Compose, Podman runtime resources, and Podman Quadlet. Kubernetes follows as another input
-and output adapter; it is not a separate conversion engine. Runtime targets produce a reviewable
-deployment plan before any optional, explicitly authorized mutation of Docker or Podman.
+The current BoxFerry milestone completes the shared conversion core and the four Docker Compose and
+Podman Quadlet document routes. The broader product remains an N-to-N converter, but native Docker,
+Podman, and Kubernetes boundaries will depend on future independent DockerLens, PodmanLens, and
+KubernetesLens projects. BoxFerry will not advertise those routes before the native libraries have
+reviewed importer, deployment-plan, execution, version, and diagnostic contracts.
 
-Planned inputs include:
-
-- Docker Compose files
-- Podman Quadlet files
-- Kubernetes resources
-- Rendered Helm and Kustomize resources
-- Docker and Podman runtime inspection data
-- Selected Docker and Podman commands
-
-Planned outputs include:
+The currently available CLI inputs are:
 
 - Docker Compose files
 - Podman Quadlet files
-- Kubernetes resources
+
+The currently available CLI outputs are:
+
+- Docker Compose files
+- Podman Quadlet files
 - Compatibility reports and manual migration guidance
 
-Helm chart and Kustomize overlay generation are later capabilities. Their rendered Kubernetes resources can be consumed earlier.
+Future DockerLens, PodmanLens, and KubernetesLens integrations add runtime resources, Kubernetes
+resources, and rendered Helm/Kustomize resources only after their native contracts exist. Helm
+chart and Kustomize overlay generation remain later capabilities.
 
 ## Related repositories
 
 - [ComposeLens](https://github.com/Strukturpiloten/compose-lens) parses, models, validates, resolves, and renders Compose documents.
 - [QuadletLens](https://github.com/Strukturpiloten/quadlet-lens) parses, models, validates, and renders version-aware Quadlet documents.
+- DockerLens, PodmanLens, and KubernetesLens are planned as future independent projects; they are
+  not part of the current implementation milestone.
 
-BoxFerry owns the application model, conversion planning, runtime adapters, and mappings between native formats. The Lens libraries do not depend on BoxFerry.
+BoxFerry owns the application model, conversion planning, orchestration, and mappings between
+native formats. Each Lens library owns its native model and never depends on BoxFerry.
 
 ## Command-line use
 
@@ -97,51 +97,6 @@ The `boxferry` crate is both the high-level library facade and the package that 
 APIs as the CLI. Applications with narrower requirements may depend on component crates such as
 `boxferry-model`, `boxferry-engine`, `boxferry-compose`, or `boxferry-quadlet`.
 
-The additive `runtime` feature exposes a pure runtime-neutral observation and reconstruction
-boundary. Embedded callers explicitly choose whether to preserve supported effective state or
-infer command, environment, protected metadata-label, user/group-identity, working-directory, and
-regular-health-check overrides by comparing linked container and image observations. Compose-
-managed `com.docker.compose.*` labels remain visible but receive a dedicated unsafe-to-reauthor
-diagnostic. Effective read-only-root state is preserved directly, as is container-level restart policy. Quadlet restart output distinguishes
-exact `Never`, approximate unbounded policies, and unsupported finite retry limits. Podman's
-separate startup-healthcheck family remains native-specific and is
-never substituted for Docker/Compose start-interval semantics.
-Every runtime reconstruction reports that original author intent is uncertain, inspected command,
-environment, and metadata-label contents are sensitive by default, and optional creation commands contribute
-provenance without becoming a required source of truth. Consistent Podman pod membership becomes
-an ordered neutral `ServiceGroup`; it records structural membership without inventing shared-
-namespace or lifecycle semantics. Embedded callers can resolve exact observed network, volume,
-and group names as application-owned or external only through provenance-bearing
-`RuntimeResolutions`; there is no implicit lifecycle default. Podman response parsing is available
-behind the non-default `podman-runtime` feature for explicit 5.4.0-through-6.1.0 inspect arrays.
-Embedded callers can acquire explicitly selected resources through a replaceable read-only Podman
-executor. An explicit finite policy can add selected pods' member containers and selected
-containers' images, networks, and named volumes without enumerating ambient resources. A
-runtime-migration CLI command remains open.
-
-Docker response parsing is available behind the non-default `docker-runtime` feature for the
-finite Engine API 1.40-through-1.55 range. Its pure decoder accepts explicit container, image,
-network, and volume inspect arrays. Its replaceable inspector requires an explicit executable,
-protected daemon endpoint, and exact API version; it never relies on Docker's ambient context or
-enumerates a resource family. Callers may explicitly authorize a bounded expansion from selected
-containers to referenced images, networks, and named volumes.
-
-A separate weekly/manual conformance workflow runs the digest-pinned official Docker Engine 29.7.1
-daemon inside an ephemeral privileged container and forces both reviewed API bounds. It mounts no
-host runtime socket or repository write path. This verifies current-daemon API 1.40 compatibility
-responses and API 1.55 responses; it does not claim to reproduce every historical Docker 19.03
-implementation detail.
-
-An opt-in, separately scheduled conformance workflow decodes real inspect output from exact,
-digest-pinned official Podman images for the available supported 5.4-through-5.8 minor lines. It
-runs nested Podman in an ephemeral privileged container without mounting a host runtime socket.
-The source-reviewed 6.1.0 decoder ceiling remains an explicit reproducible scheduled-image
-evidence gap until an exact immutable local-runtime image or reviewed build lane is available.
-
-Developers who already have the exact reviewed 6.1.0 ceiling may run a separate opt-in current-
-runtime test. It verifies the version first, creates only uniquely named temporary resources, and
-removes those resources after inspection; it is not enabled by normal tests or pull-request CI.
-
 Beginning with 0.1.1, the supported crates are published in lockstep. Applications can implement
 an [`ImportAdapter`](docs/library-api.md) and [`ExportAdapter`](docs/library-api.md), call
 `boxferry::convert`, and receive a typed `ConversionResult` instead of parsing CLI output.
@@ -159,8 +114,8 @@ optional exact Docker Engine or Podman backend. ComposeLens 0.2.0 owns
 deterministic short/long syntax choices, sensitive-output redaction, and parse-back validation,
 including ordered short/long service `env_file` output.
 BoxFerry reports compatibility-sensitive tag-plus-digest images, `host-gateway`, Podman user
-namespaces, SELinux relabeling, and SCTP before the caller authorizes output. Runtime-observed
-network and volume names are emitted explicitly so Compose project scoping cannot rename them.
+namespaces, SELinux relabeling, and SCTP before the caller authorizes output. Declared network
+and volume names are emitted explicitly so Compose project scoping cannot rename them.
 See the [Compose exporter contract](docs/compose-adapter.md).
 
 The additive `quadlet` feature exposes `QuadletImporter`, `QuadletSource`, `QuadletExporter`, and
@@ -227,9 +182,8 @@ partial losses. File-content loading is a separate future authorization boundary
 
 An optional neutral service runtime name remains distinct from the service key. Compose
 `container_name` imports with complete merge provenance and emits as capability-checked Quadlet
-`ContainerName=`. Runtime reconstruction sets the inspected container name explicitly so generated
-Compose or Quadlet definitions preserve the reviewed identity instead of relying on provider name
-generation.
+`ContainerName=`. It remains distinct from the service key so generated definitions preserve the
+declared identity instead of relying on provider name generation.
 
 The neutral model also preserves Compose health-check command form, explicit disable intent,
 durations, retries, startup grace period, and `start_interval` with field-level provenance. The
@@ -291,7 +245,6 @@ Start with the [documentation index](docs/README.md). Important design documents
 - [Diagnostic rule reference](docs/diagnostic-rules.md)
 - [Format coverage](docs/format-coverage.md)
 - [Quadlet exporter](docs/quadlet-adapter.md)
-- [Runtime reconstruction](docs/runtime-reconstruction.md)
 - [Testing strategy](docs/testing.md)
 - [Development environment](docs/development-environment.md)
 - [Release policy](docs/releasing.md)

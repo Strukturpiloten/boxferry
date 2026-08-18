@@ -1,7 +1,0 @@
-[
-  {
-    "Id": "sha256:image-runtime-id-api",
-    "Config": { "Env": [], "Cmd": [], "Entrypoint": [] },
-    "Descriptor": { "mediaType": "application/vnd.oci.image.manifest.v1+json" }
-  }
-]

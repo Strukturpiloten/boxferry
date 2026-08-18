@@ -1,8 +1,0 @@
-[
-  {
-    "Name": "frontend",
-    "Id": "network-runtime-id-frontend",
-    "Driver": "bridge",
-    "Labels": { "com.example.purpose": "fixture" }
-  }
-]

@@ -1,7 +1,8 @@
 # ADR 0007: Finite policy-controlled Podman relationship expansion
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-08-04
+- Superseded by: [ADR 0032](0032-future-native-lens-boundaries.md)
 
 ## Context
 

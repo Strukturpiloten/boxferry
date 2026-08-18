@@ -215,17 +215,6 @@ fn facade_exposes_neutral_config_and_secret_contract() -> Result<(), String> {
 }
 
 #[test]
-fn facade_distinguishes_runtime_observation_provenance() -> Result<(), String> {
-    use boxferry::{Provenance, ProvenanceKind, SourceId};
-
-    let provenance =
-        Provenance::runtime_observation(SourceId::new("runtime:container/web").map_err(|error| error.to_string())?);
-    assert_eq!(provenance.kind(), ProvenanceKind::RuntimeObservation);
-    assert_eq!(provenance.span(), None);
-    Ok(())
-}
-
-#[test]
 fn facade_exposes_neutral_structural_service_groups() -> Result<(), String> {
     use boxferry::{ResourceOwnership, Service, ServiceGroup, Sourced};
 
@@ -251,58 +240,6 @@ fn facade_exposes_neutral_structural_service_groups() -> Result<(), String> {
     assert_eq!(
         application.service_groups()[0].value().members()[0].value().as_str(),
         "web"
-    );
-    Ok(())
-}
-
-#[cfg(feature = "runtime")]
-#[test]
-fn facade_exposes_runtime_reconstruction_additively() -> Result<(), String> {
-    use boxferry::{
-        ContainerObservation, EffectiveCommand, ImageReference, ImportAdapter, OverrideReconstruction,
-        RuntimeImplementation, RuntimeImporter, RuntimeMetadataLabel, RuntimeSnapshot, SourceId,
-    };
-
-    let mut container = ContainerObservation::new(
-        SourceId::new("runtime:podman:container:web").map_err(|error| error.to_string())?,
-        Identifier::new("web").map_err(|error| error.to_string())?,
-    );
-    container.set_image(
-        ImageReference::parse("example.invalid/web:1").map_err(|error| error.to_string())?,
-        None,
-    );
-    container.set_command(EffectiveCommand::Empty);
-    container.set_environment(Vec::new());
-    container.set_labels(vec![RuntimeMetadataLabel::new(
-        Identifier::new("com.example.role").map_err(|error| error.to_string())?,
-        "web",
-    )]);
-
-    let mut snapshot = RuntimeSnapshot::new(
-        Identifier::new("example").map_err(|error| error.to_string())?,
-        RuntimeImplementation::Podman,
-    );
-    snapshot.add_container(container).map_err(|error| error.to_string())?;
-    let importer =
-        RuntimeImporter::new(OverrideReconstruction::PreserveObservedState).map_err(|error| error.to_string())?;
-    let result = importer.import(&snapshot);
-
-    assert_eq!(
-        result.application().map(|application| application.services().len()),
-        Some(1)
-    );
-    assert_eq!(
-        result
-            .application()
-            .and_then(|application| application.services().first())
-            .map(|service| service.value().labels().len()),
-        Some(1)
-    );
-    assert!(
-        result
-            .outcomes()
-            .iter()
-            .any(|outcome| outcome.subject() == "application.reconstruction")
     );
     Ok(())
 }

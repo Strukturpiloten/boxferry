@@ -2,7 +2,7 @@
 
 This plan gives BoxFerry, ComposeLens, and QuadletLens one stable task numbering scheme. Repository roadmaps describe internal phases; this document describes delivery order across repositories.
 
-Last synchronized: 2026-08-10.
+Last synchronized: 2026-08-18.
 
 ## Status convention
 
@@ -24,7 +24,9 @@ The repository that owns a task is authoritative for its detailed status. Update
 | T5   | All repositories                          | in progress | Minimum native typed subsets for the first conversion    |
 | T6   | BoxFerry, integrating both Lens libraries | in progress | First Compose-to-Quadlet vertical slice                  |
 | T7   | All repositories                          | in progress | Expanded conformance, runtime, and release testing tiers |
-| T8   | BoxFerry, integrating all adapters        | in progress | First N-to-N Docker/Compose/Podman/Quadlet milestone     |
+| T8   | BoxFerry and future native Lens projects  | blocked     | First N-to-N Docker/Compose/Podman/Quadlet milestone     |
+| T9   | BoxFerry                                  | completed   | Initial Compose/Quadlet product completion               |
+| T10  | BoxFerry                                  | planned     | Complete project documentation replacement               |
 
 ## T1: Testing foundations
 
@@ -210,46 +212,14 @@ are safe and equivalent. Application-owned secret materialization and Compose co
 explicit manual actions. Adapter and public-facade tests cover short/long, multi-file, custom-name,
 sensitive-value, strict/partial, and golden behavior.
 
-### Completed container restart-policy slice
-
-Docker Engine API 1.40-through-1.55 and Podman 5.4.0-through-6.1.0 inspection decode the native
-container restart-policy object independently and fail closed on malformed or contradictory
-values. The neutral `RestartPolicy` keeps never, always, unlimited or finite on-failure, and
-unless-stopped intent separate from dependency and deployment restart concepts. Runtime
-reconstruction preserves the host setting directly with observation provenance. Quadlet emits
-exact `Restart=no`, explicit systemd approximations for unbounded policies, and no unsafe
-substitute for finite retry counts. ComposeLens 0.1.11 provides a source-aware Compose `restart`
-project value and a parse-back-validated generated value. BoxFerry maps every literal policy with
-complete merge
-provenance, generates every neutral variant exactly back to Compose, and rejects unresolved,
-explicit-zero, and out-of-range authored retry limits without erasing the service. The
-Compose-to-Quadlet golden path proves exact `restart: "no"` to `Restart=no`; the other Quadlet
-fidelity classifications remain unchanged.
-
-### Completed runtime metadata-label slice
-
-Docker Engine API 1.40-through-1.55 and Podman 5.4.0-through-6.1.0 inspection now decode
-container and image label maps as deterministic protected runtime observations. Reconstruction can
-preserve the effective map or omit matching image defaults and retain only changed/runtime-added
-values with conversion-decision provenance. Compose's reserved `com.docker.compose.*` provider
-namespace receives a dedicated unsafe-to-reauthor outcome while remaining reviewable evidence.
-ComposeLens 0.1.9 service-label project/generation boundaries and QuadletLens 0.1.7's native
-repeatable container `Label=` key now complete the typed output gate. BoxFerry imports mapping and
-sequence forms with scalar normalization and multi-file provenance, generates protected Compose
-values, and emits systemd-quoted Quadlet labels with literal `%` escaping. Reserved
-`com.docker.compose.*` provider metadata remains diagnostic-only. Resource, image-build,
-annotation, and label-file ownership remain separate work.
-
 ### Completed explicit container-name slice
 
 ComposeLens 0.1.10 and QuadletLens 0.1.9 are published and consumed from crates.io. BoxFerry keeps
-an optional provenance-bearing service runtime name separate from its neutral service identifier.
-Effective multi-file Compose `container_name` values map into that field and emit as
-capability-checked Quadlet `ContainerName=`. Runtime reconstruction explicitly preserves the
-inspected Docker or Podman name so regenerated Compose and Quadlet definitions do not acquire a
-provider-generated replacement. Both output adapters validate their target runtime grammar and
-produce an invalid outcome rather than omitting an unsafe name. Model, adapter, runtime,
-invalid-value, and public-facade golden tests cover the complete boundary.
+an optional provenance-bearing declared service runtime name separate from its neutral service
+identifier. Effective multi-file Compose `container_name` values map into that field and emit as
+capability-checked Quadlet `ContainerName=`. Both output adapters validate their target grammar
+and produce an invalid outcome rather than omitting an unsafe name. Model, adapter, invalid-value,
+and public-facade golden tests cover the complete boundary.
 
 ## T6: First end-to-end milestone
 
@@ -268,13 +238,12 @@ file I/O and maps required safe paths to Quadlet `EnvironmentFile=` as an explic
 approximation. Optional files, unsafe paths, authorized file-content processing, broader value
 encoders, and the TYPO3 showcase remain.
 
-Runtime observations can also flow through the public engine into deterministic Compose output.
 The exporter consumes ComposeLens 0.2.0's parse-back-validated generated-document API. Embedded
 callers may require one exact Docker Compose or `podman-compose` provider release and an optional
 separate exact Docker Engine or Podman backend; the generic Quadlet-to-Compose CLI route instead
-uses the rolling provider-neutral Compose Specification target. Both preserve observed resource
-names and container restart policies, and emit ordered short/long environment-file declarations with their explicit options and
-sensitivity. It reports every compatibility or unsupported field decision before
+uses the rolling provider-neutral Compose Specification target. It emits ordered short/long
+environment-file declarations with their explicit options and sensitivity. It reports every
+compatibility or unsupported field decision before
 authorization. Health checks, dependencies, config/secret service grants, non-file material, and
 structural groups remain explicit partial losses. Application-owned file-backed top-level configs
 and secrets now use ComposeLens's parse-back-validated generated subset.
@@ -297,9 +266,8 @@ Exit criteria:
 ## T7: Expanded testing tiers
 
 Status: in progress. ComposeLens has delivered its repository tier. QuadletLens has an exact
-Podman 5.4-to-current generator matrix, and BoxFerry now has provenance-reviewed Compose, Docker
-Engine API 1.40/1.55, and Podman 5.4.0/6.0.2/6.1.0 inspection fixtures. Opt-in Podman live runtime lanes
-cover every official immutable 5.x minor image from 5.4 through 5.8; broader BoxFerry tiers remain.
+Podman 5.4-to-current generator matrix. BoxFerry's remaining work is limited to the document
+product until future native Lens projects supply their own reviewed runtime contracts.
 
 - Per pull request: unit, integration, golden, round-trip, and property tests.
 - Scheduled: Docker Compose, Podman Compose, and real Quadlet generator conformance.
@@ -307,45 +275,24 @@ cover every official immutable 5.x minor image from 5.4 through 5.8; broader Box
 
 Each harness becomes required only after its command, isolation model, version source, fixture provenance, and failure policy are documented.
 
-The first BoxFerry runtime tier is now implemented without daemon access: `boxferry-runtime`
-provides duplicate-safe observations, sensitive defaults, optional creation evidence, two explicit
-reconstruction policies, image comparison for command/environment/metadata-label/user-group/working-directory
-and field-level regular-health-check overrides, direct read-only-root and restart-policy preservation, relationship
-preservation for networks/volumes,
-provenance-aware structural service groups, uncertain lifecycle ownership, explicit exact-name
-caller resolutions with user-override provenance, and fidelity outcomes. The Quadlet path can
-preserve one complete application-owned observed group without guessing partial/multiple group
-topology. `boxferry-podman` adds deterministic native response decoding,
-structured unmodeled-field outcomes, relationship resolution, and sensitive/raw-ID redaction.
-Explicit read-only Podman acquisition is implemented through a closed command model and
-replaceable executor. Policy-controlled expansion now follows selected pod members and referenced
-container images, networks, and named volumes without ambient enumeration. A weekly/manual,
-digest-pinned nested-Podman matrix validates real 5.4.0, 5.5.2, 5.6.2, 5.7.1, and 5.8.2 response
-shapes on disposable runners without a host socket. An additional explicitly selected installed-
-current lane validates 6.1.0 with uniquely named resources, protected metadata, regular health and finite restart configuration, and exact
-cleanup. Native Docker
-inspection now has independent versioned decoding, explicit-endpoint command acquisition, finite
-container-resource expansion, public facade tests, and a digest-pinned nested Docker Engine 29.7.1
-lane for forced API 1.40/1.55 responses including protected metadata, regular health and finite restart configuration. Reproducible
-scheduled-image evidence for Podman 6.1.0 and
-historical Docker 19.03 implementation evidence remain open T7 work; current-daemon downgrade
-responses and one installed runtime are not presented as equivalent to those missing tiers.
-Pure adapter and public-facade tests now cover observation-to-Compose output without invoking a
-provider or runtime; provider/runtime execution conformance remains scheduled T7 work.
+The earlier BoxFerry-native runtime implementation has been removed. Docker, Podman, and
+Kubernetes native boundaries are future independent Lens projects; BoxFerry must not recreate
+their protocol, acquisition, conformance, deployment, or execution responsibilities while T9 and
+T10 are in progress.
 
 ## T8: First N-to-N runtime and definition milestone
 
-Status: in progress. BoxFerry coordinates this task. The Quadlet-to-neutral importer now covers
+Status: blocked by the deferred DockerLens and PodmanLens projects. BoxFerry coordinates the future
+integration task but does not own their native contracts. The Quadlet-to-neutral importer covers
 the exact shared image, container-name, command, environment, scalar-port, named/absolute-mount,
 named-network, metadata-label, host-mapping, and execution-context slice. It retains native section
 identity for systemd restart policy and complete sibling activation-plus-ordering dependencies;
 regular native health commands and scalars also enter the protected, source-aware health model.
-Host-unit references and incomplete relationships remain explicit. Docker and Podman runtime
-importers plus Compose and Quadlet exporters already exist as library APIs. The nested CLI exposes
-all four Compose/Quadlet document routes. Compose-to-Compose uses public native canonicalization to
-retain expressions and extension data; cross-format and Quadlet-to-Quadlet routes use the neutral
-model. Remaining semantic fields, runtime targets, and the full Docker/Podman/Compose/
-Quadlet route matrix are still open.
+Host-unit references and incomplete relationships remain explicit. Docker and Podman native
+responsibilities move behind future independent Lens libraries; no native runtime import API
+remains in BoxFerry. The nested CLI exposes the four Compose/Quadlet document routes.
+Compose-to-Compose uses public native canonicalization to retain expressions and extension data;
+cross-format and Quadlet-to-Quadlet routes use the neutral model.
 
 Docker runtime resources, Docker Compose, Podman runtime resources, and Podman Quadlet must each
 be available as a source and a target. Routes compose through the neutral model rather than using
@@ -361,3 +308,55 @@ Exit criteria:
   or mutate ambient state implicitly.
 - Incompatible source intent produces structured outcomes governed by the same loss policy on
   every route.
+
+No T8 runtime target, executor, CLI route, or 16-cell completion claim is implemented until the
+future DockerLens and PodmanLens projects release the required native contracts. See
+[ADR 0032](decisions/0032-future-native-lens-boundaries.md).
+
+## T9: Initial Compose/Quadlet product completion
+
+Status: completed. Implementation, focused review, and the complete 21-step repository validation
+gate passed on 2026-08-18. BoxFerry uses only released ComposeLens and QuadletLens public APIs.
+
+Work:
+
+1. Complete the deterministic Compose-to-neutral, Quadlet-to-neutral, neutral-to-Compose, and
+   neutral-to-Quadlet document matrix using the current Lens APIs without native-library changes.
+2. Record project `.env` parsing/materialization, service `env_file` content
+   parsing/materialization, Compose `include` processing, and generated config/secret service
+   grants as named released-Lens API gaps. BoxFerry does not privately implement these native
+   behaviors; `--env-file` remains limited to explicit Compose interpolation assignments.
+3. Complete positive, negative, loss-policy, same-format, JSON-report, fix-first, error-report, and
+   deterministic golden coverage for all four Compose/Quadlet document routes.
+4. Promote corpus-derived regressions only when the required native behavior is already available
+   through released Lens APIs; record other cases as named dependency gaps.
+5. Review and stabilize the public core, Compose, Quadlet, CLI, diagnostic, and report contracts
+   intended for the initial BoxFerry product. Remove inaccurate capability claims and unreleased
+   transitional APIs rather than preserving compatibility shims.
+6. Run the complete repository validation and prepare the next BoxFerry release through the
+   existing release-plz workflow.
+
+Exit criteria:
+
+- The deterministic four document routes expose truthful route-specific help and use public facade APIs.
+- Every supported mapping has positive and negative boundary coverage and every loss is structured.
+- Same-format Compose preserves native expressions/extensions; all other document routes use the
+  neutral model and deterministic native rendering.
+- Authorized environment content never becomes an ambient default or leaks into diagnostics,
+  reports, fixtures, or debug output.
+- No available capability depends on DockerLens, PodmanLens, or KubernetesLens.
+- The complete local validation gate passes from a clean checkout.
+
+The following are explicitly outside T9: Docker/Podman runtime targets or executors, runtime CLI
+routes, Kubernetes resources, `.kube` semantic conversion, artifact execution, native resource
+label/security behavior without Lens evidence, and Compose/Quadlet features that require an
+unreleased Lens API change.
+
+## T10: Complete project documentation replacement
+
+Status: planned and high priority immediately after T9.
+
+Replace the current development-era documentation with a coherent user, operator, library,
+architecture, compatibility, troubleshooting, and contributor documentation set that describes
+only implemented behavior. Detailed information architecture and migration work are intentionally
+deferred until T9 fixes the product contract that the new documentation must explain.

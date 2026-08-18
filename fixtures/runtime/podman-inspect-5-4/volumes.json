@@ -1,8 +1,0 @@
-[
-  {
-    "Name": "data",
-    "Driver": "local",
-    "Mountpoint": "/var/lib/containers/storage/volumes/data/_data",
-    "CreatedAt": "2026-08-04T00:00:00Z"
-  }
-]

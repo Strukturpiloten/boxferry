@@ -23,35 +23,39 @@ route is usable only for the intersection of semantics supported by its importer
 model, and its exporter. Incompatible intent remains a structured outcome and never disappears
 because another route happens to support it.
 
-The first major product milestone covers Docker runtime state, Docker Compose, Podman runtime
-state, and Podman Quadlet in every source/target combination. Kubernetes then joins the same
-matrix. Applying a runtime target is a separate, explicit side effect: the pure exporter first
+The current implementation milestone covers the four Compose and Quadlet document routes. Docker,
+Podman, and Kubernetes remain part of the N-to-N product direction, but their native boundaries
+will be supplied by future independent Lens projects before BoxFerry exposes those routes.
+Applying a future runtime target remains a separate, explicit side effect: the pure exporter first
 creates a deterministic deployment plan, and an executor may apply that plan only after caller
 authorization.
 
-This contract is fixed by [ADR 0017](decisions/0017-n-to-n-adapter-matrix.md).
+This ownership and delivery boundary is fixed by
+[ADR 0032](decisions/0032-future-native-lens-boundaries.md).
 
 ## System context
 
 ```text
-native source             importer                 neutral model
+native document           importer                 neutral model
 
-Docker runtime ─────────▶ Docker importer ───────┐
-Compose documents ──────▶ Compose importer ──────┤
-Podman runtime ─────────▶ Podman importer ───────┼──▶ application model ──▶ planner + diagnostics
-Quadlet files ──────────▶ Quadlet importer ──────┤
-Kubernetes resources ──▶ Kubernetes importer ───┘
+Compose documents ──────▶ Compose importer ──────┐
+Quadlet files ──────────▶ Quadlet importer ──────┼──▶ application model ──▶ planner + diagnostics
+                                                   │
+                                                   └── future Lens-backed boundaries:
+                                                       Docker, Podman, and Kubernetes
 
-neutral model             exporter                 native target
+neutral model             exporter                 native document
 
-application model ──────▶ Docker exporter ───────▶ Docker deployment plan ──▶ explicit executor
-                  ├─────▶ Compose exporter ──────▶ Compose documents
-                  ├─────▶ Podman exporter ───────▶ Podman deployment plan ──▶ explicit executor
-                  ├─────▶ Quadlet exporter ──────▶ Quadlet files
-                  └─────▶ Kubernetes exporter ──▶ Kubernetes resources
+application model ──────▶ Compose exporter ──────▶ Compose documents
+                  └─────▶ Quadlet exporter ──────▶ Quadlet files
 ```
 
-Each native format is parsed into its own native model before mapping to BoxFerry's application model. Rendering reverses this direction: the target adapter maps application intent into a native target model, and the native library renders it.
+The diagram describes the implemented document boundaries. Future DockerLens, PodmanLens, and
+KubernetesLens integrations will add their own native source and target boundaries once their
+reviewed contracts exist. Each native format is parsed into its own native model before mapping to
+BoxFerry's application model. Rendering reverses this direction: the target adapter maps
+application intent into a native target model, and the native library renders it. Future runtime
+application remains separately authorized work owned by the corresponding Lens project.
 
 ## Major components
 
@@ -87,7 +91,10 @@ Adapters map between a native model and the application model. They own semantic
 
 - The Compose adapter depends on ComposeLens.
 - The Quadlet adapter depends on QuadletLens.
-- The Kubernetes adapter depends on maintained Kubernetes API types.
+- The future Docker adapter depends on DockerLens.
+- The future Podman adapter depends on PodmanLens.
+- The future Kubernetes adapter depends on KubernetesLens, which may itself use maintained
+  Kubernetes API types.
 - Helm and Kustomize adapters initially invoke native renderers and pass the result to the Kubernetes adapter.
 
 The Compose adapter consumes a `MergedProject`, an optional matching ComposeLens
@@ -151,47 +158,18 @@ Execution identity stays container-scoped for separate units. An explicitly grou
 identical user-namespace choice declared by every service to the capability-checked pod-level
 `UserNS=` key; mixed or conflicting choices invalidate grouping.
 
-### Runtime inspectors
+### Future native boundaries
 
-Runtime inspectors read deployed Docker or Podman resources into observations and then map those
-observations to application intent. Inspection is lossy by nature: a running container does not
-retain every choice from its original source definition.
-
-The implemented `boxferry-runtime` crate owns runtime-neutral observation DTOs and a pure
-reconstructor. Its caller-selected policy either preserves supported effective state or compares
-linked container and image observations to infer command, environment, protected metadata labels,
-combined user/group, and working-directory overrides plus field-level regular-health-check differences. Retained identities
-split into the neutral fields with shared provenance. Explicit read-only-root state is preserved
-directly. Reserved Compose provider labels remain explicit unsafe-to-reauthor evidence. Podman startup health remains outside the shared regular-health contract. The
-implemented `boxferry-podman` and `boxferry-docker` crates decode explicit native response
-documents and acquire caller-selected resources through closed, replaceable command boundaries.
-Finite policies may expand only directly evidenced relationships without ambient enumeration.
-Docker acquisition additionally requires an explicit daemon endpoint and forced Engine API
-version. Separate opt-in conformance harnesses run digest-pinned nested runtimes without host
-runtime sockets. Native response types never cross into the shared runtime crate or application
-model.
-
-All native adapters translate producer diagnostics into the engine's protected `NativeFinding`
-envelope. This is provenance, not a replacement for BoxFerry rules or fidelity outcomes. The same
-boundary applies to future Docker, Podman, and Kubernetes findings; see
-[ADR 0027](decisions/0027-format-neutral-native-findings.md).
-
-Neutral provenance distinguishes effective runtime observations from authored documents,
-implementation defaults, caller overrides, and BoxFerry conversion decisions. Optional creation
-commands may support an inference, but effective inspection data remains the primary observation.
-
-Optional creation-command arguments are sensitive by default and can add provenance to the broad
-reconstruction decision, but cannot change an effective value. Resource inspection establishes
-network and volume existence and relationships, not lifecycle ownership; the neutral model records
-that ownership as uncertain until an exact-name `RuntimeResolutions` entry chooses
-application-owned or external behavior with user-override provenance.
-Consistent Podman pod membership enters the neutral graph as a structural service group; response
-disagreement is invalid and target grouping/lifecycle resolution remains caller-owned. The
-Quadlet adapter can preserve one resolved application-owned group that covers the complete
-application; it does not infer multi-group or partial-group topology.
-
-External commands and APIs are behind runtime-specific replaceable interfaces so tests can supply
-deterministic implementations.
+DockerLens, PodmanLens, and KubernetesLens will own native runtime/resource inspection, version
+evidence, deployment plans, and explicitly authorized execution. BoxFerry will consume their
+native DTOs through thin semantic adapters only after those projects publish reviewed contracts.
+`NativeFinding` remains the protected provenance envelope for future producer diagnostics; it is
+not a replacement for BoxFerry rules or fidelity outcomes. See
+[ADR 0027](decisions/0027-format-neutral-native-findings.md) and
+[ADR 0032](decisions/0032-future-native-lens-boundaries.md).
+The neutral model retains declared resource names, ownership, provenance, and optional runtime
+names without assigning future native resource-discovery semantics to BoxFerry. Future Lens-backed
+adapters will make lifecycle and execution decisions explicit to their callers.
 
 ### Target profiles and capability providers
 
@@ -207,7 +185,7 @@ Each adapter owns its relevant capability provider. The engine combines capabili
 
 The `boxferry` package contains both a library facade and the `boxferry` executable. The facade
 provides the supported high-level entry point and re-exports deliberately supported component
-surfaces. Format and runtime adapters remain separate crates so applications can select only the
+surfaces. Semantic mapping adapters remain separate crates so applications can select only the
 integrations they need.
 
 The executable owns argument parsing, terminal presentation, configuration-file discovery, and
@@ -227,15 +205,13 @@ Route-specific help exposes only the applicable input and output option families
 ## Dependency rules
 
 ```text
-compose-lens ───▶ boxferry-compose ──────────────────┐
-quadlet-lens ───▶ boxferry-quadlet ──────────────────┤
-k8s libraries ──▶ boxferry-kubernetes ───────────────┤──▶ boxferry facade ──▶ boxferry CLI
-runtime APIs ───┐                                    │
-                ├──▶ Docker/Podman adapters ─────────┤
-boxferry-runtime┘                                    │
-model and engine crates ─────────────────────────────┘
+compose-lens ────▶ boxferry-compose ───────────────────┐
+quadlet-lens ────▶ boxferry-quadlet ───────────────────┤
+model and engine crates ────────────────────────────────┤──▶ boxferry facade ──▶ boxferry CLI
+future Lens adapters ───────────────────────────────────┘
 ```
 
+- DockerLens, PodmanLens, and KubernetesLens are future projects and are not current dependencies.
 - Lens libraries never depend on BoxFerry.
 - `boxferry-model` never depends on native-format libraries.
 - Adapters may depend on a native library, the model, and engine interfaces.
@@ -258,7 +234,7 @@ model and engine crates ──────────────────�
 ## Safety and predictability
 
 - Conversion is read-only unless an explicit output path is supplied.
-- Inspecting a runtime must not modify it.
+- Any future runtime inspection must not modify the inspected system.
 - Applying generated output is outside the default conversion command.
 - Secret values are represented separately from ordinary text and redacted by default.
 - Output is deterministic for identical input, configuration, dependency versions, and target profiles.

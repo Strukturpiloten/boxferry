@@ -27,7 +27,7 @@ summary = "The workload converts without loss or compatibility diagnostics."
 
 `id` and suite names use lowercase ASCII letters, digits, and hyphens. The manifest ID must match its directory name, and its suite must match the parent directory.
 
-Allowed suites are `model`, `adapter-contract`, `conversion`, `roundtrip`, `differential`, `runtime`, and `real-world`. The `repository-policy` test suite validates every discovered manifest.
+Allowed suites are `model`, `adapter-contract`, `conversion`, `roundtrip`, `differential`, and `real-world`. The `repository-policy` test suite validates every discovered manifest.
 
 ## Provenance
 

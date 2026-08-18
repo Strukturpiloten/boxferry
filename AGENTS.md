@@ -24,7 +24,14 @@ If a change contradicts an accepted ADR, update or supersede the ADR in the same
 - BoxFerry owns orchestration, the application model, conversion planning, adapters, diagnostics, and the CLI.
 - Compose parsing and rendering belong in `compose-lens`.
 - Quadlet parsing, rendering, and native version validation belong in `quadlet-lens`.
-- Kubernetes schemas come from maintained upstream Kubernetes crates; BoxFerry owns only its mappings and supported-target policy.
+- Native Docker protocol handling, version evidence, acquisition, deployment plans, and execution
+  belong in the future independent `docker-lens` project; BoxFerry owns only the semantic mapping.
+- Native Podman protocol handling, version evidence, acquisition, deployment plans, and execution
+  belong in the future independent `podman-lens` project; BoxFerry owns only the semantic mapping.
+- Native Kubernetes resource handling and version validation belong in the future independent
+  `kubernetes-lens` project; BoxFerry owns only the semantic mapping and supported-target policy.
+- Those three future Lens projects are deferred. Do not add placeholders, native runtime crates,
+  or private replacements for their responsibilities while they do not exist.
 - Helm and Kustomize input should initially be rendered by their native tools and then handled as Kubernetes resources.
 - Format libraries must not depend on BoxFerry.
 
@@ -42,7 +49,8 @@ Using a third-party dependency is allowed when its license, maintenance state, a
 - Treat user input as fallible; malformed input must not panic the process.
 - Keep target compatibility explicit. Do not infer a target version from the development machine.
 - Keep file parsing free of runtime side effects.
-- Runtime inspection and external command execution must pass through replaceable interfaces.
+- Any future runtime inspection and external command execution must pass through replaceable
+  interfaces.
 - Secrets must be redacted from diagnostics, snapshots, and logs by default.
 
 ## Development rules
@@ -67,8 +75,6 @@ cargo ci-check
 cargo ci-core
 cargo ci-compose
 cargo ci-quadlet
-cargo ci-podman
-cargo ci-runtime
 cargo ci-policy
 cargo ci-clippy
 cargo ci-test
@@ -92,9 +98,12 @@ sequence:
 3. Fetch `origin/main`, verify local `main` is synchronized, and create
    `TheRealBecks/issue<NUMBER>` from it.
 4. Complete and review the change without staging unrelated files.
-5. Run `./scripts/check-all.sh` from the repository root. Do not commit, push, or create the pull
-   request unless every step passes. Any source, test, configuration, or documentation change made
-   after the successful run invalidates it and requires the complete task to run again.
+5. Run `./scripts/check-all.sh` from the repository root for normal changes. For an ADR-recorded
+   intentional public break, run `BOXFERRY_SEMVER_RELEASE_TYPE=major ./scripts/check-all.sh` only
+   when the eventual commit and pull-request title use a release-worthy breaking `!`. Do not commit,
+   push, or create the pull request unless the applicable complete gate passes. Any source, test,
+   configuration, or documentation change made after the successful run invalidates it and requires
+   the complete task to run again.
 6. Stage only explicit in-scope paths, run `git diff --cached --check`, review the staged diff, and
    create one intentional commit.
 7. Push the issue branch and open a ready-for-review pull request containing `Closes #<NUMBER>`.

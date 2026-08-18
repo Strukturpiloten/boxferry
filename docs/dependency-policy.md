@@ -34,18 +34,6 @@ requirement and committed lock file let Renovate propose normal updates while CI
 resolved graph. [ADR 0004](decisions/0004-first-cli-feature-and-write-safety.md) records the default
 feature and command-safety decision.
 
-`boxferry-podman` uses Serde 1.0.229 derive support and `serde_json` 1.0.151 to decode private,
-tolerant subsets of caller-supplied Podman response arrays. These types do not cross the public
-native-adapter boundary, unknown fields are retained for structured loss reporting, and malformed
-payload diagnostics do not echo input values. The committed lockfile fixes the reviewed transitive
-graph while Renovate proposes compatible updates.
-
-`boxferry-docker` uses the same Serde and `serde_json` versions for an independent private subset
-of versioned Docker Engine inspect responses. Sharing the serialization dependencies does not
-share Podman and Docker native types: their version, casing, relationship, and command contracts
-remain separate. Unknown meaningful Docker fields receive structured loss reports, and malformed
-payload diagnostics do not echo input values.
-
 The `boxferry` CLI feature uses ZIP 6.0.0 with default features disabled to create the local
 diagnostic support bundle recorded in ADR 0018 and ADR 0021. It writes only fixed, stored entries in bounded
 memory and enables no compression, encryption, timestamp, or runtime-inspection feature. ZIP is
@@ -75,8 +63,7 @@ least-privilege App token inputs, and preparation-only policy together.
 Run `cargo deny check` after installing `cargo-deny`. CI checks advisories, licenses, bans, and
 sources. Renovate proposes Cargo, npm development-tool, lockfile, Rust toolchain, Dev Container,
 GitHub Actions, directly pinned workflow-tool, checksum-pinned file-tool, base-image, GitHub CLI,
-and documented Dev Container CLI updates. Repository-specific runtime matrices have their own
-review-oriented custom managers. Updates still require the same tests and review as human-authored
+and documented Dev Container CLI updates. Updates still require the same tests and review as human-authored
 dependency changes.
 
 Repository-only file quality uses pinned development tools outside the published Rust dependency

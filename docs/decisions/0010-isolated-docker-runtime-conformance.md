@@ -1,7 +1,8 @@
 # ADR 0010: Isolated Docker API conformance in a nested daemon
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-08-04
+- Superseded by: [ADR 0032](0032-future-native-lens-boundaries.md)
 
 ## Context
 

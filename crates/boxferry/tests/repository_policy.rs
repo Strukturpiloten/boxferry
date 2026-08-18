@@ -14,7 +14,6 @@ const FIXTURE_SUITES: &[&str] = &[
     "conversion",
     "roundtrip",
     "differential",
-    "runtime",
     "real-world",
 ];
 
@@ -23,9 +22,6 @@ const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry-engine",
     "boxferry-compose",
     "boxferry-quadlet",
-    "boxferry-runtime",
-    "boxferry-docker",
-    "boxferry-podman",
     "boxferry",
 ];
 const CRATES_IO_AUTH_ACTION: &str = "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5";
@@ -137,10 +133,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "cargo ci-check",
         "cargo ci-core",
         "cargo ci-compose",
-        "cargo ci-docker",
         "cargo ci-quadlet",
-        "cargo ci-podman",
-        "cargo ci-runtime",
         "cargo ci-policy",
         "cargo ci-clippy",
         "cargo ci-test",
@@ -164,19 +157,18 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "env CARGO_TARGET_DIR=\"${coverage_target_dir}\"",
         "env CARGO_HOME=\"${semver_cargo_home}\"",
         "CARGO_TARGET_DIR=\"${semver_target_dir}\"",
-        "cargo semver-checks check-release --workspace",
+        "BOXFERRY_SEMVER_RELEASE_TYPE",
+        "\"\" | major | minor | patch",
+        "semver_check=(cargo semver-checks check-release --workspace --all-features)",
+        "semver_check+=(--release-type \"${semver_release_type}\")",
+        "\"${semver_check[@]}\"",
     ] {
         if !script.contains(required) {
             return Err(format!("local validation runner missing `{required}`"));
         }
     }
 
-    for opt_in in [
-        "ci-docker-conformance",
-        "ci-podman-conformance",
-        "ci-podman-current-conformance",
-        "ci-real-world-compose",
-    ] {
+    for opt_in in ["ci-real-world-compose"] {
         if script.contains(opt_in) {
             return Err(format!(
                 "local validation runner must not invoke opt-in tier `{opt_in}`"
@@ -474,7 +466,7 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         "run: cargo ci-check",
         "run: cargo ci-test",
         "  pr-gate:\n    name: PR gate\n    if: always()",
-        "needs: [rust, msrv, dependencies, documentation, semver, coverage, portability]",
+        "needs:\n      [rust, msrv, dependencies, documentation, semver-release-type, semver, coverage, portability]",
     ] {
         if !workflow.contains(required) {
             return Err(format!("CI workflow is missing contract `{required}`"));
@@ -486,6 +478,11 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         ("MSRV", "MSRV_RESULT", "msrv"),
         ("Dependency and license policy", "DEPENDENCIES_RESULT", "dependencies"),
         ("Documentation", "DOCUMENTATION_RESULT", "documentation"),
+        (
+            "SemVer release type",
+            "SEMVER_RELEASE_TYPE_RESULT",
+            "semver-release-type",
+        ),
         ("SemVer", "SEMVER_RESULT", "semver"),
         ("Coverage ratchet", "COVERAGE_RESULT", "coverage"),
         ("macOS portability", "PORTABILITY_RESULT", "portability"),
@@ -655,6 +652,58 @@ fn public_api_compatibility_runs_in_ci_and_release() -> Result<(), String> {
 }
 
 #[test]
+fn intentional_public_break_semver_path_is_explicit_and_narrow() -> Result<(), String> {
+    let root = repository_root();
+    let local_script = fs::read_to_string(root.join("scripts/check-all.sh"))
+        .map_err(|error| format!("failed to read local validation runner: {error}"))?;
+    for required in [
+        "semver_release_type=\"${BOXFERRY_SEMVER_RELEASE_TYPE:-}\"",
+        "case \"${semver_release_type}\" in\n  \"\" | major | minor | patch) ;;",
+        "BOXFERRY_SEMVER_RELEASE_TYPE must be empty, major, minor, or patch",
+        "semver_check+=(--release-type \"${semver_release_type}\")",
+    ] {
+        if !local_script.contains(required) {
+            return Err(format!("local SemVer override contract is missing {required}"));
+        }
+    }
+
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    for required in [
+        "semver-release-type:",
+        "release_type: ${{ steps.classify.outputs.release_type }}",
+        "SEMVER_CHANGE_SUBJECT: ${{ github.event.pull_request.title }}",
+        "push | workflow_dispatch) subject=\"$(git log -1 --format=%s)\" ;;",
+        "subject=\"${subject%%$'\\n'*}\"",
+        "'^(feat|fix|perf|refactor|revert)(\\([^)]+\\))?!: .+$'",
+        "printf 'release_type=major\\n' >> \"${GITHUB_OUTPUT}\"",
+        "printf 'release_type=\\n' >> \"${GITHUB_OUTPUT}\"",
+        "needs: semver-release-type",
+        "release-type: ${{ needs.semver-release-type.outputs.release_type }}",
+    ] {
+        if !ci.contains(required) {
+            return Err(format!("CI SemVer break classifier is missing {required}"));
+        }
+    }
+    for forbidden in [
+        "contains(github.event.pull_request.title, '!')",
+        "contains(\"${subject}\", '!')",
+    ] {
+        if ci.contains(forbidden) {
+            return Err(format!("CI SemVer break classifier must not use {forbidden}"));
+        }
+    }
+
+    let release_plz = fs::read_to_string(root.join("release-plz.toml"))
+        .map_err(|error| format!("failed to read release-plz.toml: {error}"))?;
+    if !release_plz.contains("semver_check = true") {
+        return Err("release-plz must retain semver_check = true".to_owned());
+    }
+
+    Ok(())
+}
+
+#[test]
 fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
     let root = repository_root();
     let workflow_path = root.join(".github/workflows/release.yml");
@@ -776,7 +825,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .as_array()
         .ok_or_else(|| "release-plz.toml must configure every published package".to_owned())?;
     if packages.len() != PUBLISHED_PACKAGES.len() {
-        return Err("release-plz.toml must configure all eight lockstep packages".to_owned());
+        return Err("release-plz.toml must configure all five lockstep packages".to_owned());
     }
     for package in PUBLISHED_PACKAGES {
         let configured = packages.iter().find(|entry| entry["name"].as_str() == Some(package));
@@ -791,7 +840,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .ok_or_else(|| "release-plz.toml is missing the facade package".to_owned())?;
     if facade["changelog_update"].as_bool() != Some(true)
         || facade["changelog_path"].as_str() != Some("CHANGELOG.md")
-        || facade["changelog_include"].as_array().map(Vec::len) != Some(7)
+        || facade["changelog_include"].as_array().map(Vec::len) != Some(4)
     {
         return Err("the facade must aggregate all component changes into the root changelog".to_owned());
     }
@@ -998,6 +1047,17 @@ fn run_release_notes_script(root: &Path, version: &str, changelog: &Path) -> Res
 #[test]
 fn fixture_manifests_follow_the_common_contract() -> Result<(), String> {
     support::validate_fixture_tree(&repository_root(), FIXTURE_SUITES)
+}
+
+#[test]
+fn deferred_runtime_namespaces_are_not_published_by_the_current_product() {
+    for rule in boxferry_engine::RULES {
+        assert!(
+            !matches!(rule.code().get(..3), Some("BFD" | "BFP" | "BFR")),
+            "deferred runtime rule namespace must not remain published: {}",
+            rule.code()
+        );
+    }
 }
 
 #[test]

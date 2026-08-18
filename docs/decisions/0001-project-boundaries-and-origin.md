@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-07-31
+- Amended by: [ADR 0032](0032-future-native-lens-boundaries.md)
 
 ## Context
 

@@ -1,0 +1,24 @@
+schema = 1
+id = "document-route-matrix"
+suite = "conversion"
+description = "Defines the exact deterministic two-by-two Compose and Quadlet document-route boundary."
+secrets_reviewed = true
+files = [
+  "compose.yaml",
+  "expected-compose-native.yaml",
+  "expected-compose-neutral.yaml",
+  "web.container",
+  "expected-web.container",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "No host environment, project directory, runtime, or external process input is used."
+
+[expectations]
+summary = "Each Compose/Quadlet input-output pair produces its reviewed deterministic canonical bytes for one exact service; native Compose canonicalization and neutral Compose generation retain their distinct formatting boundaries."

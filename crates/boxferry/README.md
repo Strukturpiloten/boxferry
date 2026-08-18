@@ -1,7 +1,7 @@
 # BoxFerry
 
 `boxferry` is the supported library facade and CLI for loss-aware conversion between container
-application formats and runtimes.
+application definition formats.
 
 The CLI supports Linux. Windows users must install and run it inside WSL2; native Windows binaries
 and Windows containers are unsupported. See the repository's platform-support documentation.

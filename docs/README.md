@@ -16,8 +16,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Format coverage](format-coverage.md) — field-by-field pipeline coverage and promotion rules
 - [Compose exporter](compose-adapter.md) — generated fields, provider/runtime selection, and explicit limits
 - [Quadlet exporter](quadlet-adapter.md) — supported mappings, version evidence, and explicit limits
-- [Runtime reconstruction](runtime-reconstruction.md) — observation contract, inference policy, Docker/Podman decoding, finite acquisition, and live evidence
-- [Testing strategy](testing.md) — unit, fixture, compatibility, and runtime testing
+- [Testing strategy](testing.md) — unit, fixture, compatibility, and document-route testing
 - [Real-world Compose corpus](real-world-compose-corpus.md) — pinned applications, feature goals, and opt-in ingestion
 - [Development environment](development-environment.md) — reproducible VS Code tooling and update policy
 - [Platform support](platform-support.md) — Linux CLI support and WSL2 use on Windows
@@ -26,7 +25,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Fixture format](fixture-format.md) — shared metadata, provenance, and secrets contract
 - [Podlet and compose_spec_rs issue-corpus review](research/podlet-compose-spec-rs-issues-2026-08-01.md) — user scenarios, regressions, and repository ownership
 - [Dependency and license policy](dependency-policy.md) — dependency selection, allowed sources, and license checks
-- [Implementation plan](implementation-plan.md) — synchronized cross-repository tasks T1–T7
+- [Implementation plan](implementation-plan.md) — synchronized tasks T1–T10 and current blockers
 - [Roadmap](roadmap.md) — ordered milestones without calendar promises
 - [Architecture decisions](decisions/README.md) — durable decisions and their rationale
 
