@@ -27,8 +27,11 @@ write operation is the `release-plz-*` preparation branch and pull request.
 
 ## Routine release
 
-1. Merge a reviewed release-worthy code change into the default branch. No release issue, local
-   release branch, or manually created release pull request is needed.
+1. Merge a reviewed release-worthy code or package change into the default branch. No release
+   issue, local release branch, or manually created release pull request is needed. Release
+   preparation runs only when the push changes Rust source, Cargo manifests or the lockfile, the
+   license, Cargo build configuration, the pinned toolchain, or the release configuration and
+   workflows. Ordinary documentation-only pushes do not run release-plz.
 2. Review the release-plz pull request. It updates the lockstep Cargo version, internal dependency
    requirements, lockfile, and root `CHANGELOG.md`. Normal CI must pass before merge.
 3. Merge the release-plz pull request. Only a merged pull request whose head starts with
@@ -38,17 +41,19 @@ write operation is the `release-plz-*` preparation branch and pull request.
    publishes the immutable GitHub release.
 
 GitHub uses the pull-request title as the squash commit title, so the title is the release
-classification contract. Release-plz creates or updates a release pull request only when at least
-one unreleased squash commit uses `feat`, `fix`, `perf`, `refactor`, or `revert`, with an optional
-scope and optional breaking `!`. For example, `feat(cli): ...`, `fix!: ...`, and
-`refactor(model)!: ...` are release-worthy. For intentional pre-1.0 public breaks, use a breaking
-title and review the resulting minor version.
+classification contract after the workflow path filter selects a release-relevant push. Use
+`feat`, `fix`, `perf`, `refactor`, or `revert`, with an optional scope and optional breaking `!`,
+for shipped changes. For example, `feat(cli): ...`, `fix!: ...`, and `refactor(model)!: ...` are
+release-worthy. For intentional pre-1.0 public breaks, use a breaking title and review the
+resulting minor version. The five published packages remain in one release-plz `version_group`;
+commit filtering must not be reintroduced because it can exclude unchanged group members before
+their internal dependency requirements are updated.
 
-Use `docs`, `test`, `ci`, `build`, `style`, or `chore` for non-code work. Those titles and every
-unmatched title neither trigger release preparation nor enter generated release notes. A code
-change with a non-release title will not be published automatically; dependency updates that
-change shipped behavior therefore need a release-worthy title such as `fix(deps): ...`, while
-maintenance-only updates remain `chore(deps): ...`.
+Use `docs`, `test`, `ci`, `build`, `style`, or `chore` for non-shipped work. These titles and every
+unmatched title stay out of generated release notes. Workflow path filtering, rather than commit
+filtering inside release-plz, prevents ordinary documentation-only changes from starting release
+preparation. A dependency update that changes shipped behavior therefore needs a release-worthy
+title such as `fix(deps): ...`, while maintenance-only updates remain `chore(deps): ...`.
 
 ## Public API compatibility during development
 

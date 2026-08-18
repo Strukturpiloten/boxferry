@@ -4,6 +4,18 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".cargo/**"
+      - ".github/scripts/publish-crate.sh"
+      - ".github/workflows/release-plz.yml"
+      - ".github/workflows/release.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "LICENSE"
+      - "crates/**/Cargo.toml"
+      - "crates/**/*.rs"
+      - "release-plz.toml"
+      - "rust-toolchain.toml"
   workflow_dispatch:
 
 permissions: {}

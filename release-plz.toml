@@ -7,7 +7,6 @@ git_tag_enable = false
 pr_branch_prefix = "release-plz-"
 publish = false
 release_always = false
-release_commits = "^(feat|fix|perf|refactor|revert)(\\([^)]+\\))?!?:"
 semver_check = true
 
 [changelog]

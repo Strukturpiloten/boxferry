@@ -626,6 +626,49 @@ fn release_packages_are_publishable_and_lockstep() -> Result<(), String> {
 }
 
 #[test]
+fn release_plz_preparation_runs_only_for_reviewed_release_paths() -> Result<(), String> {
+    let root = repository_root();
+    let workflow_path = root.join(".github/workflows/release-plz.yml");
+    let workflow = fs::read_to_string(&workflow_path)
+        .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
+    let push_start = workflow
+        .find("  push:\n")
+        .ok_or_else(|| "release-plz workflow must have a push trigger".to_owned())?;
+    let dispatch_start = workflow
+        .find("  workflow_dispatch:\n")
+        .ok_or_else(|| "release-plz workflow must retain manual dispatch".to_owned())?;
+    let push = &workflow[push_start..dispatch_start];
+
+    for required in [
+        "    paths:\n",
+        r#"      - ".cargo/**""#,
+        r#"      - ".github/scripts/publish-crate.sh""#,
+        r#"      - ".github/workflows/release-plz.yml""#,
+        r#"      - ".github/workflows/release.yml""#,
+        r#"      - "Cargo.lock""#,
+        r#"      - "Cargo.toml""#,
+        r#"      - "LICENSE""#,
+        r#"      - "crates/**/Cargo.toml""#,
+        r#"      - "crates/**/*.rs""#,
+        r#"      - "release-plz.toml""#,
+        r#"      - "rust-toolchain.toml""#,
+    ] {
+        if !push.contains(required) {
+            return Err(format!("release-plz push trigger is missing `{required}`"));
+        }
+    }
+    for forbidden in [r#"      - "docs/**""#, r#"      - "**/*.md""#, r#"      - "crates/**""#] {
+        if push.contains(forbidden) {
+            return Err(format!(
+                "release-plz push trigger must not include documentation-only path `{forbidden}`"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn public_api_compatibility_runs_in_ci_and_release() -> Result<(), String> {
     const ACTION: &str = "obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9";
 
@@ -813,10 +856,8 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
     if workspace.get("pr_branch_prefix").and_then(toml::Value::as_str) != Some("release-plz-") {
         return Err("release-plz branches must use the guarded release-plz- prefix".to_owned());
     }
-    if workspace.get("release_commits").and_then(toml::Value::as_str)
-        != Some(r"^(feat|fix|perf|refactor|revert)(\([^)]+\))?!?:")
-    {
-        return Err("release-plz must prepare releases only for release-worthy code commits".to_owned());
+    if workspace.contains_key("release_commits") {
+        return Err("release-plz must not filter commits before version-group bookkeeping".to_owned());
     }
 
     validate_release_plz_changelog(&config)?;
