@@ -292,8 +292,19 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
         }
     }
 
+    let prettier_ignore = fs::read_to_string(root.join(".prettierignore"))
+        .map_err(|error| format!("failed to read .prettierignore: {error}"))?;
+    if prettier_ignore
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+        .collect::<Vec<_>>()
+        != ["/CHANGELOG.md"]
+    {
+        return Err("only the release-plz-owned CHANGELOG.md may be excluded from Prettier".to_owned());
+    }
+
     let markdown_format = script
-        .find(r#"prettier --write --ignore-unknown "${markdown_files[@]}""#)
+        .find(r#"prettier --write --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}""#)
         .ok_or("non-Rust file runner must format Markdown with Prettier")?;
     let markdown_fix = script
         .find(r#"markdownlint-cli2 --fix "${markdown_literals[@]}""#)
@@ -302,7 +313,7 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
         .find(r#"markdownlint-cli2 "${markdown_literals[@]}""#)
         .ok_or("non-Rust file runner must lint Markdown after formatting")?;
     let markdown_check = script
-        .find(r#"prettier --check --ignore-unknown "${markdown_files[@]}""#)
+        .find(r#"prettier --check --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}""#)
         .ok_or("non-Rust file runner must verify Markdown formatting")?;
     if !(markdown_format < markdown_fix && markdown_fix < markdown_lint && markdown_lint < markdown_check) {
         return Err("non-Rust file runner must format, fix, lint, then check Markdown in that order".to_owned());

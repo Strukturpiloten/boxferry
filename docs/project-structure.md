@@ -11,6 +11,7 @@ boxferry/
 ├── release-plz.toml               # release-PR preparation only; publication stays protected
 ├── package.json                    # non-Rust Node development tools only
 ├── package-lock.json               # locked Markdownlint and Prettier graph
+├── .prettierignore                 # release-plz-owned generated Markdown boundary
 ├── rust-toolchain.toml
 ├── rustfmt.toml
 ├── clippy.toml
