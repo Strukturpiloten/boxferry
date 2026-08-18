@@ -23,17 +23,13 @@ The product contract is N-to-N. This table records adapter availability; it is n
 independent pairwise converters. Any implemented importer can feed any implemented exporter, but
 the resulting route supports only their shared semantic subset.
 
-| Boundary       | Import to neutral model                                                                                                         | Export from neutral model              | CLI orchestration                                                                                                                      |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Docker runtime | Inspect decoder and reconstruction library implemented for the reviewed API range                                               | Deployment planning and execution open | Open                                                                                                                                   |
-| Docker Compose | Implemented for the documented subset                                                                                           | Implemented for the documented subset  | All four Compose/Quadlet document routes; Compose output targets the rolling Compose Specification, not a selected historical provider |
-| Podman runtime | Inspect decoder and reconstruction library implemented for Podman 5.4.0–6.1.0                                                   | Deployment planning and execution open | Open                                                                                                                                   |
-| Podman Quadlet | Shared service/resource subset implemented, including labels, host mappings, and execution context; broader native surface open | Implemented for the documented subset  | All four Compose/Quadlet document routes, including same-format canonicalization                                                       |
-| Kubernetes     | Open                                                                                                                            | Open                                   | Open                                                                                                                                   |
-
-Runtime export means generating and validating a reviewable create/update plan before an optional
-explicit apply operation. It never means mutating an ambient daemon merely because conversion was
-requested.
+| Boundary       | Import to neutral model                                                                                                         | Export from neutral model             | CLI orchestration                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Docker Compose | Implemented for the documented subset                                                                                           | Implemented for the documented subset | All four Compose/Quadlet document routes; Compose output targets the rolling Compose Specification, not a selected historical provider |
+| Podman Quadlet | Shared service/resource subset implemented, including labels, host mappings, and execution context; broader native surface open | Implemented for the documented subset | All four Compose/Quadlet document routes, including same-format canonicalization                                                       |
+| Docker         | Deferred to DockerLens                                                                                                          | Deferred to DockerLens                | Deferred                                                                                                                               |
+| Podman runtime | Deferred to PodmanLens                                                                                                          | Deferred to PodmanLens                | Deferred                                                                                                                               |
+| Kubernetes     | Deferred to KubernetesLens                                                                                                      | Deferred to KubernetesLens            | Deferred                                                                                                                               |
 
 ## Status vocabulary
 
@@ -165,54 +161,6 @@ explicit pod names remain separate from the logical group identity; pod-scoped v
 `ServiceGroupRuntime` and are never assigned to an arbitrary service.
 Invalid or unresolved document-set references block import. Typed `.image` and `.build` input is
 supported; `.kube` and `.artifact` input remain open in QuadletLens and BoxFerry.
-
-## Runtime reconstruction foundation
-
-The additive `runtime` feature accepts caller-constructed, runtime-neutral observations. The
-non-default `podman-runtime` feature additionally decodes explicit container, image, network,
-volume, and pod inspect arrays for Podman 5.4.0 through the reviewed 6.1.0 ceiling. A replaceable
-executor can acquire explicitly selected resources through fixed read-only Podman commands and a
-finite policy may add selected pod members plus referenced container resources. The non-default
-`docker-runtime` feature independently decodes Engine API 1.40-through-1.55 container, image,
-network, and volume inspect arrays. Its replaceable command boundary requires an explicit daemon
-endpoint and API version; a finite policy may add selected containers' referenced resources. No
-policy enumerates an ambient resource family. The supported effective subset is image reference,
-command, environment, non-empty `user[:group]`, non-empty working directory, explicit read-only-root
-state, explicit runtime container name, container restart policy, protected effective metadata labels, regular health command/disable/timing/retry configuration, ports, mounts, network
-relationships and ordered aliases, inspected
-network/volume existence, optional creation-command evidence, and Podman pod membership evidence.
-
-Command, environment, metadata-label, `user[:group]`, working-directory, and regular-health-check values can be
-preserved or compared with a linked image observation. Health fields are compared independently;
-commands remain protected. A retained identity is split into neutral primary user and group fields
-with shared provenance. Read-only-root state is preserved directly.
-Matching image label defaults are omitted; changed, added, and reserved Compose-provider values
-remain explicit reviewable outcomes. Restart policy is also preserved directly because it is a container host setting, not an image
-default. Runtime-to-Quadlet maps `Never` exactly and retains explicit approximate or unsupported
-outcomes for the other policy forms.
-Every comparison is approximate and receives conversion-decision provenance. Network and volume
-lifecycle ownership remains uncertain unless an exact-name caller resolution selects application-
-owned or external behavior with user-override provenance. Consistent Podman pod membership becomes
-an ordered neutral `ServiceGroup` with pod and container provenance, but no inferred namespace or
-lifecycle semantics. Quadlet output reports unresolved groups rather than flattening them and can
-preserve one resolved complete application group as a named pod after explicit approximation
-authorization. Entrypoint, remaining runtime policy and security settings, annotations and
-resource labels, Podman startup-
-health configuration, and other inspect fields remain for later native adapter milestones. The
-Podman decoder reports each meaningful unmodeled native field by
-name as an unsupported outcome instead of discarding it. The Docker decoder applies the same rule
-with independent `BFD` diagnostics and additionally reports the lost entrypoint/command boundary.
-
-The Compose export path covers the same supported effective subset for images, commands,
-environment, explicit runtime names, service labels, identity/context, container restart policies,
-ports, mounts, networks, volumes, application-owned file-backed configs/secrets, and ordered environment-file declarations. It uses ComposeLens 0.2.0's
-deterministic generated-document boundary. The generic Quadlet-to-Compose route targets the rolling
-Compose Specification; embedded callers may instead select an exact Docker Compose or
-`podman-compose` provider version with an optional exact backend. Short/long `env_file` syntax, order, explicit `required`/`raw` options, and path
-sensitivity survive generated output and parse-back validation.
-Runtime-observed resource names are explicit. Provider/runtime-sensitive behavior,
-unresolved lifecycle, structural pod grouping, and fields outside the generated subset remain
-policy-controlled non-exact outcomes rather than silent output changes.
 
 ## Promotion rule
 

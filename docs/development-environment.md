@@ -220,10 +220,7 @@ cargo fmt --all -- --check
 cargo ci-check
 cargo ci-core
 cargo ci-compose
-cargo ci-docker
 cargo ci-quadlet
-cargo ci-podman
-cargo ci-runtime
 cargo ci-policy
 cargo ci-clippy
 cargo ci-test
@@ -340,8 +337,8 @@ with the pinned CLI, review the resolved digest, and rebuild:
 npx --yes @devcontainers/cli@0.88.0 upgrade --workspace-folder .
 ```
 
-## Runtime conformance
+## Native-tool conformance
 
 The default container deliberately does not mount a Docker or Podman socket, run systemd, or request
-privileged mode. Runtime and Quadlet-generator conformance belongs in explicit isolated test
-environments, not in every editor session.
+privileged mode. Any future native-runtime and Quadlet-generator conformance belongs in explicit
+isolated test environments, not in every editor session.

@@ -36,10 +36,7 @@ jobs:
         run: |
           cargo ci-core
           cargo ci-compose
-          cargo ci-docker
           cargo ci-quadlet
-          cargo ci-podman
-          cargo ci-runtime
       - name: Check repository policies
         run: cargo ci-policy
       - name: Run Clippy
@@ -153,8 +150,43 @@ jobs:
           fail: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  semver-release-type:
+    name: SemVer release type
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release_type: ${{ steps.classify.outputs.release_type }}
+    steps:
+      - *checkout
+      - name: Classify an intentional public break
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SEMVER_CHANGE_SUBJECT: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+
+          case "${EVENT_NAME}" in
+            pull_request) subject="${SEMVER_CHANGE_SUBJECT}" ;;
+            push | workflow_dispatch) subject="$(git log -1 --format=%s)" ;;
+            *)
+              printf 'Unsupported CI event for SemVer classification: %s\n' "${EVENT_NAME}" >&2
+              exit 1
+              ;;
+          esac
+          subject="${subject%%$'\n'*}"
+
+          readonly breaking_change_title_pattern='^(feat|fix|perf|refactor|revert)(\([^)]+\))?!: .+$'
+          if [[ "${subject}" =~ ${breaking_change_title_pattern} ]]; then
+            printf 'release_type=major\n' >> "${GITHUB_OUTPUT}"
+          else
+            printf 'release_type=\n' >> "${GITHUB_OUTPUT}"
+          fi
+
   semver:
     name: SemVer (${{ matrix.package }})
+    needs: semver-release-type
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -167,9 +199,6 @@ jobs:
           - boxferry-engine
           - boxferry-compose
           - boxferry-quadlet
-          - boxferry-runtime
-          - boxferry-docker
-          - boxferry-podman
           - boxferry
     steps:
       - name: Check out repository
@@ -209,11 +238,13 @@ jobs:
         with:
           package: ${{ matrix.package }}
           feature-group: all-features
+          release-type: ${{ needs.semver-release-type.outputs.release_type }}
 
   pr-gate:
     name: PR gate
     if: always()
-    needs: [rust, msrv, dependencies, documentation, semver, coverage, portability]
+    needs:
+      [rust, msrv, dependencies, documentation, semver-release-type, semver, coverage, portability]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every deterministic PR job to succeed
@@ -223,6 +254,7 @@ jobs:
           MSRV_RESULT: ${{ needs.msrv.result }}
           DEPENDENCIES_RESULT: ${{ needs.dependencies.result }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          SEMVER_RELEASE_TYPE_RESULT: ${{ needs.semver-release-type.result }}
           SEMVER_RESULT: ${{ needs.semver.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           PORTABILITY_RESULT: ${{ needs.portability.result }}
@@ -233,6 +265,7 @@ jobs:
             "MSRV|${MSRV_RESULT}"
             "Dependency and license policy|${DEPENDENCIES_RESULT}"
             "Documentation|${DOCUMENTATION_RESULT}"
+            "SemVer release type|${SEMVER_RELEASE_TYPE_RESULT}"
             "SemVer|${SEMVER_RESULT}"
             "Coverage ratchet|${COVERAGE_RESULT}"
             "macOS portability|${PORTABILITY_RESULT}"

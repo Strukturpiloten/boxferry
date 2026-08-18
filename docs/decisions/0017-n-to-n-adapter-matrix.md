@@ -1,8 +1,9 @@
 # ADR 0017: N-to-N adapter matrix and explicit runtime deployment plans
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-08-05
 - Amended by: [ADR 0019](0019-generic-cli-route-registry.md)
+- Superseded by: [ADR 0032](0032-future-native-lens-boundaries.md)
 
 ## Context
 

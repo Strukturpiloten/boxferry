@@ -146,23 +146,15 @@ For cross-format import, an unresolved expression, `on-failure:0`, or a retry co
 neutral `u64` range is a field-specific `BFC0005` invalid outcome. Compose-to-Compose native
 canonicalization instead retains a valid unresolved expression and its default because no neutral
 restart-policy interpretation is required. BoxFerry does not reinterpret an explicitly authored
-zero as an omitted retry limit. Runtime API decoders may independently interpret a native zero
-counter as the provider's absent/default representation because that is runtime observation, not
-authored Compose syntax.
+zero as an omitted retry limit.
 
 Explicit runtime names use Compose's documented portable container-name grammar. A value outside
 that grammar is a `BFC0008` invalid generation outcome; BoxFerry does not silently fall back to a
 provider-generated name.
 
-## Runtime observations and resource names
+## Declared resource names
 
-Runtime reconstruction feeds the same neutral application into this exporter. A runtime-observed
-container gets an explicit `container_name`, while its neutral service key remains independently
-available for application relationships. A runtime-observed network or volume gets an explicit
-top-level Compose `name` so project scoping cannot change the
-reviewed platform resource name. Application/external lifecycle selected through
-`RuntimeResolutions` is retained. Uncertain or implicit ownership is emitted conservatively as an
-external reference with `BFC0007`; only `AllowPartial` releases that candidate.
-
-The public runtime-to-Compose test covers the complete observation, importer, engine, loss-policy,
-exporter, parse-back validation, deterministic output, provenance, and redaction path.
+Declared `container_name` values remain separate from their neutral service keys. Declared
+top-level network and volume names remain explicit so project scoping cannot rename them during
+document conversion. Application-owned and external ownership use the neutral resource contract;
+uncertain ownership remains a structured `BFC0007` loss rather than an inferred lifecycle choice.

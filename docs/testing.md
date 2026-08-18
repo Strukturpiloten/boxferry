@@ -83,6 +83,11 @@ invalid outcomes for unresolved, explicit-zero, and out-of-range retry limits.
 ### Golden conversion scenarios
 
 Each scenario contains source input, BoxFerry configuration, expected native output, and expected diagnostics. Golden updates require review of both file changes and semantic outcomes.
+`fixtures/conversion/document-route-matrix/` is the exact deterministic 2x2 boundary for the
+four supported document routes. It deliberately records two Compose byte representations: native
+Compose canonicalization for Compose-to-Compose and neutral Compose generation for
+Quadlet-to-Compose. The reviewed common service intent remains equivalent; the formatting
+boundary is intentional and tested through the public facade as well as the CLI.
 
 ### CLI option and value contracts
 
@@ -155,54 +160,6 @@ separate-container mapping. Focused regressions prove that named primary groups 
 losses while named supplementary groups are retained, identical grouped `UserNS` moves to pod
 scope, and mixed or conflicting namespace intent invalidates grouping.
 
-Runtime-migration tests must assert provenance category as well as value. Effective inspection
-fields use runtime-observation origins; inferred author intent uses conversion-decision origins and
-an explicit non-exact outcome.
-
-The pure `boxferry-runtime` suite currently covers duplicate snapshot identities, sensitive-by-
-default effective commands/environment/creation evidence, caller-selected preservation versus
-image comparison, retained and omitted command/environment/user-group/working-directory overrides,
-field-level regular-health-check and protected metadata-label differences, reserved provider-
-metadata diagnostics, direct read-only-root and container restart-policy preservation, incomplete image evidence, ordered network
-aliases, volume relationships, uncertain lifecycle ownership, optional creation evidence, and
-ordered provenance-aware service groups. It also proves that contradictory or missing pod/member
-observations remain invalid or unsupported instead of being guessed. Explicit lifecycle tests
-require application/external ownership plus user-override provenance, reject duplicates, retain
-observation and override origins, and cover a complete observed-group-to-Quadlet public flow.
-Podman and Docker native-import tests prove that both wrapper importers forward the resolutions
-instead of exposing the feature only to caller-built snapshots. Native JSON and daemon
-conformance fixtures begin with the
-Docker and Podman adapter crates; the shared crate deliberately does not invent a native JSON
-schema. `boxferry-podman` adds authored, secrets-reviewed 5.4.0, 6.0.2, and 6.1.0 fixture sets. Its tests
-cover native casing, malformed JSON, finite version rejection, image links, pod membership,
-creation evidence, commands, environment, ports, network aliases, named/bind mounts, SELinux
-relabeling, regular health checks, protected metadata labels, container restart policies, explicit startup-health separation,
-unmodeled configuration, and raw-ID/debug redaction without an installed runtime.
-Fake-executor acquisition tests additionally prove fixed resource-family ordering, no execution
-for empty families, selector validation, finite pod-member and container-resource expansion,
-selector/response deduplication, bind-mount exclusion, malformed-response redaction, and
-selector/stdout/stderr redaction. They never invoke the process executor.
-
-`boxferry-docker` adds authored, secrets-reviewed Engine API 1.40 and 1.55 fixture sets. Its pure
-tests cover Docker-specific casing and leading-slash names, tolerant additive fields, malformed
-JSON, finite API rejection, tag-plus-digest references, effective `Path`/`Args`, image defaults,
-user/group-identity and working-directory overrides, read-only-root state, container restart
-policies, protected metadata labels, ports, network aliases, named/bind mounts, regular health checks with API-aware start
-intervals, SELinux relabeling, missing relationships, unmodeled configuration, and raw-ID/debug
-redaction. Fake-executor tests prove the explicit protected daemon
-endpoint and forced API version are present on every request, empty families run no command, and
-container expansion follows only image, network, and named-volume references. One Unix-only test
-invokes the standard process executor against a temporary assertion script—not Docker—to verify
-the exact argument array, forced API version, isolated empty client configuration, and removed
-ambient selection variables.
-
-All-feature public-facade integration tests convert complete resource-free Podman observations and
-Docker inspect documents into reviewed Quadlet bytes and convert a Docker observation into
-reviewed Compose YAML. They verify that the broad `BFR0001` uncertainty outcome must be authorized
-through the same engine path used by every other importer.
-The Podman observation slice additionally resolves one group explicitly and verifies its group-
-named `.pod`, container reference, `BFR0009`, and `BFQ0007` outcomes.
-
 ### Property and round-trip tests
 
 Use generated inputs where useful to verify parsing never panics, deterministic output, native round trips, and application-model round trips.
@@ -210,71 +167,6 @@ Use generated inputs where useful to verify parsing never panics, deterministic 
 ### Differential tests
 
 Docker, Podman, Compose implementations, Helm, Kustomize, and Kubernetes tools may be used as behavior oracles. Store the exact tool version, command, environment, and expected result. A difference is not automatically a BoxFerry bug; it must be classified.
-
-### Runtime integration tests
-
-Opt-in tests exercise real Docker, Podman, systemd/Quadlet, and Kubernetes environments. The
-initial supported Podman floor is 5.4. Test each supported minor version and the newest available
-version where CI infrastructure permits. Docker's reviewed range is Engine API 1.40 through 1.55.
-Its isolated live harness uses Podman or Docker only as an outer container engine and verifies the
-implementation inside the digest-pinned official Docker Engine 29.7.1 image. No Docker evidence is
-inferred from the local `podman-docker` command itself.
-
-The first live tier uses the exact digest-pinned images in
-[`../tools/podman-runtime-matrix.toml`](../tools/podman-runtime-matrix.toml). Pull requests validate
-that contract without starting a container. The weekly/manual `Podman runtime conformance`
-workflow runs one disposable job for each available 5.x minor lane. It gives an ephemeral outer
-container the privileges required for nested Podman, but does not mount a host runtime socket or
-repository write path. Podman 6.1.0 is the reviewed decoder ceiling and an explicit live-evidence
-gap for the reproducible scheduled-image tier because the official stable registry did not provide
-that exact local-runtime image when the matrix was reviewed. A separate installed-current test can
-exercise exactly 6.1.0 when a caller explicitly supplies that executable. It creates a unique
-resource prefix, inspects only those resources, and removes them before returning.
-
-Local live execution is optional and requires an explicitly selected outer engine:
-
-```shell
-BOXFERRY_CONTAINER_ENGINE=docker \
-BOXFERRY_PODMAN_RUNTIME_VERSION=5.4.0 \
-cargo ci-podman-conformance
-```
-
-Omit `BOXFERRY_PODMAN_RUNTIME_VERSION` to run every executable lane. Docker or Podman must already
-be able to start privileged Linux containers. The normal Dev Container deliberately does not
-mount an engine socket or request privileges; run the live command from an explicitly prepared
-disposable host/runner boundary.
-
-To verify the exact current patch through an already installed Podman:
-
-```shell
-BOXFERRY_CURRENT_PODMAN=/usr/bin/podman \
-cargo ci-podman-current-conformance
-```
-
-This command intentionally changes the selected runtime for the duration of the test: it imports
-an empty test image and creates one uniquely named pod, container, network, and volume with a
-protected metadata label, regular health check, and finite restart policy. It checks
-the Podman version before creating them and its cleanup trap removes only that unique prefix. Do
-not point it at a production runtime.
-
-Docker live conformance uses the exact image and API bounds in
-[`../tools/docker-runtime-matrix.toml`](../tools/docker-runtime-matrix.toml). The weekly/manual
-`Docker runtime conformance` workflow starts a private nested daemon in an ephemeral privileged
-container, creates only its own prefixed resources with protected metadata, regular health, and a
-finite restart policy, forces API 1.40 and 1.55 inspect responses, and
-removes the outer container. It mounts a read-only script and unique temporary evidence directory,
-not a host socket, home directory, credential store, or repository write path. API 1.40 here proves
-current-daemon downgrade behavior; it is not historical Docker 19.03 implementation evidence.
-
-To run it locally with the installed Podman outer engine:
-
-```shell
-BOXFERRY_CONTAINER_ENGINE=/usr/bin/podman \
-cargo ci-docker-conformance
-```
-
-The first run pulls the digest-pinned official Docker image. It requires permission to run a
-privileged container but does not require a local Docker Engine installation.
 
 ## Real-world corpus
 
@@ -316,19 +208,20 @@ Cargo-discovered repository-policy tests live in `crates/boxferry/tests/`. Fixtu
 [fixture manifest contract](fixture-format.md). Further product suites are added only with
 implemented behavior and meaningful assertions.
 
-The model and facade suites exercise config/secret resource ordering, duplicate rejection,
-application/external ownership, runtime names, material origins, short/long grants, nested
-provenance, and redaction independently of any native adapter. Adapter and golden scenarios are
-added only after the corresponding Lens releases can be consumed from crates.io.
+`crates/boxferry/tests/document_route_matrix.rs` owns the black-box and public-facade contract for
+the reviewed document-route matrix. It runs every route twice, checks deterministic artifact-name
+ordering and exact bytes, and proves `validate` plans artifacts without writing them.
 
-Runtime reconstruction tests additionally prove that an inspected container name becomes an
-explicit neutral service runtime name and is re-emitted by both Compose and Quadlet adapters.
+The model and facade suites exercise config/secret resource ordering, duplicate rejection,
+application/external ownership, declared runtime names, material origins, short/long grants,
+nested provenance, and redaction independently of any native adapter. Adapter and golden
+scenarios are added only after the corresponding Lens releases can be consumed from crates.io.
 
 ## Security rules
 
 - Never commit live credentials, tokens, private keys, or production inspect output.
 - Redact secret values before snapshots.
-- Give runtime tests isolated names and cleanup procedures.
+- Give native-integration tests isolated names and cleanup procedures.
 - Do not make destructive cleanup broader than resources created by the test.
 
 ## Canonical commands
@@ -354,13 +247,7 @@ cargo fmt --all -- --check
 cargo ci-check
 cargo ci-core
 cargo ci-compose
-cargo ci-docker
-cargo ci-docker-conformance # opt-in; starts an isolated privileged nested Docker daemon
 cargo ci-quadlet
-cargo ci-podman
-cargo ci-podman-conformance # opt-in; requires the explicit environment documented above
-cargo ci-podman-current-conformance # opt-in; creates temporary resources in installed Podman
-cargo ci-runtime
 cargo ci-policy
 cargo ci-clippy
 cargo ci-test
@@ -375,20 +262,18 @@ cargo deny --all-features check
 ```
 
 The main `ci-*` aliases use `--locked`, all workspace features, and all targets where the Cargo
-command supports them. The core, Compose-only, Docker-runtime-only, Podman-runtime-only, and
-Quadlet-only facade aliases protect additive feature boundaries independently. All-feature tests
-include black-box CLI checks for reviewed
+command supports them. The core, Compose-only, and Quadlet-only facade aliases protect additive
+feature boundaries independently. All-feature tests include black-box CLI checks for reviewed
 output, loss-policy blocking before writes, and refusal to overwrite an existing directory. CI
 also runs the shared non-Rust file checker in non-mutating mode and checks local documentation
 links with Lychee's network-disabled mode. The weekly/manual `External documentation link health`
 workflow owns HTTP(S) validation. It reuses successful responses for up to fourteen days, does not
 cache HTTP failures, and rate-limits each host. External availability therefore remains visible
 without making a third-party outage or developer network condition a pull-request failure.
-The Docker and Podman runtime matrices are isolated, opt-in locally, and scheduled separately from
-pull-request CI. The deterministic PR contract runs the pure-library and black-box CLI suite on
-Ubuntu and macOS; privileged runtime conformance, external link health, and the network-dependent
-remote corpus remain scheduled/manual evidence. Native Windows CLI execution is outside the supported platform
-contract; Windows users run the Linux CLI in WSL2. Small unit cases, medium
+The deterministic PR contract runs the pure-library and black-box CLI suite on Ubuntu and macOS;
+external link health and the network-dependent remote corpus remain scheduled/manual evidence.
+Native Windows CLI execution is outside the supported platform contract; Windows users run the
+Linux CLI in WSL2. Small unit cases, medium
 component/public-facade cases, and a repository-owned large offline CLI scenario cover positive
 and negative paths. The Quadlet parser also has a bounded fixed-seed 0..=256 corpus that contains
 no fuzzing dependency, catches panics, checks repeatability, diagnostic/failure span bounds,

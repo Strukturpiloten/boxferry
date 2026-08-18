@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=24
+readonly total_steps=21
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -25,6 +25,19 @@ report_failure() {
 }
 
 trap report_failure ERR
+
+# Public API compatibility normally infers the release type from the package
+# versions. An explicitly recorded breaking change may validate the intended
+# pre-1.0 release with the same major rule used by CI. Keep this opt-in narrow:
+# an unknown spelling must fail before any of the numbered checks run.
+semver_release_type="${BOXFERRY_SEMVER_RELEASE_TYPE:-}"
+case "${semver_release_type}" in
+  "" | major | minor | patch) ;;
+  *)
+    fail "BOXFERRY_SEMVER_RELEASE_TYPE must be empty, major, minor, or patch; got ${semver_release_type@Q}"
+    ;;
+esac
+readonly semver_release_type
 
 run_step() {
   local label=$1
@@ -126,6 +139,11 @@ printf 'Using isolated coverage target directory: %s\n' "${coverage_target_dir}"
 printf 'Using isolated cargo-semver-checks Cargo home: %s\n' "${semver_cargo_home}"
 printf 'Using isolated cargo-semver-checks target directory: %s\n' "${semver_target_dir}"
 
+semver_check=(cargo semver-checks check-release --workspace --all-features)
+if [[ -n "${semver_release_type}" ]]; then
+  semver_check+=(--release-type "${semver_release_type}")
+fi
+
 run_step "Format Rust" cargo fmt --all
 run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
 run_step "Check whitespace errors" git --no-pager diff --check
@@ -134,10 +152,7 @@ run_step "Audit GitHub Actions security" zizmor .github/workflows
 run_step "Check all workspace targets and features" cargo ci-check
 run_step "Check facade core feature boundary" cargo ci-core
 run_step "Check facade Compose feature boundary" cargo ci-compose
-run_step "Check facade Docker feature boundary" cargo ci-docker
 run_step "Check facade Quadlet feature boundary" cargo ci-quadlet
-run_step "Check facade Podman feature boundary" cargo ci-podman
-run_step "Check facade runtime feature boundary" cargo ci-runtime
 run_step "Check repository policies" cargo ci-policy
 run_step "Run Clippy with warnings denied" cargo ci-clippy
 run_step "Run workspace tests" cargo ci-test
@@ -155,7 +170,6 @@ run_step "Audit dependencies, licenses, bans, and sources" cargo deny --all-feat
 run_step "Check local documentation links" lychee --config lychee.toml --root-dir . --offline \
   "${markdown_files[@]}"
 run_step "Check published API compatibility" env CARGO_HOME="${semver_cargo_home}" \
-  CARGO_TARGET_DIR="${semver_target_dir}" cargo semver-checks check-release --workspace \
-  --all-features
+  CARGO_TARGET_DIR="${semver_target_dir}" "${semver_check[@]}"
 
 printf '\nBoxFerry local validation passed all %d steps.\n' "${total_steps}"

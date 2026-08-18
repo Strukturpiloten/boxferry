@@ -4,18 +4,21 @@ This roadmap describes dependency order, not delivery dates. A later phase may b
 
 Cross-repository delivery uses the stable task numbers in the [implementation plan](implementation-plan.md). This roadmap remains the detailed internal phase order for BoxFerry.
 
-## Product contract and first major milestone
+## Product contract and current milestone
 
-BoxFerry is an N-to-N conversion system. Docker runtime resources, Docker Compose, Podman runtime
-resources, and Podman Quadlet are each required as both a source and a target for the first major
-milestone. Pairwise routes compose through the neutral application model; they are not implemented
-as sixteen unrelated converters.
+BoxFerry is an N-to-N conversion system. The current implementation milestone completes the shared
+engine and the Compose/Quadlet document matrix. Docker runtime resources, Podman runtime resources,
+and Kubernetes remain future sources and targets, but their native behavior belongs to deferred
+independent DockerLens, PodmanLens, and KubernetesLens projects. Pairwise routes always compose
+through the neutral application model; they are never implemented as unrelated converters.
+
+See [ADR 0032](decisions/0032-future-native-lens-boundaries.md) for the dependency boundary and the
+[implementation plan](implementation-plan.md#t9-initial-composequadlet-product-completion) for the
+ordered current work.
 
 ### Source adapters
 
 - [x] Import Docker Compose into the neutral model for the documented first subset.
-- [x] Decode explicitly selected Docker runtime resources and reconstruct the documented subset.
-- [x] Decode explicitly selected Podman runtime resources and reconstruct the documented subset.
 - [x] Establish the first Quadlet importer slice for direct images, container names, owned network
       units, and owned volume units with source provenance and explicit unsupported outcomes.
 - [x] Extend Quadlet import with the exact shared command, protected environment, scalar-port,
@@ -42,8 +45,8 @@ as sixteen unrelated converters.
       names, protected raw lists, 6.0.0 `UID=`/`GID=` floors, and typed image-artifact validation.
 - [x] Import repeated absolute-literal Quadlet environment-file declarations without file I/O,
       retaining order and protected paths while making provider-parser uncertainty explicit.
-- [ ] Extend Quadlet import across the remaining first-milestone semantic subset, including
-      divergent runtime pod names and safely decoded native value forms not covered by the reviewed slices.
+- [x] Complete the reviewed Quadlet document import subset; unrepresented native values remain
+      structured losses until the required Lens API and semantic mapping are available.
 - [x] Accept typed Quadlet `.image` and `.build` unit families.
 - [x] Report every Quadlet `.kube` and `.artifact` document entry individually as native-only,
       including generic and unknown sections; neutral Kubernetes and artifact semantics remain open.
@@ -54,9 +57,6 @@ as sixteen unrelated converters.
 - [x] Export the documented neutral subset to Podman Quadlet definitions.
 - [x] Consume released ComposeLens 0.1.13 and export ordered neutral environment-file declarations
       through its new short/long generated-document boundary.
-- [ ] Produce deterministic Docker runtime deployment plans from the neutral model.
-- [ ] Produce deterministic Podman runtime deployment plans from the neutral model.
-- [ ] Add explicit executors that apply an authorized runtime plan without ambient discovery.
 
 ### Route orchestration
 
@@ -64,14 +64,49 @@ as sixteen unrelated converters.
 - [x] Expose all four Compose/Quadlet document routes through the CLI registry, including native
       Compose canonicalization and neutral-model Quadlet canonicalization.
 - [x] Add the [document conversion CLI contract](cli-vnext.md) with nested input and output selection.
-- [ ] Expose Docker-runtime, Podman-runtime, Compose, and Quadlet inputs and outputs through that
-      contract without duplicating conversion rules in the CLI.
 - [x] Add the [privacy-safe local error-report bundle](error-reports.md) without automatic upload
       or raw input collection.
 - [x] Preserve structured `boxferry-quadlet` syntax, typed-model, and document-set diagnostics in
       CLI reports with input aliases, static label detail, and path/secret redaction coverage.
-- [ ] Add offline golden tests for every source/target combination over their shared supported
-      subset.
+
+The full 16-route matrix is T8 work blocked on future native Lens libraries. T9 completed and
+validated the four currently available Compose/Quadlet document routes on 2026-08-18.
+
+### Initial BoxFerry completion
+
+- [x] Complete the deterministic Compose/Quadlet document matrix using released ComposeLens and
+      QuadletLens APIs; every unsupported value remains a structured outcome.
+- [x] Record project `.env` parsing/materialization, service `env_file` content
+      parsing/materialization, Compose `include` processing, and generated config/secret service
+      grants as released-Lens API gaps. BoxFerry does not privately implement them; `--env-file`
+      remains explicit Compose interpolation assignments.
+- [x] Complete positive, negative, loss-policy, same-format, structured-report, fix-first, and
+      deterministic golden coverage for all four Compose/Quadlet routes.
+- [x] Review T9 corpus candidates against released Lens APIs and existing regression coverage;
+      avoid duplicate fixtures and keep the broader corpus-promotion backlog open.
+- [x] Review and stabilize the initial public core, Compose, Quadlet, CLI, diagnostic, and report
+      contracts; remove inaccurate or unreleased surfaces instead of adding compatibility shims.
+- [x] Pass the complete repository validation and prepare the next BoxFerry release.
+
+### Deferred native-library dependencies
+
+The current milestone does not implement or simulate:
+
+- Docker or Podman deployment plans, runtime executors, or runtime CLI routes;
+- Kubernetes resource mappings, `.kube` semantics, or cluster validation;
+- native artifact execution;
+- native resource-label or broader runtime-security semantics without corresponding Lens evidence;
+- Compose or Quadlet behavior that requires an unreleased change to an existing Lens API; or
+- any private replacement for a released-Lens API gap.
+
+### High-priority documentation replacement
+
+- [ ] After initial implementation completion, replace the development-era documentation with a
+      coherent user, operator, library, architecture, compatibility, troubleshooting, and
+      contributor documentation set describing only implemented behavior. T10 is the next task.
+
+The replacement is intentionally not designed further until the initial implementation contract
+is fixed.
 
 ## Status key
 
@@ -251,74 +286,6 @@ boundary for pre-existing external Podman secrets.
 - [x] Refuse existing output directories and block unauthorized output before performing writes.
 - [x] Add black-box tests for exact reviewed bytes, write safety, and loss-policy exit status.
 
-## Phase 3: runtime migration — in progress
-
-- [x] Distinguish runtime observations, authored sources, defaults, overrides, and conversion
-      decisions in neutral provenance.
-- [x] Establish a pure shared observation/reconstruction crate without Docker or Podman response
-      types, daemon access, command execution, or ambient discovery.
-- [x] Decode caller-supplied Podman container, pod, network, volume, and image inspect arrays for
-      the finite 5.4.0-through-6.0.2 range without daemon or command access.
-- [x] Report malformed input, meaningful unmodeled configuration, missing relationships, and
-      out-of-range Podman versions through stable native diagnostics.
-- [x] Acquire explicitly selected existing Podman resources through a replaceable, shell-free,
-      read-only CLI boundary without running commands for empty resource families.
-- [x] Expand a container/pod selection to related images, networks, and named volumes under an
-      explicit finite caller policy without ambient resource enumeration.
-- [x] Do not auto-follow Podman's mixed namespace/generic container dependency IDs; retain their
-      unsupported diagnostic instead of importing infra containers or guessing portable intent.
-- [x] Add isolated, digest-pinned runtime conformance for every supported minor line with an
-      official immutable local-runtime image: 5.4.0, 5.5.2, 5.6.2, 5.7.1, and 5.8.2.
-- [x] Add an opt-in exact-current-patch lane; it now requires an explicitly selected Podman 6.1.0;
-      create only uniquely named test resources and remove them after inspection.
-- [ ] Add reproducible scheduled-image conformance for the exact current patch. The official
-      stable registry had no immutable Podman 6.1.0 local-runtime image on 2026-08-17.
-- [x] Decode explicit Docker container, image, network, and volume inspect arrays across the finite
-      Engine API 1.40-through-1.55 range, with closed explicit-endpoint acquisition and bounded
-      container-resource expansion.
-- [x] Add isolated, digest-pinned Docker Engine 29.7.1 conformance with forced API 1.40 and 1.55
-      responses, no host runtime socket, and an explicit historical-19.03 evidence limitation.
-- [x] Treat runtime `CreateCommand` data as optional, sensitive provenance rather than a required
-      source of truth.
-- [x] Reconstruct command and environment overrides by comparing effective container and image
-      observations under an explicit caller-selected policy.
-- [x] Extend container/image comparison to non-empty `user[:group]` and working-directory values,
-      split retained identities into neutral user/group fields, and preserve explicit container
-      read-only-root state directly.
-- [x] Extend the effective-state model with regular health checks, protected command forms,
-      timing/retry values, Docker API-aware start intervals, image-default comparison, and explicit
-      separation from Podman's startup-healthcheck family.
-- [x] Extend effective state with a reviewed container restart-policy slice: decode Docker and
-      Podman policy objects, preserve runtime provenance, emit exact `Restart=no`, approximate
-      unbounded systemd policies explicitly, and never widen finite retry limits silently.
-- [x] Extend effective state with protected Docker/Podman container and image label maps,
-      deterministic image-default comparison, reserved Compose-provider metadata diagnostics, and
-      explicit target-adapter losses.
-- [x] Import and generate typed service labels through ComposeLens 0.1.8 and QuadletLens 0.1.7,
-      retaining mapping/list scalar behavior, multi-file provenance, protected values, empty values,
-      systemd quoting, literal-specifier escaping, and reserved-provider diagnostics in adapter and
-      Compose-to-Quadlet golden tests.
-- [x] Preserve explicit service runtime names from Compose and runtime observations, keep them
-      distinct from neutral service identifiers, and emit validated Compose `container_name` or
-      capability-checked Quadlet `ContainerName=` through ComposeLens 0.1.10 and QuadletLens 0.1.9.
-- [ ] Define resource-label ownership separately for networks, volumes, pods, and build/image
-      artifacts before adding neutral resource-label fields or native generation.
-- [ ] Extend the broader effective-state model with reviewed security slices as their native and
-      neutral semantics are defined.
-- [x] Preserve multiple network aliases plus network, volume, mount, and container relationships
-      in observations and the supported neutral subset.
-- [x] Add an ordered neutral service-group relationship with member provenance; consistent Podman
-      membership enters the application graph without inferring namespace or lifecycle semantics.
-- [x] Reconstruct the supported application subset with application-level and field-level
-      uncertainty, provenance, redaction, and policy-controlled outcomes.
-- [x] Generate first-slice Quadlet definitions from caller-supplied observations through the
-      public importer, engine, loss policy, and exporter path.
-- [x] Apply exact-name, provenance-bearing network, volume, and service-group lifecycle
-      resolutions and preserve one complete application-owned group as a named Quadlet pod.
-- [x] Generate deterministic, parse-back-validated Compose definitions from observations through
-      an exact provider target, optional exact backend runtime, compatibility diagnostics, explicit
-      loss authorization, resource-name preservation, and the public facade.
-
 ## Additive explicit container names — completed
 
 - [x] Consume released ComposeLens 0.1.10 and QuadletLens 0.1.9 from crates.io.
@@ -327,7 +294,6 @@ boundary for pre-existing external Podman secrets.
       provenance.
 - [x] Generate validated Compose `container_name` and capability-checked Quadlet
       `ContainerName=` values.
-- [x] Preserve inspected Docker and Podman container names during runtime reconstruction.
 - [x] Reject names outside each target runtime's grammar instead of silently reverting to a
       provider-generated name.
 - [x] Add neutral-model, adapter, runtime, invalid-value, and golden end-to-end tests.
@@ -377,7 +343,7 @@ boundary for pre-existing external Podman secrets.
       parity as `BFQ0010` approximate, and report optional files or unsafe paths explicitly.
 - [x] Release and consume ComposeLens 0.1.13, then replace the tested Compose-generation loss with
       ordered short/long `env_file` output and parse-back validation.
-- [ ] Define separate caller-authorized project `.env` and environment-file content processing;
+- [ ] Track project `.env` and environment-file materialization as a released-Lens API gap;
       declaration conversion must not imply file reads or silently merge file contents.
 
 ## Phase 4: Kubernetes — open

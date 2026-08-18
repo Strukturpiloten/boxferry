@@ -1,0 +1,6 @@
+[Container]
+Image=example.invalid/web:1
+ContainerName=web-runtime
+
+[Service]
+Restart=no

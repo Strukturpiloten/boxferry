@@ -106,10 +106,11 @@ edges; every finding remains visible and callers rerun after the primary correct
 The implemented local [error-report bundle](error-reports.md) uses this structured boundary and adds
 only allowlisted, redacted invocation context; it does not capture terminal output or raw sources.
 
-Rule namespaces distinguish Compose (`BFC`), Quadlet (`BFQ`), Docker (`BFD`), Podman (`BFP`),
-runtime reconstruction (`BFR`), and orchestration/file/report (`BFO`) ownership. A code identifies
-one condition and is not reused; repeated source occurrences share it. The complete Quadlet
-boundary is documented in the [Quadlet exporter](quadlet-adapter.md).
+Current rule namespaces distinguish Compose (`BFC`), Quadlet (`BFQ`), and
+orchestration/file/report (`BFO`) ownership. Future native Lens integrations receive new,
+unassigned namespaces only when their native contracts exist. A code identifies one condition and
+is not reused; repeated source occurrences share it. The complete Quadlet boundary is documented
+in the [Quadlet exporter](quadlet-adapter.md).
 
 ## Target ranges
 

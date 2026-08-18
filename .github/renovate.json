@@ -58,22 +58,6 @@
       ],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "cli/cli"
-    },
-    {
-      "customType": "regex",
-      "description": "Signal new upstream runtime releases for evidence review",
-      "managerFilePatterns": ["/^tools/(podman|docker)-runtime-matrix\\.toml$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\ncurrent_upstream = \\\"(?<currentValue>[^\\\"]+)\\\""
-      ]
-    },
-    {
-      "customType": "regex",
-      "description": "Update the exact Docker conformance image release and digest together",
-      "managerFilePatterns": ["/^tools/docker-runtime-matrix\\.toml$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nversion = \\\"(?<currentValue>[^\\\"]+)\\\"\\nimage = \\\"[^\\\"]+@(?<currentDigest>sha256:[a-f0-9]{64})\\\""
-      ]
     }
   ],
   "packageRules": [

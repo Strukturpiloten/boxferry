@@ -18,8 +18,9 @@ high-level API. It exposes the core model and engine and will expose stable form
 additive Cargo features. The package also contains the `boxferry` executable.
 
 The facade owns orchestration convenience APIs only when their inputs keep file access,
-environment access, runtime inspection, target profiles, and loss policy explicit. It does not add
-a single “magic conversion” function that reads ambient state.
+environment access, target profiles, and loss policy explicit. It does not add a single “magic
+conversion” function that reads ambient state. Future runtime access, if supplied by a Lens-backed
+adapter, must likewise remain explicit.
 
 ### Component crates
 
@@ -28,8 +29,6 @@ a single “magic conversion” function that reads ambient state.
   and diagnostics.
 - `boxferry-compose`, `boxferry-quadlet`, and later format adapters provide native mappings and
   depend on their corresponding native libraries.
-- `boxferry-runtime` provides pure runtime-neutral observation and reconstruction contracts.
-- Runtime-specific adapter crates provide replaceable inspection interfaces and implementations.
 
 Direct component dependencies are supported for applications building custom adapters, services,
 editor integrations, language bindings, or their own user interface. Component APIs receive the
@@ -51,26 +50,23 @@ exercise the same orchestration path used by the executable.
 
 ## Feature policy
 
-Format and runtime features are additive. The implemented `runtime` feature exposes the pure
-shared reconstruction layer. The implemented non-default `podman-runtime` and `docker-runtime`
-features add their independent native inspect decoders and enable `runtime` transitively. Enabling
-one feature must not disable or change another adapter's public behavior.
+Format features are additive. Enabling one feature must not disable or change another adapter's
+public behavior.
 
 The 0.1.1 release enables `cli`, `compose`, and `quadlet` by default so
 `cargo install boxferry` builds a useful command. Embedded callers can select a smaller dependency
 surface with `default-features = false` and explicit format features. CI tests the default set,
 no-default core, every supported individual feature, and all features.
 
-The implemented adapter features are `compose`, `quadlet`, `runtime`, `podman-runtime`, and
-`docker-runtime`; `cli` enables the argument parser and requires Compose and Quadlet for the
-current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
+The implemented adapter features are `compose` and `quadlet`; `cli` enables the argument parser
+and requires Compose and Quadlet for the current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
 `ComposeCanonicalization`, `CanonicalComposeDocument`, `ComposeFindingStage`, `ComposeRuntime`,
 Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
 `QuadletSource`, `QuadletParseResult`, `QuadletParseError`, `QuadletParseFailure`, `QuadletParseFailureStage`,
 the `QuadletParseDiagnostic` DTO family, `QuadletExporter`, `QuadletGroupingPolicy`, and
-`QuadletOutput`. It also exposes each adapter and matching native
-dependency through `boxferry::compose`, `boxferry::quadlet`, `boxferry::podman`, and
-`boxferry::docker`, so embedded callers do not need to guess a second crate version.
+`QuadletOutput`. It also exposes each adapter and matching native dependency through
+`boxferry::compose` and `boxferry::quadlet`, so embedded callers do not need to guess a second
+crate version.
 
 The unconditional model re-exports include image artifact resources and their typed settings:
 `ImageAcquisition`, `ImageAcquisitionSetting`, `ImageBuild`, `ImageBuildSetting`,
@@ -106,32 +102,6 @@ severity, static summaries/labels, numeric source IDs, and byte spans, never sou
 protected values, or terminal-rendered diagnostics. Successful findings also remain inside
 `QuadletSource`, so `QuadletParseResult::into_source` and the importer cannot discard them.
 
-The `runtime` feature re-exports `RuntimeSnapshot`, its effective-state observation types including
-`RuntimeHealthcheck` and `RuntimeMetadataLabel`, plus the neutral `RestartPolicy`, `MetadataLabel`, `OverrideReconstruction`,
-`RuntimeResolutions`, and `RuntimeImporter`. It does
-not enable Docker or Podman clients and does not read a daemon, command, filesystem, or process
-environment.
-
-The `podman-runtime` feature re-exports `PodmanInspectDocuments`, `PodmanInspectSource`,
-`PodmanSnapshotResult`, `PodmanImporter`, explicit resource-selection and command types,
-`PodmanInspector`, the replaceable `PodmanCommandExecutor`, and
-`ProcessPodmanCommandExecutor`. Decoding performs no I/O. The inspector runs only fixed read-only
-inspect commands for caller-selected resources and a caller-supplied producing version.
-`PodmanExpansionPolicy` lets callers opt into finite container-resource discovery or selected-pod
-member discovery; explicit-only acquisition remains the default and the original `inspect`
-contract.
-
-The `docker-runtime` feature re-exports `DockerApiVersion`, `DockerInspectDocuments`,
-`DockerInspectSource`, `DockerSnapshotResult`, `DockerImporter`, explicit resource-selection and
-closed command types, `DockerInspector`, the replaceable `DockerCommandExecutor`, and
-`ProcessDockerCommandExecutor`. Decoding performs no I/O and accepts only the finite reviewed
-Engine API 1.40-through-1.55 range. The process inspector requires a caller-selected executable,
-protected daemon endpoint, and exact API version. It uses an isolated empty client configuration,
-removes ambient Docker daemon/context/custom-header/TLS selection variables, sets
-`DOCKER_API_VERSION`, and never enumerates empty resource families.
-`DockerExpansionPolicy::ContainerResources` follows only selected containers' image, network, and
-named-volume references; explicit-only acquisition remains the default.
-
 ## Versioning and publication
 
 Supported BoxFerry crates use a lockstep version. Workspace path dependencies also declare that
@@ -145,10 +115,11 @@ test utilities are not part of the public dependency surface.
 
 ## Side-effect contract
 
-Core model and planning operations are pure. File access, environment access, runtime inspection,
-native command execution, and output writes enter through explicit caller-selected adapters. An
-external project can substitute in-memory implementations and can create a plan without applying
-or deploying its output.
+Core model and planning operations are pure. File access, environment access, native command
+execution, and output writes enter through explicit caller-selected adapters. An external project
+can substitute in-memory implementations and can create a plan without applying or deploying its
+output. Future native-runtime access is owned by the corresponding Lens project and is not a
+current BoxFerry adapter surface.
 
 ## Implemented core surface
 
@@ -169,10 +140,7 @@ T4 provides the first tested public surface:
 - import-side conversion outcomes that participate in the same `LossPolicy` authorization as
   target-side mapping decisions;
 - an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.2.0;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.2.0;
-- an optional `runtime` facade feature backed by the pure `boxferry-runtime` component;
-- an optional `podman-runtime` facade feature backed by `boxferry-podman`; and
-- an optional `docker-runtime` facade feature backed by `boxferry-docker`.
+- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.2.0.
 
 Version 0.1.1 establishes this surface as the first crates.io contract. Broader native value
 encoders remain T5/T6 work and continue to use structured fidelity outcomes.
@@ -195,21 +163,19 @@ sensitive interpolation remains redacted from debug output while authorized adap
 it for native encoding.
 
 `Service::runtime_name` is an optional provenance-bearing container name distinct from the
-neutral service identifier. Source adapters preserve explicit names; runtime reconstruction uses
-the inspected name; Compose and Quadlet exporters validate their respective target grammars before
-emitting `container_name` or `ContainerName=`.
+neutral service identifier. Source adapters preserve declared names; Compose and Quadlet exporters
+validate their respective target grammars before emitting `container_name` or `ContainerName=`.
 
 `RestartPolicy` is the container-level automatic restart contract. It keeps `Never`, `Always`,
 unlimited or non-zero retry-limited `OnFailure`, and `UnlessStopped` distinct from service-
-dependency restart propagation and deployment-orchestrator policy. Compose service `restart` and
-runtime observations map into this contract; Compose generation preserves every variant exactly.
-Quadlet generation keeps the separate systemd fidelity rules documented below.
+dependency restart propagation and deployment-orchestrator policy. Compose service `restart` maps
+into this contract; Compose generation preserves every variant exactly. Quadlet generation keeps
+the separate systemd fidelity rules documented below.
 
-`MetadataLabel` retains an opaque non-empty name and a `ProtectedString` value. Runtime adapters
-construct sensitive `RuntimeMetadataLabel` values. The runtime importer can preserve them or
-compare container values with linked image metadata; reserved `com.docker.compose.*` provider
-labels remain reviewable but are explicitly unsafe to re-author. Compose mapping and sequence
-forms import into the same neutral type with name/value provenance. The Compose exporter emits
+`MetadataLabel` retains an opaque non-empty name and a `ProtectedString` value. Reserved
+`com.docker.compose.*` provider labels remain reviewable but are explicitly unsafe to re-author.
+Compose mapping and sequence forms import into the same neutral type with name/value provenance.
+The Compose exporter emits
 deterministic label mappings, while the Quadlet exporter emits capability-checked repeatable
 `Label=` entries with systemd quoting and literal-specifier escaping. These APIs cover service and
 container metadata only; resource labels, image-build labels, annotations, and label files need
@@ -224,31 +190,6 @@ outside the model; material and sensitive grant values retain `ProtectedString` 
 `Application::service_groups` exposes ordered `ServiceGroup` values. Each group has a neutral
 name, lifecycle ownership, and ordered provenance-bearing service identifiers. Membership does
 not imply a particular source pod type, shared namespace set, infra container, or target workload.
-
-`ProvenanceKind` distinguishes source documents, runtime observations, user overrides,
-implementation defaults, and conversion decisions. Embedded runtime adapters should attach
-`RuntimeObservation` only to effective inspected state and use `ConversionDecision` for inferred
-author intent.
-
-`RuntimeImporter` requires an explicit `OverrideReconstruction` policy. `PreserveObservedState`
-materializes supported effective command, environment, metadata-label, `user[:group]`, working-directory, and
-regular-health-check values. `InferImageOverrides` omits values equal to linked image defaults and
-retains differing values with both observation and decision provenance. Health command, disable,
-interval, timeout, retries, start-period, and supported start-interval fields are compared
-independently. Retained combined identities split into the neutral primary-user and primary-group
-fields. Explicit read-only-root and container restart-policy state is preserved directly. Restart
-policy is not compared with an image because it is a container host setting. Matching image labels
-are omitted, while changed and runtime-added labels receive decision provenance. Podman startup-health checks,
-on-failure actions, and log policies are not represented as regular health checks.
-Both policies emit an application-level approximate outcome because neither
-can recover complete author intent. Runtime network and volume ownership is `Uncertain`; pod
-membership becomes an ordered `ServiceGroup` when pod and container observations agree. Group
-lifecycle and target semantics remain explicit non-exact decisions. Callers can supply exact-name
-`RuntimeResolutions` selecting application-owned or external lifecycle only when each choice has
-`UserOverride` provenance. Resolved values retain observation and override origins and receive
-`BFR0009`. `PodmanImporter::with_resolutions` and `DockerImporter::with_resolutions` forward this
-same configuration into shared reconstruction. See
-[Runtime reconstruction](runtime-reconstruction.md).
 
 ## Minimal embedded flow
 
