@@ -1,0 +1,20 @@
+[
+  {
+    "Id": "container-current-id-api",
+    "Image": "image-current-id-api",
+    "ImageName": "registry.example.invalid/team/api:2@sha256:ef01",
+    "Name": "api",
+    "Config": {
+      "Image": "registry.example.invalid/team/api:2@sha256:ef01",
+      "Env": [],
+      "Cmd": [],
+      "StopSignal": "SIGTERM"
+    },
+    "HostConfig": {},
+    "Mounts": [],
+    "NetworkSettings": {
+      "Ports": {},
+      "Networks": {}
+    }
+  }
+]

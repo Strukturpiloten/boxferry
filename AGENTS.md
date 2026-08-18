@@ -81,6 +81,37 @@ cargo deny check
 
 The `ci-*` aliases in `.cargo/config.toml` use locked resolution and all workspace features and targets where applicable. Do not weaken an alias or CI lint to accommodate new code; address the finding or document a narrowly justified policy change.
 
+## GitHub issue-to-PR workflow
+
+When the user authorizes creating an issue, branch, commit, push, and pull request, follow this
+sequence:
+
+1. Inspect `git status` and the complete diff. Identify the exact pull-request scope and preserve
+   unrelated changes.
+2. Search for an existing issue, then create a focused GitHub issue when no duplicate exists.
+3. Fetch `origin/main`, verify local `main` is synchronized, and create
+   `TheRealBecks/issue<NUMBER>` from it.
+4. Complete and review the change without staging unrelated files.
+5. Run `./scripts/check-all.sh` from the repository root. Do not commit, push, or create the pull
+   request unless every step passes. Any source, test, configuration, or documentation change made
+   after the successful run invalidates it and requires the complete task to run again.
+6. Stage only explicit in-scope paths, run `git diff --cached --check`, review the staged diff, and
+   create one intentional commit.
+7. Push the issue branch and open a ready-for-review pull request containing `Closes #<NUMBER>`.
+8. Read the pull request back from GitHub and report its issue, branch, commit, validation result,
+   URL, and current check state.
+
+The issue may be created before local validation so failed work remains traceable, but a failed or
+incomplete `./scripts/check-all.sh` run is a hard gate against commit, push, and pull-request
+creation.
+
+The primary Sol agent runs this workflow with high reasoning effort. Sol owns the issue and branch,
+final integration and diff review, complete local gate, explicit staging, commit, push, pull-request
+creation, and GitHub readback. Terra subagents may perform bounded research, implementation,
+read-only review, or non-mutating verification assigned by Sol, but never execute the Git or GitHub
+write steps. Because `./scripts/check-all.sh` formats repository files, its mandatory final run
+remains Sol's responsibility and is not replaced by read-only Terra verification.
+
 ## Multi-agent coordination
 
 - The human-facing batch prompt and operator responsibilities are documented in

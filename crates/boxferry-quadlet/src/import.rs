@@ -18,8 +18,9 @@ use boxferry_model::{
     SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 use quadlet_lens::model::{
-    BuildKey, ContainerKey, EntryKind, ImageKey, NetworkKey, PodKey, QuadletUnitType, SectionKind, TypedEntry,
-    TypedSection, UnitReferenceKind, ValueKind, VolumeKey,
+    AuthoredContainerEnvironmentDirective, BuildKey, ContainerKey, EntryKind, ImageKey, NetworkKey, PodKey,
+    QuadletDocument, QuadletUnitType, SectionKind, SystemdUnitKey, TypedEntry, TypedSection, UnitReferenceKind,
+    ValueKind, VolumeKey,
 };
 
 use crate::QuadletSource;
@@ -93,7 +94,7 @@ impl ImportAdapter for QuadletImporter {
                         filename,
                         &mut application,
                         &mut service,
-                        document.sections(),
+                        document,
                         &service_names,
                         &mut pod_groups,
                     );
@@ -106,6 +107,9 @@ impl ImportAdapter for QuadletImporter {
                 | QuadletUnitType::Pod
                 | QuadletUnitType::Image
                 | QuadletUnitType::Build => {}
+                QuadletUnitType::Kube | QuadletUnitType::Artifact => {
+                    mapping.report_native_only_unit(filename, document);
+                }
                 _ => mapping.unsupported(
                     &format!("quadlet.{filename}"),
                     filename,
@@ -235,6 +239,36 @@ impl<'a> Mapping<'a> {
                 )
                 .with_native_finding(finding.clone()),
             );
+        }
+    }
+
+    /// Records every authored Kube or Artifact entry separately. Neither unit type has a safe
+    /// format-neutral meaning yet, so even generic-systemd, `[Quadlet]`, unknown, and repeated
+    /// entries need a value-free outcome rather than disappearing behind the primary section.
+    fn report_native_only_unit(&mut self, filename: &str, document: &QuadletDocument) {
+        let unit = match document.unit_type() {
+            QuadletUnitType::Kube => "kube",
+            QuadletUnitType::Artifact => "artifact",
+            _ => return,
+        };
+        for (section_index, section) in document.sections().iter().enumerate() {
+            let mut occurrences = BTreeMap::<String, usize>::new();
+            for entry in section.entries() {
+                let key = entry.key().text();
+                let occurrence = occurrences.entry(key.to_owned()).or_default();
+                let subject = format!(
+                    "quadlet.{unit}.{filename}.{}[{section_index}].{key}[{occurrence}]",
+                    section.name().text(),
+                );
+                *occurrence += 1;
+                self.unsupported_value(
+                    &subject,
+                    filename,
+                    key,
+                    "this native Quadlet key has no reviewed format-neutral application-model mapping",
+                    self.entry_origin(entry),
+                );
+            }
         }
     }
 
@@ -1550,14 +1584,14 @@ impl<'a> Mapping<'a> {
         filename: &str,
         application: &mut Application,
         service: &mut Service,
-        sections: &[TypedSection],
+        document: &QuadletDocument,
         service_names: &BTreeSet<String>,
         pod_groups: &mut BTreeMap<String, PodImportGroup>,
     ) {
         let service_name = service.name().as_str().to_owned();
         let mut state = ContainerImportState::default();
 
-        for section in sections {
+        for section in document.sections() {
             match section.kind() {
                 SectionKind::Container => {
                     self.map_native_container_section(
@@ -1590,6 +1624,7 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
+        self.map_container_environment(filename, &service_name, service, document);
         self.map_unit_relations(filename, &service_name, service, state.relations);
         if let Some(entry) = state.group_entry {
             self.map_group(filename, &service_name, service, entry);
@@ -1687,9 +1722,9 @@ impl<'a> Mapping<'a> {
                 }
                 EntryKind::Container(ContainerKey::Pull) => self.map_pull(filename, &service_name, service, entry),
                 EntryKind::Container(ContainerKey::Memory) => self.map_memory(filename, &service_name, service, entry),
-                EntryKind::Container(ContainerKey::Environment) => {
-                    self.map_environment(filename, &service_name, service, entry);
-                }
+                // Environment= is decoded once for the complete document below. The Lens semantic
+                // view handles systemd quoting, multiple assignments, resets, and deferred forms.
+                EntryKind::Container(ContainerKey::Environment) => {}
                 EntryKind::Container(ContainerKey::EnvironmentFile) => {
                     self.map_environment_file(filename, &service_name, service, entry);
                 }
@@ -1951,10 +1986,10 @@ impl<'a> Mapping<'a> {
         relations: &mut DependencyRelations,
     ) {
         for entry in entries {
-            let relation = match (entry.kind(), entry.key().text()) {
-                (EntryKind::GenericSystemd, "Requires") => Some(Some(true)),
-                (EntryKind::GenericSystemd, "Wants") => Some(Some(false)),
-                (EntryKind::GenericSystemd, "After") => Some(None),
+            let relation = match entry.kind() {
+                EntryKind::SystemdUnit(SystemdUnitKey::Requires) => Some(Some(true)),
+                EntryKind::SystemdUnit(SystemdUnitKey::Wants) => Some(Some(false)),
+                EntryKind::SystemdUnit(SystemdUnitKey::After) => Some(None),
                 _ => None,
             };
             let Some(relation) = relation else {
@@ -2692,42 +2727,95 @@ impl<'a> Mapping<'a> {
         self.exact(subject, Some(origin));
     }
 
-    fn map_environment(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
-        let origin = self.entry_origin(entry);
-        let fallback_subject = format!("services.{service_name}.environment");
-        let Some(value) = self.direct_value(filename, &fallback_subject, entry, origin.clone()) else {
-            return;
-        };
-        let Some((name, value)) = value.split_once('=') else {
-            self.unsupported_value(
-                &fallback_subject,
-                filename,
-                entry.key().text(),
-                "Environment must contain one explicit NAME=VALUE assignment",
-                origin,
+    fn map_container_environment(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        document: &QuadletDocument,
+    ) {
+        let environment = document.container_environment();
+        for diagnostic in environment.diagnostics() {
+            let mut finding = NativeFinding::new(
+                "quadlet",
+                "quadlet-lens",
+                diagnostic.code().as_str(),
+                "container-environment",
+                match diagnostic.severity() {
+                    quadlet_lens::diagnostic::Severity::Error => Severity::Error,
+                    quadlet_lens::diagnostic::Severity::Warning => Severity::Warning,
+                    quadlet_lens::diagnostic::Severity::Note => Severity::Note,
+                },
+                diagnostic.summary(),
             );
-            return;
-        };
-        let subject = format!("{fallback_subject}.{name}");
-        if !is_environment_name(name) || !is_safe_word(value, true) {
-            self.unsupported_value(
-                &subject,
-                filename,
-                entry.key().text(),
-                "Environment requires systemd assignment decoding outside the exact single-assignment subset",
-                origin,
+            for label in diagnostic.labels() {
+                finding = finding.with_label(boxferry_engine::NativeFindingLabel::new(
+                    boxferry_engine::NativeFindingLabelKind::Primary,
+                    label.span().source_id().get(),
+                    label.span().start(),
+                    label.span().end(),
+                    label.message(),
+                ));
+            }
+            self.diagnostics.push(
+                Diagnostic::new(
+                    self.codes.native_model.clone(),
+                    finding.severity(),
+                    "QuadletLens reported a native container Environment finding",
+                )
+                .with_native_finding(finding),
             );
-            return;
         }
-        let Some(name) = self.identifier(name, &subject, origin.clone()) else {
-            return;
-        };
-
-        service.add_environment(Sourced::from_source(
-            EnvironmentVariable::new(name, EnvironmentValue::Literal(ProtectedString::sensitive(value))),
-            origin.clone(),
-        ));
-        self.exact(subject, Some(origin));
+        for directive in environment.directives() {
+            let origin = self.provenance(directive.span());
+            match directive {
+                AuthoredContainerEnvironmentDirective::Assignment { name, value, .. } => {
+                    let subject = format!("services.{service_name}.environment.{name}");
+                    let Some(name) = self.identifier(name, &subject, origin.clone()) else {
+                        continue;
+                    };
+                    service.add_environment(Sourced::from_source(
+                        EnvironmentVariable::new(name, EnvironmentValue::Literal(ProtectedString::sensitive(value))),
+                        origin.clone(),
+                    ));
+                    self.exact(subject, Some(origin));
+                }
+                AuthoredContainerEnvironmentDirective::Reset { .. } => self.invalid_model(
+                    &format!("services.{service_name}.environment"),
+                    filename,
+                    "an empty Environment directive resets prior values and cannot be represented by the neutral model",
+                    Some(origin),
+                ),
+                AuthoredContainerEnvironmentDirective::BareName { name, .. } => self.unsupported_value(
+                    &format!("services.{service_name}.environment.{name}"),
+                    filename,
+                    "Environment",
+                    "a bare Environment name requires systemd manager or process context",
+                    origin,
+                ),
+                AuthoredContainerEnvironmentDirective::Deferred { name, .. } => self.unsupported_value(
+                    &format!("services.{service_name}.environment.{name}"),
+                    filename,
+                    "Environment",
+                    "an Environment value with a systemd specifier is deferred until manager expansion",
+                    origin,
+                ),
+                AuthoredContainerEnvironmentDirective::Unmodeled { .. } => self.unsupported_value(
+                    &format!("services.{service_name}.environment"),
+                    filename,
+                    "Environment",
+                    "Environment syntax is not represented by the reviewed semantic subset",
+                    origin,
+                ),
+                _ => self.unsupported_value(
+                    &format!("services.{service_name}.environment"),
+                    filename,
+                    "Environment",
+                    "a newer QuadletLens Environment directive is not represented by this neutral-model adapter",
+                    origin,
+                ),
+            }
+        }
     }
 
     fn map_dns_value(
@@ -4546,14 +4634,6 @@ fn is_podman_health_duration(mut value: &str) -> bool {
         found = true;
     }
     found
-}
-
-fn is_environment_name(value: &str) -> bool {
-    value
-        .as_bytes()
-        .first()
-        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 fn is_label_name(value: &str) -> bool {

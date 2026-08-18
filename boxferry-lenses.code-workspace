@@ -30,4 +30,46 @@
       "unreviewed",
     ],
   },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Workspace: Check BoxFerry",
+        "type": "process",
+        "command": "${workspaceFolder:BoxFerry}/scripts/check-all.sh",
+        "options": {
+          "cwd": "${workspaceFolder:BoxFerry}",
+        },
+        "problemMatcher": "$rustc",
+      },
+      {
+        "label": "Workspace: Check ComposeLens",
+        "type": "process",
+        "command": "${workspaceFolder:ComposeLens}/scripts/check-all.sh",
+        "options": {
+          "cwd": "${workspaceFolder:ComposeLens}",
+        },
+        "problemMatcher": "$rustc",
+      },
+      {
+        "label": "Workspace: Check QuadletLens",
+        "type": "process",
+        "command": "${workspaceFolder:QuadletLens}/scripts/check-all.sh",
+        "options": {
+          "cwd": "${workspaceFolder:QuadletLens}",
+        },
+        "problemMatcher": "$rustc",
+      },
+      {
+        "label": "Workspace: Format, lint, and test all repositories",
+        "dependsOrder": "sequence",
+        "dependsOn": [
+          "Workspace: Check BoxFerry",
+          "Workspace: Check ComposeLens",
+          "Workspace: Check QuadletLens",
+        ],
+        "problemMatcher": [],
+      },
+    ],
+  },
 }

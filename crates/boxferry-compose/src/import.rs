@@ -26,7 +26,7 @@ use compose_lens::model::{
     Entrypoint as ComposeEntrypoint, EnvironmentFileFormatKind, ExposeItemKind, ExposeProtocol,
     HealthcheckDuration as ComposeHealthcheckDuration, HealthcheckRetries as ComposeHealthcheckRetries,
     HealthcheckTest, HealthcheckTestKind, HostnameKind, Labels, LimitValue, LongPort, LongVolumeMount, MemLimitKind,
-    MountType, NetworkDefinition, PidsLimitKind, Port as ComposePort, PullPolicyKind,
+    MountType, NetworkDefinition, PidsLimitKind, Port as ComposePort, PullPolicyKind, ResourceExternal,
     RestartPolicyKind as ComposeRestartPolicyKind, SecretDefinition, SecurityOptionKind,
     SelinuxRelabel as ComposeSelinuxRelabel, ServiceNetwork, ServiceNetworks, ShmSizeKind, ShmSizeUnit,
     ShortDeviceKind, ShortPort, ShortVolumeMount, TmpfsItemKind, VolumeDefinition, VolumeMount,
@@ -107,6 +107,12 @@ impl ImportAdapter for ComposeImporter {
         );
         let mut application = Application::new(application_name);
         mapping.exact_provenance("application", view.provenance());
+        if let Some(version) = view.version() {
+            // Compose `version` is an obsolete marker, not a provider selector. Dropping it at
+            // this cross-format neutral boundary is therefore exact normalization; ComposeLens
+            // retains and reports its native obsolete-version warning independently.
+            mapping.exact_provenance("application.version", version.provenance());
+        }
 
         let profiles_valid = mapping.validate_profiles(view, source);
 
@@ -1721,11 +1727,7 @@ impl<'a> Mapping<'a> {
             service.set_hostname(
                 self.sourced_provenance(Self::protected(value, hostname.is_sensitive()), hostname.provenance()),
             );
-            if native
-                .unmodeled_fields()
-                .iter()
-                .any(|field| field.path().last().is_some_and(|name| name == "uts"))
-            {
+            if native.uts().is_some() {
                 self.unsupported_optional(
                     &subject,
                     "hostname cannot be emitted while host UTS mode remains unmodeled",
@@ -1740,6 +1742,13 @@ impl<'a> Mapping<'a> {
                     hostname.effective_source(),
                 );
             }
+        }
+        if let Some(uts) = native.uts() {
+            self.unsupported_optional(
+                &format!("{service_subject}.uts"),
+                "Compose UTS namespace mode has no neutral-model mapping",
+                uts.effective_source(),
+            );
         }
         if let Some(limit) = native.pids_limit() {
             let subject = format!("{service_subject}.pids_limit");
@@ -2798,7 +2807,7 @@ impl<'a> Mapping<'a> {
             .iter()
             .map(|alias| self.sourced_spans(Self::protected(alias.value(), true), &[alias.span()]))
             .collect();
-        let mut attachment = NetworkAttachment::with_sourced_aliases(identifier, aliases);
+        let mut attachment = NetworkAttachment::new(identifier, aliases);
         if let Some(address) = network.ipv4_address() {
             attachment.set_ipv4_address(self.sourced_spans(Self::protected(address.value(), true), &[address.span()]));
         }
@@ -2833,13 +2842,13 @@ impl<'a> Mapping<'a> {
     fn map_volume_definition(&mut self, resource: &ProjectResource<VolumeDefinition>) -> Option<Sourced<Volume>> {
         let native = resource.definition().value();
         let subject = format!("volumes.{}", resource.name().value());
+        if self.reject_obsolete_external_name_mapping(&subject, native.external()) {
+            return None;
+        }
         let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
         let ownership = self.resource_ownership(&subject, native.external(), native.span());
         let definition_sensitive = resource.definition().is_sensitive();
-        let external = matches!(
-            native.external().map(compose_lens::model::Located::value),
-            Some(BooleanValue::Literal(true))
-        );
+        let external = ownership == ResourceOwnership::External;
         let mut volume = Volume::new(name, ownership);
 
         if let Some(runtime_name) = native.custom_name() {
@@ -3060,13 +3069,13 @@ impl<'a> Mapping<'a> {
     fn map_network_definition(&mut self, resource: &ProjectResource<NetworkDefinition>) -> Option<Sourced<Network>> {
         let native = resource.definition().value();
         let subject = format!("networks.{}", resource.name().value());
+        if self.reject_obsolete_external_name_mapping(&subject, native.external()) {
+            return None;
+        }
         let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
         let ownership = self.resource_ownership(&subject, native.external(), native.span());
         let definition_sensitive = resource.definition().is_sensitive();
-        let external = matches!(
-            native.external().map(compose_lens::model::Located::value),
-            Some(BooleanValue::Literal(true))
-        );
+        let external = ownership == ResourceOwnership::External;
         let mut network = Network::new(name, ownership);
 
         if let Some(runtime_name) = native.custom_name() {
@@ -3388,16 +3397,27 @@ impl<'a> Mapping<'a> {
     fn map_config_definition(&mut self, resource: &ProjectResource<ConfigDefinition>) -> Option<Sourced<Config>> {
         let native = resource.definition().value();
         let subject = format!("configs.{}", resource.name().value());
+        if self.reject_obsolete_external_name_mapping(&subject, native.external()) {
+            return None;
+        }
         let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
         let ownership = self.resource_ownership(&subject, native.external(), native.span());
         let mut config = Config::new(name, ownership);
 
         if let Some(runtime_name) = native.custom_name() {
-            config.set_runtime_name(self.sourced_spans(
-                Self::protected(runtime_name.value(), resource.definition().is_sensitive()),
-                &[runtime_name.span()],
-            ));
-            self.exact_spans(format!("{subject}.runtime_name"), &[runtime_name.span()]);
+            if runtime_name.value().contains('$') {
+                self.invalid_value(
+                    &format!("{subject}.name"),
+                    "config name expression was not resolved",
+                    runtime_name.span(),
+                );
+            } else {
+                config.set_runtime_name(self.sourced_spans(
+                    Self::protected(runtime_name.value(), resource.definition().is_sensitive()),
+                    &[runtime_name.span()],
+                ));
+                self.exact_spans(format!("{subject}.runtime_name"), &[runtime_name.span()]);
+            }
         }
 
         let materials = [
@@ -3424,6 +3444,20 @@ impl<'a> Mapping<'a> {
         .flatten()
         .collect::<Vec<_>>();
         self.map_config_material(&subject, ownership, &materials, &mut config, resource.definition());
+        if let Some(labels) = native.labels() {
+            self.unsupported(
+                &format!("{subject}.labels"),
+                "config metadata labels have no reviewed neutral-model mapping",
+                labels.span(),
+            );
+        }
+        if let Some(template_driver) = native.template_driver() {
+            self.unsupported(
+                &format!("{subject}.template_driver"),
+                "config template driver has no reviewed neutral-model mapping",
+                template_driver.span(),
+            );
+        }
 
         self.report_fields(&subject, "config definition extension", native.extension_fields());
         self.report_fields(&subject, "unknown config definition field", native.unknown_fields());
@@ -3468,16 +3502,27 @@ impl<'a> Mapping<'a> {
     fn map_secret_definition(&mut self, resource: &ProjectResource<SecretDefinition>) -> Option<Sourced<Secret>> {
         let native = resource.definition().value();
         let subject = format!("secrets.{}", resource.name().value());
+        if self.reject_obsolete_external_name_mapping(&subject, native.external()) {
+            return None;
+        }
         let name = self.identifier_optional(&subject, resource.name().value(), resource.name().effective_source())?;
         let ownership = self.resource_ownership(&subject, native.external(), native.span());
         let mut secret = Secret::new(name, ownership);
 
         if let Some(runtime_name) = native.custom_name() {
-            secret.set_runtime_name(self.sourced_spans(
-                Self::protected(runtime_name.value(), resource.definition().is_sensitive()),
-                &[runtime_name.span()],
-            ));
-            self.exact_spans(format!("{subject}.runtime_name"), &[runtime_name.span()]);
+            if runtime_name.value().contains('$') {
+                self.invalid_value(
+                    &format!("{subject}.name"),
+                    "secret name expression was not resolved",
+                    runtime_name.span(),
+                );
+            } else {
+                secret.set_runtime_name(self.sourced_spans(
+                    Self::protected(runtime_name.value(), resource.definition().is_sensitive()),
+                    &[runtime_name.span()],
+                ));
+                self.exact_spans(format!("{subject}.runtime_name"), &[runtime_name.span()]);
+            }
         }
 
         let materials = [
@@ -3498,6 +3543,39 @@ impl<'a> Mapping<'a> {
         .flatten()
         .collect::<Vec<_>>();
         self.map_secret_material(&subject, ownership, &materials, &mut secret, resource.definition());
+        if let Some(driver) = native.driver() {
+            self.unsupported(
+                &format!("{subject}.driver"),
+                "secret driver has no reviewed neutral-model mapping",
+                driver.span(),
+            );
+        }
+        let driver_option_spans = native
+            .driver_opts()
+            .iter()
+            .map(compose_lens::model::KeyValueEntry::span)
+            .collect::<Vec<_>>();
+        if !driver_option_spans.is_empty() {
+            self.unsupported_spans(
+                &format!("{subject}.driver_opts"),
+                "secret driver options have no reviewed neutral-model mapping",
+                &driver_option_spans,
+            );
+        }
+        if let Some(labels) = native.labels() {
+            self.unsupported(
+                &format!("{subject}.labels"),
+                "secret metadata labels have no reviewed neutral-model mapping",
+                labels.span(),
+            );
+        }
+        if let Some(template_driver) = native.template_driver() {
+            self.unsupported(
+                &format!("{subject}.template_driver"),
+                "secret template driver has no reviewed neutral-model mapping",
+                template_driver.span(),
+            );
+        }
 
         self.report_fields(&subject, "secret definition extension", native.extension_fields());
         self.report_fields(&subject, "unknown secret definition field", native.unknown_fields());
@@ -3613,25 +3691,188 @@ impl<'a> Mapping<'a> {
     fn resource_ownership(
         &mut self,
         subject: &str,
-        external: Option<&compose_lens::model::Located<BooleanValue>>,
+        external: Option<&ResourceExternal>,
         span: ComposeSpan,
     ) -> ResourceOwnership {
-        match external.map(compose_lens::model::Located::value) {
-            Some(BooleanValue::Literal(true)) => ResourceOwnership::External,
-            None | Some(BooleanValue::Literal(false)) => ResourceOwnership::Application,
-            Some(BooleanValue::Expression(_)) => {
+        match external {
+            Some(ResourceExternal::Boolean(value)) if matches!(value.value(), BooleanValue::Literal(true)) => {
+                ResourceOwnership::External
+            }
+            None => ResourceOwnership::Application,
+            Some(ResourceExternal::Boolean(value)) if matches!(value.value(), BooleanValue::Literal(false)) => {
+                ResourceOwnership::Application
+            }
+            Some(ResourceExternal::Boolean(_)) => {
                 self.invalid_value(subject, "external expression was not resolved", span);
+                ResourceOwnership::Application
+            }
+            Some(ResourceExternal::NameMapping(mapping)) => {
+                self.invalid_value(
+                    subject,
+                    "obsolete `external: {name: ...}` syntax is not accepted; use `external: true` and top-level `name: ...`",
+                    mapping.span(),
+                );
+                ResourceOwnership::Application
+            }
+            Some(_) => {
+                self.invalid_value(
+                    subject,
+                    "external lifecycle form is not supported by this BoxFerry version",
+                    span,
+                );
                 ResourceOwnership::Application
             }
         }
     }
 
+    fn reject_obsolete_external_name_mapping(&mut self, subject: &str, external: Option<&ResourceExternal>) -> bool {
+        let Some(ResourceExternal::NameMapping(mapping)) = external else {
+            return false;
+        };
+        self.invalid_value(
+            subject,
+            "obsolete `external: {name: ...}` syntax is not accepted; use `external: true` and top-level `name: ...`",
+            mapping.span(),
+        );
+        true
+    }
+
     fn report_service_unsupported(&mut self, subject: &str, service: &ProjectService) {
+        macro_rules! report {
+            ($field:ident, $name:literal) => {
+                self.report_typed_service_value(subject, $name, service.$field());
+            };
+        }
+
+        // ComposeLens 0.2 promotes these fields out of the generic unmodeled collection. Until
+        // BoxFerry has a reviewed neutral contract for each one, retain their effective presence
+        // as a policy-controlled outcome instead of silently dropping it.
+        report!(domainname, "domainname");
+        report!(platform, "platform");
+        report!(isolation, "isolation");
+        report!(mac_address, "mac_address");
+        report!(credential_spec, "credential_spec");
+        report!(extends, "extends");
+        report!(provider, "provider");
+        report!(post_start, "post_start");
+        report!(pre_stop, "pre_stop");
+        report!(pre_start, "pre_start");
+        report!(blkio_config, "blkio_config");
+        report!(cgroup, "cgroup");
+        report!(cgroup_parent, "cgroup_parent");
+        report!(runtime, "runtime");
+        report!(pull_refresh_after, "pull_refresh_after");
+        report!(attach, "attach");
+        report!(stdin_open, "stdin_open");
+        report!(tty, "tty");
+        report!(privileged, "privileged");
+        report!(use_api_socket, "use_api_socket");
+        report!(label_files, "label_file");
+        report!(external_links, "external_links");
+        report!(links, "links");
+        report!(storage_opt, "storage_opt");
+        report!(models, "models");
+        report!(gpus, "gpus");
+        report!(develop, "develop");
+        report!(cpu_count, "cpu_count");
+        report!(cpu_percent, "cpu_percent");
+        report!(cpu_period, "cpu_period");
+        report!(cpu_quota, "cpu_quota");
+        report!(cpu_rt_period, "cpu_rt_period");
+        report!(cpu_rt_runtime, "cpu_rt_runtime");
+        report!(cpu_shares, "cpu_shares");
+        report!(cpus, "cpus");
+        report!(cpuset, "cpuset");
+        report!(device_cgroup_rules, "device_cgroup_rules");
+        report!(ipc, "ipc");
+        report!(mem_reservation, "mem_reservation");
+        report!(mem_swappiness, "mem_swappiness");
+        report!(memswap_limit, "memswap_limit");
+        report!(network_mode, "network_mode");
+        report!(oom_kill_disable, "oom_kill_disable");
+        report!(oom_score_adj, "oom_score_adj");
+        report!(pid, "pid");
+        report!(scale, "scale");
+        report!(volumes_from, "volumes_from");
+        self.report_volume_mount_options(subject, service);
+        for item in service.invalid_device_cgroup_rules() {
+            self.unsupported(
+                &format!("{subject}.device_cgroup_rules"),
+                "invalid device_cgroup_rules item",
+                item.span(),
+            );
+        }
+        for item in service.invalid_volumes_from() {
+            self.unsupported(
+                &format!("{subject}.volumes_from"),
+                "invalid volumes_from item",
+                item.span(),
+            );
+        }
         self.report_project_fields(subject, "service field", service.unmodeled_fields());
     }
 
     fn report_document_unsupported(&mut self, view: &ProjectView) {
+        self.report_typed_document_value("application.include", view.include());
+        self.report_typed_document_value("application.models", view.models());
         self.report_project_fields("application", "document field", view.unmodeled_fields());
+    }
+
+    fn report_typed_service_value<T>(&mut self, service_subject: &str, field: &str, value: Option<&ProjectValue<T>>) {
+        if let Some(value) = value {
+            self.unsupported_optional(
+                &format!("{service_subject}.{field}"),
+                &format!("ComposeLens typed `{field}` has no reviewed neutral-model mapping"),
+                value.effective_source(),
+            );
+        }
+    }
+
+    fn report_typed_document_value<T>(&mut self, subject: &str, value: Option<&ProjectValue<T>>) {
+        if let Some(value) = value {
+            self.unsupported_optional(
+                subject,
+                "ComposeLens typed document field has no reviewed neutral-model mapping",
+                value.effective_source(),
+            );
+        }
+    }
+
+    fn report_volume_mount_options(&mut self, service_subject: &str, service: &ProjectService) {
+        let Some(options) = service.volume_mount_options() else {
+            return;
+        };
+        let has_unmapped_options = options.value().iter().any(|item| {
+            let options = item.value();
+            options.consistency().is_some()
+                || options.bind().is_some_and(|bind| {
+                    bind.recursive().is_some()
+                        || !bind.extension_fields().is_empty()
+                        || !bind.unknown_fields().is_empty()
+                })
+                || options.image().is_some_and(|image| {
+                    image.subpath().is_some()
+                        || !image.extension_fields().is_empty()
+                        || !image.unknown_fields().is_empty()
+                })
+                || options.tmpfs().is_some_and(|tmpfs| {
+                    tmpfs.size().is_some()
+                        || tmpfs.mode().is_some()
+                        || !tmpfs.extension_fields().is_empty()
+                        || !tmpfs.unknown_fields().is_empty()
+                })
+                || options.volume().is_some_and(|volume| {
+                    volume.nocopy().is_some()
+                        || volume.subpath().is_some()
+                        || volume.labels().is_some()
+                        || !volume.extension_fields().is_empty()
+                        || !volume.unknown_fields().is_empty()
+                })
+                || !options.unmodeled_fields().is_empty()
+        });
+        if has_unmapped_options {
+            self.report_typed_service_value(service_subject, "volume_mount_options", Some(options));
+        }
     }
 
     fn report_fields(&mut self, subject: &str, kind: &str, fields: &[compose_lens::model::FieldReference]) {
@@ -3768,6 +4009,29 @@ impl<'a> Mapping<'a> {
 
     fn unsupported(&mut self, subject: &str, feature: &str, span: ComposeSpan) {
         self.unsupported_optional(subject, feature, Some(span));
+    }
+
+    fn unsupported_spans(&mut self, subject: &str, feature: &str, spans: &[ComposeSpan]) {
+        let code = self.codes.unsupported.clone();
+        self.diagnostics.push(
+            Diagnostic::new(
+                code.clone(),
+                Severity::Warning,
+                "Compose intent is not represented by the current neutral-model subset",
+            )
+            .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject)))
+            .with_field(DiagnosticField::new("feature", DiagnosticValue::plain(feature))),
+        );
+        if let Ok(mut outcome) = ConversionOutcome::loss(subject, ConversionKind::Unsupported, code) {
+            for span in spans {
+                if let Some(origin) = self.origin(*span) {
+                    if !outcome.origins().contains(&origin) {
+                        outcome = outcome.with_origin(origin);
+                    }
+                }
+            }
+            self.outcomes.push(outcome);
+        }
     }
 
     fn unsupported_optional(&mut self, subject: &str, feature: &str, span: Option<ComposeSpan>) {

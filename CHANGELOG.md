@@ -5,6 +5,29 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-17
+
+### Changed
+
+- Automates future version and changelog preparation with release-plz, makes this changelog the
+  sole release-history source, and retains the protected trusted-publishing workflow as publisher.
+- Updates the native adapters to ComposeLens 0.2.0 and QuadletLens 0.2.0; all supported
+  BoxFerry crates move together to 0.3.0 for their intentional pre-1.0 API changes.
+- Rejects obsolete Compose `external: {name: ...}` resource mappings. Use `external: true` with a
+  top-level `name`; BoxFerry no longer preserves the obsolete runtime-name form.
+- Generates application-owned file-backed top-level Compose configs and secrets through
+  ComposeLens 0.2.0, with parse-back validation and protected-path redaction.
+- Uses QuadletLens's `model::SystemdUnitKey` ownership path and retains only reviewed
+  `Requires`/`Wants` plus `After` neutral dependency semantics.
+- Quadlet semantic `Environment=` decoding maps protected literal assignments and reports remaining
+  forms. Every entry in `.kube` and `.artifact` documents is reported individually until it has a
+  neutral mapping; a systemd-version selector is deferred until it affects a supported capability.
+- Replaces `NetworkAttachment::new(Identifier, Vec<String>)` with provenance-bearing
+  `NetworkAttachment::new(Identifier, Vec<Sourced<ProtectedString>>)`. Each alias now retains
+  its source and sensitivity; no compatibility constructor remains.
+- Extends the source-reviewed Podman inspect decoder ceiling from 6.0.2 to 6.1.0; reproducible
+  live-runtime evidence remains capped at the available 5.8.2 image.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added

@@ -3,22 +3,22 @@ schema = 1
 # Renovate opens a review signal when upstream advances. Updating this value does not extend
 # BoxFerry's reviewed decoder range or mark a runtime lane conformant.
 # renovate: datasource=github-releases depName=podman-container-tools/podman
-current_upstream = "v6.0.2"
+current_upstream = "v6.1.0"
 
 [support]
 minimum = "5.4.0"
-reviewed_maximum = "6.0.2"
+reviewed_maximum = "6.1.0"
 runtime_image_maximum = "5.8.2"
 
 [installed_current]
-version = "6.0.2"
+version = "6.1.0"
 executable_environment = "BOXFERRY_CURRENT_PODMAN"
 
 [provenance]
 registry = "quay.io/podman/stable"
 registry_tags_url = "https://quay.io/repository/podman/stable?tab=tags"
-release_url = "https://github.com/podman-container-tools/podman/releases/tag/v6.0.2"
-checked = "2026-08-04"
+release_url = "https://github.com/podman-container-tools/podman/releases/tag/v6.1.0"
+checked = "2026-08-17"
 
 [[runtime]]
 version = "5.4.0"
@@ -41,6 +41,6 @@ version = "5.8.2"
 image = "quay.io/podman/stable:v5.8.2-immutable@sha256:766815d247ce0edfd8774770371d293728b0b500a219f35de98b408100f5d412"
 
 [[gap]]
-version = "6.0.2"
+version = "6.1.0"
 kind = "runtime-image-unavailable"
-detail = "The official stable registry had no immutable 6.0.2 local-runtime image when checked; an installed-current lane exists, but it is not reproducible scheduled-image conformance."
+detail = "The official stable registry had no immutable 6.1.0 local-runtime image when checked; the installed-current contract requires an explicitly selected exact 6.1.0 executable and is not reproducible scheduled-image conformance."

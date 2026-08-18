@@ -22,7 +22,7 @@ This directory is the architectural source of truth for BoxFerry. The root READM
 - [Development environment](development-environment.md) — reproducible VS Code tooling and update policy
 - [Platform support](platform-support.md) — Linux CLI support and WSL2 use on Windows
 - [Parallel agent workflows](agent-workflow.md) — human prompts for batched BoxFerry and Lens implementation
-- [Release policy](releasing.md) — library publication order and future binary automation boundary
+- [Release policy](releasing.md) — automated release PRs and protected lockstep publication
 - [Fixture format](fixture-format.md) — shared metadata, provenance, and secrets contract
 - [Podlet and compose_spec_rs issue-corpus review](research/podlet-compose-spec-rs-issues-2026-08-01.md) — user scenarios, regressions, and repository ownership
 - [Dependency and license policy](dependency-policy.md) — dependency selection, allowed sources, and license checks

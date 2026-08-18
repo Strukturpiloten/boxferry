@@ -2,21 +2,23 @@
 
 set -euo pipefail
 
-for cargo_directory_name in CARGO_HOME CARGO_TARGET_DIR; do
-  cargo_directory="${!cargo_directory_name:-}"
-  if [[ -z "${cargo_directory}" ]]; then
-    printf 'BoxFerry Dev Container is missing %s.\n' "${cargo_directory_name}" >&2
+for persistent_directory_name in CARGO_HOME CARGO_TARGET_DIR GH_CONFIG_DIR; do
+  persistent_directory="${!persistent_directory_name:-}"
+  if [[ -z "${persistent_directory}" ]]; then
+    printf 'BoxFerry Dev Container is missing %s.\n' "${persistent_directory_name}" >&2
     exit 1
   fi
-  if [[ ! -w "${cargo_directory}" ]]; then
-    sudo chown -R "$(id -u):$(id -g)" "${cargo_directory}"
+  if [[ ! -w "${persistent_directory}" ]]; then
+    sudo chown -R "$(id -u):$(id -g)" "${persistent_directory}"
   fi
-  if [[ ! -w "${cargo_directory}" ]]; then
+  if [[ ! -w "${persistent_directory}" ]]; then
     printf 'BoxFerry Dev Container cannot make %s writable: %s\n' \
-      "${cargo_directory_name}" "${cargo_directory}" >&2
+      "${persistent_directory_name}" "${persistent_directory}" >&2
     exit 1
   fi
 done
+
+chmod 0700 "${GH_CONFIG_DIR}"
 
 tools=(
   actionlint
@@ -40,7 +42,7 @@ tools=(
   rustup
   shellcheck
   shfmt
-  taplo
+  tombi
   zizmor
 )
 

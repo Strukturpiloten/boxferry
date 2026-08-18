@@ -1,0 +1,6 @@
+{
+  "title": "Cargo manifest validated semantically by Cargo",
+  "description": "Offline Tombi fallback that intentionally validates only the manifest's root shape.",
+  "type": "object",
+  "additionalProperties": true
+}

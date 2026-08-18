@@ -1950,6 +1950,278 @@ fn reports_nonlocal_and_malformed_volume_configuration() -> Result<(), Box<dyn E
 }
 
 #[test]
+fn rejects_obsolete_external_name_mapping_without_preserving_its_runtime_name() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(201);
+    let project = merged_project([(
+        id,
+        "external-names.compose.yaml",
+        concat!(
+            "services: {web: {image: example.invalid/web:1}}\n",
+            "volumes:\n",
+            "  modern: {external: true}\n",
+            "  deprecated: {external: {name: platform-volume}}\n",
+            "networks:\n",
+            "  deprecated: {external: {name: platform-network}}\n",
+            "configs:\n",
+            "  deprecated: {external: {name: platform-config}}\n",
+            "secrets:\n",
+            "  deprecated: {external: {name: platform-secret}}\n",
+        ),
+    )])?;
+    let source = ComposeSource::new(project, Identifier::new("external-names")?)?
+        .with_source_id(id, SourceId::new("external-names.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    let modern = application
+        .volumes()
+        .iter()
+        .find(|resource| resource.value().name().as_str() == "modern")
+        .ok_or("modern volume")?
+        .value();
+    assert_eq!(modern.ownership(), ResourceOwnership::External);
+    assert!(modern.runtime_name().is_none());
+
+    assert_eq!(application.volumes().len(), 1);
+    assert!(application.networks().is_empty());
+    assert!(application.configs().is_empty());
+    assert!(application.secrets().is_empty());
+    for subject in [
+        "volumes.deprecated",
+        "networks.deprecated",
+        "configs.deprecated",
+        "secrets.deprecated",
+    ] {
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Invalid),
+            "missing obsolete external mapping outcome for {subject}: {:#?}",
+            result.outcomes()
+        );
+    }
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic
+            .native_finding()
+            .is_some_and(|finding| finding.code() == "compose.resource.external-name-mapping-deprecated")
+    }));
+    Ok(())
+}
+
+#[test]
+fn rejects_invalid_or_conflicting_deprecated_external_resource_names() -> Result<(), Box<dyn Error>> {
+    let id = ComposeSourceId::new(202);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        id,
+        DocumentOrigin::new("invalid-external-names.compose.yaml", "."),
+        concat!(
+            "services: {web: {image: example.invalid/web:1}}\n",
+            "volumes:\n",
+            "  missing: {external: {}}\n",
+            "networks:\n",
+            "  conflicting: {name: modern-name, external: {name: deprecated-name}}\n",
+        ),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    assert!(!merged.is_valid(), "invalid external syntax must remain fail-closed");
+    let source = ComposeSource::new(
+        merged.project().ok_or("merged project")?.clone(),
+        Identifier::new("invalid-external-names")?,
+    )?
+    .with_source_id(id, SourceId::new("invalid-external-names.compose.yaml")?);
+
+    let result = ComposeImporter::new()?.import(&source);
+    for subject in ["volumes.missing", "networks.conflicting"] {
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Invalid),
+            "missing obsolete external mapping outcome for {subject}: {:#?}",
+            result.outcomes()
+        );
+    }
+    assert!(
+        result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.kind() == ConversionKind::Invalid)
+    );
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic
+            .native_finding()
+            .is_some_and(|finding| finding.code() == "compose.resource.external-name-conflict")
+    }));
+    Ok(())
+}
+
+#[test]
+fn keeps_compose_lens_020_typed_families_visible_until_the_neutral_contract_exists() -> Result<(), Box<dyn Error>> {
+    let result = compose_lens_020_typed_families_result()?;
+    assert_unsupported_service_fields(&result);
+    assert_unsupported_application_fields(&result)?;
+    assert_unsupported_resource_fields_retain_provenance(&result)?;
+    assert_obsolete_version_is_normalized_exactly(&result);
+    assert_secret_driver_options_remain_redacted(&result)?;
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic
+            .native_finding()
+            .is_some_and(|finding| finding.code() == "compose.version.obsolete")
+    }));
+    Ok(())
+}
+
+fn compose_lens_020_typed_families_result() -> Result<boxferry_engine::ImportResult, Box<dyn Error>> {
+    let id = ComposeSourceId::new(203);
+    let text = concat!(
+        "version: \"3.9\"\ninclude: [base.yaml]\nmodels: {embedder: {model: local-model}}\nservices:\n",
+        "  app:\n    image: example.invalid/app:1\n    domainname: example.test\n    isolation: default\n",
+        "    mac_address: '02:42:ac:11:00:02'\n    uts: host\n    use_api_socket: true\n",
+        "    label_file: labels.txt\n    external_links: [external:alias]\n    links: [db:database]\n",
+        "    storage_opt: {size: 1G}\n    models: {embedder: {endpoint_var: MODEL_URL}}\n    gpus: all\n",
+        "    develop:\n      watch:\n        - action: sync\n          path: '.'\n          target: /src\n",
+        "    cpu_count: 1\n    cpu_percent: 50\n    cpu_period: 100000\n    cpu_quota: 50000\n",
+        "    cpu_rt_period: 100000\n    cpu_rt_runtime: 50000\n    cpu_shares: 1024\n",
+        "    cpus: '0.5'\n    cpuset: '0-1'\n    device_cgroup_rules: ['c 1:3 mr']\n",
+        "    ipc: shareable\n    mem_reservation: 64m\n    mem_swappiness: 60\n",
+        "    memswap_limit: 128m\n    network_mode: bridge\n    oom_kill_disable: false\n",
+        "    oom_score_adj: 100\n    pid: host\n    scale: 2\n    volumes_from: [db:ro]\n",
+        "    volumes:\n      - type: bind\n        source: ./source\n        target: /target\n        consistency: cached\n        bind: {recursive: enabled}\n",
+        "  db: {image: example.invalid/db:1}\n",
+        "configs:\n  app-config:\n    content: application-setting=true\n    labels: {io.example.owner: application}\n    template_driver: gomplate\n",
+        "secrets:\n  app-secret:\n    file: ./app-secret.txt\n    driver: vault\n    driver_opts: {path: applications/example, token: never-disclose}\n    labels: {io.example.owner: platform}\n    template_driver: gomplate\n",
+    );
+    let loaded = LoadedProject::load([DocumentInput::new(
+        id,
+        DocumentOrigin::new("lens-020.compose.yaml", "fixtures/adapter-contract/compose-import-core"),
+        text,
+    )])?;
+    let merged = merge_project(&loaded, None);
+    if !merged.is_valid() {
+        return Err(format!("merge diagnostics: {:#?}", merged.diagnostics()).into());
+    }
+    let project = merged.project().ok_or("merged project expected")?.clone();
+    let source = ComposeSource::new(project, Identifier::new("lens-020")?)?
+        .with_source_id(id, SourceId::new("lens-020.compose.yaml")?)
+        .with_native_diagnostics(ComposeFindingStage::Load, loaded.diagnostics());
+    Ok(ComposeImporter::new()?.import(&source))
+}
+
+fn assert_unsupported_service_fields(result: &boxferry_engine::ImportResult) {
+    for field in [
+        "domainname",
+        "isolation",
+        "mac_address",
+        "uts",
+        "use_api_socket",
+        "label_file",
+        "external_links",
+        "links",
+        "storage_opt",
+        "models",
+        "gpus",
+        "develop",
+        "cpu_count",
+        "cpu_percent",
+        "cpu_period",
+        "cpu_quota",
+        "cpu_rt_period",
+        "cpu_rt_runtime",
+        "cpu_shares",
+        "cpus",
+        "cpuset",
+        "device_cgroup_rules",
+        "ipc",
+        "mem_reservation",
+        "mem_swappiness",
+        "memswap_limit",
+        "network_mode",
+        "oom_kill_disable",
+        "oom_score_adj",
+        "pid",
+        "scale",
+        "volumes_from",
+        "volume_mount_options",
+    ] {
+        assert!(
+            result.outcomes().iter().any(|outcome| {
+                outcome.subject() == format!("services.app.{field}") && outcome.kind() == ConversionKind::Unsupported
+            }),
+            "missing visible unsupported outcome for {field}: {:#?}",
+            result.outcomes()
+        );
+    }
+}
+
+fn assert_unsupported_application_fields(result: &boxferry_engine::ImportResult) -> Result<(), Box<dyn Error>> {
+    for subject in ["application.include", "application.models"] {
+        assert_unsupported_outcome(result, subject)?;
+    }
+    Ok(())
+}
+
+fn assert_unsupported_resource_fields_retain_provenance(
+    result: &boxferry_engine::ImportResult,
+) -> Result<(), Box<dyn Error>> {
+    for subject in [
+        "configs.app-config.labels",
+        "configs.app-config.template_driver",
+        "secrets.app-secret.driver",
+        "secrets.app-secret.driver_opts",
+        "secrets.app-secret.labels",
+        "secrets.app-secret.template_driver",
+    ] {
+        let outcome = result
+            .outcomes()
+            .iter()
+            .find(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported)
+            .ok_or_else(|| {
+                format!(
+                    "missing visible unsupported outcome for {subject}: {:#?}",
+                    result.outcomes()
+                )
+            })?;
+        assert_eq!(outcome.origins()[0].source_id().as_str(), "lens-020.compose.yaml");
+    }
+    Ok(())
+}
+
+fn assert_obsolete_version_is_normalized_exactly(result: &boxferry_engine::ImportResult) {
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "application.version"
+            && outcome.kind() == ConversionKind::Exact
+            && outcome.origins()[0].source_id().as_str() == "lens-020.compose.yaml"
+    }));
+}
+
+fn assert_secret_driver_options_remain_redacted(result: &boxferry_engine::ImportResult) -> Result<(), Box<dyn Error>> {
+    let driver_options = result
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "secrets.app-secret.driver_opts")
+        .ok_or("secret driver options outcome")?;
+    assert_eq!(driver_options.origins().len(), 2);
+    assert!(!format!("{:#?}", result.diagnostics()).contains("never-disclose"));
+    Ok(())
+}
+
+fn assert_unsupported_outcome(result: &boxferry_engine::ImportResult, subject: &str) -> Result<(), Box<dyn Error>> {
+    if result
+        .outcomes()
+        .iter()
+        .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "missing visible unsupported outcome for {subject}: {:#?}",
+        result.outcomes()
+    )
+    .into())
+}
+
+#[test]
 fn unresolved_variables_have_actionable_evidence_without_discarding_literal_values() -> Result<(), Box<dyn Error>> {
     let source_id = ComposeSourceId::new(198);
     let project = merged_project([(

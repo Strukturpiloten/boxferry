@@ -23,7 +23,7 @@ Create an unpublished `boxferry-podman` component crate and additive, non-defaul
 containers, images, networks, volumes, and pods plus the exact producing `PlatformVersion`. It
 performs no command execution, socket access, filesystem discovery, or environment lookup.
 
-The reviewed range is inclusive Podman 5.4.0 through 6.0.2. Decoding fails closed outside that
+The reviewed range is inclusive Podman 5.4.0 through 6.1.0. Decoding fails closed outside that
 range. Private Serde response types cover only reviewed fields; additive fields remain tolerated.
 Every meaningful reusable field outside the mapped subset produces `BFP0002` and an unsupported
 outcome. Invalid data, unsupported versions, and incomplete relationships use distinct stable
@@ -46,6 +46,13 @@ network, volume, and pod `inspect` operations.
 - The process command runner is independently testable and cannot make the decoder depend on
   global CLI state.
 - Docker retains a separate native adapter even where response shapes look similar.
+
+## 6.1.0 review update
+
+Podman 6.1.0 changes the reviewed container-inspect source only by adding a Go-template helper
+method; the JSON response structs consumed by this adapter are unchanged from 6.0.2. The ceiling
+therefore advances to 6.1.0 with a dedicated sanitized fixture. This is decoder-shape evidence,
+not live-runtime conformance or proof that every native field is reconstructable.
 
 ## Alternatives
 

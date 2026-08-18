@@ -1,7 +1,7 @@
 # Quadlet exporter
 
 The `boxferry-quadlet` crate maps BoxFerry's neutral application model into a deterministic set of
-Quadlet files through `quadlet-lens` 0.1.13. The `boxferry` facade exposes it through the additive
+Quadlet files through `quadlet-lens` 0.2.0. The `boxferry` facade exposes it through the additive
 `quadlet` feature.
 
 ## Planning boundary
@@ -11,7 +11,9 @@ implementation is `podman`, evaluates every used native capability through Quadl
 typed documents, and returns a `ConversionPlan<QuadletOutput>`.
 
 The adapter reads no files, environment variables, or installed Podman version. It writes no
-files and does not invoke Podman or systemd. `QuadletOutput` exposes the generated files and the
+files and does not invoke Podman or systemd. BoxFerry does not expose a systemd-version selector
+until a reviewed emitted capability depends on it, and it never probes the host for one.
+`QuadletOutput` exposes the generated files and the
 parse-back-validated `QuadletDocumentSet`; callers decide where authorized output is written.
 
 Generated output can contain sensitive environment values. `Debug` output for `QuadletFile` and
@@ -73,7 +75,11 @@ It currently maps:
 - image references, including `name:tag@digest` spellings;
 - exec-form commands whose individual arguments need no systemd quoting;
 - literal environment assignments whose names and values need no systemd quoting or specifier
-  escaping;
+  escaping; Quadlet import also accepts QuadletLens's decoded quoted and multi-assignment
+  `Environment=` view, while resets, bare names, deferred specifiers, and malformed forms remain
+  structured non-exact outcomes;
+- every authored `.kube` and `.artifact` entry as a value-free native-only outcome until a
+  reviewed neutral mapping exists, including generic and unknown sections;
 - ordered required environment-file declarations through repeatable `EnvironmentFile=` entries;
   safe relative paths resolve only from an explicit caller-provided Compose project root, and the
   mapping is reported as `BFQ0010` approximate until Podman parser parity is proven;

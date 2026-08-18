@@ -62,10 +62,13 @@ jobs:
       - name: Install LLVM coverage tools
         run: rustup component add llvm-tools-preview
       - name: Install pinned cargo-llvm-cov
+        # renovate: datasource=crate depName=cargo-llvm-cov
         run: cargo install --locked --version 0.8.7 cargo-llvm-cov
+      - name: Clean coverage artifacts
+        run: cargo llvm-cov clean --locked
       - name: Measure and enforce coarse coverage ratchet
         run: >-
-          cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only
+          cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only
           --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
 
   portability:
@@ -128,6 +131,7 @@ jobs:
       - name: Install pinned Node.js toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
+          # renovate: datasource=node-version depName=node
           node-version: 24.18.1
           cache: npm
           cache-dependency-path: package-lock.json

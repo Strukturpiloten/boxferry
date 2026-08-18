@@ -22,6 +22,224 @@ fn parse_source(
 }
 
 #[test]
+fn imports_semantic_environment_assignments_and_reports_contextual_forms() -> Result<(), String> {
+    let source = parse_source(
+        identifier("environment")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            "[Container]\nImage=example.invalid/web:1\nEnvironment=ONE=one \"TWO=two words\" THREE=\nEnvironment=DEFERRED=%h\nEnvironment=BARE\nEnvironment=\n",
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let service = result.application().ok_or("application")?.services()[0].value();
+    assert_eq!(service.environment().len(), 3);
+    assert_eq!(service.environment()[0].value().name().as_str(), "ONE");
+    assert!(matches!(
+        service.environment()[1].value().value(),
+        EnvironmentValue::Literal(value) if value.is_sensitive()
+    ));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.environment.DEFERRED" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.environment.BARE" && outcome.kind() == ConversionKind::Unsupported
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.environment" && outcome.kind() == ConversionKind::Invalid
+    }));
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.native_finding().is_some())
+    );
+    Ok(())
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // The complete released-key table is deliberate reviewable coverage.
+fn reports_every_released_kube_and_artifact_key_individually() -> Result<(), String> {
+    let kube_keys = [
+        "AutoUpdate=registry",
+        "ConfigMap=x",
+        "ContainersConfModule=x",
+        "ExitCodePropagation=any",
+        "GlobalArgs=--x",
+        "KubeDownForce=true",
+        "LogDriver=k8s-file",
+        "Network=x.network",
+        "PodmanArgs=--x",
+        "PublishPort=80:80",
+        "ServiceName=x",
+        "SetWorkingDirectory=unit",
+        "UserNS=keep-id",
+        "Yaml=x",
+        "LogOpt=x=y",
+        "RemapGid=100000",
+        "RemapUid=100000",
+        "RemapUidSize=65536",
+        "RemapUsers=auto",
+    ];
+    let artifact_keys = [
+        "Artifact=x",
+        "AuthFile=x",
+        "CertDir=x",
+        "Creds=x",
+        "DecryptionKey=x",
+        "Quiet=x",
+        "Retry=x",
+        "RetryDelay=x",
+        "ServiceName=x",
+        "TLSVerify=x",
+        "ContainersConfModule=x",
+        "GlobalArgs=x",
+        "PodmanArgs=x",
+    ];
+    let mut inputs = Vec::new();
+    for (index, key) in kube_keys.iter().enumerate() {
+        let body = if key.starts_with("Yaml=") {
+            format!("[Kube]\n{key}\n")
+        } else {
+            format!("[Kube]\nYaml=x\n{key}\n")
+        };
+        inputs.push(QuadletDocumentInput::new(
+            format!("kube-{index}.kube"),
+            QuadletSourceId::new(u32::try_from(index).map_err(|_| "kube source identifier")? + 1),
+            body,
+        ));
+    }
+    for (index, key) in artifact_keys.iter().enumerate() {
+        let body = if key.starts_with("Artifact=") {
+            format!("[Artifact]\n{key}\n")
+        } else {
+            format!("[Artifact]\nArtifact=example.invalid/x:1\n{key}\n")
+        };
+        inputs.push(QuadletDocumentInput::new(
+            format!("artifact-{index}.artifact"),
+            QuadletSourceId::new(u32::try_from(index).map_err(|_| "artifact source identifier")? + 100),
+            body,
+        ));
+    }
+    inputs.push(QuadletDocumentInput::new(
+        "x.network",
+        QuadletSourceId::new(250),
+        "[Network]\n",
+    ));
+    inputs.push(QuadletDocumentInput::new(
+        "complete.kube",
+        QuadletSourceId::new(251),
+        concat!(
+            "[Kube]\nYaml=first\nYaml=second\nUnknownKube=super-secret\n",
+            "[Unit]\nDefaultDependencies=no\n",
+            "[Service]\nType=oneshot\n",
+            "[Install]\nWantedBy=default.target\n",
+            "[Quadlet]\nDefaultDependencies=no\n",
+            "[UnknownSection]\nUnknownKey=super-secret\n",
+        ),
+    ));
+    inputs.push(QuadletDocumentInput::new(
+        "second.kube",
+        QuadletSourceId::new(252),
+        "[Kube]\nYaml=other\n",
+    ));
+    let source = parse_source(identifier("native")?, inputs).map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    for key in kube_keys.into_iter().chain(artifact_keys) {
+        let key = key.split_once('=').ok_or("test key")?.0;
+        assert!(
+            result.outcomes().iter().any(|outcome| {
+                outcome.subject().contains(&format!(".{key}[")) && outcome.kind() == ConversionKind::Unsupported
+            }),
+            "missing {key}"
+        );
+    }
+    for subject in [
+        "quadlet.kube.complete.kube.Kube[0].Yaml[0]",
+        "quadlet.kube.complete.kube.Kube[0].Yaml[1]",
+        "quadlet.kube.complete.kube.Kube[0].UnknownKube[0]",
+        "quadlet.kube.complete.kube.Unit[1].DefaultDependencies[0]",
+        "quadlet.kube.complete.kube.Service[2].Type[0]",
+        "quadlet.kube.complete.kube.Install[3].WantedBy[0]",
+        "quadlet.kube.complete.kube.Quadlet[4].DefaultDependencies[0]",
+        "quadlet.kube.complete.kube.UnknownSection[5].UnknownKey[0]",
+        "quadlet.kube.second.kube.Kube[0].Yaml[0]",
+    ] {
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .any(|outcome| { outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported }),
+            "missing {subject}"
+        );
+    }
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| { diagnostic.fields().iter().all(|field| field.value().redacted() != "x") })
+    );
+    assert!(!format!("{result:?}").contains("super-secret"));
+    Ok(())
+}
+
+#[test]
+fn environment_semantic_findings_do_not_duplicate_directive_losses() -> Result<(), String> {
+    let source = parse_source(
+        identifier("environment-diagnostics")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(260),
+            concat!(
+                "[Container]\nImage=example.invalid/web:1\n",
+                "Environment=DEFERRED=%h\n",
+                "Environment=\"BROKEN=private\n",
+                "Environment=ESCAPE=private\\q\n",
+                "Environment=\n",
+            ),
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let unsupported = |subject: &str| {
+        result
+            .outcomes()
+            .iter()
+            .filter(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported)
+            .count()
+    };
+    assert_eq!(unsupported("services.web.environment.DEFERRED"), 1);
+    assert_eq!(unsupported("services.web.environment"), 2);
+    assert_eq!(
+        result
+            .outcomes()
+            .iter()
+            .filter(
+                |outcome| outcome.subject() == "services.web.environment" && outcome.kind() == ConversionKind::Invalid
+            )
+            .count(),
+        1
+    );
+    assert_eq!(
+        result
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.native_finding().is_some())
+            .count(),
+        3
+    );
+    assert!(!format!("{result:?}").contains("private"));
+    Ok(())
+}
+
+#[test]
 fn imports_the_first_direct_quadlet_subset_with_provenance() -> Result<(), String> {
     let source = parse_source(
         identifier("example")?,
@@ -851,7 +1069,11 @@ fn ambiguous_native_forms_remain_explicit_and_do_not_enter_the_neutral_model() -
     let application = result.application().ok_or("expected imported application")?;
     let service = application.services()[0].value();
     assert!(service.command().is_none());
-    assert!(service.environment().is_empty());
+    assert_eq!(service.environment().len(), 1);
+    assert!(matches!(
+        service.environment()[0].value().value(),
+        EnvironmentValue::Literal(value) if value.is_sensitive()
+    ));
     assert!(service.ports().is_empty());
     assert!(service.mounts().is_empty());
     assert!(service.networks().is_empty());
@@ -861,7 +1083,7 @@ fn ambiguous_native_forms_remain_explicit_and_do_not_enter_the_neutral_model() -
             .iter()
             .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
             .count(),
-        6
+        5
     );
     let debug = format!("{:?}", result.diagnostics());
     assert!(!debug.contains("private-command"));
@@ -1160,6 +1382,50 @@ fn incomplete_or_conflicting_systemd_dependency_pairs_do_not_enter_the_model() -
             .count(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn retains_supported_unit_relationships_and_reports_other_typed_relationships() -> Result<(), String> {
+    let source = parse_source(
+        identifier("example")?,
+        [
+            QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(1),
+                concat!(
+                    "[Unit]\n",
+                    "Requires=backend.container\n",
+                    "After=backend.container\n",
+                    "Requisite=backend.container\n",
+                    "BindsTo=backend.container\n",
+                    "PartOf=backend.container\n",
+                    "Upholds=backend.container\n",
+                    "Conflicts=backend.container\n",
+                    "Before=backend.container\n",
+                    "[Container]\nImage=example.invalid/web:1\n",
+                ),
+            ),
+            QuadletDocumentInput::new(
+                "backend.container",
+                QuadletSourceId::new(2),
+                "[Container]\nImage=example.invalid/backend:1\n",
+            ),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let web = result.application().ok_or("application")?.services()[0].value();
+    assert_eq!(web.dependencies().len(), 1);
+    assert_eq!(web.dependencies()[0].value().service().as_str(), "backend");
+    for key in ["Requisite", "BindsTo", "PartOf", "Upholds", "Conflicts", "Before"] {
+        assert!(result.outcomes().iter().any(|outcome| {
+            outcome.subject() == format!("services.web.quadlet.{key}") && outcome.kind() == ConversionKind::Unsupported
+        }));
+    }
     Ok(())
 }
 

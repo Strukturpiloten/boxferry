@@ -32,6 +32,7 @@ jobs:
       - name: Install pinned Node.js toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
+          # renovate: datasource=node-version depName=node
           node-version: 24.18.1
           cache: npm
           cache-dependency-path: package-lock.json
@@ -91,14 +92,8 @@ jobs:
             exit 1
           fi
 
-          release_notes="docs/releases/${version}.md"
-          if [[ ! -f "${release_notes}" ]]; then
-            echo "Release notes are missing: ${release_notes}." >&2
-            exit 1
-          fi
-          escaped_version="${version//./\\.}"
-          if ! grep -Eq "^## \\[${escaped_version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
-            echo "CHANGELOG.md must contain '## [${version}] - YYYY-MM-DD'." >&2
+          if ! bash scripts/extract-release-notes.sh "${version}" >/dev/null; then
+            echo "CHANGELOG.md does not contain usable release notes for ${version}." >&2
             exit 1
           fi
 
@@ -126,6 +121,18 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo ci-doc
+
+      - name: Install LLVM coverage tools
+        run: rustup component add llvm-tools-preview
+      - name: Install pinned cargo-llvm-cov
+        # renovate: datasource=crate depName=cargo-llvm-cov
+        run: cargo install --locked --version 0.8.7 cargo-llvm-cov
+      - name: Clean coverage artifacts
+        run: cargo llvm-cov clean --locked
+      - name: Measure and enforce coarse coverage ratchet
+        run: >-
+          cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only
+          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
 
       - name: Read the workspace MSRV
         id: msrv
@@ -249,10 +256,12 @@ jobs:
             cargo metadata --locked --no-deps --format-version 1 |
               jq -er '[.packages[].version] | unique | if length == 1 then .[0] else error("workspace packages must use one version") end'
           )"
+          notes="${RUNNER_TEMP}/boxferry-release-notes-${version}.md"
+          bash scripts/extract-release-notes.sh "${version}" > "${notes}"
           {
             printf 'version=%s\n' "${version}"
             printf 'tag=v%s\n' "${version}"
-            printf 'notes=docs/releases/%s.md\n' "${version}"
+            printf 'notes=%s\n' "${notes}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Select crates.io authentication mode

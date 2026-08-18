@@ -25,6 +25,16 @@
     },
     {
       "customType": "regex",
+      "description": "Update directly pinned workflow tool versions",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+version: \"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)",
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+run: cargo install --locked --version (?<currentValue>[^\\s]+) [^\\s]+"
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Update the Dev Container base release and digest together",
       "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
       "matchStrings": [
@@ -72,6 +82,12 @@
       "matchManagers": ["cargo"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
       "groupName": "Rust dependencies"
+    },
+    {
+      "description": "Group repository Node development-tool updates",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "Node development tools"
     },
     {
       "description": "Pin every GitHub Action to an immutable commit hash",

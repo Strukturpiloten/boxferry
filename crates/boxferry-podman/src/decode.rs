@@ -9,7 +9,7 @@ use boxferry_engine::{
 use boxferry_model::{
     HealthcheckCommand, HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference, ModelError, Mount,
     MountSource, NetworkAttachment, Port, ProtectedString, Protocol, Provenance, RestartPolicy, SelinuxRelabel,
-    SourceId,
+    SourceId, Sourced,
 };
 use boxferry_runtime::{
     ContainerObservation, CreationEvidence, EffectiveCommand, ImageObservation, NetworkObservation,
@@ -513,7 +513,17 @@ impl<'a> Decoder<'a> {
                     );
                     match Identifier::new(network_name.clone()) {
                         Ok(network_name) => {
-                            observation.add_network(NetworkAttachment::new(network_name, network.aliases));
+                            let aliases = network
+                                .aliases
+                                .into_iter()
+                                .map(|alias| {
+                                    Sourced::from_source(
+                                        ProtectedString::sensitive(alias),
+                                        Provenance::runtime_observation(source_id.clone()),
+                                    )
+                                })
+                                .collect();
+                            observation.add_network(NetworkAttachment::new(network_name, aliases));
                         }
                         Err(_) => self.invalid_resource(
                             "container network",

@@ -12,8 +12,8 @@ development model. Mounting a developer's Podman or Docker socket into the norma
 would also expose unrelated resources and expand the container's trust boundary.
 
 The official `quay.io/podman/stable` registry provides immutable, digest-addressed local-runtime
-images through Podman 5.8.2. It did not provide an exact Podman 6.0.2 image when checked on
-2026-08-04. A source-reviewed 6.0.2 fixture is useful evidence but is not runtime conformance.
+images through Podman 5.8.2. It did not provide an exact Podman 6.1.0 image when checked on
+2026-08-17. A source-reviewed 6.1.0 fixture is useful evidence but is not runtime conformance.
 
 ## Decision
 
@@ -31,13 +31,13 @@ fixed private prefix, exist inside the ephemeral outer container, and are remove
 inner cleanup trap and the outer container's `--rm` lifecycle.
 
 Run the live tier weekly on disposable GitHub-hosted runners and allow an explicit manual version
-selection. Keep it outside pull-request CI. Record 6.0.2 as an open exact-runtime evidence gap
+selection. Keep it outside pull-request CI. Record 6.1.0 as an open exact-runtime evidence gap
 until an official immutable local-runtime image or a reviewed reproducible source-build lane is
 available. Renovate may signal a new upstream release, but it cannot extend support or declare a
 lane conformant automatically.
 
 Provide a separate ignored installed-current test for callers who already have the exact reviewed
-ceiling. It must require an explicit executable, verify version 6.0.2 before mutation, use a
+ceiling. It must require an explicit executable, verify version 6.1.0 before mutation, use a
 process-unique prefix, inspect no ambient resource, and remove only its own resources. This is
 current-patch runtime evidence, but it does not close the reproducible scheduled-image gap.
 
@@ -49,8 +49,8 @@ current-patch runtime evidence, but it does not close the reproducible scheduled
 - Digest changes and new upstream releases require an explicit evidence review.
 - The privileged outer container is suitable only for trusted, digest-reviewed images and
   disposable environments; local execution remains opt-in.
-- The decoder's 6.0.2 source-reviewed ceiling remains distinct from the 5.8.2 live-runtime ceiling.
-- An installed 6.0.2 runtime can be checked without weakening the scheduled matrix's evidence
+- The decoder's 6.1.0 source-reviewed ceiling remains distinct from the 5.8.2 live-runtime ceiling.
+- An installed 6.1.0 runtime can be checked without weakening the scheduled matrix's evidence
   classification.
 
 ## Evidence
@@ -58,7 +58,7 @@ current-patch runtime evidence, but it does not close the reproducible scheduled
 The matrix records the exact image digests and the registry/release URLs used during review. The
 official [Podman-in-Podman image documentation](https://github.com/podman-container-tools/image_build/tree/main/podman)
 describes the stable image's nested-runtime purpose. The current tracked release is
-[Podman 6.0.2](https://github.com/podman-container-tools/podman/releases/tag/v6.0.2).
+[Podman 6.1.0](https://github.com/podman-container-tools/podman/releases/tag/v6.1.0).
 
 ## Alternatives
 

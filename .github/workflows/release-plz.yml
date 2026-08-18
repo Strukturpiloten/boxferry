@@ -1,0 +1,143 @@
+name: Release preparation
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  RELEASE_GITHUB_API_VERSION: "2026-03-10"
+
+jobs:
+  prepare-release-pr:
+    name: Prepare release pull request
+    if: github.repository == 'Strukturpiloten/boxferry'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    concurrency:
+      group: release-plz-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create release-plz GitHub App token
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_APP_CLIENT_ID }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: write
+          permission-pull-requests: write
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Explain GitHub App token setup failure
+        if: steps.app-token.outcome == 'failure'
+        shell: bash
+        run: |
+          {
+            echo "GitHub could not create the release-plz App installation token."
+            echo "Set the RELEASE_PLZ_APP_CLIENT_ID organization Actions variable to the App client ID."
+            echo "Grant the App Contents and Pull requests read/write repository permissions."
+            echo "Then approve the updated permissions for the App installation on this repository."
+          } >&2
+          exit 1
+
+      - name: Create or update release pull request
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release-pr
+          # renovate: datasource=crate depName=release-plz
+          version: "0.3.160"
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  dispatch-release:
+    name: Dispatch protected release after release-plz merge
+    if: github.event_name == 'push' && github.repository == 'Strukturpiloten/boxferry'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check whether this push merged a release-plz pull request
+        id: release-pr
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          associated_pull_requests="$(
+            gh api \
+              --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls"
+          )"
+          release_pull_requests="$(
+            jq --compact-output \
+              --arg base "${DEFAULT_BRANCH}" \
+              --arg repository "${GITHUB_REPOSITORY}" \
+              '[
+                .[] |
+                select(
+                  .merged_at != null and
+                  .base.ref == $base and
+                  .head.repo.full_name == $repository and
+                  (.head.ref | startswith("release-plz-"))
+                )
+              ]' <<< "${associated_pull_requests}"
+          )"
+          release_pull_request_count="$(
+            jq --raw-output 'length' <<< "${release_pull_requests}"
+          )"
+
+          if [[ "${release_pull_request_count}" == "0" ]]; then
+            associated_heads="$(
+              jq --raw-output \
+                '[.[].head.ref] | if length == 0 then "none" else join(", ") end' \
+                <<< "${associated_pull_requests}"
+            )"
+            echo "No merged release-plz-* pull request is associated with ${GITHUB_SHA}."
+            echo "Associated pull-request heads: ${associated_heads}. No release was dispatched."
+            echo "dispatch=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [[ "${release_pull_request_count}" != "1" ]]; then
+            echo "Expected one merged release-plz-* pull request; found ${release_pull_request_count}." >&2
+            exit 1
+          fi
+
+          release_pull_request="$(
+            jq --raw-output \
+              '.[0] | "#\(.number) (\(.head.ref))"' \
+              <<< "${release_pull_requests}"
+          )"
+          echo "Merged release pull request ${release_pull_request} will dispatch release.yml."
+          echo "dispatch=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Dispatch protected release workflow
+        if: steps.release-pr.outputs.dispatch == 'true'
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            --header "X-GitHub-Api-Version: ${RELEASE_GITHUB_API_VERSION}" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/dispatches" \
+            -f ref="${DEFAULT_BRANCH}"
+          echo "Dispatched release.yml on ${DEFAULT_BRANCH} for ${GITHUB_SHA}."

@@ -22,9 +22,9 @@ use boxferry_model::{
 };
 use quadlet_lens::{
     capability::{CapabilityCatalogue, CatalogueError, PodmanTarget, PodmanVersion, SupportClassification},
-    model::{BuildKey, ContainerKey, ImageKey, NetworkKey, PodKey, QuadletUnitType, VolumeKey},
+    model::{BuildKey, ContainerKey, ImageKey, NetworkKey, PodKey, QuadletUnitType, SystemdUnitKey, VolumeKey},
     path::{PathForm, classify_path},
-    render::{EntryValue, PidsLimit, QuadletDocumentBuilder, RenderError, ShmSize, SystemdSection, SystemdUnitKey},
+    render::{EntryValue, PidsLimit, QuadletDocumentBuilder, RenderError, ShmSize, SystemdSection},
     source::SourceId,
 };
 

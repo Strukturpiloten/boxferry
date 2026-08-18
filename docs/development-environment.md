@@ -51,12 +51,41 @@ The lifecycle check is offline and only verifies the installed tools. Cargo down
 Rust dependencies when the first build or check needs them, so a registry outage does not prevent
 an already-built editor container from starting.
 
-Container builds use persistent named volumes at `/workspaces/.boxferry-cargo` and
-`/workspaces/.boxferry-target` through `CARGO_HOME` and `CARGO_TARGET_DIR`. The first gives Cargo a
-writable registry and package cache. The second keeps the host checkout's `target/` separate,
-preventing binaries built against the host's C library from being reused inside the Debian
-container. Rebuilding the container retains both caches; removing their named volumes discards only
-downloaded dependencies and generated build artifacts.
+Container builds use persistent named volumes at `/workspaces/.boxferry-cargo`,
+`/workspaces/.boxferry-target`, and `/workspaces/.boxferry-gh` through `CARGO_HOME`,
+`CARGO_TARGET_DIR`, and `GH_CONFIG_DIR`. The first gives Cargo a writable registry and package
+cache. The second keeps the host checkout's `target/` separate, preventing binaries built against
+the host's C library from being reused inside the Debian container. The third isolates GitHub CLI
+configuration and authentication from the host and from unrelated containers. `${devcontainerId}`
+makes each volume specific to this Dev Container while keeping it stable across rebuilds.
+
+The GitHub CLI is installed by the pinned Dev Container feature. Authenticate only after rebuilding
+the container:
+
+```shell
+./scripts/configure-github-cli.sh
+```
+
+Alternatively, run the **BoxFerry: Configure GitHub CLI authentication** VS Code task. The script
+prompts without echoing the token, never accepts it as a command-line argument, verifies the stored
+authentication, and leaves the existing multi-account Git credential helpers unchanged. Dev
+Containers normally have no desktop credential store, so the script uses `--insecure-storage` to
+write the token to `$GH_CONFIG_DIR/hosts.yml`. The lifecycle check restricts the configuration
+directory to the container user. The token is not committed, not stored in the host GitHub CLI
+configuration, and not shared with unrelated Dev Containers. Anyone with sufficient access to the
+local container engine or named volume can still read it. Removing the `boxferry-gh-*` volume
+deletes the persisted authentication.
+
+For the issue, branch, workflow-file, and pull-request operations used in this workspace, select the
+three Strukturpiloten repositories and grant the fine-grained token these repository permissions:
+
+- **Contents: Read and write**
+- **Issues: Read and write**
+- **Pull requests: Read and write**
+- **Workflows: Read and write**
+
+Optional **Actions: Read-only** and **Commit statuses: Read-only** permissions let the CLI inspect
+workflow runs and status checks. Metadata read access is granted automatically.
 
 The committed `.vscode/settings.json` enables format-on-save, excludes Cargo build output from file
 watching and search, activates all Cargo features in rust-analyzer, and uses Clippy for live Rust
@@ -155,9 +184,22 @@ Dockerfiles before checking the resulting tree. It
 then runs the complete feature-boundary, policy, Clippy, unit, integration, black-box CLI, doctest,
 documentation, coverage, MSRV, dependency, workflow, local-link, and published-API validation. It
 derives the MSRV from Cargo metadata and installs that Rust toolchain on first use.
+
+Offline Tombi runs select the repository's structural Cargo-manifest schema instead of Tombi
+1.4.0's embedded Cargo schema, whose lint subsections reference two remote-only schemas. Cargo
+metadata, checks, Clippy, tests, and packaging remain the authoritative semantic manifest
+validation. This keeps an empty CI cache equivalent to an established local cache without
+disabling schema discovery for other TOML files.
 Advisory-database and published-API checks require outbound network access. Local documentation
 links are checked without network access. Every command and its normal output remain visible;
 execution stops at the first failing step with its name.
+
+The complete script keeps coverage and API-compatibility artifacts below
+`$CARGO_TARGET_DIR/check-all/boxferry`. ComposeLens and QuadletLens use their own sibling
+namespaces. This prevents one repository's coverage cleanup or SemVer build from deleting or
+reusing another repository's files when the three VS Code tasks share the Dev Container target
+volume. The SemVer check also uses an isolated Cargo home, so it never reuses a read-only global
+package lock.
 
 File discovery uses `git ls-files --cached --others --exclude-standard` and passes literal paths to
 the tools. Do not replace it with a recursive `**/*.md` or similar workspace glob: the Dev
@@ -166,7 +208,11 @@ cross repository ownership boundaries or enter generated trees. Run only the non
 `./scripts/check-files.sh --fix`; CI and release validation use its non-mutating `--check` mode.
 
 In VS Code, run **Tasks: Run Test Task** or **BoxFerry: Format, lint, and test all** for the same
-command. The narrower commands remain useful when iterating on one failure:
+command. In `boxferry-lenses.code-workspace`, use **Workspace: Format, lint, and test all
+repositories** to run BoxFerry, ComposeLens, and QuadletLens sequentially. The repository-specific
+temporary directories also make separately started full-check tasks safe, while the sequential
+workspace task avoids unnecessary CPU and memory contention. The narrower commands remain useful
+when iterating on one failure:
 
 ```console
 cargo fmt --all -- --check
@@ -183,7 +229,8 @@ cargo ci-clippy
 cargo ci-test
 cargo ci-doctest
 RUSTDOCFLAGS="-D warnings" cargo ci-doc
-cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only \
+cargo llvm-cov clean --locked
+cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only \
   --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
 cargo +1.85.0 ci-check
 cargo +1.85.0 ci-policy
@@ -194,6 +241,29 @@ markdownlint-cli2 "**/*.md" "#target/**" "#.boxferry-workspace/**"
 lychee --config lychee.toml --root-dir . --offline './**/*.md'
 cargo semver-checks check-release --workspace --all-features
 ```
+
+## Issue-to-PR contribution workflow
+
+For an issue-backed change, inspect the complete working-tree diff first and preserve unrelated
+work. Search for a duplicate issue, create the issue, synchronize local `main` with `origin/main`,
+and create `TheRealBecks/issue<NUMBER>`. After implementation and final diff review, run:
+
+```console
+./scripts/check-all.sh
+```
+
+All steps must pass before the change is committed, pushed, or submitted as a pull request. If any
+source, test, configuration, or documentation file changes after that successful run, run the
+complete task again. Then stage only explicit in-scope paths, check the staged diff, commit, push,
+and open a ready-for-review pull request containing `Closes #<NUMBER>`. Read the created pull
+request back from GitHub to verify its base branch, head branch, issue linkage, draft state, and
+check status.
+
+The primary Sol agent uses high reasoning effort and owns the issue, branch, final integration,
+complete local gate, staging, commit, push, pull request, and GitHub readback. Terra agents may
+perform bounded implementation, research, read-only review, or non-mutating verification, but they
+never perform Git or GitHub writes. The formatting `./scripts/check-all.sh` task therefore remains
+Sol's final responsibility.
 
 The all-checks script intentionally excludes the macOS portability job, privileged Docker/Podman
 conformance, installed-current Podman mutation, network-fetched real-world corpus, and external

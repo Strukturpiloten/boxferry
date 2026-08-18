@@ -1,7 +1,7 @@
 # Compose exporter
 
 `boxferry-compose` maps a neutral `Application` into deterministic Compose YAML through
-ComposeLens 0.1.17. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
+ComposeLens 0.2.0. The `boxferry` facade exposes `ComposeExporter`, `ComposeRuntime`,
 `DOCKER_COMPOSE_TARGET`, and `PODMAN_COMPOSE_TARGET` through the additive `compose` feature.
 
 ## Target selection
@@ -71,7 +71,8 @@ The first slice generates:
 - TCP, UDP, and syntax-preserved SCTP ports;
 - named, bind, and anonymous mounts, with deliberate short syntax for SELinux relabeling;
 - ordered network attachments and aliases; and
-- application-owned or external top-level networks and volumes.
+- application-owned or external top-level networks and volumes; and
+- application-owned file-backed top-level configs and secrets.
 
 The importer preserves unresolved image spellings in the neutral model and emits source-side
 `BFC0105` evidence containing the Compose variable name and service-image subject. Target adapters
@@ -110,18 +111,28 @@ Current compatibility-sensitive constructs are tag-plus-digest images, `host-gat
 user-namespace values, and short-form SELinux relabeling. SCTP syntax is generated but remains an
 unsupported outcome until the selected provider/runtime pair has reviewed execution evidence.
 
-The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.1.17 output:
+The following neutral intent remains explicit `BFC0007` partial loss in ComposeLens 0.2.0 output:
 
 - a primary group without a primary user;
 - environment values that must be absent;
 - unknown protocols or future neutral enum variants;
 - health checks and service dependencies;
-- configs, secrets, and their service grants; and
+- config/secret service grants, runtime names, external or uncertain ownership, and non-file
+  material; and
 - structural service groups, because Compose cannot preserve Podman pod/shared-namespace
   semantics.
 
 Generation errors and invalid target profiles use `BFC0008` and `BFC0006` respectively and never
 produce an authorizable candidate.
+
+Top-level config and secret output uses ComposeLens's file-only generated definitions. Paths retain
+provenance and sensitivity without file I/O; invalid, deferred, multiline, or NUL-bearing paths
+fail generation. BoxFerry never turns inline or environment material into a file, and it never
+emits a service grant until the native generated boundary can retain its complete contract.
+
+Compose's obsolete `external: {name: ...}` resource syntax is rejected at import. Use
+`external: true` together with the top-level `name`; BoxFerry does not retain an obsolete mapping
+as a neutral runtime name.
 
 ## Restart-policy boundary
 

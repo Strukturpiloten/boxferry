@@ -6,7 +6,7 @@ Tests are part of the product contract. A conversion feature is incomplete until
 
 ### Unit tests
 
-Cover model invariants, individual mappings, target-profile resolution, diagnostics, redaction, and deterministic rendering choices.
+Cover model invariants, individual mappings, target-profile resolution, diagnostics, redaction, and deterministic rendering choices. Network-attachment tests require every alias to carry provenance and a sensitivity classification; protected aliases must not appear in debug output.
 
 ### Adapter contract tests
 
@@ -173,7 +173,7 @@ Podman and Docker native-import tests prove that both wrapper importers forward 
 instead of exposing the feature only to caller-built snapshots. Native JSON and daemon
 conformance fixtures begin with the
 Docker and Podman adapter crates; the shared crate deliberately does not invent a native JSON
-schema. `boxferry-podman` adds authored, secrets-reviewed 5.4.0 and 6.0.2 fixture sets. Its tests
+schema. `boxferry-podman` adds authored, secrets-reviewed 5.4.0, 6.0.2, and 6.1.0 fixture sets. Its tests
 cover native casing, malformed JSON, finite version rejection, image links, pod membership,
 creation evidence, commands, environment, ports, network aliases, named/bind mounts, SELinux
 relabeling, regular health checks, protected metadata labels, container restart policies, explicit startup-health separation,
@@ -225,10 +225,10 @@ The first live tier uses the exact digest-pinned images in
 that contract without starting a container. The weekly/manual `Podman runtime conformance`
 workflow runs one disposable job for each available 5.x minor lane. It gives an ephemeral outer
 container the privileges required for nested Podman, but does not mount a host runtime socket or
-repository write path. Podman 6.0.2 is the reviewed decoder ceiling and an explicit live-evidence
+repository write path. Podman 6.1.0 is the reviewed decoder ceiling and an explicit live-evidence
 gap for the reproducible scheduled-image tier because the official stable registry did not provide
 that exact local-runtime image when the matrix was reviewed. A separate installed-current test can
-exercise exactly 6.0.2 when a caller explicitly supplies that executable. It creates a unique
+exercise exactly 6.1.0 when a caller explicitly supplies that executable. It creates a unique
 resource prefix, inspects only those resources, and removes them before returning.
 
 Local live execution is optional and requires an explicitly selected outer engine:
@@ -366,7 +366,8 @@ cargo ci-clippy
 cargo ci-test
 cargo ci-doctest
 RUSTDOCFLAGS="-D warnings" cargo ci-doc
-cargo llvm-cov --locked --workspace --all-features --all-targets --summary-only \
+cargo llvm-cov clean --locked
+cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only \
   --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
 cargo +1.85.0 ci-check
 cargo +1.85.0 ci-policy
@@ -394,12 +395,16 @@ no fuzzing dependency, catches panics, checks repeatability, diagnostic/failure 
 ordering, and secret-canary redaction.
 
 Ubuntu runs `cargo-llvm-cov` 0.8.7 with Rust 1.97.1 over the locked workspace, all features, and
-all targets, without source exclusions. Its integer coarse-ratchet floors are 82% regions, 87%
-functions, and 82% lines; coverage is a regression signal, not correctness evidence. The
+all targets, without source exclusions. It removes BoxFerry's repository-specific coverage
+artifact tree before building so a persistent Dev Container cache cannot retain a fingerprint for
+a missing test executable and a concurrent Lens task cannot delete the new executable. Its integer
+coarse-ratchet floors are 82% regions, 87% functions, and 82% lines;
+coverage is a regression signal, not correctness evidence. The
 always-running `PR gate` requires successful Rust, MSRV, dependency, documentation, SemVer,
 coverage, and macOS portability jobs. Repository branch protection must require that
-`PR gate` check. Every promoted issue receives a deterministic offline regression before it is
-considered covered.
+`PR gate` check. The protected release workflow repeats the clean coverage and MSRV validation
+before publication. Every promoted issue receives a deterministic offline regression before it
+is considered covered.
 
 The full copy/paste local sequence, including workflow, Markdown, link, and SemVer checks, is in
 [Development environment](development-environment.md).

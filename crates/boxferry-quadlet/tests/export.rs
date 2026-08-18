@@ -2192,7 +2192,7 @@ fn retains_a_partial_candidate_but_requires_authorization_for_unresolved_intent(
     )?)?);
     service.add_network(sourced(NetworkAttachment::new(
         id("frontend")?,
-        vec!["web.local".to_owned()],
+        vec![sourced(ProtectedString::plain("web.local"))?],
     ))?);
     application.add_service(sourced(service)?)?;
 
@@ -2527,8 +2527,7 @@ fn exports_extended_container_keys_with_capability_checks() -> Result<(), Box<dy
     ))?);
     service.set_logging(sourced(logging)?);
     service.set_reload_action(sourced(ReloadAction::Signal(ProtectedString::sensitive("SIGHUP")))?);
-    let mut attachment =
-        NetworkAttachment::with_sourced_aliases(id("frontend")?, vec![sourced(ProtectedString::sensitive("web"))?]);
+    let mut attachment = NetworkAttachment::new(id("frontend")?, vec![sourced(ProtectedString::sensitive("web"))?]);
     attachment.set_ipv4_address(sourced(ProtectedString::sensitive("192.0.2.10"))?);
     attachment.set_ipv6_address(sourced(ProtectedString::sensitive("2001:db8::10"))?);
     service.add_network(sourced(attachment)?);
