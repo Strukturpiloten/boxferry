@@ -5,6 +5,18 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.3.0...boxferry-v0.4.0) - 2026-08-18
+
+### Changed
+
+- [**breaking**] complete the Compose and Quadlet document milestone ([#21](https://github.com/Strukturpiloten/boxferry/pull/21))
+
+### Fixed
+
+- *(ci)* [**breaking**] accept release-plz changelog layout ([#28](https://github.com/Strukturpiloten/boxferry/pull/28))
+- *(ci)* [**breaking**] avoid duplicate pull-request validation ([#26](https://github.com/Strukturpiloten/boxferry/pull/26))
+- *(release)* [**breaking**] preserve lockstep release preparation ([#23](https://github.com/Strukturpiloten/boxferry/pull/23))
+
 ## [0.3.0] - 2026-08-17
 
 ### Changed
