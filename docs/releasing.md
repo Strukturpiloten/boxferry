@@ -81,6 +81,10 @@ detail into the canonical topic documentation. After this transition, do not han
 `[Unreleased]` section; release-plz generates the reviewed version section from merged pull-request
 and commit titles.
 
+Release-plz also owns the generated changelog layout. The non-Rust file checker keeps
+`CHANGELOG.md` in Markdownlint and release-structure validation, but `.prettierignore` excludes
+only that file from Prettier so generated wrapping cannot make a release pull request fail.
+
 ## Current 0.3.0 transition
 
 The current tree already contains the BoxFerry 0.3.0 version and changelog section. Merging the

@@ -74,6 +74,8 @@ Repository-only file quality uses pinned development tools outside the published
 graph: markdownlint-cli2 plus Prettier for Markdown, Prettier for JSON and YAML, Tombi for TOML, shfmt and
 ShellCheck for shell, and Hadolint for Dockerfiles. The Dev Container provides them, CI and release
 validation run the same `scripts/check-files.sh --check` boundary, and Renovate tracks their pins.
+The release-plz-owned root `CHANGELOG.md` remains Markdownlint-checked and release-structure-
+validated but is the sole Markdown file excluded from Prettier through `.prettierignore`.
 `package-lock.json` fixes the complete markdownlint-cli2 and Prettier graph; CI and the Dev Container
 install it with `npm ci --ignore-scripts`. The native Linux tools are release-asset and
 SHA-256-pinned by `scripts/install-file-tools.sh`. These tools do not enter any crate package or
