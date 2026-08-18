@@ -259,6 +259,11 @@ and open a ready-for-review pull request containing `Closes #<NUMBER>`. Read the
 request back from GitHub to verify its base branch, head branch, issue linkage, draft state, and
 check status.
 
+The pull-request title becomes the squash commit title and controls automated release eligibility.
+Use `feat`, `fix`, `perf`, `refactor`, or `revert` only for release-worthy code changes, with an
+optional scope and breaking `!`. Use `docs`, `test`, `ci`, `build`, `style`, or `chore` for
+non-code work; release-plz ignores those commits and excludes them from generated release notes.
+
 The primary Sol agent uses high reasoning effort and owns the issue, branch, final integration,
 complete local gate, staging, commit, push, pull request, and GitHub readback. Terra agents may
 perform bounded implementation, research, read-only review, or non-mutating verification, but they

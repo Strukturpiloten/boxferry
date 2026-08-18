@@ -98,6 +98,9 @@ sequence:
 6. Stage only explicit in-scope paths, run `git diff --cached --check`, review the staged diff, and
    create one intentional commit.
 7. Push the issue branch and open a ready-for-review pull request containing `Closes #<NUMBER>`.
+   Use a `feat`, `fix`, `perf`, `refactor`, or `revert` Conventional Commit title only for
+   release-worthy code; classify documentation, tests, CI, build tooling, formatting, and other
+   maintenance as `docs`, `test`, `ci`, `build`, `style`, or `chore` so release-plz ignores it.
 8. Read the pull request back from GitHub and report its issue, branch, commit, validation result,
    URL, and current check state.
 

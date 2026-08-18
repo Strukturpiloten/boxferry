@@ -764,6 +764,13 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
     if workspace.get("pr_branch_prefix").and_then(toml::Value::as_str) != Some("release-plz-") {
         return Err("release-plz branches must use the guarded release-plz- prefix".to_owned());
     }
+    if workspace.get("release_commits").and_then(toml::Value::as_str)
+        != Some(r"^(feat|fix|perf|refactor|revert)(\([^)]+\))?!?:")
+    {
+        return Err("release-plz must prepare releases only for release-worthy code commits".to_owned());
+    }
+
+    validate_release_plz_changelog(&config)?;
 
     let packages = config["package"]
         .as_array()
@@ -795,6 +802,53 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .map_err(|error| format!("failed to read release workflow: {error}"))?;
     if release.contains("docs/releases/${version}.md") || !release.contains("bash scripts/extract-release-notes.sh") {
         return Err("protected publication must derive release notes from CHANGELOG.md".to_owned());
+    }
+
+    Ok(())
+}
+
+fn validate_release_plz_changelog(config: &toml::Value) -> Result<(), String> {
+    let changelog = config["changelog"]
+        .as_table()
+        .ok_or_else(|| "release-plz.toml must contain [changelog]".to_owned())?;
+    if changelog.get("protect_breaking_commits").and_then(toml::Value::as_bool) != Some(true) {
+        return Err("release-plz must preserve breaking commits in generated changelogs".to_owned());
+    }
+
+    let parsers = changelog
+        .get("commit_parsers")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "release-plz must configure changelog commit parsers".to_owned())?;
+    let expected = [
+        ("^feat", Some("Added"), false),
+        ("^fix", Some("Fixed"), false),
+        ("^perf", Some("Performance"), false),
+        ("^refactor", Some("Changed"), false),
+        ("^revert", Some("Reverted"), false),
+        ("^.*", None, true),
+    ];
+    if parsers.len() != expected.len() {
+        return Err("release-plz must configure the exact code-only changelog parser set".to_owned());
+    }
+    for (parser, (message, group, skip)) in parsers.iter().zip(expected) {
+        if parser["message"].as_str() != Some(message)
+            || parser.get("group").and_then(toml::Value::as_str) != group
+            || parser.get("skip").and_then(toml::Value::as_bool).unwrap_or(false) != skip
+        {
+            return Err(format!("release-plz changelog parser for {message} is invalid"));
+        }
+    }
+
+    let releasing = fs::read_to_string(repository_root().join("docs/releasing.md"))
+        .map_err(|error| format!("failed to read release documentation: {error}"))?;
+    for required in [
+        "classification contract",
+        "`feat`, `fix`, `perf`, `refactor`, or `revert`",
+        "`docs`, `test`, `ci`, `build`, `style`, or `chore`",
+    ] {
+        if !releasing.contains(required) {
+            return Err(format!("release documentation is missing `{required}`"));
+        }
     }
 
     Ok(())
