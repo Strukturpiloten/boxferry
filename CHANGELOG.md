@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.4.0...boxferry-v0.5.0) - 2026-08-19
+
+### Added
+
+- [**breaking**] publish executable documentation and canonical YAML ([#34](https://github.com/Strukturpiloten/boxferry/pull/34))
+
 ## [0.4.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.3.0...boxferry-v0.4.0) - 2026-08-18
 
 ### Changed
