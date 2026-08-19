@@ -5,7 +5,8 @@ GitHub tools used by CI.
 
 ## Local work
 
-Open the four-repository workspace and run:
+Open the five-repository workspace for BoxFerry, ComposeLens, PodmanLens, QuadletLens, and the
+BoxFerry website, then run:
 
 ```console
 ./scripts/check-all.sh

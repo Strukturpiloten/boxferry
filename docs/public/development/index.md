@@ -9,5 +9,5 @@ Compose mapping, Quadlet mapping, and public facade/CLI.
 - [Contributing](contributing/)
 - [Releases](releases/)
 
-Use the four-repository Dev Container workspace when changing BoxFerry together with ComposeLens,
-QuadletLens, or the website.
+Use the five-repository Dev Container workspace when changing BoxFerry together with ComposeLens,
+PodmanLens, QuadletLens, or the website.

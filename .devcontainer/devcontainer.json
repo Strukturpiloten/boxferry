@@ -24,6 +24,7 @@
     "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
     "source=boxferry-target-${devcontainerId},target=/workspaces/.boxferry-target,type=volume",
     "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
+    "source=${localWorkspaceFolder}/../podman-lens,target=/workspaces/boxferry/.boxferry-workspace/podman-lens,type=bind",
     "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind",
     "source=${localWorkspaceFolder}/../boxferry-website,target=/workspaces/boxferry/.boxferry-workspace/boxferry-website,type=bind"
   ],
