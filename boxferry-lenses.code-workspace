@@ -12,6 +12,10 @@
       "name": "QuadletLens",
       "path": ".boxferry-workspace/quadlet-lens",
     },
+    {
+      "name": "BoxFerry Website",
+      "path": ".boxferry-workspace/boxferry-website",
+    },
   ],
   "settings": {
     "cSpell.words": [
