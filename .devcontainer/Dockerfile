@@ -2,6 +2,10 @@
 # release: 24.18.1-bookworm-slim
 FROM docker.io/library/node@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7 AS node_toolchain
 
+# renovate: datasource=docker depName=ghcr.io/astral-sh/uv
+# release: 0.12.5
+FROM ghcr.io/astral-sh/uv@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 AS uv_toolchain
+
 # renovate: datasource=docker depName=mcr.microsoft.com/devcontainers/rust
 # release: 2.0.14-bookworm
 FROM mcr.microsoft.com/devcontainers/rust@sha256:d599b1bc98c3fc53825462ebf1610f39ef9145aeab485deffb8aaef44f349fe1
@@ -9,6 +13,7 @@ FROM mcr.microsoft.com/devcontainers/rust@sha256:d599b1bc98c3fc53825462ebf1610f3
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 COPY --from=node_toolchain /usr/local/ /usr/local/
+COPY --from=uv_toolchain /uv /uvx /usr/local/bin/
 
 # renovate: datasource=crate depName=cargo-deny
 ARG CARGO_DENY_VERSION=0.20.2

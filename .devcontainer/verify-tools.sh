@@ -43,6 +43,7 @@ tools=(
   shellcheck
   shfmt
   tombi
+  uv
   zizmor
 )
 

@@ -197,7 +197,7 @@ execution stops at the first failing step with its name.
 The complete script keeps coverage and API-compatibility artifacts below
 `$CARGO_TARGET_DIR/check-all/boxferry`. ComposeLens and QuadletLens use their own sibling
 namespaces. This prevents one repository's coverage cleanup or SemVer build from deleting or
-reusing another repository's files when the three VS Code tasks share the Dev Container target
+reusing another repository's files when the Rust VS Code tasks share the Dev Container target
 volume. The SemVer check also uses an isolated Cargo home, so it never reuses a read-only global
 package lock.
 
@@ -209,10 +209,11 @@ cross repository ownership boundaries or enter generated trees. Run only the non
 
 In VS Code, run **Tasks: Run Test Task** or **BoxFerry: Format, lint, and test all** for the same
 command. In `boxferry-lenses.code-workspace`, use **Workspace: Format, lint, and test all
-repositories** to run BoxFerry, ComposeLens, and QuadletLens sequentially. The repository-specific
-temporary directories also make separately started full-check tasks safe, while the sequential
-workspace task avoids unnecessary CPU and memory contention. The narrower commands remain useful
-when iterating on one failure:
+repositories** to run BoxFerry, ComposeLens, QuadletLens, and the BoxFerry website sequentially.
+The website task uses the same non-Rust formatters and linters plus its locked uv environment,
+Python tests, and strict Zensical build. The repository-specific temporary directories also make
+separately started full-check tasks safe, while the sequential workspace task avoids unnecessary
+CPU and memory contention. The narrower commands remain useful when iterating on one failure:
 
 ```console
 cargo fmt --all -- --check
