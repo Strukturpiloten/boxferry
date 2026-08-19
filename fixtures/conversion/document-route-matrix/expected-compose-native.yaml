@@ -1,6 +1,7 @@
-"name": "route-matrix"
-"services":
-  "web":
-    "container_name": "web-runtime"
-    "image": "example.invalid/web:1"
-    "restart": "no"
+---
+name: route-matrix
+services:
+  web:
+    container_name: web-runtime
+    image: example.invalid/web:1
+    restart: "no"

@@ -1,3 +1,4 @@
+---
 name: ferry-secrets
 services:
   web:

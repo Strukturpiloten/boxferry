@@ -13,6 +13,7 @@
 *.userosscache
 *.sln.docstates
 *.env
+!fixtures/conversion/document-route-matrix/variables.env
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -25,8 +26,8 @@ mono_crash.*
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
-!docs/releases/
-!docs/releases/*.md
+!docs/public/development/releases/
+!docs/public/development/releases/index.md
 
 [Dd]ebug/x64/
 [Dd]ebugPublic/x64/

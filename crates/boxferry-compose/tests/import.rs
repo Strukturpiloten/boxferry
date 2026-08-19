@@ -2057,8 +2057,9 @@ fn rejects_invalid_or_conflicting_deprecated_external_resource_names() -> Result
 }
 
 #[test]
-fn keeps_compose_lens_020_typed_families_visible_until_the_neutral_contract_exists() -> Result<(), Box<dyn Error>> {
-    let result = compose_lens_020_typed_families_result()?;
+fn keeps_released_compose_lens_typed_families_visible_until_the_neutral_contract_exists() -> Result<(), Box<dyn Error>>
+{
+    let result = released_compose_lens_typed_families_result()?;
     assert_unsupported_service_fields(&result);
     assert_unsupported_application_fields(&result)?;
     assert_unsupported_resource_fields_retain_provenance(&result)?;
@@ -2072,7 +2073,7 @@ fn keeps_compose_lens_020_typed_families_visible_until_the_neutral_contract_exis
     Ok(())
 }
 
-fn compose_lens_020_typed_families_result() -> Result<boxferry_engine::ImportResult, Box<dyn Error>> {
+fn released_compose_lens_typed_families_result() -> Result<boxferry_engine::ImportResult, Box<dyn Error>> {
     let id = ComposeSourceId::new(203);
     let text = concat!(
         "version: \"3.9\"\ninclude: [base.yaml]\nmodels: {embedder: {model: local-model}}\nservices:\n",

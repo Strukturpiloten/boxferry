@@ -1,8 +1,9 @@
+---
 name: interpolation-demo
 services:
   app:
-    image: "example.invalid/app:${TAG:?TAG is required}"
-    restart: "${RESTART_POLICY:-no}"
+    image: example.invalid/app:${TAG:?TAG is required}
+    restart: ${RESTART_POLICY:-no}
     environment:
-      TOKEN: "${TOKEN:?TOKEN is required}"
-      UNAUTHORIZED: "${UNAUTHORIZED:-safe-default}"
+      TOKEN: ${TOKEN:?TOKEN is required}
+      UNAUTHORIZED: ${UNAUTHORIZED:-safe-default}

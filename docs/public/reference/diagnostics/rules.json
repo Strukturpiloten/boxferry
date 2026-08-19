@@ -1,0 +1,421 @@
+{
+  "rules": [
+    {
+      "code": "BFC0001",
+      "default_severity": "error",
+      "description": "Compose intent could not be represented by the neutral application model.",
+      "help": "Correct the reported Compose value or remove the conflicting declaration.",
+      "name": "compose-model-invalid",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0002",
+      "default_severity": "error",
+      "description": "Profiled Compose services require an explicit profile selection.",
+      "help": "Select profiles explicitly with --profile, or use --all-profiles only after reviewing mutually exclusive services.",
+      "name": "compose-profile-selection-required",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0003",
+      "default_severity": "error",
+      "description": "The Compose profile selection is invalid or belongs to another merged project.",
+      "help": "Recreate the profile selection from the same merged Compose project.",
+      "name": "compose-profile-selection-mismatch",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0004",
+      "default_severity": "warning",
+      "description": "Compose intent is not represented by the current neutral-model subset.",
+      "help": "Review the named feature; use --loss-policy partial only when omitting that intent is acceptable.",
+      "name": "compose-intent-unsupported",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0005",
+      "default_severity": "error",
+      "description": "A Compose value cannot be represented safely in the neutral model.",
+      "help": "Correct the reported value before converting again.",
+      "name": "compose-value-invalid",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0006",
+      "default_severity": "error",
+      "description": "The requested Compose output target is invalid.",
+      "help": "Select a supported Compose target profile and compatible version inputs.",
+      "name": "compose-target-invalid",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0007",
+      "default_severity": "warning",
+      "description": "Neutral application intent is not represented in generated Compose output.",
+      "help": "Review the named subject; use --loss-policy partial only when the omitted intent is acceptable.",
+      "name": "compose-output-unsupported",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0008",
+      "default_severity": "error",
+      "description": "ComposeLens rejected generated Compose output.",
+      "help": "Correct the reported neutral value or target choice and retry.",
+      "name": "compose-generation-failed",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0009",
+      "default_severity": "warning",
+      "description": "Generated Compose syntax has a target-specific compatibility constraint.",
+      "help": "Review the target-specific classification before authorizing non-exact output.",
+      "name": "compose-compatibility-constraint",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0101",
+      "default_severity": "warning",
+      "description": "A Compose interpolation variable is not set.",
+      "help": "Provide the missing value with --env-file FILE or --env NAME=VALUE.",
+      "name": "compose-unset-variable",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0102",
+      "default_severity": "error",
+      "description": "A required Compose interpolation variable is not set.",
+      "help": "Provide the required value with --env-file FILE or --env NAME=VALUE.",
+      "name": "compose-required-variable",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0103",
+      "default_severity": "error",
+      "description": "A Compose interpolation expression is invalid.",
+      "help": "Correct the interpolation expression and retry.",
+      "name": "compose-interpolation-invalid",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0104",
+      "default_severity": "error",
+      "description": "A Compose interpolation expression exceeds the supported nesting limit.",
+      "help": "Simplify the interpolation expression before converting.",
+      "name": "compose-interpolation-nesting-limit",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0105",
+      "default_severity": "warning",
+      "description": "A Compose variable expression remains unresolved at the adapter boundary.",
+      "help": "Use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE; partial authorization applies only when the affected intent can be omitted.",
+      "name": "compose-unresolved-variable",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0197",
+      "default_severity": "error",
+      "description": "ComposeLens reported a native Compose error.",
+      "help": "Use the retained source code and source span to correct the Compose document.",
+      "name": "compose-native-error",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0198",
+      "default_severity": "warning",
+      "description": "ComposeLens reported a native Compose warning.",
+      "help": "Review the retained source code and source span before accepting the document.",
+      "name": "compose-native-warning",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFC0199",
+      "default_severity": "note",
+      "description": "ComposeLens reported native Compose information.",
+      "help": "Review the retained source code when more context is needed.",
+      "name": "compose-native-note",
+      "owner": "Compose adapter"
+    },
+    {
+      "code": "BFO1000",
+      "default_severity": "error",
+      "description": "BoxFerry could not complete the requested orchestration stage.",
+      "help": "Review the reason and correct the command inputs before retrying.",
+      "name": "orchestration-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO1001",
+      "default_severity": "error",
+      "description": "An explicitly selected input could not be read.",
+      "help": "Check that the input exists, is a readable regular file, and is not a symlink.",
+      "name": "input-read-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO1002",
+      "default_severity": "error",
+      "description": "The Compose project root could not be resolved.",
+      "help": "Provide an existing absolute --project-directory or correct the input location.",
+      "name": "compose-project-root-invalid",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO1003",
+      "default_severity": "error",
+      "description": "The requested Podman target range could not be resolved.",
+      "help": "Use major.minor or major.minor.patch values within the reviewed range.",
+      "name": "podman-target-selection-invalid",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO1004",
+      "default_severity": "error",
+      "description": "Compose interpolation inputs could not be resolved safely.",
+      "help": "Correct the named --env-file or --env input and retry.",
+      "name": "interpolation-input-invalid",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO1005",
+      "default_severity": "error",
+      "description": "Compose input could not be loaded or merged.",
+      "help": "Correct the reported Compose source diagnostic before retrying.",
+      "name": "compose-load-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO1006",
+      "default_severity": "error",
+      "description": "Source import or target conversion failed.",
+      "help": "Correct the reported rule occurrences before retrying.",
+      "name": "conversion-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO1007",
+      "default_severity": "error",
+      "description": "Quadlet input could not be parsed into the native document boundary.",
+      "help": "Correct the retained native diagnostics before retrying.",
+      "name": "quadlet-parse-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO2001",
+      "default_severity": "error",
+      "description": "The selected output directory is not empty.",
+      "help": "Empty the selected --output-directory or choose a new path.",
+      "name": "output-directory-not-empty",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO2002",
+      "default_severity": "error",
+      "description": "The selected output path is not a usable non-symlink directory.",
+      "help": "Choose an absent path or an existing empty, non-symlink directory.",
+      "name": "output-path-invalid",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO2003",
+      "default_severity": "error",
+      "description": "Generated output could not be written safely.",
+      "help": "Check parent-directory existence, permissions, free space, and path conflicts.",
+      "name": "output-write-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO3001",
+      "default_severity": "error",
+      "description": "The structured report file could not be written safely.",
+      "help": "Choose a new writable --report-file path.",
+      "name": "report-write-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFO3002",
+      "default_severity": "error",
+      "description": "The diagnostic support bundle could not be written safely.",
+      "help": "Choose a writable --error-report-directory with space for a new archive.",
+      "name": "support-bundle-write-failed",
+      "owner": "BoxFerry orchestration"
+    },
+    {
+      "code": "BFQ0001",
+      "default_severity": "error",
+      "description": "The requested Quadlet target or Podman range is invalid.",
+      "help": "Select the podman target and a version range covered by QuadletLens.",
+      "name": "quadlet-target-invalid",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0002",
+      "default_severity": "note",
+      "description": "An omitted Podman maximum extends beyond verified compatibility evidence.",
+      "help": "Set --podman-maximum-version for a finite compatibility claim.",
+      "name": "quadlet-open-ended-target",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0003",
+      "default_severity": "warning",
+      "description": "Neutral application intent is not represented by the current Quadlet subset.",
+      "help": "Review the named subject; use --loss-policy partial only when omission is acceptable.",
+      "name": "quadlet-output-unsupported",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0004",
+      "default_severity": "error",
+      "description": "A neutral value cannot be emitted safely as native Quadlet syntax.",
+      "help": "Correct or explicitly map the reported value before converting again.",
+      "name": "quadlet-value-invalid",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0005",
+      "default_severity": "error",
+      "description": "QuadletLens rejected generated native output.",
+      "help": "Correct the reported value or dependency and retry.",
+      "name": "quadlet-generation-failed",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0006",
+      "default_severity": "warning",
+      "description": "A required Quadlet capability is unavailable for part of the target range.",
+      "help": "Narrow the Podman target range or accept the documented partial result.",
+      "name": "quadlet-capability-unavailable",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0007",
+      "default_severity": "warning",
+      "description": "Generated Quadlet grouping changes source service isolation.",
+      "help": "Use --quadlet-grouping pod only when the shared-pod semantics are acceptable.",
+      "name": "quadlet-grouping-approximation",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0008",
+      "default_severity": "warning",
+      "description": "A service dependency cannot be represented exactly by Quadlet and systemd.",
+      "help": "Review the dependency condition and complete unsupported behavior manually.",
+      "name": "quadlet-dependency-unsupported",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0009",
+      "default_severity": "warning",
+      "description": "Container restart behavior is approximated by the systemd service manager.",
+      "help": "Use --loss-policy approximate only after accepting the documented systemd behavior difference.",
+      "name": "quadlet-restart-policy-approximation",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0010",
+      "default_severity": "warning",
+      "description": "Environment-file parsing is delegated to Podman.",
+      "help": "Verify the environment file with the target Podman version before deployment.",
+      "name": "quadlet-environment-file-approximation",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0011",
+      "default_severity": "error",
+      "description": "The requested Quadlet grouping cannot preserve the application topology.",
+      "help": "Keep separate containers or correct the reported grouping conflict.",
+      "name": "quadlet-grouping-invalid",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0012",
+      "default_severity": "error",
+      "description": "The service or image-artifact dependency graph is invalid.",
+      "help": "Correct missing or cyclic dependencies before converting.",
+      "name": "quadlet-dependency-invalid",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0013",
+      "default_severity": "note",
+      "description": "A required Quadlet capability is deprecated for part of the target range.",
+      "help": "Review the target range and plan migration away from the deprecated capability.",
+      "name": "quadlet-capability-deprecated",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ0014",
+      "default_severity": "error",
+      "description": "A source variable expression cannot be emitted as a Quadlet value.",
+      "help": "Resolve source variables before conversion; for Compose input, use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE.",
+      "name": "quadlet-unresolved-source-variable",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1001",
+      "default_severity": "error",
+      "description": "The Quadlet document set is invalid.",
+      "help": "Correct native Quadlet syntax and document-set errors before converting.",
+      "name": "quadlet-source-invalid",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1002",
+      "default_severity": "error",
+      "description": "Quadlet intent cannot be represented by the neutral application model.",
+      "help": "Correct the reported native value or relationship.",
+      "name": "quadlet-model-invalid",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1003",
+      "default_severity": "warning",
+      "description": "Quadlet intent is outside the current neutral-model importer subset.",
+      "help": "Review the named key; use --loss-policy partial only when omission is acceptable.",
+      "name": "quadlet-input-unsupported",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1004",
+      "default_severity": "warning",
+      "description": "Quadlet intent is approximated in the neutral model.",
+      "help": "Review the documented semantic difference before authorizing approximate output.",
+      "name": "quadlet-input-approximation",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1101",
+      "default_severity": "error",
+      "description": "QuadletLens reported a native syntax diagnostic.",
+      "help": "Use the retained source code and source span to correct the Quadlet unit.",
+      "name": "quadlet-native-syntax",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1102",
+      "default_severity": "error",
+      "description": "QuadletLens reported a native model diagnostic.",
+      "help": "Use the retained source code and source span to correct the Quadlet value.",
+      "name": "quadlet-native-model",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1103",
+      "default_severity": "error",
+      "description": "QuadletLens reported a native document-set diagnostic.",
+      "help": "Correct missing, ambiguous, or invalid cross-document relationships.",
+      "name": "quadlet-native-document-set",
+      "owner": "Quadlet adapter"
+    },
+    {
+      "code": "BFQ1104",
+      "default_severity": "error",
+      "description": "QuadletLens could not construct the native input boundary.",
+      "help": "Correct the reported input and native stage before retrying.",
+      "name": "quadlet-native-failure",
+      "owner": "Quadlet adapter"
+    }
+  ],
+  "schema_version": 1
+}

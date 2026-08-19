@@ -1,10 +1,11 @@
+---
 name: ferry-demo
 services:
   web:
     container_name: ferry-web-base
     image: registry.example:5000/team/web:1.2@sha256:abcdef
     command: ["php", "-v"]
-    user: "1001:1002"
+    user: 1001:1002
     userns_mode: keep-id
     group_add:
       - audio

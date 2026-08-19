@@ -72,6 +72,30 @@ run() {
   "$@"
 }
 
+check_yaml_document_markers() {
+  local file first_line
+  local -a missing_markers=()
+
+  for file in "${structured_files[@]}"; do
+    case "${file}" in
+      *.yaml | *.yml) ;;
+      *) continue ;;
+    esac
+
+    first_line=''
+    IFS= read -r first_line < "${file}" || true
+    if [[ "${first_line}" != '---' ]]; then
+      missing_markers+=("${file}")
+    fi
+  done
+
+  if ((${#missing_markers[@]} != 0)); then
+    printf 'Complete YAML documents must start with ---:\n' >&2
+    printf '  %s\n' "${missing_markers[@]}" >&2
+    return 1
+  fi
+}
+
 if [[ "${mode}" == "--fix" ]]; then
   printf '\nFormat Markdown\n'
   run prettier --write --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}"
@@ -102,6 +126,9 @@ run prettier --check --ignore-path .prettierignore --ignore-unknown "${markdown_
 if ((${#structured_files[@]} != 0)); then
   printf '\nCheck JSON and YAML formatting and syntax\n'
   run prettier --check --ignore-path .prettierignore --ignore-unknown "${structured_files[@]}"
+
+  printf '\nCheck YAML document markers\n'
+  run check_yaml_document_markers
 fi
 
 if ((${#toml_files[@]} != 0)); then

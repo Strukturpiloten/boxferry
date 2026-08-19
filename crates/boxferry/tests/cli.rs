@@ -1721,9 +1721,18 @@ fn compose_to_compose_merges_interpolates_and_writes_canonical_output() -> Resul
     assert_eq!(report["status"], "success");
     assert_eq!(report["output_artifacts"].as_array().map(Vec::len), Some(1));
     let document = fs::read_to_string(output.path().join("compose.yaml"))?;
-    assert!(document.contains("example.invalid/web:2"));
-    assert!(document.contains("\"MODE\": \"override\""), "{document}");
-    assert!(!document.contains("\"MODE\": \"base\""));
+    assert_eq!(
+        document,
+        concat!(
+            "---\n",
+            "name: normalization-example\n",
+            "services:\n",
+            "  web:\n",
+            "    image: example.invalid/web:2\n",
+            "    environment:\n",
+            "      MODE: override\n",
+        )
+    );
     assert_eq!(fs::read_dir(output.path())?.count(), 1);
 
     let validated = boxferry_command()
@@ -2790,8 +2799,8 @@ fn quadlet_to_compose_generic_route_writes_canonical_document_and_complete_repor
             .is_some_and(|size| size > 0)
     );
     let document = fs::read_to_string(output.path().join("compose.yaml"))?;
-    assert!(document.contains("name: \"example\""));
-    assert!(document.contains("\"web\""));
+    assert!(document.starts_with("---\nname: example\n"));
+    assert!(document.contains("services:\n  web:\n"));
     let verbose = boxferry_command()
         .args([
             "validate",
@@ -2947,9 +2956,9 @@ fn quadlet_directory_discovery_is_lowercase_lexical_and_refuses_duplicate_unit_n
     assert_eq!(report["inputs"].as_array().map(Vec::len), Some(3));
     assert_eq!(report["discovery"][0]["ignored"].as_array().map(Vec::len), Some(1));
     let document = fs::read_to_string(output.path().join("compose.yaml"))?;
-    let middle = document.find("\"middle\"").ok_or("missing middle")?;
-    let first = document.find("\"a\"").ok_or("missing a")?;
-    let last = document.find("\"z\"").ok_or("missing z")?;
+    let middle = document.find("  middle:\n").ok_or("missing middle")?;
+    let first = document.find("  a:\n").ok_or("missing a")?;
+    let last = document.find("  z:\n").ok_or("missing z")?;
     assert!(middle < first && first < last, "unexpected service order: {document}");
     let duplicate = boxferry_command()
         .args([
