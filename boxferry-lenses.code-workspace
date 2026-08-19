@@ -65,12 +65,22 @@
         "problemMatcher": "$rustc",
       },
       {
+        "label": "Workspace: Check BoxFerry Website",
+        "type": "process",
+        "command": "${workspaceFolder:BoxFerry Website}/scripts/check-all.sh",
+        "options": {
+          "cwd": "${workspaceFolder:BoxFerry Website}",
+        },
+        "problemMatcher": [],
+      },
+      {
         "label": "Workspace: Format, lint, and test all repositories",
         "dependsOrder": "sequence",
         "dependsOn": [
           "Workspace: Check BoxFerry",
           "Workspace: Check ComposeLens",
           "Workspace: Check QuadletLens",
+          "Workspace: Check BoxFerry Website",
         ],
         "problemMatcher": [],
       },

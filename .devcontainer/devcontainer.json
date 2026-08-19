@@ -37,10 +37,16 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "charliermarsh.ruff",
         "DavidAnson.vscode-markdownlint",
+        "esbenp.prettier-vscode",
+        "exiasr.hadolint",
+        "mkhl.shfmt",
+        "ms-python.python",
         "redhat.vscode-yaml",
         "rust-lang.rust-analyzer",
         "streetsidesoftware.code-spell-checker",
+        "timonwong.shellcheck",
         "tombi-toml.tombi",
         "vadimcn.vscode-lldb"
       ]
