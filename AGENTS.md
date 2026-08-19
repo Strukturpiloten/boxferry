@@ -129,8 +129,8 @@ remains Sol's responsibility and is not replaced by read-only Terra verification
 
 - The human-facing batch prompt and operator responsibilities are documented in
   `docs/agent-workflow.md`.
-- Use the primary BoxFerry agent as the integrator for tasks spanning BoxFerry, ComposeLens, and
-  QuadletLens.
+- Use the primary BoxFerry agent as the integrator for tasks spanning BoxFerry, ComposeLens,
+  PodmanLens, and QuadletLens.
 - Delegate only concrete, bounded tasks with an independently verifiable result.
 - Never run two source-writing agents in the same repository checkout concurrently.
 - Agents may write concurrently in separate repository checkouts only after the public contract is

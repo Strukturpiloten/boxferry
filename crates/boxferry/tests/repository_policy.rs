@@ -444,6 +444,8 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "\"path\": \".\"",
         "\"name\": \"ComposeLens\"",
         "\"path\": \".boxferry-workspace/compose-lens\"",
+        "\"name\": \"PodmanLens\"",
+        "\"path\": \".boxferry-workspace/podman-lens\"",
         "\"name\": \"QuadletLens\"",
         "\"path\": \".boxferry-workspace/quadlet-lens\"",
         "\"label\": \"Workspace: Format, lint, and test all repositories\"",
@@ -469,10 +471,40 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
         "source=boxferry-target-${devcontainerId},target=/workspaces/.boxferry-target,type=volume",
         "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
+        "source=${localWorkspaceFolder}/../podman-lens,target=/workspaces/boxferry/.boxferry-workspace/podman-lens,type=bind",
         "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind",
     ] {
         if !devcontainer.contains(required) {
             return Err(format!("BoxFerry Dev Container is missing sibling mount `{required}`"));
+        }
+    }
+
+    for (label, text, ordered) in [
+        (
+            "workspace folders",
+            workspace.as_str(),
+            [
+                "\"path\": \".boxferry-workspace/compose-lens\"",
+                "\"path\": \".boxferry-workspace/podman-lens\"",
+                "\"path\": \".boxferry-workspace/quadlet-lens\"",
+            ],
+        ),
+        (
+            "Dev Container sibling mounts",
+            devcontainer.as_str(),
+            [
+                "../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens",
+                "../podman-lens,target=/workspaces/boxferry/.boxferry-workspace/podman-lens",
+                "../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens",
+            ],
+        ),
+    ] {
+        let positions = ordered
+            .map(|entry| text.find(entry).ok_or_else(|| format!("{label} is missing `{entry}`")))
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        if !positions.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Err(format!("{label} must order ComposeLens, PodmanLens, and QuadletLens"));
         }
     }
 
@@ -492,6 +524,7 @@ fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching
         "[[ ! -w \"${persistent_directory}\" ]]",
         "sudo chown -R",
         "chmod 0700 \"${GH_CONFIG_DIR}\"",
+        "for repository in compose-lens podman-lens quadlet-lens boxferry-website; do",
     ] {
         if !script.contains(required) {
             return Err(format!("Dev Container lifecycle check is missing `{required}`"));

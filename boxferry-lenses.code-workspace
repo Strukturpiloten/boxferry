@@ -9,6 +9,10 @@
       "path": ".boxferry-workspace/compose-lens",
     },
     {
+      "name": "PodmanLens",
+      "path": ".boxferry-workspace/podman-lens",
+    },
+    {
       "name": "QuadletLens",
       "path": ".boxferry-workspace/quadlet-lens",
     },
@@ -27,6 +31,7 @@
       "LLDB",
       "MSRV",
       "Podlet",
+      "PodmanLens",
       "quadlet",
       "reauthor",
       "reparsing",
