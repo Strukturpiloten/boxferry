@@ -1,0 +1,148 @@
+schema = 1
+fixture-directory = "fixtures/conversion/document-route-matrix"
+
+[[examples]]
+id = "version"
+pages = ["docs/public/getting-started/index.md"]
+command = "boxferry --version"
+args = ["--version"]
+expected-exit = 0
+stdout-contains = ["boxferry "]
+
+[[examples]]
+id = "compose-to-compose"
+pages = ["docs/public/guides/convert/compose-to-compose/index.md"]
+command = "boxferry convert compose compose --input-file compose.yaml --output-directory compose-output"
+args = ["convert", "compose", "compose", "--input-file", "compose.yaml", "--output-directory", "compose-output"]
+copy = ["compose.yaml"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "compose-output/compose.yaml", fixture = "expected-compose-native.yaml" }]
+
+[[examples]]
+id = "compose-to-compose-interpolate"
+pages = ["docs/public/guides/convert/compose-to-compose/index.md"]
+command = "boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env RESTART=no --output-directory compose-interpolated-output"
+args = ["convert", "compose", "compose", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "RESTART=no", "--output-directory", "compose-interpolated-output"]
+copy = ["compose-interpolation.yaml", "variables.env"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "compose-interpolated-output/compose.yaml", fixture = "expected-compose-interpolated.yaml" }]
+
+[[examples]]
+id = "compose-to-compose-required-variable"
+pages = ["docs/public/guides/convert/compose-to-compose/index.md"]
+command = "boxferry convert compose compose --input-file compose-required.yaml --interpolate --output-directory compose-error-output"
+args = ["convert", "compose", "compose", "--input-file", "compose-required.yaml", "--interpolate", "--output-directory", "compose-error-output"]
+copy = ["compose-required.yaml"]
+expected-exit = 1
+stderr-contains = ["BFC0102", "fix first:", "--env-file FILE or --env NAME=VALUE"]
+absent = ["compose-error-output"]
+
+[[examples]]
+id = "compose-to-quadlet"
+pages = [
+  "docs/public/getting-started/index.md",
+  "docs/public/guides/convert/compose-to-quadlet/index.md",
+]
+command = "boxferry convert compose quadlet --input-file compose.yaml --output-directory quadlet-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose.yaml", "--output-directory", "quadlet-output"]
+copy = ["compose.yaml"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "quadlet-output/web.container", fixture = "expected-web.container" }]
+
+[[examples]]
+id = "compose-to-quadlet-interpolate"
+pages = ["docs/public/guides/convert/compose-to-quadlet/index.md"]
+command = "boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env RESTART=no --output-directory quadlet-interpolated-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "RESTART=no", "--output-directory", "quadlet-interpolated-output"]
+copy = ["compose-interpolation.yaml", "variables.env"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "quadlet-interpolated-output/web.container", fixture = "expected-interpolated-web.container" }]
+
+[[examples]]
+id = "compose-to-quadlet-unresolved-variable"
+pages = ["docs/public/guides/convert/compose-to-quadlet/index.md"]
+command = "boxferry convert compose quadlet --input-file compose-unresolved.yaml --output-directory quadlet-error-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose-unresolved.yaml", "--output-directory", "quadlet-error-output"]
+copy = ["compose-unresolved.yaml"]
+expected-exit = 1
+stderr-contains = ["BFC0105", "BFQ0014", "fix first:", "--interpolate"]
+absent = ["quadlet-error-output"]
+
+[[examples]]
+id = "quadlet-to-compose"
+pages = ["docs/public/guides/convert/quadlet-to-compose/index.md"]
+command = "boxferry convert quadlet compose --input-file web.container --application-name route-matrix --output-directory compose-output"
+args = ["convert", "quadlet", "compose", "--input-file", "web.container", "--application-name", "route-matrix", "--output-directory", "compose-output"]
+copy = ["web.container"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "compose-output/compose.yaml", fixture = "expected-compose-neutral.yaml" }]
+
+[[examples]]
+id = "quadlet-to-compose-invalid"
+pages = ["docs/public/guides/convert/quadlet-to-compose/index.md"]
+command = "boxferry convert quadlet compose --input-file invalid.container --application-name docs-error --output-directory compose-error-output"
+args = ["convert", "quadlet", "compose", "--input-file", "invalid.container", "--application-name", "docs-error", "--output-directory", "compose-error-output"]
+copy = ["invalid.container"]
+expected-exit = 1
+stderr-contains = ["BFQ1102", "fix first:", "provide an image"]
+absent = ["compose-error-output"]
+
+[[examples]]
+id = "quadlet-to-quadlet"
+pages = ["docs/public/guides/convert/quadlet-to-quadlet/index.md"]
+command = "boxferry convert quadlet quadlet --input-file web.container --application-name route-matrix --output-directory quadlet-output"
+args = ["convert", "quadlet", "quadlet", "--input-file", "web.container", "--application-name", "route-matrix", "--output-directory", "quadlet-output"]
+copy = ["web.container"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "wrote 1 file"]
+expected-files = [{ actual = "quadlet-output/web.container", fixture = "expected-web.container" }]
+
+[[examples]]
+id = "quadlet-to-quadlet-invalid"
+pages = ["docs/public/guides/convert/quadlet-to-quadlet/index.md"]
+command = "boxferry convert quadlet quadlet --input-file invalid.container --application-name docs-error --output-directory quadlet-error-output"
+args = ["convert", "quadlet", "quadlet", "--input-file", "invalid.container", "--application-name", "docs-error", "--output-directory", "quadlet-error-output"]
+copy = ["invalid.container"]
+expected-exit = 1
+stderr-contains = ["BFQ1102", "fix first:", "provide an image"]
+absent = ["quadlet-error-output"]
+
+[[examples]]
+id = "route-help"
+pages = ["docs/public/reference/cli/index.md"]
+command = "boxferry convert compose quadlet --help"
+args = ["convert", "compose", "quadlet", "--help"]
+expected-exit = 0
+stdout-contains = ["Compose input:", "Quadlet output:", "--output-directory <DIR>"]
+
+[[examples]]
+id = "rules-list"
+pages = ["docs/public/reference/diagnostics/index.md"]
+command = "boxferry rules"
+args = ["rules"]
+expected-exit = 0
+stdout-contains = ["BFC0001", "BFQ1104"]
+
+[[examples]]
+id = "rule-explain"
+pages = ["docs/public/reference/diagnostics/index.md"]
+command = "boxferry explain BFQ0014"
+args = ["explain", "BFQ0014"]
+expected-exit = 0
+stdout-contains = ["BFQ0014", "quadlet-unresolved-source-variable", "--interpolate"]
+
+[[examples]]
+id = "error-report"
+pages = ["docs/public/reference/error-reports/index.md"]
+command = "boxferry validate compose quadlet --input-file compose.yaml --generate-error-report --error-report-directory reports"
+args = ["validate", "compose", "quadlet", "--input-file", "compose.yaml", "--generate-error-report", "--error-report-directory", "reports"]
+copy = ["compose.yaml"]
+mkdir = ["reports"]
+expected-exit = 0
+stdout-contains = ["command succeeded", "error report:"]
+generated-files = [{ directory = "reports", prefix = "boxferry-error-report-", suffix = ".zip" }]

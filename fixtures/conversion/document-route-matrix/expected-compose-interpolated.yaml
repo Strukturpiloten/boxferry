@@ -1,0 +1,6 @@
+---
+name: docs-interpolation
+services:
+  web:
+    image: example.invalid/web:2
+    restart: "no"

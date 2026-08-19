@@ -1,0 +1,6 @@
+---
+name: docs-interpolation
+services:
+  web:
+    image: ${IMAGE}
+    restart: ${RESTART:-no}

@@ -1,288 +1,49 @@
-# Library API and publication policy
+# Library API and stability
 
-## Purpose
+Use the `boxferry` facade for normal embedding. Direct component crates are supported when an
+application needs a smaller or lower-level boundary.
 
-BoxFerry is both an embeddable Rust conversion system and a command-line application. External
-projects must be able to parse through native adapters, build and inspect conversion plans, apply
-an explicit loss policy, render supported targets, and consume structured diagnostics without
-starting the `boxferry` executable.
+## Features
 
-This boundary is recorded in [ADR 0002](decisions/0002-public-library-facade.md).
+| Feature   | Adds                                            |
+| --------- | ----------------------------------------------- |
+| `compose` | ComposeLens types and Compose semantic adapters |
+| `quadlet` | QuadletLens types and Quadlet semantic adapters |
+| `cli`     | Clap, reports, ZIP support, and the executable  |
 
-## Consumption levels
+Default features enable the useful CLI. Embedded applications can disable defaults.
 
-### `boxferry` facade
+## Public flow
 
-The `boxferry` crate is the recommended dependency for applications that want a supported,
-high-level API. It exposes the core model and engine and will expose stable format adapters through
-additive Cargo features. The package also contains the `boxferry` executable.
+1. Build or parse a native source explicitly.
+2. Import it through `ImportAdapter`.
+3. Select `TargetProfile` and `LossPolicy`.
+4. Export through `ExportAdapter` or call `boxferry::convert`.
+5. Inspect `ConversionResult` and diagnostics before applying output.
 
-The facade owns orchestration convenience APIs only when their inputs keep file access,
-environment access, target profiles, and loss policy explicit. It does not add a single “magic
-conversion” function that reads ambient state. Future runtime access, if supplied by a Lens-backed
-adapter, must likewise remain explicit.
+Core planning is pure. File access, environment access, native commands, and writes stay in
+caller-selected boundaries.
 
-### Component crates
+## Supported crates
 
-- `boxferry-model` provides the format-independent application graph and provenance types.
-- `boxferry-engine` provides adapter contracts, target profiles, planning, loss policy, outcomes,
-  and diagnostics.
-- `boxferry-compose`, `boxferry-quadlet`, and later format adapters provide native mappings and
-  depend on their corresponding native libraries.
+`boxferry`, `boxferry-model`, `boxferry-engine`, `boxferry-compose`, and `boxferry-quadlet` publish
+in lockstep.
 
-Direct component dependencies are supported for applications building custom adapters, services,
-editor integrations, language bindings, or their own user interface. Component APIs receive the
-same pre-1.0 compatibility policy as the facade once published.
+## Pre-1.0 stability
 
-## CLI parity
+The current release is pre-1.0:
 
-The CLI may own:
+- patch releases preserve documented source compatibility;
+- minor releases may replace or remove APIs with concise migration notes;
+- compatibility shims are not retained by default;
+- MSRV changes require a minor release and release notes;
+- native diagnostic codes remain provenance, while BoxFerry rule codes remain the policy contract.
 
-- argument and configuration-file parsing;
-- source discovery and authorized file access;
-- terminal and machine-readable presentation;
-- process exit status; and
-- explicit invocation of optional verification tools.
+The facade is the preferred compatibility boundary. CLI-only conversion behavior that an embedded
+caller cannot obtain is an architecture defect.
 
-It may not own conversion rules, private application-model mutations, target capability decisions,
-or diagnostics that cannot be obtained from the public libraries. Public integration tests will
-exercise the same orchestration path used by the executable.
+Build the public API documentation with:
 
-## Feature policy
-
-Format features are additive. Enabling one feature must not disable or change another adapter's
-public behavior.
-
-The 0.1.1 release enables `cli`, `compose`, and `quadlet` by default so
-`cargo install boxferry` builds a useful command. Embedded callers can select a smaller dependency
-surface with `default-features = false` and explicit format features. CI tests the default set,
-no-default core, every supported individual feature, and all features.
-
-The implemented adapter features are `compose` and `quadlet`; `cli` enables the argument parser
-and requires Compose and Quadlet for the current executable. The facade re-exports `ComposeImporter`, `ComposeSource`, `ComposeExporter`,
-`ComposeCanonicalization`, `CanonicalComposeDocument`, `ComposeFindingStage`, `ComposeRuntime`,
-Compose target constants, `QuadletDocumentInput`, `QuadletImporter`,
-`QuadletSource`, `QuadletParseResult`, `QuadletParseError`, `QuadletParseFailure`, `QuadletParseFailureStage`,
-the `QuadletParseDiagnostic` DTO family, `QuadletExporter`, `QuadletGroupingPolicy`, and
-`QuadletOutput`. It also exposes each adapter and matching native dependency through
-`boxferry::compose` and `boxferry::quadlet`, so embedded callers do not need to guess a second
-crate version.
-
-The unconditional model re-exports include image artifact resources and their typed settings:
-`ImageAcquisition`, `ImageAcquisitionSetting`, `ImageBuild`, `ImageBuildSetting`,
-`BuildSourceDeclaration`, `SourceBuildSetting`, `BuildSettingValues`, and their protected helper
-types. Services reference those declared resources independently of their runtime `ImageReference`;
-callers retain both authored source intent and policy-controlled target losses.
-
-`QuadletSource::parse` accepts only caller-provided named in-memory documents. `QuadletImporter`
-maps the documented exact image, container-name, safe command/environment, scalar-port,
-named/absolute-mount, named-network, metadata-label, host-mapping, and execution-context subset
-with source provenance. Repeated absolute-literal `EnvironmentFile=` declarations retain order
-and protected paths without filesystem access, with parser parity classified as approximate. It
-also consumes section-aware `[Service] Restart=` intent and complete
-sibling `[Unit]` activation-plus-ordering dependency pairs. Regular native health commands,
-disable intent, durations, and retry counts enter the source-aware neutral health model. It does
-import reviewed default/`type=mount` `Secret=` declarations as ordered grants to external secret
-resources, preserving target/UID/GID/mode options without accessing secret material. It does not
-discard native pod membership: an application-owned `.pod` with an explicit matching `PodName=`
-and sibling container `Pod=` references becomes a provenance-aware neutral service group. Pod-
-scoped settings and implicit/divergent runtime names remain structured losses. It does not
-inspect an installed
-Podman/systemd environment, resolve host paths, or reinterpret arbitrary systemd units as
-application services. Values that require native quoting, shell or path interpretation remain
-structured unsupported outcomes. Duplicate singleton keys and source combinations that Quadlet
-itself cannot execute, such as `Group=` without `User=`, are invalid rather than last-write-wins
-guesses.
-
-`QuadletSource::parse` is the sole diagnostic boundary. It retains every recoverable QuadletLens
-syntax/model diagnostic in caller input order, followed by document-set diagnostics. Document-set
-diagnostics can return an incomplete graph in `QuadletParseResult`; syntax/model errors and
-non-recoverable construction failures return `QuadletParseError`. DTOs retain native code,
-severity, static summaries/labels, numeric source IDs, and byte spans, never source text, paths,
-protected values, or terminal-rendered diagnostics. Successful findings also remain inside
-`QuadletSource`, so `QuadletParseResult::into_source` and the importer cannot discard them.
-
-## Versioning and publication
-
-Supported BoxFerry crates use a lockstep version. Workspace path dependencies also declare that
-version so crates.io packages resolve without the repository checkout. Intentional public breaks
-land directly in a new pre-1.0 minor version with migration notes; compatibility shims are not
-retained by default. An ADR records an architectural change.
-
-The supported crates publish in lockstep after their API and compatibility contracts pass the
-release gates. The [release policy](releasing.md) defines publication order; repository tools and
-test utilities are not part of the public dependency surface.
-
-## Side-effect contract
-
-Core model and planning operations are pure. File access, environment access, native command
-execution, and output writes enter through explicit caller-selected adapters. An external project
-can substitute in-memory implementations and can create a plan without applying or deploying its
-output. Future native-runtime access is owned by the corresponding Lens project and is not a
-current BoxFerry adapter surface.
-
-## Implemented core surface
-
-T4 provides the first tested public surface:
-
-- an ordered multi-service `Application` with images, commands, container restart policies, health checks, service dependencies,
-  environment, environment-file declarations, protected metadata labels, explicit host mappings, ports, mounts, networks, volumes, config and secret
-  declarations, ordered service grants, lifecycle ownership, and source provenance;
-- tolerant `ImageReference` parsing that retains `name:tag@digest` forms;
-- `ProtectedString` and structured diagnostics whose sensitive fields redact debug and display
-  output;
-- the typed `RuleId`, `DiagnosticRule`, `RULES`, and `find_rule` catalogue surface used by official
-  adapters and diagnostic consumers;
-- inclusive `PlatformVersion` and `TargetProfile` minimum/optional-maximum ranges;
-- exact, approximate, unsupported, and invalid `ConversionOutcome` values;
-- `LossPolicy`, validated `ConversionPlan`, and policy-authorized `ConversionResult` values;
-- public import/export adapter traits, `boxferry::convert`, and an `InMemoryAdapter` for tests;
-- import-side conversion outcomes that participate in the same `LossPolicy` authorization as
-  target-side mapping decisions;
-- an optional `compose` facade feature backed by `boxferry-compose` and ComposeLens 0.2.0;
-- an optional `quadlet` facade feature backed by `boxferry-quadlet` and QuadletLens 0.2.0.
-
-Version 0.1.1 establishes this surface as the first crates.io contract. Broader native value
-encoders remain T5/T6 work and continue to use structured fidelity outcomes.
-
-The 0.3.0 native-library upgrade keeps the dependencies publicly reachable only through their
-adapter modules. Native callers use `boxferry::compose::compose_lens::model::ResourceExternal`
-and `boxferry::quadlet::quadlet_lens::model::SystemdUnitKey`; the latter is a model type, not a
-render type.
-
-`HostMapping` retains an ordered hostname and raw-preserving `HostAddress`. Its conservative
-classification distinguishes IPv4, bracketed or unbracketed IPv6, the runtime-specific
-`host-gateway` token, and other deferred or implementation-specific values. The neutral model does
-not assume that every address is an IP or that a runtime-generated alias replaces explicit source
-intent.
-
-`Service` also exposes format-independent execution identity and context: provenance-bearing
-primary user/group values, a user-namespace mode, ordered supplementary groups, a working
-directory, and an explicit read-only-root-filesystem choice. Text values use `ProtectedString`, so
-sensitive interpolation remains redacted from debug output while authorized adapters can expose
-it for native encoding.
-
-`Service::runtime_name` is an optional provenance-bearing container name distinct from the
-neutral service identifier. Source adapters preserve declared names; Compose and Quadlet exporters
-validate their respective target grammars before emitting `container_name` or `ContainerName=`.
-
-`RestartPolicy` is the container-level automatic restart contract. It keeps `Never`, `Always`,
-unlimited or non-zero retry-limited `OnFailure`, and `UnlessStopped` distinct from service-
-dependency restart propagation and deployment-orchestrator policy. Compose service `restart` maps
-into this contract; Compose generation preserves every variant exactly. Quadlet generation keeps
-the separate systemd fidelity rules documented below.
-
-`MetadataLabel` retains an opaque non-empty name and a `ProtectedString` value. Reserved
-`com.docker.compose.*` provider labels remain reviewable but are explicitly unsafe to re-author.
-Compose mapping and sequence forms import into the same neutral type with name/value provenance.
-The Compose exporter emits
-deterministic label mappings, while the Quadlet exporter emits capability-checked repeatable
-`Label=` entries with systemd quoting and literal-specifier escaping. These APIs cover service and
-container metadata only; resource labels, image-build labels, annotations, and label files need
-separate ownership contracts.
-
-`Application` exposes separate config and secret resource collections with application/external
-ownership, optional provider/runtime names, and optional material origins. `Service` exposes
-separate ordered grant collections whose shared `ResourceGrant` retains authored short/long
-syntax and separately sourced target, UID, GID, and mode values. File and environment access stay
-outside the model; material and sensitive grant values retain `ProtectedString` redaction.
-
-`Application::service_groups` exposes ordered `ServiceGroup` values. Each group has a neutral
-name, lifecycle ownership, and ordered provenance-bearing service identifiers. Membership does
-not imply a particular source pod type, shared namespace set, infra container, or target workload.
-
-## Minimal embedded flow
-
-```rust
-use boxferry::{
-    Application, Identifier, InMemoryAdapter, LossPolicy, PlatformVersion, TargetProfile, convert,
-};
-
-let application = Application::new(Identifier::new("example")?);
-let adapter = InMemoryAdapter::exact("target document".to_owned());
-let target = TargetProfile::new("podman", PlatformVersion::new(5, 4, 0), None)?;
-let result = convert(
-    &adapter,
-    &application,
-    &adapter,
-    &target,
-    LossPolicy::ExactOnly,
-)?;
-
-assert_eq!(result.output().map(String::as_str), Some("target document"));
-# Ok::<(), Box<dyn std::error::Error>>(())
+```console
+RUSTDOCFLAGS="-D warnings" cargo ci-doc
 ```
-
-Real format adapters replace the in-memory adapter. They receive native parsed models explicitly;
-the facade does not discover files, read environment variables, or invoke runtimes on their behalf.
-
-The Compose importer accepts a caller-processed ComposeLens `MergedProject`. A caller-created
-`ProfileSelection` is required when the project contains profiled services and must belong to that
-same merged project. Each Compose source ID has a deterministic fallback identity and can be
-replaced with a caller-owned path or URI through `ComposeSource::with_source_id`. Callers attach
-native processing diagnostics with `ComposeSource::with_native_diagnostics` and an explicit
-`ComposeFindingStage`; the importer forwards them through the same public result as mapping
-diagnostics. `ComposeFindingStage::native_finding` provides the same conversion for failure paths
-that cannot construct a source.
-
-`ComposeSource::canonicalize` is the public Compose-to-Compose normalization boundary. It delegates
-rendering to ComposeLens, retains valid unresolved expressions and defaults without ambient
-environment access, and returns `ComposeCanonicalization`. Error-level native findings suppress
-the `CanonicalComposeDocument`; warnings and notes remain attached. This native same-format API is
-separate from `ComposeExporter`, which maps a neutral application to Compose.
-
-Embedded callers control Compose interpolation before merge. They construct a ComposeLens
-`MapEnvironment`, distinguish plain from sensitive entries, create the loaded project's
-per-document interpolation overlay, and pass that exact overlay to `merge_project`. BoxFerry never
-reads ambient variables on behalf of a library caller. The CLI demonstrates the same boundary and
-requires a separate authorization for each process variable it may read.
-
-Service `env_file` declarations cross the public API as ordered neutral `EnvironmentFile` values.
-They retain short/long syntax, a protected path, explicit `required` and `format` options, and
-nested provenance. Importing or exporting a declaration performs no filesystem access. An
-embedded caller may configure `QuadletExporter::with_relative_host_path_root` for lexical
-Compose-relative path resolution. The Compose exporter preserves ordered short/long declarations,
-explicit `required`/`raw` options, and path sensitivity through ComposeLens's validated generator.
-Loading file contents and applying Compose parser semantics remains a separate caller-authorized API.
-
-The importer consumes ComposeLens 0.2.0's native `build_project_view` boundary directly. Effective
-multi-file values, including service label names and scalar-normalized values, retain every contributing source origin in BoxFerry's neutral model and
-conversion outcomes; no canonical YAML render-and-reparse bridge or private BoxFerry YAML
-interpretation is used.
-
-The Compose exporter accepts a neutral `Application`, either the provider-neutral
-`COMPOSE_SPECIFICATION_TARGET` with its documented internal profile revision or an exact
-`docker-compose`/`podman-compose` provider `TargetProfile`. Provider-aware targets may attach an
-optional exact Docker Engine or Podman backend through `ComposeRuntime`; the specification target
-does not. It returns a policy-controlled
-`ConversionPlan<compose_lens::render::GeneratedComposeDocument>`. ComposeLens owns deterministic
-syntax selection and parse-back validation; BoxFerry owns semantic mapping, target compatibility
-outcomes, provenance, and authorization. The internal specification profile revision is not a
-Compose Specification release version or a claim about historical consumers. Runtime-observed
-resource names are emitted explicitly so Compose project scoping cannot rename them. See the
-[Compose exporter contract](compose-adapter.md).
-
-The Quadlet exporter accepts the neutral `Application` and an explicit Podman `TargetProfile`. It
-returns a policy-controlled `ConversionPlan<QuadletOutput>` whose files and native dependency graph
-have passed QuadletLens construction and parse-back validation. It reads no installed Podman
-version, environment, or filesystem state. See the [Quadlet exporter contract](quadlet-adapter.md).
-Relative Compose bind paths remain unsupported by default; callers opt into exact lexical
-resolution with `QuadletExporter::with_relative_bind_root` and the real Compose project directory.
-Host-specific forms such as tilde, Windows, or environment-derived source spellings remain losses
-unless the caller supplies an exact absolute or systemd-specifier target through
-`QuadletExporter::with_bind_source_mapping`. Neither API reads the host environment or filesystem.
-Separate containers remain the exact grouping default. Embedded callers may select
-`QuadletGroupingPolicy::SinglePod`; compatible declarations produce an approximate plan requiring
-`LossPolicy::AllowApproximate`, while incompatible declarations produce no candidate. Explicit
-`QuadletGroupingPolicy::PreserveSingleGroup` preserves one complete application-owned neutral
-group using the group name and rejects missing, multiple, unresolved, external, or partial groups.
-It remains approximate because structural membership does not itself assert shared namespaces.
-Explicit host mappings, health checks, dependency/readiness directives, execution-context values,
-container restart policies, explicit container names, external secret grants, and service
-metadata labels convert through QuadletLens 0.2.0. `Never`
-maps exactly to `Restart=no`; unbounded policies are explicit approximations and finite retry
-limits remain manual actions. A single-pod request requires identical
-ordered mappings and compatible user-namespace intent on every service. Common mappings and an
-identical explicit namespace emit once at pod scope; separate containers retain their own values.
-Compose config lifecycle and application-owned secret materialization remain explicit target-side
-manual actions.

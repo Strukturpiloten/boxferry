@@ -30,7 +30,7 @@ single-file bundle. A BoxFerry transport archive must not be described as native
    only document-conversion commands.
 3. `--input-file` and `--input-directory` form one occurrence-ordered source sequence. Compose
    directory discovery is non-recursive and selects exactly one conventional file using the order
-   documented in `docs/cli-vnext.md`. Overrides remain explicit. Duplicate resolved files are
+   documented in `docs/public/reference/cli/index.md`. Overrides remain explicit. Duplicate resolved files are
    invalid.
 4. Compose interpolation remains opt-in through `--interpolate` during the compatibility period.
    There is no implicit `.env` or complete process-environment import. Repeatable `--env-file`

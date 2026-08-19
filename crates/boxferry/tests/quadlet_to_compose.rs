@@ -36,11 +36,12 @@ fn quadlet_input_composes_with_the_existing_compose_exporter() -> Result<(), Box
     assert_eq!(
         output.text(),
         concat!(
-            "name: \"example\"\n",
+            "---\n",
+            "name: example\n",
             "services:\n",
-            "  \"web\":\n",
-            "    container_name: \"web-runtime\"\n",
-            "    image: \"example.invalid/web:1\"\n",
+            "  web:\n",
+            "    container_name: web-runtime\n",
+            "    image: example.invalid/web:1\n",
             "    restart: \"no\"\n"
         )
     );
@@ -81,7 +82,7 @@ fn pod_runtime_settings_remain_group_scoped_and_never_leak_into_compose_services
         LossPolicy::AllowPartial,
     )?;
     let output = result.output().ok_or("partial Compose output expected")?.text();
-    assert!(output.contains("image: \"example.invalid/web:1\""));
+    assert!(output.contains("image: example.invalid/web:1"));
     for native_group_value in [
         "grouped-service",
         "host.docker.internal",
@@ -143,43 +144,44 @@ fn shared_quadlet_service_fields_convert_to_compose_without_loss() -> Result<(),
     assert_eq!(
         output.text(),
         concat!(
-            "name: \"example\"\n",
+            "---\n",
+            "name: example\n",
             "services:\n",
-            "  \"web\":\n",
-            "    image: \"example.invalid/web:1\"\n",
+            "  web:\n",
+            "    image: example.invalid/web:1\n",
             "    command:\n",
-            "      - \"serve\"\n",
+            "      - serve\n",
             "      - \"--port=8080\"\n",
             "    environment:\n",
-            "      - \"MODE=production\"\n",
+            "      - MODE=production\n",
             "    labels:\n",
-            "      \"org.example.role\": \"frontend\"\n",
+            "      org.example.role: frontend\n",
             "    user: \"1001:1002\"\n",
             "    group_add:\n",
             "      - \"44\"\n",
-            "    working_dir: \"/srv/app\"\n",
+            "    working_dir: /srv/app\n",
             "    read_only: true\n",
             "    extra_hosts:\n",
-            "      - \"database=192.0.2.10\"\n",
+            "      - database=192.0.2.10\n",
             "    ports:\n",
             "      - target: 80\n",
             "        published: \"8080\"\n",
-            "        host_ip: \"127.0.0.1\"\n",
-            "        protocol: \"tcp\"\n",
+            "        host_ip: 127.0.0.1\n",
+            "        protocol: tcp\n",
             "    volumes:\n",
-            "      - type: \"volume\"\n",
-            "        source: \"data\"\n",
-            "        target: \"/var/lib/data\"\n",
+            "      - type: volume\n",
+            "        source: data\n",
+            "        target: /var/lib/data\n",
             "        read_only: true\n",
-            "      - type: \"bind\"\n",
-            "        source: \"/srv/config\"\n",
-            "        target: \"/etc/config\"\n",
+            "      - type: bind\n",
+            "        source: /srv/config\n",
+            "        target: /etc/config\n",
             "    networks:\n",
-            "      \"frontend\": {}\n",
+            "      frontend: {}\n",
             "networks:\n",
-            "  \"frontend\": {}\n",
+            "  frontend: {}\n",
             "volumes:\n",
-            "  \"data\": {}\n",
+            "  data: {}\n",
         )
     );
     Ok(())
@@ -217,17 +219,17 @@ fn public_quadlet_to_compose_route_reconstructs_canonical_security_options() -> 
     assert!(!format!("{output:?}").contains("secret-seccomp.json"));
     assert!(output.text().contains(concat!(
         "security_opt:\n",
-        "      - \"apparmor=profile-a\"\n",
-        "      - \"no-new-privileges:false\"\n",
-        "      - \"seccomp=secret-seccomp.json\"\n",
-        "      - \"label:disable\"\n",
-        "      - \"label:filetype:container_file_t\"\n",
-        "      - \"label:level:s0:c1,c2\"\n",
-        "      - \"label:nested\"\n",
-        "      - \"label:type:container_t\"\n",
-        "      - \"mask=/proc/acpi\"\n",
-        "      - \"unmask=/proc/acpi\"\n",
-        "      - \"mask=/proc/acpi\"\n",
+        "      - apparmor=profile-a\n",
+        "      - no-new-privileges:false\n",
+        "      - seccomp=secret-seccomp.json\n",
+        "      - label:disable\n",
+        "      - label:filetype:container_file_t\n",
+        "      - label:level:s0:c1,c2\n",
+        "      - label:nested\n",
+        "      - label:type:container_t\n",
+        "      - mask=/proc/acpi\n",
+        "      - unmask=/proc/acpi\n",
+        "      - mask=/proc/acpi\n",
     )));
     for index in 0..11 {
         assert!(result.outcomes().iter().any(|outcome| {
@@ -261,7 +263,7 @@ fn false_quadlet_selinux_booleans_remain_neutral_but_are_not_invented_in_compose
         LossPolicy::AllowPartial,
     )?;
     let output = result.output().ok_or("partial Compose output expected")?;
-    assert!(output.text().contains("- \"mask=/proc/acpi\""));
+    assert!(output.text().contains("- mask=/proc/acpi"));
     assert!(!output.text().contains("label:disable:false"));
     assert!(!output.text().contains("label:nested:false"));
     for index in [0, 1] {
@@ -306,13 +308,14 @@ fn converts_quadlet_environment_files_after_parser_parity_authorization() -> Res
     assert_eq!(
         approximate.output().ok_or("expected generated Compose output")?.text(),
         concat!(
-            "name: \"example\"\n",
+            "---\n",
+            "name: example\n",
             "services:\n",
-            "  \"web\":\n",
-            "    image: \"example.invalid/web:1\"\n",
+            "  web:\n",
+            "    image: example.invalid/web:1\n",
             "    env_file:\n",
-            "      - \"/etc/example/default.env\"\n",
-            "      - \"/run/credentials/private.env\"\n",
+            "      - /etc/example/default.env\n",
+            "      - /run/credentials/private.env\n",
         )
     );
     assert_eq!(

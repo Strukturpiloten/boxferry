@@ -8,4 +8,4 @@ Do not add credentials, unreviewed external content, or files with unclear redis
 
 The [`real-world/corpus.toml`](real-world/corpus.toml) catalogue is a separate pinned-remote test
 contract. Its upstream Compose files are retrieved only by the opt-in test and are never treated as
-vendored fixture content. See the [real-world corpus policy](../docs/real-world-compose-corpus.md).
+vendored fixture content. See the [testing policy](../docs/testing.md).

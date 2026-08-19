@@ -21,7 +21,7 @@ available to embedded users through the public library API.
 For a local, privacy-safe diagnostic archive, add the value-less `--generate-error-report` flag to
 `convert` or `validate`. It creates an automatically named ZIP in the current directory, or in an
 explicit existing directory selected by `--error-report-directory DIR`; see the repository's
-[error-report contract](../../docs/error-reports.md).
+[error-report contract](../../docs/public/reference/error-reports/).
 
 ```shell
 cargo install boxferry

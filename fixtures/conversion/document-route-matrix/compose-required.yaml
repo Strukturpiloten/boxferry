@@ -1,0 +1,5 @@
+---
+name: docs-error
+services:
+  web:
+    image: ${IMAGE:?set IMAGE before converting}

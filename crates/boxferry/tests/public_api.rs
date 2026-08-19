@@ -34,7 +34,7 @@ fn facade_exposes_report_dto_without_cli_features() {
 
 #[cfg(all(feature = "compose", feature = "quadlet"))]
 #[test]
-fn facade_reexports_the_lens_020_native_model_paths() {
+fn facade_reexports_native_lens_model_paths() {
     use boxferry::compose::compose_lens::model::ResourceExternal;
     use boxferry::quadlet::quadlet_lens::model::SystemdUnitKey;
 

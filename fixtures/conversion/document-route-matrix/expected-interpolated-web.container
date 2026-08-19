@@ -1,0 +1,5 @@
+[Container]
+Image=example.invalid/web:2
+
+[Service]
+Restart=no

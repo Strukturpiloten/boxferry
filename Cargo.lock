@@ -161,9 +161,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "compose-lens"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba1b4106be1aa0d1eaeafc5561f02a9fe196a0347ae8b83cc20dfc76cb8f4b21"
+checksum = "97c3993ef3cf441e105bb770d072317a61ff9349e422f6af2007718c443eba79"
 dependencies = [
  "yaml-edit",
 ]

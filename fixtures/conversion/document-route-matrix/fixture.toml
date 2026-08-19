@@ -4,11 +4,18 @@ suite = "conversion"
 description = "Defines the exact deterministic two-by-two Compose and Quadlet document-route boundary."
 secrets_reviewed = true
 files = [
+  "compose-interpolation.yaml",
+  "compose-required.yaml",
+  "compose-unresolved.yaml",
   "compose.yaml",
   "expected-compose-native.yaml",
   "expected-compose-neutral.yaml",
-  "web.container",
+  "expected-compose-interpolated.yaml",
+  "expected-interpolated-web.container",
   "expected-web.container",
+  "invalid.container",
+  "variables.env",
+  "web.container",
 ]
 
 [provenance]
@@ -21,4 +28,4 @@ modifications = "none"
 description = "No host environment, project directory, runtime, or external process input is used."
 
 [expectations]
-summary = "Each Compose/Quadlet input-output pair produces its reviewed deterministic canonical bytes for one exact service; native Compose canonicalization and neutral Compose generation retain their distinct formatting boundaries."
+summary = "Each Compose/Quadlet input-output pair has an exact reviewed result, and the documentation variants cover explicit interpolation plus malformed and unresolved input without using ambient values."

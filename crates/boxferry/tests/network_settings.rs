@@ -111,11 +111,12 @@ fn quadlet_network_import_keeps_one_row_and_reports_compose_ipam_loss() -> Resul
         LossPolicy::AllowPartial,
     )?;
     let output = result.output().ok_or("partial Compose output expected")?.text();
+    assert!(output.starts_with("---\nname: network\n"));
     for fragment in [
-        "name: \"runtime-front\"",
-        "driver: \"bridge\"",
-        "\"mtu\": \"1500\"",
-        "\"org.example.owner\": \"private-network-token\"",
+        "name: runtime-front",
+        "driver: bridge",
+        "mtu: \"1500\"",
+        "org.example.owner: private-network-token",
         "internal: true",
         "enable_ipv6: false",
     ] {

@@ -138,10 +138,10 @@ fn generates_iteration_one_compose_fields_and_reports_reload_loss() -> Result<()
     let output = result.output().ok_or("output")?;
     assert!(output.text().contains("entrypoint:"));
     assert!(output.text().contains("init: true"));
-    assert!(output.text().contains("stop_grace_period: \"1m30s\""));
-    assert!(output.text().contains("mem_limit: \"256m\""));
+    assert!(output.text().contains("stop_grace_period: 1m30s"));
+    assert!(output.text().contains("mem_limit: 256m"));
     assert!(output.text().contains("expose:"));
-    assert!(output.text().contains("pull_policy: \"daily\""));
+    assert!(output.text().contains("pull_policy: daily"));
     for field in [
         "hostname:",
         "pids_limit:",
@@ -348,9 +348,9 @@ fn exports_dns_collections_in_order_and_preserves_explicit_empty_lists() -> Resu
     let authorized = plan.authorize(LossPolicy::ExactOnly);
     let output = authorized.output().ok_or("Compose output expected")?;
     let text = output.text();
-    assert!(text.contains("dns:\n      - \"1.1.1.1\"\n      - \"8.8.8.8\""));
+    assert!(text.contains("dns:\n      - 1.1.1.1\n      - 8.8.8.8"));
     assert!(text.contains("dns_opt: []"));
-    assert!(text.contains("dns_search:\n      - \"example.test\""));
+    assert!(text.contains("dns_search:\n      - example.test"));
     Ok(())
 }
 
@@ -417,17 +417,17 @@ fn exports_all_security_options_canonically_in_order_and_redacts_sensitive_paylo
     assert!(!format!("{output:?}").contains("secret-seccomp.json"));
     assert!(output.text().contains(concat!(
         "security_opt:\n",
-        "      - \"apparmor=profile-a\"\n",
-        "      - \"no-new-privileges:false\"\n",
-        "      - \"seccomp=secret-seccomp.json\"\n",
-        "      - \"label:disable\"\n",
-        "      - \"label:filetype:container_file_t\"\n",
-        "      - \"label:level:s0:c1,c2\"\n",
-        "      - \"label:nested\"\n",
-        "      - \"label:type:container_t\"\n",
-        "      - \"mask=/proc/acpi\"\n",
-        "      - \"unmask=/proc/acpi\"\n",
-        "      - \"mask=/proc/acpi\"\n",
+        "      - apparmor=profile-a\n",
+        "      - no-new-privileges:false\n",
+        "      - seccomp=secret-seccomp.json\n",
+        "      - label:disable\n",
+        "      - label:filetype:container_file_t\n",
+        "      - label:level:s0:c1,c2\n",
+        "      - label:nested\n",
+        "      - label:type:container_t\n",
+        "      - mask=/proc/acpi\n",
+        "      - unmask=/proc/acpi\n",
+        "      - mask=/proc/acpi\n",
     )));
     assert_eq!(
         plan.outcomes()
@@ -470,7 +470,7 @@ fn reports_false_selinux_security_options_as_unsupported_without_generating_them
         }));
     }
     let output = plan.candidate().ok_or("generated Compose expected")?;
-    assert!(output.text().contains("- \"mask=/proc/acpi\""));
+    assert!(output.text().contains("- mask=/proc/acpi"));
     assert!(!output.text().contains("label:disable:false"));
     assert!(!output.text().contains("label:nested:false"));
     assert!(plan.authorize(LossPolicy::ExactOnly).output().is_none());
@@ -505,17 +505,17 @@ fn exports_explicit_empty_security_options_without_emitting_an_omitted_field() -
     assert!(
         output
             .text()
-            .contains("  \"empty\":\n    image: \"example.invalid/empty:1\"\n    security_opt: []")
+            .contains("  empty:\n    image: example.invalid/empty:1\n    security_opt: []")
     );
     assert!(
         output
             .text()
-            .contains("  \"omitted\":\n    image: \"example.invalid/omitted:1\"\n")
+            .contains("  omitted:\n    image: example.invalid/omitted:1\n")
     );
     assert!(
         !output
             .text()
-            .contains("  \"omitted\":\n    image: \"example.invalid/omitted:1\"\n    security_opt")
+            .contains("  omitted:\n    image: example.invalid/omitted:1\n    security_opt")
     );
     Ok(())
 }
@@ -616,23 +616,24 @@ fn exports_every_neutral_restart_policy_to_compose() -> Result<(), Box<dyn Error
     assert_eq!(
         output.text(),
         concat!(
-            "name: \"restart\"\n",
+            "---\n",
+            "name: restart\n",
             "services:\n",
-            "  \"disabled\":\n",
-            "    image: \"example.invalid/disabled:1\"\n",
+            "  disabled:\n",
+            "    image: example.invalid/disabled:1\n",
             "    restart: \"no\"\n",
-            "  \"always\":\n",
-            "    image: \"example.invalid/always:1\"\n",
-            "    restart: \"always\"\n",
-            "  \"failure\":\n",
-            "    image: \"example.invalid/failure:1\"\n",
-            "    restart: \"on-failure\"\n",
-            "  \"limited\":\n",
-            "    image: \"example.invalid/limited:1\"\n",
-            "    restart: \"on-failure:7\"\n",
-            "  \"stopped\":\n",
-            "    image: \"example.invalid/stopped:1\"\n",
-            "    restart: \"unless-stopped\"\n",
+            "  always:\n",
+            "    image: example.invalid/always:1\n",
+            "    restart: always\n",
+            "  failure:\n",
+            "    image: example.invalid/failure:1\n",
+            "    restart: on-failure\n",
+            "  limited:\n",
+            "    image: example.invalid/limited:1\n",
+            "    restart: on-failure:7\n",
+            "  stopped:\n",
+            "    image: example.invalid/stopped:1\n",
+            "    restart: unless-stopped\n",
         )
     );
     Ok(())
@@ -767,8 +768,8 @@ fn unresolved_runtime_resource_ownership_is_visible_and_partial() -> Result<(), 
     let result = plan.authorize(LossPolicy::AllowPartial);
     assert!(result.output().is_some_and(|document| document.text().contains(concat!(
         "volumes:\n",
-        "  \"data\":\n",
-        "    name: \"data\"\n",
+        "  data:\n",
+        "    name: data\n",
         "    external: true\n",
     ))));
     Ok(())
@@ -818,11 +819,12 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
     assert!(partial.output().is_some_and(|output| {
         output.text()
             == concat!(
-                "name: \"partial\"\n",
+                "---\n",
+                "name: partial\n",
                 "services:\n",
-                "  \"web\":\n",
-                "    image: \"example.invalid/web:1\"\n",
-                "    restart: \"unless-stopped\"\n",
+                "  web:\n",
+                "    image: example.invalid/web:1\n",
+                "    restart: unless-stopped\n",
             )
     }));
     Ok(())
@@ -867,12 +869,12 @@ fn emits_application_owned_file_backed_configs_and_secrets_with_parse_back_and_r
     assert!(
         output
             .text()
-            .contains("configs:\n  \"application-config\":\n    file: \"config/application.yaml\"")
+            .contains("configs:\n  application-config:\n    file: config/application.yaml")
     );
     assert!(
         output
             .text()
-            .contains("secrets:\n  \"database-password\":\n    file: \"secrets/database-password.txt\"")
+            .contains("secrets:\n  database-password:\n    file: secrets/database-password.txt")
     );
     assert_eq!(
         output
@@ -1243,16 +1245,17 @@ fn generates_typed_network_fields_preserves_explicit_empties_and_reports_ipam_lo
     assert_eq!(
         output.text(),
         concat!(
-            "name: \"network-output\"\n",
+            "---\n",
+            "name: network-output\n",
             "services:\n",
-            "  \"web\":\n",
-            "    image: \"example.invalid/web:1\"\n",
+            "  web:\n",
+            "    image: example.invalid/web:1\n",
             "networks:\n",
-            "  \"front\":\n",
-            "    name: \"runtime-front\"\n",
-            "    driver: \"bridge\"\n",
+            "  front:\n",
+            "    name: runtime-front\n",
+            "    driver: bridge\n",
             "    driver_opts:\n",
-            "      \"com.example.secret\": \"production-secret\"\n",
+            "      com.example.secret: production-secret\n",
             "    enable_ipv6: true\n",
             "    internal: false\n",
             "    labels: {}\n",
@@ -1285,8 +1288,8 @@ fn external_network_emits_only_its_explicit_runtime_name() -> Result<(), Box<dyn
     let authorized = plan.authorize(LossPolicy::AllowPartial);
     let output = authorized.output().ok_or("partial output")?;
     assert!(output.text().contains("external: true"));
-    assert!(output.text().contains("name: \"platform-existing\""));
-    assert!(!output.text().contains("driver: \"bridge\""));
+    assert!(output.text().contains("name: platform-existing"));
+    assert!(!output.text().contains("driver: bridge"));
     Ok(())
 }
 
@@ -1319,13 +1322,13 @@ fn exports_local_volume_driver_fields_runtime_name_and_explicit_empty_labels() -
     let output = authorized.output().ok_or("exact output")?;
     assert!(output.text().contains(concat!(
         "volumes:\n",
-        "  \"data\":\n",
-        "    name: \"platform-data\"\n",
-        "    driver: \"local\"\n",
+        "  data:\n",
+        "    name: platform-data\n",
+        "    driver: local\n",
         "    driver_opts:\n",
-        "      \"type\": \"none\"\n",
-        "      \"device\": \"/srv/data\"\n",
-        "      \"o\": \"bind\"\n",
+        "      type: none\n",
+        "      device: /srv/data\n",
+        "      o: bind\n",
         "    labels: {}\n",
     )));
     Ok(())
@@ -1364,8 +1367,8 @@ fn external_volume_emits_only_name_and_reports_quadlet_only_configuration() -> R
     let output = authorized.output().ok_or("partial output")?;
     assert!(output.text().contains(concat!(
         "volumes:\n",
-        "  \"data\":\n",
-        "    name: \"platform-data\"\n",
+        "  data:\n",
+        "    name: platform-data\n",
         "    external: true\n",
     )));
     assert!(!output.text().contains("driver:"));
@@ -1404,8 +1407,8 @@ fn refuses_sensitive_volume_runtime_names_without_leaking_them() -> Result<(), B
     let output = authorized.output().ok_or("partial output")?;
     assert!(!output.text().contains("private-application-volume"));
     assert!(!output.text().contains("private-external-volume"));
-    assert!(output.text().contains("  \"application-data\": {}\n"));
-    assert!(output.text().contains("  \"external-data\":\n    external: true\n"));
+    assert!(output.text().contains("  application-data: {}\n"));
+    assert!(output.text().contains("  external-data:\n    external: true\n"));
     Ok(())
 }
 
@@ -1453,56 +1456,57 @@ const fn version(major: u64, minor: u64, patch: u64) -> PlatformVersion {
 
 const fn expected_supported_document() -> &'static str {
     concat!(
-        "name: \"demo\"\n",
+        "---\n",
+        "name: demo\n",
         "services:\n",
-        "  \"web\":\n",
-        "    container_name: \"ferry-web\"\n",
-        "    image: \"example.invalid/web:1\"\n",
+        "  web:\n",
+        "    container_name: ferry-web\n",
+        "    image: example.invalid/web:1\n",
         "    command:\n",
-        "      - \"server\"\n",
+        "      - server\n",
         "      - \"--foreground\"\n",
         "    env_file:\n",
-        "      - \"./default.env\"\n",
-        "      - path: \"/run/credentials/private.env\"\n",
+        "      - ./default.env\n",
+        "      - path: /run/credentials/private.env\n",
         "        required: false\n",
-        "        format: \"raw\"\n",
+        "        format: raw\n",
         "    environment:\n",
-        "      - \"TOKEN=production-secret\"\n",
-        "      - \"HOST_VALUE\"\n",
+        "      - TOKEN=production-secret\n",
+        "      - HOST_VALUE\n",
         "    labels:\n",
-        "      \"com.example.empty\": \"\"\n",
-        "      \"com.example.metadata\": \"{\\\"channel\\\": \\\"production-secret\\\"}\"\n",
+        "      com.example.empty: \"\"\n",
+        "      com.example.metadata: \"{\\\"channel\\\": \\\"production-secret\\\"}\"\n",
         "    user: \"1001:1002\"\n",
-        "    userns_mode: \"private\"\n",
+        "    userns_mode: private\n",
         "    group_add:\n",
         "      - \"44\"\n",
-        "    working_dir: \"/srv/app\"\n",
+        "    working_dir: /srv/app\n",
         "    read_only: true\n",
-        "    restart: \"on-failure:3\"\n",
+        "    restart: on-failure:3\n",
         "    extra_hosts:\n",
-        "      - \"database=192.0.2.10\"\n",
+        "      - database=192.0.2.10\n",
         "    ports:\n",
         "      - target: 8080\n",
         "        published: \"18080\"\n",
-        "        host_ip: \"127.0.0.1\"\n",
-        "        protocol: \"tcp\"\n",
+        "        host_ip: 127.0.0.1\n",
+        "        protocol: tcp\n",
         "    volumes:\n",
-        "      - type: \"volume\"\n",
-        "        source: \"data\"\n",
-        "        target: \"/var/lib/example\"\n",
+        "      - type: volume\n",
+        "        source: data\n",
+        "        target: /var/lib/example\n",
         "        read_only: true\n",
-        "      - type: \"bind\"\n",
-        "        source: \"./config\"\n",
-        "        target: \"/etc/example\"\n",
-        "      - type: \"volume\"\n",
-        "        target: \"/tmp\"\n",
+        "      - type: bind\n",
+        "        source: ./config\n",
+        "        target: /etc/example\n",
+        "      - type: volume\n",
+        "        target: /tmp\n",
         "    networks:\n",
-        "      \"frontend\":\n",
+        "      frontend:\n",
         "        aliases:\n",
-        "          - \"web.local\"\n",
+        "          - web.local\n",
         "networks:\n",
-        "  \"frontend\": {}\n",
+        "  frontend: {}\n",
         "volumes:\n",
-        "  \"data\": {}\n",
+        "  data: {}\n",
     )
 }
