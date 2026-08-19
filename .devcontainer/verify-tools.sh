@@ -58,7 +58,7 @@ if ! rustup component list --installed | grep -q '^llvm-tools-'; then
   exit 1
 fi
 
-for repository in compose-lens quadlet-lens; do
+for repository in compose-lens quadlet-lens boxferry-website; do
   repository_path="/workspaces/boxferry/.boxferry-workspace/${repository}"
   if [[ ! -d "${repository_path}/.git" ]]; then
     printf 'BoxFerry Dev Container is missing sibling repository: %s\n' "${repository_path}" >&2

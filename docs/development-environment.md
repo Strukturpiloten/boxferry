@@ -24,7 +24,7 @@ For the normal BoxFerry-only view:
 2. Run **Dev Containers: Reopen in Container**.
 3. Wait for `BoxFerry Dev Container tooling is ready.` in the creation log.
 
-For the supported three-repository view, do not create an untitled multi-root workspace with
+For the supported four-repository view, do not create an untitled multi-root workspace with
 **Add Folder to Workspace** and do not open the `.code-workspace` file in a local window first.
 Enter the container through the BoxFerry folder:
 
@@ -35,10 +35,10 @@ code .
 Run **Dev Containers: Reopen in Container**. After the BoxFerry folder has opened in the container,
 run **File: Open Workspace from File...** and select
 `/workspaces/boxferry/boxferry-lenses.code-workspace`. BoxFerry is the primary configuration and
-mounts the host's `../compose-lens` and `../quadlet-lens` checkouts below
+mounts the host's `../compose-lens`, `../quadlet-lens`, and `../boxferry-website` checkouts below
 `/workspaces/boxferry/.boxferry-workspace` in the container. The committed workspace refers only to
 BoxFerry and these container-side subdirectories, as required by VS Code for a multi-root workspace
-in one Dev Container. All three paths remain host bind mounts, so edits persist in their respective
+in one Dev Container. All four paths remain host bind mounts, so edits persist in their respective
 repositories. The sibling repositories must use exactly those directory names and share
 BoxFerry's parent.
 
