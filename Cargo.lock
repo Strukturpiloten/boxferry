@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "boxferry-compose",
  "boxferry-engine",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry-compose"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -88,18 +88,18 @@ dependencies = [
 
 [[package]]
 name = "boxferry-engine"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "boxferry-model",
 ]
 
 [[package]]
 name = "boxferry-model"
-version = "0.5.0"
+version = "0.5.1"
 
 [[package]]
 name = "boxferry-quadlet"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
