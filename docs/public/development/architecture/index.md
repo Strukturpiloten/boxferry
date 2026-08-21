@@ -19,7 +19,9 @@ QuadletLens ── Quadlet adapter ──┘
 The CLI calls the same public orchestration API available to Rust callers. Parsing never inspects a
 runtime, and output is planned before any file is created.
 
-Future DockerLens, PodmanLens, and KubernetesLens libraries will own their native protocols,
-version evidence, deployment plans, and execution safety. BoxFerry will add only semantic mappings.
+PodmanLens owns Podman protocols, read-only acquisition, native types, version evidence,
+diagnostics, and deterministic rendering. Podman semantic integration is next and does not wait for
+DockerLens. Docker and Kubernetes integrations remain deferred. BoxFerry adds semantic mappings and
+never applies or deploys output.
 
 Accepted decisions live in the repository's `docs/decisions/` directory.

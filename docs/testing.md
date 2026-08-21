@@ -26,9 +26,11 @@ Fixtures require an authored or immutable external provenance record, license de
 review, environment boundary, and expected behavior. Never commit live credentials, private runtime
 output, or production configuration.
 
-The exact 2×2 document-route fixture under `fixtures/conversion/document-route-matrix/` also powers
-the public guide examples. `docs/documentation-examples.toml` binds each displayed command to its
-input, exit status, diagnostic codes, and output bytes.
+The exact 2×2 neutral-model route fixture under
+`fixtures/conversion/document-route-matrix/` also powers the public guide examples. Every importer
+fixture must be exercised against every registered exporter. Adding an exporter therefore requires
+expectations for all existing importer scenarios. `docs/documentation-examples.toml` binds each
+displayed command to its input, exit status, diagnostic codes, and output bytes.
 
 ## Pull-request gate
 

@@ -1294,7 +1294,7 @@ impl RenderedConversion {
     }
 }
 
-struct DocumentExecution {
+struct DocumentConversion {
     discovered: Vec<ResolvedInput>,
     aliases: ReportAliases,
     application_name: String,
@@ -1494,18 +1494,28 @@ fn generic_convert(
             )
         }
         RouteExecutor::ComposeToCompose => {
-            let (document, diagnostics) = loaded.source.canonicalize()?.into_parts();
+            let target = TargetProfile::new(
+                COMPOSE_SPECIFICATION_TARGET,
+                COMPOSE_SPECIFICATION_PROFILE_REVISION,
+                Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
+            )?;
+            let result = convert(
+                &ComposeImporter::new()?,
+                &loaded.source,
+                &ComposeExporter::new()?,
+                &target,
+                arguments.loss_policy.into(),
+            )
+            .map_err(|error| {
+                compose_conversion_failure(&error, &loaded.preprocessing_diagnostics, &aliases, &discovered)
+            })?;
             (
-                RenderedConversion {
-                    output: document.map(|document| {
-                        vec![RenderedFile {
-                            name: "compose.yaml".into(),
-                            text: document.text().to_owned(),
-                        }]
-                    }),
-                    outcomes: Vec::new(),
-                    diagnostics,
-                },
+                RenderedConversion::from_result(result, |output| {
+                    vec![RenderedFile {
+                        name: "compose.yaml".into(),
+                        text: output.text().to_owned(),
+                    }]
+                }),
                 VersionBounds {
                     minimum: "rolling".into(),
                     maximum: "rolling".into(),
@@ -1519,7 +1529,7 @@ fn generic_convert(
         route,
         output_directory,
         validate_only,
-        DocumentExecution {
+        DocumentConversion {
             discovered,
             aliases,
             application_name: loaded.application,
@@ -1676,7 +1686,7 @@ fn generic_quadlet_convert(
         route,
         output_directory,
         validate_only,
-        DocumentExecution {
+        DocumentConversion {
             discovered,
             aliases,
             application_name: application_name.as_str().into(),
@@ -1840,15 +1850,15 @@ fn finish_document_conversion(
     route: RouteSpec,
     output_directory: Option<&Path>,
     validate_only: bool,
-    execution: DocumentExecution,
+    document_conversion: DocumentConversion,
 ) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
-    let DocumentExecution {
+    let DocumentConversion {
         discovered,
         aliases,
         application_name,
         resolved_versions,
         conversion,
-    } = execution;
+    } = document_conversion;
     let RenderedConversion {
         output,
         outcomes,

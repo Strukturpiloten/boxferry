@@ -1,9 +1,10 @@
 # ADR 0030: Native Compose same-format canonicalization
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-08-13
 - Supersedes: [ADR 0029](0029-nested-input-output-cli-routes.md) decision 5 for the
   Compose-to-Compose route only
+- Superseded by: [ADR 0033](0033-universal-neutral-model-pipeline.md)
 
 ## Context
 

@@ -253,8 +253,8 @@ fn facade_exposes_compose_adapters_and_specification_target_additively() -> Resu
         source::SourceId as ComposeSourceId,
     };
     use boxferry::{
-        COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeImporter, ComposeSource,
-        ImportAdapter, SourceId,
+        COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeImporter,
+        ComposeSource, ImportAdapter, LossPolicy, SourceId, TargetProfile, convert,
     };
 
     assert_eq!(COMPOSE_SPECIFICATION_TARGET, "compose-specification");
@@ -281,8 +281,6 @@ fn facade_exposes_compose_adapters_and_specification_target_additively() -> Resu
             compose_source_id,
             SourceId::new("compose.yaml").map_err(|error| error.to_string())?,
         );
-    let canonical: boxferry::ComposeCanonicalization = source.canonicalize().map_err(|error| error.to_string())?;
-    assert!(canonical.document().is_some());
     let importer = ComposeImporter::new().map_err(|error| error.to_string())?;
     let result = importer.import(&source);
 
@@ -298,6 +296,26 @@ fn facade_exposes_compose_adapters_and_specification_target_additively() -> Resu
         Some(1)
     );
     assert!(result.diagnostics().is_empty(), "{:#?}", result.diagnostics());
+    let target = TargetProfile::new(
+        COMPOSE_SPECIFICATION_TARGET,
+        COMPOSE_SPECIFICATION_PROFILE_REVISION,
+        Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
+    )
+    .map_err(|error| error.to_string())?;
+    let converted = convert(
+        &importer,
+        &source,
+        &ComposeExporter::new().map_err(|error| error.to_string())?,
+        &target,
+        LossPolicy::AllowApproximate,
+    )
+    .map_err(|error| error.to_string())?;
+    assert!(!converted.is_blocked(), "{:#?}", converted.diagnostics());
+    assert!(
+        converted
+            .output()
+            .is_some_and(|document| document.text().contains("example.invalid/web:1"))
+    );
     Ok(())
 }
 

@@ -1,14 +1,13 @@
 schema = 1
 id = "document-route-matrix"
 suite = "conversion"
-description = "Defines the exact deterministic two-by-two Compose and Quadlet document-route boundary."
+description = "Defines the exact deterministic two-by-two Compose and Quadlet neutral-model route boundary."
 secrets_reviewed = true
 files = [
   "compose-interpolation.yaml",
   "compose-required.yaml",
   "compose-unresolved.yaml",
   "compose.yaml",
-  "expected-compose-native.yaml",
   "expected-compose-neutral.yaml",
   "expected-compose-interpolated.yaml",
   "expected-interpolated-web.container",
@@ -28,4 +27,4 @@ modifications = "none"
 description = "No host environment, project directory, runtime, or external process input is used."
 
 [expectations]
-summary = "Each Compose/Quadlet input-output pair has an exact reviewed result, and the documentation variants cover explicit interpolation plus malformed and unresolved input without using ambient values."
+summary = "Each Compose/Quadlet input-output pair passes through the neutral application model and has an exact reviewed result, while documentation variants cover explicit interpolation plus malformed and unresolved input without using ambient values."

@@ -8,6 +8,8 @@
   [ADR 0020](0020-rolling-compose-specification-cli-target.md)
 - Superseded for Compose-to-Compose execution by:
   [ADR 0030](0030-native-compose-same-format-canonicalization.md)
+- Decision 5 restored for every route by:
+  [ADR 0033](0033-universal-neutral-model-pipeline.md)
 
 ## Context
 

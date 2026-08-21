@@ -71,5 +71,5 @@ an existing output file.
 | Code | Meaning                                                      |
 | ---- | ------------------------------------------------------------ |
 | `0`  | The operation completed and requested output was written.    |
-| `1`  | Input, validation, execution, or file I/O failed.            |
+| `1`  | Input, validation, conversion, or file I/O failed.           |
 | `2`  | The selected loss policy blocked otherwise plannable output. |

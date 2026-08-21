@@ -3,6 +3,7 @@
 mod support;
 
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -366,11 +367,36 @@ fn complete_yaml_documents_use_explicit_start_markers() -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+    let deleted_output = Command::new("git")
+        .args(["ls-files", "--deleted", "-z", "--", "*.yaml", "*.yml"])
+        .current_dir(&root)
+        .output()
+        .map_err(|error| format!("failed to list deleted YAML documents: {error}"))?;
+    if !deleted_output.status.success() {
+        return Err(format!(
+            "git ls-files --deleted failed: {}",
+            String::from_utf8_lossy(&deleted_output.stderr)
+        ));
+    }
+    let deleted = deleted_output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(PathBuf::from)
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
 
     for path in output.stdout.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
         let path = Path::new(std::str::from_utf8(path).map_err(|error| error.to_string())?);
-        let contents = fs::read_to_string(root.join(path))
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let absolute = root.join(path);
+        if deleted.contains(path) {
+            continue;
+        }
+        let contents =
+            fs::read_to_string(&absolute).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         if contents.lines().next() != Some("---") {
             return Err(format!("{} must start with `---`", path.display()));
         }

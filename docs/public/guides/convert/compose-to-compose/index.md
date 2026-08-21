@@ -1,8 +1,9 @@
 # Compose to Compose
 
-Use this route to merge and canonicalize Compose input. It is not a byte-for-byte copy.
+Use this route to merge Compose input, import it into the neutral application model, and export one
+canonical Compose document. It is not a byte-for-byte copy.
 
-## Canonicalize without interpolation
+## Convert without interpolation
 
 Save this as `compose.yaml`:
 
@@ -29,7 +30,9 @@ compose-output/
 └── compose.yaml
 ```
 
-Compose expressions and extension fields remain native Compose data when interpolation is off.
+Every value crosses the neutral application model. Unresolved typed expressions are invalid at that
+boundary, and native-only extension fields require `--loss-policy partial` before BoxFerry can omit
+them. No same-format shortcut preserves unsupported native data.
 
 ## Interpolate explicitly
 

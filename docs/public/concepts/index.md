@@ -9,8 +9,8 @@ Compose ──┐                         ┌── Compose
 Quadlet ──┘                         └── Quadlet
 ```
 
-The current CLI exposes all four document routes. Future Docker, Podman, and Kubernetes routes
-remain unavailable until their independent Lens libraries exist.
+The current CLI exposes all four document routes. Podman import and export are the next integration
+phase through PodmanLens. Docker and Kubernetes remain deferred.
 
 ## Fidelity outcomes
 
@@ -46,9 +46,9 @@ Use `boxferry explain CODE` or open the rule's reference page.
 
 ## Same-format routes
 
-Compose-to-Compose uses ComposeLens native canonicalization, so valid unresolved expressions and
-extension data can survive without entering the neutral model. Quadlet-to-Quadlet uses the neutral
-model and therefore reports unsupported native intent like a cross-format conversion.
+Every same-format route uses its importer, the neutral model, and its exporter. Native-only intent
+is reported and governed by the same loss policy as a cross-format conversion. Unresolved typed
+expressions must be resolved before they can enter the neutral model.
 
-BoxFerry never infers target versions from the development machine and never applies generated
-output.
+BoxFerry never infers target versions from the development machine. It writes inert artifacts and
+never applies generated output or sends mutating runtime API requests.

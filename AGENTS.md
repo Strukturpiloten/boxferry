@@ -23,14 +23,16 @@ If a change contradicts an accepted ADR, update or supersede the ADR in the same
 - BoxFerry owns orchestration, the application model, conversion planning, adapters, diagnostics, and the CLI.
 - Compose parsing and rendering belong in `compose-lens`.
 - Quadlet parsing, rendering, and native version validation belong in `quadlet-lens`.
-- Native Docker protocol handling, version evidence, acquisition, deployment plans, and execution
-  belong in the future independent `docker-lens` project; BoxFerry owns only the semantic mapping.
-- Native Podman protocol handling, version evidence, acquisition, deployment plans, and execution
-  belong in the future independent `podman-lens` project; BoxFerry owns only the semantic mapping.
+- Native Docker protocol handling, version evidence, acquisition, and rendering belong in the
+  future independent `docker-lens` project; BoxFerry owns only the semantic mapping.
+- Native Podman protocol handling, version evidence, read-only acquisition, and deterministic
+  rendering belong in the independent `podman-lens` project; BoxFerry owns only the semantic
+  mapping.
 - Native Kubernetes resource handling and version validation belong in the future independent
   `kubernetes-lens` project; BoxFerry owns only the semantic mapping and supported-target policy.
-- Those three future Lens projects are deferred. Do not add placeholders, native runtime crates,
-  or private replacements for their responsibilities while they do not exist.
+- Podman integration is Phase 2 and proceeds independently of Docker. Docker and Kubernetes
+  integrations remain deferred. Do not add placeholders or private replacements for Lens
+  responsibilities.
 - Helm and Kustomize input should initially be rendered by their native tools and then handled as Kubernetes resources.
 - Format libraries must not depend on BoxFerry.
 
@@ -43,13 +45,16 @@ Using a third-party dependency is allowed when its license, maintenance state, a
 ## Non-negotiable behavior
 
 - Never silently discard user configuration.
+- Every native input must pass through its importer into the neutral model, and every native output
+  must be produced from that model by its exporter. Same-format native shortcuts are forbidden.
 - Every non-exact conversion must produce a structured outcome and an actionable diagnostic.
 - Preserve source locations and source-specific data long enough to explain conversion decisions.
 - Treat user input as fallible; malformed input must not panic the process.
 - Keep target compatibility explicit. Do not infer a target version from the development machine.
-- Keep file parsing free of runtime side effects.
-- Any future runtime inspection and external command execution must pass through replaceable
-  interfaces.
+- Keep file parsing free of runtime side effects. Read-only native acquisition must be explicit and
+  replaceable.
+- BoxFerry never applies generated artifacts, invokes generated commands, deploys infrastructure,
+  or sends mutating runtime API requests.
 - Secrets must be redacted from diagnostics, snapshots, and logs by default.
 
 ## Development rules
