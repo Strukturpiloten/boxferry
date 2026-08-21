@@ -1,0 +1,27 @@
+---
+name: ferry-pod
+services:
+  web:
+    image: example.invalid/web:1
+    userns_mode: keep-id
+    extra_hosts:
+      - host.docker.internal=host-gateway
+    ports:
+      - target: 80
+        published: "8080"
+        protocol: tcp
+    networks:
+      frontend: {}
+  worker:
+    image: example.invalid/worker:1
+    userns_mode: keep-id
+    extra_hosts:
+      - host.docker.internal=host-gateway
+    ports:
+      - target: 90
+        published: "9090"
+        protocol: tcp
+    networks:
+      frontend: {}
+networks:
+  frontend: {}

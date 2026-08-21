@@ -1,0 +1,5 @@
+---
+name: ferry-secrets
+services:
+  web:
+    image: example.invalid/web:1

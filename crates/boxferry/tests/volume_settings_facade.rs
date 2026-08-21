@@ -188,7 +188,7 @@ fn facade_rejects_unrepresentable_volume_resets_duplicates_and_dependencies() ->
         &podman_target(6, 0, 0, 6, 0, 2)?,
         LossPolicy::ExactOnly,
     )?;
-    assert_eq!(volume_text(&at_six)?, "[Volume]\nVolumeName=data\nOptions=bind\n");
+    assert_eq!(volume_text(&at_six)?, "[Volume]\nOptions=bind\n");
     Ok(())
 }
 

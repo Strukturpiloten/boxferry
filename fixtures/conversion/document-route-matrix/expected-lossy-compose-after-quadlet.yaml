@@ -1,0 +1,14 @@
+---
+name: lossy-chain
+services:
+  web:
+    image: example.invalid/web:1
+    labels:
+      com.example.metadata: LABEL-CANARY%h
+      com.example.literal-specifier: literal%h
+    annotations:
+      io.example.note: ANNOTATION-CANARY%h
+    logging:
+      driver: journald
+      options:
+        tag: LOGOPT-CANARY%h

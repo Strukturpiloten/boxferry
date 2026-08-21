@@ -1,0 +1,46 @@
+---
+name: ferry-demo
+services:
+  web:
+    container_name: ferry-web
+    image: registry.example:5000/team/web:1.3@sha256:fedcba
+    command:
+      - php
+      - -v
+    environment:
+      - EMPTY=
+      - FROM_HOST
+      - PORT=9090
+      - OVERRIDE_ONLY=enabled
+    user: "1001:1002"
+    userns_mode: keep-id
+    group_add:
+      - audio
+      - "44"
+    working_dir: /srv/app
+    read_only: true
+    restart: on-failure:3
+    extra_hosts:
+      - host.docker.internal=host-gateway
+      - ipv6=[::1]
+      - database=192.0.2.10
+    ports:
+      - target: 80
+        published: "8080"
+        host_ip: 127.0.0.1
+        protocol: tcp
+      - target: 8443
+        published: "8443"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: data
+        target: /var/lib/data
+        read_only: true
+      - "./config:/etc/app:Z,ro"
+      - ./shared:/srv/shared:z
+      - "./data:/srv/data:Z,ro"
+networks:
+  frontend: {}
+volumes:
+  data: {}

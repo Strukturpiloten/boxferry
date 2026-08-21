@@ -131,7 +131,29 @@ where
     I: ImportAdapter,
     E: ExportAdapter,
 {
-    let import = importer.import(source);
+    convert_imported(importer.import(source), exporter, target, policy)
+}
+
+/// Continues conversion from one completed native-to-neutral import.
+///
+/// This boundary lets orchestration select importers and exporters as independent
+/// dimensions while retaining the same validation, combined fidelity plan, and
+/// policy authorization used by convert.
+///
+/// # Errors
+///
+/// Returns [`ConversionError::Import`] when import has no usable application or
+/// contains an error diagnostic, and [`ConversionError::InvalidPlan`] when the
+/// export adapter violates plan invariants.
+pub fn convert_imported<E>(
+    import: ImportResult,
+    exporter: &E,
+    target: &TargetProfile,
+    policy: LossPolicy,
+) -> Result<ConversionResult<E::Output>, ConversionError>
+where
+    E: ExportAdapter,
+{
     let (application, import_outcomes, import_diagnostics) = import.into_parts();
     if application.is_none()
         || import_diagnostics

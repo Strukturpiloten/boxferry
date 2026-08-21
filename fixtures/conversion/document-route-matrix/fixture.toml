@@ -11,6 +11,9 @@ files = [
   "expected-compose-neutral.yaml",
   "expected-compose-interpolated.yaml",
   "expected-interpolated-web.container",
+  "expected-lossy-compose-after-quadlet.yaml",
+  "expected-lossy-web.container",
+  "lossy-compose.yaml",
   "expected-web.container",
   "invalid.container",
   "variables.env",
@@ -27,4 +30,97 @@ modifications = "none"
 description = "No host environment, project directory, runtime, or external process input is used."
 
 [expectations]
-summary = "Each Compose/Quadlet input-output pair passes through the neutral application model and has an exact reviewed result, while documentation variants cover explicit interpolation plus malformed and unresolved input without using ambient values."
+summary = "Each Compose/Quadlet input-output pair passes through the neutral application model and has an exact reviewed result; a realistic lossy Compose chain protects generated quoted assignments, while documentation variants cover explicit interpolation plus malformed and unresolved input without using ambient values."
+
+[extensions.matrix.inputs.compose]
+sources = ["compose.yaml"]
+
+[[extensions.matrix.inputs.compose.exports.compose]]
+artifact = "compose.yaml"
+expected = "expected-compose-neutral.yaml"
+
+[[extensions.matrix.inputs.compose.exports.quadlet]]
+artifact = "web.container"
+expected = "expected-web.container"
+
+[extensions.matrix.inputs.quadlet]
+sources = ["web.container"]
+application-name = "route-matrix"
+
+[[extensions.matrix.inputs.quadlet.exports.compose]]
+artifact = "compose.yaml"
+expected = "expected-compose-neutral.yaml"
+
+[[extensions.matrix.inputs.quadlet.exports.quadlet]]
+artifact = "web.container"
+expected = "expected-web.container"
+
+[[extensions.scenarios]]
+id = "normal-compose"
+input = "compose"
+sources = ["compose.yaml"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "exact"
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-compose-neutral.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "exact"
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "expected-web.container"
+
+[[extensions.scenarios]]
+id = "normal-quadlet"
+input = "quadlet"
+sources = ["web.container"]
+application-name = "route-matrix"
+
+[extensions.scenarios.exports.compose]
+loss-policy = "exact"
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-compose-neutral.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "exact"
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "expected-web.container"
+
+[[extensions.scenarios]]
+id = "lossy-compose"
+input = "compose"
+sources = ["lossy-compose.yaml"]
+protected-values = ["LABEL-CANARY", "ANNOTATION-CANARY", "LOGOPT-CANARY"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "partial"
+diagnostic-codes = ["BFC0007"]
+artifact-values = ["LABEL-CANARY", "ANNOTATION-CANARY", "LOGOPT-CANARY"]
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-lossy-compose-after-quadlet.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "partial"
+diagnostic-codes = ["BFQ0003", "BFQ0007", "BFQ0007"]
+fixed-diagnostic-codes = ["BFQ0007", "BFQ0007", "BFQ1003", "BFQ1003"]
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+artifact-values = ["LABEL-CANARY", "ANNOTATION-CANARY", "LOGOPT-CANARY"]
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "expected-lossy-web.container"

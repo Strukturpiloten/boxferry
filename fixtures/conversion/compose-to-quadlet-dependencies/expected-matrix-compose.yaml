@@ -1,0 +1,9 @@
+---
+name: dependency-demo
+services:
+  database:
+    image: example.invalid/database:1
+  cache:
+    image: example.invalid/cache:1
+  web:
+    image: example.invalid/web:1

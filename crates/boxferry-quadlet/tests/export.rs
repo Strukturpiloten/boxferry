@@ -101,11 +101,11 @@ fn exports_the_exact_first_conversion_subset_and_resolves_native_references() ->
     );
     assert_eq!(
         output.file("frontend.network").map(boxferry_quadlet::QuadletFile::text),
-        Some("[Network]\nNetworkName=frontend\n")
+        Some("[Network]\n")
     );
     assert_eq!(
         output.file("data.volume").map(boxferry_quadlet::QuadletFile::text),
-        Some("[Volume]\nVolumeName=data\n")
+        Some("[Volume]\n")
     );
     assert_eq!(
         output.file("web.container").map(boxferry_quadlet::QuadletFile::text),

@@ -6,7 +6,9 @@ mod outcome;
 mod rule;
 mod target;
 
-pub use adapter::{ConversionError, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter, convert};
+pub use adapter::{
+    ConversionError, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter, convert, convert_imported,
+};
 pub use diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, InvalidDiagnosticCode, NativeFinding,
     NativeFindingLabel, NativeFindingLabelKind, Severity,
@@ -20,8 +22,9 @@ mod integration_tests {
     use boxferry_model::{Application, Identifier};
 
     use crate::{
-        ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, ImportAdapter, ImportResult, InMemoryAdapter,
-        LossPolicy, PlatformVersion, Severity, TargetProfile, convert,
+        ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, ExportAdapter, ImportAdapter,
+        ImportResult, InMemoryAdapter, LossPolicy, PlanError, PlatformVersion, Severity, TargetProfile, convert,
+        convert_imported,
     };
 
     struct LossyImporter {
@@ -48,6 +51,24 @@ mod integration_tests {
         }
     }
 
+    struct ApplicationNameExporter;
+
+    impl ExportAdapter for ApplicationNameExporter {
+        type Output = String;
+
+        fn plan(
+            &self,
+            application: &Application,
+            _target: &TargetProfile,
+        ) -> Result<ConversionPlan<Self::Output>, PlanError> {
+            ConversionPlan::new(
+                Some(application.name().as_str().to_owned()),
+                vec![ConversionOutcome::exact("export.sentinel")],
+                Vec::new(),
+            )
+        }
+    }
+
     #[test]
     fn import_losses_participate_in_output_authorization() -> Result<(), String> {
         let application = Application::new(Identifier::new("example").map_err(|error| error.to_string())?);
@@ -66,6 +87,32 @@ mod integration_tests {
         assert!(partial.outcomes().iter().any(|outcome| {
             outcome.kind() == ConversionKind::Unsupported && outcome.subject() == "services.web.extension"
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn imported_boundary_passes_the_neutral_application_and_combines_outcomes() -> Result<(), String> {
+        let application = Application::new(Identifier::new("neutral-sentinel").map_err(|error| error.to_string())?);
+        let imported = ImportResult::new(
+            Some(application),
+            vec![ConversionOutcome::exact("import.sentinel")],
+            Vec::new(),
+        );
+        let target =
+            TargetProfile::new("target", PlatformVersion::new(1, 0, 0), None).map_err(|error| error.to_string())?;
+
+        let result = convert_imported(imported, &ApplicationNameExporter, &target, LossPolicy::ExactOnly)
+            .map_err(|error| error.to_string())?;
+
+        assert_eq!(result.output().map(String::as_str), Some("neutral-sentinel"));
+        assert_eq!(
+            result
+                .outcomes()
+                .iter()
+                .map(ConversionOutcome::subject)
+                .collect::<Vec<_>>(),
+            ["import.sentinel", "export.sentinel"]
+        );
         Ok(())
     }
 }

@@ -1,6 +1,9 @@
 //! Supported facade API exercised as an external crate would use it.
 
-use boxferry::{Application, Identifier, InMemoryAdapter, LossPolicy, PlatformVersion, TargetProfile, convert};
+use boxferry::{
+    Application, Identifier, ImportAdapter, InMemoryAdapter, LossPolicy, PlatformVersion, TargetProfile, convert,
+    convert_imported,
+};
 
 #[test]
 fn facade_exposes_report_dto_without_cli_features() {
@@ -51,6 +54,20 @@ fn facade_converts_through_public_adapter_contracts() -> Result<(), String> {
 
     let result =
         convert(&adapter, &application, &adapter, &target, LossPolicy::ExactOnly).map_err(|error| error.to_string())?;
+    assert_eq!(result.output().map(String::as_str), Some("rendered target"));
+    Ok(())
+}
+
+#[test]
+fn facade_continues_conversion_from_a_public_import_result() -> Result<(), String> {
+    let application = Application::new(Identifier::new("imported").map_err(|error| error.to_string())?);
+    let adapter = InMemoryAdapter::exact("rendered target".to_owned());
+    let target =
+        TargetProfile::new("podman", PlatformVersion::new(5, 4, 0), None).map_err(|error| error.to_string())?;
+
+    let result = convert_imported(adapter.import(&application), &adapter, &target, LossPolicy::ExactOnly)
+        .map_err(|error| error.to_string())?;
+
     assert_eq!(result.output().map(String::as_str), Some("rendered target"));
     Ok(())
 }

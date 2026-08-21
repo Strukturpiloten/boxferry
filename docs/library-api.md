@@ -18,7 +18,8 @@ Default features enable the useful CLI. Embedded applications can disable defaul
 1. Build or parse a native source explicitly.
 2. Import it through `ImportAdapter`.
 3. Select `TargetProfile` and `LossPolicy`.
-4. Export through `ExportAdapter` or call `boxferry::convert`.
+4. Export through `ExportAdapter`, call `boxferry::convert`, or continue an
+   already completed import with `boxferry::convert_imported`.
 5. Inspect `ConversionResult` and diagnostics before consuming the inert output.
 
 Core planning is pure. File, environment, and read-only native acquisition stay in explicit

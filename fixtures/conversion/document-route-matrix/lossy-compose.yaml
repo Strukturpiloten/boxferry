@@ -1,0 +1,21 @@
+---
+name: lossy-chain
+services:
+  web:
+    image: example.invalid/web:1
+    labels:
+      com.example.metadata: LABEL-CANARY%h
+      com.example.literal-specifier: literal%h
+    annotations:
+      io.example.note: ANNOTATION-CANARY%h
+    logging:
+      driver: journald
+      options:
+        tag: LOGOPT-CANARY%h
+    healthcheck:
+      test: ["CMD", "/usr/bin/healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
