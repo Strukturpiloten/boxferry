@@ -5,6 +5,13 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.5.0...boxferry-v0.5.1) - 2026-08-21
+
+### Changed
+
+- Add PodmanLens to the shared five-repository development workspace and verify its Dev Container
+  mount ([#37](https://github.com/Strukturpiloten/boxferry/pull/37)).
+
 ## [0.5.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.4.0...boxferry-v0.5.0) - 2026-08-19
 
 ### Added
