@@ -19,10 +19,10 @@ Default features enable the useful CLI. Embedded applications can disable defaul
 2. Import it through `ImportAdapter`.
 3. Select `TargetProfile` and `LossPolicy`.
 4. Export through `ExportAdapter` or call `boxferry::convert`.
-5. Inspect `ConversionResult` and diagnostics before applying output.
+5. Inspect `ConversionResult` and diagnostics before consuming the inert output.
 
-Core planning is pure. File access, environment access, native commands, and writes stay in
-caller-selected boundaries.
+Core planning is pure. File, environment, and read-only native acquisition stay in explicit
+caller-selected boundaries. Applying or deploying output is outside BoxFerry.
 
 ## Supported crates
 

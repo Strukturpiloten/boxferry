@@ -17,7 +17,7 @@ args = ["convert", "compose", "compose", "--input-file", "compose.yaml", "--outp
 copy = ["compose.yaml"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
-expected-files = [{ actual = "compose-output/compose.yaml", fixture = "expected-compose-native.yaml" }]
+expected-files = [{ actual = "compose-output/compose.yaml", fixture = "expected-compose-neutral.yaml" }]
 
 [[examples]]
 id = "compose-to-compose-interpolate"

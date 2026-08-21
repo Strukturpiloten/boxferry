@@ -42,9 +42,10 @@ Architecture decision records capture choices that constrain future development.
 | [0027](0027-format-neutral-native-findings.md)                        | accepted   | Format-neutral native findings retained by every source adapter                       |
 | [0028](0028-primary-remediation-guidance.md)                          | accepted   | Structured fix-first guidance without source syntax in target adapters                |
 | [0029](0029-nested-input-output-cli-routes.md)                        | accepted   | Nested input/output CLI routes and same-format normalization                          |
-| [0030](0030-native-compose-same-format-canonicalization.md)           | accepted   | Native Compose same-format canonicalization preserves unresolved expressions          |
+| [0030](0030-native-compose-same-format-canonicalization.md)           | superseded | Native Compose same-format canonicalization preserves unresolved expressions          |
 | [0031](0031-quadlet-systemd-environment-and-native-only-reporting.md) | accepted   | Loss-aware Quadlet semantic reporting without speculative systemd context             |
 | [0032](0032-future-native-lens-boundaries.md)                         | accepted   | Future independent Docker, Podman, and Kubernetes Lens ownership                      |
+| [0033](0033-universal-neutral-model-pipeline.md)                      | accepted   | Universal neutral-model pipeline and nonexecuting Podman-first roadmap                |
 
 ## Adding an ADR
 

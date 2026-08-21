@@ -2,12 +2,12 @@
 
 The current CLI supports Linux and four document routes.
 
-| Input   | Output  | Target contract                                |
-| ------- | ------- | ---------------------------------------------- |
-| Compose | Compose | Rolling Compose Specification canonicalization |
-| Compose | Quadlet | Podman 5.4.0 through 6.0.2 by default          |
-| Quadlet | Compose | Rolling Compose Specification generation       |
-| Quadlet | Quadlet | Podman 5.4.0 through 6.0.2 by default          |
+| Input   | Output  | Target contract                          |
+| ------- | ------- | ---------------------------------------- |
+| Compose | Compose | Rolling Compose Specification generation |
+| Compose | Quadlet | Podman 5.4.0 through 6.0.2 by default    |
+| Quadlet | Compose | Rolling Compose Specification generation |
+| Quadlet | Quadlet | Podman 5.4.0 through 6.0.2 by default    |
 
 Run `boxferry capabilities` for the installed build's exact route and version data.
 
@@ -30,9 +30,9 @@ can select exact provider-aware targets through the library API.
 
 ## Scope
 
-Docker runtime, Podman runtime, and Kubernetes routes are not available. They require future
-independent DockerLens, PodmanLens, and KubernetesLens projects. BoxFerry does not ship speculative
-runtime adapters.
+Podman routes are not available in the current release. They are the next integration phase through
+the existing independent PodmanLens project. Docker and Kubernetes remain deferred, and BoxFerry
+does not ship speculative adapters.
 
 Recognizing a native key does not guarantee every value converts exactly. When source and target
 semantics differ, the diagnostic and loss policy are the compatibility contract.

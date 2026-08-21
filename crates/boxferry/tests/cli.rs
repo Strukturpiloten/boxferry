@@ -333,11 +333,11 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
         .ok_or("Compose-to-Compose route")?;
     assert_eq!(
         compose_to_compose["fidelity_boundaries"]["exact"],
-        "compose-lens-native-canonical-project"
+        "supported-compose-compose-specification-intersection"
     );
     assert_eq!(
         compose_to_compose["fidelity_boundaries"]["policy_controlled"],
-        serde_json::json!([])
+        serde_json::json!(["unsupported-fields"])
     );
     let compose_to_quadlet = routes
         .iter()
@@ -1719,6 +1719,7 @@ fn compose_to_compose_merges_interpolates_and_writes_canonical_output() -> Resul
     assert_eq!(report["source_type"], "compose");
     assert_eq!(report["target_type"], "compose");
     assert_eq!(report["status"], "success");
+    assert!(report["fidelity"]["exact"].as_u64().is_some_and(|count| count > 0));
     assert_eq!(report["output_artifacts"].as_array().map(Vec::len), Some(1));
     let document = fs::read_to_string(output.path().join("compose.yaml"))?;
     assert_eq!(
@@ -1730,7 +1731,7 @@ fn compose_to_compose_merges_interpolates_and_writes_canonical_output() -> Resul
             "  web:\n",
             "    image: example.invalid/web:2\n",
             "    environment:\n",
-            "      MODE: override\n",
+            "      - MODE=override\n",
         )
     );
     assert_eq!(fs::read_dir(output.path())?.count(), 1);
@@ -1763,10 +1764,63 @@ fn compose_to_compose_merges_interpolates_and_writes_canonical_output() -> Resul
 }
 
 #[test]
-fn compose_to_compose_preserves_unresolved_expressions_and_defaults_without_interpolation() -> Result<(), Box<dyn Error>>
+fn compose_to_compose_preserves_unresolved_string_expressions_through_the_neutral_model() -> Result<(), Box<dyn Error>>
 {
-    let project = TemporaryOutput::new("compose-expression-preservation-project");
-    let output = TemporaryOutput::new("compose-expression-preservation-output");
+    let project = TemporaryOutput::new("compose-unresolved-string-project");
+    let output = TemporaryOutput::new("compose-unresolved-string-output");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("compose.yaml");
+    fs::write(
+        &input,
+        concat!(
+            "name: unresolved-strings\n",
+            "services:\n",
+            "  web:\n",
+            "    image: example.invalid/web:${TAG:-latest}\n",
+            "    environment:\n",
+            "      TOKEN: ${TOKEN:-default-value}\n",
+        ),
+    )?;
+
+    let converted = boxferry_command()
+        .args([
+            "convert",
+            "compose",
+            "compose",
+            "--input-file",
+            path_text(&input)?,
+            "--output-directory",
+            path_text(output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        converted.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&converted.stdout),
+        String::from_utf8_lossy(&converted.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&converted.stdout)?;
+    assert_eq!(report["status"], "success");
+    assert_eq!(
+        report["diagnostics"]
+            .as_array()
+            .ok_or("diagnostics")?
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFC0105")
+            .count(),
+        2
+    );
+    let document = fs::read_to_string(output.path().join("compose.yaml"))?;
+    assert!(document.contains("example.invalid/web:${TAG:-latest}"));
+    assert!(document.contains("TOKEN=${TOKEN:-default-value}"));
+    Ok(())
+}
+
+#[test]
+fn compose_to_compose_rejects_unresolved_typed_expressions_for_every_loss_policy() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("compose-unresolved-typed-project");
     fs::create_dir_all(project.path())?;
     let input = project.path().join("compose.yaml");
     fs::write(
@@ -1789,46 +1843,140 @@ fn compose_to_compose_preserves_unresolved_expressions_and_defaults_without_inte
         ),
     )?;
 
-    let converted = boxferry_command()
+    for policy in ["exact", "approximate", "partial"] {
+        let output = TemporaryOutput::new(&format!("compose-unresolved-typed-{policy}"));
+        let converted = boxferry_command()
+            .args([
+                "convert",
+                "compose",
+                "compose",
+                "--input-file",
+                path_text(&input)?,
+                "--loss-policy",
+                policy,
+                "--output-directory",
+                path_text(output.path())?,
+                "--console-format",
+                "json",
+            ])
+            .output()?;
+        assert_eq!(
+            converted.status.code(),
+            Some(1),
+            "policy={policy} stdout={} stderr={}",
+            String::from_utf8_lossy(&converted.stdout),
+            String::from_utf8_lossy(&converted.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&converted.stdout)?;
+        assert_eq!(report["status"], "failure");
+        assert_eq!(report["failed_stage"], "conversion");
+        assert_eq!(report["primary_diagnostic_code"], "BFC0005");
+        let diagnostics = report["diagnostics"].as_array().ok_or("diagnostics")?;
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic["code"] == "BFC0005")
+                .count(),
+            5
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic["code"] == "BFC0105")
+                .count(),
+            3
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic["code"] == "BFC0004")
+                .count(),
+            1
+        );
+        assert_eq!(report["output_artifacts"], serde_json::json!([]));
+        assert!(!output.path().exists());
+    }
+    Ok(())
+}
+
+#[test]
+fn compose_to_compose_requires_partial_policy_to_omit_native_only_fields() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("compose-native-only-project");
+    let partial_output = TemporaryOutput::new("compose-native-only-partial");
+    fs::create_dir_all(project.path())?;
+    let input = project.path().join("compose.yaml");
+    fs::write(
+        &input,
+        concat!(
+            "name: native-only\n",
+            "x-boxferry-test: extension-value\n",
+            "services:\n",
+            "  web:\n",
+            "    image: example.invalid/web:1\n",
+        ),
+    )?;
+
+    for policy in ["exact", "approximate"] {
+        let output = TemporaryOutput::new(&format!("compose-native-only-{policy}"));
+        let blocked = boxferry_command()
+            .args([
+                "convert",
+                "compose",
+                "compose",
+                "--input-file",
+                path_text(&input)?,
+                "--loss-policy",
+                policy,
+                "--output-directory",
+                path_text(output.path())?,
+                "--console-format",
+                "json",
+            ])
+            .output()?;
+        assert_eq!(blocked.status.code(), Some(2), "policy={policy}");
+        let report: serde_json::Value = serde_json::from_slice(&blocked.stdout)?;
+        assert_eq!(report["status"], "blocked");
+        assert_eq!(report["primary_diagnostic_code"], "BFC0004");
+        assert!(!output.path().exists());
+    }
+
+    let partial = boxferry_command()
         .args([
             "convert",
             "compose",
             "compose",
             "--input-file",
             path_text(&input)?,
+            "--loss-policy",
+            "partial",
             "--output-directory",
-            path_text(output.path())?,
+            path_text(partial_output.path())?,
             "--console-format",
             "json",
         ])
         .output()?;
     assert!(
-        converted.status.success(),
-        "stdout={}\nstderr={}",
-        String::from_utf8_lossy(&converted.stdout),
-        String::from_utf8_lossy(&converted.stderr)
+        partial.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&partial.stdout),
+        String::from_utf8_lossy(&partial.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&converted.stdout)?;
-    assert_eq!(report["status"], "success");
-    assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
-    assert_eq!(report["fidelity"]["exact"], 0);
-    assert_eq!(report["fidelity"]["approximate"], 0);
-    assert_eq!(report["fidelity"]["unsupported"], 0);
-
-    let document = fs::read_to_string(output.path().join("compose.yaml"))?;
-    for expression in [
-        "${EXTENSION_VALUE:-extension-default}",
-        "${TAG:-latest}",
-        "${RESTART_POLICY:-unless-stopped}",
-        "${READ_ONLY:-true}",
-        "${INIT:-true}",
-        "${STOP_TIMEOUT:-30s}",
-        "${PULL_POLICY:-missing}",
-        "${VALUE:-default-value}",
-        "${DATA_PATH:-./data}",
-    ] {
-        assert!(document.contains(expression), "missing {expression}:\n{document}");
-    }
+    let partial_report: serde_json::Value = serde_json::from_slice(&partial.stdout)?;
+    assert_eq!(partial_report["status"], "success");
+    assert!(
+        partial_report["fidelity"]["unsupported"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert!(
+        partial_report["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFC0004"))
+    );
+    let document = fs::read_to_string(partial_output.path().join("compose.yaml"))?;
+    assert!(document.contains("example.invalid/web:1"));
+    assert!(!document.contains("x-boxferry-test"));
+    assert!(!document.contains("extension-value"));
     Ok(())
 }
 

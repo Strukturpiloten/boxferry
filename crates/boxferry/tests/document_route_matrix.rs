@@ -19,8 +19,8 @@ use boxferry::compose::compose_lens::{
 use boxferry::quadlet::quadlet_lens::source::SourceId as QuadletSourceId;
 use boxferry::{
     COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeImporter,
-    ComposeSource, Identifier, ImportAdapter, LossPolicy, PlatformVersion, QuadletDocumentInput, QuadletExporter,
-    QuadletImporter, QuadletSource, SourceId, TargetProfile, convert,
+    ComposeSource, Identifier, LossPolicy, PlatformVersion, QuadletDocumentInput, QuadletExporter, QuadletImporter,
+    QuadletSource, SourceId, TargetProfile, convert,
 };
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -42,7 +42,7 @@ const ROUTES: [Route; 4] = [
         input: "compose",
         output: "compose",
         source: "compose.yaml",
-        expected: "expected-compose-native.yaml",
+        expected: "expected-compose-neutral.yaml",
         artifact: "compose.yaml",
         application_name: None,
     },
@@ -231,19 +231,12 @@ fn malformed_native_input_fails_before_writing_for_every_document_route() -> Res
 }
 
 #[test]
-fn public_facade_preserves_the_reviewed_native_and_neutral_route_boundaries() -> Result<(), Box<dyn Error>> {
+fn public_facade_routes_every_pair_through_the_neutral_application() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory();
-    let expected_compose_native = fs::read_to_string(fixture.join("expected-compose-native.yaml"))?;
-    let expected_compose_neutral = fs::read_to_string(fixture.join("expected-compose-neutral.yaml"))?;
+    let expected_compose = fs::read_to_string(fixture.join("expected-compose-neutral.yaml"))?;
     let expected_quadlet = fs::read_to_string(fixture.join("expected-web.container"))?;
     let compose_source = load_compose_source(&fixture)?;
     let quadlet_source = load_quadlet_source(&fixture)?;
-
-    let native = compose_source.canonicalize()?;
-    assert_eq!(
-        native.document().map(boxferry::CanonicalComposeDocument::text),
-        Some(expected_compose_native.as_str())
-    );
 
     let compose_importer = ComposeImporter::new()?;
     let quadlet_importer = QuadletImporter::new()?;
@@ -260,6 +253,23 @@ fn public_facade_preserves_the_reviewed_native_and_neutral_route_boundaries() ->
         PlatformVersion::new(5, 4, 0),
         Some(PlatformVersion::new(6, 0, 2)),
     )?;
+
+    let compose_to_compose = convert(
+        &compose_importer,
+        &compose_source,
+        &compose_exporter,
+        &compose_target,
+        LossPolicy::ExactOnly,
+    )?;
+    assert!(
+        !compose_to_compose.is_blocked(),
+        "{:#?}",
+        compose_to_compose.diagnostics()
+    );
+    assert_eq!(
+        compose_to_compose.output().map(GeneratedComposeDocument::text),
+        Some(expected_compose.as_str())
+    );
 
     let compose_to_quadlet = convert(
         &compose_importer,
@@ -295,7 +305,7 @@ fn public_facade_preserves_the_reviewed_native_and_neutral_route_boundaries() ->
     );
     assert_eq!(
         quadlet_to_compose.output().map(GeneratedComposeDocument::text),
-        Some(expected_compose_neutral.as_str())
+        Some(expected_compose.as_str())
     );
 
     let quadlet_to_quadlet = convert(
@@ -318,17 +328,6 @@ fn public_facade_preserves_the_reviewed_native_and_neutral_route_boundaries() ->
         Some(expected_quadlet.as_str())
     );
 
-    let native_application = ComposeImporter::new()?
-        .import(&load_compose_source_from_text(&expected_compose_native)?)
-        .application()
-        .ok_or("native Compose application")?
-        .clone();
-    let neutral_application = ComposeImporter::new()?
-        .import(&load_compose_source_from_text(&expected_compose_neutral)?)
-        .application()
-        .ok_or("neutral Compose application")?
-        .clone();
-    assert_shared_compose_intent(&native_application, &neutral_application)?;
     Ok(())
 }
 
@@ -415,29 +414,6 @@ fn load_quadlet_source(fixture: &Path) -> Result<QuadletSource, Box<dyn Error>> 
         )],
     )?
     .into_source())
-}
-
-fn assert_shared_compose_intent(
-    native: &boxferry::Application,
-    neutral: &boxferry::Application,
-) -> Result<(), Box<dyn Error>> {
-    assert_eq!(native.name(), neutral.name());
-    let native_service = native.services().first().ok_or("native web service")?.value();
-    let neutral_service = neutral.services().first().ok_or("neutral web service")?.value();
-    assert_eq!(native_service.name(), neutral_service.name());
-    assert_eq!(
-        native_service.image().map(|value| value.value().as_str()),
-        neutral_service.image().map(|value| value.value().as_str())
-    );
-    assert_eq!(
-        native_service.runtime_name().map(|value| value.value().expose()),
-        neutral_service.runtime_name().map(|value| value.value().expose())
-    );
-    assert_eq!(
-        native_service.restart_policy().map(boxferry::Sourced::value),
-        neutral_service.restart_policy().map(boxferry::Sourced::value)
-    );
-    Ok(())
 }
 
 fn boxferry_command() -> Command {

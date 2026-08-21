@@ -29,16 +29,20 @@ by embedded Rust callers.
 5. Apply the selected loss policy to the combined plan.
 6. Write create-new files only when authorized.
 
-Parsing and planning have no runtime side effects. BoxFerry does not infer target versions from the
-development machine.
+Parsing and planning have no mutating runtime side effects. Explicit read-only acquisition can feed
+a native importer, but BoxFerry never applies output or sends mutating runtime requests. BoxFerry
+does not infer target versions from the development machine.
 
 ## Same-format behavior
 
-Compose-to-Compose uses ComposeLens native canonicalization so unresolved expressions and extension
-data remain native. The other three routes use the neutral model.
+Every route uses the same importer-to-neutral-model-to-exporter pipeline. Same-format conversion is
+not passthrough or native canonicalization. Native-only intent remains visible through normal
+outcomes and loss policy.
 
 ## Future native formats
 
-DockerLens, PodmanLens, and KubernetesLens will own their native protocols, version evidence,
-deployment plans, and execution safety. BoxFerry will add only semantic mappings after those
-libraries publish reviewed contracts. See [ADR 0032](decisions/0032-future-native-lens-boundaries.md).
+PodmanLens owns Podman protocols, read-only acquisition, native types, version evidence,
+diagnostics, and deterministic rendering. Podman semantic integration is Phase 2 and does not wait
+for DockerLens. Docker and Kubernetes integrations remain deferred. BoxFerry adds semantic mappings
+only and never becomes an infrastructure deployment tool. See
+[ADR 0033](decisions/0033-universal-neutral-model-pipeline.md).

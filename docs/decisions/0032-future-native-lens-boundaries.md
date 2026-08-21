@@ -16,6 +16,8 @@
   [ADR 0017](0017-n-to-n-adapter-matrix.md)
 - Amends: [ADR 0001](0001-project-boundaries-and-origin.md) and
   [ADR 0026](0026-typed-diagnostic-rule-catalogue.md)
+- Amended by: [ADR 0033](0033-universal-neutral-model-pipeline.md) for Podman integration readiness,
+  the Podman-first sequence, and BoxFerry's permanent nonexecuting boundary
 
 ## Context
 

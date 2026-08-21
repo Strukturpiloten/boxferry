@@ -1865,6 +1865,34 @@ fn retains_invalid_released_settings_without_claiming_exact_source_conversion() 
     Ok(())
 }
 
+#[test]
+fn rejects_a_profile_selection_from_a_different_merged_project() -> Result<(), Box<dyn Error>> {
+    let selected = merged_project([(
+        ComposeSourceId::new(198),
+        "selected.compose.yaml",
+        "services:\n  selected:\n    image: example.invalid/selected:1\n",
+    )])?;
+    let imported = merged_project([(
+        ComposeSourceId::new(199),
+        "imported.compose.yaml",
+        "services:\n  imported:\n    image: example.invalid/imported:1\n",
+    )])?;
+    let selection = select_profiles(&selected, &ProfileRequest::new());
+    let source = ComposeSource::new(imported, Identifier::new("profile-mismatch")?)?.with_profile_selection(selection);
+
+    let result = ComposeImporter::new()?.import(&source);
+    assert!(result.application().is_none());
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| { diagnostic.code().as_str() == "BFC0003" && diagnostic.severity() == Severity::Error }),
+        "{:#?}",
+        result.diagnostics()
+    );
+    Ok(())
+}
+
 fn processed_project(
     base: &str,
     overlay: &str,

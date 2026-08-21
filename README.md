@@ -6,13 +6,13 @@ selected loss policy authorizes it.
 
 ## Supported document routes
 
-| Input   | Compose output    | Quadlet output          |
-| ------- | ----------------- | ----------------------- |
-| Compose | Canonical Compose | Canonical Quadlet files |
-| Quadlet | Canonical Compose | Canonical Quadlet files |
+| Input   | Compose output        | Quadlet output          |
+| ------- | --------------------- | ----------------------- |
+| Compose | Neutral-model Compose | Canonical Quadlet files |
+| Quadlet | Neutral-model Compose | Canonical Quadlet files |
 
-Docker runtime, Podman runtime, and Kubernetes routes remain future work in independent Lens
-projects. They are not advertised as available.
+Podman import and export are the next integration phase through the independent PodmanLens library.
+Docker and Kubernetes remain deferred.
 
 ## Install and convert
 
@@ -23,8 +23,9 @@ cargo install boxferry --locked
 boxferry convert compose quadlet --input-file compose.yaml --output-directory quadlet-output
 ```
 
-The output directory may be absent or empty. BoxFerry rejects any directory containing an entry
-and never starts generated units.
+The output directory may be absent or empty. BoxFerry rejects any directory containing an entry.
+It writes inert artifacts only: it never executes generated commands, starts units, deploys
+infrastructure, or sends mutating runtime API requests.
 
 Compose interpolation is disabled by default. Enable it explicitly with `--interpolate`, then add
 values with `--env-file FILE` or `--env NAME=VALUE`. BoxFerry reads no implicit `.env` file and no
