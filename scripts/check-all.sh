@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=22
+readonly total_steps=23
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -146,6 +146,7 @@ fi
 
 run_step "Format Rust" cargo fmt --all
 run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
+run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh
 run_step "Check whitespace errors" git --no-pager diff --check
 run_step "Lint GitHub Actions syntax" actionlint
 run_step "Audit GitHub Actions security" zizmor .github/workflows

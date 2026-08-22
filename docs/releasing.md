@@ -16,6 +16,8 @@ compatibility code solely to avoid the release.
 
 1. Merge release-worthy code after the complete local and hosted gates pass.
 2. Review the release-plz pull request, lockstep versions, dependency requirements, and changelog.
+   Its PR gate runs the same current-version release-metadata and changelog validator as the local
+   and protected release gates; a version bump without dated, non-empty notes cannot pass.
 3. Merge the release pull request.
 4. Run the protected release workflow for the selected version.
 5. Verify crates.io packages, checksums, tag, GitHub release, and installation.

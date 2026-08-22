@@ -154,6 +154,15 @@ jobs:
           fail: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  release-metadata:
+    name: Release metadata and changelog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - *checkout
+      - name: Validate current-version release metadata and changelog
+        run: bash scripts/validate-release-metadata.sh
+
   semver-release-type:
     name: SemVer release type
     runs-on: ubuntu-24.04
@@ -249,7 +258,17 @@ jobs:
     name: PR gate
     if: always()
     needs:
-      [rust, msrv, dependencies, documentation, semver-release-type, semver, coverage, portability]
+      [
+        rust,
+        msrv,
+        dependencies,
+        documentation,
+        release-metadata,
+        semver-release-type,
+        semver,
+        coverage,
+        portability,
+      ]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every deterministic PR job to succeed
@@ -259,6 +278,7 @@ jobs:
           MSRV_RESULT: ${{ needs.msrv.result }}
           DEPENDENCIES_RESULT: ${{ needs.dependencies.result }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
           SEMVER_RELEASE_TYPE_RESULT: ${{ needs.semver-release-type.result }}
           SEMVER_RESULT: ${{ needs.semver.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
@@ -270,6 +290,7 @@ jobs:
             "MSRV|${MSRV_RESULT}"
             "Dependency and license policy|${DEPENDENCIES_RESULT}"
             "Documentation|${DOCUMENTATION_RESULT}"
+            "Release metadata and changelog|${RELEASE_METADATA_RESULT}"
             "SemVer release type|${SEMVER_RELEASE_TYPE_RESULT}"
             "SemVer|${SEMVER_RESULT}"
             "Coverage ratchet|${COVERAGE_RESULT}"

@@ -145,6 +145,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "list_existing_files",
         "cargo fmt --all",
         "bash scripts/check-files.sh --fix",
+        "bash scripts/validate-release-metadata.sh",
         "git --no-pager diff --check",
         "actionlint",
         "zizmor .github/workflows",
@@ -586,8 +587,10 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         "runs-on: macos-14",
         "run: cargo ci-check",
         "run: cargo ci-test",
+        "  release-metadata:\n    name: Release metadata and changelog",
+        "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: PR gate\n    if: always()",
-        "needs:\n      [rust, msrv, dependencies, documentation, semver-release-type, semver, coverage, portability]",
+        "needs:\n      [\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        portability,\n      ]",
     ] {
         if !workflow.contains(required) {
             return Err(format!("CI workflow is missing contract `{required}`"));
@@ -599,6 +602,11 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         ("MSRV", "MSRV_RESULT", "msrv"),
         ("Dependency and license policy", "DEPENDENCIES_RESULT", "dependencies"),
         ("Documentation", "DOCUMENTATION_RESULT", "documentation"),
+        (
+            "Release metadata and changelog",
+            "RELEASE_METADATA_RESULT",
+            "release-metadata",
+        ),
         (
             "SemVer release type",
             "SEMVER_RELEASE_TYPE_RESULT",
@@ -644,6 +652,7 @@ fn release_workflow_rechecks_coverage_and_msrv_contracts() -> Result<(), String>
         .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
 
     for required in [
+        "bash scripts/validate-release-metadata.sh",
         "rustup component add llvm-tools-preview",
         "cargo install --locked --version 0.8.7 cargo-llvm-cov",
         "cargo llvm-cov clean --locked",
@@ -655,6 +664,74 @@ fn release_workflow_rechecks_coverage_and_msrv_contracts() -> Result<(), String>
     ] {
         if !workflow.contains(required) {
             return Err(format!("release workflow is missing validation guard `{required}`"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
+    let root = repository_root();
+    let script_path = root.join("scripts/validate-release-metadata.sh");
+    let script = fs::read_to_string(&script_path)
+        .map_err(|error| format!("failed to read {}: {error}", script_path.display()))?;
+
+    for required in [
+        "cargo metadata --locked --no-deps --format-version 1",
+        "workspace packages must use one version",
+        "select(.publish == [])",
+        "bash scripts/extract-release-notes.sh",
+        "CHANGELOG.md does not contain usable release notes",
+        "Release metadata and changelog are valid",
+    ] {
+        if !script.contains(required) {
+            return Err(format!("shared release validator is missing {required}"));
+        }
+    }
+    for package in PUBLISHED_PACKAGES {
+        if !script.contains(package) {
+            return Err(format!("shared release validator is missing package {package}"));
+        }
+    }
+
+    for (path, required) in [
+        (
+            "scripts/check-all.sh",
+            "run_step \"Validate release metadata and changelog\" bash scripts/validate-release-metadata.sh",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "  release-metadata:\n    name: Release metadata and changelog",
+        ),
+        (
+            ".github/workflows/release.yml",
+            "bash scripts/validate-release-metadata.sh",
+        ),
+    ] {
+        let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        if text.matches("bash scripts/validate-release-metadata.sh").count() != 1 || !text.contains(required) {
+            return Err(format!("{path} must invoke the shared release validator exactly once"));
+        }
+    }
+
+    let release = fs::read_to_string(root.join(".github/workflows/release.yml"))
+        .map_err(|error| format!("failed to read release workflow: {error}"))?;
+    if release.contains("metadata=\"$(cargo metadata --locked") {
+        return Err("release workflow must not duplicate shared release metadata validation".to_owned());
+    }
+
+    for (path, required) in [
+        (
+            "docs/releasing.md",
+            "a version bump without dated, non-empty notes cannot pass",
+        ),
+        ("docs/testing.md", "dedicated job required by the aggregate gate"),
+    ] {
+        let contents =
+            fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        if !contents.contains(required) {
+            return Err(format!("{path} is missing shared release-validation documentation"));
         }
     }
 
@@ -930,7 +1007,6 @@ fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
         "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1",
         "Create or verify annotated release tag",
         "Publish immutable GitHub release",
-        "Release package metadata is invalid:",
         "Could not read the numeric ID of the existing draft release",
         "GitHub did not return a numeric release ID after creating draft",
         "GitHub did not return a valid release asset upload URL",

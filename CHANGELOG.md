@@ -5,6 +5,13 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.7.0...boxferry-v0.7.1) - 2026-08-22
+
+### Changed
+
+- Make every public Podman conversion route executable and corpus-backed, including all-exporter
+  re-import and deterministic fixed-point coverage ([#51](https://github.com/Strukturpiloten/boxferry/pull/51)).
+
 ## [0.7.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.6.0...boxferry-v0.7.0) - 2026-08-22
 
 ### Added
