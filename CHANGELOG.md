@@ -5,6 +5,13 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.5.1...boxferry-v0.6.0) - 2026-08-22
+
+### Changed
+
+- [**breaking**] complete the neutral route scenario matrix ([#46](https://github.com/Strukturpiloten/boxferry/pull/46))
+- [**breaking**] enforce the neutral Compose conversion pipeline ([#43](https://github.com/Strukturpiloten/boxferry/pull/43))
+
 ## [0.5.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.5.0...boxferry-v0.5.1) - 2026-08-21
 
 ### Changed
