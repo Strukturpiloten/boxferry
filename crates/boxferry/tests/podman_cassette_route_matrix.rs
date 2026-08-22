@@ -6,7 +6,7 @@
 mod podman_cassette;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fs,
     path::{Path, PathBuf},
@@ -15,12 +15,60 @@ use std::{
 };
 
 use podman_cassette::{PodmanCassette, PodmanCassetteServer};
+use serde::Deserialize;
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 const VERSIONS: [&str; 7] = ["5.4.0", "5.5.0", "5.6.0", "5.7.0", "5.8.6", "6.0.0", "6.1.0"];
 const CONTEXTS: [&str; 2] = ["rootful", "rootless"];
 const OUTPUTS: [&str; 3] = ["compose", "quadlet", "podman"];
+
+#[derive(Debug, Deserialize)]
+struct CorpusManifest {
+    files: BTreeSet<String>,
+    extensions: CorpusExtensions,
+}
+
+#[derive(Debug, Deserialize)]
+struct CorpusExtensions {
+    #[serde(rename = "podman-corpus")]
+    podman_corpus: PodmanCorpus,
+}
+
+#[derive(Debug, Deserialize)]
+struct PodmanCorpus {
+    artifacts: Vec<HashedArtifact>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HashedArtifact {
+    file: String,
+    sha256: String,
+}
+
+#[test]
+fn cassette_manifest_hashes_pin_every_reviewed_artifact() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory();
+    let manifest: CorpusManifest = toml::from_str(&fs::read_to_string(fixture.join("fixture.toml"))?)?;
+    let artifacts = manifest
+        .extensions
+        .podman_corpus
+        .artifacts
+        .into_iter()
+        .map(|artifact| (artifact.file, artifact.sha256))
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(artifacts.len(), VERSIONS.len() * CONTEXTS.len());
+    assert_eq!(artifacts.keys().cloned().collect::<BTreeSet<_>>(), manifest.files);
+    for (file, expected) in artifacts {
+        assert_eq!(
+            sha256(&fixture.join(&file))?,
+            expected,
+            "cassette hash drifted for {file}"
+        );
+    }
+    Ok(())
+}
 
 #[test]
 fn every_complex_cassette_replays_through_every_exporter() -> Result<(), Box<dyn Error>> {
@@ -52,6 +100,8 @@ fn every_complex_cassette_replays_through_every_exporter() -> Result<(), Box<dyn
                 }
             }
 
+            assert_document_reimports(&name, context, root.path())?;
+
             let first = root.path().join(format!("{name}-podman"));
             let repeated = root.path().join(format!("{name}-podman-repeat"));
             let result = run_route(&cassette_path, "podman", context, &repeated)?;
@@ -68,6 +118,147 @@ fn every_complex_cassette_replays_through_every_exporter() -> Result<(), Box<dyn
     }
 
     assert_eq!(scenarios.len(), VERSIONS.len() * CONTEXTS.len());
+    Ok(())
+}
+
+fn assert_document_reimports(name: &str, context: &str, root: &Path) -> Result<(), Box<dyn Error>> {
+    for input in ["compose", "quadlet"] {
+        let source = root.join(format!("{name}-{input}"));
+        for output in OUTPUTS {
+            let route = format!("{input}-to-{output}");
+            let first = root.join(format!("{name}-{route}-reimport"));
+            let result = run_document_conversion(input, output, &source, &first, context)?;
+            let first_report = assert_document_route(&result, name, input, output, &first)?;
+
+            let repeated = root.join(format!("{name}-{route}-repeat"));
+            let result = run_document_conversion(input, output, &source, &repeated, context)?;
+            let repeated_report = assert_document_route(&result, name, input, output, &repeated)?;
+            assert_eq!(
+                repeated_report["fidelity"], first_report["fidelity"],
+                "{name}: {input} -> {output} fidelity counts are not repeatable"
+            );
+            assert_eq!(
+                repeated_report["diagnostics"], first_report["diagnostics"],
+                "{name}: {input} -> {output} diagnostic sequence is not repeatable"
+            );
+            assert_eq!(
+                artifact_snapshot(&repeated)?,
+                artifact_snapshot(&first)?,
+                "{name}: {input} -> {output} output depends on destination path or repetition"
+            );
+
+            if input == output {
+                assert_eq!(
+                    artifact_snapshot(&first)?,
+                    artifact_snapshot(&source)?,
+                    "{name}: cassette-produced {input} projection changed after neutral-model re-import"
+                );
+            }
+
+            if output != "podman" {
+                let canonical = root.join(format!("{name}-{route}-canonical"));
+                let result = run_document_conversion(output, output, &first, &canonical, context)?;
+                let canonical_report = assert_document_route(&result, name, output, output, &canonical)?;
+                assert_eq!(
+                    artifact_snapshot(&canonical)?,
+                    artifact_snapshot(&first)?,
+                    "{name}: generated {input} -> {output} document is not a semantic fixed point"
+                );
+
+                let fixed = root.join(format!("{name}-{route}-fixed"));
+                let result = run_document_conversion(output, output, &canonical, &fixed, context)?;
+                let fixed_report = assert_document_route(&result, name, output, output, &fixed)?;
+                assert_eq!(
+                    fixed_report["fidelity"], canonical_report["fidelity"],
+                    "{name}: chained {output} fidelity counts are not stable"
+                );
+                assert_eq!(
+                    fixed_report["diagnostics"], canonical_report["diagnostics"],
+                    "{name}: chained {output} diagnostic sequence is not stable"
+                );
+                assert_eq!(
+                    artifact_snapshot(&fixed)?,
+                    artifact_snapshot(&canonical)?,
+                    "{name}: chained {input} -> {output} document output has no deterministic fixed point"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn assert_document_route(
+    result: &Output,
+    scenario: &str,
+    input: &str,
+    output: &str,
+    directory: &Path,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    assert_route_succeeded(result, scenario, &format!("{input} -> {output} re-import"))?;
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(report["schema_version"], 1);
+    assert_eq!(report["status"], "success");
+    assert_eq!(report["exit_category"], "success");
+    assert_eq!(report["source_type"], input);
+    assert_eq!(report["target_type"], output);
+    assert_eq!(report["application"], "complex");
+    assert!(report["failed_stage"].is_null());
+    let fidelity = report["fidelity"].as_object().ok_or("missing fidelity counts")?;
+    for class in ["exact", "approximate", "unsupported"] {
+        assert!(fidelity.get(class).is_some_and(serde_json::Value::is_u64));
+    }
+    assert!(report["diagnostics"].is_array(), "missing diagnostic sequence");
+    assert!(
+        report["output_artifacts"]
+            .as_array()
+            .is_some_and(|artifacts| !artifacts.is_empty())
+    );
+    assert!(!String::from_utf8_lossy(&result.stdout).contains(".sock"));
+    assert_document_output(output, directory)?;
+    for artifact in artifact_paths(directory)? {
+        assert!(
+            !fs::read_to_string(&artifact)?.contains(".sock"),
+            "{scenario}: {input} -> {output} disclosed a socket path in {}",
+            artifact.display()
+        );
+    }
+    Ok(report)
+}
+
+fn assert_document_output(output: &str, directory: &Path) -> Result<(), Box<dyn Error>> {
+    match output {
+        "compose" => {
+            assert_eq!(artifact_names(directory)?, ["compose.yaml"]);
+            assert!(fs::read_to_string(directory.join("compose.yaml"))?.contains("services:"));
+        }
+        "quadlet" => {
+            let names = artifact_names(directory)?;
+            assert!(!names.is_empty(), "document conversion produced no Quadlet artifacts");
+            for name in names {
+                assert!(
+                    fs::read_to_string(directory.join(name))?.contains('['),
+                    "document conversion produced an empty Quadlet artifact"
+                );
+            }
+        }
+        "podman" => {
+            assert_eq!(artifact_names(directory)?, ["podman.json", "review.sh"]);
+            let deployment: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("podman.json"))?)?;
+            assert_eq!(deployment["schema_version"], 1);
+            assert!(matches!(
+                deployment["status"].as_str(),
+                Some("exact" | "manual" | "approximate")
+            ));
+            assert!(deployment["connection"].is_null());
+            assert!(
+                deployment["operations"]
+                    .as_array()
+                    .is_some_and(|operations| !operations.is_empty())
+            );
+            assert!(fs::read_to_string(directory.join("review.sh"))?.contains("podman"));
+        }
+        _ => return Err(format!("unhandled output {output}").into()),
+    }
     Ok(())
 }
 
@@ -277,6 +468,31 @@ fn run_route(cassette_path: &Path, output: &str, context: &str, directory: &Path
     )
 }
 
+fn run_document_conversion(
+    input: &str,
+    output: &str,
+    source_directory: &Path,
+    output_directory: &Path,
+    context: &str,
+) -> Result<Output, Box<dyn Error>> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+    command.args(["convert", input, output]);
+    for source in artifact_paths(source_directory)? {
+        command.arg("--input-file").arg(source);
+    }
+    if input == "quadlet" {
+        command.args(["--application-name", "complex"]);
+    }
+    if output == "podman" {
+        command.args(["--podman-target-context", context]);
+    }
+    command
+        .args(["--loss-policy", "partial", "--output-directory"])
+        .arg(output_directory)
+        .args(["--console-format", "json"]);
+    Ok(command.output()?)
+}
+
 fn run_cassette(
     cassette: PodmanCassette,
     output: &str,
@@ -443,6 +659,40 @@ fn artifact_names(directory: &Path) -> Result<Vec<String>, Box<dyn Error>> {
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     names.sort();
     Ok(names)
+}
+
+fn artifact_paths(directory: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    Ok(artifact_names(directory)?
+        .into_iter()
+        .map(|name| directory.join(name))
+        .collect())
+}
+
+fn artifact_snapshot(directory: &Path) -> Result<BTreeMap<String, Vec<u8>>, Box<dyn Error>> {
+    artifact_names(directory)?
+        .into_iter()
+        .map(|name| Ok((name.clone(), fs::read(directory.join(name))?)))
+        .collect()
+}
+
+fn sha256(path: &Path) -> Result<String, Box<dyn Error>> {
+    #[cfg(target_os = "macos")]
+    let output = Command::new("shasum").args(["-a", "256"]).arg(path).output()?;
+    #[cfg(not(target_os = "macos"))]
+    let output = Command::new("sha256sum").arg(path).output()?;
+
+    if !output.status.success() {
+        return Err(format!("SHA-256 command failed for {}", path.display()).into());
+    }
+    let stdout = String::from_utf8(output.stdout)?;
+    let digest = stdout
+        .split_whitespace()
+        .next()
+        .ok_or("SHA-256 command returned no digest")?;
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid SHA-256 digest for {}: {digest}", path.display()).into());
+    }
+    Ok(digest.to_owned())
 }
 
 fn fixture_directory() -> PathBuf {
