@@ -20,7 +20,7 @@ compatibility code solely to avoid the release.
 4. Run the protected release workflow for the selected version.
 5. Verify crates.io packages, checksums, tag, GitHub release, and installation.
 
-The five supported crates publish in dependency order and use one version. Release notes are
+The six supported crates publish in dependency order and use one version. Release notes are
 extracted from `CHANGELOG.md`; no separate release-note files are maintained.
 
 Yank a version only when it is unsafe or unusable. A normal bug receives a follow-up release.

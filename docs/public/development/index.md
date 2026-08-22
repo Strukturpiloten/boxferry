@@ -1,7 +1,7 @@
 # Development
 
 BoxFerry is a Rust workspace with separate crates for the neutral model, conversion engine,
-Compose mapping, Quadlet mapping, and public facade/CLI.
+Compose mapping, Podman mapping, Quadlet mapping, and public facade/CLI.
 
 - [Architecture](architecture/)
 - [Rust API](rust-api/)

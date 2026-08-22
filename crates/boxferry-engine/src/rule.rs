@@ -41,6 +41,14 @@ pub enum RuleId {
     OutputWriteFailed = 3_002_003,
     ReportWriteFailed = 3_003_001,
     SupportBundleWriteFailed = 3_003_002,
+    PodmanSourceInvalid = 4_000_001,
+    PodmanInputUnmodelled = 4_000_002,
+    PodmanPromotionRequired = 4_000_003,
+    PodmanIdentityConflict = 4_000_004,
+    PodmanSecretGrantIncomplete = 4_000_005,
+    PodmanTargetInvalid = 4_000_006,
+    PodmanOutputUnsupported = 4_000_007,
+    PodmanPlanningFailed = 4_000_008,
     QuadletTargetInvalid = 5_000_001,
     QuadletOpenEndedTarget = 5_000_002,
     QuadletOutputUnsupported = 5_000_003,
@@ -107,6 +115,7 @@ impl DiagnosticRule {
         match self.code.as_bytes().get(..3) {
             Some(b"BFC") => "Compose adapter",
             Some(b"BFO") => "BoxFerry orchestration",
+            Some(b"BFP") => "Podman adapter",
             Some(b"BFQ") => "Quadlet adapter",
             _ => "BoxFerry engine",
         }
@@ -390,6 +399,70 @@ pub const RULES: &[DiagnosticRule] = &[
         "Choose a writable --error-report-directory with space for a new archive."
     ),
     rule!(
+        PodmanSourceInvalid,
+        "BFP0001",
+        "podman-source-invalid",
+        Error,
+        "Inspected Podman evidence is malformed, incomplete, or unavailable for a required mapping.",
+        "Correct the selected Podman resources or selectors, then acquire a complete read-only inventory again."
+    ),
+    rule!(
+        PodmanInputUnmodelled,
+        "BFP0002",
+        "podman-input-unmodelled",
+        Warning,
+        "Inspected Podman intent is not represented by the current neutral application model.",
+        "Review the named field; use --loss-policy partial only when omitting that intent is acceptable."
+    ),
+    rule!(
+        PodmanPromotionRequired,
+        "BFP0003",
+        "podman-promotion-required",
+        Warning,
+        "Effective or locally resolved Podman evidence requires an explicit promotion decision.",
+        "Choose an explicit promotion policy only after confirming the observed value is portable desired state."
+    ),
+    rule!(
+        PodmanIdentityConflict,
+        "BFP0004",
+        "podman-identity-conflict",
+        Error,
+        "Podman resource identities or references conflict in the neutral namespace.",
+        "Narrow the selectors or rename the conflicting resources before importing again."
+    ),
+    rule!(
+        PodmanSecretGrantIncomplete,
+        "BFP0005",
+        "podman-secret-grant-incomplete",
+        Warning,
+        "Podman inspection lacks authored secret-delivery information required for a portable grant.",
+        "Author the secret delivery form and target separately; inspection metadata alone is insufficient."
+    ),
+    rule!(
+        PodmanTargetInvalid,
+        "BFP0006",
+        "podman-target-invalid",
+        Error,
+        "The requested Podman output target is outside the reviewed exact version and execution-context catalogue.",
+        "Select a reviewed --podman-max-version and state the target rootful, rootless, or unknown context explicitly."
+    ),
+    rule!(
+        PodmanOutputUnsupported,
+        "BFP0007",
+        "podman-output-unsupported",
+        Warning,
+        "Neutral application intent is not represented by the current Podman deployment subset.",
+        "Review the named subject; use --loss-policy partial only when the omitted intent is acceptable."
+    ),
+    rule!(
+        PodmanPlanningFailed,
+        "BFP0008",
+        "podman-planning-failed",
+        Error,
+        "PodmanLens could not produce or render a complete inert deployment plan.",
+        "Review retained PodmanLens findings, correct the neutral intent or target, and retry."
+    ),
+    rule!(
         QuadletTargetInvalid,
         "BFQ0001",
         "quadlet-target-invalid",
@@ -602,28 +675,36 @@ impl RuleId {
             Self::OutputWriteFailed => &RULES[27],
             Self::ReportWriteFailed => &RULES[28],
             Self::SupportBundleWriteFailed => &RULES[29],
-            Self::QuadletTargetInvalid => &RULES[30],
-            Self::QuadletOpenEndedTarget => &RULES[31],
-            Self::QuadletOutputUnsupported => &RULES[32],
-            Self::QuadletValueInvalid => &RULES[33],
-            Self::QuadletGenerationFailed => &RULES[34],
-            Self::QuadletCapabilityUnavailable => &RULES[35],
-            Self::QuadletGroupingApproximation => &RULES[36],
-            Self::QuadletDependencyUnsupported => &RULES[37],
-            Self::QuadletRestartApproximation => &RULES[38],
-            Self::QuadletEnvironmentFileApproximation => &RULES[39],
-            Self::QuadletGroupingInvalid => &RULES[40],
-            Self::QuadletDependencyInvalid => &RULES[41],
-            Self::QuadletCapabilityDeprecated => &RULES[42],
-            Self::QuadletUnresolvedVariable => &RULES[43],
-            Self::QuadletSourceInvalid => &RULES[44],
-            Self::QuadletModelInvalid => &RULES[45],
-            Self::QuadletInputUnsupported => &RULES[46],
-            Self::QuadletInputApproximation => &RULES[47],
-            Self::QuadletNativeSyntax => &RULES[48],
-            Self::QuadletNativeModel => &RULES[49],
-            Self::QuadletNativeDocumentSet => &RULES[50],
-            Self::QuadletNativeFailure => &RULES[51],
+            Self::PodmanSourceInvalid => &RULES[30],
+            Self::PodmanInputUnmodelled => &RULES[31],
+            Self::PodmanPromotionRequired => &RULES[32],
+            Self::PodmanIdentityConflict => &RULES[33],
+            Self::PodmanSecretGrantIncomplete => &RULES[34],
+            Self::PodmanTargetInvalid => &RULES[35],
+            Self::PodmanOutputUnsupported => &RULES[36],
+            Self::PodmanPlanningFailed => &RULES[37],
+            Self::QuadletTargetInvalid => &RULES[38],
+            Self::QuadletOpenEndedTarget => &RULES[39],
+            Self::QuadletOutputUnsupported => &RULES[40],
+            Self::QuadletValueInvalid => &RULES[41],
+            Self::QuadletGenerationFailed => &RULES[42],
+            Self::QuadletCapabilityUnavailable => &RULES[43],
+            Self::QuadletGroupingApproximation => &RULES[44],
+            Self::QuadletDependencyUnsupported => &RULES[45],
+            Self::QuadletRestartApproximation => &RULES[46],
+            Self::QuadletEnvironmentFileApproximation => &RULES[47],
+            Self::QuadletGroupingInvalid => &RULES[48],
+            Self::QuadletDependencyInvalid => &RULES[49],
+            Self::QuadletCapabilityDeprecated => &RULES[50],
+            Self::QuadletUnresolvedVariable => &RULES[51],
+            Self::QuadletSourceInvalid => &RULES[52],
+            Self::QuadletModelInvalid => &RULES[53],
+            Self::QuadletInputUnsupported => &RULES[54],
+            Self::QuadletInputApproximation => &RULES[55],
+            Self::QuadletNativeSyntax => &RULES[56],
+            Self::QuadletNativeModel => &RULES[57],
+            Self::QuadletNativeDocumentSet => &RULES[58],
+            Self::QuadletNativeFailure => &RULES[59],
         }
     }
 }
@@ -664,6 +745,11 @@ mod tests {
         }
         assert!(RULES.windows(2).all(|pair| pair[0].code() < pair[1].code()));
         assert_eq!(RuleId::OutputWriteFailed.definition().code(), "BFO2003");
+        assert_eq!(RuleId::PodmanPromotionRequired.definition().code(), "BFP0003");
+        assert_eq!(
+            find_rule("podman-output-unsupported").map(|rule| rule.owner()),
+            Some("Podman adapter")
+        );
         assert_eq!(find_rule("quadlet-restart-policy-approximation"), find_rule("BFQ0009"));
         Ok(())
     }

@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "status": "exact",
+  "connection": null,
+  "external_preconditions": [],
+  "operations": [
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "worker-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "example.invalid/worker:1"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=example.invalid%2Fworker%3A1&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "worker"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "worker",
+          "--pull=never",
+          "--mount",
+          "type=tmpfs,target=/run/boxferry",
+          "example.invalid/worker:1"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=worker",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {},
+            "image": "example.invalid/worker:1",
+            "mounts": [
+              {
+                "destination": "/run/boxferry",
+                "options": [
+                  "rw"
+                ],
+                "source": "tmpfs",
+                "type": "tmpfs"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "worker"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "start",
+          "worker"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/worker/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    }
+  ]
+}

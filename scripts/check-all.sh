@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=21
+readonly total_steps=22
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -152,6 +152,7 @@ run_step "Audit GitHub Actions security" zizmor .github/workflows
 run_step "Check all workspace targets and features" cargo ci-check
 run_step "Check facade core feature boundary" cargo ci-core
 run_step "Check facade Compose feature boundary" cargo ci-compose
+run_step "Check facade Podman feature boundary" cargo ci-podman
 run_step "Check facade Quadlet feature boundary" cargo ci-quadlet
 run_step "Check repository policies" cargo ci-policy
 run_step "Run Clippy with warnings denied" cargo ci-clippy

@@ -326,7 +326,7 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     assert_eq!(std::str::from_utf8(&capabilities_json.stdout)?.lines().count(), 1);
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
     let routes = capabilities_json["routes"].as_array().ok_or("routes")?;
-    assert_eq!(routes.len(), 4);
+    assert_eq!(routes.len(), 9);
     let compose_to_compose = routes
         .iter()
         .find(|route| route["input_type"] == "compose" && route["output_type"] == "compose")
@@ -365,6 +365,18 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     assert_eq!(
         quadlet_to_compose["fidelity_boundaries"]["approximate"],
         serde_json::json!(["environment-file-reconstruction"])
+    );
+
+    let podman_to_podman = routes
+        .iter()
+        .find(|route| route["input_type"] == "podman" && route["output_type"] == "podman")
+        .ok_or("Podman-to-Podman route")?;
+    assert_eq!(podman_to_podman["target_selector"], "podman-maximum");
+    assert_eq!(podman_to_podman["podman_maximum"], "6.1.0");
+    assert_eq!(podman_to_podman["target_context"], "explicit");
+    assert_eq!(
+        podman_to_podman["fidelity_boundaries"]["policy_controlled"],
+        serde_json::json!(["unmodelled-fields", "incomplete-secret-grants"])
     );
 
     let project = TemporaryOutput::new("human-conversion-summary");

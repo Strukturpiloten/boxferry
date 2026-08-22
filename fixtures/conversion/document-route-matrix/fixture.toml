@@ -1,7 +1,7 @@
 schema = 1
 id = "document-route-matrix"
 suite = "conversion"
-description = "Defines the exact deterministic two-by-two Compose and Quadlet neutral-model route boundary."
+description = "Defines the deterministic two-input, three-output Compose, Quadlet, and terminal Podman neutral-model route boundary."
 secrets_reviewed = true
 files = [
   "compose-interpolation.yaml",
@@ -18,6 +18,15 @@ files = [
   "invalid.container",
   "variables.env",
   "web.container",
+  "tmpfs-compose.yaml",
+  "expected-tmpfs-compose.yaml",
+  "expected-tmpfs-worker.container",
+  "expected-tmpfs-podman.json",
+  "expected-tmpfs-podman-review.sh",
+  "expected-podman.json",
+  "expected-podman-review.sh",
+  "expected-lossy-podman.json",
+  "expected-lossy-podman-review.sh",
 ]
 
 [provenance]
@@ -43,6 +52,14 @@ expected = "expected-compose-neutral.yaml"
 artifact = "web.container"
 expected = "expected-web.container"
 
+[[extensions.matrix.inputs.compose.exports.podman]]
+artifact = "podman.json"
+expected = "expected-podman.json"
+
+[[extensions.matrix.inputs.compose.exports.podman]]
+artifact = "review.sh"
+expected = "expected-podman-review.sh"
+
 [extensions.matrix.inputs.quadlet]
 sources = ["web.container"]
 application-name = "route-matrix"
@@ -54,6 +71,14 @@ expected = "expected-compose-neutral.yaml"
 [[extensions.matrix.inputs.quadlet.exports.quadlet]]
 artifact = "web.container"
 expected = "expected-web.container"
+
+[[extensions.matrix.inputs.quadlet.exports.podman]]
+artifact = "podman.json"
+expected = "expected-podman.json"
+
+[[extensions.matrix.inputs.quadlet.exports.podman]]
+artifact = "review.sh"
+expected = "expected-podman-review.sh"
 
 [[extensions.scenarios]]
 id = "normal-compose"
@@ -76,6 +101,18 @@ podman-maximum = "6.0.2"
 artifact = "web.container"
 expected = "expected-web.container"
 
+[extensions.scenarios.exports.podman]
+loss-policy = "partial"
+diagnostic-codes = ["BFP0007"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-podman.json"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "review.sh"
+expected = "expected-podman-review.sh"
+
 [[extensions.scenarios]]
 id = "normal-quadlet"
 input = "quadlet"
@@ -97,6 +134,18 @@ podman-maximum = "6.0.2"
 [[extensions.scenarios.exports.quadlet.artifacts]]
 artifact = "web.container"
 expected = "expected-web.container"
+
+[extensions.scenarios.exports.podman]
+loss-policy = "partial"
+diagnostic-codes = ["BFP0007"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-podman.json"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "review.sh"
+expected = "expected-podman-review.sh"
 
 [[extensions.scenarios]]
 id = "lossy-compose"
@@ -124,3 +173,49 @@ artifact-values = ["LABEL-CANARY", "ANNOTATION-CANARY", "LOGOPT-CANARY"]
 [[extensions.scenarios.exports.quadlet.artifacts]]
 artifact = "web.container"
 expected = "expected-lossy-web.container"
+
+[extensions.scenarios.exports.podman]
+loss-policy = "partial"
+diagnostic-codes = ["BFP0007"]
+artifact-values = ["LABEL-CANARY"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-lossy-podman.json"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "review.sh"
+expected = "expected-lossy-podman-review.sh"
+
+[[extensions.scenarios]]
+id = "tmpfs-compose"
+input = "compose"
+sources = ["tmpfs-compose.yaml"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "exact"
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-tmpfs-compose.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "exact"
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "worker.container"
+expected = "expected-tmpfs-worker.container"
+
+[extensions.scenarios.exports.podman]
+loss-policy = "exact"
+podman-tmpfs-destinations = ["/run/boxferry"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-tmpfs-podman.json"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "review.sh"
+expected = "expected-tmpfs-podman-review.sh"

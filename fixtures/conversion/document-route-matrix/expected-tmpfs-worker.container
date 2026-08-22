@@ -1,0 +1,3 @@
+[Container]
+Image=example.invalid/worker:1
+Tmpfs=/run/boxferry

@@ -69,7 +69,7 @@ jobs:
             echo 'Release metadata must declare one common workspace package version.' >&2
             exit 1
           fi
-          packages='["boxferry-model","boxferry-engine","boxferry-compose","boxferry-quadlet","boxferry"]'
+          packages='["boxferry-model","boxferry-engine","boxferry-compose","boxferry-podman","boxferry-quadlet","boxferry"]'
 
           if ! metadata_validation="$(
             jq -er --argjson expected "${packages}" '
@@ -106,6 +106,7 @@ jobs:
         run: |
           cargo ci-core
           cargo ci-compose
+          cargo ci-podman
           cargo ci-quadlet
       - name: Check repository policies
         run: cargo ci-policy
@@ -175,6 +176,7 @@ jobs:
           - boxferry-model
           - boxferry-engine
           - boxferry-compose
+          - boxferry-podman
           - boxferry-quadlet
           - boxferry
     steps:
@@ -434,6 +436,15 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: bash .github/scripts/publish-crate.sh boxferry-compose "${VERSION}"
 
+      - name: Authenticate boxferry-podman to crates.io
+        id: auth_podman
+        if: steps.auth_mode.outputs.bootstrap != 'true'
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+      - name: Publish boxferry-podman
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth_podman.outputs.token || secrets.CRATES_IO_BOOTSTRAP_TOKEN }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: bash .github/scripts/publish-crate.sh boxferry-podman "${VERSION}"
       - name: Authenticate boxferry-quadlet to crates.io
         id: auth_quadlet
         if: steps.auth_mode.outputs.bootstrap != 'true'
@@ -466,6 +477,7 @@ jobs:
             boxferry-model
             boxferry-engine
             boxferry-compose
+            boxferry-podman
             boxferry-quadlet
             boxferry
           )
@@ -555,7 +567,7 @@ jobs:
             exit 1
           fi
 
-          for package in boxferry-model boxferry-engine boxferry-compose boxferry-quadlet boxferry; do
+          for package in boxferry-model boxferry-engine boxferry-compose boxferry-podman boxferry-quadlet boxferry; do
             upload_asset "target/release-artifacts/${package}-${VERSION}.crate" "application/gzip"
           done
           upload_asset target/release-artifacts/SHA256SUMS text/plain

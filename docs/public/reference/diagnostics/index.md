@@ -23,10 +23,11 @@ boxferry explain BFQ0014
 | ------ | ------------------------------------------ |
 | `BFC`  | Compose input and mapping                  |
 | `BFQ`  | Quadlet input and mapping                  |
+| `BFP`  | Podman input, mapping, and output planning |
 | `BFO`  | BoxFerry orchestration, files, and reports |
 
-The pages below are generated from the same catalogue used by the CLI. Native ComposeLens and
-QuadletLens codes remain source provenance; BoxFerry rule codes are the public remediation
-contract.
+The pages below are generated from the same catalogue used by the CLI. Native ComposeLens,
+PodmanLens, and QuadletLens codes remain source provenance; BoxFerry rule codes are the public
+remediation contract.
 
 <!-- boxferry-generated-rule-index -->

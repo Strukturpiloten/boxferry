@@ -1,0 +1,1134 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "libpod-cassette",
+  "scenario_id": "complex-5.7.0-rootful",
+  "scenario_revision": 1,
+  "engine_version": "5.7.0",
+  "api_version": "5.7.0",
+  "execution_context": "rootful",
+  "synthetic": true,
+  "provenance": {
+    "evidence_kind": "source-derived-synthetic-sanitized",
+    "release_tag": "v5.7.0",
+    "revision": "0370128fc8dcae93533334324ef838db8f8da8cb",
+    "source_urls": [
+      "https://github.com/containers/podman/tree/0370128fc8dcae93533334324ef838db8f8da8cb/pkg/api/handlers/libpod",
+      "https://github.com/containers/podman/tree/0370128fc8dcae93533334324ef838db8f8da8cb/libpod/define",
+      "https://docs.podman.io/en/v5.7.0/_static/api.html"
+    ]
+  },
+  "sanitization": "Synthetic complex topology derived from immutable Libpod contracts. It is not a live export and contains no real endpoint, host, user, credential, environment value, secret payload, container, image, volume, network, or runtime data.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/libpod/_ping"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["libpod-api-version", "5.7.0"]],
+        "body": null
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v4.0.0/libpod/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Components": [
+            {
+              "Name": "Podman Engine",
+              "Version": "5.7.0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/json?all=true&sync=true"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "Id": "c-worker",
+            "Names": ["worker"]
+          },
+          {
+            "Id": "c-api",
+            "Names": ["api"]
+          },
+          {
+            "Id": "c-proxy",
+            "Names": ["proxy"]
+          },
+          {
+            "Id": "c-db",
+            "Names": ["database"]
+          },
+          {
+            "Id": "c-observer",
+            "Names": ["observer"]
+          },
+          {
+            "Id": "c-metrics",
+            "Names": ["metrics"]
+          },
+          {
+            "Id": "c-backup",
+            "Names": ["backup"]
+          },
+          {
+            "Id": "c-isolated",
+            "Names": ["isolated-control"]
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/pods/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "Id": "p-edge",
+            "Name": "edge"
+          },
+          {
+            "Id": "p-app",
+            "Name": "application"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/networks/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "id": "n-isolated",
+            "name": "isolated-net"
+          },
+          {
+            "id": "n-edge",
+            "name": "edge-net"
+          },
+          {
+            "id": "n-data",
+            "name": "data-net"
+          },
+          {
+            "id": "n-app",
+            "name": "app-net"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/volumes/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Volumes": [
+            {
+              "Name": "shared-assets"
+            },
+            {
+              "Name": "observer-cache"
+            },
+            {
+              "Name": "database-data"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/images/json?all=true"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "Id": "sha256:proxy",
+            "Names": ["registry.example.invalid/complex/proxy:1"]
+          },
+          {
+            "Id": "sha256:api",
+            "Names": ["registry.example.invalid/complex/api:1"]
+          },
+          {
+            "Id": "sha256:db",
+            "Names": ["registry.example.invalid/complex/db:1"]
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/secrets/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "ID": "s-tls",
+            "Spec": {
+              "Name": "tls-certificate"
+            }
+          },
+          {
+            "ID": "s-db",
+            "Spec": {
+              "Name": "db-password"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-api/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-api",
+          "Name": "api",
+          "Pod": "p-app",
+          "Image": "sha256:api",
+          "ImageName": "registry.example.invalid/complex/api:1",
+          "Dependencies": ["c-db"],
+          "Config": {
+            "Image": "registry.example.invalid/complex/api:1",
+            "Labels": {
+              "org.example.complex.service": "api"
+            },
+            "Env": ["COMPLEX_ENV_SENTINEL=COMPLEX_PROTECTED_VALUE_NEVER_PRINT"],
+            "Cmd": ["serve", "--safe"],
+            "Entrypoint": ["/usr/bin/complex-api"],
+            "User": "1000:1000",
+            "WorkingDir": "/srv/api",
+            "Hostname": "api",
+            "Secrets": [
+              {
+                "ID": "s-db",
+                "Name": "db-password",
+                "UID": 1000,
+                "GID": 1000,
+                "Mode": 288,
+                "Env": "DATABASE_PASSWORD"
+              }
+            ],
+            "Healthcheck": {
+              "Test": ["CMD-SHELL", "COMPLEX_NORMAL_HEALTH_SENTINEL"],
+              "Interval": 30000000000,
+              "Timeout": 5000000000,
+              "Retries": 3,
+              "StartPeriod": 1000000000
+            },
+            "HealthcheckOnFailureAction": "restart",
+            "StartupHealthCheck": {
+              "Test": ["CMD", "COMPLEX_STARTUP_HEALTH_SENTINEL"],
+              "Interval": 1000000000,
+              "Timeout": 2000000000,
+              "Retries": 5,
+              "StartPeriod": 3000000000,
+              "Successes": 2
+            }
+          },
+          "HostConfig": {
+            "MemorySwappiness": null,
+            "RestartPolicy": {
+              "Name": "on-failure",
+              "MaximumRetryCount": 5
+            },
+            "LogConfig": {
+              "Type": "journald",
+              "Size": "10m"
+            },
+            "Privileged": false,
+            "CapAdd": ["CAP_NET_BIND_SERVICE"],
+            "CapDrop": ["CAP_MKNOD"],
+            "SecurityOpt": ["no-new-privileges"],
+            "ReadonlyRootfs": true,
+            "PidMode": "private",
+            "IpcMode": "shareable",
+            "UTSMode": "private",
+            "CgroupMode": "private",
+            "CpuShares": 1024,
+            "CpuPeriod": 100000,
+            "CpuQuota": 50000,
+            "Memory": 536870912,
+            "PidsLimit": 256,
+            "Ulimits": [
+              {
+                "Name": "nofile",
+                "Soft": 1024,
+                "Hard": 4096
+              }
+            ]
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "app-net": {},
+              "data-net": {}
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "shared-assets",
+              "Source": "/synthetic/volumes/shared-assets/_data",
+              "Destination": "/srv/assets",
+              "RW": true,
+              "Options": ["nodev"],
+              "SubPath": "current"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-backup/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-backup",
+          "Name": "backup",
+          "Image": "sha256:db",
+          "ImageName": "registry.example.invalid/complex/db:1",
+          "Dependencies": ["c-db"],
+          "Config": {
+            "Labels": {
+              "org.example.complex.service": "backup"
+            },
+            "Cmd": ["backup"]
+          },
+          "HostConfig": {
+            "CreateNetNS": true,
+            "RestartPolicy": {
+              "Name": "no",
+              "MaximumRetryCount": 0
+            },
+            "LogConfig": {
+              "Type": "k8s-file",
+              "Size": "5m"
+            },
+            "Privileged": false,
+            "ReadonlyRootfs": true,
+            "PidMode": "private",
+            "IpcMode": "private",
+            "UTSMode": "private",
+            "CgroupMode": "private",
+            "CpuShares": 256,
+            "Memory": 134217728,
+            "PidsLimit": 64
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "data-net": {}
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "database-data",
+              "Source": "/synthetic/volumes/database-data/_data",
+              "Destination": "/var/lib/database",
+              "RW": false,
+              "Options": ["nodev"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-db/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-db",
+          "Name": "database",
+          "Image": "sha256:db",
+          "ImageName": "registry.example.invalid/complex/db:1",
+          "Config": {
+            "Labels": {
+              "org.example.complex.service": "database"
+            },
+            "Env": ["DB_BOOTSTRAP=COMPLEX_DB_PROTECTED_VALUE"],
+            "Cmd": ["database"],
+            "Secrets": [
+              {
+                "ID": "s-db",
+                "Name": "db-password",
+                "UID": 999,
+                "GID": 999,
+                "Mode": 256
+              }
+            ],
+            "Healthcheck": {
+              "Test": ["CMD", "db-ready"],
+              "Interval": 10000000000,
+              "Timeout": 2000000000,
+              "Retries": 4,
+              "StartPeriod": 0
+            }
+          },
+          "HostConfig": {
+            "MemorySwappiness": 15,
+            "CreateNetNS": true,
+            "PortBindings": {
+              "5432/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "15432"
+                }
+              ]
+            },
+            "Dns": ["192.0.2.53"],
+            "DnsSearch": ["complex.example.invalid"],
+            "DnsOptions": ["ndots:2"],
+            "ExtraHosts": ["backup.complex.invalid:192.0.2.20"],
+            "NoManageResolvConf": false,
+            "NoManageHosts": false,
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            },
+            "LogConfig": {
+              "Type": "journald",
+              "Size": "20m"
+            },
+            "Privileged": false,
+            "CapDrop": ["CAP_MKNOD"],
+            "ReadonlyRootfs": false,
+            "PidMode": "private",
+            "IpcMode": "private",
+            "UTSMode": "private",
+            "CgroupMode": "private",
+            "CpuShares": 2048,
+            "CpuPeriod": 100000,
+            "CpuQuota": 75000,
+            "Memory": 1073741824,
+            "PidsLimit": 512,
+            "Ulimits": [
+              {
+                "Name": "nofile",
+                "Soft": 2048,
+                "Hard": 8192
+              }
+            ]
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "data-net": {}
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "database-data",
+              "Source": "/synthetic/volumes/database-data/_data",
+              "Destination": "/var/lib/database",
+              "RW": true,
+              "Options": ["nodev", "nosuid"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-isolated/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-isolated",
+          "Name": "isolated-control",
+          "Image": "sha256:proxy",
+          "ImageName": "registry.example.invalid/complex/proxy:1",
+          "Config": {
+            "Labels": {
+              "org.example.complex.service": "isolated"
+            },
+            "Cmd": ["idle"]
+          },
+          "HostConfig": {
+            "CreateNetNS": true,
+            "RestartPolicy": {
+              "Name": "unless-stopped",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "isolated-net": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-metrics/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-metrics",
+          "Name": "metrics",
+          "Pod": "p-edge",
+          "Image": "sha256:proxy",
+          "ImageName": "registry.example.invalid/complex/proxy:1",
+          "Config": {
+            "Labels": {
+              "org.example.complex.service": "metrics"
+            },
+            "Cmd": ["metrics"]
+          },
+          "HostConfig": {
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "app-net": {},
+              "edge-net": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-observer/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-observer",
+          "Name": "observer",
+          "Image": "sha256:proxy",
+          "ImageName": "registry.example.invalid/complex/proxy:1",
+          "Config": {
+            "Labels": {
+              "org.example.complex.service": "observer"
+            },
+            "Cmd": ["observe"]
+          },
+          "HostConfig": {
+            "CreateNetNS": true,
+            "NetworkMode": "app-net",
+            "RestartPolicy": {
+              "Name": "no",
+              "MaximumRetryCount": 0
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "app-net": {
+                "Aliases": ["observer"]
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "observer-cache",
+              "Source": "/synthetic/volumes/observer-cache/_data",
+              "Destination": "/var/cache/observer",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-proxy/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-proxy",
+          "Name": "proxy",
+          "Pod": "p-edge",
+          "Image": "sha256:proxy",
+          "ImageName": "registry.example.invalid/complex/proxy:1",
+          "Dependencies": ["c-api"],
+          "Config": {
+            "Labels": {
+              "org.example.complex.service": "proxy"
+            },
+            "Cmd": ["proxy"],
+            "Secrets": [
+              {
+                "ID": "s-tls",
+                "Name": "tls-certificate",
+                "UID": 1000,
+                "GID": 1000,
+                "Mode": 288
+              }
+            ]
+          },
+          "HostConfig": {
+            "RestartPolicy": {
+              "Name": "always",
+              "MaximumRetryCount": 0
+            },
+            "ReadonlyRootfs": true
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "app-net": {},
+              "edge-net": {}
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "shared-assets",
+              "Source": "/synthetic/volumes/shared-assets/_data",
+              "Destination": "/srv/assets",
+              "RW": false,
+              "Options": ["nodev"]
+            },
+            {
+              "Type": "bind",
+              "Source": "/synthetic/config/proxy",
+              "Destination": "/etc/complex/proxy",
+              "RW": false,
+              "Propagation": "rprivate"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/containers/c-worker/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-worker",
+          "Name": "worker",
+          "Pod": "p-app",
+          "Image": "sha256:api",
+          "ImageName": "registry.example.invalid/complex/api:1",
+          "Dependencies": ["c-api"],
+          "Config": {
+            "Labels": {
+              "org.example.complex.service": "worker"
+            },
+            "Cmd": ["work"]
+          },
+          "HostConfig": {
+            "RestartPolicy": {
+              "Name": "on-failure",
+              "MaximumRetryCount": 3
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "app-net": {},
+              "data-net": {}
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "shared-assets",
+              "Source": "/synthetic/volumes/shared-assets/_data",
+              "Destination": "/srv/assets",
+              "RW": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/pods/p-app/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "p-app",
+          "Name": "application",
+          "Labels": {
+            "org.example.complex.pod": "application"
+          },
+          "CreateInfra": true,
+          "Containers": [
+            {
+              "Id": "c-api"
+            },
+            {
+              "Id": "c-worker"
+            }
+          ],
+          "InfraConfig": {
+            "PortBindings": {
+              "8080/tcp": [
+                {
+                  "HostIp": "0.0.0.0",
+                  "HostPort": "18080"
+                }
+              ]
+            },
+            "HostNetwork": false,
+            "DNSServer": ["192.0.2.53", "2001:db8::53"],
+            "DNSSearch": ["complex.example.invalid"],
+            "DNSOption": ["ndots:2"],
+            "HostAdd": ["gateway.complex.invalid:192.0.2.10"],
+            "Networks": ["app-net", "data-net"],
+            "NetworkOptions": {
+              "app-net": ["alias=application"]
+            },
+            "NoManageResolvConf": false,
+            "NoManageHosts": false,
+            "StaticIP": "10.42.0.20"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/pods/p-edge/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "p-edge",
+          "Name": "edge",
+          "Labels": {
+            "org.example.complex.pod": "edge"
+          },
+          "CreateInfra": true,
+          "Containers": [
+            {
+              "Id": "c-metrics"
+            },
+            {
+              "Id": "c-proxy"
+            }
+          ],
+          "InfraConfig": {
+            "PortBindings": {
+              "8080/tcp": [
+                {
+                  "HostIp": "0.0.0.0",
+                  "HostPort": "8080"
+                }
+              ]
+            },
+            "HostNetwork": false,
+            "DNSServer": ["192.0.2.53", "2001:db8::53"],
+            "DNSSearch": ["complex.example.invalid"],
+            "DNSOption": ["ndots:2"],
+            "HostAdd": ["gateway.complex.invalid:192.0.2.10"],
+            "Networks": ["app-net", "edge-net"],
+            "NetworkOptions": {
+              "app-net": ["alias=application"]
+            },
+            "NoManageResolvConf": false,
+            "NoManageHosts": false,
+            "StaticIP": "10.44.0.20"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/networks/n-app/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-app",
+          "name": "app-net",
+          "internal": true,
+          "labels": {
+            "org.example.complex.network": "application"
+          },
+          "options": {
+            "mtu": "1500"
+          },
+          "subnets": [
+            {
+              "subnet": "10.42.0.0/24",
+              "gateway": "10.42.0.1",
+              "lease_range": {
+                "start_ip": "10.42.0.10",
+                "end_ip": "10.42.0.200"
+              }
+            }
+          ],
+          "routes": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/networks/n-data/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-data",
+          "name": "data-net",
+          "internal": true,
+          "labels": {
+            "org.example.complex.network": "data"
+          },
+          "options": {
+            "mtu": "1500"
+          },
+          "subnets": [
+            {
+              "subnet": "10.43.0.0/24",
+              "gateway": "10.43.0.1",
+              "lease_range": {
+                "start_ip": "10.43.0.10",
+                "end_ip": "10.43.0.200"
+              }
+            }
+          ],
+          "routes": [
+            {
+              "destination": "198.51.100.0/24",
+              "gateway": "10.43.0.1",
+              "metric": 7
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/networks/n-edge/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-edge",
+          "name": "edge-net",
+          "internal": false,
+          "labels": {
+            "org.example.complex.network": "edge"
+          },
+          "options": {
+            "mtu": "1500"
+          },
+          "subnets": [
+            {
+              "subnet": "10.44.0.0/24",
+              "gateway": "10.44.0.1",
+              "lease_range": {
+                "start_ip": "10.44.0.10",
+                "end_ip": "10.44.0.200"
+              }
+            }
+          ],
+          "routes": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/networks/n-isolated/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-isolated",
+          "name": "isolated-net",
+          "internal": true,
+          "labels": {
+            "org.example.complex.network": "isolated"
+          },
+          "options": {
+            "mtu": "1500"
+          },
+          "subnets": [
+            {
+              "subnet": "10.45.0.0/24",
+              "gateway": "10.45.0.1",
+              "lease_range": {
+                "start_ip": "10.45.0.10",
+                "end_ip": "10.45.0.200"
+              }
+            }
+          ],
+          "routes": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/volumes/database-data/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Name": "database-data",
+          "Labels": {
+            "org.example.complex.volume": "database"
+          },
+          "Driver": "local",
+          "CreatedAt": "2026-01-02T03:04:05Z",
+          "Anonymous": false,
+          "UID": 999,
+          "GID": 999
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/volumes/observer-cache/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Name": "observer-cache",
+          "Labels": {
+            "org.example.complex.volume": "observer"
+          },
+          "Driver": "local",
+          "CreatedAt": "2026-01-02T03:04:05Z",
+          "Anonymous": true,
+          "UID": 1000,
+          "GID": 1000
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/volumes/shared-assets/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Name": "shared-assets",
+          "Labels": {
+            "org.example.complex.volume": "assets"
+          },
+          "Driver": "local",
+          "CreatedAt": "2026-01-02T03:04:05Z",
+          "Anonymous": false,
+          "UID": 1000,
+          "GID": 1000
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/images/sha256%3Aapi/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:api",
+          "RepoTags": ["registry.example.invalid/complex/api:1"],
+          "RepoDigests": [
+            "registry.example.invalid/complex/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          ],
+          "Digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "Created": "2026-01-02T03:04:05Z",
+          "Author": "Synthetic API Author",
+          "Architecture": "amd64",
+          "Os": "linux",
+          "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+          "Labels": {
+            "org.example.complex.role": "api"
+          },
+          "Config": {
+            "Env": ["IMAGE_DEFAULT=COMPLEX_IMAGE_PROTECTED_VALUE"]
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/images/sha256%3Adb/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:db",
+          "RepoTags": ["registry.example.invalid/complex/db:1"],
+          "RepoDigests": [
+            "registry.example.invalid/complex/db@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+          ],
+          "Digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "Created": "2026-01-02T03:04:05Z",
+          "Author": "Synthetic DB Author",
+          "Architecture": "amd64",
+          "Os": "linux",
+          "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+          "Labels": {
+            "org.example.complex.role": "database"
+          },
+          "Config": {
+            "Env": ["IMAGE_DEFAULT=COMPLEX_IMAGE_PROTECTED_VALUE"]
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/images/sha256%3Aproxy/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:proxy",
+          "RepoTags": ["registry.example.invalid/complex/proxy:1"],
+          "RepoDigests": [
+            "registry.example.invalid/complex/proxy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+          ],
+          "Digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "Created": "2026-01-02T03:04:05Z",
+          "Author": "Synthetic Proxy Author",
+          "Architecture": "amd64",
+          "Os": "linux",
+          "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+          "Labels": {
+            "org.example.complex.role": "proxy"
+          },
+          "Config": {
+            "Env": ["IMAGE_DEFAULT=COMPLEX_IMAGE_PROTECTED_VALUE"]
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/secrets/s-db/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "ID": "s-db",
+          "Spec": {
+            "Name": "db-password",
+            "Labels": {
+              "org.example.complex.secret": "database"
+            },
+            "Driver": {
+              "Name": "file",
+              "Options": {
+                "scope": "synthetic"
+              }
+            }
+          },
+          "CreatedAt": "2026-01-02T03:04:05Z",
+          "UpdatedAt": "2026-01-02T03:05:05Z"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v5.7.0/libpod/secrets/s-tls/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "ID": "s-tls",
+          "Spec": {
+            "Name": "tls-certificate",
+            "Labels": {
+              "org.example.complex.secret": "edge"
+            },
+            "Driver": {
+              "Name": "file",
+              "Options": {
+                "scope": "synthetic"
+              }
+            }
+          },
+          "CreatedAt": "2026-01-02T03:04:05Z",
+          "UpdatedAt": "2026-01-02T03:05:05Z"
+        }
+      }
+    }
+  ]
+}

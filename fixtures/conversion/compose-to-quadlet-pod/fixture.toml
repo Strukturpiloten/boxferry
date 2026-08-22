@@ -10,6 +10,8 @@ files = [
   "web.container",
   "worker.container",
   "expected-matrix-compose.yaml",
+  "expected-podman.json",
+  "expected-podman-review.sh",
 ]
 
 [provenance]
@@ -70,3 +72,15 @@ expected = "web.container"
 [[extensions.scenarios.exports.quadlet.artifacts]]
 artifact = "worker.container"
 expected = "worker.container"
+
+[extensions.scenarios.exports.podman]
+loss-policy = "partial"
+diagnostic-codes = ["BFP0007"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-podman.json"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "review.sh"
+expected = "expected-podman-review.sh"

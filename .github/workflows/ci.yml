@@ -39,6 +39,7 @@ jobs:
         run: |
           cargo ci-core
           cargo ci-compose
+          cargo ci-podman
           cargo ci-quadlet
       - name: Check repository policies
         run: cargo ci-policy
@@ -201,6 +202,7 @@ jobs:
           - boxferry-model
           - boxferry-engine
           - boxferry-compose
+          - boxferry-podman
           - boxferry-quadlet
           - boxferry
     steps:

@@ -5,12 +5,11 @@ keeps conversion rules independent of a specific source-target pair.
 
 ```text
 Compose ──┐                         ┌── Compose
-          ├── application model ────┤
+Podman ───┼── application model ────┼── Podman
 Quadlet ──┘                         └── Quadlet
 ```
 
-The current CLI exposes all four document routes. Podman import and export are the next integration
-phase through PodmanLens. Docker and Kubernetes remain deferred.
+The current CLI exposes all nine routes. Docker and Kubernetes remain deferred.
 
 ## Fidelity outcomes
 
@@ -41,6 +40,7 @@ Rule codes identify stable conditions:
 - `BFC` — Compose input and Compose mapping
 - `BFQ` — Quadlet input and Quadlet mapping
 - `BFO` — orchestration, files, and reports
+- `BFP` — Podman input, Podman mapping, and Podman output planning
 
 Use `boxferry explain CODE` or open the rule's reference page.
 
@@ -50,5 +50,15 @@ Every same-format route uses its importer, the neutral model, and its exporter. 
 is reported and governed by the same loss policy as a cross-format conversion. Unresolved typed
 expressions must be resolved before they can enter the neutral model.
 
-BoxFerry never infers target versions from the development machine. It writes inert artifacts and
-never applies generated output or sends mutating runtime API requests.
+Podman-to-Podman is not a passthrough: an explicitly acquired runtime inventory is imported into the
+neutral model and exported as a desired deployment plan. The resulting `podman.json` is not an
+inventory snapshot and cannot be imported again. Compose and Quadlet output remain re-importable.
+
+## Runtime safety
+
+Podman input is read-only and requires an explicit Unix socket and selectors. BoxFerry does not
+discover ambient connections or invoke the `podman` command. It never infers target versions or
+rootful/rootless context from the development machine.
+
+All output is inert. BoxFerry never applies generated output, executes `review.sh`, deploys
+infrastructure, or sends mutating runtime API requests.

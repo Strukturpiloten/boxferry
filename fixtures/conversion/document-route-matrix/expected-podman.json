@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "status": "exact",
+  "connection": null,
+  "external_preconditions": [],
+  "operations": [
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "web-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "example.invalid/web:1"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=example.invalid%2Fweb%3A1&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "web"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "web",
+          "--pull=never",
+          "--restart",
+          "no",
+          "example.invalid/web:1"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=web",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {},
+            "image": "example.invalid/web:1",
+            "restart_policy": "no"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "web"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "start",
+          "web"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/web/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    }
+  ]
+}

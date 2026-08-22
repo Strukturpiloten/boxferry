@@ -7,7 +7,8 @@ The CLI supports Linux. Windows users must install and run it inside WSL2; nativ
 and Windows containers are unsupported. See the repository's platform-support documentation.
 
 The default features provide nested `convert <INPUT_TYPE> <OUTPUT_TYPE>` and
-`validate <INPUT_TYPE> <OUTPUT_TYPE>` commands for all four Compose/Quadlet document routes.
+`validate <INPUT_TYPE> <OUTPUT_TYPE>` commands for all nine Compose/Quadlet/Podman routes. Podman
+input is explicit read-only acquisition; Podman output is inert review material and never applied.
 Embedded users can disable default features and select only the adapters they need.
 
 Every route uses the public importer, neutral `Application`, exporter, and loss-policy pipeline.

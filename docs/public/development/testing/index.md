@@ -23,4 +23,13 @@ MSRV, audits dependencies, builds documentation, verifies coverage floors, and c
 Every behavior change needs a positive case and a relevant failure case. Tests must never use live
 credentials, private runtime output, or ambient application resources.
 
+The offline Podman matrix contains fourteen immutable request-bound cassettes: seven exact reviewed
+versions from 5.4.0 through 6.1.0, each in simulated rootful and rootless contexts. Podman input
+scenarios run through every exporter. Compose and Quadlet outputs are re-imported for chained and
+fixed-point assertions; Podman deployment output is not an observed inventory, so its tests assert
+deterministic bytes and semantic operation equivalence instead.
+
+PodmanLens 0.1.1 cannot observe tmpfs mounts through runtime import. BoxFerry covers tmpfs on Podman
+export from authored neutral, Compose, or Quadlet input.
+
 Coverage is a regression ratchet, not evidence that semantics are correct.
