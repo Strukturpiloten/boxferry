@@ -13,8 +13,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-boxferry-engine = { path = "../boxferry-engine", version = "0.7.0" }
-boxferry-model = { path = "../boxferry-model", version = "0.7.0" }
+boxferry-engine = { path = "../boxferry-engine", version = "0.7.1" }
+boxferry-model = { path = "../boxferry-model", version = "0.7.1" }
 podman-lens = { version = "0.1.1", default-features = false }
 serde_json = "1"
 
