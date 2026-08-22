@@ -46,6 +46,7 @@ Architecture decision records capture choices that constrain future development.
 | [0031](0031-quadlet-systemd-environment-and-native-only-reporting.md) | accepted   | Loss-aware Quadlet semantic reporting without speculative systemd context             |
 | [0032](0032-future-native-lens-boundaries.md)                         | accepted   | Future independent Docker, Podman, and Kubernetes Lens ownership                      |
 | [0033](0033-universal-neutral-model-pipeline.md)                      | accepted   | Universal neutral-model pipeline and nonexecuting Podman-first roadmap                |
+| [0034](0034-podman-lens-adapter-boundary.md)                          | accepted   | PodmanLens adapter policy and inert deployment-artifact boundary                      |
 
 ## Adding an ADR
 

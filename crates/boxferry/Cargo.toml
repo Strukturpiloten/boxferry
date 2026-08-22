@@ -18,7 +18,7 @@ all-features = true
 [[bin]]
 name = "boxferry"
 path = "src/main.rs"
-required-features = ["cli", "compose", "quadlet"]
+required-features = ["cli", "compose", "podman", "quadlet"]
 
 [[test]]
 name = "quadlet_to_compose"
@@ -28,6 +28,7 @@ required-features = ["compose", "quadlet"]
 boxferry-compose = { path = "../boxferry-compose", version = "0.6.0", optional = true }
 boxferry-engine = { path = "../boxferry-engine", version = "0.6.0" }
 boxferry-model = { path = "../boxferry-model", version = "0.6.0" }
+boxferry-podman = { path = "../boxferry-podman", version = "0.6.0", optional = true }
 boxferry-quadlet = { path = "../boxferry-quadlet", version = "0.6.0", optional = true }
 clap = { version = "4.6.5", features = ["derive"], optional = true }
 serde = { version = "1.0.229", features = ["derive"], optional = true }
@@ -40,14 +41,20 @@ default-features = false
 features = ["std", "tz-system"]
 optional = true
 
+[dependencies.tokio]
+version = "1.53.1"
+features = ["macros", "rt"]
+optional = true
+
 [dev-dependencies]
 toml = "1.1.4"
 
 [features]
-default = ["cli", "compose", "quadlet"]
-cli = ["dep:clap", "dep:jiff", "dep:serde", "dep:serde_json", "dep:zip"]
+default = ["cli", "compose", "podman", "quadlet"]
+cli = ["dep:clap", "dep:jiff", "dep:serde", "dep:serde_json", "dep:tokio", "dep:zip"]
 compose = ["dep:boxferry-compose"]
 quadlet = ["dep:boxferry-quadlet"]
+podman = ["dep:boxferry-podman"]
 
 [lints]
 workspace = true

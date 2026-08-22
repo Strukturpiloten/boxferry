@@ -8,6 +8,7 @@ application needs a smaller or lower-level boundary.
 | Feature   | Adds                                            |
 | --------- | ----------------------------------------------- |
 | `compose` | ComposeLens types and Compose semantic adapters |
+| `podman`  | PodmanLens types and Podman semantic adapters   |
 | `quadlet` | QuadletLens types and Quadlet semantic adapters |
 | `cli`     | Clap, reports, ZIP support, and the executable  |
 
@@ -15,7 +16,7 @@ Default features enable the useful CLI. Embedded applications can disable defaul
 
 ## Public flow
 
-1. Build or parse a native source explicitly.
+1. Build, parse, or acquire a native source explicitly.
 2. Import it through `ImportAdapter`.
 3. Select `TargetProfile` and `LossPolicy`.
 4. Export through `ExportAdapter`, call `boxferry::convert`, or continue an
@@ -23,12 +24,23 @@ Default features enable the useful CLI. Embedded applications can disable defaul
 5. Inspect `ConversionResult` and diagnostics before consuming the inert output.
 
 Core planning is pure. File, environment, and read-only native acquisition stay in explicit
-caller-selected boundaries. Applying or deploying output is outside BoxFerry.
+caller-selected boundaries. The public Podman acquisition helper used by the CLI accepts a
+caller-selected transport and discovery request, then returns the inventory and graph consumed by
+`PodmanImporter`. It performs no ambient connection discovery and invokes no command-line tool.
+Applying or deploying output is outside BoxFerry.
+
+## Podman input and output
+
+`PodmanSource` retains the application identity, acquired `ResourceInventory`, discovered
+`ResourceGraph`, and explicit promotion policy needed by semantic import. `PodmanExporter`
+returns a `PodmanOutput` containing deterministic `podman.json` deployment-v1 and `review.sh`
+artifacts for review only. The target exact version and rootful, rootless, or unknown execution
+context are explicit. `PodmanOutput` has no execution API and is not accepted as Podman input.
 
 ## Supported crates
 
-`boxferry`, `boxferry-model`, `boxferry-engine`, `boxferry-compose`, and `boxferry-quadlet` publish
-in lockstep.
+`boxferry`, `boxferry-model`, `boxferry-engine`, `boxferry-compose`, `boxferry-podman`, and
+`boxferry-quadlet` publish in lockstep.
 
 ## Pre-1.0 stability
 

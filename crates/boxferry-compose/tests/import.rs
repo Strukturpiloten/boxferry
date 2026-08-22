@@ -282,7 +282,7 @@ fn imports_the_core_fixture_without_loss_and_excludes_inactive_profiles() -> Res
     assert_core_runtime_name(web);
     assert_eq!(
         web.image().map(|image| image.value().as_str()),
-        Some("registry.example:5000/team/web:1.3@sha256:fedcba")
+        Some("registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
     );
     assert!(matches!(
         web.command().map(boxferry_model::Sourced::value),

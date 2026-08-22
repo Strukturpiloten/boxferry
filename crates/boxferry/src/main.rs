@@ -23,6 +23,11 @@ use boxferry::compose::compose_lens::{
     profiles::{ProfileRequest, ProfileSelection, select_profiles},
     source::SourceId as ComposeSourceId,
 };
+use boxferry::podman::podman_lens::{
+    AcquisitionOptions, DiscoveryRequest, LabelSelector, ResourceKind as PodmanResourceKind, ResourceSelector,
+    TargetExecutionContext, TransportLimits, UnixConnection,
+    read_only_unix_transport::{ReadOnlyUnixTransport, ReadOnlyUnixTransportTimeouts},
+};
 use boxferry::report::{
     ConversionReport, DiscoveryDecision, ExitCategory, FailedStage, FidelityCounts, FixFirst, HostMetadata,
     OutputArtifact, ReportChoice, ReportDiagnostic, ReportField, ReportInput, ReportNativeFinding, ReportNativeLabel,
@@ -31,9 +36,10 @@ use boxferry::report::{
 use boxferry::{
     COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeFindingStage,
     ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, ImportAdapter,
-    ImportResult, LossPolicy, NativeFinding, NativeFindingLabelKind, PlatformVersion, QuadletDocumentInput,
-    QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletParseDiagnostic, QuadletParseDiagnosticOrigin,
-    QuadletParseError, QuadletSource, RULES, RuleId, SourceId, TargetProfile, convert_imported, find_rule,
+    ImportResult, LossPolicy, NativeFinding, NativeFindingLabelKind, PODMAN_TARGET, PlatformVersion, PodmanExporter,
+    PodmanImporter, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter,
+    QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES, RuleId, SourceId,
+    TargetProfile, acquire_podman_source, convert_imported, find_rule, reviewed_podman_versions,
 };
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
@@ -134,6 +140,15 @@ struct InputDocuments {
     input_directories: Vec<PathBuf>,
 }
 
+impl InputDocuments {
+    const fn empty() -> Self {
+        Self {
+            input_files: Vec::new(),
+            input_directories: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Args)]
 struct ComposeInputOptions {
     /// Compose project root for resolving paths referenced by input documents.
@@ -173,6 +188,42 @@ struct QuadletInputOptions {
 }
 
 #[derive(Debug, Args)]
+struct PodmanInputOptions {
+    /// Explicit local Podman Unix socket. No ambient connection is discovered.
+    #[arg(long, value_name = "PATH")]
+    podman_socket: PathBuf,
+    /// Neutral application name assigned to the selected runtime resources.
+    #[arg(long)]
+    application_name: String,
+    /// Discover every eligible root in the acquired inventory.
+    #[arg(long, required_unless_present_any = ["podman_resources", "podman_labels"])]
+    podman_all: bool,
+    /// Exact Podman resource root as `KIND=NAME_OR_ID`; repeat as needed.
+    #[arg(
+        long = "podman-resource",
+        value_name = "KIND=REFERENCE",
+        required_unless_present_any = ["podman_all", "podman_labels"]
+    )]
+    podman_resources: Vec<PodmanResourceInput>,
+    /// Podman label root as NAME or NAME=VALUE; repeat as needed.
+    #[arg(
+        long = "podman-label",
+        value_name = "NAME[=VALUE]",
+        required_unless_present_any = ["podman_all", "podman_resources"]
+    )]
+    podman_labels: Vec<PodmanLabelInput>,
+    /// Exact network name or ID whose discovery boundary may be crossed.
+    #[arg(long = "podman-network-boundary", value_name = "NAME_OR_ID")]
+    podman_network_boundaries: Vec<String>,
+    /// Promote effective named-volume mounts into portable neutral intent.
+    #[arg(long)]
+    promote_podman_effective_named_volumes: bool,
+    /// Promote effective named-network attachments into portable neutral intent.
+    #[arg(long)]
+    promote_podman_effective_named_networks: bool,
+}
+
+#[derive(Debug, Args)]
 struct QuadletOutputOptions {
     /// Minimum Podman version, as major.minor or major.minor.patch.
     #[arg(long, default_value = "5.4")]
@@ -194,6 +245,19 @@ struct QuadletOutputOptions {
 #[derive(Debug, Args)]
 struct ComposeOutputOptions {
     /// Compose physical output layout.
+    #[arg(long, value_enum, default_value_t = OutputLayout::Files)]
+    output_layout: OutputLayout,
+}
+
+#[derive(Debug, Args)]
+struct PodmanOutputOptions {
+    /// Inclusive Podman ceiling; selects the newest reviewed exact version not above it.
+    #[arg(long, default_value = "6.1")]
+    podman_max_version: PodmanSelector,
+    /// Explicit privilege context of the deployment target.
+    #[arg(long, value_enum)]
+    podman_target_context: PodmanTargetContext,
+    /// Podman artifact physical output layout.
     #[arg(long, value_enum, default_value_t = OutputLayout::Files)]
     output_layout: OutputLayout,
 }
@@ -233,6 +297,8 @@ enum ConversionInput {
     Compose(ComposeInputCommand),
     /// Use a Quadlet input document set.
     Quadlet(QuadletInputCommand),
+    /// Use explicitly selected resources from one read-only Podman endpoint.
+    Podman(PodmanInputCommand),
 }
 
 #[derive(Debug, Args)]
@@ -248,6 +314,8 @@ enum ComposeOutput {
     Compose(ComposeToCompose),
     /// Convert Compose input to canonical Quadlet output.
     Quadlet(ComposeToQuadlet),
+    /// Convert Compose input to inert Podman deployment artifacts.
+    Podman(ComposeToPodman),
 }
 
 #[derive(Debug, Args)]
@@ -263,6 +331,25 @@ enum QuadletOutput {
     Compose(QuadletToCompose),
     /// Convert Quadlet input to canonical Quadlet output.
     Quadlet(QuadletToQuadlet),
+    /// Convert Quadlet input to inert Podman deployment artifacts.
+    Podman(QuadletToPodman),
+}
+
+#[derive(Debug, Args)]
+#[command(subcommand_help_heading = "Output types", subcommand_value_name = "OUTPUT_TYPE")]
+struct PodmanInputCommand {
+    #[command(subcommand)]
+    output: PodmanOutput,
+}
+
+#[derive(Debug, Subcommand)]
+enum PodmanOutput {
+    /// Convert Podman input to canonical Compose output.
+    Compose(PodmanToCompose),
+    /// Convert Podman input to canonical Quadlet output.
+    Quadlet(PodmanToQuadlet),
+    /// Convert Podman input to inert Podman deployment artifacts.
+    Podman(PodmanToPodman),
 }
 
 #[derive(Debug, Args)]
@@ -324,6 +411,74 @@ struct QuadletToQuadlet {
     #[command(flatten, next_help_heading = "Diagnostics and reports")]
     diagnostics: DiagnosticOptions,
 }
+#[derive(Debug, Args)]
+#[command(about = "Read Compose input and write inert BoxFerry Podman artifacts")]
+struct ComposeToPodman {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Compose input")]
+    input: ComposeInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Read Quadlet input and write inert BoxFerry Podman artifacts")]
+struct QuadletToPodman {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Quadlet input")]
+    input: QuadletInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and write canonical BoxFerry Compose YAML")]
+struct PodmanToCompose {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Compose output")]
+    output: ComposeOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and write canonical BoxFerry Quadlet files")]
+struct PodmanToQuadlet {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Quadlet output")]
+    output: QuadletOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and write inert BoxFerry Podman artifacts")]
+struct PodmanToPodman {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
 
 #[derive(Debug, Args)]
 #[command(subcommand_help_heading = "Input types", subcommand_value_name = "INPUT_TYPE")]
@@ -338,6 +493,8 @@ enum ConvertInput {
     Compose(ConvertComposeInputCommand),
     /// Use a Quadlet input document set.
     Quadlet(ConvertQuadletInputCommand),
+    /// Use explicitly selected resources from one read-only Podman endpoint.
+    Podman(ConvertPodmanInputCommand),
 }
 
 #[derive(Debug, Args)]
@@ -353,6 +510,8 @@ enum ConvertComposeOutput {
     Compose(ConvertComposeToCompose),
     /// Convert Compose input to canonical Quadlet output.
     Quadlet(ConvertComposeToQuadlet),
+    /// Convert Compose input to inert Podman deployment artifacts.
+    Podman(ConvertComposeToPodman),
 }
 
 #[derive(Debug, Args)]
@@ -368,6 +527,25 @@ enum ConvertQuadletOutput {
     Compose(ConvertQuadletToCompose),
     /// Convert Quadlet input to canonical Quadlet output.
     Quadlet(ConvertQuadletToQuadlet),
+    /// Convert Quadlet input to inert Podman deployment artifacts.
+    Podman(ConvertQuadletToPodman),
+}
+
+#[derive(Debug, Args)]
+#[command(subcommand_help_heading = "Output types", subcommand_value_name = "OUTPUT_TYPE")]
+struct ConvertPodmanInputCommand {
+    #[command(subcommand)]
+    output: ConvertPodmanOutput,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConvertPodmanOutput {
+    /// Convert Podman input to canonical Compose output.
+    Compose(ConvertPodmanToCompose),
+    /// Convert Podman input to canonical Quadlet output.
+    Quadlet(ConvertPodmanToQuadlet),
+    /// Convert Podman input to inert Podman deployment artifacts.
+    Podman(ConvertPodmanToPodman),
 }
 
 #[derive(Debug, Args)]
@@ -412,6 +590,23 @@ struct ConvertComposeToQuadlet {
 }
 
 #[derive(Debug, Args)]
+#[command(about = "Read Compose input and write inert BoxFerry Podman artifacts")]
+struct ConvertComposeToPodman {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Compose input")]
+    input: ComposeInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
 #[command(about = "Read Quadlet input and write canonical BoxFerry Compose YAML")]
 struct ConvertQuadletToCompose {
     #[command(flatten, next_help_heading = "Input documents")]
@@ -445,6 +640,72 @@ struct ConvertQuadletToQuadlet {
     diagnostics: DiagnosticOptions,
 }
 
+#[derive(Debug, Args)]
+#[command(about = "Read Quadlet input and write inert BoxFerry Podman artifacts")]
+struct ConvertQuadletToPodman {
+    #[command(flatten, next_help_heading = "Input documents")]
+    documents: InputDocuments,
+    #[command(flatten, next_help_heading = "Quadlet input")]
+    input: QuadletInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and write canonical BoxFerry Compose YAML")]
+struct ConvertPodmanToCompose {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Compose output")]
+    output: ComposeOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Compose output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and write canonical BoxFerry Quadlet files")]
+struct ConvertPodmanToQuadlet {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Quadlet output")]
+    output: QuadletOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Quadlet output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Acquire selected Podman resources and write inert BoxFerry Podman artifacts")]
+struct ConvertPodmanToPodman {
+    #[command(flatten, next_help_heading = "Podman input")]
+    input: PodmanInputOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    output: PodmanOutputOptions,
+    #[command(flatten, next_help_heading = "Conversion policy")]
+    policy: ConversionPolicyOptions,
+    #[command(flatten, next_help_heading = "Podman output")]
+    destination: OutputDestination,
+    #[command(flatten, next_help_heading = "Diagnostics and reports")]
+    diagnostics: DiagnosticOptions,
+}
+
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "preserves typed CLI flag provenance until route execution"
+)]
 struct GenericConversion {
     presentation: Presentation,
     report_file: Option<PathBuf>,
@@ -456,6 +717,13 @@ struct GenericConversion {
     input_directories: Vec<PathBuf>,
     project_directory: Option<PathBuf>,
     application_name: Option<String>,
+    podman_socket: Option<PathBuf>,
+    podman_all: bool,
+    podman_resources: Vec<PodmanResourceInput>,
+    podman_labels: Vec<PodmanLabelInput>,
+    podman_network_boundaries: Vec<String>,
+    promote_podman_effective_named_volumes: bool,
+    promote_podman_effective_named_networks: bool,
     interpolate: bool,
     env_files: Vec<PathBuf>,
     environment: Vec<EnvironmentInput>,
@@ -463,6 +731,8 @@ struct GenericConversion {
     all_profiles: bool,
     podman_minimum_version: PodmanSelector,
     podman_maximum_version: PodmanSelector,
+    podman_deployment_max_version: PodmanSelector,
+    podman_target_context: PodmanTargetContext,
     grouping: Grouping,
     pod_name: Option<String>,
     output_layout: OutputLayout,
@@ -475,16 +745,27 @@ impl ConversionInput {
             Self::Compose(command) => match command.output {
                 ComposeOutput::Compose(arguments) => GenericConversion::from_compose_to_compose(arguments),
                 ComposeOutput::Quadlet(arguments) => GenericConversion::from_compose_to_quadlet(arguments),
+                ComposeOutput::Podman(arguments) => GenericConversion::from_compose_to_podman(arguments),
             },
             Self::Quadlet(command) => match command.output {
                 QuadletOutput::Compose(arguments) => GenericConversion::from_quadlet_to_compose(arguments),
                 QuadletOutput::Quadlet(arguments) => GenericConversion::from_quadlet_to_quadlet(arguments),
+                QuadletOutput::Podman(arguments) => GenericConversion::from_quadlet_to_podman(arguments),
+            },
+            Self::Podman(command) => match command.output {
+                PodmanOutput::Compose(arguments) => GenericConversion::from_podman_to_compose(arguments),
+                PodmanOutput::Quadlet(arguments) => GenericConversion::from_podman_to_quadlet(arguments),
+                PodmanOutput::Podman(arguments) => GenericConversion::from_podman_to_podman(arguments),
             },
         }
     }
 }
 
 impl ConvertInput {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "keeps clap route normalization in one exhaustive match"
+    )]
     fn into_invocation(self) -> (GenericConversion, PathBuf) {
         match self {
             Self::Compose(command) => match command.output {
@@ -514,6 +795,19 @@ impl ConvertInput {
                     );
                     (conversion, destination)
                 }
+                ConvertComposeOutput::Podman(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Compose,
+                        OutputType::Podman,
+                        arguments.documents,
+                        InputRouteOptions::Compose(arguments.input),
+                        OutputRouteOptions::Podman(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
             },
             Self::Quadlet(command) => match command.output {
                 ConvertQuadletOutput::Compose(arguments) => {
@@ -537,6 +831,60 @@ impl ConvertInput {
                         arguments.documents,
                         InputRouteOptions::Quadlet(arguments.input),
                         OutputRouteOptions::Quadlet(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
+                ConvertQuadletOutput::Podman(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Quadlet,
+                        OutputType::Podman,
+                        arguments.documents,
+                        InputRouteOptions::Quadlet(arguments.input),
+                        OutputRouteOptions::Podman(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
+            },
+            Self::Podman(command) => match command.output {
+                ConvertPodmanOutput::Compose(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Podman,
+                        OutputType::Compose,
+                        InputDocuments::empty(),
+                        InputRouteOptions::Podman(arguments.input),
+                        OutputRouteOptions::Compose(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
+                ConvertPodmanOutput::Quadlet(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Podman,
+                        OutputType::Quadlet,
+                        InputDocuments::empty(),
+                        InputRouteOptions::Podman(arguments.input),
+                        OutputRouteOptions::Quadlet(arguments.output),
+                        arguments.policy,
+                        arguments.diagnostics,
+                    );
+                    (conversion, destination)
+                }
+                ConvertPodmanOutput::Podman(arguments) => {
+                    let destination = arguments.destination.output_directory;
+                    let conversion = GenericConversion::from_route(
+                        InputType::Podman,
+                        OutputType::Podman,
+                        InputDocuments::empty(),
+                        InputRouteOptions::Podman(arguments.input),
+                        OutputRouteOptions::Podman(arguments.output),
                         arguments.policy,
                         arguments.diagnostics,
                     );
@@ -602,6 +950,70 @@ impl GenericConversion {
         )
     }
 
+    fn from_compose_to_podman(arguments: ComposeToPodman) -> Self {
+        Self::from_route(
+            InputType::Compose,
+            OutputType::Podman,
+            arguments.documents,
+            InputRouteOptions::Compose(arguments.input),
+            OutputRouteOptions::Podman(arguments.output),
+            arguments.policy,
+            arguments.diagnostics,
+        )
+    }
+
+    fn from_quadlet_to_podman(arguments: QuadletToPodman) -> Self {
+        Self::from_route(
+            InputType::Quadlet,
+            OutputType::Podman,
+            arguments.documents,
+            InputRouteOptions::Quadlet(arguments.input),
+            OutputRouteOptions::Podman(arguments.output),
+            arguments.policy,
+            arguments.diagnostics,
+        )
+    }
+
+    fn from_podman_to_compose(arguments: PodmanToCompose) -> Self {
+        Self::from_route(
+            InputType::Podman,
+            OutputType::Compose,
+            InputDocuments::empty(),
+            InputRouteOptions::Podman(arguments.input),
+            OutputRouteOptions::Compose(arguments.output),
+            arguments.policy,
+            arguments.diagnostics,
+        )
+    }
+
+    fn from_podman_to_quadlet(arguments: PodmanToQuadlet) -> Self {
+        Self::from_route(
+            InputType::Podman,
+            OutputType::Quadlet,
+            InputDocuments::empty(),
+            InputRouteOptions::Podman(arguments.input),
+            OutputRouteOptions::Quadlet(arguments.output),
+            arguments.policy,
+            arguments.diagnostics,
+        )
+    }
+
+    fn from_podman_to_podman(arguments: PodmanToPodman) -> Self {
+        Self::from_route(
+            InputType::Podman,
+            OutputType::Podman,
+            InputDocuments::empty(),
+            InputRouteOptions::Podman(arguments.input),
+            OutputRouteOptions::Podman(arguments.output),
+            arguments.policy,
+            arguments.diagnostics,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "keeps the complete input-output product normalization explicit"
+    )]
     fn from_route(
         input_type: InputType,
         output_type: OutputType,
@@ -611,31 +1023,85 @@ impl GenericConversion {
         policy: ConversionPolicyOptions,
         diagnostics: DiagnosticOptions,
     ) -> Self {
-        let (project_directory, application_name, interpolate, env_files, environment, profiles, all_profiles) =
-            match input {
-                InputRouteOptions::Compose(input) => (
-                    input.project_directory,
-                    input.project_name,
-                    input.interpolate,
-                    input.env_files,
-                    input.environment,
-                    input.profiles,
-                    input.all_profiles,
-                ),
-                InputRouteOptions::Quadlet(input) => (
-                    None,
-                    Some(input.application_name),
-                    false,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    false,
-                ),
-            };
-        let (podman_minimum_version, podman_maximum_version, grouping, pod_name, output_layout) = match output {
+        let (
+            project_directory,
+            application_name,
+            interpolate,
+            env_files,
+            environment,
+            profiles,
+            all_profiles,
+            podman_socket,
+            podman_all,
+            podman_resources,
+            podman_labels,
+            podman_network_boundaries,
+            promote_podman_effective_named_volumes,
+            promote_podman_effective_named_networks,
+        ) = match input {
+            InputRouteOptions::Compose(input) => (
+                input.project_directory,
+                input.project_name,
+                input.interpolate,
+                input.env_files,
+                input.environment,
+                input.profiles,
+                input.all_profiles,
+                None,
+                false,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                false,
+            ),
+            InputRouteOptions::Quadlet(input) => (
+                None,
+                Some(input.application_name),
+                false,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                None,
+                false,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                false,
+            ),
+            InputRouteOptions::Podman(input) => (
+                None,
+                Some(input.application_name),
+                false,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                false,
+                Some(input.podman_socket),
+                input.podman_all,
+                input.podman_resources,
+                input.podman_labels,
+                input.podman_network_boundaries,
+                input.promote_podman_effective_named_volumes,
+                input.promote_podman_effective_named_networks,
+            ),
+        };
+        let (
+            podman_minimum_version,
+            podman_maximum_version,
+            podman_deployment_max_version,
+            podman_target_context,
+            grouping,
+            pod_name,
+            output_layout,
+        ) = match output {
             OutputRouteOptions::Compose(output) => (
                 PodmanSelector::minimum_default(),
                 PodmanSelector::maximum_default(),
+                PodmanSelector::deployment_default(),
+                PodmanTargetContext::Unknown,
                 Grouping::Separate,
                 None,
                 output.output_layout,
@@ -643,8 +1109,19 @@ impl GenericConversion {
             OutputRouteOptions::Quadlet(output) => (
                 output.podman_minimum_version,
                 output.podman_maximum_version,
+                PodmanSelector::deployment_default(),
+                PodmanTargetContext::Unknown,
                 output.grouping,
                 output.pod_name,
+                output.output_layout,
+            ),
+            OutputRouteOptions::Podman(output) => (
+                PodmanSelector::minimum_default(),
+                PodmanSelector::maximum_default(),
+                output.podman_max_version,
+                output.podman_target_context,
+                Grouping::Separate,
+                None,
                 output.output_layout,
             ),
         };
@@ -659,6 +1136,13 @@ impl GenericConversion {
             input_directories: documents.input_directories,
             project_directory,
             application_name,
+            podman_socket,
+            podman_all,
+            podman_resources,
+            podman_labels,
+            podman_network_boundaries,
+            promote_podman_effective_named_volumes,
+            promote_podman_effective_named_networks,
             interpolate,
             env_files,
             environment,
@@ -666,6 +1150,8 @@ impl GenericConversion {
             all_profiles,
             podman_minimum_version,
             podman_maximum_version,
+            podman_deployment_max_version,
+            podman_target_context,
             grouping,
             pod_name,
             output_layout,
@@ -677,11 +1163,13 @@ impl GenericConversion {
 enum InputRouteOptions {
     Compose(ComposeInputOptions),
     Quadlet(QuadletInputOptions),
+    Podman(PodmanInputOptions),
 }
 
 enum OutputRouteOptions {
     Compose(ComposeOutputOptions),
     Quadlet(QuadletOutputOptions),
+    Podman(PodmanOutputOptions),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -718,6 +1206,85 @@ impl From<Grouping> for QuadletGroupingPolicy {
             Grouping::Separate => Self::SeparateContainers,
             Grouping::Pod => Self::SinglePod,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum PodmanTargetContext {
+    Unknown,
+    Rootless,
+    Rootful,
+}
+
+impl From<PodmanTargetContext> for TargetExecutionContext {
+    fn from(value: PodmanTargetContext) -> Self {
+        match value {
+            PodmanTargetContext::Unknown => Self::Unknown,
+            PodmanTargetContext::Rootless => Self::Rootless,
+            PodmanTargetContext::Rootful => Self::Rootful,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PodmanResourceInput {
+    kind: PodmanResourceKind,
+    reference: String,
+}
+
+impl FromStr for PodmanResourceInput {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (kind, reference) = value
+            .split_once('=')
+            .ok_or_else(|| "--podman-resource requires KIND=REFERENCE".to_owned())?;
+        let kind = match kind {
+            "container" => PodmanResourceKind::Container,
+            "pod" => PodmanResourceKind::Pod,
+            "network" => PodmanResourceKind::Network,
+            "volume" => PodmanResourceKind::Volume,
+            "image" => PodmanResourceKind::Image,
+            "secret" => PodmanResourceKind::Secret,
+            _ => {
+                return Err(
+                    "Podman resource kind must be container, pod, network, volume, image, or secret".to_owned(),
+                );
+            }
+        };
+        if reference.is_empty() {
+            return Err("--podman-resource reference must not be empty".to_owned());
+        }
+        Ok(Self {
+            kind,
+            reference: reference.to_owned(),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PodmanLabelInput {
+    name: String,
+    value: Option<String>,
+}
+
+impl FromStr for PodmanLabelInput {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.is_empty() {
+            return Err("--podman-label name must not be empty".to_owned());
+        }
+        let (name, exact) = value
+            .split_once('=')
+            .map_or((value, None), |(name, value)| (name, Some(value.to_owned())));
+        if name.is_empty() {
+            return Err("--podman-label name must not be empty".to_owned());
+        }
+        Ok(Self {
+            name: name.to_owned(),
+            value: exact,
+        })
     }
 }
 
@@ -785,6 +1352,14 @@ impl PodmanSelector {
             patch: None,
         }
     }
+    fn deployment_default() -> Self {
+        Self {
+            requested: "6.1".into(),
+            major: 6,
+            minor: 1,
+            patch: None,
+        }
+    }
 }
 
 impl FromStr for PodmanSelector {
@@ -815,6 +1390,9 @@ struct ReportAliases {
 impl ReportAliases {
     fn for_invocation(arguments: &GenericConversion, output_directory: Option<&Path>) -> Self {
         let mut values = Vec::new();
+        if let Some(socket) = &arguments.podman_socket {
+            values.push((socket.display().to_string(), "<podman-socket>".to_owned()));
+        }
         if let Some(project) = &arguments.project_directory {
             values.push((project.display().to_string(), "<project>".to_owned()));
         }
@@ -900,6 +1478,10 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
             minimum: arguments.podman_minimum_version.requested.clone(),
             maximum: arguments.podman_maximum_version.requested.clone(),
         },
+        TargetSelector::PodmanMaximum => VersionBounds {
+            minimum: "5.4.0".into(),
+            maximum: arguments.podman_deployment_max_version.requested.clone(),
+        },
         TargetSelector::ComposeSpecification => VersionBounds {
             minimum: "rolling".into(),
             maximum: "rolling".into(),
@@ -929,11 +1511,36 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
             },
         }),
         InputType::Quadlet => {}
+        InputType::Podman => {
+            report.choices.push(ReportChoice {
+                name: "podman_acquisition".into(),
+                value: "explicit-read-only-unix".into(),
+            });
+            report.choices.push(ReportChoice {
+                name: "podman_selector_count".into(),
+                value: (arguments.podman_resources.len()
+                    + arguments.podman_labels.len()
+                    + usize::from(arguments.podman_all))
+                .to_string(),
+            });
+            report.choices.push(ReportChoice {
+                name: "promote_effective_named_volumes".into(),
+                value: arguments.promote_podman_effective_named_volumes.to_string(),
+            });
+            report.choices.push(ReportChoice {
+                name: "promote_effective_named_networks".into(),
+                value: arguments.promote_podman_effective_named_networks.to_string(),
+            });
+        }
     }
     match route.target_selector {
         TargetSelector::PodmanRange => report.choices.push(ReportChoice {
             name: "grouping".into(),
             value: format!("{:?}", arguments.grouping).to_lowercase(),
+        }),
+        TargetSelector::PodmanMaximum => report.choices.push(ReportChoice {
+            name: "podman_target_context".into(),
+            value: format!("{:?}", arguments.podman_target_context).to_lowercase(),
         }),
         TargetSelector::ComposeSpecification => {}
     }
@@ -957,6 +1564,21 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("profiles", "--profile"),
         ("all_profiles", "--all-profiles"),
         ("podman_minimum_version", "--podman-minimum-version"),
+        ("podman_socket", "--podman-socket"),
+        ("podman_all", "--podman-all"),
+        ("podman_resources", "--podman-resource"),
+        ("podman_labels", "--podman-label"),
+        ("podman_network_boundaries", "--podman-network-boundary"),
+        (
+            "promote_podman_effective_named_volumes",
+            "--promote-podman-effective-named-volumes",
+        ),
+        (
+            "promote_podman_effective_named_networks",
+            "--promote-podman-effective-named-networks",
+        ),
+        ("podman_max_version", "--podman-max-version"),
+        ("podman_target_context", "--podman-target-context"),
         ("podman_maximum_version", "--podman-maximum-version"),
         ("grouping", "--quadlet-grouping"),
         ("pod_name", "--pod-name"),
@@ -1051,13 +1673,14 @@ fn sanitized_diagnostic(
     }
 }
 
-fn main() -> ExitCode {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
     let matches = Cli::command().get_matches();
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => error.exit(),
     };
-    match run(cli, &matches) {
+    match run(cli, &matches).await {
         Ok(code) => code,
         Err(error) => {
             eprintln!("boxferry: {error}");
@@ -1066,13 +1689,13 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli, matches: &clap::ArgMatches) -> Result<ExitCode, Box<dyn Error>> {
+async fn run(cli: Cli, matches: &clap::ArgMatches) -> Result<ExitCode, Box<dyn Error>> {
     match cli.command {
         Command::Convert(arguments) => {
             let (conversion, output_directory) = arguments.input.into_invocation();
-            run_generic(&conversion, matches, Some(&output_directory), false)
+            run_generic(&conversion, matches, Some(&output_directory), false).await
         }
-        Command::Validate(arguments) => run_generic(&arguments.into_generic(), matches, None, true),
+        Command::Validate(arguments) => run_generic(&arguments.into_generic(), matches, None, true).await,
         Command::Capabilities(presentation) => print_capabilities(presentation),
         Command::Rules(presentation) => print_rules(presentation),
         Command::Explain(arguments) => print_rule_explanation(&arguments),
@@ -1176,12 +1799,18 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
     let coverage = QuadletExporter::new()?.catalogue().coverage();
     let minimum = coverage.minimum().to_string();
     let maximum = coverage.maximum().to_string();
+    let podman_maximum = reviewed_podman_versions()
+        .last()
+        .ok_or_else(|| io::Error::other("Podman reviewed target catalogue is empty"))?
+        .to_string();
     if matches!(presentation.console_format, Some(ConsoleFormat::Json)) {
         println!(
             "{}",
             serde_json::to_string(&serde_json::json!({
                 "schema_version": 1,
-                "routes": route::routes().map(|route| capability_json(route, &minimum, &maximum)).collect::<Vec<_>>()
+                "routes": route::routes()
+                    .map(|route| capability_json(route, &minimum, &maximum, &podman_maximum))
+                    .collect::<Vec<_>>()
             }))?
         );
     } else if !presentation.quiet {
@@ -1189,6 +1818,11 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
             match route.target_selector {
                 TargetSelector::PodmanRange => println!(
                     "{} -> {} (Podman {minimum} through {maximum})",
+                    route.source_name(),
+                    route.target_name()
+                ),
+                TargetSelector::PodmanMaximum => println!(
+                    "{} -> {} (newest reviewed Podman through {podman_maximum})",
                     route.source_name(),
                     route.target_name()
                 ),
@@ -1210,7 +1844,7 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
     Ok(ExitCode::SUCCESS)
 }
 
-fn capability_json(route: RouteSpec, minimum: &str, maximum: &str) -> serde_json::Value {
+fn capability_json(route: RouteSpec, minimum: &str, maximum: &str, podman_maximum: &str) -> serde_json::Value {
     let fidelity = serde_json::json!({
         "exact": route.exact_boundary,
         "approximate": route.approximate_boundaries,
@@ -1221,6 +1855,11 @@ fn capability_json(route: RouteSpec, minimum: &str, maximum: &str) -> serde_json
             "input_type": route.source_name(), "output_type": route.target_name(),
             "target_selector": "podman-range", "podman_minimum": minimum,
             "podman_maximum": maximum, "fidelity_boundaries": fidelity,
+        }),
+        TargetSelector::PodmanMaximum => serde_json::json!({
+            "input_type": route.source_name(), "output_type": route.target_name(),
+            "target_selector": "podman-maximum", "podman_maximum": podman_maximum,
+            "target_context": "explicit", "fidelity_boundaries": fidelity,
         }),
         TargetSelector::ComposeSpecification => serde_json::json!({
             "input_type": route.source_name(), "output_type": route.target_name(),
@@ -1381,7 +2020,7 @@ fn post_discovery_failure(
 }
 
 #[allow(clippy::too_many_lines)]
-fn generic_convert(
+async fn generic_convert(
     arguments: &GenericConversion,
     ordered: Vec<OrderedInput>,
     output_directory: Option<&Path>,
@@ -1390,6 +2029,7 @@ fn generic_convert(
     let route = validate_route(arguments, &ordered)?;
     match route.input {
         InputType::Compose => generic_compose_convert(arguments, ordered, route, output_directory, validate_only),
+        InputType::Podman => generic_podman_convert(arguments, route, output_directory, validate_only).await,
         InputType::Quadlet => generic_quadlet_convert(arguments, ordered, route, output_directory, validate_only),
     }
 }
@@ -1509,17 +2149,46 @@ fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io
                 ));
             }
         }
-    }
-    match route.target_selector {
-        TargetSelector::PodmanRange => {
-            if arguments.pod_name.is_some() && !matches!(arguments.grouping, Grouping::Pod) {
+        InputType::Podman => {
+            let name = arguments.application_name.as_deref().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "--application-name is required for Podman input",
+                )
+            })?;
+            Identifier::new(name).map_err(io::Error::other)?;
+            if arguments.podman_socket.is_none() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "--pod-name requires --quadlet-grouping pod",
+                    "--podman-socket is required for Podman input",
+                ));
+            }
+            if !ordered.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Podman input does not accept document paths",
                 ));
             }
         }
-        TargetSelector::ComposeSpecification => {}
+    }
+    if matches!(route.input, InputType::Podman)
+        && !arguments.podman_all
+        && arguments.podman_resources.is_empty()
+        && arguments.podman_labels.is_empty()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Podman input requires --podman-all, --podman-resource, or --podman-label",
+        ));
+    }
+    if matches!(route.target_selector, TargetSelector::PodmanRange)
+        && arguments.pod_name.is_some()
+        && !matches!(arguments.grouping, Grouping::Pod)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--pod-name requires --quadlet-grouping pod",
+        ));
     }
     Ok(route)
 }
@@ -1553,7 +2222,149 @@ fn generic_quadlet_convert(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps one read-only Podman acquisition transaction auditable"
+)]
+async fn generic_podman_convert(
+    arguments: &GenericConversion,
+    route: RouteSpec,
+    output_directory: Option<&Path>,
+    validate_only: bool,
+) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+    let discovered = Vec::new();
+    let aliases = ReportAliases::for_invocation(arguments, output_directory);
+    let application_name = Identifier::new(
+        arguments
+            .application_name
+            .as_deref()
+            .ok_or_else(|| io::Error::other("validated Podman application name is missing"))?,
+    )?;
+    let connection = UnixConnection::new(
+        arguments
+            .podman_socket
+            .as_deref()
+            .ok_or_else(|| io::Error::other("validated Podman socket is missing"))?,
+    )
+    .map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::PodmanSourceInvalid,
+            "Podman Unix connection is invalid",
+            &error,
+            &aliases,
+            &discovered,
+        )
+    })?;
+    let transport = ReadOnlyUnixTransport::new(
+        connection,
+        TransportLimits::default(),
+        ReadOnlyUnixTransportTimeouts::default(),
+    )
+    .map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::PodmanSourceInvalid,
+            "Podman read-only transport is invalid",
+            &error,
+            &aliases,
+            &discovered,
+        )
+    })?;
+    let mut request = DiscoveryRequest::new();
+    if arguments.podman_all {
+        request.select_all();
+    }
+    for selected in &arguments.podman_resources {
+        request.add_root(
+            ResourceSelector::exact(selected.kind, &selected.reference).map_err(|error| {
+                post_discovery_failure(
+                    FailedStage::InputDiscovery,
+                    RuleId::PodmanSourceInvalid,
+                    "Podman resource selector is invalid",
+                    &error,
+                    &aliases,
+                    &discovered,
+                )
+            })?,
+        );
+    }
+    for selected in &arguments.podman_labels {
+        let selector = selected
+            .value
+            .as_ref()
+            .map_or_else(
+                || LabelSelector::presence(&selected.name),
+                |value| LabelSelector::exact(&selected.name, value),
+            )
+            .map_err(|error| {
+                post_discovery_failure(
+                    FailedStage::InputDiscovery,
+                    RuleId::PodmanSourceInvalid,
+                    "Podman label selector is invalid",
+                    &error,
+                    &aliases,
+                    &discovered,
+                )
+            })?;
+        request.add_label_root(selector);
+    }
+    for boundary in &arguments.podman_network_boundaries {
+        request.add_network_boundary_override(boundary).map_err(|error| {
+            post_discovery_failure(
+                FailedStage::InputDiscovery,
+                RuleId::PodmanSourceInvalid,
+                "Podman network boundary override is invalid",
+                &error,
+                &aliases,
+                &discovered,
+            )
+        })?;
+    }
+    let promotion = boxferry::PodmanPromotionPolicy::conservative()
+        .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
+        .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
+    let source = acquire_podman_source(
+        application_name.clone(),
+        &transport,
+        AcquisitionOptions::redacted(),
+        &request,
+        promotion,
+    )
+    .await
+    .map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::PodmanSourceInvalid,
+            "Podman read-only acquisition or discovery failed",
+            &error,
+            &aliases,
+            &discovered,
+        )
+    })?;
+    let imported = PodmanImporter::new()?.import(&source);
+    let (conversion, resolved_versions) =
+        export_imported(arguments, route.output, imported, None, &[], &aliases, &discovered)?;
+    finish_document_conversion(
+        arguments,
+        route,
+        output_directory,
+        validate_only,
+        DocumentConversion {
+            discovered,
+            aliases,
+            application_name: application_name.as_str().into(),
+            resolved_versions,
+            conversion,
+        },
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps exporter dispatch exhaustive across the three output formats"
+)]
 fn export_imported(
     arguments: &GenericConversion,
     output: OutputType,
@@ -1636,6 +2447,43 @@ fn export_imported(
                 VersionBounds {
                     minimum: minimum.to_string(),
                     maximum: maximum.to_string(),
+                },
+            ))
+        }
+        OutputType::Podman => {
+            let selected = resolve_podman_maximum(&arguments.podman_deployment_max_version).map_err(|error| {
+                post_discovery_failure(
+                    FailedStage::Conversion,
+                    RuleId::PodmanTargetInvalid,
+                    "Podman output version selection failed",
+                    &error,
+                    aliases,
+                    discovered,
+                )
+            })?;
+            let minimum = *reviewed_podman_versions()
+                .first()
+                .ok_or_else(|| io::Error::other("Podman reviewed target catalogue is empty"))?;
+            let target = TargetProfile::new(PODMAN_TARGET, minimum, Some(selected))?;
+            let exporter = PodmanExporter::new()?.with_execution_context(arguments.podman_target_context.into());
+            let result = convert_imported(imported, &exporter, &target, arguments.loss_policy.into())
+                .map_err(|error| conversion_failure(&error, source_diagnostics, aliases, discovered))?;
+            Ok((
+                RenderedConversion::from_result(result, |output| {
+                    vec![
+                        RenderedFile {
+                            name: "podman.json".into(),
+                            text: output.deployment_json().to_owned(),
+                        },
+                        RenderedFile {
+                            name: "review.sh".into(),
+                            text: output.review_shell().to_owned(),
+                        },
+                    ]
+                }),
+                VersionBounds {
+                    minimum: selected.to_string(),
+                    maximum: selected.to_string(),
                 },
             ))
         }
@@ -1886,16 +2734,23 @@ fn blocking_diagnostic_code(outcomes: &[boxferry::ConversionOutcome], policy: Cl
         .map(|code| code.as_str().to_owned())
 }
 
-fn run_generic(
+#[allow(clippy::too_many_lines, reason = "keeps report finalization shared by every route")]
+async fn run_generic(
     arguments: &GenericConversion,
     matches: &clap::ArgMatches,
     output_directory: Option<&Path>,
     validate_only: bool,
 ) -> Result<ExitCode, Box<dyn Error>> {
     let aliases = ReportAliases::for_invocation(arguments, output_directory);
-    let result = generic_input_order(matches)
-        .map_err(Box::<dyn Error>::from)
-        .and_then(|ordered| generic_convert(arguments, ordered, output_directory, validate_only));
+    let ordered = if arguments.input_type == InputType::Podman {
+        Ok(Vec::new())
+    } else {
+        generic_input_order(matches).map_err(Box::<dyn Error>::from)
+    };
+    let result = match ordered {
+        Ok(ordered) => generic_convert(arguments, ordered, output_directory, validate_only).await,
+        Err(error) => Err(error),
+    };
     let (mut report, primary_code, inputs) = match result {
         Ok(result) => result,
         Err(error) => {
@@ -2032,6 +2887,10 @@ fn present(
                     );
                 }
                 TargetSelector::ComposeSpecification => println!("Compose Specification: rolling"),
+                TargetSelector::PodmanMaximum => {
+                    println!("Podman maximum requested: {}", report.requested_versions.maximum);
+                    println!("Podman target resolved: {}", report.resolved_versions.maximum);
+                }
             }
             if arguments.input_type == InputType::Compose {
                 if arguments.all_profiles {
@@ -2689,6 +3548,34 @@ fn parse_environment_file(path: &Path) -> io::Result<Vec<(String, String)>> {
         assignments.push((name, value.to_owned()));
     }
     Ok(assignments)
+}
+
+fn resolve_podman_maximum(selector: &PodmanSelector) -> io::Result<PlatformVersion> {
+    let requested_exact = selector
+        .patch
+        .map(|patch| PlatformVersion::new(selector.major, selector.minor, patch));
+    reviewed_podman_versions()
+        .iter()
+        .rev()
+        .copied()
+        .find(|version| {
+            requested_exact.map_or_else(
+                || {
+                    version.major() < selector.major
+                        || (version.major() == selector.major && version.minor() <= selector.minor)
+                },
+                |maximum| *version <= maximum,
+            )
+        })
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Podman selector {} is below the oldest reviewed Podman target",
+                    selector.requested
+                ),
+            )
+        })
 }
 
 fn resolve_versions(
@@ -3538,6 +4425,66 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    fn parse_validation(arguments: &[&str]) -> Result<GenericConversion, Box<dyn Error>> {
+        let Command::Validate(command) = Cli::try_parse_from(arguments)?.command else {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "expected the validate command").into());
+        };
+        Ok(command.input.into_generic())
+    }
+
+    #[test]
+    fn podman_selectors_only_gate_podman_input_routes() -> Result<(), Box<dyn Error>> {
+        let document = [OrderedInput::File(PathBuf::from("input"))];
+        let compose = parse_validation(&[
+            "boxferry",
+            "validate",
+            "compose",
+            "podman",
+            "--input-file",
+            "input",
+            "--podman-target-context",
+            "unknown",
+        ])?;
+        validate_route(&compose, &document)?;
+
+        let quadlet = parse_validation(&[
+            "boxferry",
+            "validate",
+            "quadlet",
+            "podman",
+            "--input-file",
+            "input",
+            "--application-name",
+            "example",
+            "--podman-target-context",
+            "unknown",
+        ])?;
+        validate_route(&quadlet, &document)?;
+
+        let mut podman = parse_validation(&[
+            "boxferry",
+            "validate",
+            "podman",
+            "podman",
+            "--podman-socket",
+            "/run/podman/podman.sock",
+            "--application-name",
+            "example",
+            "--podman-all",
+            "--podman-target-context",
+            "unknown",
+        ])?;
+        podman.podman_all = false;
+        let Err(error) = validate_route(&podman, &[]) else {
+            return Err(io::Error::other("Podman input without a selector was accepted").into());
+        };
+        assert_eq!(
+            error.to_string(),
+            "Podman input requires --podman-all, --podman-resource, or --podman-label"
+        );
+        Ok(())
+    }
+
     #[test]
     fn output_write_conditions_have_distinct_catalogued_rules() {
         let aliases = ReportAliases::default();
@@ -3783,6 +4730,13 @@ mod tests {
             input_directories: Vec::new(),
             project_directory: None,
             application_name: None,
+            podman_socket: None,
+            podman_all: false,
+            podman_resources: Vec::new(),
+            podman_labels: Vec::new(),
+            podman_network_boundaries: Vec::new(),
+            promote_podman_effective_named_volumes: false,
+            promote_podman_effective_named_networks: false,
             interpolate: true,
             env_files: vec![environment_file.clone()],
             environment: vec![
@@ -3797,6 +4751,8 @@ mod tests {
             podman_minimum_version: "5.4".parse()?,
             podman_maximum_version: "6.0".parse()?,
             grouping: Grouping::Separate,
+            podman_deployment_max_version: "6.1".parse()?,
+            podman_target_context: PodmanTargetContext::Unknown,
             pod_name: None,
             output_layout: OutputLayout::Files,
             loss_policy: CliLossPolicy::Exact,
@@ -3869,5 +4825,68 @@ mod tests {
         assert!(temporary.remove().is_err());
         assert!(path.exists());
         fs::remove_dir(path)
+    }
+    #[test]
+    fn podman_input_requires_explicit_selector() {
+        let missing = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "podman",
+            "compose",
+            "--podman-socket",
+            "/run/podman/podman.sock",
+            "--application-name",
+            "example",
+        ]);
+        assert!(missing.is_err());
+
+        let selected = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "podman",
+            "compose",
+            "--podman-socket",
+            "/run/podman/podman.sock",
+            "--application-name",
+            "example",
+            "--podman-all",
+        ]);
+        assert!(selected.is_ok());
+    }
+
+    #[test]
+    fn podman_output_requires_explicit_target_context() {
+        let missing = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "compose",
+            "podman",
+            "--input-file",
+            "compose.yaml",
+        ]);
+        assert!(missing.is_err());
+
+        let explicit = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "compose",
+            "podman",
+            "--input-file",
+            "compose.yaml",
+            "--podman-target-context",
+            "unknown",
+        ]);
+        assert!(explicit.is_ok());
+    }
+
+    #[test]
+    fn podman_maximum_selects_newest_reviewed_exact_version() -> Result<(), Box<dyn Error>> {
+        assert_eq!(resolve_podman_maximum(&"5.8".parse()?)?, PlatformVersion::new(5, 8, 6));
+        assert_eq!(
+            resolve_podman_maximum(&"5.8.0".parse()?)?,
+            PlatformVersion::new(5, 7, 0)
+        );
+        assert_eq!(resolve_podman_maximum(&"6.1".parse()?)?, PlatformVersion::new(6, 1, 0));
+        Ok(())
     }
 }

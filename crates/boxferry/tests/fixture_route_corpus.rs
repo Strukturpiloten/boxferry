@@ -1,6 +1,6 @@
 //! Capability-driven conversion coverage for every positive importer fixture.
 
-#![cfg(all(feature = "cli", feature = "compose", feature = "quadlet"))]
+#![cfg(all(feature = "cli", feature = "compose", feature = "podman", feature = "quadlet"))]
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -24,7 +24,7 @@ const EXPECTED_FIXTURE_IDS: [&str; 7] = [
     "compose-to-quadlet-secrets",
     "document-route-matrix",
 ];
-const EXPECTED_SCENARIO_IDS: [&str; 9] = [
+const EXPECTED_SCENARIO_IDS: [&str; 10] = [
     "compose-import-core/compose",
     "compose-to-quadlet-core/compose",
     "compose-to-quadlet-dependencies/compose",
@@ -34,6 +34,7 @@ const EXPECTED_SCENARIO_IDS: [&str; 9] = [
     "document-route-matrix/lossy-compose",
     "document-route-matrix/normal-compose",
     "document-route-matrix/normal-quadlet",
+    "document-route-matrix/tmpfs-compose",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +82,8 @@ struct ExportExpectation {
     pod_name: Option<String>,
     podman_minimum: Option<String>,
     podman_maximum: Option<String>,
+    #[serde(default)]
+    podman_tmpfs_destinations: Vec<String>,
     artifacts: Vec<ArtifactExpectation>,
 }
 
@@ -96,7 +99,11 @@ fn every_positive_importer_fixture_covers_every_registered_exporter() -> Result<
     let repository = repository_root();
     let manifests = fixture_manifests(&repository)?;
     let capabilities = capability_routes()?;
-    let registered_inputs = capabilities.keys().cloned().collect::<BTreeSet<_>>();
+    let registered_inputs = capabilities
+        .keys()
+        .filter(|input| matches!(input.as_str(), "compose" | "quadlet"))
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let root = TemporaryDirectory::new("fixture-route-corpus")?;
     let mut covered_inputs = BTreeSet::new();
     let mut scenario_ids = BTreeSet::new();
@@ -232,6 +239,60 @@ fn every_positive_importer_fixture_covers_every_registered_exporter() -> Result<
                 assert_expected_artifacts(fixture, &output_directory, expectation, &scenario_name, output)?;
                 assert_artifact_values(&output_directory, &expectation.artifact_values, &scenario_name, output)?;
 
+                if output == "podman" {
+                    assert_podman_artifacts(
+                        &output_directory,
+                        &scenario.protected_values,
+                        &expectation.artifact_values,
+                        &expectation.podman_tmpfs_destinations,
+                        &scenario_name,
+                    )?;
+                    let repeated_directory = root
+                        .path()
+                        .join(format!("{}-{output}-repeated", safe_name(&scenario_name)));
+                    let repeated = execute_conversion(
+                        &scenario.input,
+                        output,
+                        &sources,
+                        scenario.application_name.as_deref(),
+                        Some(scenario),
+                        expectation,
+                        &expectation.loss_policy,
+                        &repeated_directory,
+                    )?;
+                    assert!(
+                        repeated.status.success(),
+                        "{scenario_name} -> {output} repeat failed: stdout={} stderr={}",
+                        String::from_utf8_lossy(&repeated.stdout),
+                        String::from_utf8_lossy(&repeated.stderr)
+                    );
+                    assert!(repeated.stderr.is_empty());
+                    let repeated_report: serde_json::Value = serde_json::from_slice(&repeated.stdout)?;
+                    assert_eq!(
+                        report_diagnostic_codes(&repeated_report)?,
+                        expectation
+                            .diagnostic_codes
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>(),
+                        "{scenario_name} -> {output} repeat diagnostic sequence changed"
+                    );
+                    assert_report_redacted(&repeated_report, &scenario.protected_values, &scenario_name);
+                    assert_podman_artifacts(
+                        &repeated_directory,
+                        &scenario.protected_values,
+                        &expectation.artifact_values,
+                        &expectation.podman_tmpfs_destinations,
+                        &scenario_name,
+                    )?;
+                    assert_eq!(
+                        normalized_artifacts(&output_directory, fixture, expectation.normalize_project_root,)?,
+                        normalized_artifacts(&repeated_directory, fixture, expectation.normalize_project_root,)?,
+                        "{scenario_name} -> Podman is not deterministic"
+                    );
+                    continue;
+                }
+
                 let fixed_directory = root
                     .path()
                     .join(format!("{}-{output}-fixed", safe_name(&scenario_name)));
@@ -343,6 +404,9 @@ fn execute_conversion(
             command.args(["--pod-name", pod_name]);
         }
     }
+    if output == "podman" {
+        command.args(["--podman-target-context", "unknown"]);
+    }
     Ok(command
         .args(["--loss-policy", policy, "--output-directory"])
         .arg(output_directory)
@@ -410,6 +474,191 @@ fn assert_artifact_values(
         );
     }
     Ok(())
+}
+
+fn assert_podman_artifacts(
+    output_directory: &Path,
+    protected_values: &[String],
+    authorized_values: &[String],
+    tmpfs_destinations: &[String],
+    scenario: &str,
+) -> Result<(), Box<dyn Error>> {
+    let deployment_text = fs::read_to_string(output_directory.join("podman.json"))?;
+    let review = fs::read_to_string(output_directory.join("review.sh"))?;
+    let deployment: serde_json::Value = serde_json::from_str(&deployment_text)?;
+
+    assert_eq!(deployment["schema_version"], 1, "{scenario} Podman schema changed");
+    assert!(
+        matches!(
+            deployment["status"].as_str(),
+            Some("exact" | "deferred_sensitive_input")
+        ),
+        "{scenario} Podman deployment has an unexpected status"
+    );
+    assert!(
+        deployment["connection"].is_null(),
+        "{scenario} Podman output must remain connection-independent"
+    );
+    assert!(
+        deployment["external_preconditions"].is_array(),
+        "{scenario} Podman preconditions must be explicit"
+    );
+
+    let operations = deployment["operations"]
+        .as_array()
+        .ok_or_else(|| format!("{scenario} Podman operations array missing"))?;
+    assert!(!operations.is_empty(), "{scenario} Podman deployment has no operations");
+    assert_podman_operation_equivalence(operations, &review, scenario)?;
+    assert_podman_tmpfs_evidence(operations, &review, tmpfs_destinations, scenario)?;
+
+    assert!(review.starts_with("#!/bin/sh\n"));
+    assert!(review.contains("# Review generated Podman commands before running this file.\n"));
+    assert!(review.contains("set -eu\n"));
+    for protected in protected_values {
+        let explicitly_authorized = authorized_values
+            .iter()
+            .any(|authorized| authorized.contains(protected) || protected.contains(authorized));
+        if !explicitly_authorized {
+            assert!(
+                !deployment_text.contains(protected) && !review.contains(protected),
+                "{scenario} Podman artifacts disclosed an unretained protected value"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn assert_podman_operation_equivalence(
+    operations: &[serde_json::Value],
+    review: &str,
+    scenario: &str,
+) -> Result<(), Box<dyn Error>> {
+    let command_lines = review
+        .lines()
+        .filter(|line| line.starts_with("podman "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        command_lines.len(),
+        operations.len(),
+        "{scenario} review script operation count changed"
+    );
+
+    for (operation, command_line) in operations.iter().zip(command_lines) {
+        assert!(
+            operation["status"].as_str().is_some(),
+            "{scenario} Podman operation status missing"
+        );
+        assert!(
+            operation["action"].as_str().is_some_and(|action| !action.is_empty()),
+            "{scenario} Podman operation action missing"
+        );
+        assert!(
+            operation["resource"]["kind"]
+                .as_str()
+                .is_some_and(|kind| !kind.is_empty()),
+            "{scenario} Podman operation resource kind missing"
+        );
+        assert!(
+            operation["resource"]["name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty()),
+            "{scenario} Podman operation resource name missing"
+        );
+        assert_eq!(operation["cli"]["program"], "podman");
+        let arguments = operation["cli"]["argv"]
+            .as_array()
+            .ok_or_else(|| format!("{scenario} Podman CLI arguments missing"))?
+            .iter()
+            .map(|argument| {
+                argument
+                    .as_str()
+                    .ok_or_else(|| format!("{scenario} Podman CLI argument is not text"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert!(!arguments.is_empty(), "{scenario} Podman CLI operation is empty");
+        let expected_command = format!(
+            "podman {}",
+            arguments
+                .iter()
+                .map(|argument| shell_quote(argument))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        assert!(
+            command_line.starts_with(&expected_command),
+            "{scenario} review command differs from podman.json: {command_line}"
+        );
+        assert_eq!(operation["libpod"]["method"], "POST");
+        assert!(
+            operation["libpod"]["path_and_query"]
+                .as_str()
+                .is_some_and(|path| path.starts_with("/v6.1.0/libpod/")),
+            "{scenario} Podman operation does not use the default reviewed 6.1 target"
+        );
+        assert!(
+            operation["libpod"]["body"].is_object(),
+            "{scenario} Podman operation body missing"
+        );
+
+        if operation["cli"]["external_sensitive_input_required"] == true {
+            assert_eq!(operation["libpod"]["body"]["kind"], "external_sensitive_input");
+            assert!(
+                review.contains("PODMAN_LENS_SECRET_INPUT_"),
+                "{scenario} sensitive operation lacks an explicit review placeholder"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn assert_podman_tmpfs_evidence(
+    operations: &[serde_json::Value],
+    review: &str,
+    destinations: &[String],
+    scenario: &str,
+) -> Result<(), Box<dyn Error>> {
+    for destination in destinations {
+        let mount_argument = format!("type=tmpfs,target={destination}");
+        let create = operations
+            .iter()
+            .find(|operation| {
+                operation["action"] == "create"
+                    && operation["resource"]["kind"] == "container"
+                    && operation["cli"]["argv"].as_array().is_some_and(|arguments| {
+                        arguments
+                            .windows(2)
+                            .any(|pair| pair[0] == "--mount" && pair[1] == mount_argument)
+                    })
+            })
+            .ok_or_else(|| {
+                format!("{scenario} lacks a container create operation for tmpfs destination {destination}")
+            })?;
+        assert_eq!(create["status"], "exact");
+        let mounts = create["libpod"]["body"]["json"]["mounts"]
+            .as_array()
+            .ok_or_else(|| format!("{scenario} tmpfs Libpod mounts missing"))?;
+        let mount = mounts
+            .iter()
+            .find(|mount| {
+                mount["destination"] == *destination && mount["source"] == "tmpfs" && mount["type"] == "tmpfs"
+            })
+            .ok_or_else(|| format!("{scenario} lacks Libpod tmpfs evidence for destination {destination}"))?;
+        assert!(
+            mount["options"]
+                .as_array()
+                .is_some_and(|options| options.iter().any(|option| option == "rw")),
+            "{scenario} tmpfs mount does not retain explicit writable access"
+        );
+        assert!(
+            review.contains(&format!("'--mount' {}", shell_quote(&mount_argument))),
+            "{scenario} review script lacks tmpfs create evidence"
+        );
+    }
+    Ok(())
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn assert_report_redacted(report: &serde_json::Value, protected_values: &[String], scenario: &str) {

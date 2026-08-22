@@ -12,6 +12,8 @@ files = [
   "expected-diagnostics.txt",
   "expected-matrix-compose.txt",
   "expected-matrix-web.container",
+  "expected-podman.json",
+  "expected-podman-review.sh",
 ]
 
 [provenance]
@@ -45,8 +47,8 @@ protected-values = [
 
 [extensions.scenarios.exports.compose]
 loss-policy = "partial"
-diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009", "BFC0009"]
-fixed-diagnostic-codes = ["BFC0009", "BFC0009", "BFC0009"]
+diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009"]
+fixed-diagnostic-codes = ["BFC0009", "BFC0009"]
 artifact-values = ["{\\\"channel\\\": \\\"stable\\\"}", "literal%h"]
 
 [[extensions.scenarios.exports.compose.artifacts]]
@@ -72,3 +74,16 @@ expected = "data.volume"
 [[extensions.scenarios.exports.quadlet.artifacts]]
 artifact = "web.container"
 expected = "expected-matrix-web.container"
+
+[extensions.scenarios.exports.podman]
+loss-policy = "partial"
+diagnostic-codes = ["BFP0007", "BFP0007", "BFP0007", "BFP0007"]
+artifact-values = ["{\"channel\": \"stable\"}", "literal%h"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-podman.json"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "review.sh"
+expected = "expected-podman-review.sh"

@@ -1,0 +1,7 @@
+---
+name: route-matrix-tmpfs
+services:
+  worker:
+    image: example.invalid/worker:1
+    tmpfs:
+      - /run/boxferry

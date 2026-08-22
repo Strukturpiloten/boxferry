@@ -427,3 +427,19 @@ fn facade_exposes_the_quadlet_export_adapter_additively() -> Result<(), String> 
     );
     Ok(())
 }
+#[cfg(feature = "podman")]
+#[test]
+fn facade_exposes_explicit_podman_policy_and_reviewed_targets() {
+    use boxferry::{PodmanPromotionPolicy, acquire_podman_source, reviewed_podman_versions};
+
+    let policy = PodmanPromotionPolicy::conservative()
+        .with_effective_named_volume_mounts(true)
+        .with_effective_named_networks(true);
+    assert!(policy.promotes_effective_named_volume_mounts());
+    assert!(policy.promotes_effective_named_networks());
+    assert_eq!(
+        reviewed_podman_versions().last().map(ToString::to_string).as_deref(),
+        Some("6.1.0")
+    );
+    let _ = acquire_podman_source;
+}

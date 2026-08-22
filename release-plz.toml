@@ -33,6 +33,10 @@ name = "boxferry-compose"
 version_group = "boxferry"
 
 [[package]]
+name = "boxferry-podman"
+version_group = "boxferry"
+
+[[package]]
 name = "boxferry-quadlet"
 version_group = "boxferry"
 
@@ -42,6 +46,7 @@ changelog_include = [
   "boxferry-compose",
   "boxferry-engine",
   "boxferry-model",
+  "boxferry-podman",
   "boxferry-quadlet",
 ]
 changelog_path = "CHANGELOG.md"

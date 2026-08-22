@@ -38,6 +38,7 @@ format_axis! {
     pub(crate) enum InputType {
         Compose => "compose",
         Quadlet => "quadlet",
+        Podman => "podman",
     }
 }
 
@@ -46,6 +47,7 @@ format_axis! {
     pub(crate) enum OutputType {
         Compose => "compose",
         Quadlet => "quadlet",
+        Podman => "podman",
     }
 }
 
@@ -53,6 +55,7 @@ format_axis! {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TargetSelector {
     PodmanRange,
+    PodmanMaximum,
     ComposeSpecification,
 }
 
@@ -61,6 +64,7 @@ impl OutputType {
         match self {
             Self::Compose => TargetSelector::ComposeSpecification,
             Self::Quadlet => TargetSelector::PodmanRange,
+            Self::Podman => TargetSelector::PodmanMaximum,
         }
     }
 }
@@ -113,6 +117,11 @@ const fn fidelity_boundaries(
             &["pod-grouping"],
             &["unsupported-fields"],
         ),
+        (InputType::Compose, OutputType::Podman) => (
+            "supported-compose-podman-intersection",
+            &["pod-grouping"],
+            &["unsupported-fields"],
+        ),
         (InputType::Quadlet, OutputType::Compose) => (
             "supported-quadlet-compose-specification-intersection",
             &["environment-file-reconstruction"],
@@ -122,6 +131,26 @@ const fn fidelity_boundaries(
             "supported-quadlet-canonical-subset",
             &["environment-file-reconstruction", "systemd-runtime-semantics"],
             &["unsupported-fields"],
+        ),
+        (InputType::Quadlet, OutputType::Podman) => (
+            "supported-quadlet-podman-intersection",
+            &["environment-file-reconstruction", "systemd-runtime-semantics"],
+            &["unsupported-fields"],
+        ),
+        (InputType::Podman, OutputType::Compose) => (
+            "supported-podman-compose-specification-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "incomplete-secret-grants"],
+        ),
+        (InputType::Podman, OutputType::Quadlet) => (
+            "supported-podman-quadlet-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "incomplete-secret-grants"],
+        ),
+        (InputType::Podman, OutputType::Podman) => (
+            "supported-podman-observation-deployment-intersection",
+            &["effective-state-promotion"],
+            &["unmodelled-fields", "incomplete-secret-grants"],
         ),
     }
 }

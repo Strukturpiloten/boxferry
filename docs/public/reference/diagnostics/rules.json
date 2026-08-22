@@ -241,6 +241,70 @@
       "owner": "BoxFerry orchestration"
     },
     {
+      "code": "BFP0001",
+      "default_severity": "error",
+      "description": "Inspected Podman evidence is malformed, incomplete, or unavailable for a required mapping.",
+      "help": "Correct the selected Podman resources or selectors, then acquire a complete read-only inventory again.",
+      "name": "podman-source-invalid",
+      "owner": "Podman adapter"
+    },
+    {
+      "code": "BFP0002",
+      "default_severity": "warning",
+      "description": "Inspected Podman intent is not represented by the current neutral application model.",
+      "help": "Review the named field; use --loss-policy partial only when omitting that intent is acceptable.",
+      "name": "podman-input-unmodelled",
+      "owner": "Podman adapter"
+    },
+    {
+      "code": "BFP0003",
+      "default_severity": "warning",
+      "description": "Effective or locally resolved Podman evidence requires an explicit promotion decision.",
+      "help": "Choose an explicit promotion policy only after confirming the observed value is portable desired state.",
+      "name": "podman-promotion-required",
+      "owner": "Podman adapter"
+    },
+    {
+      "code": "BFP0004",
+      "default_severity": "error",
+      "description": "Podman resource identities or references conflict in the neutral namespace.",
+      "help": "Narrow the selectors or rename the conflicting resources before importing again.",
+      "name": "podman-identity-conflict",
+      "owner": "Podman adapter"
+    },
+    {
+      "code": "BFP0005",
+      "default_severity": "warning",
+      "description": "Podman inspection lacks authored secret-delivery information required for a portable grant.",
+      "help": "Author the secret delivery form and target separately; inspection metadata alone is insufficient.",
+      "name": "podman-secret-grant-incomplete",
+      "owner": "Podman adapter"
+    },
+    {
+      "code": "BFP0006",
+      "default_severity": "error",
+      "description": "The requested Podman output target is outside the reviewed exact version and execution-context catalogue.",
+      "help": "Select a reviewed --podman-max-version and state the target rootful, rootless, or unknown context explicitly.",
+      "name": "podman-target-invalid",
+      "owner": "Podman adapter"
+    },
+    {
+      "code": "BFP0007",
+      "default_severity": "warning",
+      "description": "Neutral application intent is not represented by the current Podman deployment subset.",
+      "help": "Review the named subject; use --loss-policy partial only when the omitted intent is acceptable.",
+      "name": "podman-output-unsupported",
+      "owner": "Podman adapter"
+    },
+    {
+      "code": "BFP0008",
+      "default_severity": "error",
+      "description": "PodmanLens could not produce or render a complete inert deployment plan.",
+      "help": "Review retained PodmanLens findings, correct the neutral intent or target, and retry.",
+      "name": "podman-planning-failed",
+      "owner": "Podman adapter"
+    },
+    {
       "code": "BFQ0001",
       "default_severity": "error",
       "description": "The requested Quadlet target or Podman range is invalid.",

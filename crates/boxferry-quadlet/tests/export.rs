@@ -36,7 +36,7 @@ fn exports_the_exact_first_conversion_subset_and_resolves_native_references() ->
     let mut service = Service::new(id("web")?);
     service.set_runtime_name(sourced(ProtectedString::plain("ferry-web"))?);
     service.set_image(sourced(ImageReference::parse(
-        "registry.example:5000/team/web:1.3@sha256:fedcba",
+        "registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     )?)?);
     service.set_command(sourced(Command::Exec(vec![
         ProtectedString::plain("php"),
@@ -2625,7 +2625,7 @@ fn assert_grouping_rejected(plan: &boxferry_engine::ConversionPlan<boxferry_quad
 const fn exact_first_conversion_container() -> &'static str {
     concat!(
         "[Container]\n",
-        "Image=registry.example:5000/team/web:1.3@sha256:fedcba\n",
+        "Image=registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n",
         "ContainerName=ferry-web\n",
         "Exec=php -v\n",
         "User=1001\n",

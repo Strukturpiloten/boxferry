@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "status": "exact",
+  "connection": null,
+  "external_preconditions": [],
+  "operations": [
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "network",
+        "name": "frontend"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "network",
+          "create",
+          "frontend"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/networks/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "name": "frontend"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "volume",
+        "name": "data"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "volume",
+          "create",
+          "data"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/volumes/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Name": "data"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "web-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=registry.example%3A5000%2Fteam%2Fweb%40sha256%3Affffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "web"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "web",
+          "--pull=never",
+          "--network",
+          "frontend:alias=web.local",
+          "--volume",
+          "data:/var/lib/data:ro,copy",
+          "--user",
+          "1001:1002",
+          "--workdir",
+          "/srv/app",
+          "--label",
+          "com.example.empty=",
+          "--label",
+          "com.example.metadata={\"channel\": \"stable\"}",
+          "--label",
+          "com.example.literal-specifier=literal%h",
+          "--restart",
+          "no",
+          "registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "php",
+          "-v"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=web",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {
+              "frontend": {
+                "aliases": [
+                  "web.local"
+                ]
+              }
+            },
+            "command": [
+              "php",
+              "-v"
+            ],
+            "image": "registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "labels": {
+              "com.example.empty": "",
+              "com.example.literal-specifier": "literal%h",
+              "com.example.metadata": "{\"channel\": \"stable\"}"
+            },
+            "restart_policy": "no",
+            "user": "1001:1002",
+            "volumes": [
+              {
+                "Dest": "/var/lib/data",
+                "Name": "data",
+                "Options": [
+                  "ro",
+                  "copy"
+                ]
+              }
+            ],
+            "work_dir": "/srv/app"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "web"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "start",
+          "web"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/web/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    }
+  ]
+}

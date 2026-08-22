@@ -1,0 +1,97 @@
+schema = 1
+id = "podman-lens-complex-corpus"
+suite = "differential"
+description = "Pins the fourteen PodmanLens 0.1.1 request-aware complex cassettes used to test every reviewed Podman 5.4 through 6.1 version in simulated rootful and rootless contexts."
+secrets_reviewed = true
+files = [
+  "complex-5.4.0-rootful.cassette.json",
+  "complex-5.4.0-rootless.cassette.json",
+  "complex-5.5.0-rootful.cassette.json",
+  "complex-5.5.0-rootless.cassette.json",
+  "complex-5.6.0-rootful.cassette.json",
+  "complex-5.6.0-rootless.cassette.json",
+  "complex-5.7.0-rootful.cassette.json",
+  "complex-5.7.0-rootless.cassette.json",
+  "complex-5.8.6-rootful.cassette.json",
+  "complex-5.8.6-rootless.cassette.json",
+  "complex-6.0.0-rootful.cassette.json",
+  "complex-6.0.0-rootless.cassette.json",
+  "complex-6.1.0-rootful.cassette.json",
+  "complex-6.1.0-rootless.cassette.json",
+]
+
+[provenance]
+source = "external"
+url = "https://github.com/Strukturpiloten/podman-lens/tree/65d5c28fe04ff03a74131923de0b62d3eef44d3c/fixtures/corpus"
+revision = "65d5c28fe04ff03a74131923de0b62d3eef44d3c"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "Offline deterministic request replay only; no Podman daemon, process environment, host identity, credentials, or network access is used. Execution context comes from each cassette."
+
+[expectations]
+summary = "All fourteen artifacts retain their reviewed hashes and provenance, replay exactly thirty read-only Libpod interactions, import through the neutral Application model, and exercise every registered exporter."
+
+[extensions.podman-corpus]
+podman-lens-version = "0.1.1"
+upstream-manifest-sha256 = "6dbea0f48028c9ea2d44c1d286189ca9e02970b8f3b41e81a949920373e04cd9"
+reviewed-versions = ["5.4.0", "5.5.0", "5.6.0", "5.7.0", "5.8.6", "6.0.0", "6.1.0"]
+execution-contexts = ["rootful", "rootless"]
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.4.0-rootful.cassette.json"
+sha256 = "8e79b5f2f8f1771e8c8866edbeccb4b972c2554fb4163699c624264641ad5993"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.4.0-rootless.cassette.json"
+sha256 = "18d7dd5855b04517b349859de7efb8a49d7a380817d666bd34b0a0ffefb64613"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.5.0-rootful.cassette.json"
+sha256 = "5706d5133cf9eaa35ede9dc7b4f9653ad5238fff9835181af440810508549174"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.5.0-rootless.cassette.json"
+sha256 = "4de75c7985b4c7187c8847409f991a3f913f17c834be7d1f127529273b0426a3"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.6.0-rootful.cassette.json"
+sha256 = "3ec6ea56c31174c29dd6cc8c30dcb237bb889fa5d1361692c000149d78d3a091"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.6.0-rootless.cassette.json"
+sha256 = "1efbd7fb6ec2549b1cfe286ae6ebc542ba72d5f09011b16873078ef5626638f0"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.7.0-rootful.cassette.json"
+sha256 = "7eb6ebec98b017f98df41a6ccafdb2c64d17b63394fa0bf5632bc9c642d76581"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.7.0-rootless.cassette.json"
+sha256 = "1736b06fe89a61d7e1d4ec9d37a475074754b392552acdf6fa784d1db7720788"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.8.6-rootful.cassette.json"
+sha256 = "051171f87fb42119bba151f67131d818d915b6bf2cb6afe04d4716425c1c161b"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-5.8.6-rootless.cassette.json"
+sha256 = "ae7ebba5bb3ddd2c02f3d7f80065b2d162a3edec53dc0b2fe4465395f96f7960"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-6.0.0-rootful.cassette.json"
+sha256 = "5388f670cb1350ddb93f1327f74a815e6bd036ddfa39523454e7f0a73ca36616"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-6.0.0-rootless.cassette.json"
+sha256 = "55fb9223741df992cd6a42598d7202ccf661f84c60677f9087cb9144f4dfff9e"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-6.1.0-rootful.cassette.json"
+sha256 = "9c810b8e974eb6c610930c7871a56c7d0b92ebf307a6c83749dca2e63bddaa5e"
+
+[[extensions.podman-corpus.artifacts]]
+file = "complex-6.1.0-rootless.cassette.json"
+sha256 = "a254bd3c21e8723ebba4efd0fec7a9250d6179172b5b3a47dd3a7492ae079201"

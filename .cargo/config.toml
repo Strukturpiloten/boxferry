@@ -6,6 +6,7 @@ ci-core = "check --locked --package boxferry --all-targets --no-default-features
 ci-doc = "doc --locked --workspace --all-features --no-deps"
 ci-doctest = "test --locked --doc --workspace --all-features"
 ci-policy = "test --locked --package boxferry --test repository_policy"
+ci-podman = "check --locked --package boxferry --all-targets --no-default-features --features podman"
 ci-quadlet = "check --locked --package boxferry --all-targets --no-default-features --features quadlet"
 ci-real-world-compose = "test --locked --package boxferry --test real_world_compose -- --ignored --nocapture"
 ci-test = "test --locked --workspace --all-targets --all-features"

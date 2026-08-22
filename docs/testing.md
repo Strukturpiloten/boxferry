@@ -26,7 +26,7 @@ Fixtures require an authored or immutable external provenance record, license de
 review, environment boundary, and expected behavior. Never commit live credentials, private runtime
 output, or production configuration.
 
-The exact 2×2 neutral-model route fixture under
+The neutral-model document route fixture under
 `fixtures/conversion/document-route-matrix/` also powers the public guide examples.
 `fixture_route_corpus.rs` discovers every positive adapter-contract and conversion manifest. Each
 manifest declares typed `extensions.scenarios` input settings and exporter-keyed expectations.
@@ -35,12 +35,29 @@ exporter, route, or positive fixture fails until the complete expectation produc
 
 Every scenario checks its minimum authorized loss policy and all stricter blocking policies, exact
 diagnostic-code sequence, complete artifact set and bytes, report redaction, authorized
-protected-value retention, and generated same-format fixed point. Checkout-dependent project roots
-are compared through an explicit `<project>` placeholder; other bytes remain exact.
+protected-value retention, and each applicable re-import or determinism contract.
+Checkout-dependent project roots are compared through an explicit `<project>` placeholder; other
+bytes remain exact.
 
-The dedicated document route matrix additionally checks cross-format chains, direct-versus-chained
-path consistency, file-versus-directory discovery, malformed-input output safety, and public facade
-parity. `docs/documentation-examples.toml` binds each displayed command to its input, exit status,
+The complete 3×3 route matrix treats importer and exporter coverage as independent dimensions.
+Compose and Quadlet output can be imported again, so their direct, chained, semantic-equivalence,
+fixed-point, and path-consistency contracts are tested. Podman output is not an observed inventory
+and cannot be re-imported. Its contract instead checks deterministic `podman.json` and `review.sh`
+bytes, semantic operation equivalence, complete findings, and redaction.
+
+## Podman cassette matrix
+
+The offline Podman corpus contains fourteen immutable request-bound cassettes: exact reviewed
+versions 5.4.0, 5.5.0, 5.6.0, 5.7.0, 5.8.6, 6.0.0, and 6.1.0 in simulated rootful and rootless
+contexts. It covers all six resource kinds, pods and standalone containers, isolated and shared
+network borders, named volumes, bind mounts, dependencies, metadata-only secrets, partial and
+disappeared resources, ambiguous references, malformed observations, and redaction.
+
+PodmanLens 0.1.1 cannot observe tmpfs mounts through runtime import. BoxFerry tests tmpfs in the
+opposite direction by exporting authored neutral, Compose, or Quadlet intent to Podman. No ordinary
+pull-request test needs a live Podman service or unavailable historical Podman container image.
+
+`docs/documentation-examples.toml` binds each displayed command to its input, exit status,
 diagnostic codes, and output bytes.
 
 ## Pull-request gate

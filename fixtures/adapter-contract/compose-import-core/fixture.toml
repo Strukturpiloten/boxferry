@@ -10,6 +10,8 @@ files = [
   "expected-matrix-frontend.network",
   "expected-matrix-data.volume",
   "expected-matrix-web.container",
+  "expected-podman.json",
+  "expected-podman-review.sh",
 ]
 
 [provenance]
@@ -35,8 +37,8 @@ sources = ["compose.yaml", "compose.override.yaml"]
 
 [extensions.scenarios.exports.compose]
 loss-policy = "partial"
-diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009", "BFC0009"]
-fixed-diagnostic-codes = ["BFC0009", "BFC0009", "BFC0009"]
+diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009"]
+fixed-diagnostic-codes = ["BFC0009", "BFC0009"]
 
 [[extensions.scenarios.exports.compose.artifacts]]
 artifact = "compose.yaml"
@@ -60,3 +62,15 @@ expected = "expected-matrix-data.volume"
 [[extensions.scenarios.exports.quadlet.artifacts]]
 artifact = "web.container"
 expected = "expected-matrix-web.container"
+
+[extensions.scenarios.exports.podman]
+loss-policy = "partial"
+diagnostic-codes = ["BFP0007", "BFP0007", "BFP0007", "BFP0007", "BFP0007"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-podman.json"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "review.sh"
+expected = "expected-podman-review.sh"

@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "status": "exact",
+  "connection": null,
+  "external_preconditions": [],
+  "operations": [
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "app-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "example.invalid/app:2.1"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=example.invalid%2Fapp%3A2.1&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "app"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "app",
+          "--pull=never",
+          "--restart",
+          "no",
+          "example.invalid/app:2.1"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=app",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {},
+            "image": "example.invalid/app:2.1",
+            "restart_policy": "no"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "app"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "start",
+          "app"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/app/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    }
+  ]
+}

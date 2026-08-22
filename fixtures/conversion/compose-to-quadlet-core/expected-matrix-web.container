@@ -1,5 +1,5 @@
 [Container]
-Image=registry.example:5000/team/web:1.3@sha256:fedcba
+Image=registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 ContainerName=ferry-web
 Exec=php -v
 User=1001

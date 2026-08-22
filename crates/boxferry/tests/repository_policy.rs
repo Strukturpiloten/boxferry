@@ -22,6 +22,7 @@ const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry-model",
     "boxferry-engine",
     "boxferry-compose",
+    "boxferry-podman",
     "boxferry-quadlet",
     "boxferry",
 ];
@@ -150,6 +151,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "cargo ci-check",
         "cargo ci-core",
         "cargo ci-compose",
+        "cargo ci-podman",
         "cargo ci-quadlet",
         "cargo ci-policy",
         "cargo ci-clippy",
@@ -300,9 +302,14 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
         .lines()
         .filter(|line| !line.starts_with('#') && !line.is_empty())
         .collect::<Vec<_>>()
-        != ["/CHANGELOG.md"]
+        != [
+            "/CHANGELOG.md",
+            "fixtures/**/expected-podman.json",
+            "fixtures/**/expected-*-podman.json",
+            "fixtures/differential/podman-lens-complex-corpus/*.cassette.json",
+        ]
     {
-        return Err("only the release-plz-owned CHANGELOG.md may be excluded from Prettier".to_owned());
+        return Err("Prettier exclusions must remain limited to reviewed generated artifacts".to_owned());
     }
 
     let markdown_format = script
@@ -980,7 +987,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .as_array()
         .ok_or_else(|| "release-plz.toml must configure every published package".to_owned())?;
     if packages.len() != PUBLISHED_PACKAGES.len() {
-        return Err("release-plz.toml must configure all five lockstep packages".to_owned());
+        return Err("release-plz.toml must configure all six lockstep packages".to_owned());
     }
     for package in PUBLISHED_PACKAGES {
         let configured = packages.iter().find(|entry| entry["name"].as_str() == Some(package));
@@ -995,7 +1002,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .ok_or_else(|| "release-plz.toml is missing the facade package".to_owned())?;
     if facade["changelog_update"].as_bool() != Some(true)
         || facade["changelog_path"].as_str() != Some("CHANGELOG.md")
-        || facade["changelog_include"].as_array().map(Vec::len) != Some(4)
+        || facade["changelog_include"].as_array().map(Vec::len) != Some(5)
     {
         return Err("the facade must aggregate all component changes into the root changelog".to_owned());
     }
@@ -1205,11 +1212,11 @@ fn fixture_manifests_follow_the_common_contract() -> Result<(), String> {
 }
 
 #[test]
-fn deferred_runtime_namespaces_are_not_published_by_the_current_product() {
+fn deferred_docker_and_runtime_namespaces_are_not_published_by_the_current_product() {
     for rule in boxferry_engine::RULES {
         assert!(
-            !matches!(rule.code().get(..3), Some("BFD" | "BFP" | "BFR")),
-            "deferred runtime rule namespace must not remain published: {}",
+            !matches!(rule.code().get(..3), Some("BFD" | "BFR")),
+            "deferred Docker or runtime rule namespace must not remain published: {}",
             rule.code()
         );
     }

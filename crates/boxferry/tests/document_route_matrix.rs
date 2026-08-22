@@ -1,6 +1,6 @@
 //! Deterministic public contracts for every supported Compose/Quadlet document route.
 
-#![cfg(all(feature = "cli", feature = "compose", feature = "quadlet"))]
+#![cfg(all(feature = "cli", feature = "compose", feature = "podman", feature = "quadlet"))]
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -124,6 +124,9 @@ fn every_document_route_writes_reviewed_deterministic_bytes_and_stable_success_r
                     artifact.artifact
                 );
             }
+            if route.output == "podman" {
+                assert_podman_artifacts(&output, &format!("{} -> {}", route.input, route.output))?;
+            }
             if let Some(first) = &first_output {
                 assert_eq!(
                     output_bytes, *first,
@@ -163,8 +166,12 @@ fn exact_generated_artifacts_reimport_to_fixed_points_and_are_path_independent()
     }
 
     let outputs = routes.iter().map(|route| route.output.clone()).collect::<BTreeSet<_>>();
+    let document_outputs = outputs
+        .iter()
+        .filter(|output| output.as_str() != "podman")
+        .collect::<Vec<_>>();
     for input in matrix.inputs.keys() {
-        for intermediate in &outputs {
+        for intermediate in document_outputs.iter().copied() {
             let first_directory = direct_directories
                 .get(&(input.clone(), intermediate.clone()))
                 .ok_or("direct intermediate output")?;
@@ -203,13 +210,14 @@ fn exact_generated_artifacts_reimport_to_fixed_points_and_are_path_independent()
 
             for terminal in &outputs {
                 let chained_directory = root.path().join(format!("chain-{input}-{intermediate}-{terminal}"));
+                let loss_policy = if terminal == "podman" { "partial" } else { "exact" };
                 run_conversion(
                     intermediate,
                     terminal,
                     &first_sources,
                     application_name,
                     &chained_directory,
-                    "exact",
+                    loss_policy,
                 )?;
                 assert_eq!(
                     artifact_bytes(&chained_directory)?,
@@ -360,6 +368,9 @@ fn explicit_files_and_directory_discovery_produce_identical_artifacts() -> Resul
             command
                 .args(["convert", input, output, "--input-directory"])
                 .arg(&input_directory);
+            if output == "podman" {
+                command.args(["--podman-target-context", "unknown", "--loss-policy", "partial"]);
+            }
             if let Some(application_name) = scenario.application_name.as_deref() {
                 command.args(["--application-name", application_name]);
             }
@@ -385,7 +396,7 @@ fn explicit_files_and_directory_discovery_produce_identical_artifacts() -> Resul
                     .collect::<Vec<_>>(),
                 scenario.application_name.as_deref(),
                 &explicit_output,
-                "exact",
+                if output == "podman" { "partial" } else { "exact" },
             )?;
             assert_eq!(
                 artifact_bytes(&discovered_output)?,
@@ -414,6 +425,9 @@ fn every_document_route_validates_planned_artifacts_without_writing() -> Result<
         }
         if let Some(application_name) = route.application_name.as_deref() {
             command.args(["--application-name", application_name]);
+        }
+        if route.output == "podman" {
+            command.args(["--podman-target-context", "unknown", "--loss-policy", "partial"]);
         }
         let result = command.args(["--console-format", "json"]).output()?;
         assert!(
@@ -460,6 +474,9 @@ fn malformed_native_input_fails_before_writing_for_every_document_route() -> Res
             .arg(&input_path);
         if let Some(application_name) = application_name {
             command.args(["--application-name", application_name]);
+        }
+        if output == "podman" {
+            command.args(["--podman-target-context", "unknown"]);
         }
         let result = command
             .arg("--output-directory")
@@ -603,6 +620,9 @@ fn convert_route(route: &Route, fixture: &Path, output: &Path) -> Result<std::pr
     if let Some(application_name) = route.application_name.as_deref() {
         command.args(["--application-name", application_name]);
     }
+    if route.output == "podman" {
+        command.args(["--podman-target-context", "unknown", "--loss-policy", "partial"]);
+    }
     Ok(command
         .arg("--output-directory")
         .arg(output)
@@ -646,6 +666,9 @@ fn execute_conversion(
     if let Some(application_name) = application_name {
         command.args(["--application-name", application_name]);
     }
+    if output == "podman" {
+        command.args(["--podman-target-context", "unknown"]);
+    }
     let result = command
         .args(["--loss-policy", loss_policy, "--output-directory"])
         .arg(output_directory)
@@ -666,7 +689,14 @@ fn assert_success_report(bytes: &[u8], route: &Route, command_kind: &str) -> Res
     assert_eq!(report["source_type"], route.input);
     assert_eq!(report["target_type"], route.output);
     assert_eq!(report["application"], "route-matrix");
-    assert_eq!(report["diagnostics"], serde_json::json!([]));
+    assert_eq!(
+        report_diagnostic_codes(&report)?,
+        if route.output == "podman" {
+            vec!["BFP0007"]
+        } else {
+            Vec::new()
+        }
+    );
     assert_eq!(report["events"], serde_json::json!([]));
     assert_eq!(
         report["output_artifacts"]
@@ -683,6 +713,117 @@ fn assert_success_report(bytes: &[u8], route: &Route, command_kind: &str) -> Res
     );
     assert_eq!(report["invocation"]["command_kind"], command_kind);
     Ok(())
+}
+
+fn assert_podman_artifacts(output_directory: &Path, route: &str) -> Result<(), Box<dyn Error>> {
+    let deployment_text = fs::read_to_string(output_directory.join("podman.json"))?;
+    let review = fs::read_to_string(output_directory.join("review.sh"))?;
+    let deployment: serde_json::Value = serde_json::from_str(&deployment_text)?;
+
+    assert_eq!(deployment["schema_version"], 1, "{route} Podman schema changed");
+    assert!(
+        matches!(
+            deployment["status"].as_str(),
+            Some("exact" | "deferred_sensitive_input")
+        ),
+        "{route} Podman deployment has an unexpected status"
+    );
+    assert!(
+        deployment["connection"].is_null(),
+        "{route} Podman output must remain connection-independent"
+    );
+    assert!(
+        deployment["external_preconditions"].is_array(),
+        "{route} Podman preconditions must be explicit"
+    );
+
+    let operations = deployment["operations"]
+        .as_array()
+        .ok_or_else(|| format!("{route} Podman operations array missing"))?;
+    assert!(!operations.is_empty(), "{route} Podman deployment has no operations");
+    let command_lines = review
+        .lines()
+        .filter(|line| line.starts_with("podman "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        command_lines.len(),
+        operations.len(),
+        "{route} review script operation count changed"
+    );
+
+    for (operation, command_line) in operations.iter().zip(command_lines) {
+        assert!(
+            operation["status"].as_str().is_some(),
+            "{route} Podman operation status missing"
+        );
+        assert!(
+            operation["action"].as_str().is_some_and(|action| !action.is_empty()),
+            "{route} Podman operation action missing"
+        );
+        assert!(
+            operation["resource"]["kind"]
+                .as_str()
+                .is_some_and(|kind| !kind.is_empty()),
+            "{route} Podman operation resource kind missing"
+        );
+        assert!(
+            operation["resource"]["name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty()),
+            "{route} Podman operation resource name missing"
+        );
+        assert_eq!(operation["cli"]["program"], "podman");
+        let arguments = operation["cli"]["argv"]
+            .as_array()
+            .ok_or_else(|| format!("{route} Podman CLI arguments missing"))?
+            .iter()
+            .map(|argument| {
+                argument
+                    .as_str()
+                    .ok_or_else(|| format!("{route} Podman CLI argument is not text"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert!(!arguments.is_empty(), "{route} Podman CLI operation is empty");
+        let expected_command = format!(
+            "podman {}",
+            arguments
+                .iter()
+                .map(|argument| podman_shell_quote(argument))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        assert!(
+            command_line.starts_with(&expected_command),
+            "{route} review command differs from podman.json: {command_line}"
+        );
+        assert_eq!(operation["libpod"]["method"], "POST");
+        assert!(
+            operation["libpod"]["path_and_query"]
+                .as_str()
+                .is_some_and(|path| path.starts_with("/v6.1.0/libpod/")),
+            "{route} operation does not use the default reviewed Podman 6.1 target"
+        );
+        assert!(
+            operation["libpod"]["body"].is_object(),
+            "{route} Podman operation body missing"
+        );
+        if operation["cli"]["external_sensitive_input_required"] == true {
+            assert_eq!(operation["libpod"]["body"]["kind"], "external_sensitive_input");
+            assert!(
+                review.contains("PODMAN_LENS_SECRET_INPUT_"),
+                "{route} sensitive operation lacks an explicit review placeholder"
+            );
+        }
+    }
+
+    assert!(review.starts_with("#!/bin/sh\n"));
+    assert!(review.contains("# Review generated Podman commands before running this file.\n"));
+    assert!(review.contains("set -eu\n"));
+    Ok(())
+}
+
+fn podman_shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn report_diagnostic_codes(report: &serde_json::Value) -> Result<Vec<&str>, String> {
@@ -719,6 +860,11 @@ fn assert_matrix_matches_capabilities(matrix: &Matrix) -> Result<(), Box<dyn Err
         .as_array()
         .ok_or("capability routes")?
         .iter()
+        .filter(|route| {
+            route["input_type"]
+                .as_str()
+                .is_some_and(|input| matches!(input, "compose" | "quadlet"))
+        })
         .map(|route| {
             Ok((
                 route["input_type"].as_str().ok_or("capability input")?.to_owned(),

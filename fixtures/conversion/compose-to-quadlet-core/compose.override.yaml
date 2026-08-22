@@ -2,7 +2,7 @@
 services:
   web:
     container_name: ferry-web
-    image: registry.example:5000/team/web:1.3@sha256:fedcba
+    image: registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
     healthcheck:
       interval: 45s
     environment:

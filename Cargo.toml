@@ -5,6 +5,7 @@ members = [
   "crates/boxferry-compose",
   "crates/boxferry-engine",
   "crates/boxferry-model",
+  "crates/boxferry-podman",
   "crates/boxferry-quadlet",
 ]
 default-members = ["crates/boxferry"]

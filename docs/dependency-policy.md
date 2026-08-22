@@ -34,6 +34,14 @@ requirement and committed lock file let Renovate propose normal updates while CI
 resolved graph. [ADR 0004](decisions/0004-first-cli-feature-and-write-safety.md) records the default
 feature and command-safety decision.
 
+`boxferry-podman` uses the crates.io `podman-lens` 0.1.1 contract with default features disabled.
+PodmanLens owns explicit read-only Libpod acquisition, typed native observations, finite reviewed
+version evidence, semantic deployment planning, and deterministic rendering. BoxFerry owns only
+semantic mapping, orchestration, loss policy, and presentation. This dependency does not authorize
+ambient connection discovery, shelling out to `podman`, mutating requests, or execution of rendered
+operations. [ADR 0034](decisions/0034-podman-lens-adapter-boundary.md) records the architecture and
+promotion-policy boundary.
+
 The `boxferry` CLI feature uses ZIP 6.0.0 with default features disabled to create the local
 diagnostic support bundle recorded in ADR 0018 and ADR 0021. It writes only fixed, stored entries in bounded
 memory and enables no compression, encryption, timestamp, or runtime-inspection feature. ZIP is
@@ -56,7 +64,7 @@ Release preparation uses release-plz Action 0.5.131 at immutable commit
 `2eb1d8bcb770b4c48ccfaad919734b38b51958c9`, release-plz CLI 0.3.160, and SHA-pinned GitHub App
 token Action 3.2.0. These are repository-only workflow dependencies. The configuration disables
 publication, tags, and GitHub releases; the existing protected workflow retains those
-responsibilities. All five published crates remain in one version group without package-level
+responsibilities. All six published crates remain in one version group without package-level
 commit filtering so release-plz can reconcile inherited workspace versions and internal Cargo
 requirements atomically. A narrow default-branch path filter starts preparation for Rust source,
 package, dependency, build, and release-configuration changes while excluding ordinary

@@ -1,2 +1,9 @@
 # release-plz owns the generated changelog layout.
 /CHANGELOG.md
+
+# Generator-owned Podman artifacts use PodmanLens's deterministic byte layout.
+fixtures/**/expected-podman.json
+fixtures/**/expected-*-podman.json
+
+# Immutable third-party cassettes retain their reviewed upstream hashes.
+fixtures/differential/podman-lens-complex-corpus/*.cassette.json
