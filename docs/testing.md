@@ -64,7 +64,9 @@ diagnostic codes, and output bytes.
 
 The complete task formats and lints all repository files, tests every Cargo target and feature
 boundary, checks Rust 1.85.0, audits dependencies, builds Rustdoc, verifies coverage floors, and
-checks local links. Network-dependent corpus ingestion and privileged runtime conformance remain
-scheduled or explicit opt-in evidence.
+checks local links. It also validates the lockstep publishable package set and requires usable,
+dated `CHANGELOG.md` notes for the current workspace version. PR CI exposes that release-metadata
+contract as a dedicated job required by the aggregate gate. Network-dependent corpus ingestion and
+privileged runtime conformance remain scheduled or explicit opt-in evidence.
 
 Coverage is a regression ratchet, not proof of semantic correctness.

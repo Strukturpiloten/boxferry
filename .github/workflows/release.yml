@@ -60,43 +60,7 @@ jobs:
             echo "Run releases from the default branch (${DEFAULT_BRANCH})." >&2
             exit 1
           fi
-
-          metadata="$(cargo metadata --locked --no-deps --format-version 1)"
-          if ! version="$(
-            jq -er '[.packages[].version] | unique | if length == 1 then .[0] else error("workspace packages must use one version") end' \
-              <<< "${metadata}" 2>/dev/null
-          )"; then
-            echo 'Release metadata must declare one common workspace package version.' >&2
-            exit 1
-          fi
-          packages='["boxferry-model","boxferry-engine","boxferry-compose","boxferry-podman","boxferry-quadlet","boxferry"]'
-
-          if ! metadata_validation="$(
-            jq -er --argjson expected "${packages}" '
-              ([.packages[].name] | sort) as $actual |
-              ([.packages[] | select(.publish == []) | .name] | sort) as $unpublishable |
-              if $actual != ($expected | sort) then
-                "expected packages " + ($expected | sort | join(", ")) +
-                "; found " + ($actual | join(", "))
-              elif ($unpublishable | length) != 0 then
-                "packages must be publishable: " + ($unpublishable | join(", "))
-              else
-                "ok"
-              end
-            ' <<< "${metadata}" 2>/dev/null
-          )"; then
-            echo 'Could not inspect Cargo release package metadata.' >&2
-            exit 1
-          fi
-          if [[ "${metadata_validation}" != "ok" ]]; then
-            echo "Release package metadata is invalid: ${metadata_validation}." >&2
-            exit 1
-          fi
-
-          if ! bash scripts/extract-release-notes.sh "${version}" >/dev/null; then
-            echo "CHANGELOG.md does not contain usable release notes for ${version}." >&2
-            exit 1
-          fi
+          bash scripts/validate-release-metadata.sh
 
       - name: Check formatting
         run: cargo fmt --all -- --check
