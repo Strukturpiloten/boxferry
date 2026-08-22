@@ -3035,7 +3035,18 @@ impl<'a> Mapping<'a> {
         let Some(value) = self.direct_value(filename, &fallback_subject, entry, origin.clone()) else {
             return;
         };
-        let Some((name, value)) = value.split_once('=') else {
+        let encoded = value.starts_with('"');
+        let Some(decoded) = decode_generated_assignment(value) else {
+            self.unsupported_value(
+                &fallback_subject,
+                filename,
+                entry.key().text(),
+                "Label is neither a direct assignment nor deterministic BoxFerry-generated quoted assignment",
+                origin,
+            );
+            return;
+        };
+        let Some((name, value)) = decoded.split_once('=') else {
             self.unsupported_value(
                 &fallback_subject,
                 filename,
@@ -3046,7 +3057,7 @@ impl<'a> Mapping<'a> {
             return;
         };
         let subject = format!("{fallback_subject}.{name}");
-        if !is_label_name(name) || !is_safe_word(value, true) {
+        if !is_label_name(name) || (!encoded && !is_safe_word(value, true)) {
             self.unsupported_value(
                 &subject,
                 filename,
@@ -3060,7 +3071,7 @@ impl<'a> Mapping<'a> {
             return;
         };
         service.add_label(Sourced::from_source(
-            MetadataLabel::new(name, ProtectedString::plain(value)),
+            MetadataLabel::new(name, ProtectedString::sensitive(value)),
             origin.clone(),
         ));
         self.exact(subject, Some(origin));
@@ -3072,7 +3083,17 @@ impl<'a> Mapping<'a> {
         let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
             return;
         };
-        let Some((name, value)) = value.split_once('=') else {
+        let Some(decoded) = decode_generated_assignment(value) else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "Annotation is neither a direct assignment nor deterministic BoxFerry-generated quoted assignment",
+                origin,
+            );
+            return;
+        };
+        let Some((name, value)) = decoded.split_once('=') else {
             self.unsupported_value(
                 &subject,
                 filename,
@@ -3123,7 +3144,17 @@ impl<'a> Mapping<'a> {
         let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
             return;
         };
-        let Some((name, value)) = value.split_once('=') else {
+        let Some(decoded) = decode_generated_assignment(value) else {
+            self.unsupported_value(
+                &subject,
+                filename,
+                entry.key().text(),
+                "LogOpt is neither a direct assignment nor deterministic BoxFerry-generated quoted assignment",
+                origin,
+            );
+            return;
+        };
+        let Some((name, value)) = decoded.split_once('=') else {
             self.unsupported_value(
                 &subject,
                 filename,
@@ -4563,6 +4594,53 @@ fn is_safe_word(value: &str, allow_empty: bool) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'+' | b'=' | b',')
         })
+}
+
+fn decode_generated_assignment(value: &str) -> Option<String> {
+    if !value.starts_with('"') {
+        return Some(value.to_owned());
+    }
+    let encoded = value.strip_prefix('"')?.strip_suffix('"')?;
+    let mut decoded = String::with_capacity(encoded.len());
+    let mut characters = encoded.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' | '\0' | '\r' | '\n' => return None,
+            '\\' => match characters.next()? {
+                '"' => decoded.push('"'),
+                '\\' => decoded.push('\\'),
+                'n' => decoded.push('\n'),
+                'r' => decoded.push('\r'),
+                't' => decoded.push('\t'),
+                'u' => {
+                    let digits = [
+                        characters.next()?,
+                        characters.next()?,
+                        characters.next()?,
+                        characters.next()?,
+                    ];
+                    let scalar = digits
+                        .into_iter()
+                        .try_fold(0_u32, |value, digit| digit.to_digit(16).map(|digit| value * 16 + digit))?;
+                    let character = char::from_u32(scalar)?;
+                    if character == '\0' {
+                        return None;
+                    }
+                    decoded.push(character);
+                }
+                _ => return None,
+            },
+            '%' => {
+                if characters.next()? != '%' {
+                    return None;
+                }
+                decoded.push('%');
+            }
+            character if character.is_control() => return None,
+            character => decoded.push(character),
+        }
+    }
+    Some(decoded)
 }
 
 fn is_safe_security_option_value(value: &str) -> bool {

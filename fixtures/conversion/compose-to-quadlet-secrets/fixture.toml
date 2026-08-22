@@ -3,7 +3,12 @@ id = "compose-to-quadlet-secrets"
 suite = "conversion"
 description = "Protects exact external Podman secret grants and explicit manual actions for Compose configs and application-owned secret material."
 secrets_reviewed = true
-files = ["compose.yaml", "web.container", "expected-diagnostics.txt"]
+files = [
+  "compose.yaml",
+  "web.container",
+  "expected-diagnostics.txt",
+  "expected-matrix-compose.yaml",
+]
 
 [provenance]
 source = "authored"
@@ -25,3 +30,38 @@ active-profiles = []
 podman-minimum-version = "5.4.0"
 podman-maximum-version = "6.0.2"
 grouping-policy = "separate-containers"
+
+[[extensions.scenarios]]
+id = "compose"
+input = "compose"
+sources = ["compose.yaml"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "partial"
+diagnostic-codes = [
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+  "BFC0007",
+]
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-matrix-compose.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "partial"
+diagnostic-codes = ["BFQ0003", "BFQ0003", "BFQ0003", "BFQ0003"]
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "web.container"

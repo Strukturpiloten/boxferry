@@ -30,17 +30,17 @@ use boxferry::report::{
 };
 use boxferry::{
     COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeFindingStage,
-    ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, LossPolicy, NativeFinding,
-    NativeFindingLabelKind, PlatformVersion, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy,
-    QuadletImporter, QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES,
-    RuleId, SourceId, TargetProfile, convert, find_rule,
+    ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, ImportAdapter,
+    ImportResult, LossPolicy, NativeFinding, NativeFindingLabelKind, PlatformVersion, QuadletDocumentInput,
+    QuadletExporter, QuadletGroupingPolicy, QuadletImporter, QuadletParseDiagnostic, QuadletParseDiagnosticOrigin,
+    QuadletParseError, QuadletSource, RULES, RuleId, SourceId, TargetProfile, convert_imported, find_rule,
 };
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 mod route;
-use route::{InputOptions, InputType, OutputType, RouteExecutor, RouteSpec, TargetSelector};
+use route::{InputType, OutputType, RouteSpec, TargetSelector};
 
 const CONVENTIONAL_COMPOSE_FILES: [&str; 6] = [
     "compose.yaml",
@@ -1181,7 +1181,7 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
             "{}",
             serde_json::to_string(&serde_json::json!({
                 "schema_version": 1,
-                "routes": route::routes().iter().map(|route| capability_json(*route, &minimum, &maximum)).collect::<Vec<_>>()
+                "routes": route::routes().map(|route| capability_json(route, &minimum, &maximum)).collect::<Vec<_>>()
             }))?
         );
     } else if !presentation.quiet {
@@ -1388,12 +1388,20 @@ fn generic_convert(
     validate_only: bool,
 ) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
     let route = validate_route(arguments, &ordered)?;
-    if matches!(
-        route.executor,
-        RouteExecutor::QuadletToCompose | RouteExecutor::QuadletToQuadlet
-    ) {
-        return generic_quadlet_convert(arguments, ordered, route, output_directory, validate_only);
+    match route.input {
+        InputType::Compose => generic_compose_convert(arguments, ordered, route, output_directory, validate_only),
+        InputType::Quadlet => generic_quadlet_convert(arguments, ordered, route, output_directory, validate_only),
     }
+}
+
+#[allow(clippy::too_many_lines)]
+fn generic_compose_convert(
+    arguments: &GenericConversion,
+    ordered: Vec<OrderedInput>,
+    route: RouteSpec,
+    output_directory: Option<&Path>,
+    validate_only: bool,
+) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
     if arguments.pod_name.is_some() && !matches!(arguments.grouping, Grouping::Pod) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1419,24 +1427,6 @@ fn generic_convert(
         .application_name
         .as_deref()
         .map_or_else(|| derive_project_name(&project_root), str::to_owned);
-    let podman_versions = if route.target_selector == TargetSelector::PodmanRange {
-        Some(
-            resolve_versions(&arguments.podman_minimum_version, &arguments.podman_maximum_version).map_err(
-                |error| {
-                    post_discovery_failure(
-                        FailedStage::Conversion,
-                        RuleId::PodmanTargetSelectionInvalid,
-                        "Podman output version selection failed",
-                        &error,
-                        &aliases,
-                        &discovered,
-                    )
-                },
-            )?,
-        )
-    } else {
-        None
-    };
     let interpolation = generic_interpolation_environment(arguments).map_err(|error| {
         post_discovery_failure(
             FailedStage::Interpolation,
@@ -1456,74 +1446,17 @@ fn generic_convert(
         interpolation: interpolation.as_ref(),
     };
     let loaded = load_compose_source(&conversion, &aliases)?;
-    let (conversion, resolved_versions) = match route.executor {
-        RouteExecutor::ComposeToQuadlet => {
-            let (minimum, maximum) = podman_versions.ok_or_else(|| io::Error::other("missing Podman output range"))?;
-            let mut exporter = QuadletExporter::new()?
-                .with_relative_host_path_root(project_root.to_string_lossy().into_owned())?
-                .with_grouping_policy(arguments.grouping.into());
-            if let Some(pod_name) = arguments.pod_name.as_deref() {
-                exporter = exporter.with_pod_name(pod_name);
-            }
-            let target = TargetProfile::new("podman", minimum, Some(maximum))?;
-            let result = convert(
-                &ComposeImporter::new()?,
-                &loaded.source,
-                &exporter,
-                &target,
-                arguments.loss_policy.into(),
-            )
-            .map_err(|error| {
-                compose_conversion_failure(&error, &loaded.preprocessing_diagnostics, &aliases, &discovered)
-            })?;
-            (
-                RenderedConversion::from_result(result, |output| {
-                    output
-                        .files()
-                        .iter()
-                        .map(|file| RenderedFile {
-                            name: file.name().as_str().to_owned(),
-                            text: file.text().to_owned(),
-                        })
-                        .collect()
-                }),
-                VersionBounds {
-                    minimum: minimum.to_string(),
-                    maximum: maximum.to_string(),
-                },
-            )
-        }
-        RouteExecutor::ComposeToCompose => {
-            let target = TargetProfile::new(
-                COMPOSE_SPECIFICATION_TARGET,
-                COMPOSE_SPECIFICATION_PROFILE_REVISION,
-                Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
-            )?;
-            let result = convert(
-                &ComposeImporter::new()?,
-                &loaded.source,
-                &ComposeExporter::new()?,
-                &target,
-                arguments.loss_policy.into(),
-            )
-            .map_err(|error| {
-                compose_conversion_failure(&error, &loaded.preprocessing_diagnostics, &aliases, &discovered)
-            })?;
-            (
-                RenderedConversion::from_result(result, |output| {
-                    vec![RenderedFile {
-                        name: "compose.yaml".into(),
-                        text: output.text().to_owned(),
-                    }]
-                }),
-                VersionBounds {
-                    minimum: "rolling".into(),
-                    maximum: "rolling".into(),
-                },
-            )
-        }
-        _ => return Err(io::Error::other("Compose input selected a non-Compose route executor").into()),
-    };
+    let relative_host_path_root = project_root.to_string_lossy().into_owned();
+    let imported = ComposeImporter::new()?.import(&loaded.source);
+    let (conversion, resolved_versions) = export_imported(
+        arguments,
+        route.output,
+        imported,
+        Some(&relative_host_path_root),
+        &loaded.preprocessing_diagnostics,
+        &aliases,
+        &discovered,
+    )?;
     finish_document_conversion(
         arguments,
         route,
@@ -1555,15 +1488,10 @@ fn explicitly_supplied(matches: &clap::ArgMatches, id: &str) -> bool {
 }
 
 fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io::Result<RouteSpec> {
-    let route = route::find(arguments.input_type, arguments.output_type).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the requested input/output route is not implemented",
-        )
-    })?;
-    match route.input_options {
-        InputOptions::Compose => {}
-        InputOptions::Quadlet => {
+    let route = route::find(arguments.input_type, arguments.output_type);
+    match route.input {
+        InputType::Compose => {}
+        InputType::Quadlet => {
             let name = arguments.application_name.as_deref().ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -1607,80 +1535,9 @@ fn generic_quadlet_convert(
     let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
     aliases.add_inputs(&discovered);
     let (application_name, source) = load_quadlet_source(arguments, &discovered, &aliases)?;
-    let (conversion, resolved_versions) = match route.executor {
-        RouteExecutor::QuadletToCompose => {
-            let target = TargetProfile::new(
-                COMPOSE_SPECIFICATION_TARGET,
-                COMPOSE_SPECIFICATION_PROFILE_REVISION,
-                Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
-            )?;
-            let result = convert(
-                &QuadletImporter::new()?,
-                &source,
-                &ComposeExporter::new()?,
-                &target,
-                arguments.loss_policy.into(),
-            )
-            .map_err(|error| quadlet_conversion_failure(&error, &aliases, &discovered))?;
-            (
-                RenderedConversion::from_result(result, |output| {
-                    vec![RenderedFile {
-                        name: "compose.yaml".into(),
-                        text: output.text().to_owned(),
-                    }]
-                }),
-                VersionBounds {
-                    minimum: "rolling".into(),
-                    maximum: "rolling".into(),
-                },
-            )
-        }
-        RouteExecutor::QuadletToQuadlet => {
-            let (minimum, maximum) =
-                resolve_versions(&arguments.podman_minimum_version, &arguments.podman_maximum_version).map_err(
-                    |error| {
-                        post_discovery_failure(
-                            FailedStage::Conversion,
-                            RuleId::PodmanTargetSelectionInvalid,
-                            "Podman output version selection failed",
-                            &error,
-                            &aliases,
-                            &discovered,
-                        )
-                    },
-                )?;
-            let mut exporter = QuadletExporter::new()?.with_grouping_policy(arguments.grouping.into());
-            if let Some(pod_name) = arguments.pod_name.as_deref() {
-                exporter = exporter.with_pod_name(pod_name);
-            }
-            let target = TargetProfile::new("podman", minimum, Some(maximum))?;
-            let result = convert(
-                &QuadletImporter::new()?,
-                &source,
-                &exporter,
-                &target,
-                arguments.loss_policy.into(),
-            )
-            .map_err(|error| quadlet_conversion_failure(&error, &aliases, &discovered))?;
-            (
-                RenderedConversion::from_result(result, |output| {
-                    output
-                        .files()
-                        .iter()
-                        .map(|file| RenderedFile {
-                            name: file.name().as_str().to_owned(),
-                            text: file.text().to_owned(),
-                        })
-                        .collect()
-                }),
-                VersionBounds {
-                    minimum: minimum.to_string(),
-                    maximum: maximum.to_string(),
-                },
-            )
-        }
-        _ => return Err(io::Error::other("Quadlet input selected a non-Quadlet route executor").into()),
-    };
+    let imported = QuadletImporter::new()?.import(&source);
+    let (conversion, resolved_versions) =
+        export_imported(arguments, route.output, imported, None, &[], &aliases, &discovered)?;
     finish_document_conversion(
         arguments,
         route,
@@ -1696,38 +1553,93 @@ fn generic_quadlet_convert(
     )
 }
 
-fn quadlet_conversion_failure(
-    error: &ConversionError,
+#[allow(clippy::too_many_arguments)]
+fn export_imported(
+    arguments: &GenericConversion,
+    output: OutputType,
+    imported: ImportResult,
+    relative_host_path_root: Option<&str>,
+    source_diagnostics: &[ReportDiagnostic],
     aliases: &ReportAliases,
     discovered: &[ResolvedInput],
-) -> Box<dyn Error> {
-    let mut diagnostics = Vec::new();
-    match error {
-        ConversionError::Import(import_diagnostics) => diagnostics.extend(
-            import_diagnostics
-                .iter()
-                .map(|diagnostic| report_diagnostic(diagnostic, aliases)),
-        ),
-        ConversionError::InvalidPlan(_) => diagnostics.push(sanitized_diagnostic(
-            RuleId::ConversionFailed,
-            "error",
-            "the Quadlet conversion produced an invalid conversion plan",
-            &[],
-            aliases,
-        )),
-        _ => diagnostics.push(sanitized_diagnostic(
-            RuleId::ConversionFailed,
-            "error",
-            "the Quadlet conversion could not produce a valid plan",
-            &[],
-            aliases,
-        )),
+) -> Result<(RenderedConversion, VersionBounds), Box<dyn Error>> {
+    match output {
+        OutputType::Compose => {
+            let target = TargetProfile::new(
+                COMPOSE_SPECIFICATION_TARGET,
+                COMPOSE_SPECIFICATION_PROFILE_REVISION,
+                Some(COMPOSE_SPECIFICATION_PROFILE_REVISION),
+            )?;
+            let result = convert_imported(
+                imported,
+                &ComposeExporter::new()?,
+                &target,
+                arguments.loss_policy.into(),
+            )
+            .map_err(|error| conversion_failure(&error, source_diagnostics, aliases, discovered))?;
+            Ok((
+                RenderedConversion::from_result(result, |output| {
+                    vec![RenderedFile {
+                        name: "compose.yaml".into(),
+                        text: output.text().to_owned(),
+                    }]
+                }),
+                VersionBounds {
+                    minimum: "rolling".into(),
+                    maximum: "rolling".into(),
+                },
+            ))
+        }
+        OutputType::Quadlet => {
+            let (minimum, maximum) =
+                resolve_versions(&arguments.podman_minimum_version, &arguments.podman_maximum_version).map_err(
+                    |error| {
+                        post_discovery_failure(
+                            FailedStage::Conversion,
+                            RuleId::PodmanTargetSelectionInvalid,
+                            "Podman output version selection failed",
+                            &error,
+                            aliases,
+                            discovered,
+                        )
+                    },
+                )?;
+            let grouping = if imported
+                .application()
+                .is_some_and(|application| application.service_groups().len() == 1)
+            {
+                QuadletGroupingPolicy::PreserveSingleGroup
+            } else {
+                arguments.grouping.into()
+            };
+            let mut exporter = QuadletExporter::new()?.with_grouping_policy(grouping);
+            if let Some(root) = relative_host_path_root {
+                exporter = exporter.with_relative_host_path_root(root.to_owned())?;
+            }
+            if let Some(pod_name) = arguments.pod_name.as_deref() {
+                exporter = exporter.with_pod_name(pod_name);
+            }
+            let target = TargetProfile::new("podman", minimum, Some(maximum))?;
+            let result = convert_imported(imported, &exporter, &target, arguments.loss_policy.into())
+                .map_err(|error| conversion_failure(&error, source_diagnostics, aliases, discovered))?;
+            Ok((
+                RenderedConversion::from_result(result, |output| {
+                    output
+                        .files()
+                        .iter()
+                        .map(|file| RenderedFile {
+                            name: file.name().as_str().to_owned(),
+                            text: file.text().to_owned(),
+                        })
+                        .collect()
+                }),
+                VersionBounds {
+                    minimum: minimum.to_string(),
+                    maximum: maximum.to_string(),
+                },
+            ))
+        }
     }
-    Box::new(StructuredFailure::with_context(
-        FailedStage::Conversion,
-        diagnostics,
-        discovered,
-    ))
 }
 
 fn load_quadlet_source(
@@ -1990,7 +1902,7 @@ fn run_generic(
             if let Some(structured) = error.downcast_ref::<StructuredFailure>() {
                 let mut report = report_failure(
                     arguments,
-                    route::find(arguments.input_type, arguments.output_type),
+                    Some(route::find(arguments.input_type, arguments.output_type)),
                     &error.to_string(),
                     structured.stage,
                     &aliases,
@@ -2006,7 +1918,7 @@ fn run_generic(
                 (
                     report_failure(
                         arguments,
-                        route::find(arguments.input_type, arguments.output_type),
+                        Some(route::find(arguments.input_type, arguments.output_type)),
                         &error.to_string(),
                         failure_stage(&error.to_string()),
                         &aliases,
@@ -2108,8 +2020,8 @@ fn present(
             println!("input: {}", input.label());
         }
         if presentation.verbose {
-            match route::find(arguments.input_type, arguments.output_type).map(|route| route.target_selector) {
-                Some(TargetSelector::PodmanRange) => {
+            match route::find(arguments.input_type, arguments.output_type).target_selector {
+                TargetSelector::PodmanRange => {
                     println!(
                         "Podman requested: {} through {}",
                         report.requested_versions.minimum, report.requested_versions.maximum
@@ -2119,8 +2031,7 @@ fn present(
                         report.resolved_versions.minimum, report.resolved_versions.maximum
                     );
                 }
-                Some(TargetSelector::ComposeSpecification) => println!("Compose Specification: rolling"),
-                None => {}
+                TargetSelector::ComposeSpecification => println!("Compose Specification: rolling"),
             }
             if arguments.input_type == InputType::Compose {
                 if arguments.all_profiles {
@@ -2448,7 +2359,7 @@ fn compose_finding_stage(
     }
 }
 
-fn compose_conversion_failure(
+fn conversion_failure(
     error: &ConversionError,
     preprocessing_diagnostics: &[ReportDiagnostic],
     aliases: &ReportAliases,

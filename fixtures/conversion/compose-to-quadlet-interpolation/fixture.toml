@@ -3,7 +3,7 @@ id = "compose-to-quadlet-interpolation"
 suite = "conversion"
 description = "Protects opt-in Compose interpolation from explicit plain and individually authorized sensitive process variables."
 secrets_reviewed = true
-files = ["compose.yaml", "app.container"]
+files = ["compose.yaml", "app.container", "expected-matrix-compose.yaml"]
 
 [provenance]
 source = "authored"
@@ -26,3 +26,29 @@ interpolation = "explicit-only"
 podman-minimum-version = "5.4.0"
 podman-maximum-version = "6.0.2"
 grouping-policy = "separate-containers"
+
+[[extensions.scenarios]]
+id = "compose"
+input = "compose"
+sources = ["compose.yaml"]
+interpolate = true
+environment = ["TAG=2.1", "TOKEN=explicit-secret"]
+protected-values = ["explicit-secret"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "exact"
+artifact-values = ["explicit-secret"]
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-matrix-compose.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "exact"
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+artifact-values = ["explicit-secret"]
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "app.container"
+expected = "app.container"

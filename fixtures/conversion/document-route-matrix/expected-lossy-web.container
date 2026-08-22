@@ -1,0 +1,12 @@
+[Container]
+Image=example.invalid/web:1
+Annotation="io.example.note=ANNOTATION-CANARY%%h"
+LogDriver=journald
+LogOpt="tag=LOGOPT-CANARY%%h"
+HealthCmd=["CMD","/usr/bin/healthcheck"]
+HealthInterval=30s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=10s
+Label="com.example.metadata=LABEL-CANARY%%h"
+Label="com.example.literal-specifier=literal%%h"

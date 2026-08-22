@@ -848,31 +848,30 @@ impl<'a> Mapping<'a> {
                 }
                 let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Network);
                 let runtime_name_subject = format!("{subject}.runtime_name");
-                let (runtime_name, runtime_name_origins) = network.value().runtime_name().map_or_else(
-                    || (network.value().name().as_str(), network.origins()),
-                    |name| (name.value().expose(), name.origins()),
-                );
-                if !is_safe_network_scalar(runtime_name, false) {
-                    self.unsupported(
-                        &runtime_name_subject,
-                        "NetworkName must be an unquoted systemd-safe network name",
-                        runtime_name_origins,
-                    );
-                    return;
+                if let Some(runtime_name) = network.value().runtime_name() {
+                    if !is_safe_network_scalar(runtime_name.value().expose(), false) {
+                        self.unsupported(
+                            &runtime_name_subject,
+                            "NetworkName must be an unquoted systemd-safe network name",
+                            runtime_name.origins(),
+                        );
+                        return;
+                    }
+                    if !self.capability("quadlet.network.name", &runtime_name_subject, runtime_name.origins())
+                        || !self.push_network(
+                            &mut builder,
+                            NetworkKey::NetworkName,
+                            runtime_name.value().expose(),
+                            &runtime_name_subject,
+                            runtime_name.origins(),
+                        )
+                    {
+                        return;
+                    }
+                    self.exact(&runtime_name_subject, runtime_name.origins());
                 }
-                if self.capability("quadlet.network.name", &runtime_name_subject, runtime_name_origins)
-                    && self.push_network(
-                        &mut builder,
-                        NetworkKey::NetworkName,
-                        runtime_name,
-                        &runtime_name_subject,
-                        runtime_name_origins,
-                    )
-                {
-                    self.exact(&runtime_name_subject, runtime_name_origins);
-                    self.map_network_settings(&subject, network.value(), &mut builder);
-                    self.finish_document(file_name, &builder, &subject, network.origins());
-                }
+                self.map_network_settings(&subject, network.value(), &mut builder);
+                self.finish_document(file_name, &builder, &subject, network.origins());
             }
             ResourceOwnership::External => self.exact(subject, network.origins()),
             ResourceOwnership::Implicit => self.unsupported(
@@ -1093,26 +1092,27 @@ impl<'a> Mapping<'a> {
                 else {
                     return;
                 };
-                if !self.capability("quadlet.unit-type.volume", &subject, volume.origins())
-                    || !self.capability("quadlet.volume.name", &subject, volume.origins())
-                {
+                if !self.capability("quadlet.unit-type.volume", &subject, volume.origins()) {
                     return;
                 }
                 let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Volume);
-                let runtime_name = volume
-                    .value()
-                    .runtime_name()
-                    .map_or_else(|| volume.value().name().as_str(), |name| name.value().expose());
-                if self.push_volume(
-                    &mut builder,
-                    VolumeKey::VolumeName,
-                    runtime_name,
-                    &subject,
-                    volume.origins(),
-                ) {
-                    self.map_volume_settings(&mut builder, volume, &subject);
-                    self.finish_document(file_name, &builder, &subject, volume.origins());
+                if let Some(runtime_name) = volume.value().runtime_name() {
+                    let runtime_name_subject = format!("{subject}.runtime_name");
+                    if !self.capability("quadlet.volume.name", &runtime_name_subject, runtime_name.origins())
+                        || !self.push_volume(
+                            &mut builder,
+                            VolumeKey::VolumeName,
+                            runtime_name.value().expose(),
+                            &runtime_name_subject,
+                            runtime_name.origins(),
+                        )
+                    {
+                        return;
+                    }
+                    self.exact(runtime_name_subject, runtime_name.origins());
                 }
+                self.map_volume_settings(&mut builder, volume, &subject);
+                self.finish_document(file_name, &builder, &subject, volume.origins());
             }
             ResourceOwnership::External => self.exact(subject, volume.origins()),
             ResourceOwnership::Implicit => self.unsupported(
@@ -2127,9 +2127,6 @@ impl<'a> Mapping<'a> {
         self.map_execution_context(subject, service.value(), grouped, builder);
         self.map_released_container_settings(subject, service.value(), builder);
         self.map_extended_container_settings(subject, service.value(), grouped, builder);
-        if let Some(notification) = service.value().startup_notification() {
-            self.map_startup_notification(subject, notification, builder);
-        }
         self.report_grouped_dns(subject, service.value(), grouped);
         if let Some(restart_policy) = service.value().restart_policy() {
             self.map_restart_policy(subject, restart_policy, builder);
@@ -2137,7 +2134,9 @@ impl<'a> Mapping<'a> {
         if let Some(healthcheck) = service.value().healthcheck() {
             self.map_healthcheck(subject, healthcheck, builder);
         }
-        if service.value().startup_notification().is_none() {
+        if let Some(notification) = service.value().startup_notification() {
+            self.map_startup_notification(subject, notification, builder);
+        } else {
             self.map_healthy_readiness(service, builder);
         }
         for environment in service.value().environment() {

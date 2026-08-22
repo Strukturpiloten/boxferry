@@ -1,0 +1,9 @@
+---
+name: interpolation-demo
+services:
+  app:
+    image: example.invalid/app:2.1
+    environment:
+      - TOKEN=explicit-secret
+      - UNAUTHORIZED=safe-default
+    restart: "no"

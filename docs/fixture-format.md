@@ -47,3 +47,43 @@ Every `files` entry is a relative path inside its fixture directory. Absolute pa
 `environment.description` states whether interpolation values, working-directory assumptions, target versions, runtime context, or external tools affect the case. Additional structured fields may be added inside the table.
 
 `expectations.summary` explains the behavior protected by the fixture. Expected native outputs, diagnostics, conversion outcomes, exit states, and normalization rules belong in suite-specific fields or under `extensions`.
+
+## Importer and exporter scenarios
+
+Every positive `adapter-contract` and `conversion` manifest declares one or more
+`extensions.scenarios`. Each scenario names one registered input format and source set, then defines
+an expectation for every exporter reported by `boxferry capabilities`.
+
+```toml
+[[extensions.scenarios]]
+id = "compose"
+input = "compose"
+sources = ["compose.yaml"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "exact"
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-compose.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "partial"
+diagnostic-codes = ["BFQ0003"]
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "expected-web.container"
+```
+
+Compose scenarios may add explicit interpolation assignments. Quadlet scenarios provide an
+`application-name`. Quadlet exporter expectations may add typed target bounds, grouping, and pod
+name. `protected-values` must never appear in structured reports; exporter-specific
+`artifact-values` must remain in authorized generated files. `normalize-project-root = true`
+replaces only the canonical fixture directory with `<project>` before comparing reviewed bytes.
+
+The corpus runner derives stricter blocked policies from `loss-policy`, requires exact artifact
+sets and diagnostic sequences, and re-imports every generated result through its same-format
+exporter. Expected artifact files are never inferred as native inputs.

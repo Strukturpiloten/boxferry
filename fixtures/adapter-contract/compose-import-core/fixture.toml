@@ -3,7 +3,14 @@ id = "compose-import-core"
 suite = "adapter-contract"
 description = "Protects the first lossless multi-file Compose-to-BoxFerry model mapping and explicit profile selection."
 secrets_reviewed = true
-files = ["compose.yaml", "compose.override.yaml"]
+files = [
+  "compose.yaml",
+  "compose.override.yaml",
+  "expected-matrix-compose.yaml",
+  "expected-matrix-frontend.network",
+  "expected-matrix-data.volume",
+  "expected-matrix-web.container",
+]
 
 [provenance]
 source = "authored"
@@ -20,3 +27,36 @@ summary = "Merged service, execution-context, health-check, host mapping, resour
 [extensions.compose]
 source-id = 71
 active-profiles = []
+
+[[extensions.scenarios]]
+id = "compose"
+input = "compose"
+sources = ["compose.yaml", "compose.override.yaml"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "partial"
+diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009", "BFC0009"]
+fixed-diagnostic-codes = ["BFC0009", "BFC0009", "BFC0009"]
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-matrix-compose.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "partial"
+diagnostic-codes = ["BFQ0003", "BFQ0003"]
+normalize-project-root = true
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "frontend.network"
+expected = "expected-matrix-frontend.network"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "data.volume"
+expected = "expected-matrix-data.volume"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "expected-matrix-web.container"

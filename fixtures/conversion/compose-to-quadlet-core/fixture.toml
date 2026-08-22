@@ -10,6 +10,8 @@ files = [
   "data.volume",
   "web.container",
   "expected-diagnostics.txt",
+  "expected-matrix-compose.txt",
+  "expected-matrix-web.container",
 ]
 
 [provenance]
@@ -31,3 +33,42 @@ active-profiles = []
 [extensions.quadlet]
 podman-minimum-version = "5.4.0"
 podman-maximum-version = "6.0.2"
+
+[[extensions.scenarios]]
+id = "compose"
+input = "compose"
+sources = ["compose.yaml", "compose.override.yaml"]
+protected-values = [
+  "{\"channel\": \"stable\"}",
+  "literal%h",
+]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "partial"
+diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009", "BFC0009"]
+fixed-diagnostic-codes = ["BFC0009", "BFC0009", "BFC0009"]
+artifact-values = ["{\\\"channel\\\": \\\"stable\\\"}", "literal%h"]
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-matrix-compose.txt"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "partial"
+diagnostic-codes = ["BFQ0003", "BFQ0003"]
+normalize-project-root = true
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+artifact-values = ["{\\\"channel\\\": \\\"stable\\\"}", "literal%%h"]
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "frontend.network"
+expected = "frontend.network"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "data.volume"
+expected = "data.volume"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "expected-matrix-web.container"

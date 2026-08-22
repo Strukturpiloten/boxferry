@@ -1,0 +1,36 @@
+[Container]
+Image=registry.example:5000/team/web:1.3@sha256:fedcba
+ContainerName=ferry-web
+Exec=php -v
+User=1001
+Group=1002
+UserNS=keep-id
+GroupAdd=audio
+GroupAdd=44
+WorkingDir=/srv/app
+ReadOnly=true
+NetworkAlias=web.local
+HealthCmd=["CMD-SHELL","curl --fail http://127.0.0.1/health || exit 1"]
+HealthInterval=45s
+HealthTimeout=5s
+HealthRetries=3
+HealthStartPeriod=10s
+Environment=EMPTY=
+Environment=PORT=9090
+Environment=OVERRIDE_ONLY=enabled
+Label="com.example.empty="
+Label="com.example.metadata={\"channel\": \"stable\"}"
+Label="com.example.literal-specifier=literal%%h"
+AddHost=host.docker.internal:host-gateway
+AddHost=ipv6:[::1]
+AddHost=database:192.0.2.10
+PublishPort=127.0.0.1:8080:80/tcp
+PublishPort=8443:8443/tcp
+Volume=data.volume:/var/lib/data:ro
+Volume=<project>/config:/etc/app:ro,Z
+Volume=<project>/shared:/srv/shared:z
+Volume=<project>/data:/srv/data:ro,Z
+Network=frontend.network
+
+[Service]
+Restart=no

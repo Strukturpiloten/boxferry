@@ -1,67 +1,75 @@
-//! Finite, typed CLI conversion routes.
+//! Finite, typed CLI conversion routes derived from independent format axes.
 
-/// Native input formats accepted by the document conversion CLI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum InputType {
-    Compose,
-    Quadlet,
-}
-
-/// Native output formats accepted by the document conversion CLI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum OutputType {
-    Quadlet,
-    Compose,
-}
-
-impl InputType {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Compose => "compose",
-            Self::Quadlet => "quadlet",
+macro_rules! format_axis {
+    (
+        $(#[$enum_meta:meta])*
+        pub(crate) enum $name:ident {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident => $label:literal
+            ),+ $(,)?
         }
+    ) => {
+        $(#[$enum_meta])*
+        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+        pub(crate) enum $name {
+            $(
+                $(#[$variant_meta])*
+                $variant,
+            )+
+        }
+
+        impl $name {
+            pub(crate) const ALL: &'static [Self] = &[
+                $(Self::$variant,)+
+            ];
+
+            pub(crate) const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $label,)+
+                }
+            }
+        }
+    };
+}
+
+format_axis! {
+    /// Native input formats accepted by the document conversion CLI.
+    pub(crate) enum InputType {
+        Compose => "compose",
+        Quadlet => "quadlet",
     }
 }
 
-impl OutputType {
-    pub(crate) const fn name(self) -> &'static str {
-        match self {
-            Self::Quadlet => "quadlet",
-            Self::Compose => "compose",
-        }
+format_axis! {
+    /// Native output formats accepted by the document conversion CLI.
+    pub(crate) enum OutputType {
+        Compose => "compose",
+        Quadlet => "quadlet",
     }
 }
 
-/// Target-version selection family required by a route.
+/// Target-version selection family required by one output format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TargetSelector {
     PodmanRange,
     ComposeSpecification,
 }
 
-/// Typed executor selected by a route entry.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RouteExecutor {
-    ComposeToCompose,
-    ComposeToQuadlet,
-    QuadletToCompose,
-    QuadletToQuadlet,
+impl OutputType {
+    pub(crate) const fn target_selector(self) -> TargetSelector {
+        match self {
+            Self::Compose => TargetSelector::ComposeSpecification,
+            Self::Quadlet => TargetSelector::PodmanRange,
+        }
+    }
 }
 
-/// Source-side CLI option family accepted by a route.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum InputOptions {
-    Compose,
-    Quadlet,
-}
-
-/// One explicitly implemented CLI route.
+/// One route in the complete input-by-output product.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RouteSpec {
     pub(crate) input: InputType,
     pub(crate) output: OutputType,
-    pub(crate) executor: RouteExecutor,
-    pub(crate) input_options: InputOptions,
     pub(crate) target_selector: TargetSelector,
     pub(crate) exact_boundary: &'static str,
     pub(crate) approximate_boundaries: &'static [&'static str],
@@ -69,6 +77,18 @@ pub(crate) struct RouteSpec {
 }
 
 impl RouteSpec {
+    const fn new(input: InputType, output: OutputType) -> Self {
+        let (exact_boundary, approximate_boundaries, policy_controlled_boundaries) = fidelity_boundaries(input, output);
+        Self {
+            input,
+            output,
+            target_selector: output.target_selector(),
+            exact_boundary,
+            approximate_boundaries,
+            policy_controlled_boundaries,
+        }
+    }
+
     pub(crate) const fn source_name(self) -> &'static str {
         self.input.name()
     }
@@ -78,66 +98,70 @@ impl RouteSpec {
     }
 }
 
-const COMPOSE_TO_QUADLET: RouteSpec = RouteSpec {
-    input: InputType::Compose,
-    output: OutputType::Quadlet,
-    executor: RouteExecutor::ComposeToQuadlet,
-    input_options: InputOptions::Compose,
-    target_selector: TargetSelector::PodmanRange,
-    exact_boundary: "supported-compose-quadlet-intersection",
-    approximate_boundaries: &["pod-grouping"],
-    policy_controlled_boundaries: &["unsupported-fields"],
-};
-
-const COMPOSE_TO_COMPOSE: RouteSpec = RouteSpec {
-    input: InputType::Compose,
-    output: OutputType::Compose,
-    executor: RouteExecutor::ComposeToCompose,
-    input_options: InputOptions::Compose,
-    target_selector: TargetSelector::ComposeSpecification,
-    exact_boundary: "supported-compose-compose-specification-intersection",
-    approximate_boundaries: &[],
-    policy_controlled_boundaries: &["unsupported-fields"],
-};
-
-const QUADLET_TO_COMPOSE: RouteSpec = RouteSpec {
-    input: InputType::Quadlet,
-    output: OutputType::Compose,
-    executor: RouteExecutor::QuadletToCompose,
-    input_options: InputOptions::Quadlet,
-    target_selector: TargetSelector::ComposeSpecification,
-    exact_boundary: "supported-quadlet-compose-specification-intersection",
-    approximate_boundaries: &["environment-file-reconstruction"],
-    policy_controlled_boundaries: &["unsupported-fields"],
-};
-
-const QUADLET_TO_QUADLET: RouteSpec = RouteSpec {
-    input: InputType::Quadlet,
-    output: OutputType::Quadlet,
-    executor: RouteExecutor::QuadletToQuadlet,
-    input_options: InputOptions::Quadlet,
-    target_selector: TargetSelector::PodmanRange,
-    exact_boundary: "supported-quadlet-canonical-subset",
-    approximate_boundaries: &["environment-file-reconstruction", "systemd-runtime-semantics"],
-    policy_controlled_boundaries: &["unsupported-fields"],
-};
-
-const ROUTES: &[RouteSpec] = &[
-    COMPOSE_TO_COMPOSE,
-    COMPOSE_TO_QUADLET,
-    QUADLET_TO_COMPOSE,
-    QUADLET_TO_QUADLET,
-];
-
-/// Returns every CLI route implemented by this build.
-pub(crate) const fn routes() -> &'static [RouteSpec] {
-    ROUTES
+const fn fidelity_boundaries(
+    input: InputType,
+    output: OutputType,
+) -> (&'static str, &'static [&'static str], &'static [&'static str]) {
+    match (input, output) {
+        (InputType::Compose, OutputType::Compose) => (
+            "supported-compose-compose-specification-intersection",
+            &[],
+            &["unsupported-fields"],
+        ),
+        (InputType::Compose, OutputType::Quadlet) => (
+            "supported-compose-quadlet-intersection",
+            &["pod-grouping"],
+            &["unsupported-fields"],
+        ),
+        (InputType::Quadlet, OutputType::Compose) => (
+            "supported-quadlet-compose-specification-intersection",
+            &["environment-file-reconstruction"],
+            &["unsupported-fields"],
+        ),
+        (InputType::Quadlet, OutputType::Quadlet) => (
+            "supported-quadlet-canonical-subset",
+            &["environment-file-reconstruction", "systemd-runtime-semantics"],
+            &["unsupported-fields"],
+        ),
+    }
 }
 
-/// Looks up an explicitly implemented route; all other pairs are unavailable.
-pub(crate) fn find(input: InputType, output: OutputType) -> Option<RouteSpec> {
-    ROUTES
-        .iter()
-        .copied()
-        .find(|route| route.input == input && route.output == output)
+/// Returns every CLI route as the Cartesian product of registered inputs and outputs.
+pub(crate) fn routes() -> impl Iterator<Item = RouteSpec> {
+    InputType::ALL.iter().copied().flat_map(|input| {
+        OutputType::ALL
+            .iter()
+            .copied()
+            .map(move |output| RouteSpec::new(input, output))
+    })
+}
+
+/// Looks up the route selected by typed CLI axes.
+pub(crate) const fn find(input: InputType, output: OutputType) -> RouteSpec {
+    RouteSpec::new(input, output)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{InputType, OutputType, find, routes};
+
+    #[test]
+    fn registry_is_the_complete_unique_input_output_product() {
+        let registered = routes()
+            .map(|route| (route.input, route.output))
+            .collect::<BTreeSet<_>>();
+        let expected = InputType::ALL
+            .iter()
+            .copied()
+            .flat_map(|input| OutputType::ALL.iter().copied().map(move |output| (input, output)))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(registered, expected);
+        assert_eq!(registered.len(), InputType::ALL.len() * OutputType::ALL.len());
+        for (input, output) in expected {
+            assert_eq!((find(input, output).input, find(input, output).output), (input, output));
+        }
+    }
 }

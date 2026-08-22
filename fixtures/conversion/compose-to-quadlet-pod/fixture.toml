@@ -9,6 +9,7 @@ files = [
   "ferry-pod.pod",
   "web.container",
   "worker.container",
+  "expected-matrix-compose.yaml",
 ]
 
 [provenance]
@@ -31,3 +32,41 @@ active-profiles = []
 podman-minimum-version = "5.4.0"
 podman-maximum-version = "6.0.2"
 grouping-policy = "single-pod"
+
+[[extensions.scenarios]]
+id = "compose"
+input = "compose"
+sources = ["compose.yaml"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "partial"
+diagnostic-codes = ["BFC0007", "BFC0009", "BFC0009", "BFC0009", "BFC0009"]
+fixed-diagnostic-codes = ["BFC0009", "BFC0009", "BFC0009", "BFC0009"]
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-matrix-compose.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "approximate"
+diagnostic-codes = ["BFQ0007"]
+grouping = "pod"
+pod-name = "ferry-pod"
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "frontend.network"
+expected = "frontend.network"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "ferry-pod.pod"
+expected = "ferry-pod.pod"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "web.container"
+expected = "web.container"
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "worker.container"
+expected = "worker.container"

@@ -47,7 +47,7 @@ pub use boxferry_engine::{
     ConversionError, ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, Diagnostic, DiagnosticCode,
     DiagnosticField, DiagnosticRule, DiagnosticValue, ExportAdapter, ImportAdapter, ImportResult, InMemoryAdapter,
     LossPolicy, NativeFinding, NativeFindingLabel, NativeFindingLabelKind, ParsePlatformVersionError, PlatformVersion,
-    RULES, RuleId, Severity, TargetProfile, VersionRange, convert, find_rule,
+    RULES, RuleId, Severity, TargetProfile, VersionRange, convert, convert_imported, find_rule,
 };
 pub use boxferry_model::{
     Annotation, Application, ArtifactDependency, ArtifactDependencyNode, BuildAttestation, BuildContext,

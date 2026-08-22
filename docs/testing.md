@@ -27,10 +27,21 @@ review, environment boundary, and expected behavior. Never commit live credentia
 output, or production configuration.
 
 The exact 2×2 neutral-model route fixture under
-`fixtures/conversion/document-route-matrix/` also powers the public guide examples. Every importer
-fixture must be exercised against every registered exporter. Adding an exporter therefore requires
-expectations for all existing importer scenarios. `docs/documentation-examples.toml` binds each
-displayed command to its input, exit status, diagnostic codes, and output bytes.
+`fixtures/conversion/document-route-matrix/` also powers the public guide examples.
+`fixture_route_corpus.rs` discovers every positive adapter-contract and conversion manifest. Each
+manifest declares typed `extensions.scenarios` input settings and exporter-keyed expectations.
+The test compares those exporters with live `boxferry capabilities` routes, so adding an importer,
+exporter, route, or positive fixture fails until the complete expectation product exists.
+
+Every scenario checks its minimum authorized loss policy and all stricter blocking policies, exact
+diagnostic-code sequence, complete artifact set and bytes, report redaction, authorized
+protected-value retention, and generated same-format fixed point. Checkout-dependent project roots
+are compared through an explicit `<project>` placeholder; other bytes remain exact.
+
+The dedicated document route matrix additionally checks cross-format chains, direct-versus-chained
+path consistency, file-versus-directory discovery, malformed-input output safety, and public facade
+parity. `docs/documentation-examples.toml` binds each displayed command to its input, exit status,
+diagnostic codes, and output bytes.
 
 ## Pull-request gate
 
