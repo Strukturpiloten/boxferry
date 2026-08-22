@@ -58,14 +58,16 @@ harness fails whenever an importer fixture lacks an expectation for a registered
 - [x] Cover tmpfs mounts from authored neutral, Compose, and Quadlet intent through Podman export.
       PodmanLens 0.1.1 runtime input cannot observe tmpfs and BoxFerry does not claim reconstruction.
 - [x] Run every Podman import scenario through the Podman, Compose, and Quadlet exporters. Re-import
-      generated Compose and Quadlet artifacts and assert semantic equivalence, deterministic fixed
-      points, path consistency, losses, diagnostics, and redaction.
+      every generated Compose and Quadlet projection through all three exporters; assert same-format
+      semantic equivalence, chained document fixed points, deterministic path-independent output,
+      complete diagnostics, losses, and redaction.
 - [x] Verify Podman output independently through deterministic `podman.json` and `review.sh` bytes,
       semantic operation equivalence, complete findings, and redaction. It is desired deployment
       intent, not a re-importable observed inventory.
-- [ ] Release the reviewed three-by-three converter. A future live-runtime workflow may repeat the
-      version matrix in rootful and rootless containers when all required Podman images are reliably
-      available; it is not a Phase 2 prerequisite.
+- [x] Release the reviewed three-by-three converter as
+      [BoxFerry 0.7.0](https://github.com/Strukturpiloten/boxferry/releases/tag/v0.7.0). A future
+      live-runtime workflow may repeat the version matrix in rootful and rootless containers when
+      all required Podman images are reliably available; it is not a Phase 2 prerequisite.
 
 Podman integration proceeds independently of Docker. PodmanLens owns Podman acquisition, native
 types, version and capability evidence, diagnostics, and deterministic rendering. BoxFerry owns
@@ -76,7 +78,8 @@ semantic mapping, combined fidelity policy, orchestration, and inert artifact pu
 - [ ] Add public PodmanLens guides covering read-only acquisition, discovery, grouping, planning,
       rendering, diagnostics, privacy, and version boundaries.
 - [ ] Add exact-revision PodmanLens documentation and Rustdoc to boxferry-website.
-- [ ] Complete BoxFerry Podman route guides with executable, corpus-backed examples.
+- [x] Complete BoxFerry Podman route guides with executable, corpus-backed examples in
+      [issue #50](https://github.com/Strukturpiloten/boxferry/issues/50).
 
 ## Phase 4 — publish boxferry.dev
 

@@ -9,6 +9,12 @@ ceiling with `--podman-max-version VERSION` and the target context with
 `--podman-target-context unknown|rootless|rootful`. Source engine version and execution context
 never become target choices implicitly.
 
+<!-- boxferry-example: podman-to-podman -->
+
+```console
+boxferry convert podman podman --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --podman-target-context rootless --output-directory podman-output
+```
+
 Authorized output contains deterministic `podman.json` deployment-v1 operations and a deterministic
 `review.sh` POSIX review script. BoxFerry never executes either representation.
 

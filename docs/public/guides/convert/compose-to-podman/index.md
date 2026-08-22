@@ -3,9 +3,16 @@
 This route loads Compose input, imports it into the neutral application model, and exports a
 PodmanLens deployment plan.
 
-Use the normal Compose input options. Podman output accepts `--podman-max-version VERSION` and
-`--podman-target-context unknown|rootless|rootful`. The default selects reviewed Podman 6.1.0 and
-an unknown target context; neither value is inferred from the development machine.
+Use the normal Compose input options. The target context is required because BoxFerry never infers
+it from the development machine. `--podman-max-version VERSION` optionally caps output to the
+newest reviewed exact target not greater than that ceiling; without a ceiling, output targets the
+newest reviewed version, currently 6.1.0.
+
+<!-- boxferry-example: compose-to-podman -->
+
+```console
+boxferry convert compose podman --input-file tmpfs-compose.yaml --podman-target-context unknown --output-directory podman-output
+```
 
 Authorized output contains:
 
