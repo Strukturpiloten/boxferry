@@ -13,8 +13,8 @@ categories.workspace = true
 publish = true
 
 [dependencies]
-boxferry-engine = { path = "../boxferry-engine", version = "0.6.0" }
-boxferry-model = { path = "../boxferry-model", version = "0.6.0" }
+boxferry-engine = { path = "../boxferry-engine", version = "0.7.0" }
+boxferry-model = { path = "../boxferry-model", version = "0.7.0" }
 compose-lens = { version = "0.3.0", default-features = false }
 
 [lints]

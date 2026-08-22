@@ -5,6 +5,16 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.6.0...boxferry-v0.7.0) - 2026-08-22
+
+### Added
+
+- [**breaking**] integrate PodmanLens-backed Podman routes ([#48](https://github.com/Strukturpiloten/boxferry/pull/48))
+
+### Changed
+
+- [**breaking**] complete the Compose and Quadlet document milestone ([#21](https://github.com/Strukturpiloten/boxferry/pull/21))
+
 ## [0.6.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.5.1...boxferry-v0.6.0) - 2026-08-22
 
 ### Changed
