@@ -1,21 +1,37 @@
-# Repository documentation
+# Documentation map
 
-Public user and contributor pages live in [`public/`](public/) and are assembled at
-[boxferry.dev/docs](https://boxferry.dev/docs/).
+Start with the smallest document that answers the task. Detailed API facts belong in Rustdoc,
+capability facts in machine-readable sources, behavior in tests, and completed history in ADRs or
+the changelog.
 
-Maintainer contracts:
+## Use BoxFerry
 
-- [Architecture](architecture.md)
-- [Project structure](project-structure.md)
-- [Library API and stability](library-api.md)
-- [Testing](testing.md)
-- [Development environment](development-environment.md)
-- [Dependency policy](dependency-policy.md)
-- [Releases](releasing.md)
-- [Implementation status](implementation-plan.md)
-- [Architecture decisions](decisions/README.md)
-- [Fixture manifest](fixture-format.md)
-- [Agent workflow](agent-workflow.md)
+- [Getting started](public/getting-started/)
+- [Conversion guides](public/guides/)
+- [CLI reference](public/reference/cli/)
+- [Compatibility](public/reference/compatibility/)
+- [Diagnostics and error reports](public/reference/)
 
-Do not create a second user manual here. Add task documentation below `public/`, keep it concise,
-and add every displayed BoxFerry command to `documentation-examples.toml`.
+These sources are assembled at [boxferry.dev/docs](https://boxferry.dev/docs/). Keep their existing
+routes stable and register every displayed `boxferry` command in
+[`documentation-examples.toml`](documentation-examples.toml).
+
+## Develop BoxFerry
+
+| Task                                       | Read first                                            |
+| ------------------------------------------ | ----------------------------------------------------- |
+| Change the model, engine, or an adapter    | [Architecture](architecture.md)                       |
+| Change public Rust APIs                    | [API stability](api-stability.md) and Rustdoc         |
+| Add or change tests and fixtures           | [Testing](testing.md) and [fixtures](../fixtures/)    |
+| Change tools or dependencies               | [Dependency policy](dependency-policy.md)             |
+| Prepare or publish a release               | [Releases](releasing.md)                              |
+| Set up a checkout or submit a pull request | [Development environment](development-environment.md) |
+| Change platform behavior                   | [Platform support](platform-support.md)               |
+
+Repository-wide agent and Git rules live only in [`AGENTS.md`](../AGENTS.md).
+
+## Understand decisions
+
+[Architecture decisions](decisions/) explain constraints and their history. Read the index first,
+then only the active or historical records relevant to the change. `CHANGELOG.md` owns completed
+release history; GitHub issues own unfinished work.
