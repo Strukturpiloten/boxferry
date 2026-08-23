@@ -75,11 +75,18 @@ semantic mapping, combined fidelity policy, orchestration, and inert artifact pu
 
 ## Phase 3 — Podman documentation
 
-- [ ] Add public PodmanLens guides covering read-only acquisition, discovery, grouping, planning,
-      rendering, diagnostics, privacy, and version boundaries.
-- [ ] Add exact-revision PodmanLens documentation and Rustdoc to boxferry-website.
+- [x] Add public PodmanLens guides covering read-only acquisition, discovery, grouping, planning,
+      rendering, diagnostics, privacy, and version boundaries in
+      [PodmanLens PR #8](https://github.com/Strukturpiloten/podman-lens/pull/8).
+- [x] Add exact-revision PodmanLens documentation and Rustdoc to boxferry-website in
+      [boxferry-website PR #10](https://github.com/Strukturpiloten/boxferry-website/pull/10).
 - [x] Complete BoxFerry Podman route guides with executable, corpus-backed examples in
-      [issue #50](https://github.com/Strukturpiloten/boxferry/issues/50).
+      [issue #50](https://github.com/Strukturpiloten/boxferry/issues/50) and
+      [PR #51](https://github.com/Strukturpiloten/boxferry/pull/51).
+
+Phase 3 is complete. BoxFerry, PodmanLens, and boxferry-website own and validate their respective
+source documentation, and the website assembles the merged revisions without copying technical
+Markdown into the website repository.
 
 ## Phase 4 — publish boxferry.dev
 
