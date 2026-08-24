@@ -7,6 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- [**breaking**] Rename the generated Podman command artifact from `review.sh` to
+  `podman-commands.sh` and the public Rust accessor from `review_shell` to `commands_shell`, while
+  clarifying that BoxFerry never executes the runnable script
+  ([#61](https://github.com/Strukturpiloten/boxferry/issues/61)).
 - Reorganize current documentation around task-oriented entry points and canonical sources, move
   the Podman adapter policy into BoxFerry, separate active decisions from superseded history, and
   prevent duplicate planning and API ledgers from returning

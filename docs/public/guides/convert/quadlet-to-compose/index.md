@@ -2,6 +2,12 @@
 
 Use this route to reconstruct one canonical Compose document from a Quadlet document set.
 
+## Prerequisites
+
+- One or more related Quadlet files.
+- An explicit application name for the neutral model.
+- An absent or empty output directory.
+
 ## Convert
 
 Save this as `web.container`:
@@ -41,6 +47,14 @@ services:
 `--application-name` is required because a Quadlet file set has no Compose project name. The
 output targets the rolling Compose Specification, not an installed provider.
 
+## Production checks
+
+- `Environment=` values become protected service environment values. `EnvironmentFile=` paths are
+  target-host dependencies and may require approximation.
+- Bind mounts remain host-specific even when their syntax converts exactly.
+- Secret references do not include secret material; provision it separately on the target.
+- Pod and systemd relationships without a Compose equivalent remain visible as diagnostics.
+
 ## Invalid Quadlet value
 
 An empty `Image=` entry fails before output is created:
@@ -59,3 +73,7 @@ corrected.
 - Repeat `--input-file` or add `--input-directory DIR` for a document set.
 - Use `--loss-policy approximate` or `partial` only after reviewing the reported rule.
 - Compose interpolation options do not apply to Quadlet input.
+
+---
+
+[← Podman to Quadlet](../podman-to-quadlet/) · [Next: Quadlet to Podman →](../quadlet-to-podman/)

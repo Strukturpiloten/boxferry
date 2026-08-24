@@ -484,7 +484,7 @@ fn assert_podman_artifacts(
     scenario: &str,
 ) -> Result<(), Box<dyn Error>> {
     let deployment_text = fs::read_to_string(output_directory.join("podman.json"))?;
-    let review = fs::read_to_string(output_directory.join("review.sh"))?;
+    let review = fs::read_to_string(output_directory.join("podman-commands.sh"))?;
     let deployment: serde_json::Value = serde_json::from_str(&deployment_text)?;
 
     assert_eq!(deployment["schema_version"], 1, "{scenario} Podman schema changed");
@@ -540,7 +540,7 @@ fn assert_podman_operation_equivalence(
     assert_eq!(
         command_lines.len(),
         operations.len(),
-        "{scenario} review script operation count changed"
+        "{scenario} command script operation count changed"
     );
 
     for (operation, command_line) in operations.iter().zip(command_lines) {
@@ -651,7 +651,7 @@ fn assert_podman_tmpfs_evidence(
         );
         assert!(
             review.contains(&format!("'--mount' {}", shell_quote(&mount_argument))),
-            "{scenario} review script lacks tmpfs create evidence"
+            "{scenario} command script lacks tmpfs create evidence"
         );
     }
     Ok(())

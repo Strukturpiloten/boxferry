@@ -27,6 +27,7 @@ active table; superseded records are history and are read only when that history
 | [0032](0032-future-native-lens-boundaries.md)                         | Independent native Lens ownership                                            |
 | [0033](0033-universal-neutral-model-pipeline.md)                      | Universal neutral pipeline and nonexecuting Podman-first direction           |
 | [0034](0034-podman-lens-adapter-boundary.md)                          | PodmanLens adapter and inert output boundary                                 |
+| [0035](0035-explicit-podman-command-artifact.md)                      | Explicit Podman command artifact and safety contract                         |
 
 ## Superseded history
 

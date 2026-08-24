@@ -459,7 +459,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "BFP0008",
         "podman-planning-failed",
         Error,
-        "PodmanLens could not produce or render a complete inert deployment plan.",
+        "PodmanLens could not produce or render a complete reviewable deployment plan.",
         "Review retained PodmanLens findings, correct the neutral intent or target, and retry."
     ),
     rule!(

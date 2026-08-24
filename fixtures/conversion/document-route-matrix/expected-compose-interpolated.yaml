@@ -2,5 +2,7 @@
 name: docs-interpolation
 services:
   web:
-    image: example.invalid/web:2
-    restart: "no"
+    image: example.invalid/web:2026.08.24
+    environment:
+      - LOG_LEVEL=warning
+    restart: always

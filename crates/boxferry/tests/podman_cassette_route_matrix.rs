@@ -111,8 +111,8 @@ fn every_complex_cassette_replays_through_every_exporter() -> Result<(), Box<dyn
                 fs::read(repeated.join("podman.json"))?
             );
             assert_eq!(
-                fs::read(first.join("review.sh"))?,
-                fs::read(repeated.join("review.sh"))?
+                fs::read(first.join("podman-commands.sh"))?,
+                fs::read(repeated.join("podman-commands.sh"))?
             );
         }
     }
@@ -242,7 +242,7 @@ fn assert_document_output(output: &str, directory: &Path) -> Result<(), Box<dyn 
             }
         }
         "podman" => {
-            assert_eq!(artifact_names(directory)?, ["podman.json", "review.sh"]);
+            assert_eq!(artifact_names(directory)?, ["podman-commands.sh", "podman.json"]);
             let deployment: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("podman.json"))?)?;
             assert_eq!(deployment["schema_version"], 1);
             assert!(matches!(
@@ -255,7 +255,7 @@ fn assert_document_output(output: &str, directory: &Path) -> Result<(), Box<dyn 
                     .as_array()
                     .is_some_and(|operations| !operations.is_empty())
             );
-            assert!(fs::read_to_string(directory.join("review.sh"))?.contains("podman"));
+            assert!(fs::read_to_string(directory.join("podman-commands.sh"))?.contains("podman"));
         }
         _ => return Err(format!("unhandled output {output}").into()),
     }
@@ -610,7 +610,7 @@ fn assert_quadlet_output(directory: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 fn assert_podman_output(directory: &Path) -> Result<(), Box<dyn Error>> {
-    assert_eq!(artifact_names(directory)?, ["podman.json", "review.sh"]);
+    assert_eq!(artifact_names(directory)?, ["podman-commands.sh", "podman.json"]);
     let bytes = fs::read(directory.join("podman.json"))?;
     let deployment: serde_json::Value = serde_json::from_slice(&bytes)?;
     assert_eq!(deployment["schema_version"], 1);
@@ -640,7 +640,7 @@ fn assert_podman_output(directory: &Path) -> Result<(), Box<dyn Error>> {
     assert!(!deployment_text.contains("DATABASE_PASSWORD="));
     assert!(!deployment_text.contains(".sock"));
 
-    let shell = fs::read_to_string(directory.join("review.sh"))?;
+    let shell = fs::read_to_string(directory.join("podman-commands.sh"))?;
     assert!(shell.starts_with("#!/"));
     assert!(shell.contains("podman"));
     assert!(!shell.contains("DATABASE_PASSWORD="));

@@ -299,7 +299,7 @@
     {
       "code": "BFP0008",
       "default_severity": "error",
-      "description": "PodmanLens could not produce or render a complete inert deployment plan.",
+      "description": "PodmanLens could not produce or render a complete reviewable deployment plan.",
       "help": "Review retained PodmanLens findings, correct the neutral intent or target, and retry.",
       "name": "podman-planning-failed",
       "owner": "Podman adapter"

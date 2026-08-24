@@ -1,6 +1,20 @@
 schema = 1
 fixture-directory = "fixtures/conversion/document-route-matrix"
 
+[[artifacts]]
+id = "compose-to-podman-json"
+page = "docs/public/guides/convert/compose-to-podman/index.md"
+fixture = "expected-tmpfs-podman.json"
+language = "json"
+indent = 4
+
+[[artifacts]]
+id = "compose-to-podman-commands"
+page = "docs/public/guides/convert/compose-to-podman/index.md"
+fixture = "expected-tmpfs-podman-commands.sh"
+language = "sh"
+indent = 0
+
 [[examples]]
 id = "version"
 pages = ["docs/public/getting-started/index.md"]
@@ -22,8 +36,8 @@ expected-files = [{ actual = "compose-output/compose.yaml", fixture = "expected-
 [[examples]]
 id = "compose-to-compose-interpolate"
 pages = ["docs/public/guides/convert/compose-to-compose/index.md"]
-command = "boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env RESTART=no --output-directory compose-interpolated-output"
-args = ["convert", "compose", "compose", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "RESTART=no", "--output-directory", "compose-interpolated-output"]
+command = "boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --output-directory compose-interpolated-output"
+args = ["convert", "compose", "compose", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--output-directory", "compose-interpolated-output"]
 copy = ["compose-interpolation.yaml", "variables.env"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
@@ -55,8 +69,8 @@ expected-files = [{ actual = "quadlet-output/web.container", fixture = "expected
 [[examples]]
 id = "compose-to-quadlet-interpolate"
 pages = ["docs/public/guides/convert/compose-to-quadlet/index.md"]
-command = "boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env RESTART=no --output-directory quadlet-interpolated-output"
-args = ["convert", "compose", "quadlet", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "RESTART=no", "--output-directory", "quadlet-interpolated-output"]
+command = "boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --loss-policy approximate --output-directory quadlet-interpolated-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--loss-policy", "approximate", "--output-directory", "quadlet-interpolated-output"]
 copy = ["compose-interpolation.yaml", "variables.env"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
@@ -122,7 +136,7 @@ expected-exit = 0
 stdout-contains = ["command succeeded"]
 expected-files = [
   { actual = "podman-output/podman.json", fixture = "expected-tmpfs-podman.json" },
-  { actual = "podman-output/review.sh", fixture = "expected-tmpfs-podman-review.sh" },
+  { actual = "podman-output/podman-commands.sh", fixture = "expected-tmpfs-podman-commands.sh" },
 ]
 
 [[examples]]
@@ -135,7 +149,7 @@ expected-exit = 0
 stdout-contains = ["command succeeded"]
 expected-files = [
   { actual = "podman-output/podman.json", fixture = "expected-tmpfs-podman.json" },
-  { actual = "podman-output/review.sh", fixture = "expected-tmpfs-podman-review.sh" },
+  { actual = "podman-output/podman-commands.sh", fixture = "expected-tmpfs-podman-commands.sh" },
 ]
 
 [[examples]]
@@ -174,10 +188,10 @@ expected-exit = 0
 stdout-contains = ["command succeeded"]
 podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"
 podman-socket-placeholder = "/run/user/1000/podman/podman.sock"
-artifact-sets = [{ directory = "podman-output", files = ["podman.json", "review.sh"] }]
+artifact-sets = [{ directory = "podman-output", files = ["podman.json", "podman-commands.sh"] }]
 artifact-contains = [
   { actual = "podman-output/podman.json", contains = ["\"schema_version\": 1", "\"name\": \"observer\"", "/v6.1.0/libpod/"], excludes = ["podman.sock", "DATABASE_PASSWORD"] },
-  { actual = "podman-output/review.sh", contains = ["Review generated Podman commands", "podman 'container' 'create'", "observer"], excludes = ["podman.sock", "DATABASE_PASSWORD"] },
+  { actual = "podman-output/podman-commands.sh", contains = ["Review generated Podman commands", "podman 'container' 'create'", "observer"], excludes = ["podman.sock", "DATABASE_PASSWORD"] },
 ]
 
 [[examples]]

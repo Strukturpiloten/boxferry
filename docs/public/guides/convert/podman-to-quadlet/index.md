@@ -1,11 +1,15 @@
 # Podman to Quadlet
 
-This route explicitly acquires selected Podman runtime resources, imports them into the neutral
-application model, and writes canonical Quadlet files.
+Generate canonical Quadlet files from explicitly selected Podman runtime resources. Acquisition is
+read-only and every resource crosses the neutral application model.
 
-Configure the read-only input as described in [Podman input](../../podman-input/): select one Unix
-socket, set the application name, and provide at least one resource or label selector or select all
-eligible roots.
+## Prerequisites
+
+- Read-only input configured as described in [Podman input](../../podman-input/).
+- At least one resource or label selector, or `--podman-all`.
+- A target Podman version range and Quadlet grouping decision.
+
+## Convert
 
 <!-- boxferry-example: podman-to-quadlet -->
 
@@ -13,10 +17,22 @@ eligible roots.
 boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-output
 ```
 
+The bounded example writes `quadlet-output/observer.container`. Generated Quadlet files can be
+imported again for semantic-equivalence and fixed-point checks.
+
+## Compatibility and loss
+
 Quadlet output retains its explicit minimum and maximum Podman version range and grouping policy.
 Source runtime versions never become the target range implicitly.
 
 Runtime-effective, runtime-assigned, and locally resolved observations remain governed by explicit
 promotion and loss policy. The two promotion flags in the example authorize only effective named
-volumes and networks; they do not promote arbitrary runtime-local state. Generated Quadlet files
-can be imported again for semantic-equivalence and fixed-point checks.
+volumes and networks; they do not promote arbitrary runtime-local state.
+
+Before using the units on another host, verify bind mounts, `EnvironmentFile=` paths, secret
+references, shared volume data, and network units. BoxFerry writes files; it never installs,
+enables, starts, or reloads systemd units.
+
+---
+
+[← Podman to Podman](../podman-to-podman/) · [Next: Quadlet to Compose →](../quadlet-to-compose/)
