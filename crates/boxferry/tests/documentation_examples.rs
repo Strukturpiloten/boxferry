@@ -26,7 +26,19 @@ static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 struct DocumentationManifest {
     schema: u8,
     fixture_directory: PathBuf,
+    #[serde(default)]
+    artifacts: Vec<DocumentationArtifact>,
     examples: Vec<DocumentationExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct DocumentationArtifact {
+    id: String,
+    page: PathBuf,
+    fixture: PathBuf,
+    language: String,
+    indent: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +178,48 @@ fn documented_commands_match_the_checked_manifest() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn documented_artifacts_match_reviewed_fixtures() -> Result<(), Box<dyn Error>> {
+    let repository = repository_root()?;
+    let manifest = load_manifest(&repository)?;
+    let fixture_directory = repository.join(&manifest.fixture_directory);
+    let mut ids = BTreeSet::new();
+
+    for artifact in &manifest.artifacts {
+        assert!(
+            ids.insert(&artifact.id),
+            "duplicate documentation artifact `{}`",
+            artifact.id
+        );
+        let page = fs::read_to_string(repository.join(&artifact.page))?;
+        let rendered = rendered_artifact(&page, artifact)?;
+        let expected = fs::read_to_string(fixture_directory.join(&artifact.fixture))?;
+        if artifact.language == "json" {
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&rendered)?,
+                serde_json::from_str::<serde_json::Value>(&expected)?,
+                "documentation artifact `{}` drifted semantically from `{}`",
+                artifact.id,
+                artifact.fixture.display()
+            );
+        } else {
+            assert_eq!(
+                rendered,
+                expected,
+                "documentation artifact `{}` drifted from `{}`",
+                artifact.id,
+                artifact.fixture.display()
+            );
+        }
+    }
+
+    assert!(
+        !ids.is_empty(),
+        "at least one generated artifact must be documented exactly"
+    );
+    Ok(())
+}
+
+#[test]
 fn every_documented_command_executes_with_its_reviewed_contract() -> Result<(), Box<dyn Error>> {
     let repository = repository_root()?;
     let manifest = load_manifest(&repository)?;
@@ -204,8 +258,9 @@ fn every_documented_command_executes_with_its_reviewed_contract() -> Result<(), 
         let output = Command::new(binary)
             .args(args)
             .current_dir(temporary.path())
-            .env_remove("IMAGE")
-            .env_remove("RESTART")
+            .env_remove("IMAGE_TAG")
+            .env_remove("LOG_LEVEL")
+            .env_remove("RESTART_POLICY")
             .output()?;
         if let Some(server) = server {
             server.finish()?;
@@ -430,6 +485,44 @@ fn rendered_example(example: &DocumentationExample) -> String {
         "<!-- boxferry-example: {} -->\n\n```console\n{}\n```",
         example.id, example.command
     )
+}
+
+fn rendered_artifact(page: &str, artifact: &DocumentationArtifact) -> Result<String, Box<dyn Error>> {
+    let marker = format!("<!-- boxferry-artifact: {} -->", artifact.id);
+    if page.matches(&marker).count() != 1 {
+        return Err(format!("artifact marker `{}` must occur exactly once", artifact.id).into());
+    }
+    let after_marker = page
+        .split_once(&marker)
+        .ok_or_else(|| std::io::Error::other(format!("artifact marker `{}` is missing", artifact.id)))?
+        .1;
+    let indent = " ".repeat(artifact.indent);
+    let opening = format!("{indent}```{}", artifact.language);
+    let closing = format!("{indent}```");
+    let mut lines = after_marker.lines();
+    lines
+        .find(|line| *line == opening)
+        .ok_or_else(|| std::io::Error::other(format!("artifact `{}` code block is missing", artifact.id)))?;
+
+    let mut rendered = String::new();
+    for line in &mut lines {
+        if line == closing {
+            rendered.push('\n');
+            return Ok(rendered);
+        }
+        let line = line.strip_prefix(&indent).ok_or_else(|| {
+            std::io::Error::other(format!(
+                "artifact `{}` line does not use its declared indentation",
+                artifact.id
+            ))
+        })?;
+        if !rendered.is_empty() {
+            rendered.push('\n');
+        }
+        rendered.push_str(line);
+    }
+
+    Err(format!("artifact `{}` code block is not closed", artifact.id).into())
 }
 
 fn example_id(line: &str) -> Option<&str> {

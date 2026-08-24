@@ -17,8 +17,21 @@ network boundary. The selected inventory and discovered resource graph pass thro
 Choose the output:
 
 - [Compose output](../convert/podman-to-compose/) writes one canonical Compose document.
+- [Podman output](../convert/podman-to-podman/) writes a reviewable plan and command script.
 - [Quadlet output](../convert/podman-to-quadlet/) writes canonical Quadlet files.
-- [Podman output](../convert/podman-to-podman/) writes an inert Podman deployment plan.
+
+## Production boundaries to review
+
+- **Network borders:** discovery does not cross a named network unless
+  `--podman-network-boundary NAME_OR_ID` explicitly allows it.
+- **Shared volumes:** effective named volumes remain runtime evidence unless
+  `--promote-podman-effective-named-volumes` authorizes portable desired state.
+- **Shared networks:** use `--promote-podman-effective-named-networks` only after confirming the
+  target should recreate that network intent.
+- **Bind mounts:** host paths are machine-local. Review every local-resolution diagnostic before
+  accepting output for a different host.
+- **Secrets:** inspection cannot reconstruct secret delivery intent. BoxFerry reports incomplete
+  grants instead of inventing them.
 
 Podman deployment-v1 JSON is output intent, not an acquired inventory snapshot, and cannot be used
 as Podman input.

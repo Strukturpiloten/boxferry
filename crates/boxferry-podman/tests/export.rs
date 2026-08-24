@@ -1,4 +1,4 @@
-//! Podman target resolution and inert export contracts.
+//! Podman target resolution and reviewable export contracts.
 
 use std::error::Error;
 
@@ -93,7 +93,7 @@ fn invalid_targets_produce_bfp0006_and_no_candidate() -> Result<(), Box<dyn Erro
 }
 
 #[test]
-fn podman_artifacts_are_deterministic_inert_and_semantically_versioned() -> Result<(), Box<dyn Error>> {
+fn podman_artifacts_are_deterministic_reviewable_and_semantically_versioned() -> Result<(), Box<dyn Error>> {
     let application = minimal_application()?;
     let target = TargetProfile::new(PODMAN_TARGET, version(5, 4, 0), None)?;
     let exporter = PodmanExporter::new()?.with_execution_context(TargetExecutionContext::Rootless);
@@ -105,9 +105,9 @@ fn podman_artifacts_are_deterministic_inert_and_semantically_versioned() -> Resu
 
     assert_eq!(first, second);
     assert_eq!(first.target_version(), version(6, 1, 0));
-    assert!(first.review_shell().starts_with("#!/bin/sh\n"));
-    assert!(first.review_shell().contains("podman 'container' 'create'"));
-    assert!(!first.review_shell().contains("curl "));
+    assert!(first.commands_shell().starts_with("#!/bin/sh\n"));
+    assert!(first.commands_shell().contains("podman 'container' 'create'"));
+    assert!(!first.commands_shell().contains("curl "));
     assert!(!format!("{first:?}").contains("example.invalid/web:1"));
 
     let deployment: serde_json::Value = serde_json::from_str(first.deployment_json())?;
@@ -148,8 +148,8 @@ fn uncertain_runtime_group_is_omitted_and_partial_podman_output_remains_authoriz
     );
     let authorized = plan.authorize(LossPolicy::AllowPartial);
     let output = authorized.output().ok_or("partial Podman output expected")?;
-    assert!(!output.review_shell().contains(" 'pod' "));
-    assert!(output.review_shell().contains("podman 'container' 'create'"));
+    assert!(!output.commands_shell().contains(" 'pod' "));
+    assert!(output.commands_shell().contains("podman 'container' 'create'"));
     Ok(())
 }
 
@@ -206,8 +206,8 @@ fn tmpfs_options_preserve_only_safe_destination_under_partial_policy() -> Result
     );
     let result = plan.authorize(LossPolicy::AllowPartial);
     let output = result.output().ok_or("partial tmpfs Podman output expected")?;
-    assert!(output.review_shell().contains("type=tmpfs,target=/run/cache"));
-    assert!(!output.review_shell().contains("mode=1777"));
+    assert!(output.commands_shell().contains("type=tmpfs,target=/run/cache"));
+    assert!(!output.commands_shell().contains("mode=1777"));
     assert!(!output.deployment_json().contains("uid=1000"));
     Ok(())
 }

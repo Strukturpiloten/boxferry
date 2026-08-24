@@ -66,9 +66,9 @@ acquisition and never invokes the `podman` executable.
 An output directory containing any entry—including a dotfile—is rejected. BoxFerry never replaces
 an existing output file.
 
-Podman output defaults to exact target 6.1.0 and contains inert `podman.json` and `review.sh`
-files. The maximum version and target context are never inferred from the source or development
-machine.
+Podman output defaults to exact target 6.1.0 and contains reviewable `podman.json` plus runnable
+`podman-commands.sh`. BoxFerry never executes the script. The maximum version and target context are
+never inferred from the source or development machine.
 
 ## Policy and reports
 

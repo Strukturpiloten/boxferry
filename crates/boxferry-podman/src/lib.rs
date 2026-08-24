@@ -1,8 +1,8 @@
 //! Semantic `PodmanLens` adapter for `BoxFerry`'s neutral application model.
 //!
 //! Read-only acquisition remains a caller boundary. This crate consumes an already acquired
-//! [`podman_lens::ResourceInventory`] and [`podman_lens::ResourceGraph`], and produces only inert
-//! deployment JSON and a review shell script. It never opens a connection or executes Podman.
+//! [`podman_lens::ResourceInventory`] and [`podman_lens::ResourceGraph`], and produces reviewable
+//! deployment JSON and a command script. It never opens a connection or executes Podman.
 
 mod export;
 mod import;

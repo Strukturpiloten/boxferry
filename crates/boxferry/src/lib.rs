@@ -5,7 +5,8 @@
 //! features. Every conversion uses the importer → neutral model → exporter pipeline.
 //!
 //! Planning does not execute generated commands or mutate a runtime. Podman acquisition requires
-//! an explicit caller-supplied read-only transport, and Podman output is an inert deployment plan.
+//! an explicit caller-supplied read-only transport, and Podman output is a reviewable deployment
+//! plan and command script.
 //!
 //! # Example
 //!

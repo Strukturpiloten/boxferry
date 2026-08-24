@@ -314,7 +314,7 @@ enum ComposeOutput {
     Compose(ComposeToCompose),
     /// Convert Compose input to canonical Quadlet output.
     Quadlet(ComposeToQuadlet),
-    /// Convert Compose input to inert Podman deployment artifacts.
+    /// Convert Compose input to reviewable Podman deployment artifacts.
     Podman(ComposeToPodman),
 }
 
@@ -331,7 +331,7 @@ enum QuadletOutput {
     Compose(QuadletToCompose),
     /// Convert Quadlet input to canonical Quadlet output.
     Quadlet(QuadletToQuadlet),
-    /// Convert Quadlet input to inert Podman deployment artifacts.
+    /// Convert Quadlet input to reviewable Podman deployment artifacts.
     Podman(QuadletToPodman),
 }
 
@@ -348,7 +348,7 @@ enum PodmanOutput {
     Compose(PodmanToCompose),
     /// Convert Podman input to canonical Quadlet output.
     Quadlet(PodmanToQuadlet),
-    /// Convert Podman input to inert Podman deployment artifacts.
+    /// Convert Podman input to reviewable Podman deployment artifacts.
     Podman(PodmanToPodman),
 }
 
@@ -412,7 +412,7 @@ struct QuadletToQuadlet {
     diagnostics: DiagnosticOptions,
 }
 #[derive(Debug, Args)]
-#[command(about = "Read Compose input and write inert BoxFerry Podman artifacts")]
+#[command(about = "Read Compose input and write reviewable BoxFerry Podman artifacts")]
 struct ComposeToPodman {
     #[command(flatten, next_help_heading = "Input documents")]
     documents: InputDocuments,
@@ -427,7 +427,7 @@ struct ComposeToPodman {
 }
 
 #[derive(Debug, Args)]
-#[command(about = "Read Quadlet input and write inert BoxFerry Podman artifacts")]
+#[command(about = "Read Quadlet input and write reviewable BoxFerry Podman artifacts")]
 struct QuadletToPodman {
     #[command(flatten, next_help_heading = "Input documents")]
     documents: InputDocuments,
@@ -468,7 +468,7 @@ struct PodmanToQuadlet {
 }
 
 #[derive(Debug, Args)]
-#[command(about = "Acquire selected Podman resources and write inert BoxFerry Podman artifacts")]
+#[command(about = "Acquire selected Podman resources and write reviewable BoxFerry Podman artifacts")]
 struct PodmanToPodman {
     #[command(flatten, next_help_heading = "Podman input")]
     input: PodmanInputOptions,
@@ -510,7 +510,7 @@ enum ConvertComposeOutput {
     Compose(ConvertComposeToCompose),
     /// Convert Compose input to canonical Quadlet output.
     Quadlet(ConvertComposeToQuadlet),
-    /// Convert Compose input to inert Podman deployment artifacts.
+    /// Convert Compose input to reviewable Podman deployment artifacts.
     Podman(ConvertComposeToPodman),
 }
 
@@ -527,7 +527,7 @@ enum ConvertQuadletOutput {
     Compose(ConvertQuadletToCompose),
     /// Convert Quadlet input to canonical Quadlet output.
     Quadlet(ConvertQuadletToQuadlet),
-    /// Convert Quadlet input to inert Podman deployment artifacts.
+    /// Convert Quadlet input to reviewable Podman deployment artifacts.
     Podman(ConvertQuadletToPodman),
 }
 
@@ -544,7 +544,7 @@ enum ConvertPodmanOutput {
     Compose(ConvertPodmanToCompose),
     /// Convert Podman input to canonical Quadlet output.
     Quadlet(ConvertPodmanToQuadlet),
-    /// Convert Podman input to inert Podman deployment artifacts.
+    /// Convert Podman input to reviewable Podman deployment artifacts.
     Podman(ConvertPodmanToPodman),
 }
 
@@ -590,7 +590,7 @@ struct ConvertComposeToQuadlet {
 }
 
 #[derive(Debug, Args)]
-#[command(about = "Read Compose input and write inert BoxFerry Podman artifacts")]
+#[command(about = "Read Compose input and write reviewable BoxFerry Podman artifacts")]
 struct ConvertComposeToPodman {
     #[command(flatten, next_help_heading = "Input documents")]
     documents: InputDocuments,
@@ -641,7 +641,7 @@ struct ConvertQuadletToQuadlet {
 }
 
 #[derive(Debug, Args)]
-#[command(about = "Read Quadlet input and write inert BoxFerry Podman artifacts")]
+#[command(about = "Read Quadlet input and write reviewable BoxFerry Podman artifacts")]
 struct ConvertQuadletToPodman {
     #[command(flatten, next_help_heading = "Input documents")]
     documents: InputDocuments,
@@ -688,7 +688,7 @@ struct ConvertPodmanToQuadlet {
 }
 
 #[derive(Debug, Args)]
-#[command(about = "Acquire selected Podman resources and write inert BoxFerry Podman artifacts")]
+#[command(about = "Acquire selected Podman resources and write reviewable BoxFerry Podman artifacts")]
 struct ConvertPodmanToPodman {
     #[command(flatten, next_help_heading = "Podman input")]
     input: PodmanInputOptions,
@@ -2472,12 +2472,12 @@ fn export_imported(
                 RenderedConversion::from_result(result, |output| {
                     vec![
                         RenderedFile {
-                            name: "podman.json".into(),
-                            text: output.deployment_json().to_owned(),
+                            name: "podman-commands.sh".into(),
+                            text: output.commands_shell().to_owned(),
                         },
                         RenderedFile {
-                            name: "review.sh".into(),
-                            text: output.review_shell().to_owned(),
+                            name: "podman.json".into(),
+                            text: output.deployment_json().to_owned(),
                         },
                     ]
                 }),
