@@ -60,5 +60,6 @@ Podman input is read-only and requires an explicit Unix socket and selectors. Bo
 discover ambient connections or invoke the `podman` command. It never infers target versions or
 rootful/rootless context from the development machine.
 
-All output is inert. BoxFerry never applies generated output, executes `review.sh`, deploys
-infrastructure, or sends mutating runtime API requests.
+BoxFerry never applies generated output, executes `podman-commands.sh`, deploys infrastructure, or
+sends mutating runtime API requests. The generated script contains real commands: a user who runs
+it performs those operations against the selected Podman connection.

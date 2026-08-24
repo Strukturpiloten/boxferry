@@ -11,7 +11,7 @@ native source → Lens → importer → Application → exporter → native cand
                                       │
                                 loss policy
                                       │
-                           authorized inert output
+                        authorized reviewable output
 ```
 
 Every route follows this pipeline, including Compose-to-Compose, Quadlet-to-Quadlet, and
@@ -68,8 +68,9 @@ development host.
 ## Output boundary
 
 Compose and Quadlet output are documents that can be imported again, so tests cover chained
-conversion and fixed points. Podman output is different: `podman.json` and `review.sh` describe
-desired operations for review and cannot be used as observed Podman input. Tests therefore protect
+conversion and fixed points. Podman output is different: `podman.json` and `podman-commands.sh`
+describe desired operations and cannot be used as observed Podman input. BoxFerry never executes
+the command script, but a user who runs it performs real Podman operations. Tests therefore protect
 deterministic bytes, semantic operations, findings, and redaction.
 
 BoxFerry exposes no executor, invokes no generated command, starts no unit, and sends no mutating

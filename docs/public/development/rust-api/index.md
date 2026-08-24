@@ -14,11 +14,11 @@ The public flow is explicit:
 3. Import into `Application`.
 4. Select a target profile and `LossPolicy`.
 5. Export a typed conversion plan.
-6. Inspect or write the inert artifacts after caller authorization.
+6. Inspect or write the reviewable artifacts after caller authorization.
 
 Core planning is side-effect free. File, environment, read-only runtime acquisition, and output
 writes stay at caller-selected boundaries. Podman input uses a caller-selected transport and
-discovery request. Podman output is deterministic deployment-v1 JSON plus a review script, with no
+discovery request. Podman output is deterministic deployment-v1 JSON plus a command script, with no
 execution method. Applying or deploying artifacts is outside BoxFerry.
 
 All six supported crates use one pre-1.0 version. Minor releases may remove or replace APIs with

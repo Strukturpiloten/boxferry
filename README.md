@@ -6,11 +6,11 @@ loss policy allows it.
 
 ## What it converts
 
-| Input   | Compose           | Quadlet              | Podman                |
-| ------- | ----------------- | -------------------- | --------------------- |
-| Compose | Generated Compose | Generated unit files | Inert deployment plan |
-| Quadlet | Generated Compose | Generated unit files | Inert deployment plan |
-| Podman  | Generated Compose | Generated unit files | Inert deployment plan |
+| Input   | Compose           | Podman                      | Quadlet              |
+| ------- | ----------------- | --------------------------- | -------------------- |
+| Compose | Generated Compose | Reviewable Podman artifacts | Generated unit files |
+| Podman  | Generated Compose | Reviewable Podman artifacts | Generated unit files |
+| Quadlet | Generated Compose | Reviewable Podman artifacts | Generated unit files |
 
 All nine routes use the same importer → neutral model → exporter pipeline. Same-format conversion
 is never a native passthrough. Docker and Kubernetes are not implemented.
@@ -30,7 +30,8 @@ The output directory may be absent or empty. BoxFerry refuses to overwrite an ex
 
 - Podman input uses an explicit, caller-selected, read-only connection.
 - Podman output is review material, not an observed inventory or an apply operation.
-- Generated commands and units are never executed.
+- BoxFerry never executes generated commands or units. A user who runs the command script performs
+  real Podman operations.
 - Runtime mutation and infrastructure deployment are outside the product.
 - Environment interpolation is opt-in; BoxFerry reads no implicit `.env` file.
 - Secrets are redacted from diagnostics and reports by default.

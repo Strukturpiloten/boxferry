@@ -717,7 +717,7 @@ fn assert_success_report(bytes: &[u8], route: &Route, command_kind: &str) -> Res
 
 fn assert_podman_artifacts(output_directory: &Path, route: &str) -> Result<(), Box<dyn Error>> {
     let deployment_text = fs::read_to_string(output_directory.join("podman.json"))?;
-    let review = fs::read_to_string(output_directory.join("review.sh"))?;
+    let review = fs::read_to_string(output_directory.join("podman-commands.sh"))?;
     let deployment: serde_json::Value = serde_json::from_str(&deployment_text)?;
 
     assert_eq!(deployment["schema_version"], 1, "{route} Podman schema changed");
@@ -748,7 +748,7 @@ fn assert_podman_artifacts(output_directory: &Path, route: &str) -> Result<(), B
     assert_eq!(
         command_lines.len(),
         operations.len(),
-        "{route} review script operation count changed"
+        "{route} command script operation count changed"
     );
 
     for (operation, command_line) in operations.iter().zip(command_lines) {

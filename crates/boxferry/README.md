@@ -4,7 +4,7 @@
 Quadlet, and Podman. Windows users run it inside WSL2.
 
 All nine routes use an importer → neutral `Application` → exporter pipeline. Podman input is
-explicit read-only acquisition; Podman output is inert review material. BoxFerry never executes
+explicit read-only acquisition; Podman output is reviewable material. BoxFerry never executes
 generated commands or mutates a runtime.
 
 ```console

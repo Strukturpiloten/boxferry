@@ -1,9 +1,15 @@
 # Compose to Compose
 
-Use this route to merge Compose input, import it into the neutral application model, and export one
-canonical Compose document. It is not a byte-for-byte copy.
+Merge and normalize Compose files through BoxFerry's neutral application model. The result is one
+canonical Compose document, not a byte-for-byte copy.
 
-## Convert without interpolation
+## Prerequisites
+
+- One or more Compose files.
+- An absent or empty output directory.
+- Explicit interpolation input when the source contains `${NAME}` expressions.
+
+## Convert a literal document
 
 Save this as `compose.yaml`:
 
@@ -34,7 +40,7 @@ Every value crosses the neutral application model. Unresolved typed expressions 
 boundary, and native-only extension fields require `--loss-policy partial` before BoxFerry can omit
 them. No same-format shortcut preserves unsupported native data.
 
-## Interpolate explicitly
+## Supply production values explicitly
 
 Save the following input as `compose-interpolation.yaml`:
 
@@ -43,20 +49,32 @@ Save the following input as `compose-interpolation.yaml`:
 name: docs-interpolation
 services:
   web:
-    image: ${IMAGE}
-    restart: ${RESTART:-no}
+    image: example.invalid/web:${IMAGE_TAG}
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: ${RESTART_POLICY:-unless-stopped}
 ```
 
-Save `IMAGE=example.invalid/web:2` as `variables.env`, then run:
+Save non-secret deployment defaults as `variables.env`:
+
+```dotenv
+IMAGE_TAG=2026.08.24
+RESTART_POLICY=always
+```
+
+Override one value on the command line:
 
 <!-- boxferry-example: compose-to-compose-interpolate -->
 
 ```console
-boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env RESTART=no --output-directory compose-interpolated-output
+boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --output-directory compose-interpolated-output
 ```
 
-The rendered service contains the resolved image and `restart: "no"`. BoxFerry reads no implicit
-`.env` file and no process variable unless `--env NAME` authorizes that exact name.
+The rendered service contains image tag `2026.08.24`, `LOG_LEVEL=warning`, and `restart: always`.
+Later `--env-file` inputs win over earlier files; `--env NAME=VALUE` wins over all files.
+
+For a sensitive process value, prefer `--env NAME`. It authorizes only that named variable and
+keeps its value out of diagnostics. BoxFerry reads no implicit `.env` file.
 
 ## Missing required value
 
@@ -77,3 +95,7 @@ boxferry convert compose compose --input-file compose-required.yaml --interpolat
 - Use `--profile NAME` or `--all-profiles` for profiled services.
 - Add `--project-directory DIR` when relative source paths use another project root.
 - Keep the default `--loss-policy exact` unless a diagnostic explains an acceptable loss.
+
+---
+
+[← Conversion guides](../../) · [Next: Compose to Podman →](../compose-to-podman/)

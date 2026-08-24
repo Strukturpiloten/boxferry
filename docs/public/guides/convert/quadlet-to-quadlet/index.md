@@ -3,6 +3,12 @@
 Use this route to parse, validate, and rebuild Quadlet files through BoxFerry's neutral model. It
 is not a byte-preserving formatter.
 
+## Prerequisites
+
+- One or more related Quadlet files and an explicit application name.
+- The complete target Podman version range.
+- An absent or empty output directory.
+
 ## Convert
 
 Save this as `web.container`:
@@ -32,6 +38,10 @@ quadlet-output/
 The default target covers Podman 5.4.0 through 6.0.2. Every emitted key must work across the whole
 selected range.
 
+Same-format conversion does not preserve native-only values silently. `EnvironmentFile=` paths,
+bind mounts, secret references, pod grouping, and systemd relationships still pass through the
+neutral model and normal loss policy.
+
 ## Invalid Quadlet value
 
 An empty `Image=` entry is invalid for both parsing and reconstruction:
@@ -51,3 +61,10 @@ created.
 - `--podman-minimum-version` and `--podman-maximum-version` select the complete target range.
 - `--quadlet-grouping pod` requests one compatible pod and requires approximation authorization.
 - Compose interpolation options do not apply to Quadlet input.
+
+BoxFerry never installs, enables, or starts generated units. Copy the reviewed files through your
+normal configuration-management process and verify target-host paths separately.
+
+---
+
+[← Quadlet to Podman](../quadlet-to-podman/) · [Conversion guides](../../)

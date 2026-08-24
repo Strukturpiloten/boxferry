@@ -1,4 +1,4 @@
-//! Neutral application model to inert Podman deployment artifacts.
+//! Neutral application model to reviewable Podman deployment artifacts.
 
 use std::{error::Error, fmt};
 

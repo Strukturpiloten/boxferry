@@ -1,5 +1,6 @@
 [Container]
-Image=example.invalid/web:2
+Image=example.invalid/web:2026.08.24
+Environment=LOG_LEVEL=warning
 
 [Service]
-Restart=no
+Restart=always

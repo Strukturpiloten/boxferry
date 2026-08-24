@@ -35,7 +35,8 @@ The corpus verifies:
 
 Compose and Quadlet artifacts can be imported again. Podman output cannot: it is a deployment plan,
 not an observed inventory. Podman assertions instead compare deterministic `podman.json` and
-`review.sh`, semantic operations, complete findings, and redaction.
+runnable `podman-commands.sh`, semantic operations, complete findings, and redaction. BoxFerry never
+executes that script.
 
 ## Podman evidence
 

@@ -2,5 +2,7 @@
 name: docs-interpolation
 services:
   web:
-    image: ${IMAGE}
-    restart: ${RESTART:-no}
+    image: example.invalid/web:${IMAGE_TAG}
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: ${RESTART_POLICY:-unless-stopped}

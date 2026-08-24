@@ -22,11 +22,11 @@ files = [
   "expected-tmpfs-compose.yaml",
   "expected-tmpfs-worker.container",
   "expected-tmpfs-podman.json",
-  "expected-tmpfs-podman-review.sh",
+  "expected-tmpfs-podman-commands.sh",
   "expected-podman.json",
-  "expected-podman-review.sh",
+  "expected-podman-commands.sh",
   "expected-lossy-podman.json",
-  "expected-lossy-podman-review.sh",
+  "expected-lossy-podman-commands.sh",
 ]
 
 [provenance]
@@ -53,12 +53,12 @@ artifact = "web.container"
 expected = "expected-web.container"
 
 [[extensions.matrix.inputs.compose.exports.podman]]
-artifact = "podman.json"
-expected = "expected-podman.json"
+artifact = "podman-commands.sh"
+expected = "expected-podman-commands.sh"
 
 [[extensions.matrix.inputs.compose.exports.podman]]
-artifact = "review.sh"
-expected = "expected-podman-review.sh"
+artifact = "podman.json"
+expected = "expected-podman.json"
 
 [extensions.matrix.inputs.quadlet]
 sources = ["web.container"]
@@ -73,12 +73,12 @@ artifact = "web.container"
 expected = "expected-web.container"
 
 [[extensions.matrix.inputs.quadlet.exports.podman]]
-artifact = "podman.json"
-expected = "expected-podman.json"
+artifact = "podman-commands.sh"
+expected = "expected-podman-commands.sh"
 
 [[extensions.matrix.inputs.quadlet.exports.podman]]
-artifact = "review.sh"
-expected = "expected-podman-review.sh"
+artifact = "podman.json"
+expected = "expected-podman.json"
 
 [[extensions.scenarios]]
 id = "normal-compose"
@@ -106,12 +106,12 @@ loss-policy = "partial"
 diagnostic-codes = ["BFP0007"]
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "podman.json"
-expected = "expected-podman.json"
+artifact = "podman-commands.sh"
+expected = "expected-podman-commands.sh"
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "review.sh"
-expected = "expected-podman-review.sh"
+artifact = "podman.json"
+expected = "expected-podman.json"
 
 [[extensions.scenarios]]
 id = "normal-quadlet"
@@ -140,12 +140,12 @@ loss-policy = "partial"
 diagnostic-codes = ["BFP0007"]
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "podman.json"
-expected = "expected-podman.json"
+artifact = "podman-commands.sh"
+expected = "expected-podman-commands.sh"
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "review.sh"
-expected = "expected-podman-review.sh"
+artifact = "podman.json"
+expected = "expected-podman.json"
 
 [[extensions.scenarios]]
 id = "lossy-compose"
@@ -180,12 +180,12 @@ diagnostic-codes = ["BFP0007"]
 artifact-values = ["LABEL-CANARY"]
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "podman.json"
-expected = "expected-lossy-podman.json"
+artifact = "podman-commands.sh"
+expected = "expected-lossy-podman-commands.sh"
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "review.sh"
-expected = "expected-lossy-podman-review.sh"
+artifact = "podman.json"
+expected = "expected-lossy-podman.json"
 
 [[extensions.scenarios]]
 id = "tmpfs-compose"
@@ -213,9 +213,9 @@ loss-policy = "exact"
 podman-tmpfs-destinations = ["/run/boxferry"]
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "podman.json"
-expected = "expected-tmpfs-podman.json"
+artifact = "podman-commands.sh"
+expected = "expected-tmpfs-podman-commands.sh"
 
 [[extensions.scenarios.exports.podman.artifacts]]
-artifact = "review.sh"
-expected = "expected-tmpfs-podman-review.sh"
+artifact = "podman.json"
+expected = "expected-tmpfs-podman.json"

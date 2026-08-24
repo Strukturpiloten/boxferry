@@ -22,9 +22,9 @@ an explicit read-only transport and discovery request; it never discovers an amb
 shells out to `podman`. Every output is planned before a file is created.
 
 PodmanLens owns Podman protocols, read-only acquisition, native types, version evidence,
-diagnostics, deployment planning, and deterministic rendering. BoxFerry writes only inert
-`podman.json` and `review.sh` output, never applies or deploys it. This deployment output is not a
-runtime inventory and cannot be used as Podman input.
+diagnostics, deployment planning, and deterministic rendering. BoxFerry writes reviewable
+`podman.json` plus runnable `podman-commands.sh`, but never executes, applies, or deploys either
+artifact. This deployment output is not runtime inventory and cannot be used as Podman input.
 
 All nine Compose, Quadlet, and Podman routes cross the neutral model. Docker and Kubernetes
 integrations remain deferred.
