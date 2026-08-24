@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-for persistent_directory_name in CARGO_HOME CARGO_TARGET_DIR GH_CONFIG_DIR; do
+for persistent_directory_name in CARGO_HOME GH_CONFIG_DIR; do
   persistent_directory="${!persistent_directory_name:-}"
   if [[ -z "${persistent_directory}" ]]; then
     printf 'BoxFerry Dev Container is missing %s.\n' "${persistent_directory_name}" >&2

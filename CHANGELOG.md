@@ -15,6 +15,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
   the Podman adapter policy into BoxFerry, separate active decisions from superseded history, and
   prevent duplicate planning and API ledgers from returning
   ([#57](https://github.com/Strukturpiloten/boxferry/pull/57)).
+- Use Cargo's conventional repository-local `target` directory for Dev Container builds instead
+  of a hidden volume-backed target directory
+  ([#63](https://github.com/Strukturpiloten/boxferry/issues/63)).
 
 ## [0.7.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.7.0...boxferry-v0.7.1) - 2026-08-22
 

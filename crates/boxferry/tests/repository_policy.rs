@@ -499,11 +499,9 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "\"workspaceMount\": \"source=${localWorkspaceFolder},target=/workspaces/boxferry,type=bind\"",
         "\"workspaceFolder\": \"/workspaces/boxferry\"",
         "\"CARGO_HOME\": \"/workspaces/.boxferry-cargo\"",
-        "\"CARGO_TARGET_DIR\": \"/workspaces/.boxferry-target\"",
         "\"GH_CONFIG_DIR\": \"/workspaces/.boxferry-gh\"",
         "source=boxferry-cargo-${devcontainerId},target=/workspaces/.boxferry-cargo,type=volume",
         "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
-        "source=boxferry-target-${devcontainerId},target=/workspaces/.boxferry-target,type=volume",
         "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
         "source=${localWorkspaceFolder}/../podman-lens,target=/workspaces/boxferry/.boxferry-workspace/podman-lens,type=bind",
         "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind",
@@ -553,7 +551,6 @@ fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching
 
     for required in [
         "CARGO_HOME",
-        "CARGO_TARGET_DIR",
         "GH_CONFIG_DIR",
         "[[ ! -w \"${persistent_directory}\" ]]",
         "sudo chown -R",
@@ -564,8 +561,43 @@ fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching
             return Err(format!("Dev Container lifecycle check is missing `{required}`"));
         }
     }
-    if script.contains("sudo -u") {
-        return Err("Dev Container lifecycle check must not require forbidden sudo user switching".to_owned());
+    for forbidden in ["CARGO_TARGET_DIR", "sudo -u"] {
+        if script.contains(forbidden) {
+            return Err(format!("Dev Container lifecycle check must not contain `{forbidden}`"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn devcontainer_uses_cargo_default_workspace_target_directory() -> Result<(), String> {
+    let root = repository_root();
+    let config_path = root.join(".devcontainer/devcontainer.json");
+    let config = fs::read_to_string(&config_path)
+        .map_err(|error| format!("failed to read {}: {error}", config_path.display()))?;
+
+    for forbidden in ["CARGO_TARGET_DIR", "boxferry-target", "/workspaces/.boxferry-target"] {
+        if config.contains(forbidden) {
+            return Err(format!(
+                "Dev Container must use Cargo's default workspace target directory; found `{forbidden}`"
+            ));
+        }
+    }
+
+    let guide_path = root.join("docs/development-environment.md");
+    let guide =
+        fs::read_to_string(&guide_path).map_err(|error| format!("failed to read {}: {error}", guide_path.display()))?;
+    for required in [
+        "Cargo uses its default workspace target directory",
+        "cargo build --release --locked --package boxferry",
+        "./target/release/boxferry --version",
+        "Dev Containers: Rebuild Container",
+        "unset CARGO_TARGET_DIR",
+    ] {
+        if !guide.contains(required) {
+            return Err(format!("development environment guide is missing `{required}`"));
+        }
     }
 
     Ok(())

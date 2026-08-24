@@ -3,6 +3,20 @@
 Use the Dev Container. It provides the pinned Rust, Node, documentation, audit, and GitHub tools
 used by CI for the five-repository workspace.
 
+## Build the CLI
+
+Cargo uses its default workspace target directory. Build the release binary and run it from the
+expected repository-local path:
+
+```console
+cargo build --release --locked --package boxferry
+./target/release/boxferry --version
+```
+
+After pulling the change from an older workspace, run **Dev Containers: Rebuild Container** in VS
+Code. Existing containers retain their original environment until rebuilt. To use the default in
+an already-open terminal before rebuilding, run `unset CARGO_TARGET_DIR`.
+
 ## Local verification
 
 Run the complete gate after the final edit:
