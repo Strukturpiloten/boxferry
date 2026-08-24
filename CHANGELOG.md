@@ -5,6 +5,13 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Reorganize current documentation around task-oriented entry points and canonical sources, move
+  the Podman adapter policy into BoxFerry, separate active decisions from superseded history, and
+  prevent duplicate planning and API ledgers from returning
+  ([#57](https://github.com/Strukturpiloten/boxferry/pull/57)).
+
 ## [0.7.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.7.0...boxferry-v0.7.1) - 2026-08-22
 
 ### Changed
