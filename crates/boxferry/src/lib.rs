@@ -1,8 +1,11 @@
 //! Reusable high-level APIs for `BoxFerry` conversions.
 //!
-//! This facade exposes the same model and conversion-engine crates used by the
-//! `boxferry` command-line application. Format adapters will be re-exported here behind
-//! documented additive features when their public contracts are implemented.
+//! This facade exposes the same neutral model and conversion engine used by the `boxferry`
+//! command-line application. Compose, Podman, and Quadlet adapters are available through additive
+//! features. Every conversion uses the importer → neutral model → exporter pipeline.
+//!
+//! Planning does not execute generated commands or mutate a runtime. Podman acquisition requires
+//! an explicit caller-supplied read-only transport, and Podman output is an inert deployment plan.
 //!
 //! # Example
 //!

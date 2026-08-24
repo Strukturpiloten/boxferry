@@ -1,53 +1,54 @@
 # Architecture decision records
 
-Architecture decision records capture choices that constrain future development.
+ADRs explain durable constraints and why they were chosen. Current work should start with the
+active table; superseded records are history and are read only when that history matters.
 
-## Status values
+## Active decisions
 
-- `proposed` — under discussion
-- `accepted` — current project direction
-- `superseded` — replaced by another ADR
-- `rejected` — considered but not adopted
+| ADR                                                                   | Decision                                                                     |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [0001](0001-project-boundaries-and-origin.md)                         | Repository boundaries, dependency direction, and from-scratch implementation |
+| [0002](0002-public-library-facade.md)                                 | Public facade, reusable component crates, and CLI parity                     |
+| [0004](0004-first-cli-feature-and-write-safety.md)                    | Useful default CLI with fail-closed, non-overwriting output                  |
+| [0011](0011-neutral-service-group-relationships.md)                   | Structural service grouping without inferred runtime semantics               |
+| [0013](0013-explicit-compose-provider-and-runtime.md)                 | Provider-aware embedded Compose targets                                      |
+| [0018](0018-generic-cli-and-diagnostic-support-bundle.md)             | Generic CLI and privacy-safe local support bundle                            |
+| [0019](0019-generic-cli-route-registry.md)                            | Extensible route registry                                                    |
+| [0020](0020-rolling-compose-specification-cli-target.md)              | Rolling Compose target and detailed Quadlet diagnostics                      |
+| [0021](0021-automatic-local-error-report-names.md)                    | Automatic local error-report names                                           |
+| [0022](0022-sole-quadlet-parser-and-deterministic-test-contract.md)   | Quadlet parser and deterministic test ownership                              |
+| [0024](0024-linux-cli-and-wsl-on-windows.md)                          | Linux CLI and WSL2 on Windows                                                |
+| [0025](0025-empty-output-directories-and-final-human-status.md)       | Empty output directories and final status                                    |
+| [0026](0026-typed-diagnostic-rule-catalogue.md)                       | Typed diagnostic rules and causal final status                               |
+| [0027](0027-format-neutral-native-findings.md)                        | Format-neutral native findings                                               |
+| [0028](0028-primary-remediation-guidance.md)                          | Structured primary remediation guidance                                      |
+| [0029](0029-nested-input-output-cli-routes.md)                        | Nested input/output CLI routes                                               |
+| [0031](0031-quadlet-systemd-environment-and-native-only-reporting.md) | Quadlet environment boundaries and native findings                           |
+| [0032](0032-future-native-lens-boundaries.md)                         | Independent native Lens ownership                                            |
+| [0033](0033-universal-neutral-model-pipeline.md)                      | Universal neutral pipeline and nonexecuting Podman-first direction           |
+| [0034](0034-podman-lens-adapter-boundary.md)                          | PodmanLens adapter and inert output boundary                                 |
 
-## Index
+## Superseded history
 
-| ADR                                                                   | Status     | Decision                                                                              |
-| --------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------- |
-| [0001](0001-project-boundaries-and-origin.md)                         | accepted   | Independent repositories, dependency direction, and from-scratch implementation       |
-| [0002](0002-public-library-facade.md)                                 | accepted   | Public library facade, reusable component crates, and CLI parity                      |
-| [0003](0003-explicit-runtime-observation-provenance.md)               | superseded | Runtime observations remain distinct from authored intent and conversion decisions    |
-| [0004](0004-first-cli-feature-and-write-safety.md)                    | accepted   | Useful default CLI features with fail-closed, non-overwriting output                  |
-| [0005](0005-shared-runtime-observation-layer.md)                      | superseded | Pure shared runtime observations with separate Docker and Podman native adapters      |
-| [0006](0006-finite-podman-inspect-decoder.md)                         | superseded | Finite Podman inspect decoding with separately replaceable resource acquisition       |
-| [0007](0007-finite-podman-relationship-expansion.md)                  | superseded | Finite policy-controlled Podman relationship expansion without ambient enumeration    |
-| [0008](0008-isolated-podman-runtime-conformance.md)                   | superseded | Digest-pinned nested Podman conformance without a host runtime socket                 |
-| [0009](0009-versioned-docker-inspection.md)                           | superseded | Docker inspection follows an explicit Engine API version and daemon endpoint          |
-| [0010](0010-isolated-docker-runtime-conformance.md)                   | superseded | Digest-pinned nested Docker conformance without a host runtime socket                 |
-| [0011](0011-neutral-service-group-relationships.md)                   | accepted   | Structural service grouping without inferred namespace or lifecycle semantics         |
-| [0012](0012-explicit-runtime-lifecycle-resolution.md)                 | superseded | Provenance-bearing runtime lifecycle choices and one preserved Quadlet group          |
-| [0013](0013-explicit-compose-provider-and-runtime.md)                 | accepted   | Provider-aware embedded Compose targets and generated output                          |
-| [0014](0014-runtime-regular-health-observations.md)                   | superseded | Regular runtime health inference without conflating Podman startup health             |
-| [0015](0015-runtime-container-restart-policy.md)                      | superseded | Container restart observations with conservative systemd approximation                |
-| [0016](0016-runtime-metadata-label-reconstruction.md)                 | superseded | Protected runtime metadata labels with image-default and provider-metadata boundaries |
-| [0017](0017-n-to-n-adapter-matrix.md)                                 | superseded | N-to-N import/export adapters with reviewable runtime deployment plans                |
-| [0018](0018-generic-cli-and-diagnostic-support-bundle.md)             | accepted   | Generic CLI migration and privacy-safe local diagnostic support bundle                |
-| [0019](0019-generic-cli-route-registry.md)                            | accepted   | Extensible CLI route registry with Compose and Quadlet document routes                |
-| [0020](0020-rolling-compose-specification-cli-target.md)              | accepted   | Rolling Compose Specification target and detailed Quadlet CLI diagnostics             |
-| [0021](0021-automatic-local-error-report-names.md)                    | accepted   | Automatic local diagnostic report names and publication                               |
-| [0022](0022-sole-quadlet-parser-and-deterministic-test-contract.md)   | accepted   | Sole Quadlet parser and deterministic test contract                                   |
-| [0023](0023-windows-local-time-zone-database.md)                      | superseded | Temporary native-Windows Jiff time-zone database decision                             |
-| [0024](0024-linux-cli-and-wsl-on-windows.md)                          | accepted   | Support the CLI on Linux and require WSL2 on Windows                                  |
-| [0025](0025-empty-output-directories-and-final-human-status.md)       | accepted   | Empty output-directory reuse and ordered final human status                           |
-| [0026](0026-typed-diagnostic-rule-catalogue.md)                       | accepted   | Typed diagnostic rules, native-code provenance, grouped help, and causal final status |
-| [0027](0027-format-neutral-native-findings.md)                        | accepted   | Format-neutral native findings retained by every source adapter                       |
-| [0028](0028-primary-remediation-guidance.md)                          | accepted   | Structured fix-first guidance without source syntax in target adapters                |
-| [0029](0029-nested-input-output-cli-routes.md)                        | accepted   | Nested input/output CLI routes and same-format normalization                          |
-| [0030](0030-native-compose-same-format-canonicalization.md)           | superseded | Native Compose same-format canonicalization preserves unresolved expressions          |
-| [0031](0031-quadlet-systemd-environment-and-native-only-reporting.md) | accepted   | Loss-aware Quadlet semantic reporting without speculative systemd context             |
-| [0032](0032-future-native-lens-boundaries.md)                         | accepted   | Future independent Docker, Podman, and Kubernetes Lens ownership                      |
-| [0033](0033-universal-neutral-model-pipeline.md)                      | accepted   | Universal neutral-model pipeline and nonexecuting Podman-first roadmap                |
-| [0034](0034-podman-lens-adapter-boundary.md)                          | accepted   | PodmanLens adapter policy and inert deployment-artifact boundary                      |
+| ADR                                                         | Replaced decision                 |
+| ----------------------------------------------------------- | --------------------------------- |
+| [0003](0003-explicit-runtime-observation-provenance.md)     | Runtime observation provenance    |
+| [0005](0005-shared-runtime-observation-layer.md)            | Shared runtime observation layer  |
+| [0006](0006-finite-podman-inspect-decoder.md)               | In-repository Podman inspection   |
+| [0007](0007-finite-podman-relationship-expansion.md)        | In-repository Podman discovery    |
+| [0008](0008-isolated-podman-runtime-conformance.md)         | In-repository Podman conformance  |
+| [0009](0009-versioned-docker-inspection.md)                 | Docker inspection                 |
+| [0010](0010-isolated-docker-runtime-conformance.md)         | Docker conformance                |
+| [0012](0012-explicit-runtime-lifecycle-resolution.md)       | Runtime lifecycle resolution      |
+| [0014](0014-runtime-regular-health-observations.md)         | Runtime health observations       |
+| [0015](0015-runtime-container-restart-policy.md)            | Runtime restart observations      |
+| [0016](0016-runtime-metadata-label-reconstruction.md)       | Runtime label reconstruction      |
+| [0017](0017-n-to-n-adapter-matrix.md)                       | Earlier adapter matrix            |
+| [0023](0023-windows-local-time-zone-database.md)            | Native Windows time-zone database |
+| [0030](0030-native-compose-same-format-canonicalization.md) | Same-format Compose shortcut      |
 
-## Adding an ADR
+## Status and changes
 
-Use the next four-digit number. Include context, decision, consequences, and alternatives. Do not rewrite an accepted ADR to hide a changed decision; add a new ADR that supersedes it.
+Records use `proposed`, `accepted`, `superseded`, or `rejected`. Add the next four-digit
+record with context, decision, consequences, and alternatives. Never rewrite an accepted record to
+hide a changed decision; add a record that explicitly supersedes it.

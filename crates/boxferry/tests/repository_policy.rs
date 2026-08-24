@@ -1288,6 +1288,73 @@ fn fixture_manifests_follow_the_common_contract() -> Result<(), String> {
 }
 
 #[test]
+fn maintainer_documentation_is_small_and_has_one_current_inventory() -> Result<(), String> {
+    let root = repository_root();
+    let docs = root.join("docs");
+    let expected = BTreeSet::from([
+        "README.md",
+        "api-stability.md",
+        "architecture.md",
+        "dependency-policy.md",
+        "development-environment.md",
+        "platform-support.md",
+        "releasing.md",
+        "testing.md",
+    ])
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<BTreeSet<_>>();
+    let actual = fs::read_dir(&docs)
+        .map_err(|error| format!("failed to read {}: {error}", docs.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("md"))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect::<BTreeSet<_>>();
+    if actual != expected {
+        return Err(format!(
+            "top-level maintainer guide inventory drifted: expected {expected:?}, found {actual:?}"
+        ));
+    }
+
+    for (path, maximum_words) in [
+        ("README.md", 800),
+        ("AGENTS.md", 1_300),
+        ("docs/README.md", 500),
+        ("docs/api-stability.md", 800),
+        ("docs/architecture.md", 1_500),
+        ("docs/dependency-policy.md", 1_000),
+        ("docs/development-environment.md", 800),
+        ("docs/platform-support.md", 400),
+        ("docs/releasing.md", 700),
+        ("docs/testing.md", 1_200),
+        ("fixtures/README.md", 1_000),
+    ] {
+        let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        let words = text.split_whitespace().count();
+        if words > maximum_words {
+            return Err(format!(
+                "{path} contains {words} words; current guidance is limited to {maximum_words}"
+            ));
+        }
+    }
+
+    for removed in [
+        "docs/agent-workflow.md",
+        "docs/fixture-format.md",
+        "docs/implementation-plan.md",
+        "docs/library-api.md",
+        "docs/project-structure.md",
+        "docs/research/podlet-compose-spec-rs-issues-2026-08-01.md",
+    ] {
+        if root.join(removed).exists() {
+            return Err(format!("obsolete or duplicate documentation returned at {removed}"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn deferred_docker_and_runtime_namespaces_are_not_published_by_the_current_product() {
     for rule in boxferry_engine::RULES {
         assert!(

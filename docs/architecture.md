@@ -1,60 +1,85 @@
 # Architecture
 
-BoxFerry composes independent native adapters around one provenance-aware application model.
+Use this guide to decide where behavior belongs and which boundaries a change must preserve.
+
+## Conversion pipeline
 
 ```text
-ComposeLens ── boxferry-compose ──┐
-PodmanLens ─── boxferry-podman ───┼── boxferry-model ── boxferry-engine
-QuadletLens ── boxferry-quadlet ──┘                         │
-                                                           └── boxferry facade and CLI
+native source → Lens → importer → Application → exporter → native candidate
+                                      │
+                         outcomes + target profile
+                                      │
+                                loss policy
+                                      │
+                           authorized inert output
 ```
+
+Every route follows this pipeline, including Compose-to-Compose, Quadlet-to-Quadlet, and
+Podman-to-Podman. A native parser or renderer cannot bypass the neutral model.
+
+1. Parse a document or explicitly acquire a read-only inventory.
+2. Import native intent and findings into the neutral `Application`.
+3. Resolve the caller-selected target profile.
+4. Export a typed candidate and collect target findings.
+5. Apply loss policy to the combined conversion plan.
+6. Write create-new files only when policy authorizes the result.
+
+Parsing, acquisition, import, export, and planning do not mutate a runtime. The CLI calls the same
+public orchestration APIs available to embedded callers.
 
 ## Ownership
 
-- `boxferry-model` owns format-neutral application intent and protected values.
-- `boxferry-engine` owns adapter traits, planning, target profiles, diagnostics, and loss policy.
-- `boxferry-compose`, `boxferry-podman`, and `boxferry-quadlet` own semantic mappings.
-- `boxferry` owns the public facade, CLI parsing, presentation, reports, and file-write boundary.
-- ComposeLens, PodmanLens, and QuadletLens own their native parsing or protocol handling, rendering,
-  source evidence, and native findings.
+| Owner                    | Responsibility                                                       |
+| ------------------------ | -------------------------------------------------------------------- |
+| `boxferry-model`         | Format-neutral intent, provenance, and protected values              |
+| `boxferry-engine`        | Adapter traits, planning, target profiles, outcomes, and loss policy |
+| `boxferry-compose`       | Compose ↔ neutral semantic mapping                                   |
+| `boxferry-podman`        | PodmanLens ↔ neutral semantic mapping                                |
+| `boxferry-quadlet`       | QuadletLens ↔ neutral semantic mapping                               |
+| `boxferry`               | Facade, CLI, reports, presentation, and create-new file boundary     |
+| Native Lens repositories | Native parsing/acquisition, rendering, evidence, and native findings |
 
-The neutral model never exposes Lens types. The CLI calls the same public orchestration APIs used
-by embedded Rust callers.
+The neutral model contains no Lens types. Format-specific behavior stays in the owning Lens;
+cross-format meaning stays in the corresponding BoxFerry adapter; orchestration stays out of the
+CLI layer.
 
-## Conversion phases
+## Podman adapter contract
 
-1. Parse with the native Lens or explicitly acquire a read-only native inventory.
-2. Import into the neutral model and retain source outcomes.
-3. Resolve the explicit target profile.
-4. Export a typed candidate and add target outcomes.
-5. Apply the selected loss policy to the combined plan.
-6. Write create-new files only when authorized.
+PodmanLens reports whether a field is absent, configured, effective, runtime-assigned, locally
+resolved, unavailable, malformed, version-inapplicable, not applicable, or unmodelled.
+`boxferry-podman` must handle that state before reading a value:
 
-Parsing, acquisition, and planning have no mutating runtime side effects. Podman acquisition accepts
-an explicit caller-owned transport and discovery request; it does not discover an ambient connection
-or shell out to `podman`. BoxFerry never applies output or sends mutating runtime requests. Target
-versions and rootful/rootless context are explicit and never inferred from the development machine.
+- configured values may become neutral intent when the semantics match;
+- effective values require an explicit promotion policy;
+- runtime-assigned and locally resolved values remain evidence unless the caller authorizes them;
+- unavailable, malformed, ambiguous, and unmodelled data produce structured outcomes;
+- redacted data never becomes an empty value or reconstructed secret.
 
-## Same-format behavior
+The adapter preserves Podman resource identity for correlation, rejects normalized-name
+collisions, and starts inspected ownership as uncertain. Pod networking belongs to the neutral
+service group; unpodded container networking belongs to the service. Exact field mappings and
+regressions live with `boxferry-podman` source, Rustdoc, and tests rather than in a prose ledger.
 
-Every route uses the same importer-to-neutral-model-to-exporter pipeline. Same-format conversion is
-not passthrough or native canonicalization. Native-only intent remains visible through normal
-outcomes and loss policy.
+For output, the adapter constructs typed PodmanLens image, network, volume, secret, pod, container,
+and dependency intent. It returns every planning and rendering finding. The exact Podman version
+and rootful, rootless, or unknown context come from the target profile, never from the source or
+development host.
 
-## Podman output boundary
+## Output boundary
 
-PodmanLens owns Podman protocols, read-only acquisition, native types, version evidence,
-diagnostics, deployment planning, and deterministic rendering. BoxFerry maps a neutral
-`Application` to PodmanLens deployment intent and writes only complete, inert `podman.json` and
-`review.sh` artifacts. It exposes no executor.
+Compose and Quadlet output are documents that can be imported again, so tests cover chained
+conversion and fixed points. Podman output is different: `podman.json` and `review.sh` describe
+desired operations for review and cannot be used as observed Podman input. Tests therefore protect
+deterministic bytes, semantic operations, findings, and redaction.
 
-Podman output is not re-importable Podman input: the output represents desired operations, while
-input is an acquired runtime inventory and resource graph. Compose and Quadlet outputs receive
-chained re-import and fixed-point tests; Podman output receives deterministic-byte and
-semantic-operation tests.
+BoxFerry exposes no executor, invokes no generated command, starts no unit, and sends no mutating
+runtime request. Docker and Kubernetes remain deferred until independent native libraries and
+reviewed adapter contracts exist.
 
-## Deferred native formats
+## Change checklist
 
-Docker and Kubernetes integrations remain deferred. BoxFerry adds no placeholder adapter and never
-becomes an infrastructure deployment tool. See
-[ADR 0034](decisions/0034-podman-lens-adapter-boundary.md).
+- Put the behavior in its owning layer.
+- Preserve source evidence long enough to explain every decision.
+- Add positive, failure, unsupported, and target-boundary tests where relevant.
+- Update machine evidence rather than copying its rows into prose.
+- Add or supersede an [ADR](decisions/) when an architectural constraint changes.
