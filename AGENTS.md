@@ -72,6 +72,18 @@ When the user authorizes Git and GitHub writes:
 7. Push and open a ready pull request containing `Closes #<NUMBER>`.
 8. Read back the issue, commit, pull request, and required checks.
 
+Opening and reading back the ready pull request is the default stopping point. Authorization to run
+the Git workflow or perform GitHub writes does not authorize a merge.
+
+Merge only when the user explicitly authorizes merging the specific pull request or the scoped set
+of pull requests in the current request. Immediately before merging, read back the exact head
+commit and verify that the pull request is ready, mergeable, and has every required check
+successful. Never bypass branch protection, use an administrator override, or infer authority for
+an out-of-scope release, publication, or deployment pull request.
+
+Use the repository's normal merge method with an exact-head safeguard, then read back and report
+the merged state and merge commit.
+
 Use release-worthy Conventional Commit types only for product changes. Use `docs`, `test`,
 `ci`, `build`, `style`, or `chore` for non-release work.
 
