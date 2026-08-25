@@ -225,6 +225,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "is_smoke_diagnostics_cell",
         "engine_image_available",
         "engine_operation 'read outer Podman version'",
+        "finish_runtime_canaries",
         "timed_operation 5m 'pull digest-pinned workload image'",
         "podman load --input /boxferry-workload.tar",
         "--privileged",

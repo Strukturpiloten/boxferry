@@ -553,7 +553,8 @@ create_workloads() {
     if [ "${BF_WORKLOAD_SCOPE}" = minimal ]; then
       nested_begin "create minimal running and stopped runtime canaries"
       podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-        --network none "${portable_image}" sleep 3600
+        --network none --volume /boxferry-socket:/boxferry-control:ro "${portable_image}" \
+        sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
       podman create --name "${BF_PREFIX}-stopped" ${run_label} \
         --network "${BF_PREFIX}-small-net" "${portable_image}" true
       nested_pass
@@ -611,7 +612,8 @@ create_workloads() {
     # observation richer without making a successful route depend on a particular runtime field.
     nested_begin "create runtime-state and pod topology"
     podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-      --network none "${portable_image}" sleep 3600
+      --network none --volume /boxferry-socket:/boxferry-control:ro "${portable_image}" \
+      sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
     podman create --name "${BF_PREFIX}-stopped" ${run_label} \
       --network "${BF_PREFIX}-small-net" "${portable_image}" true
     if [ "${major}" -ge 4 ]; then
@@ -644,9 +646,13 @@ create_workloads() {
     if [ "${major}" -ge 4 ]; then
       nested_begin "create and verify health-state evidence"
       podman run -d --name "${BF_PREFIX}-healthy" ${run_label} \
-        --network none --health-cmd /bin/true --health-interval 1h --health-retries 1 "${portable_image}" sleep 3600
+        --network none --volume /boxferry-socket:/boxferry-control:ro \
+        --health-cmd /bin/true --health-interval 1h --health-retries 1 "${portable_image}" \
+        sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
       podman run -d --name "${BF_PREFIX}-unhealthy" ${run_label} \
-        --network none --health-cmd /bin/false --health-interval 1h --health-retries 1 "${portable_image}" sleep 3600
+        --network none --volume /boxferry-socket:/boxferry-control:ro \
+        --health-cmd /bin/false --health-interval 1h --health-retries 1 "${portable_image}" \
+        sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
       podman healthcheck run "${BF_PREFIX}-healthy"
       podman healthcheck run "${BF_PREFIX}-unhealthy" || true
       healthy="$(podman inspect --format "{{.State.Health.Status}}" "${BF_PREFIX}-healthy")"
@@ -1416,20 +1422,18 @@ podman_socket() {
   fi
 }
 
-remove_runtime_canaries() {
-  local socket=$1 scope=${2:-full} name
-  local -a names=(running)
+finish_runtime_canaries() {
+  local socket_directory=$1 scope=$2
+  local -a names=("${current_prefix}-running")
   if [[ "${scope}" == full && "${current_podman_major}" -ge 4 ]]; then
-    names+=(healthy unhealthy)
+    names+=("${current_prefix}-healthy" "${current_prefix}-unhealthy")
   fi
-  for name in "${names[@]}"; do
-    if ((current_podman_major >= 4)); then
-      podman_socket "${socket}" rm --force --time 0 "${current_prefix}-${name}" > /dev/null
-    else
-      podman_socket "${socket}" kill "${current_prefix}-${name}" > /dev/null
-      podman_socket "${socket}" rm --force "${current_prefix}-${name}" > /dev/null
-    fi
-  done
+  : > "${socket_directory}/finish-runtime"
+  engine_operation 'wait for runtime canaries to exit and remove them' \
+    exec "${started_outer}" sh -ceu \
+    "for name do podman wait \"\${name}\" > /dev/null; podman rm \"\${name}\" > /dev/null; done" \
+    sh "${names[@]}"
+  rm -f -- "${socket_directory}/finish-runtime"
 }
 
 assert_runtime_scenarios() {
@@ -1820,7 +1824,7 @@ run_cell() {
     printf 'Could not resolve selected container ID before acquisition started.\n' >&2
     return 1
   }
-  remove_runtime_canaries "${socket}" "${workload_scope}"
+  finish_runtime_canaries "${socket_directory}" "${workload_scope}"
   activate_outer_runtime "${socket_directory}"
   progress_pass
 
