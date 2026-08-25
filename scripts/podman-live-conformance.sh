@@ -392,7 +392,7 @@ cleanup() {
   for directory in "${discovery_directories[@]:-}"; do
     rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
       "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
-      "${directory}/start-api"
+      "${directory}/runtime-canaries.log" "${directory}/start-api"
     rmdir -- "${directory}" 2> /dev/null || true
   done
   if [[ "${discovery_parent_created}" == true ]]; then
@@ -515,7 +515,7 @@ create_workloads() {
   fi
   printf 'Live setup: create %s nested resources for %s\n' "${scope}" "${prefix}"
   # shellcheck disable=SC2016 # ${...} expands in the nested shell, not this script.
-  startup_substep "create ${scope} nested resources (deadline ${deadline})" \
+  if ! startup_substep "create ${scope} nested resources (deadline ${deadline})" \
     timeout --signal=TERM --kill-after=30s "${deadline}" \
     "${engine}" exec --env "BF_PREFIX=${prefix}" \
     --env "BF_WORKLOAD_IMAGE=${workload_local_tag}" --env "BF_WORKLOAD_SCOPE=${scope}" \
@@ -525,6 +525,8 @@ create_workloads() {
     portable_image="registry.example.invalid/boxferry/${BF_PREFIX}:1"
     run_label="--label io.boxferry.live-run=${BF_PREFIX}"
     compose_labels="${run_label} --label com.docker.compose.project=${BF_PREFIX}"
+    canary_log=/boxferry-socket/runtime-canaries.log
+    : > "${canary_log}"
     nested_begin() {
       nested_name=$1
       nested_started_at="$(date +%s)"
@@ -556,7 +558,8 @@ create_workloads() {
       if [ "${BF_INCLUDE_CANARIES}" = true ]; then
         nested_begin "create minimal running runtime canary"
         podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-          --network none "${portable_image}" sleep 3600
+          --network none "${portable_image}" sleep 3600 \
+          >> "${canary_log}" 2>&1 < /dev/null
         nested_pass
       fi
       nested_begin "create minimal stopped runtime evidence"
@@ -618,7 +621,8 @@ create_workloads() {
     nested_begin "create runtime-state and pod topology"
     if [ "${BF_INCLUDE_CANARIES}" = true ]; then
       podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-        --network none "${portable_image}" sleep 3600
+        --network none "${portable_image}" sleep 3600 \
+        >> "${canary_log}" 2>&1 < /dev/null
     fi
     podman create --name "${BF_PREFIX}-stopped" ${run_label} \
       --network "${BF_PREFIX}-small-net" "${portable_image}" true
@@ -653,10 +657,10 @@ create_workloads() {
       nested_begin "create and verify health-state evidence"
       podman run -d --name "${BF_PREFIX}-healthy" ${run_label} \
         --network none --health-cmd /bin/true --health-interval 1h --health-retries 1 \
-        "${portable_image}" sleep 3600
+        "${portable_image}" sleep 3600 >> "${canary_log}" 2>&1 < /dev/null
       podman run -d --name "${BF_PREFIX}-unhealthy" ${run_label} \
         --network none --health-cmd /bin/false --health-interval 1h --health-retries 1 \
-        "${portable_image}" sleep 3600
+        "${portable_image}" sleep 3600 >> "${canary_log}" 2>&1 < /dev/null
       podman healthcheck run "${BF_PREFIX}-healthy"
       podman healthcheck run "${BF_PREFIX}-unhealthy" || true
       healthy="$(podman inspect --format "{{.State.Health.Status}}" "${BF_PREFIX}-healthy")"
@@ -671,7 +675,10 @@ create_workloads() {
         --network "${BF_PREFIX}-large-private" --secret "${BF_PREFIX}-conditional" "${portable_image}" sleep 3600
     fi
     nested_pass
-  '
+  '; then
+    cat -- "${socket_directory}/runtime-canaries.log" >&2 || true
+    return 1
+  fi
   printf 'Live setup: nested resources ready for %s\n' "${prefix}"
 }
 
@@ -1432,7 +1439,7 @@ start_clean_acquisition_outer() {
     rm --force --ignore -- "${started_outer}" > /dev/null
   rm -f -- "${socket_directory}/podman.sock" "${socket_directory}/bootstrap.log" \
     "${socket_directory}/runtime-evidence.tsv" "${socket_directory}/runtime-evidence.ready" \
-    "${socket_directory}/start-api"
+    "${socket_directory}/runtime-canaries.log" "${socket_directory}/start-api"
   start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
   create_workloads "${started_outer}" "${current_prefix}" "${scope}" "${socket_directory}" false
   current_selected_container_id="$(
@@ -1736,7 +1743,8 @@ run_discovery() {
     rm --force --ignore -- "${outer}" > /dev/null
   rm -f -- "${uid_socket_directory}/podman.sock" "${uid_socket_directory}/bootstrap.log" \
     "${uid_socket_directory}/runtime-evidence.tsv" \
-    "${uid_socket_directory}/runtime-evidence.ready" "${uid_socket_directory}/start-api"
+    "${uid_socket_directory}/runtime-evidence.ready" \
+    "${uid_socket_directory}/runtime-canaries.log" "${uid_socket_directory}/start-api"
   rmdir -- "${uid_socket_directory}"
   if [[ "${discovery_parent_created}" == true ]]; then
     rmdir -- "${uid_runtime_directory}"
