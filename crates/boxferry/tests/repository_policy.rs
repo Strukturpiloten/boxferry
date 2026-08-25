@@ -714,7 +714,9 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         "workspace packages must use one version",
         "select(.publish == [])",
         "bash scripts/extract-release-notes.sh",
-        "CHANGELOG.md does not contain usable release notes",
+        "exactly one Unreleased section",
+        "Newest CHANGELOG.md release",
+        "Unreleased must be empty while preparing BoxFerry",
         "Release metadata and changelog are valid",
     ] {
         if !script.contains(required) {
@@ -730,11 +732,11 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
     for (path, required) in [
         (
             "scripts/check-all.sh",
-            "run_step \"Validate release metadata and changelog\" bash scripts/validate-release-metadata.sh",
+            "run_step \"Test release metadata policy\" bash scripts/test-release-metadata.sh",
         ),
         (
             ".github/workflows/ci.yml",
-            "  release-metadata:\n    name: Release metadata and changelog",
+            "  release-metadata:\n    name: Release metadata and changelog\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - name: Check out repository with release history",
         ),
         (
             ".github/workflows/release.yml",
@@ -747,16 +749,40 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         }
     }
 
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .map_err(|error| format!("failed to read CI workflow: {error}"))?;
+    let release_metadata_job = ci
+        .split_once("  release-metadata:\n")
+        .and_then(|(_, remainder)| remainder.split_once("\n  semver-release-type:"))
+        .map(|(job, _)| job)
+        .ok_or_else(|| "CI release-metadata job boundary is missing".to_owned())?;
+    if !release_metadata_job.contains("fetch-depth: 0") {
+        return Err("CI release-metadata job must fetch complete tag history".to_owned());
+    }
+
     let release = fs::read_to_string(root.join(".github/workflows/release.yml"))
         .map_err(|error| format!("failed to read release workflow: {error}"))?;
     if release.contains("metadata=\"$(cargo metadata --locked") {
         return Err("release workflow must not duplicate shared release metadata validation".to_owned());
     }
 
+    let tests = fs::read_to_string(root.join("scripts/test-release-metadata.sh"))
+        .map_err(|error| format!("failed to read release metadata policy tests: {error}"))?;
+    for required in [
+        "non-empty Unreleased during release preparation",
+        "newest release differs from workspace version",
+        "duplicate current-version release section",
+        "duplicate Unreleased section",
+    ] {
+        if !tests.contains(required) {
+            return Err(format!("release metadata policy tests are missing {required}"));
+        }
+    }
+
     for (path, required) in [
         (
             "docs/releasing.md",
-            "a version bump without dated, non-empty notes cannot pass",
+            "one dated, usable numbered section matching the workspace version",
         ),
         ("docs/testing.md", "dedicated job required by the aggregate gate"),
     ] {

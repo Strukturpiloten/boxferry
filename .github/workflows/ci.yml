@@ -159,7 +159,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - *checkout
+      - name: Check out repository with release history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Validate current-version release metadata and changelog
         run: bash scripts/validate-release-metadata.sh
 
