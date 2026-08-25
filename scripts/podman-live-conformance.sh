@@ -3,6 +3,7 @@
 # This is intentionally opt-in: it pulls trusted images and starts privileged containers.
 
 set -Eeuo pipefail
+exec 3>&2
 
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
@@ -214,6 +215,7 @@ apply_target_socket=""
 current_podman_major=""
 current_podman_rootless=""
 current_default_podman_network_present=""
+current_selected_container_id=""
 progress_active=false
 progress_failure_reported=false
 progress_index=0
@@ -288,6 +290,85 @@ startup_substep() {
   return "${status}"
 }
 
+timed_operation() {
+  local deadline=$1 name=$2 started_at elapsed status
+  shift 2
+  started_at="$(date +%s)"
+  printf '%s STEP START %s (deadline %s)\n' "$(timestamp)" "${name}" "${deadline}" >&3
+  if timeout --signal=TERM --kill-after=10s "${deadline}" "$@"; then
+    elapsed=$(($(date +%s) - started_at))
+    printf '%s STEP PASS  %s (%s)\n' \
+      "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" >&3
+    return 0
+  else
+    status=$?
+  fi
+  elapsed=$(($(date +%s) - started_at))
+  printf '%s STEP FAIL  %s (%s, exit %d)\n' \
+    "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" "${status}" >&3
+  return "${status}"
+}
+
+expected_failure_operation() {
+  local deadline=$1 name=$2 expected_status=$3 started_at elapsed status
+  shift 3
+  started_at="$(date +%s)"
+  printf '%s STEP START %s (expect exit %d, deadline %s)\n' \
+    "$(timestamp)" "${name}" "${expected_status}" "${deadline}" >&3
+  if timeout --signal=TERM --kill-after=10s "${deadline}" "$@"; then
+    elapsed=$(($(date +%s) - started_at))
+    printf '%s STEP FAIL  %s unexpectedly succeeded (%s)\n' \
+      "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" >&3
+    return 1
+  else
+    status=$?
+  fi
+  elapsed=$(($(date +%s) - started_at))
+  if [[ "${status}" == "${expected_status}" ]]; then
+    printf '%s STEP PASS  %s failed as expected (%s, exit %d)\n' \
+      "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" "${status}" >&3
+    return 0
+  fi
+  printf '%s STEP FAIL  %s returned unexpected status (%s, exit %d)\n' \
+    "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" "${status}" >&3
+  return "${status}"
+}
+
+engine_operation() {
+  local name=$1
+  shift
+  timed_operation 90s "${name}" "${engine}" "$@"
+}
+
+engine_image_available() {
+  local name=$1 image=$2 started_at elapsed status
+  started_at="$(date +%s)"
+  printf '%s STEP START %s (deadline 90s)\n' "$(timestamp)" "${name}" >&3
+  if timeout --signal=TERM --kill-after=10s 90s "${engine}" image exists "${image}"; then
+    elapsed=$(($(date +%s) - started_at))
+    printf '%s STEP PASS  %s: present (%s)\n' \
+      "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" >&3
+    return 0
+  else
+    status=$?
+  fi
+  elapsed=$(($(date +%s) - started_at))
+  if ((status == 1)); then
+    printf '%s STEP PASS  %s: absent (%s)\n' \
+      "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" >&3
+    return 1
+  fi
+  printf '%s STEP FAIL  %s (%s, exit %d)\n' \
+    "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" "${status}" >&3
+  return "${status}"
+}
+
+boxferry_operation() {
+  local name=$1
+  shift
+  timed_operation 90s "${name}" "${boxferry_bin}" "$@"
+}
+
 trap progress_fail ERR
 
 cleanup() {
@@ -298,7 +379,8 @@ cleanup() {
       "${engine}" rm --force --ignore -- "${outer}" > /dev/null 2>&1 || true
   done
   for image in "${mounted_images[@]:-}"; do
-    "${engine}" image unmount -- "${image}" > /dev/null 2>&1 || true
+    timeout --signal=TERM --kill-after=10s 30s \
+      "${engine}" image unmount -- "${image}" > /dev/null 2>&1 || true
   done
   for pid in "${fault_proxy_pids[@]:-}"; do
     kill "${pid}" > /dev/null 2>&1 || true
@@ -308,7 +390,9 @@ cleanup() {
     rm -f -- "${socket}"
   done
   for directory in "${discovery_directories[@]:-}"; do
-    rm -f -- "${directory}/podman.sock"
+    rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
+      "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
+      "${directory}/start-api"
     rmdir -- "${directory}" 2> /dev/null || true
   done
   if [[ "${discovery_parent_created}" == true ]]; then
@@ -343,8 +427,10 @@ require_binary() {
 boxferry_bin="$(require_binary)"
 readonly boxferry_bin
 
+outer_engine_version="$(engine_operation 'read outer Podman version' --version | tr '\n' ' ')"
+readonly outer_engine_version
 printf '%s HOST outer-engine=%s version=%s cpus=%s\n' \
-  "$(timestamp)" "${engine}" "$("${engine}" --version | tr '\n' ' ')" "$(getconf _NPROCESSORS_ONLN)"
+  "$(timestamp)" "${engine}" "${outer_engine_version}" "$(getconf _NPROCESSORS_ONLN)"
 awk -v timestamp="$(timestamp)" '
   /^MemTotal:/ { total = $2 }
   /^MemAvailable:/ { available = $2 }
@@ -359,7 +445,11 @@ df -Pk -- "${repository_root}" | awk -v timestamp="$(timestamp)" '
 
 contains_smoke_cell() {
   case "$1" in
-    podman-6.1-rootful | podman-6.1-rootless | podman-debian-11-rootful | podman-debian-11-rootless) return 0 ;;
+    podman-5.4-rootless | podman-6.1-rootful | podman-6.1-rootless | \
+      podman-debian-11-rootful | podman-debian-11-rootless | podman-debian-12-rootful | \
+      podman-ubi-8-rootful | podman-ubuntu-22.04-rootless | podman-ubuntu-24.04-rootless)
+      return 0
+      ;;
     *) return 1 ;;
   esac
 }
@@ -396,42 +486,86 @@ wait_for_socket() {
   return 1
 }
 
+wait_for_file() {
+  local file=$1 description=$2
+  for _ in {1..60}; do
+    [[ -s "${file}" ]] && return 0
+    sleep 1
+  done
+  printf 'Timed out waiting for %s: %s\n' "${description}" "${file}" >&2
+  return 1
+}
+
+activate_outer_runtime() {
+  local socket_directory=$1
+  rm -f -- "${socket_directory}/podman.sock"
+  : > "${socket_directory}/start-api"
+  if ! startup_substep 'wait for nested Podman socket (deadline 60s)' \
+    wait_for_socket "${socket_directory}/podman.sock"; then
+    cat -- "${socket_directory}/bootstrap.log" >&2 || true
+    return 1
+  fi
+}
+
 create_workloads() {
-  local outer=$1 prefix=$2 scope=${3:-full}
+  local outer=$1 prefix=$2 scope=${3:-full} socket_directory=$4 deadline=5m
+  if [[ "${scope}" == minimal ]]; then
+    deadline=2m
+  fi
   printf 'Live setup: create %s nested resources for %s\n' "${scope}" "${prefix}"
   # shellcheck disable=SC2016 # ${...} expands in the nested shell, not this script.
-  timeout --signal=TERM --kill-after=30s 15m "${engine}" exec --env "BF_PREFIX=${prefix}" \
+  startup_substep "create ${scope} nested resources (deadline ${deadline})" \
+    timeout --signal=TERM --kill-after=30s "${deadline}" \
+    "${engine}" exec --env "BF_PREFIX=${prefix}" \
     --env "BF_WORKLOAD_IMAGE=${workload_local_tag}" --env "BF_WORKLOAD_SCOPE=${scope}" \
     "${outer}" /bin/sh -ceu '
     image="${BF_WORKLOAD_IMAGE}"
     portable_image="registry.example.invalid/boxferry/${BF_PREFIX}:1"
     run_label="--label io.boxferry.live-run=${BF_PREFIX}"
     compose_labels="${run_label} --label com.docker.compose.project=${BF_PREFIX}"
+    nested_begin() {
+      nested_name=$1
+      nested_started_at="$(date +%s)"
+      printf "%s NESTED STEP START %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${nested_name}" >&2
+    }
+    nested_pass() {
+      nested_elapsed="$(( $(date +%s) - nested_started_at ))"
+      printf "%s NESTED STEP PASS  %s (%ss)\n" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${nested_name}" "${nested_elapsed}" >&2
+    }
+
+    nested_begin "prepare workload image"
     podman load --input /boxferry-workload.tar
     podman image exists "${image}"
     podman tag "${image}" "${portable_image}"
-    image_id="$(podman image inspect --format "{{.Id}}" "${image}")"
     major="$(podman version --format "{{.Client.Version}}" | cut -d. -f1)"
     rootless="$(podman info --format "{{.Host.Security.Rootless}}")"
+    nested_pass
 
+    nested_begin "create small network, volume, and selected container"
     podman network create "${BF_PREFIX}-small-net"
     podman volume create "${BF_PREFIX}-small-data"
     podman create --name "${BF_PREFIX}-small-web" \
       --label "io.boxferry.live-run=${BF_PREFIX}" --network "${BF_PREFIX}-small-net" \
       --volume "${BF_PREFIX}-small-data:/var/lib/boxferry" \
       --env BOXFERRY_LIVE_MODE=small "${portable_image}" sleep 3600
+    nested_pass
     if [ "${BF_WORKLOAD_SCOPE}" = minimal ]; then
+      nested_begin "create minimal running and stopped runtime canaries"
       podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-        --network none "${image}" sleep 3600
+        --network none "${portable_image}" sleep 3600
       podman create --name "${BF_PREFIX}-stopped" ${run_label} \
-        --network "${BF_PREFIX}-small-net" "${image_id}" true
+        --network "${BF_PREFIX}-small-net" "${portable_image}" true
+      nested_pass
       exit 0
     fi
+
+    nested_begin "create apply and large network-volume topology"
     podman network create "${BF_PREFIX}-apply-net"
     podman volume create "${BF_PREFIX}-apply-data"
     podman create --name "${BF_PREFIX}-apply-web" ${run_label} \
       --network "${BF_PREFIX}-apply-net" --volume "${BF_PREFIX}-apply-data:/srv/data:rw" \
-      --env BOXFERRY_LIVE_MODE=apply "${image}" sleep 3600
+      --env BOXFERRY_LIVE_MODE=apply "${portable_image}" sleep 3600
 
     podman network create "${BF_PREFIX}-large-edge"
     subnet_octet="$(( (RANDOM % 200) + 20 ))"
@@ -440,49 +574,57 @@ create_workloads() {
     podman network create --internal --subnet "${private_subnet}" "${BF_PREFIX}-large-private"
     podman volume create "${BF_PREFIX}-large-data"
     podman volume create "${BF_PREFIX}-large-cache"
+    nested_pass
+
+    nested_begin "create large service topology"
     podman create --name "${BF_PREFIX}-large-db" ${compose_labels} \
       --label com.docker.compose.service=db --network "${BF_PREFIX}-large-private" \
       --volume "${BF_PREFIX}-large-data:/var/lib/boxferry" \
-      --env BOXFERRY_LIVE_ROLE=database "${image}" sleep 3600
+      --env BOXFERRY_LIVE_ROLE=database "${portable_image}" sleep 3600
     podman create --name "${BF_PREFIX}-large-cache" ${compose_labels} \
       --label com.docker.compose.service=cache --network "${BF_PREFIX}-large-private" \
       --volume "${BF_PREFIX}-large-cache:/var/cache/boxferry" \
-      --env BOXFERRY_LIVE_ROLE=cache "${image}" sleep 3600
+      --env BOXFERRY_LIVE_ROLE=cache "${portable_image}" sleep 3600
     podman create --name "${BF_PREFIX}-large-api" ${compose_labels} \
       --label com.docker.compose.service=api --network "${BF_PREFIX}-large-private" --network-alias api \
       --ip "${private_api_ip}" --dns 1.1.1.1 --publish 127.0.0.1::8080 \
       --volume "${BF_PREFIX}-large-cache:/cache:ro" \
-      --env BOXFERRY_LIVE_ROLE=api "${image}" sleep 3600
+      --env BOXFERRY_LIVE_ROLE=api "${portable_image}" sleep 3600
     if [ "${major}" -ge 4 ] || [ "${rootless}" != true ]; then
       podman network connect --alias public-api "${BF_PREFIX}-large-edge" "${BF_PREFIX}-large-api"
     fi
     if [ "${major}" -ge 4 ]; then
       podman create --name "${BF_PREFIX}-large-worker" ${compose_labels} \
         --label com.docker.compose.service=worker --network "${BF_PREFIX}-large-private" \
-        --requires "${BF_PREFIX}-large-db" --env BOXFERRY_LIVE_ROLE=worker "${image}" sleep 3600
+        --requires "${BF_PREFIX}-large-db" --env BOXFERRY_LIVE_ROLE=worker "${portable_image}" sleep 3600
     else
       podman create --name "${BF_PREFIX}-large-worker" ${compose_labels} \
         --label com.docker.compose.service=worker --network "${BF_PREFIX}-large-private" \
-        --env BOXFERRY_LIVE_ROLE=worker "${image}" sleep 3600
+        --env BOXFERRY_LIVE_ROLE=worker "${portable_image}" sleep 3600
     fi
     podman create --name "${BF_PREFIX}-large-proxy" ${compose_labels} \
       --label com.docker.compose.service=proxy --network "${BF_PREFIX}-large-edge" \
-      --env BOXFERRY_LIVE_ROLE=proxy "${image}" sleep 3600
+      --env BOXFERRY_LIVE_ROLE=proxy "${portable_image}" sleep 3600
+    nested_pass
 
     # Lifecycle and topology are deliberately separate from the main application.  They make
     # observation richer without making a successful route depend on a particular runtime field.
+    nested_begin "create runtime-state and pod topology"
     podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-      --network none "${image}" sleep 3600
+      --network none "${portable_image}" sleep 3600
     podman create --name "${BF_PREFIX}-stopped" ${run_label} \
-      --network "${BF_PREFIX}-small-net" "${image_id}" true
+      --network "${BF_PREFIX}-small-net" "${portable_image}" true
     if [ "${major}" -ge 4 ]; then
       podman pod create --infra=false --name "${BF_PREFIX}-pod" --label io.boxferry.live-run="${BF_PREFIX}"
       podman create --name "${BF_PREFIX}-pod-member" ${run_label} \
-        --pod "${BF_PREFIX}-pod" "${image}" sleep 3600
+        --pod "${BF_PREFIX}-pod" "${portable_image}" sleep 3600
       podman pod create --infra=false --name "${BF_PREFIX}-pod-secondary" --label io.boxferry.live-run="${BF_PREFIX}"
       podman create --name "${BF_PREFIX}-pod-secondary-member" ${run_label} \
-        --pod "${BF_PREFIX}-pod-secondary" "${image}" sleep 3600
+        --pod "${BF_PREFIX}-pod-secondary" "${portable_image}" sleep 3600
     fi
+    nested_pass
+
+    nested_begin "create environment, mount, and runtime-policy evidence"
     mkdir -p /tmp/boxferry-live-bind
     printf "BOXFERRY_ENV_FILE=present\\nBOXFERRY_PROTECTED_TOKEN=not-a-secret-test-value\\n" > /tmp/boxferry-live.env
     if [ "${major}" -ge 4 ]; then
@@ -491,29 +633,34 @@ create_workloads() {
         --tmpfs /scratch:rw,size=65536 --env-file /tmp/boxferry-live.env --env BOXFERRY_ENV=inline \
         --annotation io.boxferry.live=present --restart on-failure:3 --ipc private --pid private --uts private \
         --cap-drop ALL --memory 96m --pids-limit 64 --log-driver k8s-file \
-        --health-cmd /bin/true --health-interval 1h "${image}" sleep 3600
+        --health-cmd /bin/true --health-interval 1h "${portable_image}" sleep 3600
     else
       podman create --name "${BF_PREFIX}-options" ${run_label} \
         --network "${BF_PREFIX}-large-private" --volume /tmp/boxferry-live-bind:/bind:ro,rprivate \
         --tmpfs /scratch:rw,size=65536 --env-file /tmp/boxferry-live.env --env BOXFERRY_ENV=inline \
-        --cap-drop ALL "${image}" sleep 3600
+        --cap-drop ALL "${portable_image}" sleep 3600
     fi
+    nested_pass
     if [ "${major}" -ge 4 ]; then
+      nested_begin "create and verify health-state evidence"
       podman run -d --name "${BF_PREFIX}-healthy" ${run_label} \
-        --network none --health-cmd /bin/true --health-interval 1h --health-retries 1 "${image}" sleep 3600
+        --network none --health-cmd /bin/true --health-interval 1h --health-retries 1 "${portable_image}" sleep 3600
       podman run -d --name "${BF_PREFIX}-unhealthy" ${run_label} \
-        --network none --health-cmd /bin/false --health-interval 1h --health-retries 1 "${image}" sleep 3600
+        --network none --health-cmd /bin/false --health-interval 1h --health-retries 1 "${portable_image}" sleep 3600
       podman healthcheck run "${BF_PREFIX}-healthy"
       podman healthcheck run "${BF_PREFIX}-unhealthy" || true
       healthy="$(podman inspect --format "{{.State.Health.Status}}" "${BF_PREFIX}-healthy")"
       unhealthy="$(podman inspect --format "{{.State.Health.Status}}" "${BF_PREFIX}-unhealthy")"
       [ "${healthy}" = healthy ] && [ "${unhealthy}" = unhealthy ]
+      nested_pass
     fi
+    nested_begin "create conditional secret evidence when supported"
     if podman secret --help > /dev/null 2>&1 && \
       printf "boxferry-live-not-a-secret\\n" | podman secret create "${BF_PREFIX}-conditional" - > /dev/null 2>&1; then
       podman create --name "${BF_PREFIX}-secret" ${run_label} \
-        --network "${BF_PREFIX}-large-private" --secret "${BF_PREFIX}-conditional" "${image}" sleep 3600
+        --network "${BF_PREFIX}-large-private" --secret "${BF_PREFIX}-conditional" "${portable_image}" sleep 3600
     fi
+    nested_pass
   '
   printf 'Live setup: nested resources ready for %s\n' "${prefix}"
 }
@@ -522,20 +669,27 @@ prepare_workload_archive() {
   if [[ -s "${workload_archive}" ]]; then
     return
   fi
-  local expected_digest="${workload_image##*@}" resolved_digest
+  local expected_digest="${workload_image##*@}" resolved_digest cache_status=0
   printf 'Live setup: prepare digest-pinned workload archive\n'
-  if ! "${engine}" image exists "${workload_image}"; then
-    timeout --signal=TERM --kill-after=30s 15m "${engine}" pull --quiet "${workload_image}" \
+  engine_image_available 'probe workload image cache' "${workload_image}" || cache_status=$?
+  if ((cache_status == 1)); then
+    timed_operation 5m 'pull digest-pinned workload image' \
+      "${engine}" pull --quiet "${workload_image}" \
       > "${artifact_root}/workload-image.pull.log"
+  elif ((cache_status != 0)); then
+    return "${cache_status}"
   fi
-  resolved_digest="$("${engine}" image inspect --format '{{.Digest}}' "${workload_image}")"
+  resolved_digest="$(engine_operation 'inspect workload image digest' \
+    image inspect --format '{{.Digest}}' "${workload_image}")"
   if [[ "${resolved_digest}" != "${expected_digest}" ]]; then
     printf 'Resolved workload image digest mismatch: expected %s, observed %s\n' \
       "${expected_digest}" "${resolved_digest}" >&2
     return 1
   fi
-  "${engine}" tag "${workload_image}" "${workload_local_tag}"
-  timeout --signal=TERM --kill-after=30s 15m "${engine}" save --format docker-archive \
+  engine_operation 'tag workload image for nested loading' \
+    tag "${workload_image}" "${workload_local_tag}"
+  timed_operation 5m 'archive workload image for nested loading' \
+    "${engine}" save --format docker-archive \
     --output "${workload_archive}" "${workload_local_tag}"
   chmod 0644 "${workload_archive}"
 }
@@ -543,16 +697,22 @@ prepare_workload_archive() {
 prepare_matrix_image() {
   local id=$1 image=$2
   local expected_digest="${image##*@}"
-  local resolved_digest
-  if "${engine}" image exists "${image}"; then
-    resolved_digest="$("${engine}" image inspect --format '{{.Digest}}' "${image}")"
+  local resolved_digest cache_status=0
+  engine_image_available "probe ${id} image cache" "${image}" || cache_status=$?
+  if ((cache_status == 0)); then
+    resolved_digest="$(engine_operation "inspect ${id} image digest" \
+      image inspect --format '{{.Digest}}' "${image}")"
     printf 'Using cached matrix image with verified digest %s.\n' "${resolved_digest}" \
       > "${artifact_root}/${id}.pull.log"
-  else
+  elif ((cache_status == 1)); then
     printf 'Live setup: pull reviewed outer image for %s\n' "${id}"
-    timeout --signal=TERM --kill-after=30s 15m "${engine}" pull --quiet "${image}" \
+    timed_operation 5m "pull reviewed ${id} image" \
+      "${engine}" pull --quiet "${image}" \
       > "${artifact_root}/${id}.pull.log"
-    resolved_digest="$("${engine}" image inspect --format '{{.Digest}}' "${image}")"
+    resolved_digest="$(engine_operation "inspect ${id} image digest" \
+      image inspect --format '{{.Digest}}' "${image}")"
+  else
+    return "${cache_status}"
   fi
   if [[ "${resolved_digest}" != "${expected_digest}" ]]; then
     printf 'Resolved matrix image digest mismatch for %s: expected %s, observed %s\n' \
@@ -572,24 +732,20 @@ start_outer_runtime() {
   prepare_workload_archive
   prepare_matrix_image "${id}" "${image}"
   outer_containers+=("${outer}")
+  # The caller starts the API only after resource creation and matching-version CLI assertions.
+  # This avoids concurrent nested CLI/API storage access and a second long-lived exec session;
+  # both have deadlocked nondeterministically on GitHub-hosted outer Podman engines.
   # shellcheck disable=SC2016 # ${...} expands in the nested shell, not this script.
   startup_substep 'create detached outer container (deadline 90s)' \
     timeout --signal=TERM --kill-after=10s 90s \
     "${engine}" run --detach --rm --name "${outer}" --stop-timeout 1 --privileged --device /dev/fuse \
     --security-opt label=disable --volume "${socket_directory}:/boxferry-socket:Z" \
     --volume "${workload_archive}:/boxferry-workload.tar:ro" \
-    --env "BF_SOCKET=/boxferry-socket/podman.sock" "${image}" /bin/sh -ceu \
-    'trap "exit 0" INT TERM; while :; do sleep 3600; done' \
-    > "${artifact_root}/${id}.outer.log"
-
-  # One detached exec collects all evidence and then becomes the API service. Repeated rapid exec
-  # sessions can deadlock on GitHub's outer Podman engine even though the nested runtime is healthy.
-  # shellcheck disable=SC2016 # Nested shell expands variables and commands in the reviewed image.
-  startup_substep 'start nested evidence and API process (deadline 30s)' \
-    timeout --signal=TERM --kill-after=10s 30s \
-    "${engine}" exec --detach "${outer}" /bin/sh -ceu '
+    --env "BF_SOCKET=/boxferry-socket/podman.sock" "${image}" /bin/sh -ceu '
+      trap "exit 0" INT TERM
       umask 000
-      rm -f "${BF_SOCKET}" /boxferry-socket/runtime-evidence.tsv
+      rm -f "${BF_SOCKET}" /boxferry-socket/runtime-evidence.tsv \
+        /boxferry-socket/runtime-evidence.ready /boxferry-socket/start-api
       exec 2> /boxferry-socket/bootstrap.log
       {
         printf "podman-version\t"
@@ -605,11 +761,16 @@ start_outer_runtime() {
         printf "api-version\t%s\n" "$(podman info --format "{{.Version.APIVersion}}")"
         printf "rootless\t%s\n" "$(podman info --format "{{.Host.Security.Rootless}}")"
       } > /boxferry-socket/runtime-evidence.tsv
+      printf "ready\n" > /boxferry-socket/runtime-evidence.ready
+      while test ! -e /boxferry-socket/start-api; do sleep 1; done
+      rm -f /boxferry-socket/start-api
       exec podman system service --time 0 "unix://${BF_SOCKET}" \
         >> /boxferry-socket/bootstrap.log 2>&1
-    ' > "${artifact_root}/${id}.service-exec"
-  if ! startup_substep 'wait for nested Podman socket (deadline 60s)' \
-    wait_for_socket "${socket_directory}/podman.sock"; then
+    ' \
+    > "${artifact_root}/${id}.outer.log"
+
+  if ! startup_substep 'wait for nested runtime evidence (deadline 60s)' \
+    wait_for_file "${socket_directory}/runtime-evidence.ready" 'nested runtime evidence'; then
     cat -- "${socket_directory}/bootstrap.log" >&2 || true
     return 1
   fi
@@ -647,7 +808,8 @@ start_outer_runtime() {
 start_outer() {
   local id=$1 image=$2 mode=$3 socket_directory=$4 prefix=$5
   start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
-  create_workloads "${started_outer}" "${prefix}"
+  create_workloads "${started_outer}" "${prefix}" full "${socket_directory}"
+  activate_outer_runtime "${socket_directory}"
 }
 
 verify_observed_version() {
@@ -701,13 +863,15 @@ run_convert() {
     target_arguments+=(--podman-target-context rootful)
   fi
   mkdir -p -- "${current_case}/outputs"
-  if ! "${boxferry_bin}" convert podman "${output}" --podman-socket "${socket}" \
+  if ! boxferry_operation "BoxFerry ${selection_name} Podman-to-${output}" \
+    convert podman "${output}" --podman-socket "${socket}" \
     --application-name "${current_prefix}" --loss-policy partial \
     --promote-podman-effective-named-volumes --promote-podman-effective-named-networks \
     --output-directory "${output_directory}" --console-format json "${target_arguments[@]}" "$@" \
     > "${output_directory}.report.json"; then
     mkdir -p -- "${current_case}/support-bundles"
-    "${boxferry_bin}" validate podman "${output}" --podman-socket "${socket}" \
+    boxferry_operation "BoxFerry ${selection_name} support replay to ${output}" \
+      validate podman "${output}" --podman-socket "${socket}" \
       --application-name "${current_prefix}" --loss-policy partial \
       --promote-podman-effective-named-volumes --promote-podman-effective-named-networks \
       --generate-error-report --include-podman-snapshot \
@@ -974,7 +1138,8 @@ assert_neutral_projection_equivalent() {
     if [[ "${side}" == left ]]; then input="${left}"; else input="${right}"; fi
     output="${projection_root}/${side}"
     report="${projection_root}/${side}.report.json"
-    "${boxferry_bin}" convert compose compose --input-file "${input}" --loss-policy partial \
+    boxferry_operation "BoxFerry ${assertion} ${side} neutral projection" \
+      convert compose compose --input-file "${input}" --loss-policy partial \
       --output-directory "${output}" --console-format json > "${report}"
     jq --exit-status '
       .schema_version == 1 and .status == "success" and .exit_category == "success"
@@ -992,10 +1157,11 @@ canonicalize_compose_semantics() {
 
 assert_strict_policy_blocks() {
   local socket=$1 report="${current_case}/strict-policy.report.json" error="${current_case}/strict-policy.stderr"
-  if "${boxferry_bin}" validate podman compose --podman-socket "${socket}" \
+  if ! expected_failure_operation 90s 'BoxFerry strict-policy validation' 2 \
+    "${boxferry_bin}" validate podman compose --podman-socket "${socket}" \
     --application-name "${current_prefix}" --podman-resource "container=${current_prefix}-small-web" \
     --loss-policy exact --console-format json > "${report}" 2> "${error}"; then
-    printf '%s\n' 'Strict loss policy unexpectedly accepted live effective/runtime evidence.' >&2
+    printf '%s\n' 'Strict loss policy did not fail with the expected command status.' >&2
     return 1
   fi
   [[ ! -s "${error}" ]] || {
@@ -1029,7 +1195,8 @@ run_reimports() {
         local result="${current_case}/reimports/${selection}-${input}-to-${output}"
         local report="${result}.report.json"
         command+=(--output-directory "${result}" --console-format json)
-        "${command[@]}" > "${report}"
+        timed_operation 90s "BoxFerry ${selection} ${input}-to-${output} reimport" \
+          "${command[@]}" > "${report}"
         assert_successful_conversion "${output}" "${selection}" "${result}" "${report}"
       done
     done
@@ -1100,10 +1267,17 @@ start_apply_target() {
   start_outer_runtime "${id}-apply-target" "${image}" "${mode}" "${socket_directory}"
   apply_target_outer="${started_outer}"
   apply_target_socket="${socket_directory}/podman.sock"
-  "${engine}" exec "${apply_target_outer}" mkdir -p /etc/containers/containers.conf.d
-  "${engine}" cp \
+  engine_operation 'prepare apply-target configuration directory' \
+    exec "${apply_target_outer}" mkdir -p /etc/containers/containers.conf.d
+  engine_operation 'copy apply-target network configuration' cp \
     "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" \
     "${apply_target_outer}:/etc/containers/containers.conf.d/99-boxferry-live.conf"
+  engine_operation 'load digest-pinned apply-target workload image' \
+    exec "${apply_target_outer}" podman load --input /boxferry-workload.tar > /dev/null
+  engine_operation 'tag apply-target workload with configured portable reference' \
+    exec "${apply_target_outer}" podman tag "${workload_local_tag}" \
+    "registry.example.invalid/boxferry/${current_prefix}:1"
+  activate_outer_runtime "${socket_directory}"
   verify_observed_version "${id}-apply-target" "${declared_version}" \
     "${artifact_root}/${id}-apply-target.podman-version"
   [[ "$(< "${artifact_root}/${id}-apply-target.architecture")" =~ ^(x86_64|amd64)$ ]]
@@ -1135,12 +1309,16 @@ run_external_apply_reacquire() {
     ' "${source_plan}/podman.json" > /dev/null
 
   start_apply_target
-  "${engine}" exec "${apply_target_outer}" podman network create "${expected_network}" > /dev/null
-  "${engine}" exec "${apply_target_outer}" podman volume create "${expected_volume}" > /dev/null
-  timeout --signal=TERM --kill-after=30s 15m "${engine}" exec --interactive \
+  engine_operation 'create apply-target network' \
+    exec "${apply_target_outer}" podman network create "${expected_network}" > /dev/null
+  engine_operation 'create apply-target volume' \
+    exec "${apply_target_outer}" podman volume create "${expected_volume}" > /dev/null
+  timed_operation 3m 'execute generated plan inside apply target' \
+    "${engine}" exec --interactive \
     "${apply_target_outer}" /bin/sh -seu \
     < "${source_plan}/podman-commands.sh"
-  "${engine}" exec "${apply_target_outer}" podman inspect "${expected_container}" > /dev/null
+  engine_operation 'inspect applied target container' \
+    exec "${apply_target_outer}" podman inspect "${expected_container}" > /dev/null
 
   run_convert podman "${apply_target_socket}" apply-target \
     --podman-resource "container=${expected_container}"
@@ -1151,10 +1329,15 @@ run_external_apply_reacquire() {
   cmp --silent "${current_case}/outputs/apply-source-compose/compose.yaml" \
     "${current_case}/outputs/apply-target-compose/compose.yaml"
 
-  "${engine}" exec "${apply_target_outer}" podman rm --force --time 0 "${expected_container}" > /dev/null
-  "${engine}" exec "${apply_target_outer}" podman network rm "${expected_network}" > /dev/null
-  "${engine}" exec "${apply_target_outer}" podman volume rm "${expected_volume}" > /dev/null
-  if "${engine}" exec "${apply_target_outer}" podman inspect "${expected_container}" > /dev/null 2>&1; then
+  engine_operation 'remove applied target container' \
+    exec "${apply_target_outer}" podman rm --force --time 0 "${expected_container}" > /dev/null
+  engine_operation 'remove applied target network' \
+    exec "${apply_target_outer}" podman network rm "${expected_network}" > /dev/null
+  engine_operation 'remove applied target volume' \
+    exec "${apply_target_outer}" podman volume rm "${expected_volume}" > /dev/null
+  if ! expected_failure_operation 90s 'verify applied target cleanup' 125 \
+    "${engine}" exec "${apply_target_outer}" podman inspect \
+    "${expected_container}" > /dev/null 2>&1; then
     printf 'Applied conformance container survived exact cleanup: %s\n' "${expected_container}" >&2
     return 1
   fi
@@ -1162,16 +1345,14 @@ run_external_apply_reacquire() {
 
 run_invalid_glob() {
   local socket=$1 output="${current_case}/invalid-glob.stdout" error="${current_case}/invalid-glob.stderr"
-  local status=0
-  if "${boxferry_bin}" validate podman compose --podman-socket "${socket}" \
+  if ! expected_failure_operation 90s 'BoxFerry literal-glob rejection' 2 \
+    "${boxferry_bin}" validate podman compose --podman-socket "${socket}" \
     --application-name "${current_prefix}" --podman-resource "container=${current_prefix}-small-*" \
     --loss-policy partial --console-format json > "${output}" 2> "${error}"; then
-    printf '%s\n' 'A literal glob resource selector unexpectedly succeeded.' >&2
+    printf '%s\n' 'Literal glob rejection did not return the expected command status.' >&2
     return 1
-  else
-    status=$?
   fi
-  [[ "${status}" == 2 && ! -s "${output}" ]] || {
+  [[ ! -s "${output}" ]] || {
     printf 'Invalid literal glob did not fail as a CLI usage error.\n' >&2
     return 1
   }
@@ -1183,7 +1364,8 @@ assert_redacted_support_bundle() {
   local reports="${current_case}/support-bundle"
   local report="${current_case}/support-bundle.report.json"
   mkdir -p -- "${reports}"
-  "${boxferry_bin}" validate podman compose --podman-socket "${socket}" \
+  boxferry_operation 'BoxFerry redacted support-bundle validation' \
+    validate podman compose --podman-socket "${socket}" \
     --podman-label "io.boxferry.live-run=${current_prefix}" --loss-policy partial \
     --promote-podman-effective-named-volumes --promote-podman-effective-named-networks \
     --generate-error-report --include-podman-snapshot --error-report-directory "${reports}" \
@@ -1223,19 +1405,26 @@ assert_redacted_support_bundle() {
 }
 
 podman_socket() {
-  local socket=$1
+  local socket=$1 action=${2:-command}
   shift
-  if [[ -n "${started_outer}" && (-z "${current_podman_major}" || "${current_podman_major}" -lt 4) ]]; then
-    "${engine}" exec "${started_outer}" podman "$@"
+  if [[ -n "${started_outer}" && ! -S "${socket}" ]]; then
+    engine_operation "nested Podman ${action} through matching container CLI" \
+      exec "${started_outer}" podman "$@"
   else
-    "${engine}" --url "unix://${socket}" "$@"
+    engine_operation "nested Podman ${action} through acquisition socket" \
+      --url "unix://${socket}" "$@"
   fi
 }
 
 remove_runtime_canaries() {
-  local socket=$1 name
-  for name in running healthy unhealthy; do
-    podman_socket "${socket}" rm --force "${current_prefix}-${name}" > /dev/null 2>&1 || true
+  local socket=$1 scope=${2:-full} name
+  local -a names=(running)
+  if [[ "${scope}" == full && "${current_podman_major}" -ge 4 ]]; then
+    names+=(healthy unhealthy)
+  fi
+  for name in "${names[@]}"; do
+    podman_socket "${socket}" kill "${current_prefix}-${name}" > /dev/null
+    podman_socket "${socket}" rm --force "${current_prefix}-${name}" > /dev/null
   done
 }
 
@@ -1273,10 +1462,14 @@ assert_runtime_scenarios() {
     (.[0].Image | type == "string" and length > 0)
   ' > /dev/null
   podman_socket "${socket}" inspect "${current_prefix}-large-db" | jq --exit-status '
-    [.. | strings | select(contains("634a8f35b5f16dcf4aaa0822adc0b1964bb786fca12f6831de8ddc45e5986a00"))] | length > 0
+    ((((.[0].Config.Image // "") | startswith("registry.example.invalid/boxferry/")) or
+      ((.[0].ImageName // "") | startswith("registry.example.invalid/boxferry/"))) and
+    (.[0].Image | type == "string" and length > 0))
   ' > /dev/null
   podman_socket "${socket}" inspect "${current_prefix}-stopped" | jq --exit-status '
-    (.[0].Config.Image | type == "string" and length > 0) and (.[0].Image | type == "string" and length > 0)
+    (((.[0].Config.Image // "") | startswith("registry.example.invalid/boxferry/")) or
+      ((.[0].ImageName // "") | startswith("registry.example.invalid/boxferry/"))) and
+    (.[0].Image | type == "string" and length > 0)
   ' > /dev/null
   printf 'Live scenario: network-boundaries\n'
   require_scenario network-boundaries
@@ -1365,7 +1558,8 @@ assert_runtime_scenarios() {
   fi
   printf 'Live scenario: secret-conditional\n'
   require_scenario secret-conditional
-  if podman_socket "${socket}" secret inspect "${current_prefix}-conditional" > /dev/null 2>&1; then
+  if ((major >= 4)) &&
+    podman_socket "${socket}" secret inspect "${current_prefix}-conditional" > /dev/null 2>&1; then
     podman_socket "${socket}" inspect "${current_prefix}-secret" | jq --exit-status \
       '[.. | strings | select(contains("conditional"))] | length > 0' > /dev/null
     printf 'secret endpoint supported\n' >> "${current_case}/feature-gates.txt"
@@ -1405,7 +1599,7 @@ run_fault_proxy_case() {
   local socket=$1 mode=$2 output report fault_socket pid container_id
   fault_socket="${runtime_root}/fault-${mode}.sock"
   report="${current_case}/fault-${mode}.report.json"
-  container_id="$(podman_socket "${socket}" inspect --format '{{.Id}}' "${current_prefix}-small-web")"
+  container_id="${current_selected_container_id}"
   [[ -n "${container_id}" ]] || {
     printf 'Could not resolve selected container ID for fault proxy.\n' >&2
     return 1
@@ -1450,7 +1644,7 @@ run_fault_proxy_case() {
 run_partial_section_failure() {
   local socket=$1 output selector report fault_socket pid container_id
   fault_socket="${runtime_root}/fault-section-500.sock"
-  container_id="$(podman_socket "${socket}" inspect --format '{{.Id}}' "${current_prefix}-small-web")"
+  container_id="${current_selected_container_id}"
   rm -f -- "${fault_socket}"
   python3 "${repository_root}/fixtures/conformance/podman-live/fault_proxy.py" \
     --listen "${fault_socket}" --upstream "${socket}" \
@@ -1513,14 +1707,18 @@ run_discovery() {
   local outer
   start_outer "${id}-discovery" "${image}" "${mode}" "${uid_socket_directory}" "${current_prefix}-discovery"
   outer="${started_outer}"
-  "${boxferry_bin}" convert podman compose --application-name "${current_prefix}" --loss-policy partial \
+  boxferry_operation 'BoxFerry conventional socket discovery conversion' \
+    convert podman compose --application-name "${current_prefix}" --loss-policy partial \
     --promote-podman-effective-named-volumes --promote-podman-effective-named-networks \
     --podman-resource "container=${current_prefix}-discovery-small-web" \
     --output-directory "${current_case}/outputs/discovery-compose" --console-format json \
     > "${current_case}/outputs/discovery-compose.report.json"
   [[ -s "${current_case}/outputs/discovery-compose/compose.yaml" ]]
-  "${engine}" rm --force --ignore -- "${outer}" > /dev/null
-  rm -f -- "${uid_socket_directory}/podman.sock"
+  engine_operation 'remove socket-discovery container' \
+    rm --force --ignore -- "${outer}" > /dev/null
+  rm -f -- "${uid_socket_directory}/podman.sock" "${uid_socket_directory}/bootstrap.log" \
+    "${uid_socket_directory}/runtime-evidence.tsv" \
+    "${uid_socket_directory}/runtime-evidence.ready" "${uid_socket_directory}/start-api"
   rmdir -- "${uid_socket_directory}"
   if [[ "${discovery_parent_created}" == true ]]; then
     rmdir -- "${uid_runtime_directory}"
@@ -1575,10 +1773,10 @@ run_cell() {
   printf '%s CELL START %s (%s, %s profile)\n' "$(timestamp)" "${id}" "${mode}" "${profile}"
   progress_run 'prepare digest-pinned workload archive' prepare_workload_archive
   progress_run 'pull and verify reviewed Podman image' prepare_matrix_image "${id}" "${image}"
-  progress_run 'start nested Podman service' \
+  progress_run 'start isolated Podman container and collect runtime evidence' \
     start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
-  progress_run "create ${workload_scope} Podman resource environment" \
-    create_workloads "${started_outer}" "${current_prefix}" "${workload_scope}"
+  progress_run "create ${workload_scope} resources before acquisition starts" \
+    create_workloads "${started_outer}" "${current_prefix}" "${workload_scope}" "${socket_directory}"
   outer="${started_outer}"
   progress_begin 'verify image, version, architecture, and runtime evidence'
   verify_observed_version "${id}" "${declared_version}" "${artifact_root}/${id}.podman-version"
@@ -1601,9 +1799,9 @@ run_cell() {
   current_podman_major="$(awk '{ split($3, version, "."); print version[1] }' \
     "${artifact_root}/${id}.podman-version")"
   current_podman_rootless="$(< "${artifact_root}/${id}.rootless")"
-  runtime_test_name='verify live runtime semantics (9 scenario groups)'
+  runtime_test_name='verify live runtime semantics (9 scenario groups) and start acquisition socket'
   if [[ "${workload_scope}" == minimal ]]; then
-    runtime_test_name='verify runtime baseline (state, image, network, volume, environment)'
+    runtime_test_name='verify runtime baseline and start acquisition socket'
   fi
   progress_begin "${runtime_test_name}"
   if [[ "${workload_scope}" == minimal ]]; then
@@ -1611,7 +1809,15 @@ run_cell() {
   else
     assert_runtime_scenarios "${socket}" "$(awk '{print $3}' "${artifact_root}/${id}.podman-version")"
   fi
-  remove_runtime_canaries "${socket}"
+  current_selected_container_id="$(
+    podman_socket "${socket}" inspect --format '{{.Id}}' "${current_prefix}-small-web"
+  )"
+  [[ -n "${current_selected_container_id}" ]] || {
+    printf 'Could not resolve selected container ID before acquisition started.\n' >&2
+    return 1
+  }
+  remove_runtime_canaries "${socket}" "${workload_scope}"
+  activate_outer_runtime "${socket_directory}"
   progress_pass
 
   local selection output
@@ -1705,14 +1911,16 @@ run_limited_cell() {
     > "${current_case}/outer.id"
   progress_pass
   progress_begin 'verify helper privilege collision evidence'
-  [[ "$("${engine}" exec "${outer}" id -u)" == 1000 ]] || {
+  [[ "$(engine_operation 'read limited-cell UID' exec "${outer}" id -u)" == 1000 ]] || {
     printf 'Limited rootless cell did not start as UID 1000: %s\n' "${id}" >&2
     return 1
   }
-  "${engine}" exec "${outer}" podman --version > "${current_case}/podman-version"
-  "${engine}" exec "${outer}" uname -m > "${current_case}/architecture"
+  engine_operation 'read limited-cell Podman version' \
+    exec "${outer}" podman --version > "${current_case}/podman-version"
+  engine_operation 'read limited-cell architecture' \
+    exec "${outer}" uname -m > "${current_case}/architecture"
   # shellcheck disable=SC2016 # Package queries and command substitution execute inside the image.
-  "${engine}" exec "${outer}" sh -ceu '
+  engine_operation 'read limited-cell package version' exec "${outer}" sh -ceu '
     if test -s /usr/share/strukturpiloten/podman-package-version; then
       cat /usr/share/strukturpiloten/podman-package-version
     else
@@ -1730,7 +1938,8 @@ run_limited_cell() {
     return 1
   fi
   local mounted_image_root uid_helper gid_helper uid_capability gid_capability
-  mounted_image_root="$("${engine}" image mount "${image}")"
+  mounted_image_root="$(engine_operation 'mount limited-cell image for helper review' \
+    image mount "${image}")"
   mounted_images+=("${image}")
   uid_helper="${mounted_image_root}/usr/bin/newuidmap"
   gid_helper="${mounted_image_root}/usr/bin/newgidmap"
@@ -1748,7 +1957,7 @@ run_limited_cell() {
     ls -ln "${uid_helper}" "${gid_helper}"
     printf '%s\n%s\n' "${uid_capability}" "${gid_capability}"
   } > "${current_case}/helper-privileges"
-  "${engine}" image unmount -- "${image}" > /dev/null
+  engine_operation 'unmount limited-cell image' image unmount -- "${image}" > /dev/null
   printf '%s\n' unavailable > "${current_case}/api-version"
   printf '%s\n' unverified-runtime-unavailable > "${current_case}/rootless"
   printf '%s\n' "${reason}" > "${current_case}/resource-limitation"

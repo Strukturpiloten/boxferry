@@ -15,8 +15,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
   resource and field context ([#65](https://github.com/Strukturpiloten/boxferry/issues/65)).
 - Add digest-pinned live Podman conformance for all 48 rootful/rootless container images, covering
   real workloads, selectors, all exporters, re-imports, fault responses, and redaction without a
-  nightly schedule. Five published UBI/openSUSE rootless images report a verified helper-privilege
-  limitation instead of overstating live-resource coverage
+  nightly schedule. Pull requests build BoxFerry once, then run a deadline-bounded nine-cell
+  compatibility matrix with timestamped operation progress. Five published UBI/openSUSE rootless
+  images report a verified helper-privilege limitation instead of overstating live-resource coverage
   ([#65](https://github.com/Strukturpiloten/boxferry/issues/65)).
 
 ### Fixed

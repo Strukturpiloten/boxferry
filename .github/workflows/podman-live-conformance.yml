@@ -40,7 +40,17 @@ jobs:
         run: |
           set -Eeuo pipefail
           if [[ "${PROFILE}" == smoke ]]; then
-            cells="$(awk -F '\t' '$1 == "podman-6.1-rootful" || $1 == "podman-6.1-rootless" || $1 == "podman-debian-11-rootful" || $1 == "podman-debian-11-rootless" { print $1 }' fixtures/conformance/podman-live/matrix.tsv)"
+            cells="$(awk -F '\t' '
+              $1 == "podman-5.4-rootless" ||
+              $1 == "podman-6.1-rootful" ||
+              $1 == "podman-6.1-rootless" ||
+              $1 == "podman-debian-11-rootful" ||
+              $1 == "podman-debian-11-rootless" ||
+              $1 == "podman-debian-12-rootful" ||
+              $1 == "podman-ubi-8-rootful" ||
+              $1 == "podman-ubuntu-22.04-rootless" ||
+              $1 == "podman-ubuntu-24.04-rootless" { print $1 }
+            ' fixtures/conformance/podman-live/matrix.tsv)"
           else
             cells="$(awk -F '\t' '$1 !~ /^#/ && $6 == "container" { print $1 }' fixtures/conformance/podman-live/matrix.tsv)"
           fi
@@ -49,6 +59,25 @@ jobs:
           printf 'cells=%s\n' "${json}" >> "${GITHUB_OUTPUT}"
           printf 'profile=%s\n' "${PROFILE}" >> "${GITHUB_OUTPUT}"
 
+  build-boxferry:
+    name: Build BoxFerry once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build BoxFerry
+        run: cargo build --locked --package boxferry --bin boxferry --features podman
+      - name: Upload BoxFerry binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boxferry-live-binary
+          path: target/debug/boxferry
+          if-no-files-found: error
+          retention-days: 1
+
   conformance:
     name: ${{ needs.matrix.outputs.profile }} / ${{ matrix.cell }}
     # Nested privileged containers execute only reviewed image names. Fork changes cannot alter a
@@ -56,7 +85,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    needs: matrix
+    needs: [matrix, build-boxferry]
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -73,8 +102,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman
-      - name: Build BoxFerry without privilege escalation
-        run: cargo build --locked --package boxferry --bin boxferry --features podman
+      - name: Download BoxFerry binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: boxferry-live-binary
+          path: target/debug
+      - name: Restore executable permission
+        run: chmod +x target/debug/boxferry
       - name: Run the checked-in live conformance runner
         env:
           PROFILE: ${{ needs.matrix.outputs.profile }}

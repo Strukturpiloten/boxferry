@@ -223,7 +223,9 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "TEST %d/%d START",
         "TEST %d/%d PASS",
         "is_smoke_diagnostics_cell",
-        "timeout --signal=TERM --kill-after=30s 15m",
+        "engine_image_available",
+        "engine_operation 'read outer Podman version'",
+        "timed_operation 5m 'pull digest-pinned workload image'",
         "podman load --input /boxferry-workload.tar",
         "--privileged",
         "--device /dev/fuse",
@@ -283,11 +285,27 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     if !hosted.contains("pull_request:") || !hosted.contains("workflow_dispatch:") {
         return Err("hosted live Podman workflow must provide PR smoke and manual execution".to_owned());
     }
+    for required in [
+        "build-boxferry:",
+        "needs: [matrix, build-boxferry]",
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2",
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0",
+        "chmod +x target/debug/boxferry",
+    ] {
+        if !hosted.contains(required) {
+            return Err(format!("hosted live Podman workflow is missing `{required}`"));
+        }
+    }
     for smoke in [
+        "podman-5.4-rootless",
         "podman-6.1-rootful",
         "podman-6.1-rootless",
         "podman-debian-11-rootful",
         "podman-debian-11-rootless",
+        "podman-debian-12-rootful",
+        "podman-ubi-8-rootful",
+        "podman-ubuntu-22.04-rootless",
+        "podman-ubuntu-24.04-rootless",
     ] {
         if !hosted.contains(&format!("$1 == \"{smoke}\"")) {
             return Err(format!(

@@ -41,14 +41,15 @@ reproducing those failures, but raw runtime inventory is too sensitive for a def
    redaction, and deterministic malformed/404 fault responses. The BoxFerry process remains
    read-only; only the isolated test harness executes generated commands inside a fresh disposable
    Podman 6.1 target before reacquiring and comparing the result. The runner never mounts an
-   ambient host socket into a nested image.
+   ambient host socket into a nested image. Resource creation and matching-version CLI assertions
+   finish before the API service starts; after socket activation no CLI touches the same store.
 7. A separate reviewed limitation catalogue prevents incomplete cells from being reported as
    resource coverage. The current UBI 8/9/10 and openSUSE Leap/Tumbleweed rootless digests combine
    package-supplied file capabilities with recipe-added setuid bits on `newuidmap`/`newgidmap`; the
    helpers then cannot open the second namespace's `uid_map`. Those five cells verify that exact
    container failure until corrected images are published. Pull requests run a representative
-   four-cell smoke matrix; manual dispatch runs all 48 container cells. There are no VM or nightly
-   lanes.
+   nine-cell smoke matrix covering every finite legacy input anchor plus oldest/newest root-mode
+   edges; manual dispatch runs all 48 container cells. There are no VM or nightly lanes.
 
 ## Consequences
 

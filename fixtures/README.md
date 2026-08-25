@@ -72,15 +72,16 @@ Forty-three execute the complete live-resource suite. The five UBI/openSUSE root
 resource coverage. Once corrected image digests initialize nested rootless Podman, remove their
 limitation rows so they execute the same suite as every other cell.
 
-The four-cell pull-request smoke profile uses the same runner and real workloads but a bounded
-scenario subset. Every cell uses a minimal container/network/volume workload and exports one exact
-selection to all targets. Version-independent CLI, policy, redaction, and malformed-input checks run
-once on Podman 6.1 rootful. The complete workload and runtime matrix remain in `full-container`.
-Only `full-container` evidence is labelled `full`; smoke evidence is labelled
-`smoke`. Each cell
-prints its planned test count, timestamped start/pass/fail events, and elapsed time. The host engine
-verifies the pinned workload image and passes an archive to the nested engines, so live-resource
-creation does not depend on nested registry networking.
+The nine-cell pull-request smoke profile uses the same runner and real workloads but a bounded
+scenario subset. It covers the finite 3.0.1, 3.4.4, 4.3.1, 4.9.3, 4.9.4, 5.4, and 6.1 live-input
+boundaries while retaining both root modes at the oldest and newest edges. Every cell uses a
+minimal container/network/volume workload and exports one exact selection to all targets.
+Version-independent CLI, policy, redaction, and malformed-input checks run once on Podman 6.1
+rootful. The complete distribution, minor-version, workload, and runtime matrix remains in
+`full-container`. Only `full-container` evidence is labelled `full`; smoke evidence is labelled
+`smoke`. Each cell prints its planned test count, timestamped start/pass/fail events, and elapsed
+time. The host engine verifies the pinned workload image and passes an archive to the nested
+engines, so live-resource creation does not depend on nested registry networking.
 
 Retained failure artifacts are local diagnostic evidence. Review them for environment values,
 resource names, image references, paths, and topology before sharing; never commit raw live output.

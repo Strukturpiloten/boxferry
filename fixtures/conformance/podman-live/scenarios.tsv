@@ -15,7 +15,7 @@ strict-policy-blocks	small	exact-small	strict policy reports actionable subject	
 stopped-and-running	lifecycle	label-large	Podman inspect proves running and created states	yes
 healthy-and-unhealthy	health	label-large	Podman inspect proves health states on Podman >= 4	yes
 pod-members-and-standalone	topology	label-large	Podman inspect proves members of two distinct pods and a standalone service	yes
-image-identities	images	label-large	Podman inspect proves portable registry-tag digest and image-ID references	yes
+image-identities	images	label-large	Podman inspect proves configured portable registry tags plus resolved image-ID evidence	yes
 network-boundaries	networks	network-boundary	Podman inspect proves private/edge attachment aliases and private boundary	yes
 mount-matrix	storage	label-large	Podman inspect proves shared named-volume RW/RO bind propagation and tmpfs mounts	yes
 environment-matrix	environment	label-large	Podman inspect proves inline and env-file values before redaction test	yes
