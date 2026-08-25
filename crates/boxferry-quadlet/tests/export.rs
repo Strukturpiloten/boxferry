@@ -1566,6 +1566,192 @@ fn references_external_resources_without_generating_lifecycle_files() -> Result<
 }
 
 #[test]
+fn reports_unreferenced_external_resources_that_quadlet_cannot_represent() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("external")?);
+    application.add_network(sourced(Network::new(
+        id("unused-network")?,
+        ResourceOwnership::External,
+    ))?)?;
+    application.add_volume(sourced(Volume::new(id("unused-volume")?, ResourceOwnership::External))?)?;
+    application.add_service(sourced(image_service("web")?)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    for subject in ["networks.unused-network", "volumes.unused-volume"] {
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported),
+            "missing unsupported outcome for {subject}: {:#?}",
+            plan.outcomes()
+        );
+        assert!(plan.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code().as_str() == "BFQ0003"
+                && diagnostic
+                    .fields()
+                    .iter()
+                    .any(|field| field.name() == "subject" && field.value().expose() == subject)
+        }));
+    }
+    assert!(plan.authorize(LossPolicy::ExactOnly).output().is_none());
+    Ok(())
+}
+
+#[test]
+fn group_runtime_references_resources_only_when_the_group_is_consumed() -> Result<(), Box<dyn Error>> {
+    let mut application = minimal_application()?;
+    application.add_network(sourced(Network::new(id("shared")?, ResourceOwnership::External))?)?;
+    application.add_volume(sourced(Volume::new(id("database")?, ResourceOwnership::External))?)?;
+
+    let mut runtime = ServiceGroupRuntime::new();
+    runtime.add_network(sourced(NetworkAttachment::new(id("shared")?, Vec::new()))?);
+    runtime.add_mount(sourced(Mount::new(
+        MountSource::Volume(id("database")?),
+        "/var/lib/database",
+        false,
+    )?)?);
+    let mut group = ServiceGroup::new(id("observed-pod")?, ResourceOwnership::Application);
+    group.add_member(sourced(id("web")?)?)?;
+    group.set_runtime(sourced(runtime)?);
+    application.add_service_group(sourced(group)?)?;
+
+    let target = podman_target(Some(version(6, 0, 2)))?;
+    let separate = QuadletExporter::new()?.plan(&application, &target)?;
+    for subject in ["networks.shared", "volumes.database"] {
+        assert!(
+            separate
+                .outcomes()
+                .iter()
+                .any(|outcome| { outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported })
+        );
+    }
+
+    let preserved = QuadletExporter::new()?
+        .with_grouping_policy(QuadletGroupingPolicy::PreserveSingleGroup)
+        .plan(&application, &target)?;
+    for subject in ["networks.shared", "volumes.database"] {
+        assert!(
+            preserved
+                .outcomes()
+                .iter()
+                .any(|outcome| { outcome.subject() == subject && outcome.kind() == ConversionKind::Exact })
+        );
+    }
+    let authorized = preserved.authorize(LossPolicy::AllowApproximate);
+    let output = authorized.output().ok_or("preserved group output expected")?;
+    assert_eq!(
+        output.file("observed-pod.pod").map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Pod]\n",
+            "Network=shared\n",
+            "Volume=database:/var/lib/database\n",
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn retains_uncertain_network_and_volume_references_without_managing_their_lifecycle() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("observed-runtime")?);
+    application.add_network(sourced(Network::new(id("shared")?, ResourceOwnership::Uncertain))?)?;
+    application.add_volume(sourced(Volume::new(id("database")?, ResourceOwnership::Uncertain))?)?;
+    let mut service = Service::new(id("web")?);
+    service.set_image(sourced(ImageReference::parse("example.invalid/web:1")?)?);
+    service.add_mount(sourced(Mount::new(
+        MountSource::Volume(id("database")?),
+        "/var/lib/database",
+        false,
+    )?)?);
+    service.add_network(sourced(NetworkAttachment::new(id("shared")?, Vec::new()))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    let authorized = plan.clone().authorize(LossPolicy::AllowApproximate);
+    let output = authorized.output().ok_or("approximate output expected")?;
+    assert_eq!(
+        output
+            .files()
+            .iter()
+            .map(|file| file.name().as_str())
+            .collect::<Vec<_>>(),
+        ["web.container"]
+    );
+    assert_eq!(
+        output.file("web.container").map(boxferry_quadlet::QuadletFile::text),
+        Some(concat!(
+            "[Container]\n",
+            "Image=example.invalid/web:1\n",
+            "Volume=database:/var/lib/database\n",
+            "Network=shared\n",
+        ))
+    );
+    for subject in [
+        "networks.shared",
+        "volumes.database",
+        "services.web.networks.shared",
+        "services.web.mounts[0]",
+    ] {
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Approximate),
+            "missing approximate outcome for {subject}: {:#?}",
+            plan.outcomes()
+        );
+        assert!(
+            !plan
+                .outcomes()
+                .iter()
+                .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Exact),
+            "uncertain reference must not also claim exactness for {subject}: {:#?}",
+            plan.outcomes()
+        );
+    }
+    assert!(plan.diagnostics().iter().any(|diagnostic| {
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| field.name() == "subject" && field.value().expose() == "services.web.networks.shared")
+    }));
+    Ok(())
+}
+
+#[test]
+fn refuses_implicit_network_and_volume_references() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("implicit-runtime")?);
+    application.add_network(sourced(Network::new(id("shared")?, ResourceOwnership::Implicit))?)?;
+    application.add_volume(sourced(Volume::new(id("database")?, ResourceOwnership::Implicit))?)?;
+    let mut service = Service::new(id("web")?);
+    service.set_image(sourced(ImageReference::parse("example.invalid/web:1")?)?);
+    service.add_mount(sourced(Mount::new(
+        MountSource::Volume(id("database")?),
+        "/var/lib/database",
+        false,
+    )?)?);
+    service.add_network(sourced(NetworkAttachment::new(id("shared")?, Vec::new()))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    for subject in [
+        "networks.shared",
+        "volumes.database",
+        "services.web.networks.shared",
+        "services.web.mounts[0]",
+    ] {
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| { outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported })
+        );
+    }
+    let authorized = plan.authorize(LossPolicy::AllowPartial);
+    let output = authorized.output().ok_or("partial output expected")?;
+    let container = output.file("web.container").ok_or("container expected")?.text();
+    assert!(!container.contains("Network=shared"));
+    assert!(!container.contains("Volume=database"));
+    Ok(())
+}
+
+#[test]
 fn maps_external_secrets_with_default_preservation_and_mount_options() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("external-secrets")?);
     application.add_secret(sourced(Secret::new(

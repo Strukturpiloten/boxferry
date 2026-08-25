@@ -1,0 +1,83 @@
+---
+name: Podman live conformance
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Reviewed matrix lane to run on the GitHub-hosted disposable runner.
+        required: true
+        default: full-container
+        type: choice
+        options:
+          - smoke
+          - full-container
+
+permissions:
+  contents: read
+
+concurrency:
+  group: podman-live-conformance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    name: Select reviewed cells
+    runs-on: ubuntu-24.04
+    outputs:
+      cells: ${{ steps.cells.outputs.cells }}
+      profile: ${{ steps.cells.outputs.profile }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select exact matrix cells
+        id: cells
+        env:
+          PROFILE: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.profile }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "${PROFILE}" == smoke ]]; then
+            cells="$(awk -F '\t' '$1 == "podman-6.1-rootful" || $1 == "podman-6.1-rootless" || $1 == "podman-debian-11-rootful" || $1 == "podman-debian-11-rootless" { print $1 }' fixtures/conformance/podman-live/matrix.tsv)"
+          else
+            cells="$(awk -F '\t' '$1 !~ /^#/ && $6 == "container" { print $1 }' fixtures/conformance/podman-live/matrix.tsv)"
+          fi
+          json="$(jq --raw-input --slurp --compact-output 'split("\n") | map(select(length > 0))' <<< "${cells}")"
+          [[ "$(jq 'length' <<< "${json}")" -gt 0 ]]
+          printf 'cells=%s\n' "${json}" >> "${GITHUB_OUTPUT}"
+          printf 'profile=%s\n' "${PROFILE}" >> "${GITHUB_OUTPUT}"
+
+  conformance:
+    name: ${{ needs.matrix.outputs.profile }} / ${{ matrix.cell }}
+    # Nested privileged containers execute only reviewed image names. Fork changes cannot alter a
+    # privileged GitHub-hosted runner. The job receives no secrets and never mounts a host socket.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: matrix
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        cell: ${{ fromJSON(needs.matrix.outputs.cells) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ needs.matrix.outputs.profile == 'smoke' && 10 || 120 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install outer Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcap2-bin podman
+      - name: Build BoxFerry without privilege escalation
+        run: cargo build --locked --package boxferry --bin boxferry --features podman
+      - name: Run the checked-in live conformance runner
+        env:
+          PROFILE: ${{ needs.matrix.outputs.profile }}
+          BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
+          MATRIX_CELL: ${{ matrix.cell }}
+        run: sudo env BOXFERRY_BIN="${BOXFERRY_BIN}" bash scripts/podman-live-conformance.sh --profile "${PROFILE}" --matrix-cell "${MATRIX_CELL}" --engine podman

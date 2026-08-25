@@ -1,0 +1,28 @@
+# schema=1; selector and route inventory performed by scripts/podman-live-conformance.sh
+# id	workload	selector	output_or_assertion	reimport
+exact-small	small	container=<run>-small-web	compose	no
+prefix-large	large	container-prefix=<run>-large-	quadlet	no
+label-large	large	io.boxferry.live-run=<run>	podman	no
+all-resources	small-and-large	all	compose	no
+network-boundary	large	network=<run>-large-private plus Compose ownership closure	quadlet	no
+invalid-literal-glob	small	container=<run>-small-*	rejected	no
+socket-discovery	small	container=<run>-discovery-small-web	compose	no
+compose-reimports	large	label-large	compose/quadlet/podman	yes
+quadlet-reimports	large	label-large	compose/quadlet/podman	yes
+neutral-projection-equivalence	small-and-large	all selections	canonical Compose projections remain byte-identical; all-resource Quadlet export diagnoses uncertain default-network ownership before reimport	yes
+deterministic-exact-compose	small	exact-small	byte-identical compose artifact	yes
+strict-policy-blocks	small	exact-small	strict policy reports actionable subject	yes
+stopped-and-running	lifecycle	label-large	Podman inspect proves running and created states	yes
+healthy-and-unhealthy	health	label-large	Podman inspect proves health states on Podman >= 4	yes
+pod-members-and-standalone	topology	label-large	Podman inspect proves members of two distinct pods and a standalone service	yes
+image-identities	images	label-large	Podman inspect proves portable registry-tag digest and image-ID references	yes
+network-boundaries	networks	network-boundary	Podman inspect proves private/edge attachment aliases and private boundary	yes
+mount-matrix	storage	label-large	Podman inspect proves shared named-volume RW/RO bind propagation and tmpfs mounts	yes
+environment-matrix	environment	label-large	Podman inspect proves inline and env-file values before redaction test	yes
+runtime-policy-matrix	policy	label-large	Podman inspect proves requested portable runtime policy values	yes
+secret-conditional	secrets	label-large	Podman secret is created only when endpoint supports it	yes
+protected-redaction-support-bundle	support-bundle	label-large	redacted support snapshot omits the protected canary	yes
+malformed-selected-container	fault-proxy	exact-small	malformed inspect response blocks every exporter	yes
+disappeared-selected-container	fault-proxy	exact-small	404 inspect response blocks every exporter	yes
+partial-inventory-section	fault-proxy	all/label/exact	volume-list failure blocks unbounded selectors while a volume-independent exact container remains usable	yes
+external-apply-reacquire	portable-apply	exact apply-safe container	generated Podman commands run only in a fresh 6.1 harness target and reacquire identically	yes

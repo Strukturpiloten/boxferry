@@ -9,6 +9,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fs,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
@@ -118,6 +119,153 @@ fn every_complex_cassette_replays_through_every_exporter() -> Result<(), Box<dyn
     }
 
     assert_eq!(scenarios.len(), VERSIONS.len() * CONTEXTS.len());
+    Ok(())
+}
+
+#[test]
+fn opted_in_support_bundle_contains_only_redacted_podman_snapshots() -> Result<(), Box<dyn Error>> {
+    let cassette_path = fixture_directory().join("complex-6.1.0-rootless.cassette.json");
+    let cassette = PodmanCassette::load(&cassette_path)?;
+    let server = PodmanCassetteServer::start(cassette)?;
+    let socket = server.socket().to_owned();
+    let root = TemporaryDirectory::new("podman-support-bundle")?;
+    let reports = root.path().join("reports");
+    fs::create_dir(&reports)?;
+
+    let result = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "podman", "compose", "--podman-socket"])
+        .arg(&socket)
+        .args([
+            "--podman-all",
+            "--application-name",
+            "complex",
+            "--promote-podman-effective-named-volumes",
+            "--promote-podman-effective-named-networks",
+            "--loss-policy",
+            "partial",
+            "--console-format",
+            "json",
+            "--generate-error-report",
+            "--include-podman-snapshot",
+            "--error-report-directory",
+        ])
+        .arg(&reports)
+        .output()?;
+    let replay = server.finish();
+    if let Err(error) = replay {
+        return Err(format!(
+            "support-bundle cassette replay failed: {error}; stdout={}; stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
+    assert!(result.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert!(report["redaction"]["count"].as_u64().is_some_and(|count| count > 0));
+    assert!(
+        report["redaction"]["classes"]
+            .as_array()
+            .is_some_and(|classes| classes.iter().any(|class| class == "podman-support-snapshot"))
+    );
+
+    let archives = fs::read_dir(&reports)?.collect::<Result<Vec<_>, _>>()?;
+    let [archive] = archives.as_slice() else {
+        return Err(format!("expected one support archive, found {}", archives.len()).into());
+    };
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive.path())?)?;
+    let mut entries = BTreeMap::new();
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index)?;
+        let mut text = String::new();
+        entry.read_to_string(&mut text)?;
+        entries.insert(entry.name().to_owned(), text);
+    }
+    assert_eq!(
+        entries.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "README.md",
+            "podman-acquisition-findings-v1.json",
+            "podman-discovery-graph-v1.json",
+            "podman-inventory-v1.json",
+            "report.json",
+        ])
+    );
+    for (name, contents) in &entries {
+        for protected in [
+            "COMPLEX_PROTECTED_VALUE_NEVER_PRINT",
+            "COMPLEX_DB_PROTECTED_VALUE",
+            "COMPLEX_NORMAL_HEALTH_SENTINEL",
+            "COMPLEX_STARTUP_HEALTH_SENTINEL",
+        ] {
+            assert!(!contents.contains(protected), "{name} retained protected Podman value");
+        }
+        assert!(!contents.contains(".sock"), "{name} retained the connection endpoint");
+    }
+    assert!(entries["README.md"].contains("operationally sensitive"));
+    let inventory: serde_json::Value = serde_json::from_str(&entries["podman-inventory-v1.json"])?;
+    assert_eq!(inventory["schema_version"], 1);
+    let graph: serde_json::Value = serde_json::from_str(&entries["podman-discovery-graph-v1.json"])?;
+    assert_eq!(graph["schema_version"], 1);
+    let findings: serde_json::Value = serde_json::from_str(&entries["podman-acquisition-findings-v1.json"])?;
+    assert_eq!(findings["schema_version"], 1);
+    Ok(())
+}
+
+#[test]
+fn exact_prefix_and_label_selectors_infer_names_through_every_exporter() -> Result<(), Box<dyn Error>> {
+    let source = PodmanCassette::load(&fixture_directory().join("complex-6.1.0-rootless.cassette.json"))?;
+    let root = TemporaryDirectory::new("podman-cassette-selector-inference")?;
+
+    for (case, arguments, expected_application) in [
+        ("exact", ["--podman-resource", "container=observer"], "observer"),
+        ("prefix", ["--podman-resource-prefix", "container=obs"], "obs"),
+        (
+            "label",
+            ["--podman-label", "org.example.complex.service=observer"],
+            "observer",
+        ),
+    ] {
+        for output in OUTPUTS {
+            let directory = root.path().join(format!("{case}-{output}"));
+            let result = run_cassette_with_application(
+                source.clone(),
+                output,
+                "rootless",
+                &directory,
+                &arguments,
+                "partial",
+                None,
+            )?;
+            assert_route_succeeded(&result, case, output)?;
+            let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+            assert_eq!(report["application"], expected_application);
+            assert_only_observer(output, &directory)?;
+        }
+    }
+    Ok(())
+}
+
+fn assert_only_observer(output: &str, directory: &Path) -> Result<(), Box<dyn Error>> {
+    match output {
+        "compose" => {
+            let document = fs::read_to_string(directory.join("compose.yaml"))?;
+            assert!(document.contains("  observer:"));
+            assert!(!document.contains("  api:"));
+        }
+        "quadlet" => {
+            let names = artifact_names(directory)?;
+            assert!(names.iter().any(|name| name == "observer.container"));
+            assert!(!names.iter().any(|name| name == "api.container"));
+        }
+        "podman" => {
+            let plan = fs::read_to_string(directory.join("podman.json"))?;
+            assert!(plan.contains("\"name\": \"observer\""));
+            assert!(!plan.contains("\"name\": \"api\""));
+        }
+        _ => return Err(format!("unhandled output {output}").into()),
+    }
     Ok(())
 }
 
@@ -501,6 +649,26 @@ fn run_cassette(
     selection_arguments: &[&str],
     loss_policy: &str,
 ) -> Result<Output, Box<dyn Error>> {
+    run_cassette_with_application(
+        cassette,
+        output,
+        context,
+        directory,
+        selection_arguments,
+        loss_policy,
+        Some("complex"),
+    )
+}
+
+fn run_cassette_with_application(
+    cassette: PodmanCassette,
+    output: &str,
+    context: &str,
+    directory: &Path,
+    selection_arguments: &[&str],
+    loss_policy: &str,
+    application_name: Option<&str>,
+) -> Result<Output, Box<dyn Error>> {
     let scenario = cassette.scenario_id().to_owned();
     let server = PodmanCassetteServer::start(cassette)?;
     let socket = server.socket().to_owned();
@@ -508,8 +676,11 @@ fn run_cassette(
     command
         .args(["convert", "podman", output])
         .arg("--podman-socket")
-        .arg(&socket)
-        .args(["--application-name", "complex"])
+        .arg(&socket);
+    if let Some(application_name) = application_name {
+        command.args(["--application-name", application_name]);
+    }
+    command
         .args(selection_arguments)
         .args([
             "--promote-podman-effective-named-volumes",

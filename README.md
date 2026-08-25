@@ -28,7 +28,8 @@ The output directory may be absent or empty. BoxFerry refuses to overwrite an ex
 
 ## Safety model
 
-- Podman input uses an explicit, caller-selected, read-only connection.
+- Podman input is read-only. The CLI checks only conventional local sockets unless the user
+  supplies an explicit socket; embedded callers retain a caller-selected transport boundary.
 - Podman output is review material, not an observed inventory or an apply operation.
 - BoxFerry never executes generated commands or units. A user who runs the command script performs
   real Podman operations.

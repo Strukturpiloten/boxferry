@@ -3,6 +3,13 @@
 #[cfg(target_os = "windows")]
 compile_error!("the native Windows BoxFerry CLI is unsupported; install and run BoxFerry inside WSL2");
 
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::{
+    fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt},
+    net::UnixStream,
+};
 use std::{
     collections::BTreeSet,
     env,
@@ -34,14 +41,14 @@ use boxferry::report::{
     ReportStatus, SanitizedInvocation, VersionBounds, redact_text,
 };
 use boxferry::{
-    COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeFindingStage,
-    ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier, ImportAdapter,
-    ImportResult, LossPolicy, NativeFinding, NativeFindingLabelKind, PODMAN_TARGET, PlatformVersion, PodmanExporter,
-    PodmanImporter, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter,
-    QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES, RuleId, SourceId,
-    TargetProfile, acquire_podman_source, convert_imported, find_rule, reviewed_podman_versions,
+    Application, COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter,
+    ComposeFindingStage, ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier,
+    ImportAdapter, ImportResult, LossPolicy, NativeFinding, NativeFindingLabelKind, PODMAN_TARGET, PlatformVersion,
+    PodmanExporter, PodmanImporter, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter,
+    QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES, ResourceOwnership,
+    RuleId, SourceId, TargetProfile, acquire_podman_source, convert_imported, find_rule, reviewed_podman_versions,
 };
-use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
+use clap::{ArgGroup, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
@@ -61,6 +68,7 @@ const MAX_README_BYTES: usize = 128 * 1024;
 const MAX_ARCHIVE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_ERROR_REPORT_COLLISIONS: u8 = 99;
 const SUPPORT_BUNDLE_README: &str = "# BoxFerry diagnostic support bundle\n\nreview_required: true\n\nInspect both files before uploading this archive. It is generated locally and BoxFerry never uploads it.\n\n## Contents\n\n- `report.json` is the complete structured diagnostic report.\n- This archive intentionally omits source and generated-file contents, environment values, raw panic payloads, backtraces, hostname, username, and the ambient process environment.\n\n## Attaching to an issue\n\nAfter review, create a GitHub issue using your normal browser or GitHub client, describe the problem, and attach this ZIP. Do not upload it if the review finds unwanted context. This archive contains no network instructions or automatic submission.\n";
+const PODMAN_SUPPORT_BUNDLE_README: &str = "# BoxFerry diagnostic support bundle\n\nreview_required: true\n\nInspect every file before uploading this archive. It is generated locally and BoxFerry never uploads it. Podman resource names, image references, redacted IDs, and topology can still be operationally sensitive.\n\n## Contents\n\n- `report.json` is the complete structured diagnostic report.\n- `podman-inventory-v1.json` is the always-redacted acquired inventory snapshot.\n- `podman-discovery-graph-v1.json` is the always-redacted selected topology and discovery evidence.\n- `podman-acquisition-findings-v1.json` collects value-free acquisition findings and observed JSON kinds.\n- This archive omits environment values, protected health commands, credentials, secret payloads and driver values, label values, raw unknown JSON, connection endpoints, generated-file contents, raw panic payloads, backtraces, hostname, username, and the ambient process environment.\n\nThese snapshots are diagnostic serialization only. They are not trusted Podman input or replay cassettes.\n\n## Attaching to an issue\n\nAfter review, create a GitHub issue using your normal browser or GitHub client, describe the problem, and attach this ZIP. Do not upload it if the review finds unwanted context. This archive contains no network instructions or automatic submission.\n";
 static SUPPORT_BUNDLE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Parser)]
@@ -188,39 +196,58 @@ struct QuadletInputOptions {
 }
 
 #[derive(Debug, Args)]
+#[command(group = ArgGroup::new("podman_selector").required(true).multiple(true))]
 struct PodmanInputOptions {
-    /// Explicit local Podman Unix socket. No ambient connection is discovered.
+    /// Local Podman Unix socket; defaults to the first available rootless, then rootful socket.
     #[arg(long, value_name = "PATH")]
-    podman_socket: PathBuf,
-    /// Neutral application name assigned to the selected runtime resources.
-    #[arg(long)]
-    application_name: String,
+    podman_socket: Option<PathBuf>,
     /// Discover every eligible root in the acquired inventory.
-    #[arg(long, required_unless_present_any = ["podman_resources", "podman_labels"])]
+    #[arg(long, group = "podman_selector")]
     podman_all: bool,
-    /// Exact Podman resource root as `KIND=NAME_OR_ID`; repeat as needed.
-    #[arg(
-        long = "podman-resource",
-        value_name = "KIND=REFERENCE",
-        required_unless_present_any = ["podman_all", "podman_labels"]
-    )]
+    /// Exact resource root as `KIND=REFERENCE`; kinds: container, image, network, pod, secret, volume.
+    #[arg(long = "podman-resource", value_name = "KIND=REFERENCE", group = "podman_selector")]
     podman_resources: Vec<PodmanResourceInput>,
-    /// Podman label root as NAME or NAME=VALUE; repeat as needed.
+    /// Resource name prefix as `KIND=PREFIX`; kinds: container, image, network, pod, secret, volume.
     #[arg(
-        long = "podman-label",
-        value_name = "NAME[=VALUE]",
-        required_unless_present_any = ["podman_all", "podman_resources"]
+        long = "podman-resource-prefix",
+        value_name = "KIND=PREFIX",
+        group = "podman_selector"
     )]
+    podman_resource_prefixes: Vec<PodmanResourcePrefixInput>,
+    /// Podman label root as NAME or NAME=VALUE; repeat as needed.
+    #[arg(long = "podman-label", value_name = "NAME[=VALUE]", group = "podman_selector")]
     podman_labels: Vec<PodmanLabelInput>,
+    /// Neutral application name; defaults deterministically from one selector or `podman-import`.
+    #[arg(long)]
+    application_name: Option<String>,
     /// Exact network name or ID whose discovery boundary may be crossed.
-    #[arg(long = "podman-network-boundary", value_name = "NAME_OR_ID")]
+    #[arg(
+        long = "podman-network-boundary",
+        value_name = "NAME_OR_ID",
+        value_parser = parse_podman_network_boundary
+    )]
     podman_network_boundaries: Vec<String>,
+    #[command(flatten)]
+    promotion: PodmanPromotionOptions,
+    #[command(flatten)]
+    support: PodmanSupportOptions,
+}
+
+#[derive(Debug, Args)]
+struct PodmanPromotionOptions {
     /// Promote effective named-volume mounts into portable neutral intent.
     #[arg(long)]
     promote_podman_effective_named_volumes: bool,
     /// Promote effective named-network attachments into portable neutral intent.
     #[arg(long)]
     promote_podman_effective_named_networks: bool,
+}
+
+#[derive(Debug, Args)]
+struct PodmanSupportOptions {
+    /// Add always-redacted Podman inventory and discovery snapshots to the support ZIP.
+    #[arg(long, requires = "generate_error_report")]
+    include_podman_snapshot: bool,
 }
 
 #[derive(Debug, Args)]
@@ -279,7 +306,7 @@ struct DiagnosticOptions {
     /// Write a locally reviewable ZIP with fixed README.md and report.json entries.
     #[arg(long)]
     generate_error_report: bool,
-    /// Existing non-symlink directory for the generated error report.
+    /// Existing non-symlink directory, or one absent direct child, for the generated error report.
     #[arg(long, value_name = "DIR", requires = "generate_error_report")]
     error_report_directory: Option<PathBuf>,
 }
@@ -295,10 +322,10 @@ struct ConversionCommand {
 enum ConversionInput {
     /// Use Compose input documents.
     Compose(ComposeInputCommand),
-    /// Use a Quadlet input document set.
-    Quadlet(QuadletInputCommand),
     /// Use explicitly selected resources from one read-only Podman endpoint.
     Podman(PodmanInputCommand),
+    /// Use a Quadlet input document set.
+    Quadlet(QuadletInputCommand),
 }
 
 #[derive(Debug, Args)]
@@ -312,10 +339,10 @@ struct ComposeInputCommand {
 enum ComposeOutput {
     /// Convert Compose input to canonical Compose output.
     Compose(ComposeToCompose),
-    /// Convert Compose input to canonical Quadlet output.
-    Quadlet(ComposeToQuadlet),
     /// Convert Compose input to reviewable Podman deployment artifacts.
     Podman(ComposeToPodman),
+    /// Convert Compose input to canonical Quadlet output.
+    Quadlet(ComposeToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -329,10 +356,10 @@ struct QuadletInputCommand {
 enum QuadletOutput {
     /// Convert Quadlet input to canonical Compose output.
     Compose(QuadletToCompose),
-    /// Convert Quadlet input to canonical Quadlet output.
-    Quadlet(QuadletToQuadlet),
     /// Convert Quadlet input to reviewable Podman deployment artifacts.
     Podman(QuadletToPodman),
+    /// Convert Quadlet input to canonical Quadlet output.
+    Quadlet(QuadletToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -346,10 +373,10 @@ struct PodmanInputCommand {
 enum PodmanOutput {
     /// Convert Podman input to canonical Compose output.
     Compose(PodmanToCompose),
-    /// Convert Podman input to canonical Quadlet output.
-    Quadlet(PodmanToQuadlet),
     /// Convert Podman input to reviewable Podman deployment artifacts.
     Podman(PodmanToPodman),
+    /// Convert Podman input to canonical Quadlet output.
+    Quadlet(PodmanToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -491,10 +518,10 @@ struct ConvertCommand {
 enum ConvertInput {
     /// Use Compose input documents.
     Compose(ConvertComposeInputCommand),
-    /// Use a Quadlet input document set.
-    Quadlet(ConvertQuadletInputCommand),
     /// Use explicitly selected resources from one read-only Podman endpoint.
     Podman(ConvertPodmanInputCommand),
+    /// Use a Quadlet input document set.
+    Quadlet(ConvertQuadletInputCommand),
 }
 
 #[derive(Debug, Args)]
@@ -508,10 +535,10 @@ struct ConvertComposeInputCommand {
 enum ConvertComposeOutput {
     /// Convert Compose input to canonical Compose output.
     Compose(ConvertComposeToCompose),
-    /// Convert Compose input to canonical Quadlet output.
-    Quadlet(ConvertComposeToQuadlet),
     /// Convert Compose input to reviewable Podman deployment artifacts.
     Podman(ConvertComposeToPodman),
+    /// Convert Compose input to canonical Quadlet output.
+    Quadlet(ConvertComposeToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -525,10 +552,10 @@ struct ConvertQuadletInputCommand {
 enum ConvertQuadletOutput {
     /// Convert Quadlet input to canonical Compose output.
     Compose(ConvertQuadletToCompose),
-    /// Convert Quadlet input to canonical Quadlet output.
-    Quadlet(ConvertQuadletToQuadlet),
     /// Convert Quadlet input to reviewable Podman deployment artifacts.
     Podman(ConvertQuadletToPodman),
+    /// Convert Quadlet input to canonical Quadlet output.
+    Quadlet(ConvertQuadletToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -542,10 +569,10 @@ struct ConvertPodmanInputCommand {
 enum ConvertPodmanOutput {
     /// Convert Podman input to canonical Compose output.
     Compose(ConvertPodmanToCompose),
-    /// Convert Podman input to canonical Quadlet output.
-    Quadlet(ConvertPodmanToQuadlet),
     /// Convert Podman input to reviewable Podman deployment artifacts.
     Podman(ConvertPodmanToPodman),
+    /// Convert Podman input to canonical Quadlet output.
+    Quadlet(ConvertPodmanToQuadlet),
 }
 
 #[derive(Debug, Args)]
@@ -710,6 +737,7 @@ struct GenericConversion {
     presentation: Presentation,
     report_file: Option<PathBuf>,
     generate_error_report: bool,
+    include_podman_snapshot: bool,
     error_report_directory: Option<PathBuf>,
     input_type: InputType,
     output_type: OutputType,
@@ -720,6 +748,7 @@ struct GenericConversion {
     podman_socket: Option<PathBuf>,
     podman_all: bool,
     podman_resources: Vec<PodmanResourceInput>,
+    podman_resource_prefixes: Vec<PodmanResourcePrefixInput>,
     podman_labels: Vec<PodmanLabelInput>,
     podman_network_boundaries: Vec<String>,
     promote_podman_effective_named_volumes: bool,
@@ -1034,10 +1063,12 @@ impl GenericConversion {
             podman_socket,
             podman_all,
             podman_resources,
+            podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
             promote_podman_effective_named_volumes,
             promote_podman_effective_named_networks,
+            include_podman_snapshot,
         ) = match input {
             InputRouteOptions::Compose(input) => (
                 input.project_directory,
@@ -1052,6 +1083,8 @@ impl GenericConversion {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
+                false,
                 false,
                 false,
             ),
@@ -1068,24 +1101,28 @@ impl GenericConversion {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
+                false,
                 false,
                 false,
             ),
             InputRouteOptions::Podman(input) => (
                 None,
-                Some(input.application_name),
+                input.application_name,
                 false,
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 false,
-                Some(input.podman_socket),
+                input.podman_socket,
                 input.podman_all,
                 input.podman_resources,
+                input.podman_resource_prefixes,
                 input.podman_labels,
                 input.podman_network_boundaries,
-                input.promote_podman_effective_named_volumes,
-                input.promote_podman_effective_named_networks,
+                input.promotion.promote_podman_effective_named_volumes,
+                input.promotion.promote_podman_effective_named_networks,
+                input.support.include_podman_snapshot,
             ),
         };
         let (
@@ -1129,6 +1166,7 @@ impl GenericConversion {
             presentation: diagnostics.presentation,
             report_file: diagnostics.report_file,
             generate_error_report: diagnostics.generate_error_report,
+            include_podman_snapshot,
             error_report_directory: diagnostics.error_report_directory,
             input_type,
             output_type,
@@ -1139,6 +1177,7 @@ impl GenericConversion {
             podman_socket,
             podman_all,
             podman_resources,
+            podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
             promote_podman_effective_named_volumes,
@@ -1232,34 +1271,137 @@ struct PodmanResourceInput {
     reference: String,
 }
 
+fn parse_podman_resource(value: &str, option: &str) -> Result<(PodmanResourceKind, String), String> {
+    let (kind, reference) = value
+        .split_once('=')
+        .ok_or_else(|| format!("{option} requires KIND=REFERENCE"))?;
+    let kind = match kind {
+        "container" => PodmanResourceKind::Container,
+        "image" => PodmanResourceKind::Image,
+        "network" => PodmanResourceKind::Network,
+        "pod" => PodmanResourceKind::Pod,
+        "secret" => PodmanResourceKind::Secret,
+        "volume" => PodmanResourceKind::Volume,
+        _ => {
+            return Err("Podman resource kind must be container, image, network, pod, secret, or volume".to_owned());
+        }
+    };
+    if reference.is_empty() {
+        return Err(format!("{option} reference must not be empty"));
+    }
+    Ok((kind, reference.to_owned()))
+}
+
 impl FromStr for PodmanResourceInput {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let (kind, reference) = value
-            .split_once('=')
-            .ok_or_else(|| "--podman-resource requires KIND=REFERENCE".to_owned())?;
-        let kind = match kind {
-            "container" => PodmanResourceKind::Container,
-            "pod" => PodmanResourceKind::Pod,
-            "network" => PodmanResourceKind::Network,
-            "volume" => PodmanResourceKind::Volume,
-            "image" => PodmanResourceKind::Image,
-            "secret" => PodmanResourceKind::Secret,
-            _ => {
-                return Err(
-                    "Podman resource kind must be container, pod, network, volume, image, or secret".to_owned(),
-                );
-            }
-        };
-        if reference.is_empty() {
-            return Err("--podman-resource reference must not be empty".to_owned());
-        }
-        Ok(Self {
-            kind,
-            reference: reference.to_owned(),
+        let (kind, reference) = parse_podman_resource(value, "--podman-resource")?;
+        ResourceSelector::exact(kind, &reference).map_err(|_| {
+            "--podman-resource requires a non-empty exact name or ID without whitespace, glob, or regular-expression syntax".to_owned()
+        })?;
+        Ok(Self { kind, reference })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PodmanResourcePrefixInput {
+    kind: PodmanResourceKind,
+    prefix: String,
+}
+
+impl FromStr for PodmanResourcePrefixInput {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (kind, prefix) = parse_podman_resource(value, "--podman-resource-prefix")?;
+        ResourceSelector::prefix(kind, &prefix).map_err(|_| {
+            "--podman-resource-prefix requires a non-empty literal name prefix without whitespace, glob, or regular-expression syntax".to_owned()
+        })?;
+        Ok(Self { kind, prefix })
+    }
+}
+
+fn derive_podman_application_name(arguments: &GenericConversion) -> Result<Identifier, boxferry::ModelError> {
+    if let Some(name) = arguments.application_name.as_deref() {
+        return Identifier::new(name);
+    }
+    // A container or pod root is an application-shaped name. Other native roots,
+    // notably an image reference, identify an implementation detail rather than the
+    // imported application and must retain the neutral fallback instead.
+    let exact_name = (arguments.podman_resources.len() == 1)
+        .then(|| &arguments.podman_resources[0])
+        .filter(|resource| matches!(resource.kind, PodmanResourceKind::Container | PodmanResourceKind::Pod))
+        .map(|resource| resource.reference.as_str())
+        .filter(|reference| !looks_like_native_id(reference));
+    let prefix =
+        (arguments.podman_resource_prefixes.len() == 1).then(|| arguments.podman_resource_prefixes[0].prefix.as_str());
+    let label_value = (arguments.podman_labels.len() == 1)
+        .then(|| arguments.podman_labels[0].value.as_deref())
+        .flatten();
+    let derived = exact_name.or(prefix).or(label_value).unwrap_or("podman-import");
+    Identifier::new(derived).or_else(|_| Identifier::new("podman-import"))
+}
+
+fn looks_like_native_id(value: &str) -> bool {
+    let value = value.strip_prefix("sha256:").unwrap_or(value);
+    value.len() >= 12 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Returns the only local sockets this CLI will discover, in deliberate rootless-first order.
+#[cfg(unix)]
+fn local_podman_socket_candidates(uid: u32) -> [PathBuf; 2] {
+    [
+        PathBuf::from(format!("/run/user/{uid}/podman/podman.sock")),
+        PathBuf::from("/run/podman/podman.sock"),
+    ]
+}
+
+#[cfg(not(unix))]
+fn local_podman_socket_candidates(_uid: u32) -> [PathBuf; 2] {
+    [
+        PathBuf::from("/run/user/unknown/podman/podman.sock"),
+        PathBuf::from("/run/podman/podman.sock"),
+    ]
+}
+
+fn resolve_podman_socket(explicit: Option<&Path>) -> io::Result<PathBuf> {
+    if let Some(socket) = explicit {
+        return Ok(socket.to_path_buf());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let uid = fs::metadata("/proc/self")?.uid();
+        let candidates = local_podman_socket_candidates(uid);
+        first_local_podman_socket(&candidates).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "no local Podman API socket was found; checked {} then {}; start `systemctl --user start podman.socket`, start `sudo systemctl start podman.socket`, or pass --podman-socket PATH explicitly",
+                    candidates[0].display(),
+                    candidates[1].display(),
+                ),
+            )
         })
     }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "automatic local Podman socket discovery requires Linux; pass --podman-socket PATH explicitly",
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn first_local_podman_socket(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find_map(|candidate| {
+        fs::symlink_metadata(candidate)
+            .ok()
+            .filter(|metadata| !metadata.file_type().is_symlink() && metadata.file_type().is_socket())
+            .filter(|_| UnixStream::connect(candidate).is_ok())
+            .map(|_| candidate.clone())
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -1281,11 +1423,29 @@ impl FromStr for PodmanLabelInput {
         if name.is_empty() {
             return Err("--podman-label name must not be empty".to_owned());
         }
+        if let Some(value) = exact.as_deref() {
+            LabelSelector::exact(name, value).map_err(|_| {
+                "--podman-label requires a literal NAME[=VALUE] without whitespace, glob, or regular-expression syntax"
+                    .to_owned()
+            })?;
+        } else {
+            LabelSelector::presence(name).map_err(|_| {
+                "--podman-label requires a literal NAME[=VALUE] without whitespace, glob, or regular-expression syntax"
+                    .to_owned()
+            })?;
+        }
         Ok(Self {
             name: name.to_owned(),
             value: exact,
         })
     }
+}
+
+fn parse_podman_network_boundary(value: &str) -> Result<String, String> {
+    ResourceSelector::exact(PodmanResourceKind::Network, value).map_err(|_| {
+        "--podman-network-boundary requires a non-empty exact network name or ID without whitespace, glob, or regular-expression syntax".to_owned()
+    })?;
+    Ok(value.to_owned())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1429,6 +1589,11 @@ impl ReportAliases {
         self.add_inputs(inputs);
     }
 
+    fn add_path(&mut self, path: &Path, alias: &str) {
+        self.values.push((path.display().to_string(), alias.into()));
+        self.values.sort_by_key(|value| std::cmp::Reverse(value.0.len()));
+    }
+
     fn add_inputs(&mut self, inputs: &[ResolvedInput]) {
         for (index, input) in inputs.iter().enumerate() {
             if let Some(path) = input.path() {
@@ -1519,6 +1684,7 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
             report.choices.push(ReportChoice {
                 name: "podman_selector_count".into(),
                 value: (arguments.podman_resources.len()
+                    + arguments.podman_resource_prefixes.len()
                     + arguments.podman_labels.len()
                     + usize::from(arguments.podman_all))
                 .to_string(),
@@ -1567,6 +1733,7 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("podman_socket", "--podman-socket"),
         ("podman_all", "--podman-all"),
         ("podman_resources", "--podman-resource"),
+        ("podman_resource_prefixes", "--podman-resource-prefix"),
         ("podman_labels", "--podman-label"),
         ("podman_network_boundaries", "--podman-network-boundary"),
         (
@@ -1586,6 +1753,7 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("loss_policy", "--loss-policy"),
         ("report_file", "--report-file"),
         ("generate_error_report", "--generate-error-report"),
+        ("include_podman_snapshot", "--include-podman-snapshot"),
         ("error_report_directory", "--error-report-directory"),
         ("verbose", "--verbose"),
         ("quiet", "--quiet"),
@@ -1799,10 +1967,12 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
     let coverage = QuadletExporter::new()?.catalogue().coverage();
     let minimum = coverage.minimum().to_string();
     let maximum = coverage.maximum().to_string();
-    let podman_maximum = reviewed_podman_versions()
+    let podman_targets = reviewed_podman_versions();
+    let podman_maximum = podman_targets
         .last()
         .ok_or_else(|| io::Error::other("Podman reviewed target catalogue is empty"))?
         .to_string();
+    let podman_inputs = boxferry::podman::podman_lens::capability_catalogue()?;
     if matches!(presentation.console_format, Some(ConsoleFormat::Json)) {
         println!(
             "{}",
@@ -1810,7 +1980,17 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
                 "schema_version": 1,
                 "routes": route::routes()
                     .map(|route| capability_json(route, &minimum, &maximum, &podman_maximum))
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>(),
+                "podman": {
+                    "input_capabilities": podman_inputs
+                        .iter()
+                        .map(podman_input_capability_json)
+                        .collect::<Vec<_>>(),
+                    "output_targets": podman_targets
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                },
             }))?
         );
     } else if !presentation.quiet {
@@ -1840,8 +2020,47 @@ fn print_capabilities(presentation: Presentation) -> Result<ExitCode, Box<dyn Er
                 );
             }
         }
+        if presentation.verbose {
+            println!("Podman input capabilities:");
+            for input in &podman_inputs {
+                println!(
+                    "  {}: {} <= Podman < {}; Libpod API >= {}; {}",
+                    input.podman_minor_line(),
+                    input.minimum_podman_version(),
+                    input.maximum_exclusive_podman_version(),
+                    input.minimum_libpod_api_version(),
+                    if input.output_supported() {
+                        "input and output reviewed"
+                    } else {
+                        "input only"
+                    }
+                );
+            }
+            println!(
+                "Podman output targets: {}",
+                podman_targets
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn podman_input_capability_json(
+    capability: &boxferry::podman::podman_lens::CapabilityCatalogueEntry,
+) -> serde_json::Value {
+    serde_json::json!({
+        "podman_minor_line": capability.podman_minor_line(),
+        "minimum_podman_version": capability.minimum_podman_version(),
+        "maximum_exclusive_podman_version": capability.maximum_exclusive_podman_version(),
+        "minimum_libpod_api_version": capability.minimum_libpod_api_version(),
+        "observed_podman_version": capability.observed_podman_version(),
+        "observed_libpod_api_version": capability.observed_libpod_api_version(),
+        "output_supported": capability.output_supported(),
+    })
 }
 
 fn capability_json(route: RouteSpec, minimum: &str, maximum: &str, podman_maximum: &str) -> serde_json::Value {
@@ -1909,6 +2128,15 @@ struct StructuredFailure {
     inputs: Vec<ReportInput>,
     discovery: Vec<DiscoveryDecision>,
     presentation_inputs: Vec<ResolvedInput>,
+    podman_support_evidence: Option<PodmanSupportEvidence>,
+}
+
+#[derive(Clone, Debug)]
+struct PodmanSupportEvidence {
+    inventory: serde_json::Value,
+    discovery_graph: serde_json::Value,
+    acquisition_findings: serde_json::Value,
+    redaction_count: usize,
 }
 
 struct RenderedFile {
@@ -1951,6 +2179,7 @@ impl StructuredFailure {
             inputs,
             discovery,
             presentation_inputs,
+            podman_support_evidence: None,
         }
     }
 }
@@ -2025,12 +2254,22 @@ async fn generic_convert(
     ordered: Vec<OrderedInput>,
     output_directory: Option<&Path>,
     validate_only: bool,
-) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+) -> Result<
+    (
+        ConversionReport,
+        ExitCode,
+        Vec<ResolvedInput>,
+        Option<PodmanSupportEvidence>,
+    ),
+    Box<dyn Error>,
+> {
     let route = validate_route(arguments, &ordered)?;
     match route.input {
-        InputType::Compose => generic_compose_convert(arguments, ordered, route, output_directory, validate_only),
+        InputType::Compose => generic_compose_convert(arguments, ordered, route, output_directory, validate_only)
+            .map(|(report, code, inputs)| (report, code, inputs, None)),
         InputType::Podman => generic_podman_convert(arguments, route, output_directory, validate_only).await,
-        InputType::Quadlet => generic_quadlet_convert(arguments, ordered, route, output_directory, validate_only),
+        InputType::Quadlet => generic_quadlet_convert(arguments, ordered, route, output_directory, validate_only)
+            .map(|(report, code, inputs)| (report, code, inputs, None)),
     }
 }
 
@@ -2150,18 +2389,8 @@ fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io
             }
         }
         InputType::Podman => {
-            let name = arguments.application_name.as_deref().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "--application-name is required for Podman input",
-                )
-            })?;
-            Identifier::new(name).map_err(io::Error::other)?;
-            if arguments.podman_socket.is_none() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "--podman-socket is required for Podman input",
-                ));
+            if let Some(name) = arguments.application_name.as_deref() {
+                Identifier::new(name).map_err(io::Error::other)?;
             }
             if !ordered.is_empty() {
                 return Err(io::Error::new(
@@ -2174,11 +2403,18 @@ fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io
     if matches!(route.input, InputType::Podman)
         && !arguments.podman_all
         && arguments.podman_resources.is_empty()
+        && arguments.podman_resource_prefixes.is_empty()
         && arguments.podman_labels.is_empty()
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Podman input requires --podman-all, --podman-resource, or --podman-label",
+            "Podman input requires --podman-all, --podman-resource, --podman-resource-prefix, or --podman-label",
+        ));
+    }
+    if arguments.include_podman_snapshot && !matches!(route.input, InputType::Podman) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--include-podman-snapshot is available only for Podman input routes",
         ));
     }
     if matches!(route.target_selector, TargetSelector::PodmanRange)
@@ -2231,22 +2467,46 @@ async fn generic_podman_convert(
     route: RouteSpec,
     output_directory: Option<&Path>,
     validate_only: bool,
-) -> Result<(ConversionReport, ExitCode, Vec<ResolvedInput>), Box<dyn Error>> {
+) -> Result<
+    (
+        ConversionReport,
+        ExitCode,
+        Vec<ResolvedInput>,
+        Option<PodmanSupportEvidence>,
+    ),
+    Box<dyn Error>,
+> {
     let discovered = Vec::new();
-    let aliases = ReportAliases::for_invocation(arguments, output_directory);
-    let application_name = Identifier::new(
-        arguments
-            .application_name
-            .as_deref()
-            .ok_or_else(|| io::Error::other("validated Podman application name is missing"))?,
-    )?;
-    let connection = UnixConnection::new(
-        arguments
-            .podman_socket
-            .as_deref()
-            .ok_or_else(|| io::Error::other("validated Podman socket is missing"))?,
-    )
-    .map_err(|error| {
+    let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
+    let application_name = derive_podman_application_name(arguments).map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::PodmanSourceInvalid,
+            "Podman application name is invalid",
+            &error,
+            &aliases,
+            &discovered,
+        )
+    })?;
+    let socket = resolve_podman_socket(arguments.podman_socket.as_deref()).map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::PodmanSourceInvalid,
+            "Podman local Unix socket could not be resolved",
+            &error,
+            &aliases,
+            &discovered,
+        )
+    })?;
+    if arguments.podman_socket.is_none()
+        && arguments.presentation.verbose
+        && !arguments.presentation.quiet
+        && !matches!(arguments.presentation.console_format, Some(ConsoleFormat::Json))
+    {
+        println!("selected local Podman socket: {}", socket.display());
+    }
+    aliases.add_path(&socket, "<podman-socket>");
+    let connection = UnixConnection::new(&socket).map_err(|error| {
         post_discovery_failure(
             FailedStage::InputDiscovery,
             RuleId::PodmanSourceInvalid,
@@ -2282,6 +2542,20 @@ async fn generic_podman_convert(
                     FailedStage::InputDiscovery,
                     RuleId::PodmanSourceInvalid,
                     "Podman resource selector is invalid",
+                    &error,
+                    &aliases,
+                    &discovered,
+                )
+            })?,
+        );
+    }
+    for selected in &arguments.podman_resource_prefixes {
+        request.add_root(
+            ResourceSelector::prefix(selected.kind, &selected.prefix).map_err(|error| {
+                post_discovery_failure(
+                    FailedStage::InputDiscovery,
+                    RuleId::PodmanSourceInvalid,
+                    "Podman resource name-prefix selector is invalid",
                     &error,
                     &aliases,
                     &discovered,
@@ -2342,9 +2616,18 @@ async fn generic_podman_convert(
             &discovered,
         )
     })?;
+    let support_evidence = arguments
+        .include_podman_snapshot
+        .then(|| podman_support_evidence(&source))
+        .transpose()?;
     let imported = PodmanImporter::new()?.import(&source);
     let (conversion, resolved_versions) =
-        export_imported(arguments, route.output, imported, None, &[], &aliases, &discovered)?;
+        export_imported(arguments, route.output, imported, None, &[], &aliases, &discovered).map_err(|mut error| {
+            if let Some(structured) = error.downcast_mut::<StructuredFailure>() {
+                structured.podman_support_evidence.clone_from(&support_evidence);
+            }
+            error
+        })?;
     finish_document_conversion(
         arguments,
         route,
@@ -2358,6 +2641,132 @@ async fn generic_podman_convert(
             conversion,
         },
     )
+    .map(|(report, code, inputs)| (report, code, inputs, support_evidence.clone()))
+    .map_err(|mut error| {
+        if let Some(structured) = error.downcast_mut::<StructuredFailure>() {
+            structured.podman_support_evidence = support_evidence;
+        }
+        error
+    })
+}
+
+fn podman_support_evidence(source: &boxferry::PodmanSource) -> Result<PodmanSupportEvidence, serde_json::Error> {
+    let inventory = serde_json::to_value(source.redacted_inventory_snapshot())?;
+    let discovery_graph = serde_json::to_value(source.redacted_graph_snapshot())?;
+    let mut findings = Vec::new();
+
+    for section in inventory
+        .get("sections")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let resource_kind = section.get("kind").cloned().unwrap_or(serde_json::Value::Null);
+        for finding in section
+            .get("findings")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            findings.push(annotated_podman_finding(finding, &resource_kind));
+        }
+        for observation in section
+            .get("observations")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(header) = observation.get("header") else {
+                continue;
+            };
+            for finding in header
+                .get("findings")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                findings.push(annotated_podman_finding(finding, &resource_kind));
+            }
+            for field in header
+                .get("unmodelled_fields")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                findings.push(serde_json::json!({
+                    "code": "unmodelled-json-field",
+                    "resource_kind": resource_kind,
+                    "resource": field.get("resource").cloned().unwrap_or(serde_json::Value::Null),
+                    "field_path": field.get("path").cloned().unwrap_or(serde_json::Value::Null),
+                    "occurrence": serde_json::Value::Null,
+                    "expected_json_type": serde_json::Value::Null,
+                    "observed_json_type": field.get("json_kind").cloned().unwrap_or(serde_json::Value::Null),
+                }));
+            }
+        }
+    }
+
+    let acquisition_findings = serde_json::json!({
+        "schema_version": 1,
+        "service": inventory.get("service").cloned().unwrap_or(serde_json::Value::Null),
+        "findings": findings,
+    });
+    let redaction_count = count_redacted_snapshot_values(&inventory)
+        + count_redacted_snapshot_values(&discovery_graph)
+        + count_redacted_snapshot_values(&acquisition_findings);
+    Ok(PodmanSupportEvidence {
+        inventory,
+        discovery_graph,
+        acquisition_findings,
+        redaction_count,
+    })
+}
+
+fn count_redacted_snapshot_values(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::String(value) => usize::from(value == "[redacted]"),
+        serde_json::Value::Array(values) => values.iter().map(count_redacted_snapshot_values).sum(),
+        serde_json::Value::Object(values) => {
+            // PodmanLens snapshots omit protected values instead of inserting a replacement
+            // string. Their state/count metadata lets us report those deliberate omissions
+            // without ever inspecting the original values.
+            let omitted_field_values = if values.get("state").and_then(serde_json::Value::as_str) == Some("observed") {
+                values
+                    .get("count")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|count| usize::try_from(count).ok())
+                    .unwrap_or(1)
+            } else {
+                0
+            };
+            let omitted_environment_value = usize::from(
+                values
+                    .get("value_state")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|state| state != "absent"),
+            );
+            let omitted_label_selector_value =
+                usize::from(values.get("exact_value_requested").and_then(serde_json::Value::as_bool) == Some(true));
+            let omitted_compose_grouping_value =
+                usize::from(values.get("evidence").and_then(serde_json::Value::as_str) == Some("compose_ownership"));
+            omitted_field_values
+                + omitted_environment_value
+                + omitted_label_selector_value
+                + omitted_compose_grouping_value
+                + values.values().map(count_redacted_snapshot_values).sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+fn annotated_podman_finding(finding: &serde_json::Value, resource_kind: &serde_json::Value) -> serde_json::Value {
+    let mut finding = finding.clone();
+    if let Some(object) = finding.as_object_mut() {
+        object.insert("resource_kind".into(), resource_kind.clone());
+        object.insert("expected_json_type".into(), serde_json::Value::Null);
+        object.insert("observed_json_type".into(), serde_json::Value::Null);
+    }
+    finding
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2417,7 +2826,7 @@ fn export_imported(
                 )?;
             let grouping = if imported
                 .application()
-                .is_some_and(|application| application.service_groups().len() == 1)
+                .is_some_and(should_preserve_imported_quadlet_group)
             {
                 QuadletGroupingPolicy::PreserveSingleGroup
             } else {
@@ -2488,6 +2897,29 @@ fn export_imported(
             ))
         }
     }
+}
+
+fn should_preserve_imported_quadlet_group(application: &Application) -> bool {
+    let [group] = application.service_groups() else {
+        return false;
+    };
+    if group.value().ownership() != ResourceOwnership::Application
+        || group.value().members().len() != application.services().len()
+    {
+        return false;
+    }
+    let service_names = application
+        .services()
+        .iter()
+        .map(|service| service.value().name().as_str())
+        .collect::<BTreeSet<_>>();
+    let member_names = group
+        .value()
+        .members()
+        .iter()
+        .map(|member| member.value().as_str())
+        .collect::<BTreeSet<_>>();
+    service_names == member_names
 }
 
 fn load_quadlet_source(
@@ -2751,7 +3183,7 @@ async fn run_generic(
         Ok(ordered) => generic_convert(arguments, ordered, output_directory, validate_only).await,
         Err(error) => Err(error),
     };
-    let (mut report, primary_code, inputs) = match result {
+    let (mut report, primary_code, inputs, podman_support_evidence) = match result {
         Ok(result) => result,
         Err(error) => {
             if let Some(structured) = error.downcast_ref::<StructuredFailure>() {
@@ -2768,7 +3200,12 @@ async fn run_generic(
                 if structured.stage == FailedStage::OutputWrite {
                     report.exit_category = ExitCategory::OutputWrite;
                 }
-                (report, ExitCode::FAILURE, structured.presentation_inputs.clone())
+                (
+                    report,
+                    ExitCode::FAILURE,
+                    structured.presentation_inputs.clone(),
+                    structured.podman_support_evidence.clone(),
+                )
             } else {
                 (
                     report_failure(
@@ -2780,6 +3217,7 @@ async fn run_generic(
                     ),
                     ExitCode::FAILURE,
                     Vec::new(),
+                    None,
                 )
             }
         }
@@ -2787,7 +3225,12 @@ async fn run_generic(
     report.invocation = sanitized_invocation(matches, if validate_only { "validate" } else { "convert" });
     let mut final_code = primary_code;
     if let Some(path) = &arguments.report_file {
-        let encoded = serialize_report(&mut report)?;
+        let encoded = serialize_report(
+            &mut report,
+            podman_support_evidence
+                .as_ref()
+                .map(|evidence| evidence.redaction_count),
+        )?;
         if let Err(error) = write_report_file(path, &encoded) {
             report.diagnostics.push(sanitized_diagnostic(
                 RuleId::ReportWriteFailed,
@@ -2807,10 +3250,16 @@ async fn run_generic(
     }
     let mut error_report_path = None;
     if arguments.generate_error_report {
-        let encoded = serialize_report(&mut report)?;
-        match write_generated_error_report(
+        let encoded = serialize_report(
+            &mut report,
+            podman_support_evidence
+                .as_ref()
+                .map(|evidence| evidence.redaction_count),
+        )?;
+        match write_generated_error_report_with_evidence(
             arguments.error_report_directory.as_deref(),
             &encoded,
+            podman_support_evidence.as_ref(),
             local_error_report_time,
             env::current_dir,
         ) {
@@ -2839,6 +3288,9 @@ async fn run_generic(
         &inputs,
         validate_only,
         error_report_path.as_deref(),
+        podman_support_evidence
+            .as_ref()
+            .map(|evidence| evidence.redaction_count),
     )?;
     Ok(final_code)
 }
@@ -2862,11 +3314,15 @@ fn present(
     inputs: &[ResolvedInput],
     validate_only: bool,
     error_report_path: Option<&Path>,
+    podman_snapshot_redactions: Option<usize>,
 ) -> Result<(), Box<dyn Error>> {
     refresh_report_outcome(report);
     let presentation = arguments.presentation;
     if matches!(presentation.console_format, Some(ConsoleFormat::Json)) {
-        println!("{}", serialize_console_report(report, error_report_path)?);
+        println!(
+            "{}",
+            serialize_console_report(report, error_report_path, podman_snapshot_redactions)?
+        );
         return Ok(());
     }
     if !presentation.quiet {
@@ -3824,6 +4280,21 @@ fn normalize_report_diagnostics(diagnostics: &mut Vec<ReportDiagnostic>) {
     });
 }
 
+fn order_report_diagnostics_causally(report: &mut ConversionReport) {
+    let primary = report.primary_diagnostic_code.as_deref();
+    report.diagnostics.sort_by_key(|diagnostic| {
+        if Some(diagnostic.code.as_str()) == primary {
+            0
+        } else if matches!(diagnostic.code.as_str(), "BFO3001" | "BFO3002") {
+            3
+        } else if diagnostic.severity == "error" {
+            1
+        } else {
+            2
+        }
+    });
+}
+
 fn refresh_report_outcome(report: &mut ConversionReport) {
     normalize_report_diagnostics(&mut report.diagnostics);
     if report.status == ReportStatus::Success {
@@ -3854,12 +4325,14 @@ fn refresh_report_outcome(report: &mut ConversionReport) {
                 .find(|diagnostic| matches!(diagnostic.severity.as_str(), "error" | "warning"))
         })
     } else {
-        stage_code
-            .and_then(|code| {
-                report
-                    .diagnostics
-                    .iter()
-                    .find(|diagnostic| diagnostic.code == code || diagnostic.code.starts_with(code))
+        retained
+            .or_else(|| {
+                stage_code.and_then(|code| {
+                    report
+                        .diagnostics
+                        .iter()
+                        .find(|diagnostic| diagnostic.code == code || diagnostic.code.starts_with(code))
+                })
             })
             .or_else(|| {
                 report
@@ -3867,7 +4340,6 @@ fn refresh_report_outcome(report: &mut ConversionReport) {
                     .iter()
                     .find(|diagnostic| diagnostic.severity == "error")
             })
-            .or(retained)
     };
     if let Some(primary) = primary.cloned() {
         let rule = find_rule(&primary.code);
@@ -3887,6 +4359,7 @@ fn refresh_report_outcome(report: &mut ConversionReport) {
         report.failure_summary = None;
         report.fix_first = None;
     }
+    order_report_diagnostics_causally(report);
 }
 
 fn print_report_diagnostics(report: &ConversionReport) {
@@ -4023,7 +4496,10 @@ fn human_field_name(name: &str) -> &str {
     }
 }
 
-fn serialize_report(report: &mut ConversionReport) -> Result<String, Box<dyn Error>> {
+fn serialize_report(
+    report: &mut ConversionReport,
+    podman_snapshot_redactions: Option<usize>,
+) -> Result<String, Box<dyn Error>> {
     refresh_report_outcome(report);
     report.enforce_v1_limits();
     let redacted_summaries = report
@@ -4068,6 +4544,12 @@ fn serialize_report(report: &mut ConversionReport) -> Result<String, Box<dyn Err
         (false, true) => vec!["protected-value".into()],
         (false, false) => Vec::new(),
     };
+    if let Some(count) = podman_snapshot_redactions {
+        report.redaction.count = report.redaction.count.saturating_add(count);
+        report.redaction.classes.push("podman-support-snapshot".into());
+        report.redaction.classes.sort();
+        report.redaction.classes.dedup();
+    }
     let mut encoded = serde_json::to_string(report)?;
     while encoded.len() > boxferry::report::MAX_JSON_BYTES && report.reduce_for_json() {
         refresh_report_outcome(report);
@@ -4082,8 +4564,9 @@ fn serialize_report(report: &mut ConversionReport) -> Result<String, Box<dyn Err
 fn serialize_console_report(
     report: &mut ConversionReport,
     error_report_path: Option<&Path>,
+    podman_snapshot_redactions: Option<usize>,
 ) -> Result<String, Box<dyn Error>> {
-    let encoded = serialize_report(report)?;
+    let encoded = serialize_report(report, podman_snapshot_redactions)?;
     let Some(path) = error_report_path else {
         return Ok(encoded);
     };
@@ -4112,9 +4595,14 @@ fn write_report_file(path: &Path, report: &str) -> io::Result<()> {
     file.write_all(b"\n")
 }
 
-fn write_support_bundle(path: &Path, report: &str) -> io::Result<()> {
-    validate_support_bundle_entries(SUPPORT_BUNDLE_README.as_bytes(), report.as_bytes())?;
-    let archive = build_support_bundle(SUPPORT_BUNDLE_README.as_bytes(), report.as_bytes())?;
+fn write_support_bundle(path: &Path, report: &str, podman_evidence: Option<&PodmanSupportEvidence>) -> io::Result<()> {
+    let readme = if podman_evidence.is_some() {
+        PODMAN_SUPPORT_BUNDLE_README
+    } else {
+        SUPPORT_BUNDLE_README
+    };
+    validate_support_bundle_entries_with_evidence(readme.as_bytes(), report.as_bytes(), podman_evidence)?;
+    let archive = build_support_bundle_with_evidence(readme.as_bytes(), report.as_bytes(), podman_evidence)?;
     publish_new_file(path, &archive)
 }
 
@@ -4134,9 +4622,24 @@ fn local_error_report_time() -> io::Result<Zoned> {
     Ok(timestamp.to_zoned(time_zone))
 }
 
+#[cfg(test)]
 fn write_generated_error_report<Clock, CurrentDirectory>(
     configured_directory: Option<&Path>,
     report: &str,
+    clock: Clock,
+    current_directory: CurrentDirectory,
+) -> io::Result<PathBuf>
+where
+    Clock: FnOnce() -> io::Result<Zoned>,
+    CurrentDirectory: FnOnce() -> io::Result<PathBuf>,
+{
+    write_generated_error_report_with_evidence(configured_directory, report, None, clock, current_directory)
+}
+
+fn write_generated_error_report_with_evidence<Clock, CurrentDirectory>(
+    configured_directory: Option<&Path>,
+    report: &str,
+    podman_evidence: Option<&PodmanSupportEvidence>,
     clock: Clock,
     current_directory: CurrentDirectory,
 ) -> io::Result<PathBuf>
@@ -4148,7 +4651,7 @@ where
     let time = clock()?;
     for collision in 0..=MAX_ERROR_REPORT_COLLISIONS {
         let path = directory.join(error_report_filename(&time, collision));
-        match write_support_bundle(&path, report) {
+        match write_support_bundle(&path, report, podman_evidence) {
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
@@ -4168,7 +4671,24 @@ where
     CurrentDirectory: FnOnce() -> io::Result<PathBuf>,
 {
     let directory = match configured_directory {
-        Some(directory) => directory.to_path_buf(),
+        Some(directory) => {
+            match fs::symlink_metadata(directory) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    let parent = directory.parent().unwrap_or_else(|| Path::new("."));
+                    let parent_metadata = fs::symlink_metadata(parent)?;
+                    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "error-report directory parent must be an existing non-symlink directory",
+                        ));
+                    }
+                    create_private_directory(directory)?;
+                }
+                Err(error) => return Err(error),
+            }
+            directory.to_path_buf()
+        }
         None => current_directory()?,
     };
     let metadata = fs::symlink_metadata(&directory)?;
@@ -4198,7 +4718,23 @@ fn error_report_filename(time: &Zoned, collision: u8) -> String {
     )
 }
 
+fn create_private_directory(path: &Path) -> io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(path)
+}
+
+#[cfg(test)]
 fn validate_support_bundle_entries(readme: &[u8], report: &[u8]) -> io::Result<()> {
+    validate_support_bundle_entries_with_evidence(readme, report, None)
+}
+
+fn validate_support_bundle_entries_with_evidence(
+    readme: &[u8],
+    report: &[u8],
+    podman_evidence: Option<&PodmanSupportEvidence>,
+) -> io::Result<()> {
     if report.len() > boxferry::report::MAX_JSON_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -4211,10 +4747,34 @@ fn validate_support_bundle_entries(readme: &[u8], report: &[u8]) -> io::Result<(
             "README.md exceeds the v1 size cap",
         ));
     }
+    if let Some(evidence) = podman_evidence {
+        for (name, value) in [
+            ("podman-inventory-v1.json", &evidence.inventory),
+            ("podman-discovery-graph-v1.json", &evidence.discovery_graph),
+            ("podman-acquisition-findings-v1.json", &evidence.acquisition_findings),
+        ] {
+            let size = serde_json::to_vec(value).map_err(io::Error::other)?.len();
+            if size > boxferry::report::MAX_JSON_BYTES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{name} exceeds the v1 size cap"),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
+#[cfg(test)]
 fn build_support_bundle(readme: &[u8], report: &[u8]) -> io::Result<Vec<u8>> {
+    build_support_bundle_with_evidence(readme, report, None)
+}
+
+fn build_support_bundle_with_evidence(
+    readme: &[u8],
+    report: &[u8],
+    podman_evidence: Option<&PodmanSupportEvidence>,
+) -> io::Result<Vec<u8>> {
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     writer
@@ -4225,6 +4785,17 @@ fn build_support_bundle(readme: &[u8], report: &[u8]) -> io::Result<Vec<u8>> {
         .start_file("report.json", options)
         .map_err(|error| zip_error(&error))?;
     writer.write_all(report)?;
+    if let Some(evidence) = podman_evidence {
+        for (name, value) in [
+            ("podman-inventory-v1.json", &evidence.inventory),
+            ("podman-discovery-graph-v1.json", &evidence.discovery_graph),
+            ("podman-acquisition-findings-v1.json", &evidence.acquisition_findings),
+        ] {
+            writer.start_file(name, options).map_err(|error| zip_error(&error))?;
+            serde_json::to_writer_pretty(&mut writer, value).map_err(io::Error::other)?;
+            writer.write_all(b"\n")?;
+        }
+    }
     let archive = writer.finish().map_err(|error| zip_error(&error))?.into_inner();
     if archive.len() > MAX_ARCHIVE_BYTES {
         return Err(io::Error::new(
@@ -4280,7 +4851,11 @@ impl SupportBundleTemporary {
                 std::process::id()
             );
             let path = parent.join(temporary_name);
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            match options.open(&path) {
                 Ok(file) => return Ok(Self { path, file: Some(file) }),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => return Err(error),
@@ -4413,6 +4988,9 @@ mod tests {
         interpolation::EnvironmentProvider,
         project::{ProjectValue, build_project_view},
     };
+    use boxferry::{Provenance, Service, ServiceGroup, Sourced};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     fn fixed_error_report_time() -> io::Result<Zoned> {
         "2026-08-11T09:07:05Z"
             .parse::<Timestamp>()
@@ -4480,7 +5058,7 @@ mod tests {
         };
         assert_eq!(
             error.to_string(),
-            "Podman input requires --podman-all, --podman-resource, or --podman-label"
+            "Podman input requires --podman-all, --podman-resource, --podman-resource-prefix, or --podman-label"
         );
         Ok(())
     }
@@ -4708,6 +5286,72 @@ mod tests {
     }
 
     #[test]
+    fn generated_error_report_creates_only_an_explicit_missing_leaf_directory() -> io::Result<()> {
+        let parent = env::temp_dir().join(format!(
+            "boxferry-generated-error-report-new-leaf-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&parent)?;
+        let directory = parent.join("reports");
+        let report = write_generated_error_report(Some(&directory), "{}", fixed_error_report_time, || {
+            unreachable!("configured directory does not use cwd")
+        })?;
+        let canonical = fs::canonicalize(&directory)?;
+        assert_eq!(report.parent(), Some(canonical.as_path()));
+        assert!(directory.is_dir());
+        #[cfg(unix)]
+        {
+            assert_eq!(fs::metadata(&directory)?.permissions().mode() & 0o777, 0o700);
+            assert_eq!(fs::metadata(&report)?.permissions().mode() & 0o777, 0o600);
+        }
+        fs::remove_dir_all(parent)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_podman_socket_candidates_are_rootless_first_and_finite() {
+        assert_eq!(
+            local_podman_socket_candidates(1234),
+            [
+                PathBuf::from("/run/user/1234/podman/podman.sock"),
+                PathBuf::from("/run/podman/podman.sock"),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_rootless_socket_falls_back_to_a_connectable_rootful_candidate() -> io::Result<()> {
+        use std::os::unix::net::UnixListener;
+
+        let directory = env::temp_dir().join(format!(
+            "boxferry-podman-socket-fallback-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let stale = directory.join("rootless.sock");
+        let active = directory.join("rootful.sock");
+        let regular = directory.join("regular.sock");
+        drop(UnixListener::bind(&stale)?);
+        let listener = UnixListener::bind(&active)?;
+        fs::write(&regular, "not a socket")?;
+
+        assert_eq!(
+            first_local_podman_socket(&[regular.clone(), stale.clone(), active.clone()]),
+            Some(active.clone())
+        );
+
+        drop(listener);
+        assert_eq!(first_local_podman_socket(std::slice::from_ref(&active)), None);
+        fs::remove_file(regular)?;
+        fs::remove_file(stale)?;
+        fs::remove_file(active)?;
+        fs::remove_dir(directory)
+    }
+
+    #[test]
     fn generic_interpolation_inputs_propagate_sensitivity_to_compose_values() -> Result<(), Box<dyn Error>> {
         let environment_file = env::temp_dir().join(format!(
             "boxferry-generic-interpolation-sensitivity-{}-{}.env",
@@ -4723,6 +5367,7 @@ mod tests {
             },
             report_file: None,
             generate_error_report: false,
+            include_podman_snapshot: false,
             error_report_directory: None,
             input_type: InputType::Compose,
             output_type: OutputType::Quadlet,
@@ -4733,6 +5378,7 @@ mod tests {
             podman_socket: None,
             podman_all: false,
             podman_resources: Vec::new(),
+            podman_resource_prefixes: Vec::new(),
             podman_labels: Vec::new(),
             podman_network_boundaries: Vec::new(),
             promote_podman_effective_named_volumes: false,
@@ -4852,6 +5498,99 @@ mod tests {
             "--podman-all",
         ]);
         assert!(selected.is_ok());
+
+        let exact_resource = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "podman",
+            "compose",
+            "--podman-resource",
+            "container=example",
+        ]);
+        assert!(exact_resource.is_ok());
+
+        let prefix = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "podman",
+            "compose",
+            "--podman-resource-prefix",
+            "container=example-",
+        ]);
+        assert!(prefix.is_ok());
+
+        let glob_prefix = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "podman",
+            "compose",
+            "--podman-resource-prefix",
+            "container=example-*",
+        ]);
+        assert!(glob_prefix.is_err());
+
+        let label = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "podman",
+            "compose",
+            "--podman-label",
+            "io.example.application",
+        ]);
+        assert!(label.is_ok());
+    }
+
+    #[test]
+    fn podman_application_name_fallback_is_deterministic_and_selector_only() -> Result<(), Box<dyn Error>> {
+        fn arguments(selection: &[&str]) -> Result<GenericConversion, Box<dyn Error>> {
+            let mut command = vec!["boxferry", "validate", "podman", "compose"];
+            command.extend_from_slice(selection);
+            let parsed = Cli::try_parse_from(command)?;
+            let Command::Validate(command) = parsed.command else {
+                return Err("expected validate command".into());
+            };
+            Ok(command.input.into_generic())
+        }
+
+        for (selection, expected) in [
+            (vec!["--podman-resource", "container=web"], "web"),
+            (vec!["--podman-resource-prefix", "container=web-"], "web-"),
+            (
+                vec!["--podman-label", "io.example.application=production"],
+                "production",
+            ),
+            (vec!["--podman-label", "io.example.application"], "podman-import"),
+            (vec!["--podman-all"], "podman-import"),
+            (
+                vec![
+                    "--podman-resource",
+                    "container=web",
+                    "--podman-resource",
+                    "container=worker",
+                ],
+                "podman-import",
+            ),
+            (vec!["--podman-resource", "container=0123456789abcdef"], "podman-import"),
+            (
+                vec!["--podman-resource", "image=registry.example/app:1.0"],
+                "podman-import",
+            ),
+            (
+                vec![
+                    "--podman-resource",
+                    "image=registry.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ],
+                "podman-import",
+            ),
+            (
+                vec!["--podman-all", "--application-name", "explicit-migration"],
+                "explicit-migration",
+            ),
+        ] {
+            let arguments = arguments(&selection)?;
+            assert_eq!(derive_podman_application_name(&arguments)?.as_str(), expected);
+        }
+        Ok(())
     }
 
     #[test]
@@ -4887,6 +5626,55 @@ mod tests {
             PlatformVersion::new(5, 7, 0)
         );
         assert_eq!(resolve_podman_maximum(&"6.1".parse()?)?, PlatformVersion::new(6, 1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn automatic_quadlet_group_preservation_requires_one_complete_application_owned_group() -> Result<(), Box<dyn Error>>
+    {
+        fn sourced<T>(value: T) -> Result<Sourced<T>, Box<dyn Error>> {
+            Ok(Sourced::from_source(
+                value,
+                Provenance::source(SourceId::new("podman-live")?),
+            ))
+        }
+
+        fn application(ownership: ResourceOwnership, members: &[&str]) -> Result<Application, Box<dyn Error>> {
+            let mut application = Application::new(Identifier::new("example")?);
+            for name in ["web", "worker"] {
+                application.add_service(sourced(Service::new(Identifier::new(name)?))?)?;
+            }
+            let mut group = ServiceGroup::new(Identifier::new("application")?, ownership);
+            for member in members {
+                group.add_member(sourced(Identifier::new(*member)?)?)?;
+            }
+            application.add_service_group(sourced(group)?)?;
+            Ok(application)
+        }
+
+        assert!(should_preserve_imported_quadlet_group(&application(
+            ResourceOwnership::Application,
+            &["web", "worker"],
+        )?));
+        assert!(!should_preserve_imported_quadlet_group(&application(
+            ResourceOwnership::Application,
+            &["web"],
+        )?));
+        assert!(!should_preserve_imported_quadlet_group(&application(
+            ResourceOwnership::Implicit,
+            &["web", "worker"],
+        )?));
+        let mut split = Application::new(Identifier::new("split")?);
+        for name in ["web", "worker"] {
+            split.add_service(sourced(Service::new(Identifier::new(name)?))?)?;
+            let mut group = ServiceGroup::new(
+                Identifier::new(format!("{name}-group"))?,
+                ResourceOwnership::Application,
+            );
+            group.add_member(sourced(Identifier::new(name)?)?)?;
+            split.add_service_group(sourced(group)?)?;
+        }
+        assert!(!should_preserve_imported_quadlet_group(&split));
         Ok(())
     }
 }

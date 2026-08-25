@@ -43,6 +43,48 @@ the suite matches its parent. Valid suites are `model`, `adapter-contract`, `con
 
 The repository-policy suite validates these rules.
 
+## Live conformance matrix
+
+`fixtures/conformance/podman-live/matrix.tsv` is not a parser fixture and does not enter the
+deterministic fixture corpus. It is the reviewed inventory of trusted Strukturpiloten nested-Podman
+images used only by `scripts/podman-live-conformance.sh`. Each row names one image, its declared
+Podman/package version, distribution family, inner root mode, and execution lane.
+
+`scenarios.tsv` is the equally reviewed end-to-end route inventory. `limitations.tsv` records a
+temporary, verified image-level reason why one container cell cannot run that route inventory. The
+runner validates all three catalogues before it pulls an image, so changing a selector, exporter,
+reimport, supported image, or coverage exception is an explicit review event. Its
+external apply/reacquire case runs generated commands only inside a fresh disposable Podman 6.1
+harness target; BoxFerry remains read-only and nonexecuting.
+That target receives `podman-live/apply-target-containers.conf`, which disables Netavark firewall
+rules because the pinned nested image has no `nft` binary. The case therefore proves resource
+planning, isolated network membership, and reacquisition—not NAT or host firewall behavior.
+
+The matrix has exactly 48 rootful/rootless cells. It is conformance evidence, not the public finite
+compatibility contract; `boxferry capabilities` is the installed-build source of truth. Every image
+column is a tag plus exact `@sha256:` digest; the runner rejects an unpinned row before it pulls
+anything. Each row records its expected `amd64` architecture, and the evidence captures resolved
+digest, package version, Podman/API version, and rootless state.
+
+All 48 cells run as digest-pinned images inside disposable privileged outer Podman containers.
+Forty-three execute the complete live-resource suite. The five UBI/openSUSE rootless rows in
+`limitations.tsv` verify the published images' `newuidmap` permission failure and report no
+resource coverage. Once corrected image digests initialize nested rootless Podman, remove their
+limitation rows so they execute the same suite as every other cell.
+
+The four-cell pull-request smoke profile uses the same runner and real workloads but a bounded
+scenario subset. Every cell uses a minimal container/network/volume workload and exports one exact
+selection to all targets. Version-independent CLI, policy, redaction, and malformed-input checks run
+once on Podman 6.1 rootful. The complete workload and runtime matrix remain in `full-container`.
+Only `full-container` evidence is labelled `full`; smoke evidence is labelled
+`smoke`. Each cell
+prints its planned test count, timestamped start/pass/fail events, and elapsed time. The host engine
+verifies the pinned workload image and passes an archive to the nested engines, so live-resource
+creation does not depend on nested registry networking.
+
+Retained failure artifacts are local diagnostic evidence. Review them for environment values,
+resource names, image references, paths, and topology before sharing; never commit raw live output.
+
 ## Route scenarios
 
 Every positive adapter or conversion case declares one or more

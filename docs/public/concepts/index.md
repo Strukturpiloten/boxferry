@@ -56,9 +56,11 @@ inventory snapshot and cannot be imported again. Compose and Quadlet output rema
 
 ## Runtime safety
 
-Podman input is read-only and requires an explicit Unix socket and selectors. BoxFerry does not
-discover ambient connections or invoke the `podman` command. It never infers target versions or
-rootful/rootless context from the development machine.
+Podman input is read-only and requires selectors. The CLI checks one deterministic local socket
+pair—current-user rootless first, then rootful—unless `--podman-socket` explicitly overrides it.
+It does not read Podman connection configuration, discover remote connections, or invoke the
+`podman` command. It never infers target versions or rootful/rootless context from the development
+machine.
 
 BoxFerry never applies generated output, executes `podman-commands.sh`, deploys infrastructure, or
 sends mutating runtime API requests. The generated script contains real commands: a user who runs

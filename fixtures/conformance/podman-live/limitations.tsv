@@ -1,0 +1,6 @@
+# schema=1; id	reason
+podman-opensuse-leap-16.0-rootless	helper-privilege-collision
+podman-opensuse-tumbleweed-rootless	helper-privilege-collision
+podman-ubi-10-rootless	helper-privilege-collision
+podman-ubi-8-rootless	helper-privilege-collision
+podman-ubi-9-rootless	helper-privilege-collision

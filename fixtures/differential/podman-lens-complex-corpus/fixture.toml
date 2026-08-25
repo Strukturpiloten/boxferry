@@ -1,7 +1,7 @@
 schema = 1
 id = "podman-lens-complex-corpus"
 suite = "differential"
-description = "Pins the fourteen PodmanLens 0.1.1 request-aware complex cassettes used to test every reviewed Podman 5.4 through 6.1 version in simulated rootful and rootless contexts."
+description = "Pins the fourteen request-aware complex cassettes captured with PodmanLens 0.1.1 and retained as historical differential provenance for every reviewed Podman 5.4 through 6.1 version in simulated rootful and rootless contexts."
 secrets_reviewed = true
 files = [
   "complex-5.4.0-rootful.cassette.json",

@@ -8,14 +8,14 @@ Run the complete deterministic gate before every pull request:
 
 ## Choose a test layer
 
-| Layer         | Protects                                                    |
-| ------------- | ----------------------------------------------------------- |
-| Unit          | Model invariants, mappings, diagnostics, and redaction      |
-| Adapter       | Native-to-neutral and neutral-to-native contracts           |
-| Golden        | Exact artifacts and diagnostic sequences                    |
-| CLI           | Arguments, exit status, output safety, and reports          |
-| Documentation | Every displayed command and its expected result             |
-| Conformance   | Reviewed external tools in scheduled or opt-in environments |
+| Layer         | Protects                                                |
+| ------------- | ------------------------------------------------------- |
+| Unit          | Model invariants, mappings, diagnostics, and redaction  |
+| Adapter       | Native-to-neutral and neutral-to-native contracts       |
+| Golden        | Exact artifacts and diagnostic sequences                |
+| CLI           | Arguments, exit status, output safety, and reports      |
+| Documentation | Every displayed command and its expected result         |
+| Conformance   | Reviewed external tools in explicit opt-in environments |
 
 Every behavior change needs a positive case and a relevant failure case. A mapping is incomplete
 until unsupported values and target-version boundaries are tested.
@@ -40,13 +40,103 @@ executes that script.
 
 ## Podman evidence
 
-The offline cassette corpus covers reviewed Podman 5.4 through 6.1 observations in rootful and
-rootless contexts. It includes all resource kinds, pods and standalone containers, isolated and
-shared networks, volumes and bind mounts, dependencies, protected metadata, incomplete resources,
-ambiguous references, malformed observations, and redaction.
+Offline evidence separates input compatibility from output compatibility. Legacy input anchors
+cover 3.0.1, 3.4.4, 4.3.1, 4.9.3, and 4.9.4; modern request-bound cassettes cover reviewed 5.4
+through 6.1 observations in rootful and rootless contexts. The output target catalogue remains
+5.4.0 through 6.1.0. Use `boxferry capabilities --verbose` for exact finite bounds.
 
-The normal pull-request gate needs no live Podman service or historical Podman container image.
-Live runtime conformance remains scheduled or explicit opt-in evidence.
+Fixtures include all resource kinds, pods and standalone containers, isolated and shared networks,
+volumes and bind mounts, dependencies, protected metadata, incomplete resources, ambiguous
+references, malformed observations, and redaction.
+
+The normal deterministic gate needs no live Podman service or historical Podman container image.
+
+### Live Podman conformance
+
+[`scripts/podman-live-conformance.sh`](../scripts/podman-live-conformance.sh) is the single runner
+for local and GitHub Actions evidence. It starts only the trusted nested images listed in
+[`fixtures/conformance/podman-live/matrix.tsv`](../fixtures/conformance/podman-live/matrix.tsv),
+never mounts a host Podman socket or a repository checkout into them. Every verified cell writes
+and prints a tab-separated evidence row containing its reviewed image digest, declared and
+observed Podman versions, API version, package revision, distribution, architecture, root mode,
+lane, transport, and resource-coverage level. Successful diagnostic artifacts are removed unless
+`--retain-artifacts` is selected; verified evidence remains visible in the local or GitHub Actions log. A matrix image
+reference must already carry an exact `@sha256:` digest before the runner is allowed to pull it.
+
+The runner creates small and multi-service applications: running and stopped containers, health
+states where supported, members of multiple pods plus standalone services, networks and aliases,
+named volumes shared read-write/read-only, explicit bind propagation, and tmpfs mounts,
+environment and env-file evidence, labels, restart/
+logging/security/resource policy where available, and conditional secrets. It exercises exact,
+prefix, label, all-resource, and network-boundary selection; literal-glob rejection; explicit and
+discovered sockets; every Podman exporter; Compose/Quadlet reimports; deterministic artifacts; and
+strict-policy blocking with an actionable subject. All generated resource names use one
+process-unique `bf65-` prefix and cleanup is limited to that run. It never executes BoxFerry's
+generated command script as product behavior.
+
+The external apply/reacquire scenario is deliberately harness-owned. For reviewed current and
+legacy representative cells, it exports one portable container to Podman, validates the complete
+operation/precondition plan, provisions only its exact prefix-scoped network and volume in one
+fresh Podman 6.1 rootful target, and executes `podman-commands.sh` inside that disposable target.
+It then reacquires the result through the neutral model and requires byte-identical Podman and
+Compose projections before exact cleanup. BoxFerry itself never invokes the generated script.
+The disposable Podman 6.1 target uses the checked-in Netavark `firewall_driver = "none"` drop-in:
+its image is pulled before the generated container starts, and this scenario tests isolated
+network membership rather than masquerading or host firewall integration.
+
+Full-resource container cells also create the otherwise-unused `/run/user/0/podman` host directory temporarily
+to prove conventional socket discovery; the runner refuses to replace an existing path and removes
+what it created during cleanup.
+
+All 48 matrix entries are container cells. Forty-three run the complete resource suite. The five
+current UBI/openSUSE rootless image digests are listed in `podman-live/limitations.tsv`: their
+packaged `newuidmap` and `newgidmap` files carry capabilities, while the image recipe also adds the
+setuid bit. That combined helper state fails while opening the second namespace's `uid_map`. The
+runner verifies the exact failure and records `helper-privilege-collision`; it does not claim live
+BoxFerry resource coverage for those cells. Removing the extra setuid change in the image recipes,
+publishing corrected images, updating the reviewed digests, and deleting the corresponding
+limitation rows promotes them to the complete suite.
+
+Run a fast, representative check locally:
+
+```console
+cargo build --locked --package boxferry --bin boxferry --features podman
+BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" bash scripts/podman-live-conformance.sh --profile smoke --engine podman
+```
+
+This local command aggregates the same four smoke cells sequentially. GitHub Actions invokes the
+same runner and cell IDs in four isolated matrix jobs. Every smoke cell creates a minimal but real
+container/network/volume workload, checks its runtime baseline, and converts one exact container
+through all three exporters. The Podman 6.1 rootful cell alone runs version-independent CLI, policy,
+redaction, and malformed-input checks; repeating those checks provides no additional version
+evidence. The complete runtime matrix, socket discovery, every selector, re-imports,
+partial/disappeared-resource failures, and apply/reacquire remain in the complete profile. Pull
+requests have a 10-minute hard limit per smoke cell.
+
+The runner prints a timestamped plan and a start/pass/fail line for every numbered test, including
+elapsed time. Setup operations are numbered tests too, so a slow image pull or workload creation is
+visible immediately. Network operations have explicit per-operation timeouts. The outer engine
+verifies and archives the digest-pinned workload image; nested engines load that archive instead of
+reaching a registry.
+
+Run all 48 rootful and rootless container cells. The evidence distinguishes the 43 complete cells
+from the five reviewed helper limitations:
+
+```console
+cargo build --locked --package boxferry --bin boxferry --features podman
+BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" bash scripts/podman-live-conformance.sh --profile full-container --engine podman
+```
+
+If a transient registry or runner failure interrupts this long local profile, resume at the first
+unproved reviewed cell instead of repeating earlier evidence:
+
+```console
+BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" bash scripts/podman-live-conformance.sh --profile full-container --matrix-start-at podman-alpine-3.24-rootful --engine podman
+```
+
+GitHub workflows invoke the same runner. Pull requests from this repository run the four-cell smoke
+profile. Manual `workflow_dispatch` selects smoke or all 48 container cells. There is deliberately
+no nightly schedule.
 
 ## Gate contents
 

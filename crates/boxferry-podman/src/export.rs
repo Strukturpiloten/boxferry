@@ -3,8 +3,8 @@
 use std::{error::Error, fmt};
 
 use boxferry_engine::{
-    ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, ExportAdapter,
-    InvalidDiagnosticCode, NativeFinding, PlanError, PlatformVersion, RuleId, Severity, TargetProfile,
+    ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue,
+    ExportAdapter, InvalidDiagnosticCode, NativeFinding, PlanError, PlatformVersion, RuleId, Severity, TargetProfile,
 };
 use boxferry_model::{
     Application, Command, Entrypoint, EnvironmentValue, MountSource, ProtectedString, PullPolicy, ResourceOwnership,
@@ -16,8 +16,9 @@ use podman_lens::{
     DeploymentEnvironmentValue, DeploymentIntent, DeploymentResource, DeploymentResourceId, EnvironmentAssignment,
     EnvironmentName, ExternalPrecondition, ImageIntent, ImagePullPolicy, ImageSource, Label, LabelKey, MountAccess,
     NamedVolumeCopyMode, NamedVolumeMount, NetworkAttachment, NetworkIntent, ObservedApiVersion, ObservedPodmanVersion,
-    PodIntent, PublicEnvironmentValue, PublicLabelValue, ResourceKind, SecretIntent, SensitiveInputReference,
-    StartupDependency, TargetExecutionContext, TmpfsMount, VolumeIntent, plan_deployment, render_deployment,
+    PlanningFinding, PodIntent, PublicEnvironmentValue, PublicLabelValue, RenderingFinding, ResourceKind, SecretIntent,
+    SensitiveInputReference, StartupDependency, TargetExecutionContext, TmpfsMount, VolumeIntent, plan_deployment,
+    render_deployment,
 };
 
 use crate::PodmanOutput;
@@ -182,12 +183,7 @@ impl ExportAdapter for PodmanExporter {
         let planning = plan_deployment(&intent);
         if !planning.findings().is_empty() {
             for finding in planning.findings() {
-                mapping.native_error(
-                    "deployment.plan",
-                    finding.code().as_str(),
-                    finding.message(),
-                    "planning",
-                );
+                mapping.native_planning_error(finding);
             }
         }
         let Some(plan) = planning.plan() else {
@@ -197,12 +193,7 @@ impl ExportAdapter for PodmanExporter {
         let rendering = render_deployment(plan);
         if !rendering.findings().is_empty() {
             for finding in rendering.findings() {
-                mapping.native_error(
-                    "deployment.render",
-                    finding.code().as_str(),
-                    finding.message(),
-                    "rendering",
-                );
+                mapping.native_rendering_error(finding);
             }
         }
         let Some(rendering) = rendering.rendering() else {
@@ -437,7 +428,7 @@ impl<'a> Mapping<'a> {
             }
             self.map_service_settings(service, &mut container)?;
             self.map_service_mounts(service, &mut container)?;
-            self.map_service_networks(service, &mut container)?;
+            self.map_service_networks(service, &mut container);
             Ok(DeploymentResource::Container(container))
         })();
         self.add_resource_result(&subject, container_result);
@@ -640,16 +631,34 @@ impl<'a> Mapping<'a> {
         Ok(())
     }
 
-    fn map_service_networks(
-        &mut self,
-        service: &Service,
-        container: &mut ContainerIntent,
-    ) -> podman_lens::PodmanLensResult<()> {
+    fn map_service_networks(&mut self, service: &Service, container: &mut ContainerIntent) {
         for (index, network) in service.networks().iter().enumerate() {
-            let mut attachment =
-                NetworkAttachment::new(self.resource_id(ResourceKind::Network, network.value().network().as_str())?)?;
-            for alias in network.value().aliases() {
-                attachment.add_alias(alias)?;
+            let subject = format!("services.{}.networks[{index}]", service.name().as_str());
+            let attachment = self
+                .resource_id(ResourceKind::Network, network.value().network().as_str())
+                .and_then(NetworkAttachment::new);
+            let mut attachment = match attachment {
+                Ok(attachment) => attachment,
+                Err(error) => {
+                    self.native_error(&subject, error.code().as_str(), error.message(), "mapping");
+                    continue;
+                }
+            };
+            let mut aliases_valid = true;
+            for (alias_index, alias) in network.value().aliases().iter().enumerate() {
+                if let Err(error) = attachment.add_alias(alias) {
+                    self.native_error(
+                        &format!("{subject}.aliases[{alias_index}]"),
+                        error.code().as_str(),
+                        error.message(),
+                        "mapping",
+                    );
+                    aliases_valid = false;
+                    break;
+                }
+            }
+            if !aliases_valid {
+                continue;
             }
             if network.value().ipv4_address().is_some() || network.value().ipv6_address().is_some() {
                 self.unsupported(
@@ -657,9 +666,10 @@ impl<'a> Mapping<'a> {
                     "static neutral network addresses are not yet mapped to PodmanLens attachment intent",
                 );
             }
-            container.add_network(attachment)?;
+            if let Err(error) = container.add_network(attachment) {
+                self.native_error(&subject, error.code().as_str(), error.message(), "mapping");
+            }
         }
-        Ok(())
     }
 
     fn map_dependencies(&mut self) {
@@ -825,13 +835,16 @@ impl<'a> Mapping<'a> {
     }
 
     fn native_error(&mut self, subject: &str, native_code: &str, summary: &str, stage: &'static str) {
-        let native = NativeFinding::new("podman", "podman-lens", native_code, stage, Severity::Error, summary);
+        let subject_field = DiagnosticField::new("subject", DiagnosticValue::plain(subject));
+        let native = NativeFinding::new("podman", "podman-lens", native_code, stage, Severity::Error, summary)
+            .with_field(subject_field.clone());
         self.diagnostics.push(
             Diagnostic::new(
                 self.exporter.codes.planning.clone(),
                 Severity::Error,
                 "PodmanLens could not map, plan, or render deployment intent",
             )
+            .with_field(subject_field)
             .with_native_finding(native),
         );
         if let Ok(outcome) =
@@ -840,6 +853,132 @@ impl<'a> Mapping<'a> {
             self.outcomes.push(outcome);
         }
         self.intent = None;
+    }
+
+    fn native_planning_error(&mut self, finding: &PlanningFinding) {
+        let subject = finding.subject().map_or_else(
+            || "deployment.plan".to_owned(),
+            |resource| format!("{}.{}", resource_kind_name(resource.kind()), resource.name()),
+        );
+        let mut fields = vec![DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone()))];
+        if let Some(resource) = finding.subject() {
+            fields.push(DiagnosticField::new(
+                "resource_kind",
+                DiagnosticValue::plain(resource_kind_name(resource.kind())),
+            ));
+            fields.push(DiagnosticField::new(
+                "resource_name",
+                DiagnosticValue::plain(resource.name()),
+            ));
+        }
+        if let Some(field) = finding.field() {
+            fields.push(DiagnosticField::new("intent_field", DiagnosticValue::plain(field)));
+        }
+        if !finding.related().is_empty() {
+            fields.push(DiagnosticField::new(
+                "related_resources",
+                DiagnosticValue::plain(
+                    finding
+                        .related()
+                        .iter()
+                        .map(|resource| format!("{}:{}", resource_kind_name(resource.kind()), resource.name()))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+            ));
+        }
+        if let Some(occurrence) = finding.occurrence() {
+            fields.push(DiagnosticField::new(
+                "occurrence",
+                DiagnosticValue::plain(occurrence.to_string()),
+            ));
+        }
+        if let Some(count) = finding.count() {
+            fields.push(DiagnosticField::new("count", DiagnosticValue::plain(count.to_string())));
+        }
+
+        let mut native = NativeFinding::new(
+            "podman",
+            "podman-lens",
+            finding.code().as_str(),
+            "planning",
+            Severity::Error,
+            finding.message(),
+        );
+        let mut diagnostic = Diagnostic::new(
+            self.exporter.codes.planning.clone(),
+            Severity::Error,
+            "PodmanLens could not map, plan, or render deployment intent",
+        );
+        for field in fields {
+            native = native.with_field(field.clone());
+            diagnostic = diagnostic.with_field(field);
+        }
+        self.diagnostics.push(diagnostic.with_native_finding(native));
+        if let Ok(outcome) =
+            ConversionOutcome::loss(subject, ConversionKind::Invalid, self.exporter.codes.planning.clone())
+        {
+            self.outcomes.push(outcome);
+        }
+        self.intent = None;
+    }
+
+    fn native_rendering_error(&mut self, finding: &RenderingFinding) {
+        let subject = finding.subject().map_or_else(
+            || "deployment.render".to_owned(),
+            |resource| format!("{}.{}", resource_kind_name(resource.kind()), resource.name()),
+        );
+        let mut fields = vec![DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone()))];
+        if let Some(resource) = finding.subject() {
+            fields.push(DiagnosticField::new(
+                "resource_kind",
+                DiagnosticValue::plain(resource_kind_name(resource.kind())),
+            ));
+            fields.push(DiagnosticField::new(
+                "resource_name",
+                DiagnosticValue::plain(resource.name()),
+            ));
+        }
+        if let Some(field) = finding.field() {
+            fields.push(DiagnosticField::new("intent_field", DiagnosticValue::plain(field)));
+        }
+
+        let mut native = NativeFinding::new(
+            "podman",
+            "podman-lens",
+            finding.code().as_str(),
+            "rendering",
+            Severity::Error,
+            finding.message(),
+        );
+        let mut diagnostic = Diagnostic::new(
+            self.exporter.codes.planning.clone(),
+            Severity::Error,
+            "PodmanLens could not map, plan, or render deployment intent",
+        );
+        for field in fields {
+            native = native.with_field(field.clone());
+            diagnostic = diagnostic.with_field(field);
+        }
+        self.diagnostics.push(diagnostic.with_native_finding(native));
+        if let Ok(outcome) =
+            ConversionOutcome::loss(subject, ConversionKind::Invalid, self.exporter.codes.planning.clone())
+        {
+            self.outcomes.push(outcome);
+        }
+        self.intent = None;
+    }
+}
+
+const fn resource_kind_name(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Container => "container",
+        ResourceKind::Pod => "pod",
+        ResourceKind::Network => "network",
+        ResourceKind::Volume => "volume",
+        ResourceKind::Image => "image",
+        ResourceKind::Secret => "secret",
+        _ => "resource",
     }
 }
 

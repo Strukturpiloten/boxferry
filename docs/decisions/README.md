@@ -28,6 +28,8 @@ active table; superseded records are history and are read only when that history
 | [0033](0033-universal-neutral-model-pipeline.md)                      | Universal neutral pipeline and nonexecuting Podman-first direction           |
 | [0034](0034-podman-lens-adapter-boundary.md)                          | PodmanLens adapter and inert output boundary                                 |
 | [0035](0035-explicit-podman-command-artifact.md)                      | Explicit Podman command artifact and safety contract                         |
+| [0036](0036-local-podman-cli-discovery-and-selectors.md)              | Deterministic local Podman CLI discovery and exact selectors                 |
+| [0037](0037-finite-podman-input-and-live-conformance.md)              | Finite legacy Podman input, diagnostic snapshots, and live conformance       |
 
 ## Superseded history
 

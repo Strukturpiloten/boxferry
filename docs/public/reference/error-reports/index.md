@@ -34,9 +34,29 @@ Protected values, environment values, command arguments, metadata-label values, 
 secret material are redacted as `<redacted>`. Additional credential-name and private-key filters
 provide defense in depth.
 
+## Podman diagnostic snapshots
+
+For a Podman input route, explicitly add redacted acquisition evidence:
+
+<!-- boxferry-example: podman-snapshot-error-report -->
+
+```console
+boxferry validate podman compose --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --loss-policy partial --generate-error-report --include-podman-snapshot --error-report-directory reports
+```
+
+`--include-podman-snapshot` requires `--generate-error-report`. It adds the redacted inventory,
+discovery graph, and value-free acquisition findings. It omits environment values, protected
+health commands, credentials, secret payloads and driver values, label values, unknown raw JSON,
+and connection endpoints.
+
+The snapshot is diagnostic serialization, not executable input, a replayable Podman inventory, or
+a PodmanLens cassette. Resource names, image references, IDs, and topology can still be
+operationally sensitive. The report's redaction count measures redaction markers and deliberately
+omitted values across serialized snapshot entries; it is not a count of distinct source secrets.
+
 ## Before sharing
 
-The bundle always declares `review_required: true`. Open both entries and remove anything you do
+The bundle always declares `review_required: true`. Open every entry and remove anything you do
 not want to publish. BoxFerry reduces exposure; it cannot guarantee that every context value is
 safe to share.
 

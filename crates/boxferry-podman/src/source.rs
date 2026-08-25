@@ -1,7 +1,7 @@
 //! Explicit already-acquired Podman source boundary.
 
 use boxferry_model::Identifier;
-use podman_lens::{ResourceGraph, ResourceInventory};
+use podman_lens::{CapabilityCatalogueEntry, ResourceGraph, ResourceInventory};
 
 /// Explicit authorization for promoting effective runtime observations into desired intent.
 ///
@@ -86,6 +86,51 @@ impl PodmanSource {
     #[must_use]
     pub const fn graph(&self) -> &ResourceGraph {
         &self.graph
+    }
+
+    /// Returns the exact Podman Engine version observed before acquisition started.
+    ///
+    /// This is source evidence only. In particular, an input-only legacy runtime is never
+    /// treated as a Podman deployment target; exporters still require a separate explicit
+    /// [`crate::ResolvedPodmanTarget`].
+    #[must_use]
+    pub fn observed_engine_version(&self) -> &str {
+        self.inventory.service().engine_version().original()
+    }
+
+    /// Returns the exact Libpod API version used for acquisition.
+    ///
+    /// This is source evidence only and must not be inferred as an output target.
+    #[must_use]
+    pub fn observed_api_version(&self) -> &str {
+        self.inventory.service().api_version().original()
+    }
+
+    /// Returns the immutable input capability evidence for the observed service.
+    ///
+    /// The returned entry may be input-only. Callers must select a separate explicit target
+    /// profile before planning Podman output.
+    #[must_use]
+    pub fn input_capability(&self) -> &CapabilityCatalogueEntry {
+        self.inventory.service().input_capability()
+    }
+
+    /// Returns an always-redacted, serialization-only inventory snapshot.
+    ///
+    /// The snapshot omits environment values, secrets, connection details, label values and raw
+    /// unknown JSON. It is diagnostic evidence, not a supported Podman input format.
+    #[must_use]
+    pub fn redacted_inventory_snapshot(&self) -> podman_lens::snapshot::v1::InventorySnapshot {
+        podman_lens::snapshot::v1::inventory(&self.inventory)
+    }
+
+    /// Returns an always-redacted, serialization-only discovery-graph snapshot.
+    ///
+    /// The snapshot is intended for an opt-in support bundle and cannot be used to recreate a
+    /// live inventory or select an output target.
+    #[must_use]
+    pub fn redacted_graph_snapshot(&self) -> podman_lens::snapshot::v1::GraphSnapshot {
+        podman_lens::snapshot::v1::graph(&self.graph)
     }
 
     /// Replaces the conservative effective-observation promotion policy.
