@@ -1423,8 +1423,12 @@ remove_runtime_canaries() {
     names+=(healthy unhealthy)
   fi
   for name in "${names[@]}"; do
-    podman_socket "${socket}" kill "${current_prefix}-${name}" > /dev/null
-    podman_socket "${socket}" rm --force "${current_prefix}-${name}" > /dev/null
+    if ((current_podman_major >= 4)); then
+      podman_socket "${socket}" rm --force --time 0 "${current_prefix}-${name}" > /dev/null
+    else
+      podman_socket "${socket}" kill "${current_prefix}-${name}" > /dev/null
+      podman_socket "${socket}" rm --force "${current_prefix}-${name}" > /dev/null
+    fi
   done
 }
 
