@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.7.1...boxferry-v0.8.0) - 2026-08-24
+
+### Added
+
+- [**breaking**] rename Podman command artifact ([#62](https://github.com/Strukturpiloten/boxferry/pull/62))
+
 ### Changed
 
 - [**breaking**] Rename the generated Podman command artifact from `review.sh` to
