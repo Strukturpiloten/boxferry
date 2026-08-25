@@ -508,7 +508,8 @@ activate_outer_runtime() {
 }
 
 create_workloads() {
-  local outer=$1 prefix=$2 scope=${3:-full} socket_directory=$4 deadline=5m
+  local outer=$1 prefix=$2 scope=${3:-full} socket_directory=$4
+  local include_canaries=${5:-true} deadline=5m
   if [[ "${scope}" == minimal ]]; then
     deadline=2m
   fi
@@ -518,6 +519,7 @@ create_workloads() {
     timeout --signal=TERM --kill-after=30s "${deadline}" \
     "${engine}" exec --env "BF_PREFIX=${prefix}" \
     --env "BF_WORKLOAD_IMAGE=${workload_local_tag}" --env "BF_WORKLOAD_SCOPE=${scope}" \
+    --env "BF_INCLUDE_CANARIES=${include_canaries}" \
     "${outer}" /bin/sh -ceu '
     image="${BF_WORKLOAD_IMAGE}"
     portable_image="registry.example.invalid/boxferry/${BF_PREFIX}:1"
@@ -551,10 +553,13 @@ create_workloads() {
       --env BOXFERRY_LIVE_MODE=small "${portable_image}" sleep 3600
     nested_pass
     if [ "${BF_WORKLOAD_SCOPE}" = minimal ]; then
-      nested_begin "create minimal running and stopped runtime canaries"
-      podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-        --network none --volume /boxferry-socket:/boxferry-control:ro "${portable_image}" \
-        sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
+      if [ "${BF_INCLUDE_CANARIES}" = true ]; then
+        nested_begin "create minimal running runtime canary"
+        podman run -d --name "${BF_PREFIX}-running" ${run_label} \
+          --network none "${portable_image}" sleep 3600
+        nested_pass
+      fi
+      nested_begin "create minimal stopped runtime evidence"
       podman create --name "${BF_PREFIX}-stopped" ${run_label} \
         --network "${BF_PREFIX}-small-net" "${portable_image}" true
       nested_pass
@@ -611,9 +616,10 @@ create_workloads() {
     # Lifecycle and topology are deliberately separate from the main application.  They make
     # observation richer without making a successful route depend on a particular runtime field.
     nested_begin "create runtime-state and pod topology"
-    podman run -d --name "${BF_PREFIX}-running" ${run_label} \
-      --network none --volume /boxferry-socket:/boxferry-control:ro "${portable_image}" \
-      sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
+    if [ "${BF_INCLUDE_CANARIES}" = true ]; then
+      podman run -d --name "${BF_PREFIX}-running" ${run_label} \
+        --network none "${portable_image}" sleep 3600
+    fi
     podman create --name "${BF_PREFIX}-stopped" ${run_label} \
       --network "${BF_PREFIX}-small-net" "${portable_image}" true
     if [ "${major}" -ge 4 ]; then
@@ -643,16 +649,14 @@ create_workloads() {
         --cap-drop ALL "${portable_image}" sleep 3600
     fi
     nested_pass
-    if [ "${major}" -ge 4 ]; then
+    if [ "${major}" -ge 4 ] && [ "${BF_INCLUDE_CANARIES}" = true ]; then
       nested_begin "create and verify health-state evidence"
       podman run -d --name "${BF_PREFIX}-healthy" ${run_label} \
-        --network none --volume /boxferry-socket:/boxferry-control:ro \
-        --health-cmd /bin/true --health-interval 1h --health-retries 1 "${portable_image}" \
-        sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
+        --network none --health-cmd /bin/true --health-interval 1h --health-retries 1 \
+        "${portable_image}" sleep 3600
       podman run -d --name "${BF_PREFIX}-unhealthy" ${run_label} \
-        --network none --volume /boxferry-socket:/boxferry-control:ro \
-        --health-cmd /bin/false --health-interval 1h --health-retries 1 "${portable_image}" \
-        sh -ceu "while [ ! -e /boxferry-control/finish-runtime ]; do sleep 1; done"
+        --network none --health-cmd /bin/false --health-interval 1h --health-retries 1 \
+        "${portable_image}" sleep 3600
       podman healthcheck run "${BF_PREFIX}-healthy"
       podman healthcheck run "${BF_PREFIX}-unhealthy" || true
       healthy="$(podman inspect --format "{{.State.Health.Status}}" "${BF_PREFIX}-healthy")"
@@ -814,7 +818,7 @@ start_outer_runtime() {
 start_outer() {
   local id=$1 image=$2 mode=$3 socket_directory=$4 prefix=$5
   start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
-  create_workloads "${started_outer}" "${prefix}" full "${socket_directory}"
+  create_workloads "${started_outer}" "${prefix}" full "${socket_directory}" false
   activate_outer_runtime "${socket_directory}"
 }
 
@@ -1422,18 +1426,24 @@ podman_socket() {
   fi
 }
 
-finish_runtime_canaries() {
-  local socket_directory=$1 scope=$2
-  local -a names=("${current_prefix}-running")
-  if [[ "${scope}" == full && "${current_podman_major}" -ge 4 ]]; then
-    names+=("${current_prefix}-healthy" "${current_prefix}-unhealthy")
-  fi
-  : > "${socket_directory}/finish-runtime"
-  engine_operation 'wait for runtime canaries to exit and remove them' \
-    exec "${started_outer}" sh -ceu \
-    "for name do podman wait \"\${name}\" > /dev/null; podman rm \"\${name}\" > /dev/null; done" \
-    sh "${names[@]}"
-  rm -f -- "${socket_directory}/finish-runtime"
+start_clean_acquisition_outer() {
+  local id=$1 image=$2 mode=$3 socket_directory=$4 scope=$5
+  engine_operation 'remove runtime-observation outer container' \
+    rm --force --ignore -- "${started_outer}" > /dev/null
+  rm -f -- "${socket_directory}/podman.sock" "${socket_directory}/bootstrap.log" \
+    "${socket_directory}/runtime-evidence.tsv" "${socket_directory}/runtime-evidence.ready" \
+    "${socket_directory}/start-api"
+  start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
+  create_workloads "${started_outer}" "${current_prefix}" "${scope}" "${socket_directory}" false
+  current_selected_container_id="$(
+    podman_socket "${socket_directory}/podman.sock" inspect --format '{{.Id}}' \
+      "${current_prefix}-small-web"
+  )"
+  [[ -n "${current_selected_container_id}" ]] || {
+    printf 'Could not resolve selected container ID before acquisition started.\n' >&2
+    return 1
+  }
+  activate_outer_runtime "${socket_directory}"
 }
 
 assert_runtime_scenarios() {
@@ -1817,15 +1827,8 @@ run_cell() {
   else
     assert_runtime_scenarios "${socket}" "$(awk '{print $3}' "${artifact_root}/${id}.podman-version")"
   fi
-  current_selected_container_id="$(
-    podman_socket "${socket}" inspect --format '{{.Id}}' "${current_prefix}-small-web"
-  )"
-  [[ -n "${current_selected_container_id}" ]] || {
-    printf 'Could not resolve selected container ID before acquisition started.\n' >&2
-    return 1
-  }
-  finish_runtime_canaries "${socket_directory}" "${workload_scope}"
-  activate_outer_runtime "${socket_directory}"
+  start_clean_acquisition_outer "${id}" "${image}" "${mode}" \
+    "${socket_directory}" "${workload_scope}"
   progress_pass
 
   local selection output
