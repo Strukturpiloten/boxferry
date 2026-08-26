@@ -5,6 +5,26 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Changed
+
+- [**breaking**] Upgrade PodmanLens to 0.2.1, separate finite Podman 3.0.1–6.1 input capability
+  evidence from the 5.4.0–6.1.0 output catalogue, add rootless-first local socket discovery,
+  optional application-name inference, literal prefix selectors, causal diagnostics, and
+  opt-in always-redacted Podman support snapshots. Empty user overrides and ID-derived hostnames no
+  longer become authored intent, while Podman planning/rendering failures retain their exact
+  resource and field context ([#65](https://github.com/Strukturpiloten/boxferry/issues/65)).
+- Add digest-pinned live Podman conformance for all 48 rootful/rootless container images, covering
+  real workloads, selectors, all exporters, re-imports, fault responses, and redaction without a
+  nightly schedule. Pull requests build BoxFerry once, then run a deadline-bounded nine-cell
+  compatibility matrix with timestamped operation progress and one representative live socket
+  discovery check. External apply targets are isolated per source cell. Five published
+  UBI/openSUSE rootless images report a verified helper-privilege limitation instead of overstating
+  live-resource coverage ([#65](https://github.com/Strukturpiloten/boxferry/issues/65)).
+
+### Fixed
+
+- Restrict newly created support-report directories and archives to the invoking user.
+
 ## [0.8.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.7.1...boxferry-v0.8.0) - 2026-08-24
 
 ### Added

@@ -6,6 +6,9 @@
   [ADR 0027](0027-format-neutral-native-findings.md),
   [ADR 0032](0032-future-native-lens-boundaries.md), and
   [ADR 0033](0033-universal-neutral-model-pipeline.md)
+- Amended by: [ADR 0035](0035-explicit-podman-command-artifact.md),
+  [ADR 0036](0036-local-podman-cli-discovery-and-selectors.md), and
+  [ADR 0037](0037-finite-podman-input-and-live-conformance.md)
 
 ## Context
 
@@ -17,14 +20,14 @@ silently become portable intent, target behavior could depend on the development
 machine, and a review artifact could be mistaken for either an observed Podman
 inventory or an executable deployment facility.
 
-PodmanLens 0.1.1 exposes explicit read-only acquisition, resource discovery,
+PodmanLens 0.2.1 exposes explicit read-only acquisition, resource discovery,
 typed observation origins and states, semantic deployment planning, and
 deterministic rendering. It does not choose BoxFerry mappings, execute rendered
 operations, or provide a supported deserializer for an inventory snapshot.
 
 ## Decision
 
-1. `boxferry-podman` depends on the crates.io release `podman-lens` 0.1.1.
+1. `boxferry-podman` depends on the crates.io release `podman-lens` 0.2.1.
    PodmanLens owns Libpod protocol decoding, read-only transport, resource
    inventory and graph types, native version evidence, deployment planning, and
    deterministic Podman rendering. BoxFerry owns application selection,

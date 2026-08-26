@@ -37,8 +37,8 @@ format_axis! {
     /// Native input formats accepted by the document conversion CLI.
     pub(crate) enum InputType {
         Compose => "compose",
-        Quadlet => "quadlet",
         Podman => "podman",
+        Quadlet => "quadlet",
     }
 }
 
@@ -46,8 +46,8 @@ format_axis! {
     /// Native output formats accepted by the document conversion CLI.
     pub(crate) enum OutputType {
         Compose => "compose",
-        Quadlet => "quadlet",
         Podman => "podman",
+        Quadlet => "quadlet",
     }
 }
 

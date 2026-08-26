@@ -314,11 +314,20 @@ fn generic_convert_handles_a_large_repository_owned_offline_scenario() -> Result
 
 #[test]
 fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() -> Result<(), Box<dyn Error>> {
+    assert_verbose_capabilities_include_concise_summaries()?;
+    assert_human_conversion_output_includes_concise_summary()?;
+    Ok(())
+}
+
+fn assert_verbose_capabilities_include_concise_summaries() -> Result<(), Box<dyn Error>> {
     let capabilities = boxferry_command().args(["capabilities", "--verbose"]).output()?;
     assert!(capabilities.status.success());
     let capabilities_stdout = String::from_utf8(capabilities.stdout)?;
     assert!(capabilities_stdout.contains("fidelity:"));
     assert!(capabilities_stdout.contains("fidelity boundary:"));
+    assert!(capabilities_stdout.contains("Podman input capabilities:"));
+    assert!(capabilities_stdout.contains("3.0: 3.0.1 <= Podman < 3.0.2"));
+    assert!(capabilities_stdout.contains("Podman output targets: 5.4.0"));
     let capabilities_json = boxferry_command()
         .args(["capabilities", "--console-format", "json"])
         .output()?;
@@ -327,6 +336,19 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
     let capabilities_json: serde_json::Value = serde_json::from_slice(&capabilities_json.stdout)?;
     let routes = capabilities_json["routes"].as_array().ok_or("routes")?;
     assert_eq!(routes.len(), 9);
+    let podman_inputs = capabilities_json["podman"]["input_capabilities"]
+        .as_array()
+        .ok_or("Podman input capabilities")?;
+    assert!(
+        podman_inputs
+            .iter()
+            .any(|capability| { capability["podman_minor_line"] == "3.0" && capability["output_supported"] == false })
+    );
+    let podman_outputs = capabilities_json["podman"]["output_targets"]
+        .as_array()
+        .ok_or("Podman output targets")?;
+    assert!(podman_outputs.iter().all(|version| version != "3.0.1"));
+    assert_eq!(podman_outputs.last(), Some(&serde_json::json!("6.1.0")));
     let compose_to_compose = routes
         .iter()
         .find(|route| route["input_type"] == "compose" && route["output_type"] == "compose")
@@ -379,6 +401,10 @@ fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() 
         serde_json::json!(["unmodelled-fields", "incomplete-secret-grants"])
     );
 
+    Ok(())
+}
+
+fn assert_human_conversion_output_includes_concise_summary() -> Result<(), Box<dyn Error>> {
     let project = TemporaryOutput::new("human-conversion-summary");
     let output = TemporaryOutput::new("human-conversion-summary-output");
     fs::create_dir_all(project.path())?;
@@ -1579,25 +1605,63 @@ fn assert_filesystem_metavariables_are_specific(help: &str) {
     assert!(!help.contains("<PROJECT_DIRECTORY>"));
 }
 
+fn assert_format_subcommands_are_alphabetical(help: &str) {
+    let formats = help
+        .lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|name| matches!(*name, "compose" | "podman" | "quadlet"))
+        .collect::<Vec<_>>();
+    assert_eq!(formats, ["compose", "podman", "quadlet"]);
+}
+
 #[test]
 fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error>> {
+    assert_every_route_has_sorted_contextual_help()?;
+    assert_route_specific_help_contracts()?;
+    Ok(())
+}
+
+fn assert_every_route_has_sorted_contextual_help() -> Result<(), Box<dyn Error>> {
+    for workflow in ["convert", "validate"] {
+        for input in ["compose", "podman", "quadlet"] {
+            for output in ["compose", "podman", "quadlet"] {
+                let arguments = [workflow, input, output, "--help"];
+                let result = boxferry_command().args(arguments).output()?;
+                assert!(result.status.success(), "{arguments:?}");
+                assert!(result.stderr.is_empty(), "{arguments:?}");
+            }
+        }
+    }
+
     for arguments in [
         ["convert", "--help"].as_slice(),
         ["convert", "compose", "--help"].as_slice(),
-        ["convert", "compose", "compose", "--help"].as_slice(),
-        ["convert", "compose", "quadlet", "--help"].as_slice(),
-        ["convert", "quadlet", "compose", "--help"].as_slice(),
-        ["convert", "quadlet", "quadlet", "--help"].as_slice(),
-        ["validate", "compose", "compose", "--help"].as_slice(),
-        ["validate", "compose", "quadlet", "--help"].as_slice(),
-        ["validate", "quadlet", "compose", "--help"].as_slice(),
-        ["validate", "quadlet", "quadlet", "--help"].as_slice(),
     ] {
         let result = boxferry_command().args(arguments).output()?;
         assert!(result.status.success(), "{arguments:?}");
         assert!(result.stderr.is_empty(), "{arguments:?}");
     }
 
+    for arguments in [
+        ["convert", "--help"].as_slice(),
+        ["validate", "--help"].as_slice(),
+        ["convert", "compose", "--help"].as_slice(),
+        ["convert", "podman", "--help"].as_slice(),
+        ["convert", "quadlet", "--help"].as_slice(),
+        ["validate", "compose", "--help"].as_slice(),
+        ["validate", "podman", "--help"].as_slice(),
+        ["validate", "quadlet", "--help"].as_slice(),
+    ] {
+        let result = boxferry_command().args(arguments).output()?;
+        assert!(result.status.success(), "{arguments:?}");
+        assert_format_subcommands_are_alphabetical(&String::from_utf8(result.stdout)?);
+    }
+
+    Ok(())
+}
+
+fn assert_route_specific_help_contracts() -> Result<(), Box<dyn Error>> {
     let compose_quadlet = boxferry_command()
         .args(["convert", "compose", "quadlet", "--help"])
         .output()?;
@@ -1646,22 +1710,23 @@ fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error
     assert!(!quadlet_compose.contains("--podman-minimum-version"));
     assert!(!quadlet_compose.contains("Output destination:"));
 
-    for (input, output, heading) in [
-        ("compose", "compose", "Compose output:"),
-        ("compose", "quadlet", "Quadlet output:"),
-        ("quadlet", "compose", "Compose output:"),
-        ("quadlet", "quadlet", "Quadlet output:"),
-    ] {
-        let help = boxferry_command().args(["convert", input, output, "--help"]).output()?;
-        let help = String::from_utf8(help.stdout)?;
-        let heading = help.find(heading).ok_or("output heading")?;
-        let destination = heading
-            + help[heading..]
-                .find("--output-directory <DIR>")
-                .ok_or("output directory")?;
-        let policy = help.find("Conversion policy:").ok_or("conversion policy")?;
-        assert!(heading < destination && destination < policy, "{input} -> {output}");
-        assert!(!help.contains("Output destination:"), "{input} -> {output}");
+    for input in ["compose", "podman", "quadlet"] {
+        for (output, output_heading) in [
+            ("compose", "Compose output:"),
+            ("podman", "Podman output:"),
+            ("quadlet", "Quadlet output:"),
+        ] {
+            let help = boxferry_command().args(["convert", input, output, "--help"]).output()?;
+            let help = String::from_utf8(help.stdout)?;
+            let heading = help.find(output_heading).ok_or("output heading")?;
+            let destination = heading
+                + help[heading..]
+                    .find("--output-directory <DIR>")
+                    .ok_or("output directory")?;
+            let policy = help.find("Conversion policy:").ok_or("conversion policy")?;
+            assert!(heading < destination && destination < policy, "{input} -> {output}");
+            assert!(!help.contains("Output destination:"), "{input} -> {output}");
+        }
     }
 
     let contextual = boxferry_command()
@@ -1678,6 +1743,110 @@ fn route_help_is_nested_grouped_and_route_specific() -> Result<(), Box<dyn Error
             .output()?;
         assert_eq!(rejected.status.code(), Some(2));
         assert!(String::from_utf8_lossy(&rejected.stderr).contains("unexpected argument"));
+    }
+    Ok(())
+}
+
+#[test]
+fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Box<dyn Error>> {
+    let help = boxferry_command()
+        .args(["validate", "podman", "quadlet", "--help"])
+        .output()?;
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout)?;
+    assert!(help.contains("Podman input:"));
+    assert!(help.contains("--podman-socket <PATH>"));
+    assert!(help.contains("--application-name <APPLICATION_NAME>"));
+    assert!(help.contains("--podman-resource <KIND=REFERENCE>"));
+    assert!(help.contains("--podman-resource-prefix <KIND=PREFIX>"));
+    for kind in ["container", "image", "network", "pod", "secret", "volume"] {
+        assert!(help.contains(kind), "missing Podman resource kind {kind}");
+    }
+    let headings = [
+        "Podman input:",
+        "Quadlet output:",
+        "Conversion policy:",
+        "Diagnostics and reports:",
+    ];
+    let positions = headings
+        .iter()
+        .map(|heading| help.find(heading).ok_or(*heading))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    let podman_option_order = [
+        "--podman-socket <PATH>",
+        "--podman-all",
+        "--podman-resource <KIND=REFERENCE>",
+        "--podman-resource-prefix <KIND=PREFIX>",
+        "--podman-label <NAME[=VALUE]>",
+        "--application-name <APPLICATION_NAME>",
+        "--podman-network-boundary <NAME_OR_ID>",
+        "--promote-podman-effective-named-volumes",
+        "--promote-podman-effective-named-networks",
+        "--include-podman-snapshot",
+    ];
+    let podman_input_help = &help[positions[0]..positions[1]];
+    let podman_option_positions = podman_option_order
+        .iter()
+        .map(|option| podman_input_help.find(option).ok_or(*option))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert!(podman_option_positions.windows(2).all(|pair| pair[0] < pair[1]));
+
+    let missing_selector = boxferry_command().args(["validate", "podman", "quadlet"]).output()?;
+    assert_eq!(missing_selector.status.code(), Some(2));
+    let error = String::from_utf8(missing_selector.stderr)?;
+    assert!(error.contains("--podman-all"));
+    assert!(error.contains("--podman-resource"));
+    assert!(error.contains("--podman-resource-prefix"));
+    assert!(error.contains("--podman-label"));
+    assert!(!error.contains("--podman-socket is required"));
+    assert!(!error.contains("--application-name is required"));
+
+    let omitted_socket_and_name = boxferry_command()
+        .args([
+            "validate",
+            "podman",
+            "quadlet",
+            "--podman-resource",
+            "container=web",
+            "--podman-socket",
+            "/definitely-not-a-podman-socket",
+        ])
+        .output()?;
+    assert_eq!(omitted_socket_and_name.status.code(), Some(1));
+    let error = String::from_utf8(omitted_socket_and_name.stderr)?;
+    assert!(error.contains("BFP0001 podman-source-invalid"), "{error}");
+    assert!(!error.contains("--application-name is required"), "{error}");
+
+    let invalid_prefix = boxferry_command()
+        .args([
+            "validate",
+            "podman",
+            "quadlet",
+            "--podman-resource-prefix",
+            "container=web-*",
+        ])
+        .output()?;
+    assert_eq!(invalid_prefix.status.code(), Some(2));
+    let error = String::from_utf8(invalid_prefix.stderr)?;
+    assert!(error.contains("literal name prefix"), "{error}");
+
+    for arguments in [
+        vec!["--podman-resource", "container=web*"],
+        vec!["--podman-resource", "container=web name"],
+        vec!["--podman-label", "team*"],
+        vec!["--podman-all", "--podman-network-boundary", "private*"],
+    ] {
+        let result = boxferry_command()
+            .args(["validate", "podman", "quadlet"])
+            .args(arguments)
+            .output()?;
+        assert_eq!(result.status.code(), Some(2));
+        let error = String::from_utf8(result.stderr)?;
+        assert!(
+            !error.contains("BFP0001"),
+            "selector syntax must fail before socket discovery: {error}"
+        );
     }
     Ok(())
 }
@@ -2717,6 +2886,43 @@ fn report_file_is_attempted_before_the_support_bundle() -> Result<(), Box<dyn Er
 }
 
 #[test]
+fn report_redaction_summary_is_stable_across_every_serialization_target() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
+    let directory = TemporaryOutput::new("support-bundle-redaction-stability");
+    fs::create_dir_all(directory.path())?;
+    let report_file = directory.path().join("standalone-report.json");
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "compose",
+            "quadlet",
+            "--input-file",
+            path_text(&fixture)?,
+            "--loss-policy",
+            "partial",
+            "--report-file",
+            path_text(&report_file)?,
+            "--generate-error-report",
+            "--error-report-directory",
+            path_text(directory.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let console: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    let standalone: serde_json::Value = serde_json::from_slice(&fs::read(&report_file)?)?;
+    let mut archive = ZipArchive::new(Cursor::new(fs::read(generated_error_report(directory.path())?)?))?;
+    let mut entry = archive.by_name("report.json")?;
+    let mut bundled = String::new();
+    std::io::Read::read_to_string(&mut entry, &mut bundled)?;
+    let bundled: serde_json::Value = serde_json::from_str(&bundled)?;
+    assert_eq!(console["redaction"], standalone["redaction"]);
+    assert_eq!(standalone["redaction"], bundled["redaction"]);
+    Ok(())
+}
+
+#[test]
 fn report_write_failure_preserves_a_primary_failure_category_and_stage() -> Result<(), Box<dyn Error>> {
     let project = TemporaryOutput::new("report-primary-failure");
     let report = TemporaryOutput::new("report-primary-existing");
@@ -2752,6 +2958,41 @@ fn report_write_failure_preserves_a_primary_failure_category_and_stage() -> Resu
         value["diagnostics"]
             .as_array()
             .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO3001"))
+    );
+    Ok(())
+}
+
+#[test]
+fn support_bundle_write_failure_preserves_the_original_conversion_failure() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("support-primary-failure");
+    let unusable_directory = TemporaryOutput::new("support-primary-file");
+    fs::create_dir_all(project.path())?;
+    fs::write(project.path().join("compose.yaml"), "services: [broken\n")?;
+    fs::write(unusable_directory.path(), "not a directory")?;
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "compose",
+            "quadlet",
+            "--input-file",
+            path_text(&project.path().join("compose.yaml"))?,
+            "--generate-error-report",
+            "--error-report-directory",
+            path_text(unusable_directory.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(result.status.code(), Some(1));
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(value["failed_stage"], "compose-merge");
+    assert_ne!(value["primary_diagnostic_code"], "BFO3002");
+    assert_eq!(value["fix_first"]["code"], value["primary_diagnostic_code"]);
+    assert_ne!(value["exit_category"], "report-write");
+    assert!(
+        value["diagnostics"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO3002"))
     );
     Ok(())
 }
@@ -2835,6 +3076,31 @@ fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentati
                 .all(|entry| entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")))
         );
     }
+    Ok(())
+}
+
+#[test]
+fn support_bundle_creates_an_explicit_missing_leaf_directory() -> Result<(), Box<dyn Error>> {
+    let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
+    let directory = TemporaryOutput::new("support-bundle-new-directory");
+    assert!(!directory.path().exists());
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "compose",
+            "quadlet",
+            "--input-file",
+            path_text(&fixture)?,
+            "--loss-policy",
+            "partial",
+            "--generate-error-report",
+            "--error-report-directory",
+            path_text(directory.path())?,
+        ])
+        .output()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert!(directory.path().is_dir());
+    assert!(generated_error_report(directory.path())?.is_file());
     Ok(())
 }
 

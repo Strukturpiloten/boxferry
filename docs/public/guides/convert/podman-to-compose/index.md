@@ -5,8 +5,9 @@ acquisition is read-only; the generated Compose document describes portable desi
 
 ## Prerequisites
 
-- One explicit Unix socket and application name.
-- At least one resource or label selector, or `--podman-all`.
+- Read-only input configured as described in [Podman input](../../podman-input/). A conventional
+  local socket and neutral application name are derived unless you override them.
+- At least one exact, prefix, or label selector, or `--podman-all`.
 - A decision about whether effective named volumes and networks are portable desired state.
 
 See [Podman input](../../podman-input/) before selecting a shared production environment.

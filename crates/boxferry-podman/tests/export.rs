@@ -4,7 +4,8 @@ use std::error::Error;
 
 use boxferry_engine::{ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
 use boxferry_model::{
-    Application, Identifier, ImageReference, ProtectedString, ResourceOwnership, Service, ServiceGroup, Sourced,
+    Application, Identifier, ImageReference, Network, NetworkAttachment, ProtectedString, ResourceOwnership, Service,
+    ServiceGroup, Sourced,
 };
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanTargetError, resolve_podman_target, reviewed_podman_versions,
@@ -237,6 +238,71 @@ fn sensitive_or_malformed_tmpfs_destination_fails_without_leaking() -> Result<()
             .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.code().as_str() == "BFP0008")
+    );
+    Ok(())
+}
+
+#[test]
+fn invalid_network_alias_reports_its_exact_mapping_subject() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(Identifier::new("alias-test")?);
+    application.add_network(Sourced::generated(Network::new(
+        Identifier::new("frontend")?,
+        ResourceOwnership::Application,
+    )))?;
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.add_network(Sourced::generated(NetworkAttachment::new(
+        Identifier::new("frontend")?,
+        vec![Sourced::generated(ProtectedString::plain("a".repeat(254)))],
+    )));
+    application.add_service(Sourced::generated(service))?;
+
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    assert!(plan.candidate().is_none());
+    let diagnostic = plan
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code().as_str() == "BFP0008")
+        .ok_or("missing Podman mapping diagnostic")?;
+    assert!(
+        diagnostic.fields().iter().any(|field| {
+            field.name() == "subject" && field.value().expose() == "services.web.networks[0].aliases[0]"
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn local_image_portability_failure_reports_resource_and_field() -> Result<(), Box<dyn Error>> {
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("localhost/example:1")?));
+    let mut application = Application::new(Identifier::new("local-image-test")?);
+    application.add_service(Sourced::generated(service))?;
+
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    assert!(plan.candidate().is_none());
+    let finding = plan
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic
+                .native_finding()
+                .is_some_and(|finding| finding.code() == "PLN0048")
+        })
+        .ok_or("missing local image portability diagnostic")?;
+    assert!(
+        finding
+            .fields()
+            .iter()
+            .any(|field| { field.name() == "resource_name" && field.value().expose() == "web-image" })
+    );
+    assert!(
+        finding
+            .fields()
+            .iter()
+            .any(|field| { field.name() == "intent_field" && field.value().expose() == "source.portability" })
     );
     Ok(())
 }

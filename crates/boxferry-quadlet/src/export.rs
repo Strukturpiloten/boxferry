@@ -341,6 +341,7 @@ struct Mapping<'a> {
     diagnostics: Vec<Diagnostic>,
     next_source_id: u32,
     generation_failed: bool,
+    consumed_group: Option<String>,
 }
 
 struct PodPlan {
@@ -350,6 +351,16 @@ struct PodPlan {
     consumed_group: Option<String>,
     approximation: &'static str,
     runtime: Option<Sourced<ServiceGroupRuntime>>,
+}
+
+/// A native resource reference after its lifecycle ownership has been resolved.
+///
+/// `Uncertain` resources have a known native name but no safe lifecycle claim. They can be
+/// referenced by a generated service as external resources, but that is an approximation rather
+/// than an exact managed-unit dependency.
+struct ResolvedResourceSource {
+    value: String,
+    approximation: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -370,6 +381,7 @@ impl<'a> Mapping<'a> {
             diagnostics: Vec::new(),
             next_source_id: 1,
             generation_failed: false,
+            consumed_group: None,
         }
     }
 
@@ -481,6 +493,7 @@ impl<'a> Mapping<'a> {
                 Some(plan)
             }
         };
+        self.consumed_group = pod_plan.as_ref().and_then(|plan| plan.consumed_group.clone());
         for group in self.application.service_groups() {
             if pod_plan.as_ref().and_then(|plan| plan.consumed_group.as_deref()) != Some(group.value().name().as_str())
             {
@@ -873,10 +886,22 @@ impl<'a> Mapping<'a> {
                 self.map_network_settings(&subject, network.value(), &mut builder);
                 self.finish_document(file_name, &builder, &subject, network.origins());
             }
-            ResourceOwnership::External => self.exact(subject, network.origins()),
+            ResourceOwnership::External if self.network_is_referenced(network.value().name().as_str()) => {
+                self.exact(subject, network.origins());
+            }
+            ResourceOwnership::External => self.unsupported(
+                &subject,
+                "an unreferenced external network has no standalone Quadlet representation",
+                network.origins(),
+            ),
             ResourceOwnership::Implicit => self.unsupported(
                 &subject,
                 "implicit source network lifecycle cannot yet be reproduced safely",
+                network.origins(),
+            ),
+            ResourceOwnership::Uncertain => self.approximate(
+                &subject,
+                "network lifecycle ownership is uncertain; no managed .network unit was generated",
                 network.origins(),
             ),
             _ => self.unsupported(&subject, "unknown network ownership", network.origins()),
@@ -1114,10 +1139,22 @@ impl<'a> Mapping<'a> {
                 self.map_volume_settings(&mut builder, volume, &subject);
                 self.finish_document(file_name, &builder, &subject, volume.origins());
             }
-            ResourceOwnership::External => self.exact(subject, volume.origins()),
+            ResourceOwnership::External if self.volume_is_referenced(volume.value().name().as_str()) => {
+                self.exact(subject, volume.origins());
+            }
+            ResourceOwnership::External => self.unsupported(
+                &subject,
+                "an unreferenced external volume has no standalone Quadlet representation",
+                volume.origins(),
+            ),
             ResourceOwnership::Implicit => self.unsupported(
                 &subject,
                 "implicit source volume lifecycle cannot yet be reproduced safely",
+                volume.origins(),
+            ),
+            ResourceOwnership::Uncertain => self.approximate(
+                &subject,
+                "volume lifecycle ownership is uncertain; no managed .volume unit was generated",
                 volume.origins(),
             ),
             _ => self.unsupported(&subject, "unknown volume ownership", volume.origins()),
@@ -1355,6 +1392,43 @@ impl<'a> Mapping<'a> {
             "Quadlet has no native configuration-resource lifecycle; create and mount this config through an explicit target policy",
             config.origins(),
         );
+    }
+
+    fn network_is_referenced(&self, name: &str) -> bool {
+        self.application.services().iter().any(|service| {
+            service
+                .value()
+                .networks()
+                .iter()
+                .any(|attachment| attachment.value().network().as_str() == name)
+        }) || self.application.service_groups().iter().any(|group| {
+            self.consumed_group.as_deref() == Some(group.value().name().as_str())
+                && group
+                    .value()
+                    .runtime()
+                    .and_then(|runtime| runtime.value().networks())
+                    .is_some_and(|networks| {
+                        networks
+                            .iter()
+                            .any(|attachment| attachment.value().network().as_str() == name)
+                    })
+        })
+    }
+
+    fn volume_is_referenced(&self, name: &str) -> bool {
+        let uses_volume = |mount: &Sourced<Mount>| matches!(mount.value().source(), MountSource::Volume(volume) if volume.as_str() == name);
+        self.application
+            .services()
+            .iter()
+            .any(|service| service.value().mounts().iter().any(&uses_volume))
+            || self.application.service_groups().iter().any(|group| {
+                self.consumed_group.as_deref() == Some(group.value().name().as_str())
+                    && group
+                        .value()
+                        .runtime()
+                        .and_then(|runtime| runtime.value().mounts())
+                        .is_some_and(|mounts| mounts.iter().any(&uses_volume))
+            })
     }
 
     fn map_service_group(&mut self, group: &Sourced<boxferry_model::ServiceGroup>) {
@@ -4137,69 +4211,13 @@ impl<'a> Mapping<'a> {
             );
             return;
         }
-        let source = match mount.value().source() {
-            MountSource::Volume(name) => self.volume_source(&subject, name.as_str(), mount.origins()),
-            MountSource::HostPath(path) => {
-                if let Some(mapped) = self.exporter.bind_source_mappings.get(path) {
-                    Some(mapped.clone())
-                } else {
-                    match classify_path(path) {
-                        PathForm::AbsoluteLiteral | PathForm::SystemdSpecifier if is_safe_mount_part(path) => {
-                            Some(path.clone())
-                        }
-                        PathForm::UnitRelativeLiteral => {
-                            if let Some(root) = self.exporter.relative_bind_root.as_deref() {
-                                if let Some(resolved) = resolve_relative_path(root, path) {
-                                    Some(resolved)
-                                } else {
-                                    self.unsupported(
-                                        &subject,
-                                        "relative bind source traverses above the filesystem root",
-                                        mount.origins(),
-                                    );
-                                    None
-                                }
-                            } else {
-                                self.unsupported(
-                                    &subject,
-                                    "relative bind source needs an explicit Compose project root",
-                                    mount.origins(),
-                                );
-                                None
-                            }
-                        }
-                        PathForm::RelativeLiteral => {
-                            self.unsupported(
-                                &subject,
-                                "relative bind form needs an explicit source-to-target mapping",
-                                mount.origins(),
-                            );
-                            None
-                        }
-                        _ => {
-                            self.unsupported(
-                                &subject,
-                                "bind source needs an explicit source-to-target mapping for Quadlet",
-                                mount.origins(),
-                            );
-                            None
-                        }
-                    }
-                }
-            }
-            MountSource::Anonymous => Some(String::new()),
-            _ => {
-                self.unsupported(&subject, "unknown mount source", mount.origins());
-                None
-            }
-        };
-        let Some(source) = source else {
+        let Some(source) = self.mount_source(&subject, mount) else {
             return;
         };
-        let mut encoded = if source.is_empty() {
+        let mut encoded = if source.value.is_empty() {
             mount.value().target().to_owned()
         } else {
-            format!("{source}:{}", mount.value().target())
+            format!("{}:{}", source.value, mount.value().target())
         };
         let mut options = Vec::new();
         if mount.value().read_only() {
@@ -4221,7 +4239,78 @@ impl<'a> Mapping<'a> {
         if self.capability("quadlet.container.volume", &subject, mount.origins())
             && self.push_container(builder, ContainerKey::Volume, encoded, &subject, mount.origins())
         {
-            self.exact(subject, mount.origins());
+            self.record_reference_outcome(&subject, source.approximation, mount.origins());
+        }
+    }
+
+    fn mount_source(&mut self, subject: &str, mount: &Sourced<Mount>) -> Option<ResolvedResourceSource> {
+        match mount.value().source() {
+            MountSource::Volume(name) => self.volume_source(subject, name.as_str(), mount.origins()),
+            MountSource::HostPath(path) => {
+                if let Some(mapped) = self.exporter.bind_source_mappings.get(path) {
+                    Some(ResolvedResourceSource {
+                        value: mapped.clone(),
+                        approximation: None,
+                    })
+                } else {
+                    match classify_path(path) {
+                        PathForm::AbsoluteLiteral | PathForm::SystemdSpecifier if is_safe_mount_part(path) => {
+                            Some(ResolvedResourceSource {
+                                value: path.clone(),
+                                approximation: None,
+                            })
+                        }
+                        PathForm::UnitRelativeLiteral => {
+                            if let Some(root) = self.exporter.relative_bind_root.as_deref() {
+                                if let Some(resolved) = resolve_relative_path(root, path) {
+                                    Some(ResolvedResourceSource {
+                                        value: resolved,
+                                        approximation: None,
+                                    })
+                                } else {
+                                    self.unsupported(
+                                        subject,
+                                        "relative bind source traverses above the filesystem root",
+                                        mount.origins(),
+                                    );
+                                    None
+                                }
+                            } else {
+                                self.unsupported(
+                                    subject,
+                                    "relative bind source needs an explicit Compose project root",
+                                    mount.origins(),
+                                );
+                                None
+                            }
+                        }
+                        PathForm::RelativeLiteral => {
+                            self.unsupported(
+                                subject,
+                                "relative bind form needs an explicit source-to-target mapping",
+                                mount.origins(),
+                            );
+                            None
+                        }
+                        _ => {
+                            self.unsupported(
+                                subject,
+                                "bind source needs an explicit source-to-target mapping for Quadlet",
+                                mount.origins(),
+                            );
+                            None
+                        }
+                    }
+                }
+            }
+            MountSource::Anonymous => Some(ResolvedResourceSource {
+                value: String::new(),
+                approximation: None,
+            }),
+            _ => {
+                self.unsupported(subject, "unknown mount source", mount.origins());
+                None
+            }
         }
     }
 
@@ -4236,9 +4325,15 @@ impl<'a> Mapping<'a> {
         let source = self.network_source(&subject, name, network.origins());
         if let Some(source) = source {
             if self.capability("quadlet.container.network", &subject, network.origins())
-                && self.push_container(builder, ContainerKey::Network, source, &subject, network.origins())
+                && self.push_container(
+                    builder,
+                    ContainerKey::Network,
+                    source.value,
+                    &subject,
+                    network.origins(),
+                )
             {
-                self.exact(&subject, network.origins());
+                self.record_reference_outcome(&subject, source.approximation, network.origins());
             }
         }
     }
@@ -4251,17 +4346,17 @@ impl<'a> Mapping<'a> {
         builder: &mut QuadletDocumentBuilder,
     ) {
         let subject = format!("{group_subject}.runtime.mounts[{index}]");
-        let Some(encoded) = self.encode_pod_mount(&subject, mount) else {
+        let Some((encoded, approximation)) = self.encode_pod_mount(&subject, mount) else {
             return;
         };
         if self.capability("quadlet.pod.volume", &subject, mount.origins())
             && self.push_pod(builder, PodKey::Volume, encoded, &subject, mount.origins())
         {
-            self.exact(subject, mount.origins());
+            self.record_reference_outcome(&subject, approximation, mount.origins());
         }
     }
 
-    fn encode_pod_mount(&mut self, subject: &str, mount: &Sourced<Mount>) -> Option<String> {
+    fn encode_pod_mount(&mut self, subject: &str, mount: &Sourced<Mount>) -> Option<(String, Option<&'static str>)> {
         if !is_safe_mount_part(mount.value().target()) || !mount.value().target().starts_with('/') {
             self.unsupported(
                 subject,
@@ -4274,13 +4369,19 @@ impl<'a> Mapping<'a> {
             MountSource::Volume(name) => self.volume_source(subject, name.as_str(), mount.origins()),
             MountSource::HostPath(path) => {
                 if let Some(mapped) = self.exporter.bind_source_mappings.get(path) {
-                    Some(mapped.clone())
+                    Some(ResolvedResourceSource {
+                        value: mapped.clone(),
+                        approximation: None,
+                    })
                 } else if matches!(
                     classify_path(path),
                     PathForm::AbsoluteLiteral | PathForm::SystemdSpecifier
                 ) && is_safe_mount_part(path)
                 {
-                    Some(path.clone())
+                    Some(ResolvedResourceSource {
+                        value: path.clone(),
+                        approximation: None,
+                    })
                 } else {
                     self.unsupported(
                         subject,
@@ -4290,16 +4391,20 @@ impl<'a> Mapping<'a> {
                     None
                 }
             }
-            MountSource::Anonymous => Some(String::new()),
+            MountSource::Anonymous => Some(ResolvedResourceSource {
+                value: String::new(),
+                approximation: None,
+            }),
             _ => {
                 self.unsupported(subject, "unknown pod mount source", mount.origins());
                 None
             }
         }?;
-        let mut encoded = if source.is_empty() {
+        let approximation = source.approximation;
+        let mut encoded = if source.value.is_empty() {
             mount.value().target().to_owned()
         } else {
-            format!("{source}:{}", mount.value().target())
+            format!("{}:{}", source.value, mount.value().target())
         };
         let mut options = Vec::new();
         if mount.value().read_only() {
@@ -4318,7 +4423,7 @@ impl<'a> Mapping<'a> {
             encoded.push(':');
             encoded.push_str(&options.join(","));
         }
-        Some(encoded)
+        Some((encoded, approximation))
     }
 
     fn map_pod_network_attachment(
@@ -4331,16 +4436,19 @@ impl<'a> Mapping<'a> {
         let source = self.network_source(&subject, name, network.origins());
         if let Some(source) = source {
             if self.capability("quadlet.pod.network", &subject, network.origins())
-                && self.push_pod(builder, PodKey::Network, source, &subject, network.origins())
+                && self.push_pod(builder, PodKey::Network, source.value, &subject, network.origins())
             {
-                self.exact(subject, network.origins());
+                self.record_reference_outcome(&subject, source.approximation, network.origins());
             }
         }
     }
 
-    fn network_source(&mut self, subject: &str, name: &str, origins: &[Provenance]) -> Option<String> {
+    fn network_source(&mut self, subject: &str, name: &str, origins: &[Provenance]) -> Option<ResolvedResourceSource> {
         if name == "host" {
-            return Some(name.to_owned());
+            return Some(ResolvedResourceSource {
+                value: name.to_owned(),
+                approximation: None,
+            });
         }
         if !is_native_atom(name) {
             self.unsupported(subject, "network name requires target-specific escaping", origins);
@@ -4352,8 +4460,20 @@ impl<'a> Mapping<'a> {
             .iter()
             .find(|network| network.value().name().as_str() == name);
         match declaration.map(|network| network.value().ownership()) {
-            Some(ResourceOwnership::Application) => Some(format!("{name}.network")),
-            Some(ResourceOwnership::External) => Some(name.to_owned()),
+            Some(ResourceOwnership::Application) => Some(ResolvedResourceSource {
+                value: format!("{name}.network"),
+                approximation: None,
+            }),
+            Some(ResourceOwnership::External) => Some(ResolvedResourceSource {
+                value: name.to_owned(),
+                approximation: None,
+            }),
+            Some(ResourceOwnership::Uncertain) => Some(ResolvedResourceSource {
+                value: name.to_owned(),
+                approximation: Some(
+                    "network lifecycle ownership is uncertain; retained the known native name as an external reference",
+                ),
+            }),
             Some(ResourceOwnership::Implicit) | None => {
                 self.unsupported(subject, "implicit network cannot yet be reproduced safely", origins);
                 None
@@ -4365,7 +4485,7 @@ impl<'a> Mapping<'a> {
         }
     }
 
-    fn volume_source(&mut self, subject: &str, name: &str, origins: &[Provenance]) -> Option<String> {
+    fn volume_source(&mut self, subject: &str, name: &str, origins: &[Provenance]) -> Option<ResolvedResourceSource> {
         if !is_native_atom(name) {
             self.unsupported(subject, "volume name requires target-specific escaping", origins);
             return None;
@@ -4376,8 +4496,20 @@ impl<'a> Mapping<'a> {
             .iter()
             .find(|volume| volume.value().name().as_str() == name);
         match declaration.map(|volume| volume.value().ownership()) {
-            Some(ResourceOwnership::Application) => Some(format!("{name}.volume")),
-            Some(ResourceOwnership::External) => Some(name.to_owned()),
+            Some(ResourceOwnership::Application) => Some(ResolvedResourceSource {
+                value: format!("{name}.volume"),
+                approximation: None,
+            }),
+            Some(ResourceOwnership::External) => Some(ResolvedResourceSource {
+                value: name.to_owned(),
+                approximation: None,
+            }),
+            Some(ResourceOwnership::Uncertain) => Some(ResolvedResourceSource {
+                value: name.to_owned(),
+                approximation: Some(
+                    "volume lifecycle ownership is uncertain; retained the known native name as an external reference",
+                ),
+            }),
             Some(ResourceOwnership::Implicit) | None => {
                 self.unsupported(subject, "implicit volume cannot yet be reproduced safely", origins);
                 None
@@ -4386,6 +4518,14 @@ impl<'a> Mapping<'a> {
                 self.unsupported(subject, "unknown volume ownership", origins);
                 None
             }
+        }
+    }
+
+    fn record_reference_outcome(&mut self, subject: &str, approximation: Option<&str>, origins: &[Provenance]) {
+        if let Some(reason) = approximation {
+            self.approximate(subject, reason, origins);
+        } else {
+            self.exact(subject, origins);
         }
     }
 

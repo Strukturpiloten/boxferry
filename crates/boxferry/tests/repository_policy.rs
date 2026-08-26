@@ -51,6 +51,286 @@ fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), Strin
 }
 
 #[test]
+fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> Result<(), String> {
+    let root = repository_root();
+    let runner = fs::read_to_string(root.join("scripts/podman-live-conformance.sh"))
+        .map_err(|error| format!("failed to read live Podman runner: {error}"))?;
+    let matrix = fs::read_to_string(root.join("fixtures/conformance/podman-live/matrix.tsv"))
+        .map_err(|error| format!("failed to read live Podman matrix: {error}"))?;
+    let scenarios = fs::read_to_string(root.join("fixtures/conformance/podman-live/scenarios.tsv"))
+        .map_err(|error| format!("failed to read live Podman scenarios: {error}"))?;
+    let hosted = fs::read_to_string(root.join(".github/workflows/podman-live-conformance.yml"))
+        .map_err(|error| format!("failed to read hosted Podman workflow: {error}"))?;
+    let limitations = fs::read_to_string(root.join("fixtures/conformance/podman-live/limitations.tsv"))
+        .map_err(|error| format!("failed to read live Podman limitations: {error}"))?;
+    validate_live_matrix(&matrix, &limitations)?;
+    validate_live_scenarios(&scenarios)?;
+    validate_live_runner(&runner)?;
+    validate_live_workflow(&hosted)
+}
+
+fn validate_live_matrix(matrix: &str, limitations: &str) -> Result<(), String> {
+    let rows = matrix
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    if rows.len() != 48 {
+        return Err(format!(
+            "live Podman matrix must contain 48 cells, found {}",
+            rows.len()
+        ));
+    }
+    let mut matrix_ids = BTreeSet::new();
+    for row in &rows {
+        if row.len() != 7 {
+            return Err(format!("live Podman matrix row must have seven fields: {row:?}"));
+        }
+        if !matrix_ids.insert(row[0]) {
+            return Err(format!("live Podman matrix cell ID is duplicated: {}", row[0]));
+        }
+        let image = row[1];
+        let Some((_, digest)) = image.rsplit_once("@sha256:") else {
+            return Err(format!("live Podman image is not digest pinned: {image}"));
+        };
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(format!("live Podman image has an invalid SHA-256 digest: {image}"));
+        }
+        if row[6] != "amd64" {
+            return Err(format!("live Podman matrix architecture is not reviewed: {}", row[6]));
+        }
+        if !matches!(row[4], "rootful" | "rootless") {
+            return Err(format!("live Podman matrix root mode is not reviewed: {}", row[4]));
+        }
+        if row[5] != "container" {
+            return Err(format!("live Podman matrix lane is not reviewed: {}", row[5]));
+        }
+    }
+    let container_rows = rows.iter().filter(|row| row[5] == "container").count();
+    if container_rows != 48 {
+        return Err(format!(
+            "live Podman matrix must contain 48 container cells, found {container_rows}"
+        ));
+    }
+    let limitation_rows = limitations
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    if limitation_rows.len() != 5 {
+        return Err(format!(
+            "live Podman limitation catalogue must contain five cells, found {}",
+            limitation_rows.len()
+        ));
+    }
+    let mut limited_ids = BTreeSet::new();
+    for row in &limitation_rows {
+        if row.len() != 2 || row[1] != "helper-privilege-collision" {
+            return Err(format!("invalid live Podman limitation row: {row:?}"));
+        }
+        if !limited_ids.insert(row[0]) {
+            return Err(format!("live Podman limitation is duplicated: {}", row[0]));
+        }
+        let matrix_row = rows
+            .iter()
+            .find(|matrix_row| matrix_row[0] == row[0])
+            .ok_or_else(|| format!("limited Podman cell is absent from the matrix: {}", row[0]))?;
+        if matrix_row[4] != "rootless" || matrix_row[5] != "container" {
+            return Err(format!(
+                "limited Podman cell must remain a rootless container row: {}",
+                row[0]
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
+    let scenario_rows = scenarios
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    if scenario_rows.len() != 26 {
+        return Err(format!(
+            "live Podman scenario catalogue must contain twenty-six cases, found {}",
+            scenario_rows.len()
+        ));
+    }
+    let scenario_ids = scenario_rows
+        .iter()
+        .map(|row| {
+            if row.len() == 5 {
+                Ok(row[0])
+            } else {
+                Err(format!("live Podman scenario row must have five fields: {row:?}"))
+            }
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    for required in [
+        "exact-small",
+        "prefix-large",
+        "label-large",
+        "all-resources",
+        "network-boundary",
+        "invalid-literal-glob",
+        "socket-discovery",
+        "compose-reimports",
+        "quadlet-reimports",
+        "neutral-projection-equivalence",
+        "deterministic-exact-compose",
+        "strict-policy-blocks",
+        "stopped-and-running",
+        "healthy-and-unhealthy",
+        "pod-members-and-standalone",
+        "image-identities",
+        "network-boundaries",
+        "mount-matrix",
+        "environment-matrix",
+        "runtime-policy-matrix",
+        "secret-conditional",
+        "protected-redaction-support-bundle",
+        "malformed-selected-container",
+        "disappeared-selected-container",
+        "partial-inventory-section",
+        "external-apply-reacquire",
+    ] {
+        if !scenario_ids.contains(required) {
+            return Err(format!("live Podman scenario catalogue is missing {required}"));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_live_runner(runner: &str) -> Result<(), String> {
+    for required in [
+        "--podman-resource-prefix",
+        "--podman-label",
+        "--podman-all",
+        "--matrix-start-at",
+        "network-boundary",
+        "run_invalid_glob",
+        "run_reimports",
+        "run_external_apply_reacquire",
+        "run_discovery",
+        "should_run_discovery",
+        "run_limited_cell",
+        "helper-privilege-collision",
+        "resource_coverage",
+        "coverage_level=smoke",
+        "local -a selections=(exact)",
+        "TEST %d/%d START",
+        "TEST %d/%d PASS",
+        "is_smoke_diagnostics_cell",
+        "engine_image_available",
+        "engine_operation 'read outer Podman version'",
+        "start_clean_acquisition_outer",
+        "runtime-canaries.log",
+        ">> \"${canary_log}\" 2>&1 < /dev/null",
+        "exec > /boxferry-socket/bootstrap.log 2>&1",
+        "selected-container-id",
+        "smoke-baseline.json",
+        "remove previous apply target",
+        "timed_operation 5m 'pull digest-pinned workload image'",
+        "podman load --input /boxferry-workload.tar",
+        "--privileged",
+        "--device /dev/fuse",
+        "image inspect --format '{{.Digest}}'",
+        "cap_setuid=ep",
+        "cap_setgid=ep",
+    ] {
+        if !runner.contains(required) {
+            return Err(format!("live Podman runner is missing `{required}`"));
+        }
+    }
+    for forbidden in [
+        "/var/run/docker.sock",
+        "/run/podman/podman.sock",
+        "--volume ${repository_root}",
+    ] {
+        if runner.contains(forbidden) {
+            return Err(format!("live Podman runner must not expose `{forbidden}` to an image"));
+        }
+    }
+    for apply_target_contract in [
+        "'$1 == \"podman-6.1-rootful\" { print; exit }'",
+        "\"${id}\" == podman-6.1-rootful",
+        "\"${declared_version}\" == 6.1.0",
+    ] {
+        if !runner.contains(apply_target_contract) {
+            return Err(format!(
+                "live Podman runner must pin its external apply target: `{apply_target_contract}`"
+            ));
+        }
+    }
+    for default_network_contract in [
+        "current_default_podman_network_present",
+        "podman_socket \"${socket}\" network ls --format json",
+        "default Podman network absent from live inventory; default-network ownership diagnostic is inapplicable",
+    ] {
+        if !runner.contains(default_network_contract) {
+            return Err(format!(
+                "live Podman runner must make its default-network Quadlet assertion inventory-aware: `{default_network_contract}`"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_live_workflow(hosted: &str) -> Result<(), String> {
+    let required = "sudo env BOXFERRY_BIN=\"${BOXFERRY_BIN}\" bash scripts/podman-live-conformance.sh --profile \"${PROFILE}\" --matrix-cell \"${MATRIX_CELL}\" --engine podman";
+    if !hosted.contains(required) {
+        return Err(format!(
+            "live Podman workflow must invoke the checked-in runner: `{required}`"
+        ));
+    }
+    if hosted.contains("schedule:") {
+        return Err("live Podman workflow must not schedule nightly runs".to_owned());
+    }
+    if !hosted.contains("pull_request:") || !hosted.contains("workflow_dispatch:") {
+        return Err("hosted live Podman workflow must provide PR smoke and manual execution".to_owned());
+    }
+    for required in [
+        "build-boxferry:",
+        "needs: [matrix, build-boxferry]",
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+        "chmod +x target/debug/boxferry",
+    ] {
+        if !hosted.contains(required) {
+            return Err(format!("hosted live Podman workflow is missing `{required}`"));
+        }
+    }
+    for smoke in [
+        "podman-5.4-rootless",
+        "podman-6.1-rootful",
+        "podman-6.1-rootless",
+        "podman-debian-11-rootful",
+        "podman-debian-11-rootless",
+        "podman-debian-12-rootful",
+        "podman-ubi-8-rootful",
+        "podman-ubuntu-22.04-rootless",
+        "podman-ubuntu-24.04-rootless",
+    ] {
+        if !hosted.contains(&format!("$1 == \"{smoke}\"")) {
+            return Err(format!(
+                "hosted live Podman workflow smoke selection is missing {smoke}"
+            ));
+        }
+    }
+    if !hosted.contains("$6 == \"container\"") {
+        return Err("hosted full Podman workflow must select every matrix container row".to_owned());
+    }
+    if !hosted.contains("sudo apt-get install --yes libcap2-bin podman") {
+        return Err("hosted Podman workflow must install the capability inspection tool".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
 fn vscode_workspace_configuration_covers_local_development() -> Result<(), String> {
     let root = repository_root();
     for (path, required) in [
