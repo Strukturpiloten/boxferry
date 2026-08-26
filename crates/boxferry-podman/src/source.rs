@@ -11,6 +11,7 @@ use podman_lens::{CapabilityCatalogueEntry, ResourceGraph, ResourceInventory};
 pub struct PodmanPromotionPolicy {
     effective_named_volume_mounts: bool,
     effective_named_networks: bool,
+    portable_effective_settings: bool,
 }
 
 impl PodmanPromotionPolicy {
@@ -20,6 +21,7 @@ impl PodmanPromotionPolicy {
         Self {
             effective_named_volume_mounts: false,
             effective_named_networks: false,
+            portable_effective_settings: false,
         }
     }
 
@@ -37,6 +39,13 @@ impl PodmanPromotionPolicy {
         self
     }
 
+    /// Authorizes or rejects the reviewed portable effective-settings subset.
+    #[must_use]
+    pub const fn with_portable_effective_settings(mut self, enabled: bool) -> Self {
+        self.portable_effective_settings = enabled;
+        self
+    }
+
     /// Returns whether portable effective named-volume mounts may be promoted.
     #[must_use]
     pub const fn promotes_effective_named_volume_mounts(self) -> bool {
@@ -47,6 +56,12 @@ impl PodmanPromotionPolicy {
     #[must_use]
     pub const fn promotes_effective_named_networks(self) -> bool {
         self.effective_named_networks
+    }
+
+    /// Returns whether reviewed portable effective settings may be promoted.
+    #[must_use]
+    pub const fn promotes_portable_effective_settings(self) -> bool {
+        self.portable_effective_settings
     }
 }
 /// One explicit Podman import source after caller-owned acquisition and discovery.

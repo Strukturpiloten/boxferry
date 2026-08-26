@@ -7,17 +7,24 @@ use boxferry_engine::{
     ImportResult, InvalidDiagnosticCode, NativeFinding, Severity,
 };
 use boxferry_model::{
-    Application, Command, Entrypoint, Identifier, ImageReference, MetadataLabel, ModelError, Mount, MountSource,
-    Network, NetworkAttachment as NeutralNetworkAttachment, ProtectedString, Provenance, ResourceOwnership, Secret,
-    Service, ServiceDependency, ServiceGroup, SourceId, Sourced, Volume,
+    Application, Command, Entrypoint, EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand,
+    HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference, MetadataLabel, ModelError, Mount, MountSource,
+    Network, NetworkAttachment as NeutralNetworkAttachment, Port, ProtectedString, Protocol, Provenance,
+    ResourceOwnership, RestartPolicy, Secret, Service, ServiceDependency, ServiceGroup, SourceId, Sourced, Volume,
 };
 use podman_lens::{
     ContainerMountKind, ContainerMountObservation, ContainerMountSource, ContainerObservation,
-    ContainerSecretGrantObservation, NativeNamespaceMode, NativeNetworkingObservation, ObservationField,
-    ObservationOrigin, ResourceDetails, ResourceIdentity, ResourceKind, ResourceObservation, ResourceObservationState,
+    ContainerSecretGrantObservation, NativeHealthCheckObservation, NativeHealthCommand, NativeNamespaceMode,
+    NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol, NativeRestartPolicyName,
+    NativeRestartPolicyObservation, ObservationField, ObservationOrigin, ProtectedEnvironment,
+    ProtectedEnvironmentValue, ResourceDetails, ResourceIdentity, ResourceKind, ResourceObservation,
+    ResourceObservationState,
 };
 
 use crate::PodmanSource;
+
+const PORTABLE_EFFECTIVE_SETTINGS_FLAG: &str = "--promote-podman-portable-effective-settings";
+const COMPOSE_LIFECYCLE_LABEL_PREFIX: &str = "com.docker.compose.";
 
 /// PodmanLens-to-neutral-model semantic importer.
 #[derive(Clone, Debug)]
@@ -282,27 +289,15 @@ impl<'a> Mapping<'a> {
         self.map_mounts(&subject, details, &mut service);
         self.map_container_networks(&subject, details, &mut service);
         self.map_dependencies(&subject, details, &mut service);
-        self.observation_only(
-            &format!("{subject}.environment"),
-            details.environment(),
-            "protected environment values require caller authorization",
-        );
+        self.map_portable_environment(&subject, details.environment(), &mut service);
         self.report_secret_grants(&format!("{subject}.secret_grants"), details.secret_grants());
         self.observation_only(
             &format!("{subject}.memory_swappiness"),
             details.memory_swappiness(),
             "configured memory swappiness has no neutral field",
         );
-        self.observation_only(
-            &format!("{subject}.restart_policy"),
-            details.restart_policy(),
-            "effective restart policy needs explicit promotion policy",
-        );
-        self.observation_only(
-            &format!("{subject}.healthcheck"),
-            details.health_check(),
-            "effective health configuration needs explicit promotion policy",
-        );
+        self.map_portable_restart_policy(&subject, details.restart_policy(), &mut service);
+        self.map_portable_healthcheck(&subject, details.health_check(), &mut service);
         self.observation_only(
             &format!("{subject}.health_failure_action"),
             details.health_failure_action(),
@@ -337,6 +332,269 @@ impl<'a> Mapping<'a> {
         self.exact(&subject);
         if let Err(error) = application.add_service(self.sourced(service)) {
             self.model_error(subject, &error);
+        }
+    }
+
+    fn map_portable_environment(
+        &mut self,
+        subject: &str,
+        field: &ObservationField<ProtectedEnvironment>,
+        service: &mut Service,
+    ) {
+        let field_subject = format!("{subject}.environment");
+        let authorized = self.source.promotion_policy().promotes_portable_effective_settings();
+        let Some((environment, promoted)) = self.portable_setting(
+            field,
+            &field_subject,
+            authorized,
+            "protected environment values require caller authorization",
+        ) else {
+            return;
+        };
+
+        let mut retained = 0_usize;
+        for entry in environment.entries() {
+            let entry_subject = format!("{field_subject}.{}", entry.name());
+            let Ok(name) = Identifier::new(entry.name()) else {
+                self.unsupported(
+                    &entry_subject,
+                    "environment name cannot be represented in the neutral model",
+                );
+                continue;
+            };
+            let ProtectedEnvironmentValue::AuthorizedOpaque(value) = entry.value() else {
+                self.unsupported(
+                    &entry_subject,
+                    "environment value remained redacted during acquisition and cannot be promoted",
+                );
+                continue;
+            };
+            let variable = value.expose(|value| {
+                EnvironmentVariable::new(name, EnvironmentValue::Literal(ProtectedString::sensitive(value)))
+            });
+            service.add_environment(if promoted {
+                self.decision_sourced(variable)
+            } else {
+                self.sourced(variable)
+            });
+            retained += 1;
+        }
+
+        if promoted && retained > 0 {
+            self.approximate_with_flag(
+                field_subject,
+                "effective environment values were explicitly promoted as protected portable intent",
+                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+            );
+        }
+    }
+
+    fn map_portable_restart_policy(
+        &mut self,
+        subject: &str,
+        field: &ObservationField<NativeRestartPolicyObservation>,
+        service: &mut Service,
+    ) {
+        let field_subject = format!("{subject}.restart_policy");
+        let authorized = self.source.promotion_policy().promotes_portable_effective_settings();
+        let Some((restart, promoted)) = self.portable_setting(
+            field,
+            &field_subject,
+            authorized,
+            "effective restart policy needs explicit promotion policy",
+        ) else {
+            return;
+        };
+        let Some((name, _)) = self.portable_setting(
+            restart.name(),
+            &format!("{field_subject}.name"),
+            authorized,
+            "effective restart policy name needs explicit promotion policy",
+        ) else {
+            return;
+        };
+        let retry_count = self
+            .portable_setting(
+                restart.maximum_retry_count(),
+                &format!("{field_subject}.maximum_retry_count"),
+                authorized,
+                "effective restart retry count needs explicit promotion policy",
+            )
+            .map(|(value, _)| *value);
+        let policy = match name {
+            NativeRestartPolicyName::No => RestartPolicy::Never,
+            NativeRestartPolicyName::Always => RestartPolicy::Always,
+            NativeRestartPolicyName::OnFailure => {
+                RestartPolicy::on_failure(retry_count.and_then(std::num::NonZeroU64::new))
+            }
+            NativeRestartPolicyName::UnlessStopped => RestartPolicy::UnlessStopped,
+            _ => {
+                self.unsupported(
+                    &field_subject,
+                    "native restart policy is not reviewed for neutral promotion",
+                );
+                return;
+            }
+        };
+        service.set_restart_policy(if promoted {
+            self.decision_sourced(policy)
+        } else {
+            self.sourced(policy)
+        });
+        if promoted {
+            self.approximate_with_flag(
+                field_subject,
+                "effective restart policy was explicitly promoted as portable intent",
+                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+            );
+        }
+    }
+
+    fn map_portable_healthcheck(
+        &mut self,
+        subject: &str,
+        field: &ObservationField<NativeHealthCheckObservation>,
+        service: &mut Service,
+    ) {
+        let field_subject = format!("{subject}.healthcheck");
+        let authorized = self.source.promotion_policy().promotes_portable_effective_settings();
+        let Some((native, promoted)) = self.portable_setting(
+            field,
+            &field_subject,
+            authorized,
+            "effective health configuration needs explicit promotion policy",
+        ) else {
+            return;
+        };
+        let mut healthcheck = Healthcheck::new();
+        let mut retained = false;
+
+        if let Some((command, _)) = self.portable_setting(
+            native.command(),
+            &format!("{field_subject}.command"),
+            authorized,
+            "effective health command needs explicit promotion policy",
+        ) {
+            match command {
+                NativeHealthCommand::Disabled => {
+                    healthcheck.set_disabled(self.portable_sourced(true, promoted));
+                    retained = true;
+                }
+                NativeHealthCommand::Shell(command) => {
+                    let command = command.expose(|arguments| arguments.join(" "));
+                    healthcheck.set_command(
+                        self.portable_sourced(HealthcheckCommand::Shell(ProtectedString::sensitive(command)), promoted),
+                    );
+                    retained = true;
+                }
+                NativeHealthCommand::Exec(command) => {
+                    let command =
+                        command.expose(|arguments| arguments.iter().map(ProtectedString::sensitive).collect());
+                    healthcheck.set_command(self.portable_sourced(HealthcheckCommand::Exec(command), promoted));
+                    retained = true;
+                }
+                _ => {
+                    self.unsupported(
+                        format!("{field_subject}.command"),
+                        "native health command is not reviewed for neutral promotion",
+                    );
+                }
+            }
+        }
+
+        retained |= self.map_health_duration(
+            native.interval(),
+            &format!("{field_subject}.interval"),
+            authorized,
+            promoted,
+            Healthcheck::set_interval,
+            &mut healthcheck,
+        );
+        retained |= self.map_health_duration(
+            native.timeout(),
+            &format!("{field_subject}.timeout"),
+            authorized,
+            promoted,
+            Healthcheck::set_timeout,
+            &mut healthcheck,
+        );
+        retained |= self.map_health_duration(
+            native.start_period(),
+            &format!("{field_subject}.start_period"),
+            authorized,
+            promoted,
+            Healthcheck::set_start_period,
+            &mut healthcheck,
+        );
+        if let Some((retries, _)) = self.portable_setting(
+            native.retries(),
+            &format!("{field_subject}.retries"),
+            authorized,
+            "effective health retries need explicit promotion policy",
+        ) {
+            match HealthcheckRetries::new(retries.to_string()) {
+                Ok(value) => {
+                    healthcheck.set_retries(self.portable_sourced(value, promoted));
+                    retained = true;
+                }
+                Err(error) => self.model_error(format!("{field_subject}.retries"), &error),
+            }
+        }
+
+        if retained {
+            service.set_healthcheck(if promoted {
+                self.decision_sourced(healthcheck)
+            } else {
+                self.sourced(healthcheck)
+            });
+            if promoted {
+                self.approximate_with_flag(
+                    field_subject,
+                    "effective normal healthcheck was explicitly promoted as portable intent",
+                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                );
+            }
+        }
+    }
+
+    fn map_health_duration(
+        &mut self,
+        field: &ObservationField<i64>,
+        subject: &str,
+        authorized: bool,
+        promoted: bool,
+        set: impl FnOnce(&mut Healthcheck, Sourced<HealthcheckDuration>),
+        healthcheck: &mut Healthcheck,
+    ) -> bool {
+        let Some((value, _)) = self.portable_setting(
+            field,
+            subject,
+            authorized,
+            "effective health duration needs explicit promotion policy",
+        ) else {
+            return false;
+        };
+        if *value < 0 {
+            self.unsupported(subject, "negative native health duration cannot become portable intent");
+            return false;
+        }
+        match HealthcheckDuration::new(format!("{value}ns")) {
+            Ok(value) => {
+                set(healthcheck, self.portable_sourced(value, promoted));
+                true
+            }
+            Err(error) => {
+                self.model_error(subject, &error);
+                false
+            }
+        }
+    }
+
+    fn portable_sourced<T>(&self, value: T, promoted: bool) -> Sourced<T> {
+        if promoted {
+            self.decision_sourced(value)
+        } else {
+            self.sourced(value)
         }
     }
 
@@ -536,6 +794,9 @@ impl<'a> Mapping<'a> {
             return;
         };
         for (name, value) in labels {
+            if is_compose_lifecycle_label(name) {
+                continue;
+            }
             match Identifier::new(name) {
                 Ok(name) => service.add_label(self.sourced(MetadataLabel::new(name, ProtectedString::plain(value)))),
                 Err(error) => self.model_error(&labels_subject, &error),
@@ -554,6 +815,9 @@ impl<'a> Mapping<'a> {
             return;
         };
         for (name, value) in labels {
+            if is_compose_lifecycle_label(name) {
+                continue;
+            }
             match Identifier::new(name) {
                 Ok(name) => network.add_label(self.sourced(MetadataLabel::new(name, ProtectedString::plain(value)))),
                 Err(error) => self.model_error(&labels_subject, &error),
@@ -572,6 +836,9 @@ impl<'a> Mapping<'a> {
             return;
         };
         for (name, value) in labels {
+            if is_compose_lifecycle_label(name) {
+                continue;
+            }
             match Identifier::new(name) {
                 Ok(name) => volume.add_label(self.sourced(MetadataLabel::new(name, ProtectedString::plain(value)))),
                 Err(error) => self.model_error(&labels_subject, &error),
@@ -774,7 +1041,7 @@ impl<'a> Mapping<'a> {
             "native networking evidence is not promoted at this topology boundary",
         );
         if let Some(networking) = field.observed() {
-            self.report_networking_remainders(subject, networking.value());
+            self.report_networking_remainders(subject, networking.value(), false);
             self.observation_only(
                 &format!("{subject}.references"),
                 networking.value().networks(),
@@ -783,29 +1050,36 @@ impl<'a> Mapping<'a> {
         }
     }
 
-    fn report_networking_remainders(&mut self, subject: &str, networking: &NativeNetworkingObservation) {
+    fn report_networking_remainders(
+        &mut self,
+        subject: &str,
+        networking: &NativeNetworkingObservation,
+        portable_fields_handled: bool,
+    ) {
         macro_rules! report {
             ($name:literal, $field:expr, $reason:literal) => {
                 self.observation_only(&format!("{subject}.{}", $name), $field, $reason);
             };
         }
-        report!(
-            "port_bindings",
-            networking.port_bindings(),
-            "runtime port bindings require explicit authored publication intent"
-        );
-        if let Some(bindings) = networking.port_bindings().observed() {
-            for (index, binding) in bindings.value().iter().enumerate() {
-                self.observation_only(
-                    &format!("{subject}.port_bindings[{index}].host_ip"),
-                    binding.host_ip(),
-                    "runtime-assigned host IP is observation-only",
-                );
-                self.observation_only(
-                    &format!("{subject}.port_bindings[{index}].host_port"),
-                    binding.host_port(),
-                    "runtime-assigned host port is observation-only",
-                );
+        if !portable_fields_handled {
+            report!(
+                "port_bindings",
+                networking.port_bindings(),
+                "runtime port bindings require explicit authored publication intent"
+            );
+            if let Some(bindings) = networking.port_bindings().observed() {
+                for (index, binding) in bindings.value().iter().enumerate() {
+                    self.observation_only(
+                        &format!("{subject}.port_bindings[{index}].host_ip"),
+                        binding.host_ip(),
+                        "runtime-assigned host IP is observation-only",
+                    );
+                    self.observation_only(
+                        &format!("{subject}.port_bindings[{index}].host_port"),
+                        binding.host_port(),
+                        "runtime-assigned host port is observation-only",
+                    );
+                }
             }
         }
         report!(
@@ -818,21 +1092,23 @@ impl<'a> Mapping<'a> {
             networking.host_network(),
             "effective host networking requires explicit promotion"
         );
-        report!(
-            "dns_servers",
-            networking.dns_servers(),
-            "effective DNS servers require explicit promotion"
-        );
-        report!(
-            "dns_search",
-            networking.dns_search(),
-            "effective DNS search domains require explicit promotion"
-        );
-        report!(
-            "dns_options",
-            networking.dns_options(),
-            "effective DNS options require explicit promotion"
-        );
+        if !portable_fields_handled {
+            report!(
+                "dns_servers",
+                networking.dns_servers(),
+                "effective DNS servers require explicit promotion"
+            );
+            report!(
+                "dns_search",
+                networking.dns_search(),
+                "effective DNS search domains require explicit promotion"
+            );
+            report!(
+                "dns_options",
+                networking.dns_options(),
+                "effective DNS options require explicit promotion"
+            );
+        }
         report!(
             "host_entries",
             networking.host_entries(),
@@ -865,6 +1141,155 @@ impl<'a> Mapping<'a> {
         );
     }
 
+    fn map_portable_networking(
+        &mut self,
+        subject: &str,
+        networking: &NativeNetworkingObservation,
+        service: &mut Service,
+    ) {
+        let authorized = self.source.promotion_policy().promotes_portable_effective_settings();
+        self.map_portable_ports(subject, networking.port_bindings(), authorized, service);
+
+        let dns_servers_subject = format!("{subject}.dns_servers");
+        if let Some((servers, promoted)) = self.portable_setting(
+            networking.dns_servers(),
+            &dns_servers_subject,
+            authorized,
+            "effective DNS servers require explicit promotion",
+        ) {
+            let values = servers
+                .iter()
+                .map(|value| self.portable_sourced(ProtectedString::plain(value.to_string()), promoted))
+                .collect();
+            service.set_dns_servers(values);
+            if promoted {
+                self.approximate_with_flag(
+                    dns_servers_subject,
+                    "effective DNS servers were explicitly promoted as portable intent",
+                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                );
+            }
+        }
+
+        let dns_search_subject = format!("{subject}.dns_search");
+        if let Some((domains, promoted)) = self.portable_setting(
+            networking.dns_search(),
+            &dns_search_subject,
+            authorized,
+            "effective DNS search domains require explicit promotion",
+        ) {
+            let values = domains
+                .iter()
+                .map(|value| self.portable_sourced(ProtectedString::plain(value), promoted))
+                .collect();
+            service.set_dns_search_domains(values);
+            if promoted {
+                self.approximate_with_flag(
+                    dns_search_subject,
+                    "effective DNS search domains were explicitly promoted as portable intent",
+                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                );
+            }
+        }
+
+        let dns_options_subject = format!("{subject}.dns_options");
+        if let Some((options, promoted)) = self.portable_setting(
+            networking.dns_options(),
+            &dns_options_subject,
+            authorized,
+            "effective DNS options require explicit promotion",
+        ) {
+            let values = options
+                .iter()
+                .map(|value| self.portable_sourced(ProtectedString::plain(value), promoted))
+                .collect();
+            service.set_dns_options(values);
+            if promoted {
+                self.approximate_with_flag(
+                    dns_options_subject,
+                    "effective DNS options were explicitly promoted as portable intent",
+                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                );
+            }
+        }
+    }
+
+    fn map_portable_ports(
+        &mut self,
+        subject: &str,
+        field: &ObservationField<Vec<NativePortBindingObservation>>,
+        authorized: bool,
+        service: &mut Service,
+    ) {
+        let field_subject = format!("{subject}.port_bindings");
+        let Some((bindings, collection_promoted)) = self.portable_setting(
+            field,
+            &field_subject,
+            authorized,
+            "effective published ports require explicit promotion",
+        ) else {
+            return;
+        };
+        let mut promoted_any = collection_promoted;
+        for (index, binding) in bindings.iter().enumerate() {
+            let binding_subject = format!("{field_subject}[{index}]");
+            let host_port = self
+                .portable_setting(
+                    binding.host_port(),
+                    &format!("{binding_subject}.host_port"),
+                    authorized,
+                    "effective published host port requires explicit promotion",
+                )
+                .map(|(value, promoted)| (*value, promoted));
+            if binding.host_port().is_observed() && host_port.is_none() {
+                continue;
+            }
+            let host_ip = self
+                .portable_setting(
+                    binding.host_ip(),
+                    &format!("{binding_subject}.host_ip"),
+                    authorized,
+                    "effective published host address requires explicit promotion",
+                )
+                .map(|(value, promoted)| (value.to_string(), promoted));
+            if binding.host_ip().is_observed() && host_ip.is_none() {
+                continue;
+            }
+            let promoted = collection_promoted
+                || host_port.is_some_and(|(_, promoted)| promoted)
+                || host_ip.as_ref().is_some_and(|(_, promoted)| *promoted);
+            promoted_any |= promoted;
+            let protocol = match binding.protocol() {
+                NativePortProtocol::Tcp => Protocol::Tcp,
+                NativePortProtocol::Udp => Protocol::Udp,
+                NativePortProtocol::Sctp => Protocol::Sctp,
+                _ => {
+                    self.unsupported(
+                        &binding_subject,
+                        "native port protocol is not reviewed for neutral promotion",
+                    );
+                    continue;
+                }
+            };
+            match Port::new(
+                binding.container_port(),
+                host_port.map(|(value, _)| value),
+                host_ip.map(|(value, _)| value),
+                protocol,
+            ) {
+                Ok(port) => service.add_port(self.portable_sourced(port, promoted)),
+                Err(error) => self.model_error(binding_subject, &error),
+            }
+        }
+        if promoted_any {
+            self.approximate_with_flag(
+                field_subject,
+                "effective published ports were explicitly promoted as portable intent",
+                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+            );
+        }
+    }
+
     fn map_container_networks(&mut self, subject: &str, details: &ContainerObservation, service: &mut Service) {
         if details.pod_membership().is_observed() {
             self.report_networking_only(&format!("{subject}.pod_member_networking"), details.networking());
@@ -875,7 +1300,8 @@ impl<'a> Mapping<'a> {
             self.report_state(details.networking(), &field_subject);
             return;
         };
-        self.report_networking_remainders(&field_subject, networking.value());
+        self.map_portable_networking(&field_subject, networking.value(), service);
+        self.report_networking_remainders(&field_subject, networking.value(), true);
         let Some(networks) = networking.value().networks().observed() else {
             self.report_state(networking.value().networks(), &field_subject);
             return;
@@ -995,6 +1421,45 @@ impl<'a> Mapping<'a> {
             }
             _ => {
                 self.unsupported(subject, "future observation origin is not reviewed for promotion");
+                None
+            }
+        }
+    }
+
+    fn portable_setting<'b, T>(
+        &mut self,
+        field: &'b ObservationField<T>,
+        subject: &str,
+        effective_authorized: bool,
+        effective_reason: &'static str,
+    ) -> Option<(&'b T, bool)> {
+        let Some(observed) = field.observed() else {
+            self.report_state(field, subject);
+            return None;
+        };
+        match observed.origin() {
+            ObservationOrigin::Configured => {
+                self.exact(subject);
+                Some((observed.value(), false))
+            }
+            ObservationOrigin::Effective if effective_authorized => Some((observed.value(), true)),
+            ObservationOrigin::Effective => {
+                self.promotion_required_with_flag(subject, effective_reason, PORTABLE_EFFECTIVE_SETTINGS_FLAG);
+                None
+            }
+            ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
+                self.unsupported_with_origin(
+                    subject,
+                    "runtime-assigned and local-resolution observations are never promoted as portable settings",
+                    observed.origin(),
+                );
+                None
+            }
+            _ => {
+                self.unsupported(
+                    subject,
+                    "future observation origin is not reviewed for portable promotion",
+                );
                 None
             }
         }
@@ -1195,8 +1660,22 @@ impl<'a> Mapping<'a> {
 
         let graph_findings = self.source.graph().findings().to_vec();
         for finding in graph_findings {
-            self.discovery_finding(&finding);
+            if self.discovery_finding_is_relevant(&finding) {
+                self.discovery_finding(&finding);
+            }
         }
+    }
+
+    fn discovery_finding_is_relevant(&self, finding: &podman_lens::DiscoveryFinding) -> bool {
+        if matches!(
+            finding.code(),
+            podman_lens::DiagnosticCode::AdvisoryLabelIncomplete | podman_lens::DiagnosticCode::AdvisoryLabelConflict
+        ) {
+            return false;
+        }
+        finding
+            .resource_identity()
+            .is_none_or(|identity| self.selected.contains(identity))
     }
 
     fn inventory_section_is_relevant(&self, kind: ResourceKind) -> bool {
@@ -1776,6 +2255,10 @@ fn podman_native_summary(code: podman_lens::DiagnosticCode) -> &'static str {
         }
         _ => podman_lens::Diagnostic::new(code).message(),
     }
+}
+
+fn is_compose_lifecycle_label(name: &str) -> bool {
+    name.starts_with(COMPOSE_LIFECYCLE_LABEL_PREFIX)
 }
 
 const fn observation_state_name(state: ResourceObservationState) -> &'static str {
