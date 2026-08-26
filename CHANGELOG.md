@@ -19,6 +19,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 - Bound Podman support-snapshot serialization and ZIP allocation, show human progress, and retain a
   base diagnostic ZIP with `BFO3002` when optional snapshot evidence is too large
   ([#72](https://github.com/Strukturpiloten/boxferry/issues/72)).
+- Prevent live Podman resource setup from hanging on inherited container output descriptors by
+  using detached setup commands with atomic completion status and periodic progress heartbeats
+  ([#72](https://github.com/Strukturpiloten/boxferry/issues/72)).
 
 ## [0.8.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.0...boxferry-v0.8.1) - 2026-08-26
 

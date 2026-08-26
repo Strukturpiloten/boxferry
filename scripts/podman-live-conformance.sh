@@ -393,7 +393,8 @@ cleanup() {
     rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
       "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
       "${directory}/runtime-canaries.log" "${directory}/selected-container-id" \
-      "${directory}/smoke-baseline.json" "${directory}/start-api"
+      "${directory}/smoke-baseline.json" "${directory}/start-api" \
+      "${directory}/resource-setup.status" "${directory}/resource-setup.status.tmp"
     rmdir -- "${directory}" 2> /dev/null || true
   done
   if [[ "${discovery_parent_created}" == true ]]; then
@@ -497,6 +498,30 @@ wait_for_file() {
   return 1
 }
 
+wait_for_workload_completion() {
+  local status_file=$1 log_file=$2 deadline_seconds=$3
+  local elapsed=0 last_event
+  while ((elapsed < deadline_seconds)); do
+    if [[ -s "${status_file}" ]]; then
+      return 0
+    fi
+    sleep 1
+    ((elapsed += 1))
+    if ((elapsed % 15 == 0)); then
+      last_event="$(tail -n 1 -- "${log_file}" 2> /dev/null || true)"
+      if [[ -n "${last_event}" ]]; then
+        printf '%s STEP WAIT  nested resource setup (%s elapsed; last event: %s)\n' \
+          "$(timestamp)" "$(format_duration "${elapsed}")" "${last_event}" >&2
+      else
+        printf '%s STEP WAIT  nested resource setup (%s elapsed; no event logged yet)\n' \
+          "$(timestamp)" "$(format_duration "${elapsed}")" >&2
+      fi
+    fi
+  done
+  printf 'Timed out waiting for nested resource completion: %s\n' "${status_file}" >&2
+  return 1
+}
+
 activate_outer_runtime() {
   local socket_directory=$1
   rm -f -- "${socket_directory}/podman.sock"
@@ -510,15 +535,18 @@ activate_outer_runtime() {
 
 create_workloads() {
   local outer=$1 prefix=$2 scope=${3:-full} socket_directory=$4
-  local include_canaries=${5:-true} deadline=5m
+  local include_canaries=${5:-true} deadline=5m deadline_seconds=300
+  local completion_file="${socket_directory}/resource-setup.status" setup_status
   if [[ "${scope}" == minimal ]]; then
     deadline=2m
+    deadline_seconds=120
   fi
+  rm -f -- "${completion_file}" "${completion_file}.tmp"
   printf 'Live setup: create %s nested resources for %s\n' "${scope}" "${prefix}"
   # shellcheck disable=SC2016 # ${...} expands in the nested shell, not this script.
-  if ! startup_substep "create ${scope} nested resources (deadline ${deadline})" \
-    timeout --signal=TERM --kill-after=30s "${deadline}" \
-    "${engine}" exec --env "BF_PREFIX=${prefix}" \
+  if ! startup_substep "launch ${scope} nested resource setup (deadline 30s)" \
+    timeout --signal=TERM --kill-after=10s 30s \
+    "${engine}" exec --detach --env "BF_PREFIX=${prefix}" \
     --env "BF_WORKLOAD_IMAGE=${workload_local_tag}" --env "BF_WORKLOAD_SCOPE=${scope}" \
     --env "BF_INCLUDE_CANARIES=${include_canaries}" \
     "${outer}" /bin/sh -ceu '
@@ -527,11 +555,14 @@ create_workloads() {
     run_label="--label io.boxferry.live-run=${BF_PREFIX}"
     compose_labels="${run_label} --label com.docker.compose.project=${BF_PREFIX}"
     canary_log=/boxferry-socket/runtime-canaries.log
+    completion_file=/boxferry-socket/resource-setup.status
+    rm -f "${completion_file}" "${completion_file}.tmp"
     : > "${canary_log}"
-    # Rootless conmon/slirp helpers can inherit the outer `podman exec` output pipe even after
-    # detached workload commands finish.  Keep all nested setup output in the bind-mounted log
-    # so those helpers cannot keep the outer command attached.
+    # Nested conmon/slirp helpers may outlive their parent command.  Keep their output in the
+    # bind-mounted log and publish an atomic completion status instead of waiting on an attached
+    # outer exec stream whose descriptors a helper could retain.
     exec > /boxferry-socket/bootstrap.log 2>&1
+    trap "status=\$?; trap - 0; printf \"%s\\n\" \"\${status}\" > \"\${completion_file}.tmp\"; mv -f \"\${completion_file}.tmp\" \"\${completion_file}\"; exit \"\${status}\"" 0
     nested_begin() {
       nested_name=$1
       nested_started_at="$(date +%s)"
@@ -687,10 +718,30 @@ create_workloads() {
         --network "${BF_PREFIX}-large-private" --secret "${BF_PREFIX}-conditional" "${portable_image}" sleep 3600
     fi
     nested_pass
-  '; then
+  ' > /dev/null; then
     cat -- "${socket_directory}/bootstrap.log" >&2 || true
     cat -- "${socket_directory}/runtime-canaries.log" >&2 || true
     return 1
+  fi
+  if ! startup_substep "wait for ${scope} nested resources (deadline ${deadline})" \
+    wait_for_workload_completion "${completion_file}" "${socket_directory}/bootstrap.log" \
+    "${deadline_seconds}"; then
+    cat -- "${socket_directory}/bootstrap.log" >&2 || true
+    cat -- "${socket_directory}/runtime-canaries.log" >&2 || true
+    return 1
+  fi
+  IFS= read -r setup_status < "${completion_file}" || true
+  if [[ ! "${setup_status}" =~ ^[0-9]+$ ]] || ((setup_status > 255)); then
+    printf 'Nested resource setup wrote an invalid completion status: %q\n' "${setup_status}" >&2
+    cat -- "${socket_directory}/bootstrap.log" >&2 || true
+    cat -- "${socket_directory}/runtime-canaries.log" >&2 || true
+    return 1
+  fi
+  if ((setup_status != 0)); then
+    printf 'Nested resource setup failed with exit %d.\n' "${setup_status}" >&2
+    cat -- "${socket_directory}/bootstrap.log" >&2 || true
+    cat -- "${socket_directory}/runtime-canaries.log" >&2 || true
+    return "${setup_status}"
   fi
   printf 'Live setup: nested resources ready for %s\n' "${prefix}"
 }
@@ -1458,7 +1509,8 @@ start_clean_acquisition_outer() {
   rm -f -- "${socket_directory}/podman.sock" "${socket_directory}/bootstrap.log" \
     "${socket_directory}/runtime-evidence.tsv" "${socket_directory}/runtime-evidence.ready" \
     "${socket_directory}/runtime-canaries.log" "${socket_directory}/selected-container-id" \
-    "${socket_directory}/smoke-baseline.json" "${socket_directory}/start-api"
+    "${socket_directory}/smoke-baseline.json" "${socket_directory}/start-api" \
+    "${socket_directory}/resource-setup.status" "${socket_directory}/resource-setup.status.tmp"
   start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
   create_workloads "${started_outer}" "${current_prefix}" "${scope}" "${socket_directory}" false
   current_selected_container_id="$(< "${socket_directory}/selected-container-id")"
@@ -1763,7 +1815,9 @@ run_discovery() {
     "${uid_socket_directory}/runtime-evidence.ready" \
     "${uid_socket_directory}/runtime-canaries.log" \
     "${uid_socket_directory}/selected-container-id" \
-    "${uid_socket_directory}/smoke-baseline.json" "${uid_socket_directory}/start-api"
+    "${uid_socket_directory}/smoke-baseline.json" "${uid_socket_directory}/start-api" \
+    "${uid_socket_directory}/resource-setup.status" \
+    "${uid_socket_directory}/resource-setup.status.tmp"
   rmdir -- "${uid_socket_directory}"
   if [[ "${discovery_parent_created}" == true ]]; then
     rmdir -- "${uid_runtime_directory}"
