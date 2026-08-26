@@ -3,6 +3,7 @@
 - Status: accepted
 - Date: 2026-08-13
 - Amends: [ADR 0026](0026-typed-diagnostic-rule-catalogue.md) and [ADR 0027](0027-format-neutral-native-findings.md)
+- Amended by: [ADR 0038](0038-bounded-human-diagnostic-presentation.md)
 
 ## Context
 

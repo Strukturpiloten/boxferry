@@ -14,9 +14,10 @@ use boxferry_model::{
 };
 use podman_lens::{
     ContainerMountKind, ContainerMountObservation, ContainerMountSource, ContainerObservation,
-    ContainerSecretGrantObservation, DiscoveryExplanationKind, NativeHealthCheckObservation, NativeHealthCommand,
-    NativeNamespaceMode, NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol,
-    NativeRestartPolicyName, NativeRestartPolicyObservation, ObservationField, ObservationOrigin, ProtectedEnvironment,
+    ContainerSecretGrantObservation, DiscoveryExplanationKind, MAX_UNKNOWN_FIELDS_PER_INVENTORY,
+    MAX_UNKNOWN_FIELDS_PER_RECORD, NativeHealthCheckObservation, NativeHealthCommand, NativeNamespaceMode,
+    NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol, NativeRestartPolicyName,
+    NativeRestartPolicyObservation, ObservationField, ObservationOrigin, ProtectedEnvironment,
     ProtectedEnvironmentValue, ResourceDetails, ResourceIdentity, ResourceKind, ResourceObservation,
     ResourceObservationState,
 };
@@ -712,16 +713,29 @@ impl<'a> Mapping<'a> {
 
     fn map_configured_image(&mut self, subject: &str, details: &ContainerObservation, service: &mut Service) {
         let field_subject = format!("{subject}.image");
-        if let Some(image) = self.configured(details.configured_image(), &field_subject) {
+        let configured_image_retained = if let Some(image) = self.configured(details.configured_image(), &field_subject)
+        {
             match ImageReference::parse(image) {
-                Ok(image) => service.set_image(self.sourced(image)),
-                Err(error) => self.model_error(field_subject, &error),
+                Ok(image) => {
+                    service.set_image(self.sourced(image));
+                    true
+                }
+                Err(error) => {
+                    self.model_error(field_subject, &error);
+                    false
+                }
             }
-        }
+        } else {
+            false
+        };
         self.observation_only(
             &format!("{subject}.local_image_id"),
             details.local_image_id(),
-            "local image resolution must not replace configured image intent",
+            if configured_image_retained {
+                "Podman local image ID is host-local resolution evidence; the configured image reference was retained instead"
+            } else {
+                "Podman local image ID is host-local resolution evidence; no portable configured image reference was available"
+            },
         );
     }
 
@@ -1636,12 +1650,9 @@ impl<'a> Mapping<'a> {
             ObservationField::Observed(observed) => match observed.origin() {
                 ObservationOrigin::Configured => self.unsupported_with_origin(subject, reason, observed.origin()),
                 ObservationOrigin::Effective => self.promotion_required(subject, reason),
-                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => self
-                    .unsupported_with_origin(
-                        subject,
-                        "runtime-assigned and local-resolution observations are never authored intent",
-                        observed.origin(),
-                    ),
+                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
+                    self.unsupported_with_origin(subject, reason, observed.origin());
+                }
                 _ => self.unsupported(subject, "future observation origin is not reviewed"),
             },
             _ => self.report_state(field, subject),
@@ -2064,7 +2075,7 @@ impl<'a> Mapping<'a> {
         let mut diagnostic = diagnostic_with_context(
             self.importer.unsupported.clone(),
             Severity::Warning,
-            "PodmanLens retained a native acquisition finding",
+            reason,
             &subject,
             reason,
             "omitted",
@@ -2101,20 +2112,7 @@ impl<'a> Mapping<'a> {
             .iter()
             .filter_map(|(_, _, finding)| finding.field_path())
             .collect::<BTreeSet<_>>();
-        if paths.len() == 1 {
-            if let Some(path) = paths.first() {
-                context.push(DiagnosticField::new("native_path", DiagnosticValue::plain(*path)));
-            }
-        } else if !paths.is_empty() {
-            context.push(DiagnosticField::new(
-                "native_path_count",
-                DiagnosticValue::plain(paths.len().to_string()),
-            ));
-            context.push(DiagnosticField::new(
-                "native_path_samples",
-                DiagnosticValue::plain(paths.iter().take(8).copied().collect::<Vec<_>>().join(", ")),
-            ));
-        }
+        self.append_native_field_context(&mut context, code, finding, &paths);
         let mut native = native;
         for field in context {
             native = native.with_field(field.clone());
@@ -2127,6 +2125,76 @@ impl<'a> Mapping<'a> {
                 ConversionKind::Unsupported,
                 self.importer.unsupported.clone(),
             );
+        }
+    }
+
+    fn append_native_field_context(
+        &self,
+        context: &mut Vec<DiagnosticField>,
+        code: podman_lens::DiagnosticCode,
+        finding: &podman_lens::InventoryFinding,
+        paths: &BTreeSet<&str>,
+    ) {
+        match code {
+            podman_lens::DiagnosticCode::UnknownFieldOverflow => {
+                self.append_unknown_field_limit_context(context, finding);
+            }
+            podman_lens::DiagnosticCode::NativeFieldUnsupported => append_native_paths(context, paths),
+            _ => {
+                append_native_paths(context, paths);
+                return;
+            }
+        }
+        context.push(DiagnosticField::new(
+            "native_value_policy",
+            DiagnosticValue::plain("field paths retained; native values not retained"),
+        ));
+    }
+
+    fn append_unknown_field_limit_context(
+        &self,
+        context: &mut Vec<DiagnosticField>,
+        finding: &podman_lens::InventoryFinding,
+    ) {
+        context.push(DiagnosticField::new(
+            "retention_limit_per_resource",
+            DiagnosticValue::plain(MAX_UNKNOWN_FIELDS_PER_RECORD.to_string()),
+        ));
+        context.push(DiagnosticField::new(
+            "retention_limit_per_inventory",
+            DiagnosticValue::plain(MAX_UNKNOWN_FIELDS_PER_INVENTORY.to_string()),
+        ));
+        context.push(DiagnosticField::new(
+            "discarded_native_path_count_at_least",
+            DiagnosticValue::plain("1"),
+        ));
+        let Some(observation) = finding
+            .resource()
+            .and_then(|identity| self.source.inventory().observation(identity))
+        else {
+            return;
+        };
+        let retained = observation.header().unmodelled_fields();
+        context.push(DiagnosticField::new(
+            "retained_native_path_count",
+            DiagnosticValue::plain(retained.len().to_string()),
+        ));
+        if !retained.is_empty() {
+            context.push(DiagnosticField::new(
+                "native_path_samples",
+                DiagnosticValue::plain(
+                    retained
+                        .iter()
+                        .map(podman_lens::UnmodelledField::path)
+                        .take(8)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+            ));
+            context.push(DiagnosticField::new(
+                "native_path_samples_shown",
+                DiagnosticValue::plain(retained.len().min(8).to_string()),
+            ));
         }
     }
 
@@ -2383,8 +2451,35 @@ fn diagnostic_with_context(
     })
 }
 
+fn append_native_paths(context: &mut Vec<DiagnosticField>, paths: &BTreeSet<&str>) {
+    if paths.len() == 1 {
+        if let Some(path) = paths.first() {
+            context.push(DiagnosticField::new("native_path", DiagnosticValue::plain(*path)));
+        }
+    } else if !paths.is_empty() {
+        context.push(DiagnosticField::new(
+            "native_path_count",
+            DiagnosticValue::plain(paths.len().to_string()),
+        ));
+        context.push(DiagnosticField::new(
+            "native_path_samples",
+            DiagnosticValue::plain(paths.iter().take(8).copied().collect::<Vec<_>>().join(", ")),
+        ));
+        context.push(DiagnosticField::new(
+            "native_path_samples_shown",
+            DiagnosticValue::plain(paths.len().min(8).to_string()),
+        ));
+    }
+}
+
 fn podman_native_summary(code: podman_lens::DiagnosticCode) -> &'static str {
     match code {
+        podman_lens::DiagnosticCode::UnknownFieldOverflow => {
+            "PodmanLens reached its bounded unmapped-field retention limit; at least one additional path descriptor was omitted"
+        }
+        podman_lens::DiagnosticCode::NativeFieldUnsupported => {
+            "PodmanLens found native response fields without typed portable mappings; path descriptors were retained without values"
+        }
         podman_lens::DiagnosticCode::AdvisoryLabelIncomplete => {
             "optional Podman application-grouping labels are incomplete; affected resources remain ungrouped"
         }

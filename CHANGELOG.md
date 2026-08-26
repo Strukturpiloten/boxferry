@@ -7,6 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Group repeated human diagnostics by actionable cause with bounded subject and native-path samples;
+  `--verbose` expands every occurrence while JSON reports remain complete
+  ([#86](https://github.com/Strukturpiloten/boxferry/issues/86)).
+
 - Sort the top-level command help alphabetically and make release-plz promote reviewed Unreleased
   notes without generating duplicate category headings ([#77](https://github.com/Strukturpiloten/boxferry/issues/77)).
 
@@ -18,6 +22,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
   ([#82](https://github.com/Strukturpiloten/boxferry/issues/82)).
 
 ### Fixed
+
+- Explain Podman unmapped-field retention limits, counts, value omission, and configured-image
+  preservation while retaining safe image/resource subjects containing slashes
+  ([#86](https://github.com/Strukturpiloten/boxferry/issues/86)).
 
 - Resolve bare relative `--error-report-directory` values such as `error` from the current working
   directory, matching `./error` ([#77](https://github.com/Strukturpiloten/boxferry/issues/77)).

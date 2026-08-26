@@ -5,6 +5,7 @@
 - Amends: [ADR 0018](0018-generic-cli-and-diagnostic-support-bundle.md)
 - Amends: [ADR 0020](0020-rolling-compose-specification-cli-target.md)
 - Amends: [ADR 0025](0025-empty-output-directories-and-final-human-status.md)
+- Amended by: [ADR 0038](0038-bounded-human-diagnostic-presentation.md)
 
 ## Context
 

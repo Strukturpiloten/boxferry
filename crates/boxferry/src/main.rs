@@ -11,9 +11,10 @@ use std::os::unix::{
     net::UnixStream,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     env,
     error::Error,
+    fmt::Write as _,
     fs::{self, OpenOptions},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -1643,11 +1644,21 @@ impl ReportAliases {
     }
 
     fn value(&self, value: &str) -> String {
+        self.value_for_field("", value)
+    }
+
+    fn value_for_field(&self, field_name: &str, value: &str) -> String {
         let mut value = value.to_owned();
         for (path, alias) in &self.values {
             if !path.is_empty() {
                 value = value.replace(path, alias);
             }
+        }
+        if matches!(
+            field_name,
+            "subject" | "resource" | "native_path" | "native_path_samples"
+        ) {
+            return value;
         }
         value
             .split_whitespace()
@@ -1866,7 +1877,7 @@ fn sanitized_diagnostic(
     let (summary, _) = redact_text("summary", &aliases.value(summary), false);
     let mut safe_fields = Vec::new();
     for (name, value, sensitive) in fields {
-        let (value, redacted) = redact_text(name, &aliases.value(value), *sensitive);
+        let (value, redacted) = redact_text(name, &aliases.value_for_field(name, value), *sensitive);
         safe_fields.push(ReportField {
             name: (*name).into(),
             value,
@@ -3656,7 +3667,7 @@ fn present(
         println!();
         io::stdout().flush()?;
     }
-    print_report_diagnostics(report);
+    print_report_diagnostics(report, presentation.verbose);
     print_fix_first(report);
     io::stderr().flush()?;
     if !presentation.quiet {
@@ -4410,7 +4421,7 @@ fn report_native_finding(
             name: field.name().to_owned(),
             value: redact_text(
                 field.name(),
-                &aliases.value(field.value().expose()),
+                &aliases.value_for_field(field.name(), field.value().expose()),
                 field.value().is_sensitive(),
             )
             .0,
@@ -4618,7 +4629,84 @@ fn refresh_report_outcome(report: &mut ConversionReport) {
     order_report_diagnostics_causally(report);
 }
 
-fn print_report_diagnostics(report: &ConversionReport) {
+const HUMAN_SUBJECT_SAMPLE_LIMIT: usize = 3;
+const HUMAN_NATIVE_PATH_SAMPLE_LIMIT: usize = 8;
+
+fn print_report_diagnostics(report: &ConversionReport, verbose: bool) {
+    if verbose {
+        print_report_diagnostic_occurrences(report);
+        return;
+    }
+    if let Some(context) = loss_policy_context(report) {
+        eprintln!("policy: {context}");
+        if !report.diagnostics.is_empty() {
+            eprintln!();
+        }
+    }
+    let diagnostics = &report.diagnostics;
+    let mut start = 0;
+    while start < diagnostics.len() {
+        let code = &diagnostics[start].code;
+        let mut end = start + 1;
+        while end < diagnostics.len() && diagnostics[end].code == *code {
+            end += 1;
+        }
+        if start > 0 {
+            eprintln!();
+        }
+        let group = &diagnostics[start..end];
+        let first = &group[0];
+        if group.len() == 1 {
+            eprintln!("{} {} [{}]", first.code, first.name, first.severity);
+        } else {
+            eprintln!(
+                "{} {} [{}] ({} findings)",
+                first.code,
+                first.name,
+                first.severity,
+                group.len()
+            );
+        }
+        let summary_is_common = group.iter().all(|diagnostic| diagnostic.summary == first.summary);
+        let summary = if summary_is_common {
+            first.summary.as_str()
+        } else {
+            find_rule(&first.code).map_or(first.summary.as_str(), |rule| rule.description())
+        };
+        eprintln!("  {summary}");
+        let common_fields = common_report_fields(group);
+        for field in &common_fields {
+            eprintln!("  {}: {}", human_field_name(&field.name), field.value);
+        }
+        eprintln!("  findings:");
+        let finding_groups = human_finding_groups(group);
+        if finding_groups.len() < group.len() {
+            eprintln!(
+                "    summarized {} occurrences as {} actionable group(s); use --verbose to expand every occurrence",
+                group.len(),
+                finding_groups.len()
+            );
+        }
+        for (offset, occurrences) in finding_groups.iter().enumerate() {
+            let details = human_finding_details(occurrences, &common_fields, summary_is_common);
+            if let Some((name, value)) = details.first() {
+                eprintln!("    {}. {name}: {value}", offset + 1);
+                for (name, value) in &details[1..] {
+                    eprintln!("       {name}: {value}");
+                }
+            } else if occurrences.len() == 1 {
+                eprintln!("    {}. condition reported", offset + 1);
+            } else {
+                eprintln!("    {}. condition reported {} times", offset + 1, occurrences.len());
+            }
+        }
+        eprintln!("  help: {}", first.help);
+        eprintln!("  explain: boxferry explain {}", first.code);
+        start = end;
+    }
+}
+
+fn print_report_diagnostic_occurrences(report: &ConversionReport) {
     if let Some(context) = loss_policy_context(report) {
         eprintln!("policy: {context}");
         if !report.diagnostics.is_empty() {
@@ -4700,6 +4788,224 @@ fn print_report_diagnostics(report: &ConversionReport) {
     }
 }
 
+fn human_finding_groups(diagnostics: &[ReportDiagnostic]) -> Vec<Vec<&ReportDiagnostic>> {
+    let mut indexes = BTreeMap::<(Option<String>, String, Vec<(String, String)>), usize>::new();
+    let mut groups = Vec::<Vec<&ReportDiagnostic>>::new();
+    for diagnostic in diagnostics {
+        let semantic_fields = diagnostic
+            .fields
+            .iter()
+            .filter(|field| !human_occurrence_field(&field.name))
+            .map(|field| (field.name.clone(), field.value.clone()))
+            .collect::<Vec<_>>();
+        let key = (
+            diagnostic.source_code.clone(),
+            diagnostic.summary.clone(),
+            semantic_fields,
+        );
+        if let Some(index) = indexes.get(&key).copied() {
+            groups[index].push(diagnostic);
+        } else {
+            indexes.insert(key, groups.len());
+            groups.push(vec![diagnostic]);
+        }
+    }
+    groups
+}
+
+fn human_occurrence_field(name: &str) -> bool {
+    matches!(
+        name,
+        "subject"
+            | "resource"
+            | "native_path"
+            | "native_path_count"
+            | "native_path_samples"
+            | "native_path_samples_shown"
+            | "occurrence_count"
+            | "retained_native_path_count"
+            | "discarded_native_path_count_at_least"
+    )
+}
+
+fn human_finding_details(
+    occurrences: &[&ReportDiagnostic],
+    outer_common_fields: &[ReportField],
+    summary_is_common: bool,
+) -> Vec<(String, String)> {
+    let Some(first) = occurrences.first().copied() else {
+        return Vec::new();
+    };
+    if occurrences.len() == 1 {
+        let mut details = first
+            .fields
+            .iter()
+            .filter(|field| !outer_common_fields.contains(field))
+            .map(|field| (human_field_name(&field.name).to_owned(), field.value.clone()))
+            .collect::<Vec<_>>();
+        append_source_rule(&mut details, first);
+        if !summary_is_common && !summary_is_represented_by_fields(first) {
+            details.push(("detail".into(), first.summary.clone()));
+        }
+        for span in &first.spans {
+            details.push((
+                "location".into(),
+                format!("{}:{}-{}", span.source, span.start, span.end),
+            ));
+        }
+        return details;
+    }
+
+    let mut details = Vec::new();
+    append_source_rule(&mut details, first);
+    for field in &first.fields {
+        if human_occurrence_field(&field.name) || outer_common_fields.contains(field) {
+            continue;
+        }
+        if occurrences[1..]
+            .iter()
+            .all(|diagnostic| diagnostic.fields.contains(field))
+        {
+            details.push((human_field_name(&field.name).to_owned(), field.value.clone()));
+        }
+    }
+    if !summary_is_common && !summary_is_represented_by_fields(first) {
+        details.push(("detail".into(), first.summary.clone()));
+    }
+
+    let subjects = report_field_values(occurrences, "subject");
+    let resources = report_field_values(occurrences, "resource");
+    append_affected_samples(
+        &mut details,
+        "subject",
+        "affected subjects",
+        "subject samples",
+        &subjects,
+    );
+    if resources != subjects {
+        append_affected_samples(
+            &mut details,
+            "resource",
+            "affected resources",
+            "resource samples",
+            &resources,
+        );
+    }
+    append_numeric_total(&mut details, occurrences, "occurrence_count", "native occurrence count");
+    append_numeric_total(&mut details, occurrences, "native_path_count", "native path count");
+    append_numeric_total(
+        &mut details,
+        occurrences,
+        "retained_native_path_count",
+        "retained native path count",
+    );
+    append_numeric_total(
+        &mut details,
+        occurrences,
+        "discarded_native_path_count_at_least",
+        "discarded native path count (at least)",
+    );
+
+    let native_paths = native_path_values(occurrences);
+    if !native_paths.is_empty() {
+        details.push((
+            "native path samples".into(),
+            bounded_human_samples(&native_paths, HUMAN_NATIVE_PATH_SAMPLE_LIMIT),
+        ));
+    }
+    let locations = occurrences
+        .iter()
+        .flat_map(|diagnostic| &diagnostic.spans)
+        .map(|span| format!("{}:{}-{}", span.source, span.start, span.end))
+        .collect::<BTreeSet<_>>();
+    append_affected_samples(
+        &mut details,
+        "location",
+        "affected locations",
+        "location samples",
+        &locations,
+    );
+    details
+}
+
+fn append_source_rule(details: &mut Vec<(String, String)>, diagnostic: &ReportDiagnostic) {
+    if let Some(source_code) = diagnostic
+        .source_code
+        .as_deref()
+        .filter(|source_code| source_code.starts_with("PLN") && *source_code != diagnostic.code)
+    {
+        details.insert(0, ("source rule".into(), source_code.to_owned()));
+    }
+}
+
+fn report_field_values(diagnostics: &[&ReportDiagnostic], name: &str) -> BTreeSet<String> {
+    diagnostics
+        .iter()
+        .flat_map(|diagnostic| &diagnostic.fields)
+        .filter(|field| field.name == name)
+        .map(|field| field.value.clone())
+        .collect()
+}
+
+fn native_path_values(diagnostics: &[&ReportDiagnostic]) -> BTreeSet<String> {
+    diagnostics
+        .iter()
+        .flat_map(|diagnostic| &diagnostic.fields)
+        .filter(|field| matches!(field.name.as_str(), "native_path" | "native_path_samples"))
+        .flat_map(|field| field.value.split(", "))
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn append_numeric_total(
+    details: &mut Vec<(String, String)>,
+    diagnostics: &[&ReportDiagnostic],
+    field_name: &str,
+    human_name: &str,
+) {
+    let values = diagnostics
+        .iter()
+        .flat_map(|diagnostic| &diagnostic.fields)
+        .filter(|field| field.name == field_name)
+        .map(|field| field.value.parse::<usize>())
+        .collect::<Result<Vec<_>, _>>();
+    if let Ok(values) = values {
+        if !values.is_empty() {
+            details.push((human_name.into(), values.into_iter().sum::<usize>().to_string()));
+        }
+    }
+}
+
+fn append_affected_samples(
+    details: &mut Vec<(String, String)>,
+    singular_name: &str,
+    count_name: &str,
+    samples_name: &str,
+    values: &BTreeSet<String>,
+) {
+    match values.len() {
+        0 => {}
+        1 => details.push((singular_name.into(), values.first().cloned().unwrap_or_default())),
+        _ => {
+            details.push((count_name.into(), values.len().to_string()));
+            details.push((
+                samples_name.into(),
+                bounded_human_samples(values, HUMAN_SUBJECT_SAMPLE_LIMIT),
+            ));
+        }
+    }
+}
+
+fn bounded_human_samples(values: &BTreeSet<String>, limit: usize) -> String {
+    let mut samples = values.iter().take(limit).cloned().collect::<Vec<_>>().join(", ");
+    let remaining = values.len().saturating_sub(limit);
+    if remaining > 0 {
+        let _ = write!(samples, " (+{remaining} more; use --verbose)");
+    }
+    samples
+}
+
 fn print_fix_first(report: &ConversionReport) {
     let Some(fix_first) = &report.fix_first else {
         return;
@@ -4760,9 +5066,15 @@ fn human_field_name(name: &str) -> &str {
         "native_path" => "native path",
         "native_path_count" => "native path count",
         "native_path_samples" => "native path samples",
+        "native_path_samples_shown" => "native path samples shown",
+        "native_value_policy" => "native value policy",
         "observation_origin" => "observation origin",
         "observation_state" => "observation state",
         "occurrence_count" => "occurrence count",
+        "retained_native_path_count" => "retained native path count",
+        "discarded_native_path_count_at_least" => "discarded native path count (at least)",
+        "retention_limit_per_inventory" => "retention limit per inventory",
+        "retention_limit_per_resource" => "retention limit per resource",
         "requested_maximum" => "requested maximum",
         "requested_minimum" => "requested minimum",
         "required_loss_policy" => "required loss policy",
@@ -5420,6 +5732,61 @@ mod tests {
     }
 
     #[test]
+    fn semantic_podman_subjects_survive_path_redaction_while_host_paths_do_not() {
+        let aliases = ReportAliases::default();
+        let subject = "images.registry.example/team/application:1.labels";
+        assert_eq!(aliases.value_for_field("subject", subject), subject);
+        assert_eq!(
+            aliases.value_for_field("reason", "failed to read /srv/private/application.env"),
+            "failed to read <path>"
+        );
+    }
+
+    #[test]
+    fn repeated_human_findings_form_bounded_actionable_groups_without_mutating_diagnostics() {
+        let diagnostics = (0..5)
+            .map(|index| ReportDiagnostic {
+                code: "BFP0003".into(),
+                name: "podman-promotion-required".into(),
+                source_code: None,
+                severity: "warning".into(),
+                summary: "effective setting needs explicit promotion policy".into(),
+                help: "Review the setting.".into(),
+                fields: vec![
+                    ReportField {
+                        name: "subject".into(),
+                        value: format!("services.synthetic-{index}.restart_policy"),
+                    },
+                    ReportField {
+                        name: "reason".into(),
+                        value: "effective setting needs explicit promotion policy".into(),
+                    },
+                    ReportField {
+                        name: "decision".into(),
+                        value: "not-promoted".into(),
+                    },
+                ],
+                spans: Vec::new(),
+                native_finding: None,
+            })
+            .collect::<Vec<_>>();
+        let before = diagnostics.clone();
+        let groups = human_finding_groups(&diagnostics);
+        assert_eq!(groups.len(), 1);
+        let details = human_finding_details(&groups[0], &[], true);
+        assert!(details.contains(&("affected subjects".into(), "5".into())));
+        assert!(
+            details
+                .iter()
+                .any(|(name, value)| { name == "subject samples" && value.contains("+2 more; use --verbose") })
+        );
+        assert_eq!(
+            diagnostics, before,
+            "human grouping must not alter JSON report diagnostics"
+        );
+    }
+
+    #[test]
     fn finite_cli_values_accept_every_documented_spelling_and_reject_unknown_values() {
         fn value_names<T: ValueEnum>() -> Vec<String> {
             T::value_variants()
@@ -5665,12 +6032,18 @@ mod tests {
     fn stale_rootless_socket_falls_back_to_a_connectable_rootful_candidate() -> io::Result<()> {
         use std::os::unix::net::UnixListener;
 
-        let directory = env::temp_dir().join(format!(
-            "boxferry-podman-socket-fallback-{}-{}",
-            std::process::id(),
-            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&directory)?;
+        let directory = loop {
+            let candidate = env::temp_dir().join(format!(
+                "boxferry-podman-socket-fallback-{}-{}",
+                std::process::id(),
+                SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        };
         let stale = directory.join("rootless.sock");
         let active = directory.join("rootful.sock");
         let regular = directory.join("regular.sock");
