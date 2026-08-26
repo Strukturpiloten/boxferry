@@ -229,6 +229,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "start_clean_acquisition_outer",
         "runtime-canaries.log",
         ">> \"${canary_log}\" 2>&1 < /dev/null",
+        "exec > /boxferry-socket/bootstrap.log 2>&1",
         "selected-container-id",
         "smoke-baseline.json",
         "remove previous apply target",

@@ -528,6 +528,10 @@ create_workloads() {
     compose_labels="${run_label} --label com.docker.compose.project=${BF_PREFIX}"
     canary_log=/boxferry-socket/runtime-canaries.log
     : > "${canary_log}"
+    # Rootless conmon/slirp helpers can inherit the outer `podman exec` output pipe even after
+    # detached workload commands finish.  Keep all nested setup output in the bind-mounted log
+    # so those helpers cannot keep the outer command attached.
+    exec > /boxferry-socket/bootstrap.log 2>&1
     nested_begin() {
       nested_name=$1
       nested_started_at="$(date +%s)"
@@ -684,6 +688,7 @@ create_workloads() {
     fi
     nested_pass
   '; then
+    cat -- "${socket_directory}/bootstrap.log" >&2 || true
     cat -- "${socket_directory}/runtime-canaries.log" >&2 || true
     return 1
   fi
