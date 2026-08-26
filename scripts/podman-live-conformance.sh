@@ -1278,7 +1278,12 @@ should_run_external_apply() {
 }
 
 start_apply_target() {
-  [[ -z "${apply_target_outer}" ]] || return 0
+  if [[ -n "${apply_target_outer}" ]]; then
+    engine_operation 'remove previous apply target' rm --force --ignore "${apply_target_outer}" > /dev/null
+    apply_target_outer=""
+    apply_target_socket=""
+  fi
+
   local id image declared_version distribution mode lane architecture
   IFS=$'\t' read -r id image declared_version distribution mode lane architecture < <(
     awk -F '\t' '$1 == "podman-6.1-rootful" { print; exit }' "${matrix_path}"
@@ -1765,6 +1770,13 @@ is_smoke_diagnostics_cell() {
   [[ "$1" == podman-6.1-rootful ]]
 }
 
+should_run_discovery() {
+  # Socket-path selection is host-side CLI behavior, independent of the nested Podman version.
+  # One newest-version rootful cell proves the conventional socket against a real API service;
+  # deterministic CLI tests cover rootless-first ordering and both finite candidates.
+  [[ "$1" == podman-6.1-rootful ]]
+}
+
 remove_outer() {
   local outer=$1
   timeout --signal=TERM --kill-after=10s 30s \
@@ -1780,10 +1792,13 @@ configure_cell_progress() {
       progress_total=15
     fi
   else
-    progress_total=31
+    progress_total=30
     if should_run_external_apply "${id}"; then
-      progress_total=32
+      progress_total=31
     fi
+  fi
+  if should_run_discovery "${id}"; then
+    ((progress_total += 1))
   fi
   printf '%s PLAN cell=%s profile=%s tests=%d\n' \
     "$(timestamp)" "${id}" "${profile}" "${progress_total}"
@@ -1902,6 +1917,8 @@ run_cell() {
       progress_run 'externally apply and reacquire Podman plan' \
         run_external_apply_reacquire "${socket}"
     fi
+  fi
+  if should_run_discovery "${id}"; then
     require_scenario socket-discovery
     progress_run 'discover local Podman socket' run_discovery "${id}" "${image}" "${mode}"
   fi

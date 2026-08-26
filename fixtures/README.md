@@ -77,7 +77,8 @@ scenario subset. It covers the finite 3.0.1, 3.4.4, 4.3.1, 4.9.3, 4.9.4, 5.4, an
 boundaries while retaining both root modes at the oldest and newest edges. Every cell uses a
 minimal container/network/volume workload and exports one exact selection to all targets.
 Version-independent CLI, policy, redaction, and malformed-input checks run once on Podman 6.1
-rootful. The complete distribution, minor-version, workload, and runtime matrix remains in
+rootful, along with one live conventional-socket discovery check. The complete distribution,
+minor-version, workload, and runtime matrix remains in
 `full-container`. Only `full-container` evidence is labelled `full`; smoke evidence is labelled
 `smoke`. Each cell prints its planned test count, timestamped start/pass/fail events, and elapsed
 time. The host engine verifies the pinned workload image and passes an archive to the nested

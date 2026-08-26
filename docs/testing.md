@@ -64,31 +64,25 @@ lane, transport, and resource-coverage level. Successful diagnostic artifacts ar
 matrix image reference must already carry an exact `@sha256:` digest before the runner is allowed
 to pull it.
 
-The runner creates small and multi-service applications: running and stopped containers, health
-states where supported, members of multiple pods plus standalone services, networks and aliases,
-named volumes shared read-write/read-only, explicit bind propagation, and tmpfs mounts,
-environment and env-file evidence, labels, restart/
-logging/security/resource policy where available, and conditional secrets. It exercises exact,
-prefix, label, all-resource, and network-boundary selection; literal-glob rejection; explicit and
-discovered sockets; every Podman exporter; Compose/Quadlet reimports; deterministic artifacts; and
-strict-policy blocking with an actionable subject. All generated resource names use one
-process-unique `bf65-` prefix and cleanup is limited to that run. It never executes BoxFerry's
-generated command script as product behavior.
+The runner creates small and multi-service applications with stopped/running containers, supported
+health states, pods and standalone services, network aliases, shared volumes, bind/tmpfs mounts,
+environment evidence, labels, runtime policy, and conditional secrets. It exercises every
+selector and exporter, literal-glob rejection, explicit/discovered sockets, reimports,
+deterministic artifacts, and strict-policy blocking. A process-unique `bf65-` prefix limits cleanup
+to that run. BoxFerry never executes its generated script as product behavior.
 
-The external apply/reacquire scenario is deliberately harness-owned. For reviewed current and
-legacy representative cells, it exports one portable container to Podman, validates the complete
-operation/precondition plan, provisions only its exact prefix-scoped network and volume in one
-fresh Podman 6.1 rootful target, and executes `podman-commands.sh` inside that disposable target.
-It then reacquires the result through the neutral model and requires byte-identical Podman and
-Compose projections before exact cleanup. BoxFerry itself never invokes the generated script.
+The harness-owned apply/reacquire scenario exports one portable container, validates its operation
+and precondition plan, provisions its prefix-scoped network and volume, and executes the generated
+script inside a fresh Podman 6.1 rootful target. Reacquisition must produce byte-identical Podman
+and Compose projections before cleanup. BoxFerry itself never invokes the script.
 The disposable Podman 6.1 target uses the checked-in Netavark `firewall_driver = "none"` drop-in.
 The harness preloads the digest-pinned archive under the configured portable reference before the
 generated container starts. This tests isolated network membership, not registry access,
 masquerading, or host firewall integration.
 
-Full-resource container cells also create the otherwise-unused `/run/user/0/podman` host directory
-temporarily to prove conventional socket discovery; the runner refuses to replace an existing path
-and removes what it created during cleanup.
+Podman 6.1 rootful temporarily creates `/run/user/0/podman` to prove conventional discovery against
+a real service. This host-side CLI behavior is version-independent. The runner refuses to replace
+an existing path and removes what it creates.
 
 All 48 matrix entries are container cells. Forty-three run the complete resource suite. The five
 current UBI/openSUSE rootless image digests are listed in `podman-live/limitations.tsv`: their
@@ -111,11 +105,12 @@ a time. They cover the finite live-input boundaries: Podman 3.0.1 rootful/rootle
 4.3.1 rootful, 4.9.3 rootless, 4.9.4 rootful, 5.4 rootless, and 6.1 rootful/rootless.
 
 Every cell runs ten checks: setup, evidence, a minimal real workload, runtime assertions, all three
-exports, and cleanup. Podman 6.1 rootful adds five version-independent checks: glob rejection,
-determinism, strict loss policy, support redaction, and malformed input. That is 95 checks; repeating
-the diagnostics on every version would add no compatibility evidence.
+exports, and cleanup. Podman 6.1 rootful adds six version-independent checks: glob rejection,
+determinism, strict loss policy, support redaction, malformed input, and conventional socket
+discovery. That is 96 checks; repeating those checks on every version would add no compatibility
+evidence.
 
-The complete runtime matrix, socket discovery, every selector, re-imports,
+The complete runtime matrix, representative live socket discovery, every selector, re-imports,
 partial/disappeared-resource failures, and apply/reacquire remain in the complete profile. Pull
 requests have a 10-minute hard limit per smoke cell.
 
@@ -142,9 +137,9 @@ BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" 
 
 GitHub workflows invoke the same runner. Pull requests from this repository run the nine-cell smoke
 profile. Manual `workflow_dispatch` selects the same smoke profile or all 48 container cells. The
-full profile plans 31 checks for 33 complete cells, 32 for the ten external-apply cells, and four
-limitation checks for each of five published rootless images: 1,363 checks in total. There is
-deliberately no nightly schedule.
+full profile plans 30 checks for 33 complete cells, 31 for nine external-apply cells, 32 for the
+Podman 6.1 rootful external-apply and discovery cell, and four limitation checks for each of five
+published rootless images: 1,321 checks in total. There is deliberately no nightly schedule.
 
 ## Gate contents
 
