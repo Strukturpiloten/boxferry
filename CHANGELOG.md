@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.1...boxferry-v0.8.2) - 2026-08-26
+
+### Fixed
+
+- *(podman)* make diagnostics and reports actionable ([#73](https://github.com/Strukturpiloten/boxferry/pull/73))
+
 ### Changed
 
 - Make every Podman adapter finding identify its safe subject, reason, and conversion decision,
