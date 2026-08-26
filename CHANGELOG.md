@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.0...boxferry-v0.8.1) - 2026-08-26
+
+### Added
+
+- make Podman import production-ready ([#70](https://github.com/Strukturpiloten/boxferry/pull/70))
+
 ### Changed
 
 - [**breaking**] Upgrade PodmanLens to 0.2.1, separate finite Podman 3.0.1–6.1 input capability
