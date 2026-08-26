@@ -393,7 +393,7 @@ cleanup() {
     rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
       "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
       "${directory}/runtime-canaries.log" "${directory}/selected-container-id" \
-      "${directory}/start-api"
+      "${directory}/smoke-baseline.json" "${directory}/start-api"
     rmdir -- "${directory}" 2> /dev/null || true
   done
   if [[ "${discovery_parent_created}" == true ]]; then
@@ -568,6 +568,12 @@ create_workloads() {
       podman create --name "${BF_PREFIX}-stopped" ${run_label} \
         --network "${BF_PREFIX}-small-net" "${portable_image}" true
       nested_pass
+      if [ "${BF_INCLUDE_CANARIES}" = true ]; then
+        nested_begin "capture minimal runtime baseline"
+        podman inspect "${BF_PREFIX}-small-web" "${BF_PREFIX}-running" \
+          "${BF_PREFIX}-stopped" > /boxferry-socket/smoke-baseline.json
+        nested_pass
+      fi
       exit 0
     fi
 
@@ -1442,7 +1448,7 @@ start_clean_acquisition_outer() {
   rm -f -- "${socket_directory}/podman.sock" "${socket_directory}/bootstrap.log" \
     "${socket_directory}/runtime-evidence.tsv" "${socket_directory}/runtime-evidence.ready" \
     "${socket_directory}/runtime-canaries.log" "${socket_directory}/selected-container-id" \
-    "${socket_directory}/start-api"
+    "${socket_directory}/smoke-baseline.json" "${socket_directory}/start-api"
   start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
   create_workloads "${started_outer}" "${current_prefix}" "${scope}" "${socket_directory}" false
   current_selected_container_id="$(< "${socket_directory}/selected-container-id")"
@@ -1594,20 +1600,21 @@ assert_runtime_scenarios() {
 }
 
 assert_smoke_runtime_baseline() {
-  local socket=$1
+  local baseline="${socket_directory}/smoke-baseline.json"
   require_scenario stopped-and-running
-  [[ "$(podman_socket "${socket}" inspect --format '{{.State.Status}}' "${current_prefix}-running")" == running ]]
-  local stopped_status
-  stopped_status="$(podman_socket "${socket}" inspect --format '{{.State.Status}}' "${current_prefix}-stopped")"
-  [[ "${stopped_status}" == created || "${stopped_status}" == configured ]]
-  podman_socket "${socket}" inspect "${current_prefix}-small-web" | jq --exit-status \
+  jq --exit-status --arg selected "${current_prefix}-small-web" \
+    --arg running "${current_prefix}-running" --arg stopped "${current_prefix}-stopped" \
     --arg network "${current_prefix}-small-net" --arg volume "${current_prefix}-small-data" '
-      (((.[0].Config.Image // "") | startswith("registry.example.invalid/boxferry/")) or
-        ((.[0].ImageName // "") | startswith("registry.example.invalid/boxferry/"))) and
-      (.[0].NetworkSettings.Networks[$network] != null) and
-      any(.[0].Mounts[]?; .Name == $volume and .Destination == "/var/lib/boxferry" and .RW == true) and
-      any(.[0].Config.Env[]?; . == "BOXFERRY_LIVE_MODE=small")
-    ' > /dev/null
+      any(.[]; .Name == $running and .State.Status == "running") and
+      any(.[]; .Name == $stopped and
+        (.State.Status == "created" or .State.Status == "configured")) and
+      any(.[]; .Name == $selected and
+        ((((.Config.Image // "") | startswith("registry.example.invalid/boxferry/")) or
+          ((.ImageName // "") | startswith("registry.example.invalid/boxferry/"))) and
+        (.NetworkSettings.Networks[$network] != null) and
+        any(.Mounts[]?; .Name == $volume and .Destination == "/var/lib/boxferry" and .RW == true) and
+        any(.Config.Env[]?; . == "BOXFERRY_LIVE_MODE=small")))
+    ' "${baseline}" > /dev/null
 }
 
 wait_for_fault_proxy() {
@@ -1745,7 +1752,8 @@ run_discovery() {
     "${uid_socket_directory}/runtime-evidence.tsv" \
     "${uid_socket_directory}/runtime-evidence.ready" \
     "${uid_socket_directory}/runtime-canaries.log" \
-    "${uid_socket_directory}/selected-container-id" "${uid_socket_directory}/start-api"
+    "${uid_socket_directory}/selected-container-id" \
+    "${uid_socket_directory}/smoke-baseline.json" "${uid_socket_directory}/start-api"
   rmdir -- "${uid_socket_directory}"
   if [[ "${discovery_parent_created}" == true ]]; then
     rmdir -- "${uid_runtime_directory}"
@@ -1832,7 +1840,7 @@ run_cell() {
   fi
   progress_begin "${runtime_test_name}"
   if [[ "${workload_scope}" == minimal ]]; then
-    assert_smoke_runtime_baseline "${socket}"
+    assert_smoke_runtime_baseline
   else
     assert_runtime_scenarios "${socket}" "$(awk '{print $3}' "${artifact_root}/${id}.podman-version")"
   fi
