@@ -240,6 +240,8 @@ struct PodmanInputOptions {
 
 #[derive(Debug, Args)]
 struct PodmanPromotionOptions {
+    #[command(flatten)]
+    bind_mounts: PodmanBindMountPromotionOption,
     /// Promote reviewed effective environment, ports, restart, health, and DNS settings.
     #[arg(long)]
     promote_podman_portable_effective_settings: bool,
@@ -249,6 +251,13 @@ struct PodmanPromotionOptions {
     /// Promote effective named-network attachments into portable neutral intent.
     #[arg(long)]
     promote_podman_effective_named_networks: bool,
+}
+
+#[derive(Debug, Args)]
+struct PodmanBindMountPromotionOption {
+    /// Promote host-local bind mounts for a reviewed same-path target.
+    #[arg(long)]
+    promote_podman_effective_bind_mounts: bool,
 }
 
 #[derive(Debug, Args)]
@@ -759,6 +768,7 @@ struct GenericConversion {
     podman_resource_prefixes: Vec<PodmanResourcePrefixInput>,
     podman_labels: Vec<PodmanLabelInput>,
     podman_network_boundaries: Vec<String>,
+    promote_podman_effective_bind_mounts: bool,
     promote_podman_portable_effective_settings: bool,
     promote_podman_effective_named_volumes: bool,
     promote_podman_effective_named_networks: bool,
@@ -1075,6 +1085,7 @@ impl GenericConversion {
             podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
+            promote_podman_effective_bind_mounts,
             promote_podman_portable_effective_settings,
             promote_podman_effective_named_volumes,
             promote_podman_effective_named_networks,
@@ -1098,6 +1109,7 @@ impl GenericConversion {
                 false,
                 false,
                 false,
+                false,
             ),
             InputRouteOptions::Quadlet(input) => (
                 None,
@@ -1117,6 +1129,7 @@ impl GenericConversion {
                 false,
                 false,
                 false,
+                false,
             ),
             InputRouteOptions::Podman(input) => (
                 None,
@@ -1132,6 +1145,7 @@ impl GenericConversion {
                 input.podman_resource_prefixes,
                 input.podman_labels,
                 input.podman_network_boundaries,
+                input.promotion.bind_mounts.promote_podman_effective_bind_mounts,
                 input.promotion.promote_podman_portable_effective_settings,
                 input.promotion.promote_podman_effective_named_volumes,
                 input.promotion.promote_podman_effective_named_networks,
@@ -1193,6 +1207,7 @@ impl GenericConversion {
             podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
+            promote_podman_effective_bind_mounts,
             promote_podman_portable_effective_settings,
             promote_podman_effective_named_volumes,
             promote_podman_effective_named_networks,
@@ -1704,6 +1719,10 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
                 .to_string(),
             });
             report.choices.push(ReportChoice {
+                name: "promote_effective_bind_mounts".into(),
+                value: arguments.promote_podman_effective_bind_mounts.to_string(),
+            });
+            report.choices.push(ReportChoice {
                 name: "promote_portable_effective_settings".into(),
                 value: arguments.promote_podman_portable_effective_settings.to_string(),
             });
@@ -1754,6 +1773,10 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("podman_resource_prefixes", "--podman-resource-prefix"),
         ("podman_labels", "--podman-label"),
         ("podman_network_boundaries", "--podman-network-boundary"),
+        (
+            "promote_podman_effective_bind_mounts",
+            "--promote-podman-effective-bind-mounts",
+        ),
         (
             "promote_podman_portable_effective_settings",
             "--promote-podman-portable-effective-settings",
@@ -2654,6 +2677,7 @@ async fn generic_podman_convert(
         })?;
     }
     let promotion = boxferry::PodmanPromotionPolicy::conservative()
+        .with_effective_bind_mounts(arguments.promote_podman_effective_bind_mounts)
         .with_portable_effective_settings(arguments.promote_podman_portable_effective_settings)
         .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
         .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
@@ -5697,6 +5721,7 @@ mod tests {
             podman_resource_prefixes: Vec::new(),
             podman_labels: Vec::new(),
             podman_network_boundaries: Vec::new(),
+            promote_podman_effective_bind_mounts: false,
             promote_podman_portable_effective_settings: false,
             promote_podman_effective_named_volumes: false,
             promote_podman_effective_named_networks: false,
@@ -5958,10 +5983,20 @@ mod tests {
             "quadlet",
             "--podman-resource",
             "container=web",
+            "--promote-podman-effective-bind-mounts",
             "--promote-podman-portable-effective-settings",
         ])?;
+        assert!(arguments.promote_podman_effective_bind_mounts);
         assert!(arguments.promote_podman_portable_effective_settings);
+        assert!(!arguments.promote_podman_effective_named_volumes);
+        assert!(!arguments.promote_podman_effective_named_networks);
         let report = new_report(&arguments, route::find(InputType::Podman, OutputType::Quadlet));
+        assert!(
+            report
+                .choices
+                .iter()
+                .any(|choice| { choice.name == "promote_effective_bind_mounts" && choice.value == "true" })
+        );
         assert!(
             report
                 .choices

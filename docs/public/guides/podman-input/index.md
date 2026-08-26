@@ -50,11 +50,12 @@ Choose the output:
   `--promote-podman-effective-named-volumes` authorizes portable desired state.
 - **Shared networks:** use `--promote-podman-effective-named-networks` only after confirming the
   target should recreate that network intent.
+- **Bind mounts:** `--promote-podman-effective-bind-mounts` preserves absolute host sources,
+  container destinations, and read-only state. It explicitly assumes those paths are valid on
+  the target. Non-default native options, propagation, and subpaths remain diagnostic findings.
 - **Portable effective settings:** `--promote-podman-portable-effective-settings` authorizes the
   reviewed environment, published-port, restart, normal-health, and DNS subset. It also authorizes
   environment acquisition into sensitive in-memory wrappers. Reports and snapshots stay redacted.
-- **Bind mounts:** host paths are machine-local. Review every local-resolution diagnostic before
-  accepting output for a different host.
 - **Secrets:** inspection cannot reconstruct secret delivery intent. BoxFerry reports incomplete
   grants instead of inventing them.
 - **Local images:** `localhost/...`, image IDs, unqualified names, and tagless repositories are not
@@ -83,7 +84,7 @@ accept:
 <!-- boxferry-example: podman-portable-effective-settings -->
 
 ```console
-boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output
+boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-effective-bind-mounts --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output
 ```
 
 Podman deployment-v1 JSON is output intent, not an acquired inventory snapshot, and cannot be used

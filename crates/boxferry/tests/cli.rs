@@ -1813,6 +1813,8 @@ fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Bo
         "--podman-label <NAME[=VALUE]>",
         "--application-name <APPLICATION_NAME>",
         "--podman-network-boundary <NAME_OR_ID>",
+        "--promote-podman-effective-bind-mounts",
+        "--promote-podman-portable-effective-settings",
         "--promote-podman-effective-named-volumes",
         "--promote-podman-effective-named-networks",
         "--include-podman-snapshot",

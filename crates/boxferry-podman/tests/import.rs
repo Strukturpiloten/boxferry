@@ -8,11 +8,12 @@ use std::{
     sync::Mutex,
 };
 
-use boxferry_engine::{ConversionKind, ExportAdapter, ImportAdapter, PlatformVersion, TargetProfile};
-use boxferry_model::{EnvironmentValue, HealthcheckCommand, Identifier, RestartPolicy};
+use boxferry_engine::{ConversionKind, ExportAdapter, ImportAdapter, LossPolicy, PlatformVersion, TargetProfile};
+use boxferry_model::{EnvironmentValue, HealthcheckCommand, Identifier, MountSource, ResourceOwnership, RestartPolicy};
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanImporter, PodmanPromotionPolicy, PodmanSource, podman_lens,
 };
+use boxferry_quadlet::QuadletExporter;
 use futures::executor::block_on;
 use podman_lens::{
     AcquisitionOptions, DiagnosticCode, DiscoveryRequest, LabelSelector, LibpodHeader, LibpodHeaders, LibpodRequest,
@@ -337,6 +338,85 @@ fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result
     assert!(result.diagnostics().iter().any(|diagnostic| {
         diagnostic.code().as_str() == "BFP0003" && diagnostic.summary().contains("portable named-volume mount promoted")
     }));
+    Ok(())
+}
+
+#[test]
+fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(), Box<dyn Error>> {
+    let source = legacy_source(
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":false,"Propagation":"rprivate"}]}"#,
+    )?
+    .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_bind_mounts(true));
+
+    let result = PodmanImporter::new()?.import(&source);
+    let service = result
+        .application()
+        .ok_or("legacy application")?
+        .services()
+        .first()
+        .ok_or("legacy service")?
+        .value();
+    assert_eq!(service.mounts().len(), 1);
+    assert!(matches!(
+        service.mounts()[0].value().source(),
+        MountSource::HostPath(path) if path == "/srv/example/config"
+    ));
+    assert_eq!(service.mounts()[0].value().target(), "/etc/example");
+    assert!(service.mounts()[0].value().read_only());
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0003"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "available_promotion"
+                    && field.value().redacted() == "--promote-podman-effective-bind-mounts"
+            })
+    }));
+    Ok(())
+}
+
+#[test]
+fn promoted_application_network_is_managed_and_effective_empty_dns_is_not_authored() -> Result<(), Box<dyn Error>> {
+    let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":"","Cmd":["nginx","-g","daemon off;"],"Env":["NC_davstorage.request_timeout=60 seconds"]},"HostConfig":{"RestartPolicy":{"Name":""},"Dns":[],"DnsSearch":[],"DnsOptions":[]},"NetworkSettings":{"Networks":{"legacy-net":{"NetworkID":"legacy-net"}}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":true,"Propagation":"rprivate"}]}"#;
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(
+        legacy_responses(inspect)?,
+        &request,
+        AcquisitionOptions::include_environment_values(),
+    )?
+    .with_promotion_policy(
+        PodmanPromotionPolicy::conservative()
+            .with_effective_bind_mounts(true)
+            .with_effective_named_networks(true)
+            .with_portable_effective_settings(true),
+    );
+
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("legacy application")?;
+    assert_eq!(application.networks().len(), 1);
+    assert_eq!(
+        application.networks()[0].value().ownership(),
+        ResourceOwnership::Application
+    );
+    let service = application.services().first().ok_or("legacy service")?.value();
+    assert!(service.dns_servers().is_none());
+    assert!(service.dns_search_domains().is_none());
+    assert!(service.dns_options().is_none());
+    assert_eq!(service.mounts().len(), 1);
+    assert_eq!(service.environment().len(), 1);
+
+    let target = TargetProfile::new(
+        PODMAN_TARGET,
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+    let plan = QuadletExporter::new()?.plan(application, &target)?;
+    let authorized = plan.authorize(LossPolicy::AllowPartial);
+    let output = authorized.output().ok_or("production-shaped Quadlet output")?;
+    let container = output.file("web.container").ok_or("container unit")?.text();
+    assert!(container.contains("Exec=nginx -g \"daemon off;\""));
+    assert!(container.contains("Environment=\"NC_davstorage.request_timeout=60 seconds\""));
+    assert!(container.contains("Volume=/srv/example/config:/etc/example"));
+    assert!(output.file("legacy-net.network").is_some());
     Ok(())
 }
 

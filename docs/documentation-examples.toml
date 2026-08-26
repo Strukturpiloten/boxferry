@@ -253,8 +253,8 @@ generated-files = [{ directory = "reports", prefix = "boxferry-error-report-", s
 [[examples]]
 id = "podman-portable-effective-settings"
 pages = ["docs/public/guides/podman-input/index.md"]
-command = "boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output"
-args = ["convert", "podman", "quadlet", "--podman-socket", "/run/user/1000/podman/podman.sock", "--podman-resource", "container=c-observer", "--promote-podman-portable-effective-settings", "--promote-podman-effective-named-volumes", "--promote-podman-effective-named-networks", "--loss-policy", "partial", "--output-directory", "quadlet-portable-output"]
+command = "boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-effective-bind-mounts --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output"
+args = ["convert", "podman", "quadlet", "--podman-socket", "/run/user/1000/podman/podman.sock", "--podman-resource", "container=c-observer", "--promote-podman-effective-bind-mounts", "--promote-podman-portable-effective-settings", "--promote-podman-effective-named-volumes", "--promote-podman-effective-named-networks", "--loss-policy", "partial", "--output-directory", "quadlet-portable-output"]
 expected-exit = 0
 stdout-contains = ["command succeeded"]
 podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"

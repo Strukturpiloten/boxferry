@@ -32,6 +32,11 @@ volumes and networks; they do not promote arbitrary runtime-local state. Add
 restart, normal-health, and DNS evidence. It allows sensitive environment acquisition, but
 diagnostic reports and snapshots remain redacted.
 
+Add `--promote-podman-effective-bind-mounts` only when the target intentionally reuses the same
+absolute host paths. BoxFerry preserves the source, destination, and read-only state; native-only
+mount options remain visible as findings. Quoted Quadlet output preserves Podman environment names
+such as dotted application settings and exec arguments containing spaces.
+
 Before using the units on another host, verify bind mounts, `EnvironmentFile=` paths, secret
 references, shared volume data, and network units. BoxFerry writes files; it never installs,
 enables, starts, or reloads systemd units.

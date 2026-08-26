@@ -63,6 +63,16 @@ operations, or provide a supported deserializer for an inventory snapshot.
    controls. The CLI acquires environment values into opaque sensitive wrappers only when this
    policy is selected; all snapshots and reports remain redacted.
 
+   `--promote-podman-effective-bind-mounts` is a separate target-local decision. It may retain an
+   absolute observed host path, container destination, and read-only state only when the operator
+   has reviewed the target as a same-path migration. Non-default options, propagation, relative
+   paths, and incomplete fields remain unsupported. Quadlet output quotes single-line environment
+   assignments and exec arguments according to the native parser instead of imposing shell
+   variable-name rules. Empty Podman DNS arrays are absence, not authored reset intent.
+
+   Promoted named resources that are selected application prerequisites become application-owned.
+   A discovery `StoppedSharedBoundary` remains external and must never be recreated implicitly.
+
    Discovery diagnostics are scoped to the selected resource graph. Optional
    `com.docker.compose.*` ownership and lifecycle labels may expand a group, but missing or
    conflicting optional grouping evidence is not application-intent loss and those labels never

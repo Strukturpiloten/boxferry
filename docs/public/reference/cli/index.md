@@ -43,6 +43,7 @@ Use route-specific `--help`; it shows only applicable options.
 | `--podman-resource-prefix KIND=PREFIX`         | Podman input          | Add a literal name-prefix root using the same kinds.                                                                                  |
 | `--podman-label NAME[=VALUE]`                  | Podman input          | Add a label root; repeat as needed.                                                                                                   |
 | `--podman-network-boundary NAME_OR_ID`         | Podman input          | Authorize one explicit network crossing; repeatable.                                                                                  |
+| `--promote-podman-effective-bind-mounts`       | Podman input          | Promote absolute host bind paths for a reviewed target that uses the same paths.                                                      |
 | `--promote-podman-portable-effective-settings` | Podman input          | Promote reviewed effective environment, ports, restart, normal health, and DNS settings; authorize sensitive environment acquisition. |
 | `--promote-podman-effective-named-volumes`     | Podman input          | Promote effective named volumes to desired state.                                                                                     |
 | `--promote-podman-effective-named-networks`    | Podman input          | Promote effective named networks to desired state.                                                                                    |

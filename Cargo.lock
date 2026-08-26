@@ -117,6 +117,7 @@ version = "0.8.2"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
+ "boxferry-quadlet",
  "futures",
  "podman-lens",
  "serde_json",
