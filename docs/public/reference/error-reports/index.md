@@ -65,10 +65,9 @@ publication. The report directory stays empty until the complete archive is read
 exposes a partial ZIP. If optional Podman evidence still cannot fit its entry or archive limit,
 BoxFerry writes the base `README.md` and `report.json` bundle. `BFO3002` then names the omitted
 snapshot and the original conversion result remains the primary failure or policy decision. JSON
-and quiet output remain free of progress lines. Repeated native-field findings are grouped with
-counts and bounded path samples,
-so large live inventories remain readable and do not duplicate one diagnostic for every retained
-field.
+and quiet output remain free of progress lines. Default human output groups repeated findings with
+counts and bounded samples. `--verbose` expands the human occurrences. The JSON report and bundle
+still contain every structured diagnostic.
 
 ## Before sharing
 

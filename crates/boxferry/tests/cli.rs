@@ -779,8 +779,31 @@ fn repeated_human_rules_hoist_shared_context_and_list_only_finding_evidence() ->
         1
     );
     assert_eq!(stderr.matches("\n  reason:").count(), 1, "{stderr}");
-    assert!(stderr.contains("1. subject: services.first.restart_policy"));
-    assert!(stderr.contains("2. subject: services.second.restart_policy"));
+    assert!(stderr.contains("summarized 2 occurrences as 1 actionable group(s)"));
+    assert!(stderr.contains("affected subjects: 2"));
+    assert!(stderr.contains("subject samples: services.first.restart_policy, services.second.restart_policy"));
+    assert!(!stderr.contains("1. subject: services.first.restart_policy"));
+
+    let verbose = boxferry_command()
+        .env_remove("FIRST_VALUE")
+        .env_remove("SECOND_VALUE")
+        .args([
+            "validate",
+            "compose",
+            "quadlet",
+            "--input-file",
+            path_text(&compose)?,
+            "--interpolate",
+            "--loss-policy",
+            "approximate",
+            "--verbose",
+        ])
+        .output()?;
+    assert!(verbose.status.success(), "{}", String::from_utf8_lossy(&verbose.stderr));
+    let verbose_stderr = String::from_utf8(verbose.stderr)?;
+    assert!(!verbose_stderr.contains("summarized 2 occurrences"));
+    assert!(verbose_stderr.contains("1. subject: services.first.restart_policy"));
+    assert!(verbose_stderr.contains("2. subject: services.second.restart_policy"));
     Ok(())
 }
 

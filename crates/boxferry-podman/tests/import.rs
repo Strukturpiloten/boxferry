@@ -302,15 +302,26 @@ fn repeated_native_fields_are_reported_as_one_bounded_actionable_group() -> Resu
     };
     assert_eq!(field("occurrence_count"), Some("12"));
     assert_eq!(field("native_path_count"), Some("12"));
+    assert_eq!(field("native_path_samples_shown"), Some("8"));
+    assert_eq!(
+        field("native_value_policy"),
+        Some("field paths retained; native values not retained")
+    );
     assert_eq!(
         field("native_path_samples"),
         Some("$.Unknown00, $.Unknown01, $.Unknown02, $.Unknown03, $.Unknown04, $.Unknown05, $.Unknown06, $.Unknown07")
     );
     let native = diagnostic.native_finding().ok_or("native finding")?;
     assert!(
-        ["occurrence_count", "native_path_count", "native_path_samples"]
-            .iter()
-            .all(|expected| native.fields().iter().any(|field| field.name() == *expected))
+        [
+            "occurrence_count",
+            "native_path_count",
+            "native_path_samples",
+            "native_path_samples_shown",
+            "native_value_policy",
+        ]
+        .iter()
+        .all(|expected| native.fields().iter().any(|field| field.name() == *expected))
     );
     assert_eq!(
         result
@@ -321,6 +332,77 @@ fn repeated_native_fields_are_reported_as_one_bounded_actionable_group() -> Resu
         12,
         "aggregation must not change fidelity accounting"
     );
+    Ok(())
+}
+
+#[test]
+fn native_field_limits_explain_retained_paths_without_retaining_values() -> Result<(), Box<dyn Error>> {
+    let mut inspect = serde_json::json!({
+        "Id": "c-web",
+        "Name": "web",
+        "ImageName": "example.invalid/legacy:1",
+        "Pod": "",
+        "Config": {"Entrypoint": ""},
+        "HostConfig": {"RestartPolicy": {"Name": ""}},
+        "NetworkSettings": {"Networks": {}},
+        "Mounts": []
+    });
+    let object = inspect.as_object_mut().ok_or("inspect object")?;
+    for index in 0..=podman_lens::MAX_UNKNOWN_FIELDS_PER_RECORD {
+        object.insert(format!("SyntheticUnknown{index:03}"), serde_json::Value::Bool(true));
+    }
+    let source = legacy_source(&serde_json::to_string(&inspect)?)?;
+    let result = PodmanImporter::new()?.import(&source);
+    let diagnostic = result
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.native_finding().is_some_and(|finding| {
+                finding.code() == DiagnosticCode::UnknownFieldOverflow.as_str() && finding.stage() == "acquisition"
+            })
+        })
+        .ok_or("bounded unknown-field diagnostic")?;
+    let field = |name: &str| {
+        diagnostic
+            .fields()
+            .iter()
+            .find(|field| field.name() == name)
+            .map(|field| field.value().redacted())
+    };
+    assert!(diagnostic.summary().contains("bounded unmapped-field retention limit"));
+    assert_eq!(field("retention_limit_per_resource"), Some("128"));
+    assert_eq!(field("retention_limit_per_inventory"), Some("2048"));
+    assert_eq!(field("retained_native_path_count"), Some("128"));
+    assert_eq!(field("discarded_native_path_count_at_least"), Some("1"));
+    assert_eq!(field("native_path_samples_shown"), Some("8"));
+    assert_eq!(
+        field("native_value_policy"),
+        Some("field paths retained; native values not retained")
+    );
+    assert!(field("native_path_samples").is_some_and(|samples| samples.contains("$.SyntheticUnknown000")));
+    assert!(!format!("{diagnostic:?}").contains("true"));
+    Ok(())
+}
+
+#[test]
+fn local_image_id_diagnostic_explains_that_configured_reference_is_retained() -> Result<(), Box<dyn Error>> {
+    let source = legacy_source(
+        r#"{"Id":"c-web","Name":"web","ImageName":"localhost/example/team-app:latest","Image":"sha256:local-only","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#,
+    )?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("legacy application")?;
+    let service = application.services().first().ok_or("legacy service")?.value();
+    assert_eq!(
+        service.image().map(|image| image.value().as_str()),
+        Some("localhost/example/team-app:latest")
+    );
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.fields().iter().any(|field| {
+            field.name() == "reason"
+                && field.value().redacted()
+                    == "Podman local image ID is host-local resolution evidence; the configured image reference was retained instead"
+        })
+    }));
     Ok(())
 }
 

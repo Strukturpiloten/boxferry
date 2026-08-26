@@ -88,8 +88,12 @@ never inferred from the source or development machine.
 | `--generate-error-report`                   | Create a local ZIP support bundle.                      |
 | `--error-report-directory DIR`              | Select or create its direct destination directory.      |
 | `--include-podman-snapshot`                 | Add always-redacted Podman evidence to a generated ZIP. |
-| `--verbose`                                 | Add discovery and version-resolution detail.            |
+| `--verbose`                                 | Add discovery detail and expand diagnostic occurrences. |
 | `--quiet`                                   | Suppress progress and success text.                     |
+
+Default human output groups repeated occurrences by actionable reason. It prints affected counts
+and bounded subject/path samples. `--verbose` also expands every diagnostic occurrence;
+`--console-format json` emits the complete structured report.
 
 ## Exit status
 
