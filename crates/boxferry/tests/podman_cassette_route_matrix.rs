@@ -163,6 +163,7 @@ fn opted_in_support_bundle_contains_only_redacted_podman_snapshots() -> Result<(
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stdout));
     assert!(result.stderr.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_podman_diagnostic_context(&report)?;
     assert!(report["redaction"]["count"].as_u64().is_some_and(|count| count > 0));
     assert!(
         report["redaction"]["classes"]
@@ -210,6 +211,122 @@ fn opted_in_support_bundle_contains_only_redacted_podman_snapshots() -> Result<(
     assert_eq!(graph["schema_version"], 1);
     let findings: serde_json::Value = serde_json::from_str(&entries["podman-acquisition-findings-v1.json"])?;
     assert_eq!(findings["schema_version"], 1);
+    Ok(())
+}
+
+#[test]
+fn blocked_exact_validation_still_writes_the_opted_in_support_bundle() -> Result<(), Box<dyn Error>> {
+    let cassette_path = fixture_directory().join("complex-6.1.0-rootless.cassette.json");
+    let cassette = PodmanCassette::load(&cassette_path)?;
+    let server = PodmanCassetteServer::start(cassette)?;
+    let socket = server.socket().to_owned();
+    let root = TemporaryDirectory::new("podman-blocked-support-bundle")?;
+    let reports = root.path().join("reports");
+    fs::create_dir(&reports)?;
+
+    let result = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "podman", "quadlet", "--podman-socket"])
+        .arg(&socket)
+        .args([
+            "--podman-resource",
+            "container=observer",
+            "--generate-error-report",
+            "--include-podman-snapshot",
+            "--error-report-directory",
+        ])
+        .arg(&reports)
+        .args(["--console-format", "json"])
+        .output()?;
+    let replay = server.finish();
+    if let Err(error) = replay {
+        return Err(format!(
+            "blocked support-bundle cassette replay failed: {error}; stdout={}; stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_podman_diagnostic_context(&report)?;
+    assert_eq!(report["status"], "blocked");
+    assert!(report["error_report_path"].as_str().is_some());
+
+    let archives = fs::read_dir(&reports)?.collect::<Result<Vec<_>, _>>()?;
+    let [archive] = archives.as_slice() else {
+        return Err(format!("expected one blocked support archive, found {}", archives.len()).into());
+    };
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive.path())?)?;
+    let entries = (0..zip.len())
+        .map(|index| zip.by_index(index).map(|entry| entry.name().to_owned()))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    assert_eq!(
+        entries,
+        BTreeSet::from([
+            "README.md".to_owned(),
+            "podman-acquisition-findings-v1.json".to_owned(),
+            "podman-discovery-graph-v1.json".to_owned(),
+            "podman-inventory-v1.json".to_owned(),
+            "report.json".to_owned(),
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn blocked_podman_findings_name_the_subject_decision_and_native_rule() -> Result<(), Box<dyn Error>> {
+    let cassette_path = fixture_directory().join("complex-6.1.0-rootless.cassette.json");
+    let cassette = PodmanCassette::load(&cassette_path)?;
+    let server = PodmanCassetteServer::start(cassette)?;
+    let socket = server.socket().to_owned();
+
+    let result = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "podman", "quadlet", "--podman-socket"])
+        .arg(&socket)
+        .args(["--podman-resource", "container=observer"])
+        .output()?;
+    let replay = server.finish();
+    if let Err(error) = replay {
+        return Err(format!(
+            "actionable diagnostic cassette replay failed: {error}; stdout={}; stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+
+    assert_eq!(result.status.code(), Some(2));
+    let progress = String::from_utf8(result.stdout)?;
+    assert!(
+        progress.contains("Podman input: acquiring the selected read-only inventory..."),
+        "Podman acquisition remained silent: {progress}"
+    );
+    let diagnostics = String::from_utf8(result.stderr)?;
+    for expected in [
+        "BFP0002 podman-input-unmodelled",
+        "BFP0003 podman-promotion-required",
+        "source rule: PLN",
+        "subject:",
+        "reason:",
+        "decision:",
+        "required loss policy:",
+        "available promotion:",
+    ] {
+        assert!(
+            diagnostics.contains(expected),
+            "missing `{expected}` in:\n{diagnostics}"
+        );
+    }
+    assert!(
+        !diagnostics.contains("message:"),
+        "fallback-only message field remained"
+    );
+    assert!(
+        !diagnostics.contains("Compose ownership labels are incomplete"),
+        "Podman-only route implied that Compose participated"
+    );
     Ok(())
 }
 
@@ -344,6 +461,7 @@ fn assert_document_route(
 ) -> Result<serde_json::Value, Box<dyn Error>> {
     assert_route_succeeded(result, scenario, &format!("{input} -> {output} re-import"))?;
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_podman_diagnostic_context(&report)?;
     assert_eq!(report["schema_version"], 1);
     assert_eq!(report["status"], "success");
     assert_eq!(report["exit_category"], "success");
@@ -579,6 +697,7 @@ fn assert_failed_without_output(
     assert!(result.stderr.is_empty());
     assert!(!directory.exists(), "blocked conversion wrote output");
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_podman_diagnostic_context(&report)?;
     assert_eq!(report["schema_version"], 1);
     assert!(matches!(report["status"].as_str(), Some("failure" | "blocked")));
     assert!(report["primary_diagnostic_code"].is_string());
@@ -596,12 +715,47 @@ fn assert_failed_without_output(
 
 fn assert_report_has_diagnostic(result: &Output, expected: &str) -> Result<(), Box<dyn Error>> {
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_podman_diagnostic_context(&report)?;
     assert!(
         report["diagnostics"]
             .as_array()
             .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["code"] == expected)),
         "report omitted {expected}: {report}"
     );
+    Ok(())
+}
+
+fn assert_podman_diagnostic_context(report: &serde_json::Value) -> Result<(), Box<dyn Error>> {
+    let diagnostics = report["diagnostics"].as_array().ok_or("missing report diagnostics")?;
+    for diagnostic in diagnostics.iter().filter(|diagnostic| {
+        diagnostic["code"].as_str().is_some_and(|code| {
+            matches!(
+                code,
+                "BFP0001" | "BFP0002" | "BFP0003" | "BFP0004" | "BFP0005" | "BFP0006" | "BFP0007" | "BFP0008"
+            )
+        })
+    }) {
+        let fields = diagnostic["fields"]
+            .as_array()
+            .ok_or("Podman diagnostic fields missing")?;
+        for expected in ["subject", "reason", "decision"] {
+            assert!(
+                fields.iter().any(|field| field["name"] == expected),
+                "{} omitted {expected}: {diagnostic}",
+                diagnostic["code"]
+            );
+        }
+        if matches!(
+            diagnostic["code"].as_str(),
+            Some("BFP0002" | "BFP0003" | "BFP0005" | "BFP0007")
+        ) {
+            assert!(
+                fields.iter().any(|field| field["name"] == "required_loss_policy"),
+                "{} omitted required_loss_policy: {diagnostic}",
+                diagnostic["code"]
+            );
+        }
+    }
     Ok(())
 }
 
@@ -722,6 +876,7 @@ fn assert_route_succeeded(result: &Output, scenario: &str, output: &str) -> Resu
 
 fn assert_report(bytes: &[u8], output: &str, directory: &Path) -> Result<(), Box<dyn Error>> {
     let report: serde_json::Value = serde_json::from_slice(bytes)?;
+    assert_podman_diagnostic_context(&report)?;
     assert_eq!(report["schema_version"], 1);
     assert_eq!(report["status"], "success");
     assert_eq!(report["exit_category"], "success");

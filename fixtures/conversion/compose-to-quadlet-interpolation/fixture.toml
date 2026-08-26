@@ -55,7 +55,7 @@ expected = "app.container"
 
 [extensions.scenarios.exports.podman]
 loss-policy = "partial"
-diagnostic-codes = ["BFP0007"]
+diagnostic-codes = ["BFP0007", "BFP0007"]
 
 [[extensions.scenarios.exports.podman.artifacts]]
 artifact = "podman-commands.sh"

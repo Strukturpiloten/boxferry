@@ -176,7 +176,7 @@ expected = "expected-lossy-web.container"
 
 [extensions.scenarios.exports.podman]
 loss-policy = "partial"
-diagnostic-codes = ["BFP0007"]
+diagnostic-codes = ["BFP0007", "BFP0007", "BFP0007"]
 artifact-values = ["LABEL-CANARY"]
 
 [[extensions.scenarios.exports.podman.artifacts]]

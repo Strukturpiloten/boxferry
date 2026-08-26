@@ -31,7 +31,10 @@ reproducing those failures, but raw runtime inventory is too sensitive for a def
    input routes. It adds always-redacted inventory, discovery graph, and value-free acquisition
    findings. Environment values, protected health commands, credentials, secret payloads and driver
    values, label values, unknown raw JSON, and connection endpoints are omitted. The redaction count
-   covers serialized markers and omitted values, not distinct source secrets.
+   covers serialized markers and omitted values, not distinct source secrets. Each snapshot entry
+   is serialized directly into a bounded byte buffer. If optional evidence exceeds an entry or
+   archive limit, BoxFerry publishes the base diagnostic ZIP atomically with `BFO3002` instead of
+   leaving the requested report directory empty.
 5. These snapshots are diagnostic serialization only. They are not Podman input, replay cassettes,
    deployment plans, or authorization to mutate a runtime. ADR 0021 publication safety and ADR
    0035's inert BoxFerry output boundary remain unchanged.

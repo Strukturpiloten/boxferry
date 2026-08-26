@@ -19,7 +19,10 @@ use std::{
     path::{Path, PathBuf},
     process::ExitCode,
     str::FromStr,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use boxferry::compose::compose_lens::{
@@ -2133,10 +2136,46 @@ struct StructuredFailure {
 
 #[derive(Clone, Debug)]
 struct PodmanSupportEvidence {
-    inventory: serde_json::Value,
-    discovery_graph: serde_json::Value,
-    acquisition_findings: serde_json::Value,
+    entries: Option<PodmanSupportEntries>,
+    failure: Option<String>,
     redaction_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct PodmanSupportEntries {
+    inventory: Arc<[u8]>,
+    discovery_graph: Arc<[u8]>,
+    acquisition_findings: Arc<[u8]>,
+}
+
+impl PodmanSupportEvidence {
+    fn complete(entries: PodmanSupportEntries, redaction_count: usize) -> Self {
+        Self {
+            entries: Some(entries),
+            failure: None,
+            redaction_count,
+        }
+    }
+
+    fn omitted(error: &io::Error) -> Self {
+        Self {
+            entries: None,
+            failure: Some(error.to_string()),
+            redaction_count: 0,
+        }
+    }
+
+    const fn entries(&self) -> Option<&PodmanSupportEntries> {
+        self.entries.as_ref()
+    }
+
+    const fn redaction_count(&self) -> Option<usize> {
+        if self.entries.is_some() {
+            Some(self.redaction_count)
+        } else {
+            None
+        }
+    }
 }
 
 struct RenderedFile {
@@ -2598,6 +2637,7 @@ async fn generic_podman_convert(
     let promotion = boxferry::PodmanPromotionPolicy::conservative()
         .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
         .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
+    print_human_progress(arguments, "Podman input: acquiring the selected read-only inventory...");
     let source = acquire_podman_source(
         application_name.clone(),
         &transport,
@@ -2616,10 +2656,10 @@ async fn generic_podman_convert(
             &discovered,
         )
     })?;
-    let support_evidence = arguments
-        .include_podman_snapshot
-        .then(|| podman_support_evidence(&source))
-        .transpose()?;
+    let support_evidence = arguments.include_podman_snapshot.then(|| {
+        print_support_bundle_progress(arguments, "preparing the bounded redacted Podman snapshot");
+        podman_support_evidence(&source)
+    });
     let imported = PodmanImporter::new()?.import(&source);
     let (conversion, resolved_versions) =
         export_imported(arguments, route.output, imported, None, &[], &aliases, &discovered).map_err(|mut error| {
@@ -2650,12 +2690,19 @@ async fn generic_podman_convert(
     })
 }
 
-fn podman_support_evidence(source: &boxferry::PodmanSource) -> Result<PodmanSupportEvidence, serde_json::Error> {
-    let inventory = serde_json::to_value(source.redacted_inventory_snapshot())?;
-    let discovery_graph = serde_json::to_value(source.redacted_graph_snapshot())?;
+fn podman_support_evidence(source: &boxferry::PodmanSource) -> PodmanSupportEvidence {
+    match try_podman_support_evidence(source) {
+        Ok(evidence) => evidence,
+        Err(error) => PodmanSupportEvidence::omitted(&error),
+    }
+}
+
+fn try_podman_support_evidence(source: &boxferry::PodmanSource) -> io::Result<PodmanSupportEvidence> {
+    let inventory = serialize_bounded_json("podman-inventory-v1.json", &source.redacted_inventory_snapshot())?;
+    let inventory_value: serde_json::Value = serde_json::from_slice(&inventory).map_err(io::Error::other)?;
     let mut findings = Vec::new();
 
-    for section in inventory
+    for section in inventory_value
         .get("sections")
         .and_then(serde_json::Value::as_array)
         .into_iter()
@@ -2708,18 +2755,76 @@ fn podman_support_evidence(source: &boxferry::PodmanSource) -> Result<PodmanSupp
 
     let acquisition_findings = serde_json::json!({
         "schema_version": 1,
-        "service": inventory.get("service").cloned().unwrap_or(serde_json::Value::Null),
+        "service": inventory_value.get("service").cloned().unwrap_or(serde_json::Value::Null),
         "findings": findings,
     });
-    let redaction_count = count_redacted_snapshot_values(&inventory)
-        + count_redacted_snapshot_values(&discovery_graph)
-        + count_redacted_snapshot_values(&acquisition_findings);
-    Ok(PodmanSupportEvidence {
-        inventory,
-        discovery_graph,
-        acquisition_findings,
-        redaction_count,
-    })
+    let inventory_redactions = count_redacted_snapshot_values(&inventory_value);
+    drop(inventory_value);
+
+    let discovery_graph = serialize_bounded_json("podman-discovery-graph-v1.json", &source.redacted_graph_snapshot())?;
+    let discovery_value: serde_json::Value = serde_json::from_slice(&discovery_graph).map_err(io::Error::other)?;
+    let discovery_redactions = count_redacted_snapshot_values(&discovery_value);
+    drop(discovery_value);
+
+    let acquisition_redactions = count_redacted_snapshot_values(&acquisition_findings);
+    let acquisition_findings = serialize_bounded_json("podman-acquisition-findings-v1.json", &acquisition_findings)?;
+    Ok(PodmanSupportEvidence::complete(
+        PodmanSupportEntries {
+            inventory: inventory.into(),
+            discovery_graph: discovery_graph.into(),
+            acquisition_findings: acquisition_findings.into(),
+        },
+        inventory_redactions + discovery_redactions + acquisition_redactions,
+    ))
+}
+
+fn serialize_bounded_json(name: &str, value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
+    let mut output = BoundedBuffer::new(boxferry::report::MAX_JSON_BYTES, name);
+    serde_json::to_writer_pretty(&mut output, value).map_err(|error| {
+        if error.is_io() {
+            io::Error::new(io::ErrorKind::InvalidData, error.to_string())
+        } else {
+            io::Error::other(error)
+        }
+    })?;
+    Ok(output.into_inner())
+}
+
+struct BoundedBuffer<'a> {
+    bytes: Vec<u8>,
+    maximum: usize,
+    name: &'a str,
+}
+
+impl<'a> BoundedBuffer<'a> {
+    fn new(maximum: usize, name: &'a str) -> Self {
+        Self {
+            bytes: Vec::new(),
+            maximum,
+            name,
+        }
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+impl Write for BoundedBuffer<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() > self.maximum.saturating_sub(self.bytes.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} exceeds the v1 size cap", self.name),
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn count_redacted_snapshot_values(value: &serde_json::Value) -> usize {
@@ -3224,13 +3329,25 @@ async fn run_generic(
     };
     report.invocation = sanitized_invocation(matches, if validate_only { "validate" } else { "convert" });
     let mut final_code = primary_code;
-    if let Some(path) = &arguments.report_file {
-        let encoded = serialize_report(
+    let snapshot_entries = podman_support_evidence
+        .as_ref()
+        .and_then(PodmanSupportEvidence::entries);
+    let mut snapshot_redactions = podman_support_evidence
+        .as_ref()
+        .and_then(PodmanSupportEvidence::redaction_count);
+    if let Some(reason) = podman_support_evidence
+        .as_ref()
+        .and_then(|evidence| evidence.failure.as_deref())
+    {
+        record_support_bundle_failure(
             &mut report,
-            podman_support_evidence
-                .as_ref()
-                .map(|evidence| evidence.redaction_count),
-        )?;
+            &format!("Podman snapshot was omitted before ZIP creation: {reason}"),
+            &aliases,
+        );
+        mark_report_write_failure_if_success(&mut report, &mut final_code);
+    }
+    if let Some(path) = &arguments.report_file {
+        let encoded = serialize_report(&mut report, snapshot_redactions)?;
         if let Err(error) = write_report_file(path, &encoded) {
             report.diagnostics.push(sanitized_diagnostic(
                 RuleId::ReportWriteFailed,
@@ -3250,35 +3367,42 @@ async fn run_generic(
     }
     let mut error_report_path = None;
     if arguments.generate_error_report {
-        let encoded = serialize_report(
-            &mut report,
-            podman_support_evidence
-                .as_ref()
-                .map(|evidence| evidence.redaction_count),
-        )?;
+        print_support_bundle_progress(arguments, "writing the diagnostic ZIP atomically");
+        let encoded = serialize_report(&mut report, snapshot_redactions)?;
         match write_generated_error_report_with_evidence(
             arguments.error_report_directory.as_deref(),
             &encoded,
-            podman_support_evidence.as_ref(),
+            snapshot_entries,
             local_error_report_time,
             env::current_dir,
         ) {
             Ok(path) => error_report_path = Some(path),
-            Err(error) => {
-                report.diagnostics.push(sanitized_diagnostic(
-                    RuleId::SupportBundleWriteFailed,
-                    "error",
-                    RuleId::SupportBundleWriteFailed.definition().description(),
-                    &[("reason", &error.to_string(), false)],
+            Err(error) if snapshot_entries.is_some() && error.kind() == io::ErrorKind::InvalidData => {
+                record_support_bundle_failure(
+                    &mut report,
+                    &format!("Podman snapshot was omitted from the ZIP: {error}"),
                     &aliases,
-                ));
-                report.events.push("support-bundle-write-failed".into());
-                if final_code == ExitCode::SUCCESS {
-                    report.failed_stage = Some(FailedStage::ReportWrite);
-                    report.status = ReportStatus::Failure;
-                    report.exit_category = ExitCategory::ReportWrite;
-                    final_code = ExitCode::FAILURE;
+                );
+                mark_report_write_failure_if_success(&mut report, &mut final_code);
+                snapshot_redactions = None;
+                let fallback = serialize_report(&mut report, None)?;
+                match write_generated_error_report_with_evidence(
+                    arguments.error_report_directory.as_deref(),
+                    &fallback,
+                    None,
+                    local_error_report_time,
+                    env::current_dir,
+                ) {
+                    Ok(path) => error_report_path = Some(path),
+                    Err(fallback_error) => {
+                        record_support_bundle_failure(&mut report, &fallback_error.to_string(), &aliases);
+                        mark_report_write_failure_if_success(&mut report, &mut final_code);
+                    }
                 }
+            }
+            Err(error) => {
+                record_support_bundle_failure(&mut report, &error.to_string(), &aliases);
+                mark_report_write_failure_if_success(&mut report, &mut final_code);
             }
         }
     }
@@ -3288,11 +3412,39 @@ async fn run_generic(
         &inputs,
         validate_only,
         error_report_path.as_deref(),
-        podman_support_evidence
-            .as_ref()
-            .map(|evidence| evidence.redaction_count),
+        snapshot_redactions,
     )?;
     Ok(final_code)
+}
+
+fn print_support_bundle_progress(arguments: &GenericConversion, action: &str) {
+    print_human_progress(arguments, &format!("support bundle: {action}..."));
+}
+
+fn print_human_progress(arguments: &GenericConversion, message: &str) {
+    if !arguments.presentation.quiet && !matches!(arguments.presentation.console_format, Some(ConsoleFormat::Json)) {
+        println!("{message}");
+    }
+}
+
+fn record_support_bundle_failure(report: &mut ConversionReport, reason: &str, aliases: &ReportAliases) {
+    report.diagnostics.push(sanitized_diagnostic(
+        RuleId::SupportBundleWriteFailed,
+        "error",
+        RuleId::SupportBundleWriteFailed.definition().description(),
+        &[("reason", reason, false)],
+        aliases,
+    ));
+    report.events.push("support-bundle-write-failed".into());
+}
+
+fn mark_report_write_failure_if_success(report: &mut ConversionReport, final_code: &mut ExitCode) {
+    if *final_code == ExitCode::SUCCESS {
+        report.failed_stage = Some(FailedStage::ReportWrite);
+        report.status = ReportStatus::Failure;
+        report.exit_category = ExitCategory::ReportWrite;
+        *final_code = ExitCode::FAILURE;
+    }
 }
 
 fn failure_stage(message: &str) -> FailedStage {
@@ -4415,8 +4567,15 @@ fn print_report_diagnostics(report: &ConversionReport) {
                 .filter(|field| !common_fields.contains(field))
                 .map(|field| (human_field_name(&field.name), field.value.clone()))
                 .collect::<Vec<_>>();
+            if let Some(source_code) = diagnostic
+                .source_code
+                .as_deref()
+                .filter(|source_code| source_code.starts_with("PLN") && *source_code != diagnostic.code)
+            {
+                details.insert(0, ("source rule", source_code.to_owned()));
+            }
             if !summary_is_common && !summary_is_represented_by_fields(diagnostic) {
-                details.push(("message", diagnostic.summary.clone()));
+                details.push(("detail", diagnostic.summary.clone()));
             }
             for span in &diagnostic.spans {
                 details.push(("location", format!("{}:{}-{}", span.source, span.start, span.end)));
@@ -4484,14 +4643,29 @@ fn common_report_fields(group: &[ReportDiagnostic]) -> Vec<ReportField> {
 }
 
 fn summary_is_represented_by_fields(diagnostic: &ReportDiagnostic) -> bool {
-    matches!(diagnostic.code.as_str(), "BFC0101" | "BFC0102")
-        && diagnostic.fields.iter().any(|field| field.name == "variable")
+    diagnostic.fields.iter().any(|field| field.name == "reason")
+        || (matches!(diagnostic.code.as_str(), "BFC0101" | "BFC0102")
+            && diagnostic.fields.iter().any(|field| field.name == "variable"))
 }
 
 fn human_field_name(name: &str) -> &str {
     match name {
         "label_message" => "detail",
         "native_stage" => "native stage",
+        "available_promotion" => "available promotion",
+        "native_path" => "native path",
+        "native_path_count" => "native path count",
+        "native_path_samples" => "native path samples",
+        "observation_origin" => "observation origin",
+        "observation_state" => "observation state",
+        "occurrence_count" => "occurrence count",
+        "requested_maximum" => "requested maximum",
+        "requested_minimum" => "requested minimum",
+        "required_loss_policy" => "required loss policy",
+        "resource_kind" => "resource kind",
+        "reviewed_targets" => "reviewed targets",
+        "source_api" => "source API",
+        "source_engine" => "source engine",
         other => other,
     }
 }
@@ -4595,7 +4769,7 @@ fn write_report_file(path: &Path, report: &str) -> io::Result<()> {
     file.write_all(b"\n")
 }
 
-fn write_support_bundle(path: &Path, report: &str, podman_evidence: Option<&PodmanSupportEvidence>) -> io::Result<()> {
+fn write_support_bundle(path: &Path, report: &str, podman_evidence: Option<&PodmanSupportEntries>) -> io::Result<()> {
     let readme = if podman_evidence.is_some() {
         PODMAN_SUPPORT_BUNDLE_README
     } else {
@@ -4639,7 +4813,7 @@ where
 fn write_generated_error_report_with_evidence<Clock, CurrentDirectory>(
     configured_directory: Option<&Path>,
     report: &str,
-    podman_evidence: Option<&PodmanSupportEvidence>,
+    podman_evidence: Option<&PodmanSupportEntries>,
     clock: Clock,
     current_directory: CurrentDirectory,
 ) -> io::Result<PathBuf>
@@ -4733,7 +4907,7 @@ fn validate_support_bundle_entries(readme: &[u8], report: &[u8]) -> io::Result<(
 fn validate_support_bundle_entries_with_evidence(
     readme: &[u8],
     report: &[u8],
-    podman_evidence: Option<&PodmanSupportEvidence>,
+    podman_evidence: Option<&PodmanSupportEntries>,
 ) -> io::Result<()> {
     if report.len() > boxferry::report::MAX_JSON_BYTES {
         return Err(io::Error::new(
@@ -4753,8 +4927,7 @@ fn validate_support_bundle_entries_with_evidence(
             ("podman-discovery-graph-v1.json", &evidence.discovery_graph),
             ("podman-acquisition-findings-v1.json", &evidence.acquisition_findings),
         ] {
-            let size = serde_json::to_vec(value).map_err(io::Error::other)?.len();
-            if size > boxferry::report::MAX_JSON_BYTES {
+            if value.len() > boxferry::report::MAX_JSON_BYTES {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("{name} exceeds the v1 size cap"),
@@ -4773,10 +4946,17 @@ fn build_support_bundle(readme: &[u8], report: &[u8]) -> io::Result<Vec<u8>> {
 fn build_support_bundle_with_evidence(
     readme: &[u8],
     report: &[u8],
-    podman_evidence: Option<&PodmanSupportEvidence>,
+    podman_evidence: Option<&PodmanSupportEntries>,
 ) -> io::Result<Vec<u8>> {
+    let estimated_size = stored_zip_size_upper_bound(readme, report, podman_evidence);
+    if estimated_size > MAX_ARCHIVE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stored support bundle exceeds the v1 size cap",
+        ));
+    }
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut writer = ZipWriter::new(Cursor::new(Vec::with_capacity(estimated_size)));
     writer
         .start_file("README.md", options)
         .map_err(|error| zip_error(&error))?;
@@ -4792,7 +4972,7 @@ fn build_support_bundle_with_evidence(
             ("podman-acquisition-findings-v1.json", &evidence.acquisition_findings),
         ] {
             writer.start_file(name, options).map_err(|error| zip_error(&error))?;
-            serde_json::to_writer_pretty(&mut writer, value).map_err(io::Error::other)?;
+            writer.write_all(value)?;
             writer.write_all(b"\n")?;
         }
     }
@@ -4804,6 +4984,26 @@ fn build_support_bundle_with_evidence(
         ));
     }
     Ok(archive)
+}
+
+fn stored_zip_size_upper_bound(readme: &[u8], report: &[u8], podman_evidence: Option<&PodmanSupportEntries>) -> usize {
+    let mut entries = vec![("README.md", readme.len()), ("report.json", report.len())];
+    if let Some(evidence) = podman_evidence {
+        entries.extend([
+            ("podman-inventory-v1.json", evidence.inventory.len() + 1),
+            ("podman-discovery-graph-v1.json", evidence.discovery_graph.len() + 1),
+            (
+                "podman-acquisition-findings-v1.json",
+                evidence.acquisition_findings.len() + 1,
+            ),
+        ]);
+    }
+    let payload = entries.iter().map(|(_, size)| size).sum::<usize>();
+    let names = entries.iter().map(|(name, _)| name.len()).sum::<usize>();
+    payload
+        .saturating_add(names.saturating_mul(2))
+        .saturating_add(entries.len().saturating_mul(512))
+        .saturating_add(512)
 }
 
 fn zip_error(error: &zip::result::ZipError) -> io::Error {
@@ -5448,11 +5648,34 @@ mod tests {
         assert!(validate_support_bundle_entries(&vec![b'r'; MAX_README_BYTES + 1], b"{}").is_err());
         assert!(validate_support_bundle_entries(b"readme", &vec![b'j'; boxferry::report::MAX_JSON_BYTES + 1]).is_err());
 
-        let overhead = build_support_bundle(b"", b"")?.len();
-        let archive_at_limit = vec![b'a'; MAX_ARCHIVE_BYTES - overhead];
-        let archive = build_support_bundle(&archive_at_limit, b"")?;
-        assert_eq!(archive.len(), MAX_ARCHIVE_BYTES);
-        assert!(build_support_bundle(&vec![b'a'; MAX_ARCHIVE_BYTES - overhead + 1], b"").is_err());
+        let archive = build_support_bundle(b"readme", b"{}")?;
+        assert!(archive.len() < MAX_ARCHIVE_BYTES);
+
+        let oversized = PodmanSupportEntries {
+            inventory: Arc::from(vec![b'i'; 2 * 1024 * 1024]),
+            discovery_graph: Arc::from(vec![b'g'; 2 * 1024 * 1024]),
+            acquisition_findings: Arc::from(vec![b'f'; 2 * 1024 * 1024]),
+        };
+        assert!(validate_support_bundle_entries_with_evidence(b"readme", b"{}", Some(&oversized)).is_ok());
+        let Err(error) = build_support_bundle_with_evidence(b"readme", b"{}", Some(&oversized)) else {
+            return Err(io::Error::other("oversized Podman evidence was accepted"));
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        let directory = env::temp_dir().join(format!(
+            "boxferry-support-bundle-fallback-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let path = directory.join("report.zip");
+        assert!(write_support_bundle(&path, "{}", Some(&oversized)).is_err());
+        assert!(!path.exists(), "an oversized snapshot must not publish a partial ZIP");
+        write_support_bundle(&path, "{}", None)?;
+        let zip = zip::ZipArchive::new(fs::File::open(&path)?)?;
+        assert_eq!(zip.len(), 2, "the base diagnostic ZIP remains publishable");
+        fs::remove_dir_all(directory)?;
+        assert!(serialize_bounded_json("oversized.json", &"x".repeat(boxferry::report::MAX_JSON_BYTES)).is_err());
         Ok(())
     }
 

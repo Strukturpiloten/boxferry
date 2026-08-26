@@ -84,10 +84,21 @@ fn invalid_targets_produce_bfp0006_and_no_candidate() -> Result<(), Box<dyn Erro
     let plan = exporter.plan(&minimal_application()?, &target)?;
 
     assert!(plan.candidate().is_none());
-    assert!(
-        plan.diagnostics()
-            .iter()
-            .any(|diagnostic| { diagnostic.code().as_str() == "BFP0006" && diagnostic.severity() == Severity::Error })
+    let diagnostic = plan
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code().as_str() == "BFP0006" && diagnostic.severity() == Severity::Error)
+        .ok_or("missing invalid Podman target diagnostic")?;
+    assert_context_fields(
+        diagnostic,
+        &[
+            "subject",
+            "reason",
+            "decision",
+            "requested_minimum",
+            "requested_maximum",
+            "reviewed_targets",
+        ],
     );
     assert!(plan.authorize(LossPolicy::AllowPartial).output().is_none());
     Ok(())
@@ -142,11 +153,12 @@ fn uncertain_runtime_group_is_omitted_and_partial_podman_output_remains_authoriz
     let plan = exporter.plan(&application, &target)?;
 
     assert!(plan.candidate().is_some(), "{:?}", plan.diagnostics());
-    assert!(
-        plan.diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.code().as_str() == "BFP0007")
-    );
+    let diagnostic = plan
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.code().as_str() == "BFP0007")
+        .ok_or("missing unsupported Podman output diagnostic")?;
+    assert_context_fields(diagnostic, &["subject", "reason", "decision", "required_loss_policy"]);
     let authorized = plan.authorize(LossPolicy::AllowPartial);
     let output = authorized.output().ok_or("partial Podman output expected")?;
     assert!(!output.commands_shell().contains(" 'pod' "));
@@ -265,6 +277,7 @@ fn invalid_network_alias_reports_its_exact_mapping_subject() -> Result<(), Box<d
         .iter()
         .find(|diagnostic| diagnostic.code().as_str() == "BFP0008")
         .ok_or("missing Podman mapping diagnostic")?;
+    assert_context_fields(diagnostic, &["subject", "reason", "decision"]);
     assert!(
         diagnostic.fields().iter().any(|field| {
             field.name() == "subject" && field.value().expose() == "services.web.networks[0].aliases[0]"
@@ -314,6 +327,16 @@ fn tmpfs_application(value: ProtectedString) -> Result<Application, Box<dyn Erro
     let mut application = Application::new(Identifier::new("tmpfs-test")?);
     application.add_service(Sourced::generated(service))?;
     Ok(application)
+}
+
+fn assert_context_fields(diagnostic: &boxferry_engine::Diagnostic, expected: &[&str]) {
+    for name in expected {
+        assert!(
+            diagnostic.fields().iter().any(|field| field.name() == *name),
+            "{} omitted {name}: {diagnostic:?}",
+            diagnostic.code().as_str()
+        );
+    }
 }
 
 const fn version(major: u64, minor: u64, patch: u64) -> PlatformVersion {
