@@ -1605,6 +1605,38 @@ fn assert_filesystem_metavariables_are_specific(help: &str) {
     assert!(!help.contains("<PROJECT_DIRECTORY>"));
 }
 
+#[test]
+fn top_level_help_lists_commands_alphabetically() -> Result<(), Box<dyn Error>> {
+    let output = boxferry_command().arg("help").output()?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let help = String::from_utf8(output.stdout)?;
+    let commands = help
+        .lines()
+        .filter_map(|line| line.strip_prefix("  "))
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|name| {
+            matches!(
+                *name,
+                "capabilities" | "convert" | "explain" | "help" | "rules" | "validate" | "version"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        [
+            "capabilities",
+            "convert",
+            "explain",
+            "help",
+            "rules",
+            "validate",
+            "version"
+        ]
+    );
+    Ok(())
+}
+
 fn assert_format_subcommands_are_alphabetical(help: &str) {
     let formats = help
         .lines()
@@ -2998,7 +3030,7 @@ fn support_bundle_write_failure_preserves_the_original_conversion_failure() -> R
 }
 
 #[test]
-fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentation() -> Result<(), Box<dyn Error>> {
+fn support_bundle_has_only_fixed_deflated_entries_and_is_independent_of_presentation() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
     for (label, presentation) in [
         ("normal", Vec::new()),
@@ -3044,7 +3076,7 @@ fn support_bundle_has_only_fixed_stored_entries_and_is_independent_of_presentati
         for (index, name) in ["README.md", "report.json"].iter().enumerate() {
             let mut entry = zip.by_index(index)?;
             assert_eq!(entry.name(), *name);
-            assert_eq!(entry.compression(), CompressionMethod::Stored);
+            assert_eq!(entry.compression(), CompressionMethod::Deflated);
             let mut contents = String::new();
             std::io::Read::read_to_string(&mut entry, &mut contents)?;
             if *name == "README.md" {

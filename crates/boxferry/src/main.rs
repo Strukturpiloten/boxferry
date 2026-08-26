@@ -15,7 +15,7 @@ use std::{
     env,
     error::Error,
     fs::{self, OpenOptions},
-    io::{self, Cursor, Read, Write},
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::ExitCode,
     str::FromStr,
@@ -68,7 +68,9 @@ const CONVENTIONAL_COMPOSE_FILES: [&str; 6] = [
 ];
 const QUADLET_EXTENSIONS: [&str; 6] = ["container", "pod", "network", "volume", "build", "image"];
 const MAX_README_BYTES: usize = 128 * 1024;
-const MAX_ARCHIVE_BYTES: usize = 5 * 1024 * 1024;
+const MAX_PODMAN_SNAPSHOT_JSON_BYTES: usize = 32 * 1024 * 1024;
+const MAX_ARCHIVE_UNCOMPRESSED_BYTES: usize = 104 * 1024 * 1024;
+const MAX_ARCHIVE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ERROR_REPORT_COLLISIONS: u8 = 99;
 const SUPPORT_BUNDLE_README: &str = "# BoxFerry diagnostic support bundle\n\nreview_required: true\n\nInspect both files before uploading this archive. It is generated locally and BoxFerry never uploads it.\n\n## Contents\n\n- `report.json` is the complete structured diagnostic report.\n- This archive intentionally omits source and generated-file contents, environment values, raw panic payloads, backtraces, hostname, username, and the ambient process environment.\n\n## Attaching to an issue\n\nAfter review, create a GitHub issue using your normal browser or GitHub client, describe the problem, and attach this ZIP. Do not upload it if the review finds unwanted context. This archive contains no network instructions or automatic submission.\n";
 const PODMAN_SUPPORT_BUNDLE_README: &str = "# BoxFerry diagnostic support bundle\n\nreview_required: true\n\nInspect every file before uploading this archive. It is generated locally and BoxFerry never uploads it. Podman resource names, image references, redacted IDs, and topology can still be operationally sensitive.\n\n## Contents\n\n- `report.json` is the complete structured diagnostic report.\n- `podman-inventory-v1.json` is the always-redacted acquired inventory snapshot.\n- `podman-discovery-graph-v1.json` is the always-redacted selected topology and discovery evidence.\n- `podman-acquisition-findings-v1.json` collects value-free acquisition findings and observed JSON kinds.\n- This archive omits environment values, protected health commands, credentials, secret payloads and driver values, label values, raw unknown JSON, connection endpoints, generated-file contents, raw panic payloads, backtraces, hostname, username, and the ambient process environment.\n\nThese snapshots are diagnostic serialization only. They are not trusted Podman input or replay cassettes.\n\n## Attaching to an issue\n\nAfter review, create a GitHub issue using your normal browser or GitHub client, describe the problem, and attach this ZIP. Do not upload it if the review finds unwanted context. This archive contains no network instructions or automatic submission.\n";
@@ -88,14 +90,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Convert one explicit input type into one explicit output type.
-    Convert(ConvertCommand),
-    /// Parse and plan one explicit route without writing output.
-    Validate(ConversionCommand),
     /// List document conversion routes implemented by this build.
     Capabilities(Presentation),
-    /// List every `BoxFerry` diagnostic rule in stable code order.
-    Rules(CataloguePresentation),
+    /// Convert one explicit input type into one explicit output type.
+    Convert(ConvertCommand),
     /// Explain one diagnostic rule by code or human-readable name.
     Explain(ExplainCommand),
     /// Show contextual command help.
@@ -104,6 +102,10 @@ enum Command {
         #[arg(value_name = "COMMAND", num_args = 0..)]
         command: Vec<String>,
     },
+    /// List every `BoxFerry` diagnostic rule in stable code order.
+    Rules(CataloguePresentation),
+    /// Parse and plan one explicit route without writing output.
+    Validate(ConversionCommand),
     /// Print `BoxFerry` version information.
     Version,
 }
@@ -2779,7 +2781,7 @@ fn try_podman_support_evidence(source: &boxferry::PodmanSource) -> io::Result<Po
 }
 
 fn serialize_bounded_json(name: &str, value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
-    let mut output = BoundedBuffer::new(boxferry::report::MAX_JSON_BYTES, name);
+    let mut output = BoundedBuffer::new(MAX_PODMAN_SNAPSHOT_JSON_BYTES, name);
     serde_json::to_writer_pretty(&mut output, value).map_err(|error| {
         if error.is_io() {
             io::Error::new(io::ErrorKind::InvalidData, error.to_string())
@@ -2824,6 +2826,62 @@ impl Write for BoundedBuffer<'_> {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+struct BoundedCursor {
+    inner: Cursor<Vec<u8>>,
+    maximum: usize,
+    name: &'static str,
+}
+
+impl BoundedCursor {
+    fn new(maximum: usize, capacity: usize, name: &'static str) -> Self {
+        Self {
+            inner: Cursor::new(Vec::with_capacity(capacity.min(maximum))),
+            maximum,
+            name,
+        }
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.inner.into_inner()
+    }
+}
+
+impl Write for BoundedCursor {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let position = usize::try_from(self.inner.position()).map_err(io::Error::other)?;
+        let end = position
+            .checked_add(bytes.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, self.name))?;
+        if end > self.maximum {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} exceeds the v1 size cap", self.name),
+            ));
+        }
+        self.inner.write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl Seek for BoundedCursor {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        let previous = self.inner.position();
+        let next = self.inner.seek(position)?;
+        let maximum = u64::try_from(self.maximum).unwrap_or(u64::MAX);
+        if next > maximum {
+            self.inner.set_position(previous);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} exceeds the v1 size cap", self.name),
+            ));
+        }
+        Ok(next)
     }
 }
 
@@ -4846,7 +4904,12 @@ where
 {
     let directory = match configured_directory {
         Some(directory) => {
-            match fs::symlink_metadata(directory) {
+            let directory = if directory.is_absolute() {
+                directory.to_path_buf()
+            } else {
+                current_directory()?.join(directory)
+            };
+            match fs::symlink_metadata(&directory) {
                 Ok(_) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     let parent = directory.parent().unwrap_or_else(|| Path::new("."));
@@ -4857,11 +4920,11 @@ where
                             "error-report directory parent must be an existing non-symlink directory",
                         ));
                     }
-                    create_private_directory(directory)?;
+                    create_private_directory(&directory)?;
                 }
                 Err(error) => return Err(error),
             }
-            directory.to_path_buf()
+            directory
         }
         None => current_directory()?,
     };
@@ -4927,7 +4990,7 @@ fn validate_support_bundle_entries_with_evidence(
             ("podman-discovery-graph-v1.json", &evidence.discovery_graph),
             ("podman-acquisition-findings-v1.json", &evidence.acquisition_findings),
         ] {
-            if value.len() > boxferry::report::MAX_JSON_BYTES {
+            if value.len() > MAX_PODMAN_SNAPSHOT_JSON_BYTES {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("{name} exceeds the v1 size cap"),
@@ -4948,15 +5011,21 @@ fn build_support_bundle_with_evidence(
     report: &[u8],
     podman_evidence: Option<&PodmanSupportEntries>,
 ) -> io::Result<Vec<u8>> {
-    let estimated_size = stored_zip_size_upper_bound(readme, report, podman_evidence);
-    if estimated_size > MAX_ARCHIVE_BYTES {
+    let estimated_size = support_bundle_uncompressed_size_upper_bound(readme, report, podman_evidence);
+    if estimated_size > MAX_ARCHIVE_UNCOMPRESSED_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "stored support bundle exceeds the v1 size cap",
+            "uncompressed support bundle exceeds the v1 size cap",
         ));
     }
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    let mut writer = ZipWriter::new(Cursor::new(Vec::with_capacity(estimated_size)));
+    let options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .compression_level(Some(6));
+    let mut writer = ZipWriter::new(BoundedCursor::new(
+        MAX_ARCHIVE_BYTES,
+        estimated_size,
+        "compressed support bundle",
+    ));
     writer
         .start_file("README.md", options)
         .map_err(|error| zip_error(&error))?;
@@ -4980,13 +5049,17 @@ fn build_support_bundle_with_evidence(
     if archive.len() > MAX_ARCHIVE_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "stored support bundle exceeds the v1 size cap",
+            "compressed support bundle exceeds the v1 size cap",
         ));
     }
     Ok(archive)
 }
 
-fn stored_zip_size_upper_bound(readme: &[u8], report: &[u8], podman_evidence: Option<&PodmanSupportEntries>) -> usize {
+fn support_bundle_uncompressed_size_upper_bound(
+    readme: &[u8],
+    report: &[u8],
+    podman_evidence: Option<&PodmanSupportEntries>,
+) -> usize {
     let mut entries = vec![("README.md", readme.len()), ("report.json", report.len())];
     if let Some(evidence) = podman_evidence {
         entries.extend([
@@ -5486,6 +5559,27 @@ mod tests {
     }
 
     #[test]
+    fn generated_error_report_resolves_bare_relative_directories_from_cwd() -> io::Result<()> {
+        let current_directory = env::temp_dir().join(format!(
+            "boxferry-generated-error-report-relative-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&current_directory)?;
+
+        for (configured, leaf) in [("error", "error"), ("./dot-error", "dot-error")] {
+            let report =
+                write_generated_error_report(Some(Path::new(configured)), "{}", fixed_error_report_time, || {
+                    Ok(current_directory.clone())
+                })?;
+            let expected = fs::canonicalize(current_directory.join(leaf))?;
+            assert_eq!(report.parent(), Some(expected.as_path()));
+        }
+
+        fs::remove_dir_all(current_directory)
+    }
+
+    #[test]
     fn generated_error_report_creates_only_an_explicit_missing_leaf_directory() -> io::Result<()> {
         let parent = env::temp_dir().join(format!(
             "boxferry-generated-error-report-new-leaf-{}-{}",
@@ -5651,16 +5745,32 @@ mod tests {
         let archive = build_support_bundle(b"readme", b"{}")?;
         assert!(archive.len() < MAX_ARCHIVE_BYTES);
 
+        let large_inventory = serialize_bounded_json(
+            "podman-inventory-v1.json",
+            &serde_json::json!({ "padding": "x".repeat(boxferry::report::MAX_JSON_BYTES) }),
+        )?;
+        assert!(large_inventory.len() > boxferry::report::MAX_JSON_BYTES);
+        let large = PodmanSupportEntries {
+            inventory: Arc::from(large_inventory),
+            discovery_graph: Arc::from(b"{}".to_vec()),
+            acquisition_findings: Arc::from(b"{}".to_vec()),
+        };
+        assert!(validate_support_bundle_entries_with_evidence(b"readme", b"{}", Some(&large)).is_ok());
+        let archive = build_support_bundle_with_evidence(b"readme", b"{}", Some(&large))?;
+        assert!(archive.len() < MAX_ARCHIVE_BYTES);
+        let mut zip = zip::ZipArchive::new(Cursor::new(archive))?;
+        assert_eq!(zip.len(), 5);
+        let mut retained_inventory = String::new();
+        zip.by_name("podman-inventory-v1.json")?
+            .read_to_string(&mut retained_inventory)?;
+        assert!(retained_inventory.len() > boxferry::report::MAX_JSON_BYTES);
+
         let oversized = PodmanSupportEntries {
-            inventory: Arc::from(vec![b'i'; 2 * 1024 * 1024]),
-            discovery_graph: Arc::from(vec![b'g'; 2 * 1024 * 1024]),
-            acquisition_findings: Arc::from(vec![b'f'; 2 * 1024 * 1024]),
+            inventory: Arc::from(vec![b'i'; MAX_PODMAN_SNAPSHOT_JSON_BYTES + 1]),
+            discovery_graph: Arc::from(b"{}".to_vec()),
+            acquisition_findings: Arc::from(b"{}".to_vec()),
         };
-        assert!(validate_support_bundle_entries_with_evidence(b"readme", b"{}", Some(&oversized)).is_ok());
-        let Err(error) = build_support_bundle_with_evidence(b"readme", b"{}", Some(&oversized)) else {
-            return Err(io::Error::other("oversized Podman evidence was accepted"));
-        };
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(validate_support_bundle_entries_with_evidence(b"readme", b"{}", Some(&oversized)).is_err());
 
         let directory = env::temp_dir().join(format!(
             "boxferry-support-bundle-fallback-{}-{}",
@@ -5675,7 +5785,7 @@ mod tests {
         let zip = zip::ZipArchive::new(fs::File::open(&path)?)?;
         assert_eq!(zip.len(), 2, "the base diagnostic ZIP remains publishable");
         fs::remove_dir_all(directory)?;
-        assert!(serialize_bounded_json("oversized.json", &"x".repeat(boxferry::report::MAX_JSON_BYTES)).is_err());
+        assert!(serialize_bounded_json("oversized.json", &"x".repeat(MAX_PODMAN_SNAPSHOT_JSON_BYTES)).is_err());
         Ok(())
     }
 
