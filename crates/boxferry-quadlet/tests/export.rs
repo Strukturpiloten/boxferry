@@ -2185,6 +2185,46 @@ fn resolves_relative_binds_against_explicit_caller_context() -> Result<(), Box<d
 }
 
 #[test]
+fn quotes_complex_environment_and_exec_arguments_without_losing_podman_names() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("quoted")?);
+    let mut service = image_service("web")?;
+    service.set_command(sourced(Command::Exec(vec![
+        ProtectedString::plain("nginx"),
+        ProtectedString::plain("-g"),
+        ProtectedString::plain("daemon off;"),
+    ]))?);
+    service.add_environment(Sourced::from_source(
+        EnvironmentVariable::new(
+            id("NC_davstorage.request_timeout")?,
+            EnvironmentValue::Literal(ProtectedString::sensitive(
+                "value with \"quotes\", \\backslashes, $dollar, and 100%",
+            )),
+        ),
+        Provenance::runtime_observation(SourceId::new("podman-runtime")?),
+    ));
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().all(|outcome| {
+        !matches!(
+            outcome.subject(),
+            "services.web.command" | "services.web.environment.NC_davstorage.request_timeout"
+        ) || outcome.kind() == ConversionKind::Exact
+    }));
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let output = authorized
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("quoted Quadlet output expected")?;
+    assert!(output.contains("Exec=nginx -g \"daemon off;\""));
+    assert!(output.contains(
+        "Environment=\"NC_davstorage.request_timeout=value with \\\"quotes\\\", \\\\backslashes, $dollar, and 100%\""
+    ));
+    Ok(())
+}
+
+#[test]
 fn emits_ordered_environment_files_only_after_approximation_authorization() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("environment-files")?);
     let mut service = image_service("web")?;

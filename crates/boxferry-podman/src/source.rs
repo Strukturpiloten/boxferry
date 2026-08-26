@@ -9,59 +9,83 @@ use podman_lens::{CapabilityCatalogueEntry, ResourceGraph, ResourceInventory};
 /// never promotable through this policy.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PodmanPromotionPolicy {
-    effective_named_volume_mounts: bool,
-    effective_named_networks: bool,
-    portable_effective_settings: bool,
+    enabled: u8,
 }
+
+const EFFECTIVE_BIND_MOUNTS: u8 = 1 << 0;
+const EFFECTIVE_NAMED_VOLUME_MOUNTS: u8 = 1 << 1;
+const EFFECTIVE_NAMED_NETWORKS: u8 = 1 << 2;
+const PORTABLE_EFFECTIVE_SETTINGS: u8 = 1 << 3;
 
 impl PodmanPromotionPolicy {
     /// Creates the conservative policy that retains effective values as observations only.
     #[must_use]
     pub const fn conservative() -> Self {
-        Self {
-            effective_named_volume_mounts: false,
-            effective_named_networks: false,
-            portable_effective_settings: false,
-        }
+        Self { enabled: 0 }
+    }
+
+    /// Authorizes or rejects host-local bind-mount promotion.
+    #[must_use]
+    pub const fn with_effective_bind_mounts(mut self, enabled: bool) -> Self {
+        self.set(EFFECTIVE_BIND_MOUNTS, enabled);
+        self
     }
 
     /// Authorizes or rejects portable named-volume mount promotion.
     #[must_use]
     pub const fn with_effective_named_volume_mounts(mut self, enabled: bool) -> Self {
-        self.effective_named_volume_mounts = enabled;
+        self.set(EFFECTIVE_NAMED_VOLUME_MOUNTS, enabled);
         self
     }
 
     /// Authorizes or rejects named-network attachment promotion.
     #[must_use]
     pub const fn with_effective_named_networks(mut self, enabled: bool) -> Self {
-        self.effective_named_networks = enabled;
+        self.set(EFFECTIVE_NAMED_NETWORKS, enabled);
         self
     }
 
     /// Authorizes or rejects the reviewed portable effective-settings subset.
     #[must_use]
     pub const fn with_portable_effective_settings(mut self, enabled: bool) -> Self {
-        self.portable_effective_settings = enabled;
+        self.set(PORTABLE_EFFECTIVE_SETTINGS, enabled);
         self
     }
 
     /// Returns whether portable effective named-volume mounts may be promoted.
     #[must_use]
     pub const fn promotes_effective_named_volume_mounts(self) -> bool {
-        self.effective_named_volume_mounts
+        self.contains(EFFECTIVE_NAMED_VOLUME_MOUNTS)
+    }
+
+    /// Returns whether effective host-local bind mounts may be promoted.
+    #[must_use]
+    pub const fn promotes_effective_bind_mounts(self) -> bool {
+        self.contains(EFFECTIVE_BIND_MOUNTS)
     }
 
     /// Returns whether effective named-network attachments may be promoted.
     #[must_use]
     pub const fn promotes_effective_named_networks(self) -> bool {
-        self.effective_named_networks
+        self.contains(EFFECTIVE_NAMED_NETWORKS)
     }
 
     /// Returns whether reviewed portable effective settings may be promoted.
     #[must_use]
     pub const fn promotes_portable_effective_settings(self) -> bool {
-        self.portable_effective_settings
+        self.contains(PORTABLE_EFFECTIVE_SETTINGS)
+    }
+
+    const fn set(&mut self, flag: u8, value: bool) {
+        if value {
+            self.enabled |= flag;
+        } else {
+            self.enabled &= !flag;
+        }
+    }
+
+    const fn contains(self, flag: u8) -> bool {
+        self.enabled & flag != 0
     }
 }
 /// One explicit Podman import source after caller-owned acquisition and discovery.

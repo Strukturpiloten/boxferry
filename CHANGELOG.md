@@ -13,6 +13,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 - Add explicit `--promote-podman-portable-effective-settings` migration policy for protected
   environment values, published ports, restart policy, normal healthchecks, and DNS while keeping
   reports and snapshots redacted ([#80](https://github.com/Strukturpiloten/boxferry/issues/80)).
+- Add explicit `--promote-podman-effective-bind-mounts` authorization for reviewed same-path
+  migrations while retaining non-default native mount options as visible partial loss
+  ([#82](https://github.com/Strukturpiloten/boxferry/issues/82)).
 
 ### Fixed
 
@@ -25,6 +28,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 - Scope Podman discovery diagnostics to the selected graph and consume optional Compose lifecycle
   labels without leaking unrelated host findings or metadata into converted applications
   ([#80](https://github.com/Strukturpiloten/boxferry/issues/80)).
+- Preserve quoted Podman environment values, dotted variable names, exec arguments, promoted bind
+  mounts, and application-owned networks in Quadlet output; omit non-authored empty DNS defaults
+  ([#82](https://github.com/Strukturpiloten/boxferry/issues/82)).
 
 ## [0.8.2](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.1...boxferry-v0.8.2) - 2026-08-26
 

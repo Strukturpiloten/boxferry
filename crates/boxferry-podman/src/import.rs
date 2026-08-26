@@ -14,9 +14,9 @@ use boxferry_model::{
 };
 use podman_lens::{
     ContainerMountKind, ContainerMountObservation, ContainerMountSource, ContainerObservation,
-    ContainerSecretGrantObservation, NativeHealthCheckObservation, NativeHealthCommand, NativeNamespaceMode,
-    NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol, NativeRestartPolicyName,
-    NativeRestartPolicyObservation, ObservationField, ObservationOrigin, ProtectedEnvironment,
+    ContainerSecretGrantObservation, DiscoveryExplanationKind, NativeHealthCheckObservation, NativeHealthCommand,
+    NativeNamespaceMode, NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol,
+    NativeRestartPolicyName, NativeRestartPolicyObservation, ObservationField, ObservationOrigin, ProtectedEnvironment,
     ProtectedEnvironmentValue, ResourceDetails, ResourceIdentity, ResourceKind, ResourceObservation,
     ResourceObservationState,
 };
@@ -24,6 +24,7 @@ use podman_lens::{
 use crate::PodmanSource;
 
 const PORTABLE_EFFECTIVE_SETTINGS_FLAG: &str = "--promote-podman-portable-effective-settings";
+const EFFECTIVE_BIND_MOUNTS_FLAG: &str = "--promote-podman-effective-bind-mounts";
 const COMPOSE_LIFECYCLE_LABEL_PREFIX: &str = "com.docker.compose.";
 
 /// PodmanLens-to-neutral-model semantic importer.
@@ -140,7 +141,11 @@ impl<'a> Mapping<'a> {
         let Some(name) = self.identifier(&subject, observation.header().identity()) else {
             return;
         };
-        let mut network = Network::new(name, ResourceOwnership::Uncertain);
+        let ownership = self.promoted_resource_ownership(
+            observation.header().identity(),
+            self.source.promotion_policy().promotes_effective_named_networks(),
+        );
+        let mut network = Network::new(name, ownership);
         self.map_network_labels(&subject, details.labels(), &mut network);
         self.observation_only(
             &format!("{subject}.internal"),
@@ -180,7 +185,11 @@ impl<'a> Mapping<'a> {
         let Some(name) = self.identifier(&subject, observation.header().identity()) else {
             return;
         };
-        let mut volume = Volume::new(name, ResourceOwnership::Uncertain);
+        let ownership = self.promoted_resource_ownership(
+            observation.header().identity(),
+            self.source.promotion_policy().promotes_effective_named_volume_mounts(),
+        );
+        let mut volume = Volume::new(name, ownership);
         self.map_volume_labels(&subject, details.labels(), &mut volume);
         self.observation_only(
             &format!("{subject}.driver"),
@@ -963,19 +972,34 @@ impl<'a> Mapping<'a> {
             );
             return;
         }
-        if !self.source.promotion_policy().promotes_effective_named_volume_mounts() {
+        if !self.source.promotion_policy().promotes_effective_named_volume_mounts()
+            && !self.source.promotion_policy().promotes_effective_bind_mounts()
+        {
             for (index, mount) in observed.value().iter().enumerate() {
                 self.report_unpromoted_mount(&format!("{field_subject}[{index}]"), mount);
             }
             self.promotion_required_with_flag(
                 &field_subject,
-                "effective named-volume mounts require explicit promotion authorization",
-                "--promote-podman-effective-named-volumes",
+                "effective mounts require explicit promotion authorization",
+                "--promote-podman-effective-named-volumes or --promote-podman-effective-bind-mounts",
             );
             return;
         }
         for (index, mount) in observed.value().iter().enumerate() {
             let mount_subject = format!("{field_subject}[{index}]");
+            if mount.kind() == ContainerMountKind::Bind {
+                self.map_effective_bind_mount(&mount_subject, mount, service);
+                continue;
+            }
+            if !self.source.promotion_policy().promotes_effective_named_volume_mounts() {
+                self.report_unpromoted_mount(&mount_subject, mount);
+                self.promotion_required_with_flag(
+                    mount_subject,
+                    "effective named-volume mount requires explicit promotion authorization",
+                    "--promote-podman-effective-named-volumes",
+                );
+                continue;
+            }
             self.report_mount_remainders(&mount_subject, mount);
             if mount.kind() != ContainerMountKind::NamedVolume {
                 self.report_mount_core(&mount_subject, mount);
@@ -1031,6 +1055,94 @@ impl<'a> Mapping<'a> {
                 }
                 Err(error) => self.model_error(mount_subject, &error),
             }
+        }
+    }
+
+    fn map_effective_bind_mount(&mut self, subject: &str, mount: &ContainerMountObservation, service: &mut Service) {
+        if !self.source.promotion_policy().promotes_effective_bind_mounts() {
+            self.report_unpromoted_mount(subject, mount);
+            self.promotion_required_with_flag(
+                subject,
+                "host-local bind mount requires explicit same-path promotion authorization",
+                EFFECTIVE_BIND_MOUNTS_FLAG,
+            );
+            return;
+        }
+        let (Some(source), Some(destination), Some(writable)) = (
+            mount.source().observed(),
+            mount.destination().observed(),
+            mount.writable().observed(),
+        ) else {
+            self.report_state(mount.source(), &format!("{subject}.source"));
+            self.report_state(mount.destination(), &format!("{subject}.destination"));
+            self.report_state(mount.writable(), &format!("{subject}.writable"));
+            self.invalid(subject, "bind-mount source, destination, or access is incomplete");
+            return;
+        };
+        let ContainerMountSource::LocalBindPath(source_path) = source.value() else {
+            self.invalid(subject, "bind-mount kind and source disagree");
+            return;
+        };
+        if !source_path.starts_with('/') {
+            self.unsupported(subject, "host-local bind source is not an absolute path");
+            return;
+        }
+        if !matches!(
+            destination.origin(),
+            ObservationOrigin::Configured | ObservationOrigin::Effective
+        ) || !matches!(
+            writable.origin(),
+            ObservationOrigin::Configured | ObservationOrigin::Effective
+        ) {
+            self.unsupported(subject, "runtime-assigned bind destination or access is never promoted");
+            return;
+        }
+
+        self.report_bind_mount_remainders(subject, mount);
+        match Mount::new(
+            MountSource::HostPath(source_path.clone()),
+            destination.value(),
+            !writable.value(),
+        ) {
+            Ok(mount) => {
+                service.add_mount(self.decision_sourced(mount));
+                self.approximate_with_flag(
+                    subject,
+                    "host-local bind mount promoted for a reviewed same-path target",
+                    EFFECTIVE_BIND_MOUNTS_FLAG,
+                );
+            }
+            Err(error) => self.model_error(subject, &error),
+        }
+    }
+
+    fn report_bind_mount_remainders(&mut self, subject: &str, mount: &ContainerMountObservation) {
+        self.exact(format!("{subject}.local_backing_path"));
+        match mount.options().observed() {
+            Some(options) if options.value().is_empty() => self.exact(format!("{subject}.options")),
+            _ => self.observation_only(
+                &format!("{subject}.options"),
+                mount.options(),
+                "non-default native bind-mount options have no complete neutral mapping",
+            ),
+        }
+        match mount.propagation().observed() {
+            Some(propagation) if matches!(propagation.value().as_str(), "" | "private" | "rprivate") => {
+                self.exact(format!("{subject}.propagation"));
+            }
+            _ => self.observation_only(
+                &format!("{subject}.propagation"),
+                mount.propagation(),
+                "non-default bind-mount propagation has no reviewed neutral mapping",
+            ),
+        }
+        match mount.subpath().observed() {
+            Some(subpath) if subpath.value().is_empty() => self.exact(format!("{subject}.subpath")),
+            _ => self.observation_only(
+                &format!("{subject}.subpath"),
+                mount.subpath(),
+                "native bind-mount subpath has no reviewed neutral mapping",
+            ),
         }
     }
 
@@ -1157,17 +1269,21 @@ impl<'a> Mapping<'a> {
             authorized,
             "effective DNS servers require explicit promotion",
         ) {
-            let values = servers
-                .iter()
-                .map(|value| self.portable_sourced(ProtectedString::plain(value.to_string()), promoted))
-                .collect();
-            service.set_dns_servers(values);
-            if promoted {
-                self.approximate_with_flag(
-                    dns_servers_subject,
-                    "effective DNS servers were explicitly promoted as portable intent",
-                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
-                );
+            if servers.is_empty() {
+                self.exact(dns_servers_subject);
+            } else {
+                let values = servers
+                    .iter()
+                    .map(|value| self.portable_sourced(ProtectedString::plain(value.to_string()), promoted))
+                    .collect();
+                service.set_dns_servers(values);
+                if promoted {
+                    self.approximate_with_flag(
+                        dns_servers_subject,
+                        "effective DNS servers were explicitly promoted as portable intent",
+                        PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                    );
+                }
             }
         }
 
@@ -1178,17 +1294,21 @@ impl<'a> Mapping<'a> {
             authorized,
             "effective DNS search domains require explicit promotion",
         ) {
-            let values = domains
-                .iter()
-                .map(|value| self.portable_sourced(ProtectedString::plain(value), promoted))
-                .collect();
-            service.set_dns_search_domains(values);
-            if promoted {
-                self.approximate_with_flag(
-                    dns_search_subject,
-                    "effective DNS search domains were explicitly promoted as portable intent",
-                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
-                );
+            if domains.is_empty() {
+                self.exact(dns_search_subject);
+            } else {
+                let values = domains
+                    .iter()
+                    .map(|value| self.portable_sourced(ProtectedString::plain(value), promoted))
+                    .collect();
+                service.set_dns_search_domains(values);
+                if promoted {
+                    self.approximate_with_flag(
+                        dns_search_subject,
+                        "effective DNS search domains were explicitly promoted as portable intent",
+                        PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                    );
+                }
             }
         }
 
@@ -1199,17 +1319,21 @@ impl<'a> Mapping<'a> {
             authorized,
             "effective DNS options require explicit promotion",
         ) {
-            let values = options
-                .iter()
-                .map(|value| self.portable_sourced(ProtectedString::plain(value), promoted))
-                .collect();
-            service.set_dns_options(values);
-            if promoted {
-                self.approximate_with_flag(
-                    dns_options_subject,
-                    "effective DNS options were explicitly promoted as portable intent",
-                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
-                );
+            if options.is_empty() {
+                self.exact(dns_options_subject);
+            } else {
+                let values = options
+                    .iter()
+                    .map(|value| self.portable_sourced(ProtectedString::plain(value), promoted))
+                    .collect();
+                service.set_dns_options(values);
+                if promoted {
+                    self.approximate_with_flag(
+                        dns_options_subject,
+                        "effective DNS options were explicitly promoted as portable intent",
+                        PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                    );
+                }
             }
         }
     }
@@ -1676,6 +1800,20 @@ impl<'a> Mapping<'a> {
         finding
             .resource_identity()
             .is_none_or(|identity| self.selected.contains(identity))
+    }
+
+    fn promoted_resource_ownership(&self, identity: &ResourceIdentity, promoted: bool) -> ResourceOwnership {
+        if !promoted {
+            return ResourceOwnership::Uncertain;
+        }
+        if self.source.graph().explanations().iter().any(|explanation| {
+            explanation.resource() == identity
+                && matches!(explanation.kind(), DiscoveryExplanationKind::StoppedSharedBoundary)
+        }) {
+            ResourceOwnership::External
+        } else {
+            ResourceOwnership::Application
+        }
     }
 
     fn inventory_section_is_relevant(&self, kind: ResourceKind) -> bool {

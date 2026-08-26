@@ -15,8 +15,8 @@ use boxferry_model::{
     Command, Config, Device, Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentValue, ExposedPort,
     GroupExitPolicy, Healthcheck, HealthcheckCommand, HostAddressKind, HostMapping, ImageAcquisition,
     ImageAcquisitionSetting, ImageArtifactAssignment, ImageBuild, ImageBuildSetting, MetadataLabel, Mount, MountSource,
-    NetworkAttachment, NetworkDriverOption, Port, ProtectedString, Protocol, Provenance, PullPolicy, ReloadAction,
-    ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service,
+    NetworkAttachment, NetworkDriverOption, Port, ProtectedString, Protocol, Provenance, ProvenanceKind, PullPolicy,
+    ReloadAction, ResourceGrant, ResourceOwnership, RestartPolicy, Secret, SecurityOption, SelinuxRelabel, Service,
     ServiceDependency, ServiceDependencyCondition, ServiceGroupRuntime, SourceBuildSetting, Sourced,
     StartupNotification, VolumeImageSource,
 };
@@ -3726,20 +3726,34 @@ impl<'a> Mapping<'a> {
         let subject = format!("{service_subject}.command");
         let value = match command.value() {
             Command::Exec(arguments)
-                if !arguments.is_empty() && arguments.iter().all(|argument| is_safe_word(argument.expose(), false)) =>
+                if arguments
+                    .iter()
+                    .any(|argument| contains_unresolved_source_variable(argument.expose(), command.origins())) =>
             {
-                Some(
-                    arguments
-                        .iter()
-                        .map(ProtectedString::expose)
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                )
+                self.unsupported(
+                    &subject,
+                    "command argument contains unresolved authored variable syntax",
+                    command.origins(),
+                );
+                None
             }
+            Command::Exec(arguments) if !arguments.is_empty() => arguments
+                .iter()
+                .map(|argument| encode_quadlet_word(argument.expose()))
+                .collect::<Option<Vec<_>>>()
+                .map(|arguments| arguments.join(" "))
+                .or_else(|| {
+                    self.unsupported(
+                        &subject,
+                        "command argument contains a physical line break, NUL byte, or control character",
+                        command.origins(),
+                    );
+                    None
+                }),
             Command::Exec(_) => {
                 self.unsupported(
                     &subject,
-                    "command arguments requiring systemd quoting are not yet encoded",
+                    "exec-form command requires at least one argument",
                     command.origins(),
                 );
                 None
@@ -3968,14 +3982,6 @@ impl<'a> Mapping<'a> {
     ) {
         let name = environment.value().name().as_str();
         let subject = format!("{service_subject}.environment.{name}");
-        if !is_environment_name(name) {
-            self.unsupported(
-                &subject,
-                "environment name is outside the safely encoded Quadlet subset",
-                environment.origins(),
-            );
-            return;
-        }
         let EnvironmentValue::Literal(value) = environment.value().value() else {
             let reason = match environment.value().value() {
                 EnvironmentValue::Host => "host environment resolution requires an explicit value provider",
@@ -3985,15 +3991,22 @@ impl<'a> Mapping<'a> {
             self.unsupported(&subject, reason, environment.origins());
             return;
         };
-        if !is_safe_word(value.expose(), true) {
+        if contains_unresolved_source_variable(value.expose(), environment.origins()) {
             self.unsupported(
                 &subject,
-                "environment value requires systemd quoting or specifier escaping not yet encoded",
+                "environment value contains unresolved authored variable syntax",
                 environment.origins(),
             );
             return;
         }
-        let encoded = format!("{name}={}", value.expose());
+        let Some(encoded) = encode_quadlet_environment_assignment(name, value.expose()) else {
+            self.unsupported(
+                &subject,
+                "environment assignment contains an invalid name, physical line break, NUL byte, or control character",
+                environment.origins(),
+            );
+            return;
+        };
         if self.capability("quadlet.container.environment", &subject, environment.origins())
             && self.push_container(
                 builder,
@@ -5282,12 +5295,43 @@ fn is_native_atom(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
-fn is_environment_name(value: &str) -> bool {
-    value
-        .as_bytes()
-        .first()
-        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+fn encode_quadlet_environment_assignment(name: &str, value: &str) -> Option<String> {
+    if name.is_empty()
+        || name.contains('=')
+        || name
+            .chars()
+            .any(|character| character == '\0' || character.is_control())
+    {
+        return None;
+    }
+    encode_quadlet_word(&format!("{name}={value}"))
+}
+
+fn contains_unresolved_source_variable(value: &str, origins: &[Provenance]) -> bool {
+    value.contains('$')
+        && origins
+            .iter()
+            .any(|origin| origin.kind() == ProvenanceKind::SourceDocument)
+        && !origins.iter().any(|origin| {
+            matches!(
+                origin.kind(),
+                ProvenanceKind::RuntimeObservation | ProvenanceKind::ConversionDecision
+            )
+        })
+}
+
+fn encode_quadlet_word(value: &str) -> Option<String> {
+    if value
+        .chars()
+        .any(|character| character == '\0' || matches!(character, '\r' | '\n') || character.is_control())
+    {
+        return None;
+    }
+    if is_safe_word(value, false) {
+        return Some(value.to_owned());
+    }
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    Some(format!("\"{escaped}\""))
 }
 
 fn encode_json_array(values: &[&str]) -> String {

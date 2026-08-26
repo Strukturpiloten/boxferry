@@ -37,6 +37,10 @@ reviewed environment, published-port, restart, normal-health, and DNS subset; re
 redacted. Every other required decision or unsupported field stays visible through the normal
 diagnostic and loss-policy contract.
 
+Use `--promote-podman-effective-bind-mounts` only for a target that deliberately reuses the same
+absolute host paths. The flag preserves source, destination, and read-only state; it does not claim
+that the paths or their contents were migrated.
+
 ## Production checks
 
 - Add `--podman-network-boundary NAME_OR_ID` only for a network that discovery may cross.

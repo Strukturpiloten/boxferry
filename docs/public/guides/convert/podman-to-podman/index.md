@@ -34,6 +34,8 @@ contract for every Podman output route. BoxFerry never executes the script. Runn
 - The source engine version and execution context never become target choices implicitly.
 - A rootful-to-rootless move can change privileged ports, namespaces, UID mappings, and host-path
   access. Review every target-context diagnostic.
+- `--promote-podman-effective-bind-mounts` reuses absolute source paths. Verify those paths and
+  their permissions on the target before running the generated script.
 - Network-boundary permission controls discovery, not target firewall policy.
 - Named volume recreation does not copy volume data.
 - Inspected secrets remain preconditions until an operator supplies reviewed secret intent.
