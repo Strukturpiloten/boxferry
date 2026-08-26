@@ -10,7 +10,10 @@ Create a report in an existing directory:
 boxferry validate compose quadlet --input-file compose.yaml --generate-error-report --error-report-directory reports
 ```
 
-Without `--error-report-directory`, the current directory is used. The local-time filename is:
+Bare relative paths such as `reports` and explicit relative paths such as `./reports` both resolve
+from the current working directory. BoxFerry may create that one missing leaf directory when its
+parent exists. Without `--error-report-directory`, the current directory itself is used. The
+local-time filename is:
 
 ```text
 boxferry-error-report-2026-08-19_16-42-08.zip
@@ -54,13 +57,15 @@ a PodmanLens cassette. Resource names, image references, IDs, and topology can s
 operationally sensitive. The report's redaction count measures redaction markers and deliberately
 omitted values across serialized snapshot entries; it is not a count of distinct source secrets.
 
-Snapshot entries are serialized into bounded buffers before ZIP construction. Human output prints
-progress before Podman acquisition, snapshot preparation, and atomic ZIP publication. The report
-directory stays empty until the complete archive is ready: BoxFerry never exposes a partial ZIP. If
-the optional Podman evidence cannot fit its entry or archive limit, BoxFerry still writes the base
-`README.md` and `report.json` bundle. `BFO3002` then names the omitted snapshot and the original
-conversion result remains the primary failure or policy decision. JSON and quiet output remain free
-of progress lines. Repeated native-field findings are grouped with counts and bounded path samples,
+Snapshot entries are serialized into bounded buffers of at most 32 MiB per JSON file and compressed
+with DEFLATE. The complete uncompressed bundle is capped at 104 MiB and the final ZIP at 16 MiB.
+Human output prints progress before Podman acquisition, snapshot preparation, and atomic ZIP
+publication. The report directory stays empty until the complete archive is ready: BoxFerry never
+exposes a partial ZIP. If optional Podman evidence still cannot fit its entry or archive limit,
+BoxFerry writes the base `README.md` and `report.json` bundle. `BFO3002` then names the omitted
+snapshot and the original conversion result remains the primary failure or policy decision. JSON
+and quiet output remain free of progress lines. Repeated native-field findings are grouped with
+counts and bounded path samples,
 so large live inventories remain readable and do not duplicate one diagnostic for every retained
 field.
 

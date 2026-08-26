@@ -1443,6 +1443,19 @@ fn validate_release_plz_changelog(config: &toml::Value) -> Result<(), String> {
         return Err("release-plz must preserve breaking commits in generated changelogs".to_owned());
     }
 
+    let body = changelog
+        .get("body")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| "release-plz must configure a changelog body".to_owned())?;
+    if !body.contains("## [{{ version }}]")
+        || !body.contains("{{ release_link }}")
+        || !body.contains("%Y-%m-%d")
+        || body.contains("commits")
+        || body.contains("group_by")
+    {
+        return Err("release-plz must add only a dated release heading above reviewed Unreleased notes".to_owned());
+    }
+
     let parsers = changelog
         .get("commit_parsers")
         .and_then(toml::Value::as_array)

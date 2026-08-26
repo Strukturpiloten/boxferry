@@ -5,6 +5,19 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Sort the top-level command help alphabetically and make release-plz promote reviewed Unreleased
+  notes without generating duplicate category headings ([#77](https://github.com/Strukturpiloten/boxferry/issues/77)).
+
+### Fixed
+
+- Resolve bare relative `--error-report-directory` values such as `error` from the current working
+  directory, matching `./error` ([#77](https://github.com/Strukturpiloten/boxferry/issues/77)).
+- Compress support bundles and retain bounded redacted Podman snapshots up to 32 MiB per JSON entry
+  so production inventories above the former 4 MiB report limit remain debuggable
+  ([#77](https://github.com/Strukturpiloten/boxferry/issues/77)).
+
 ## [0.8.2](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.1...boxferry-v0.8.2) - 2026-08-26
 
 ### Changed
