@@ -71,6 +71,11 @@ When the user authorizes Git and GitHub writes:
    intentional commit.
 7. Push and open a ready pull request containing `Closes #<NUMBER>`.
 8. Read back the issue, commit, pull request, and required checks.
+9. After an authorized, verified merge, restore the primary checkout to synchronized `main`,
+   remove any temporary worktree with `git worktree remove <recorded-path>`, delete the verified
+   merged local issue branch with `git branch --delete --force TheRealBecks/issue<NUMBER>`, run
+   `git worktree prune --verbose`, and read back `git worktree list --porcelain` plus
+   `git status --short --branch`. Never leave `target/*-issue*` worktree registrations behind.
 
 Opening and reading back the ready pull request is the default stopping point. Authorization to run
 the Git workflow or perform GitHub writes does not authorize a merge.
