@@ -39,6 +39,11 @@ replace this gate.
 6. Stage explicit paths, run `git diff --cached --check`, and review the staged diff.
 7. Commit once, push, and open a ready pull request containing `Closes #<NUMBER>`.
 8. Read the issue and pull request back and monitor required checks.
+9. After a verified merge, return the primary checkout to synchronized `main`, remove any temporary
+   worktree with `git worktree remove <recorded-path>`, delete the verified merged local issue branch
+   with `git branch --delete --force TheRealBecks/issue<NUMBER>`, and run
+   `git worktree prune --verbose`. Verify `git worktree list --porcelain` and
+   `git status --short --branch` show no stale issue checkout.
 
 All steps must pass before the change is committed, pushed, or submitted.
 
