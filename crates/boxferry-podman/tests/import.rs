@@ -166,10 +166,17 @@ fn input_only_podman_three_imports_through_the_neutral_model() -> Result<(), Box
         .filter(|finding| finding.stage() == "acquisition")
         .collect::<Vec<_>>();
     assert!(
-        ordinary_native_findings
-            .iter()
-            .all(|finding| finding.fields().is_empty()),
-        "ordinary native findings must remain value-free so CLI reporting can deduplicate them"
+        ordinary_native_findings.iter().all(|finding| [
+            "subject",
+            "reason",
+            "resource_kind",
+            "observation_origin",
+            "source_engine",
+            "source_api"
+        ]
+        .iter()
+        .all(|expected| finding.fields().iter().any(|field| field.name() == *expected))),
+        "ordinary native findings must retain safe actionable context"
     );
     let ordinary_codes = ordinary_native_findings
         .iter()
@@ -179,6 +186,20 @@ fn input_only_podman_three_imports_through_the_neutral_model() -> Result<(), Box
         ordinary_codes.len() < 4,
         "one small legacy application must not create one human diagnostic per native field"
     );
+    for diagnostic in result.diagnostics().iter().filter(|diagnostic| {
+        matches!(
+            diagnostic.code().as_str(),
+            "BFP0001" | "BFP0002" | "BFP0003" | "BFP0004" | "BFP0005"
+        )
+    }) {
+        for expected in ["subject", "reason", "decision"] {
+            assert!(
+                diagnostic.fields().iter().any(|field| field.name() == expected),
+                "{} omitted {expected}: {diagnostic:?}",
+                diagnostic.code().as_str()
+            );
+        }
+    }
 
     let output_target = TargetProfile::new(
         PODMAN_TARGET,
@@ -196,6 +217,66 @@ fn input_only_podman_three_imports_through_the_neutral_model() -> Result<(), Box
     assert!(inventory_snapshot.to_string().contains("[redacted]") || !inventory_snapshot.to_string().contains("Env"));
     let graph_snapshot = serde_json::to_value(source.redacted_graph_snapshot())?;
     assert_eq!(graph_snapshot["schema_version"], 1);
+    Ok(())
+}
+
+#[test]
+fn repeated_native_fields_are_reported_as_one_bounded_actionable_group() -> Result<(), Box<dyn Error>> {
+    let source = legacy_source(
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[],"Unknown00":0,"Unknown01":1,"Unknown02":2,"Unknown03":3,"Unknown04":4,"Unknown05":5,"Unknown06":6,"Unknown07":7,"Unknown08":8,"Unknown09":9,"Unknown10":10,"Unknown11":11}"#,
+    )?;
+    let result = PodmanImporter::new()?.import(&source);
+    let groups = result
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code().as_str() == "BFP0002")
+        .filter(|diagnostic| {
+            diagnostic.native_finding().is_some_and(|finding| {
+                finding.code() == DiagnosticCode::NativeFieldUnsupported.as_str() && finding.stage() == "acquisition"
+            })
+        })
+        .filter(|diagnostic| {
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "resource" && field.value().redacted() == "container:web")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        groups.len(),
+        1,
+        "one resource and native rule must produce one diagnostic"
+    );
+
+    let diagnostic = groups[0];
+    let field = |name: &str| {
+        diagnostic
+            .fields()
+            .iter()
+            .find(|field| field.name() == name)
+            .map(|field| field.value().redacted())
+    };
+    assert_eq!(field("occurrence_count"), Some("12"));
+    assert_eq!(field("native_path_count"), Some("12"));
+    assert_eq!(
+        field("native_path_samples"),
+        Some("$.Unknown00, $.Unknown01, $.Unknown02, $.Unknown03, $.Unknown04, $.Unknown05, $.Unknown06, $.Unknown07")
+    );
+    let native = diagnostic.native_finding().ok_or("native finding")?;
+    assert!(
+        ["occurrence_count", "native_path_count", "native_path_samples"]
+            .iter()
+            .all(|expected| native.fields().iter().any(|field| field.name() == *expected))
+    );
+    assert_eq!(
+        result
+            .outcomes()
+            .iter()
+            .filter(|outcome| outcome.subject() == "podman.acquisition.PLN0023")
+            .count(),
+        12,
+        "aggregation must not change fidelity accounting"
+    );
     Ok(())
 }
 

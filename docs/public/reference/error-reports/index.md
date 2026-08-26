@@ -54,6 +54,16 @@ a PodmanLens cassette. Resource names, image references, IDs, and topology can s
 operationally sensitive. The report's redaction count measures redaction markers and deliberately
 omitted values across serialized snapshot entries; it is not a count of distinct source secrets.
 
+Snapshot entries are serialized into bounded buffers before ZIP construction. Human output prints
+progress before Podman acquisition, snapshot preparation, and atomic ZIP publication. The report
+directory stays empty until the complete archive is ready: BoxFerry never exposes a partial ZIP. If
+the optional Podman evidence cannot fit its entry or archive limit, BoxFerry still writes the base
+`README.md` and `report.json` bundle. `BFO3002` then names the omitted snapshot and the original
+conversion result remains the primary failure or policy decision. JSON and quiet output remain free
+of progress lines. Repeated native-field findings are grouped with counts and bounded path samples,
+so large live inventories remain readable and do not duplicate one diagnostic for every retained
+field.
+
 ## Before sharing
 
 The bundle always declares `review_required: true`. Open every entry and remove anything you do

@@ -162,7 +162,32 @@ impl ExportAdapter for PodmanExporter {
         let resolved = match resolve_podman_target(target) {
             Ok(resolved) => resolved,
             Err(error) => {
-                let diagnostic = Diagnostic::new(self.codes.invalid_target.clone(), Severity::Error, error.to_string());
+                let versions = target.versions();
+                let maximum = versions
+                    .maximum()
+                    .map_or_else(|| "unbounded".to_owned(), |version| version.to_string());
+                let supported = reviewed_podman_versions()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let reason = error.to_string();
+                let diagnostic = Diagnostic::new(self.codes.invalid_target.clone(), Severity::Error, &reason)
+                    .with_field(DiagnosticField::new("subject", DiagnosticValue::plain("target.podman")))
+                    .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)))
+                    .with_field(DiagnosticField::new("decision", DiagnosticValue::plain("rejected")))
+                    .with_field(DiagnosticField::new(
+                        "requested_minimum",
+                        DiagnosticValue::plain(versions.minimum().to_string()),
+                    ))
+                    .with_field(DiagnosticField::new(
+                        "requested_maximum",
+                        DiagnosticValue::plain(maximum),
+                    ))
+                    .with_field(DiagnosticField::new(
+                        "reviewed_targets",
+                        DiagnosticValue::plain(supported),
+                    ));
                 let outcome = ConversionOutcome::loss(
                     "target.podman",
                     ConversionKind::Invalid,
@@ -803,11 +828,17 @@ impl<'a> Mapping<'a> {
 
     fn unsupported(&mut self, subject: impl Into<String>, summary: impl Into<String>) {
         let subject = subject.into();
-        self.diagnostics.push(Diagnostic::new(
-            self.exporter.codes.unsupported.clone(),
-            Severity::Warning,
-            summary,
-        ));
+        let summary = summary.into();
+        self.diagnostics.push(
+            Diagnostic::new(self.exporter.codes.unsupported.clone(), Severity::Warning, &summary)
+                .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(&subject)))
+                .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(summary)))
+                .with_field(DiagnosticField::new("decision", DiagnosticValue::plain("omitted")))
+                .with_field(DiagnosticField::new(
+                    "required_loss_policy",
+                    DiagnosticValue::plain("partial"),
+                )),
+        );
         if let Ok(outcome) = ConversionOutcome::loss(
             subject,
             ConversionKind::Unsupported,
@@ -821,11 +852,13 @@ impl<'a> Mapping<'a> {
 
     fn error(&mut self, subject: impl Into<String>, summary: impl Into<String>) {
         let subject = subject.into();
-        self.diagnostics.push(Diagnostic::new(
-            self.exporter.codes.planning.clone(),
-            Severity::Error,
-            summary,
-        ));
+        let summary = summary.into();
+        self.diagnostics.push(
+            Diagnostic::new(self.exporter.codes.planning.clone(), Severity::Error, &summary)
+                .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(&subject)))
+                .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(summary)))
+                .with_field(DiagnosticField::new("decision", DiagnosticValue::plain("rejected"))),
+        );
         if let Ok(outcome) =
             ConversionOutcome::loss(subject, ConversionKind::Invalid, self.exporter.codes.planning.clone())
         {
@@ -837,7 +870,8 @@ impl<'a> Mapping<'a> {
     fn native_error(&mut self, subject: &str, native_code: &str, summary: &str, stage: &'static str) {
         let subject_field = DiagnosticField::new("subject", DiagnosticValue::plain(subject));
         let native = NativeFinding::new("podman", "podman-lens", native_code, stage, Severity::Error, summary)
-            .with_field(subject_field.clone());
+            .with_field(subject_field.clone())
+            .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(summary)));
         self.diagnostics.push(
             Diagnostic::new(
                 self.exporter.codes.planning.clone(),
@@ -845,6 +879,8 @@ impl<'a> Mapping<'a> {
                 "PodmanLens could not map, plan, or render deployment intent",
             )
             .with_field(subject_field)
+            .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(summary)))
+            .with_field(DiagnosticField::new("decision", DiagnosticValue::plain("rejected")))
             .with_native_finding(native),
         );
         if let Ok(outcome) =
@@ -860,7 +896,11 @@ impl<'a> Mapping<'a> {
             || "deployment.plan".to_owned(),
             |resource| format!("{}.{}", resource_kind_name(resource.kind()), resource.name()),
         );
-        let mut fields = vec![DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone()))];
+        let mut fields = vec![
+            DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone())),
+            DiagnosticField::new("reason", DiagnosticValue::plain(finding.message())),
+            DiagnosticField::new("decision", DiagnosticValue::plain("rejected")),
+        ];
         if let Some(resource) = finding.subject() {
             fields.push(DiagnosticField::new(
                 "resource_kind",
@@ -928,7 +968,11 @@ impl<'a> Mapping<'a> {
             || "deployment.render".to_owned(),
             |resource| format!("{}.{}", resource_kind_name(resource.kind()), resource.name()),
         );
-        let mut fields = vec![DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone()))];
+        let mut fields = vec![
+            DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone())),
+            DiagnosticField::new("reason", DiagnosticValue::plain(finding.message())),
+            DiagnosticField::new("decision", DiagnosticValue::plain("rejected")),
+        ];
         if let Some(resource) = finding.subject() {
             fields.push(DiagnosticField::new(
                 "resource_kind",

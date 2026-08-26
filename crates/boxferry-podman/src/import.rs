@@ -700,9 +700,10 @@ impl<'a> Mapping<'a> {
             for (index, mount) in observed.value().iter().enumerate() {
                 self.report_unpromoted_mount(&format!("{field_subject}[{index}]"), mount);
             }
-            self.promotion_required(
+            self.promotion_required_with_flag(
                 &field_subject,
                 "effective named-volume mounts require explicit promotion authorization",
+                "--promote-podman-effective-named-volumes",
             );
             return;
         }
@@ -755,9 +756,10 @@ impl<'a> Mapping<'a> {
             match Mount::new(MountSource::Volume(volume_name), destination.value(), !writable.value()) {
                 Ok(mount) => {
                     service.add_mount(self.decision_sourced(mount));
-                    self.approximate(
+                    self.approximate_with_flag(
                         mount_subject,
                         "portable named-volume mount promoted by explicit BoxFerry policy",
+                        "--promote-podman-effective-named-volumes",
                     );
                 }
                 Err(error) => self.model_error(mount_subject, &error),
@@ -886,9 +888,10 @@ impl<'a> Mapping<'a> {
             return;
         }
         if !self.source.promotion_policy().promotes_effective_named_networks() {
-            self.promotion_required(
+            self.promotion_required_with_flag(
                 &field_subject,
                 "effective named networks require explicit promotion authorization",
+                "--promote-podman-effective-named-networks",
             );
             return;
         }
@@ -898,9 +901,10 @@ impl<'a> Mapping<'a> {
                 continue;
             };
             service.add_network(self.decision_sourced(NeutralNetworkAttachment::new(name, Vec::new())));
-            self.approximate(
+            self.approximate_with_flag(
                 &field_subject,
                 "effective named network promoted without runtime-assigned addresses",
+                "--promote-podman-effective-named-networks",
             );
         }
     }
@@ -982,9 +986,10 @@ impl<'a> Mapping<'a> {
                 None
             }
             ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
-                self.unsupported(
+                self.unsupported_with_origin(
                     subject,
                     "runtime-assigned and local-resolution observations are never authored intent",
+                    observed.origin(),
                 );
                 None
             }
@@ -1008,7 +1013,7 @@ impl<'a> Mapping<'a> {
         };
         match observed.origin() {
             ObservationOrigin::Configured if reject(observed.value()) => {
-                self.unsupported(subject, reason);
+                self.unsupported_with_origin(subject, reason, observed.origin());
                 None
             }
             ObservationOrigin::Configured => {
@@ -1023,9 +1028,10 @@ impl<'a> Mapping<'a> {
                 None
             }
             ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
-                self.unsupported(
+                self.unsupported_with_origin(
                     subject,
                     "runtime-assigned and local-resolution observations are never authored intent",
+                    observed.origin(),
                 );
                 None
             }
@@ -1039,12 +1045,14 @@ impl<'a> Mapping<'a> {
     fn observation_only<T>(&mut self, subject: &str, field: &ObservationField<T>, reason: &'static str) {
         match field {
             ObservationField::Observed(observed) => match observed.origin() {
-                ObservationOrigin::Configured => self.unsupported(subject, reason),
+                ObservationOrigin::Configured => self.unsupported_with_origin(subject, reason, observed.origin()),
                 ObservationOrigin::Effective => self.promotion_required(subject, reason),
-                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => self.unsupported(
-                    subject,
-                    "runtime-assigned and local-resolution observations are never authored intent",
-                ),
+                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => self
+                    .unsupported_with_origin(
+                        subject,
+                        "runtime-assigned and local-resolution observations are never authored intent",
+                        observed.origin(),
+                    ),
                 _ => self.unsupported(subject, "future observation origin is not reviewed"),
             },
             _ => self.report_state(field, subject),
@@ -1066,10 +1074,12 @@ impl<'a> Mapping<'a> {
                     subject,
                     "effective observation requires explicit field-specific promotion",
                 ),
-                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => self.unsupported(
-                    subject,
-                    "runtime-assigned and local-resolution observations are never authored intent",
-                ),
+                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => self
+                    .unsupported_with_origin(
+                        subject,
+                        "runtime-assigned and local-resolution observations are never authored intent",
+                        observed.origin(),
+                    ),
                 _ => self.unsupported(subject, "future observation origin is not reviewed for promotion"),
             },
             ObservationField::Unavailable => {
@@ -1131,7 +1141,7 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_native_findings(&mut self) {
-        let section_findings = self
+        let mut inventory_findings = self
             .source
             .inventory()
             .sections()
@@ -1143,23 +1153,46 @@ impl<'a> Mapping<'a> {
                     .iter()
                     .filter(|finding| finding.resource().is_none())
                     .cloned()
-                    .map(move |finding| (section.kind(), finding))
+                    .map(move |finding| (section.kind(), None, finding))
             })
             .collect::<Vec<_>>();
-        for (kind, finding) in section_findings {
-            self.inventory_finding(&finding, Some(kind));
+        inventory_findings.extend(
+            self.selected
+                .iter()
+                .filter_map(|identity| self.source.inventory().observation(identity))
+                .flat_map(|observation| {
+                    observation.header().findings().iter().cloned().map(move |finding| {
+                        (
+                            observation.header().identity().kind(),
+                            Some(observation_state_name(observation.header().state())),
+                            finding,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let mut ordinary = BTreeMap::<
+            (String, &'static str, Option<String>, Option<&'static str>),
+            Vec<(ResourceKind, Option<&'static str>, podman_lens::InventoryFinding)>,
+        >::new();
+        for (kind, state, finding) in inventory_findings {
+            if invalid_inventory_finding(finding.code()) {
+                self.inventory_finding(&finding, kind, state);
+                continue;
+            }
+            let key = (
+                finding.code().as_str().to_owned(),
+                resource_kind_name(kind),
+                finding.resource().map(resource_locator),
+                state,
+            );
+            ordinary.entry(key).or_default().push((kind, state, finding));
+        }
+        for findings in ordinary.values() {
+            self.native_inventory_findings(findings);
         }
 
-        let inventory_findings = self
-            .selected
-            .iter()
-            .filter_map(|identity| self.source.inventory().observation(identity))
-            .flat_map(|observation| observation.header().findings())
-            .cloned()
-            .collect::<Vec<_>>();
-        for finding in inventory_findings {
-            self.inventory_finding(&finding, None);
-        }
         let graph_findings = self.source.graph().findings().to_vec();
         for finding in graph_findings {
             self.discovery_finding(&finding);
@@ -1174,86 +1207,44 @@ impl<'a> Mapping<'a> {
             || self.selected.iter().any(|identity| identity.kind() == kind)
     }
 
-    fn inventory_finding(&mut self, finding: &podman_lens::InventoryFinding, section_kind: Option<ResourceKind>) {
+    fn inventory_finding(
+        &mut self,
+        finding: &podman_lens::InventoryFinding,
+        section_kind: ResourceKind,
+        observation_state: Option<&'static str>,
+    ) {
         let code = finding.code();
-        let incomplete = invalid_inventory_finding(code);
-        if !incomplete {
-            // Ordinary unsupported source fields are deliberately value-free and shared. The CLI
-            // can therefore deduplicate them into concise human output; their resource-level
-            // detail belongs in the caller's opt-in redacted snapshot.
-            self.native_finding(code, "acquisition");
-            return;
-        }
-
-        let source_version = self.source.observed_engine_version();
-        let source_api = self.source.observed_api_version();
-        let native = NativeFinding::new(
+        let resource = finding.resource().map(resource_locator);
+        let subject = resource
+            .clone()
+            .unwrap_or_else(|| format!("podman.inventory.{}", resource_kind_name(section_kind)));
+        let reason = podman_native_summary(code);
+        let context = self.inventory_finding_context(finding, section_kind, observation_state);
+        let mut native = NativeFinding::new(
             "podman",
             "podman-lens",
             code.as_str(),
             "acquisition",
             Severity::Warning,
-            podman_lens::Diagnostic::new(code).message(),
+            reason,
         )
-        .with_field(DiagnosticField::new(
-            "source_engine",
-            DiagnosticValue::plain(source_version),
-        ))
-        .with_field(DiagnosticField::new("source_api", DiagnosticValue::plain(source_api)));
-        let native = if let Some(resource) = finding.resource() {
-            native.with_field(DiagnosticField::new(
-                "resource",
-                DiagnosticValue::plain(resource_locator(resource)),
-            ))
-        } else {
-            native
-        };
-        let native = if let Some(kind) = section_kind {
-            native.with_field(DiagnosticField::new(
-                "resource_kind",
-                DiagnosticValue::plain(resource_kind_name(kind)),
-            ))
-        } else {
-            native
-        };
-        let native = if let Some(field_path) = finding.field_path() {
-            native.with_field(DiagnosticField::new("native_path", DiagnosticValue::plain(field_path)))
-        } else {
-            native
-        };
+        .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone())))
+        .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)));
 
         let adapter_code = self.importer.invalid.clone();
-        let diagnostic = Diagnostic::new(
+        let mut diagnostic = diagnostic_with_context(
             adapter_code.clone(),
             Severity::Error,
             "Podman source evidence is incomplete or malformed",
-        )
-        .with_field(DiagnosticField::new(
-            "source_engine",
-            DiagnosticValue::plain(source_version),
-        ))
-        .with_field(DiagnosticField::new("source_api", DiagnosticValue::plain(source_api)));
-        let diagnostic = if let Some(resource) = finding.resource() {
-            diagnostic.with_field(DiagnosticField::new(
-                "resource",
-                DiagnosticValue::plain(resource_locator(resource)),
-            ))
-        } else {
-            diagnostic
-        };
-        let diagnostic = if let Some(kind) = section_kind {
-            diagnostic.with_field(DiagnosticField::new(
-                "resource_kind",
-                DiagnosticValue::plain(resource_kind_name(kind)),
-            ))
-        } else {
-            diagnostic
-        };
-        let diagnostic = if let Some(field_path) = finding.field_path() {
-            diagnostic.with_field(DiagnosticField::new("native_path", DiagnosticValue::plain(field_path)))
-        } else {
-            diagnostic
-        };
+            &subject,
+            reason,
+            "rejected",
+            None,
+        );
+        for field in context {
+            native = native.with_field(field.clone());
+            diagnostic = diagnostic.with_field(field);
+        }
         self.diagnostics.push(diagnostic.with_native_finding(native));
         self.push_loss(
             format!("podman.acquisition.{}", code.as_str()),
@@ -1262,24 +1253,71 @@ impl<'a> Mapping<'a> {
         );
     }
 
+    fn inventory_finding_context(
+        &self,
+        finding: &podman_lens::InventoryFinding,
+        section_kind: ResourceKind,
+        observation_state: Option<&'static str>,
+    ) -> Vec<DiagnosticField> {
+        let mut fields = vec![
+            DiagnosticField::new("observation_origin", DiagnosticValue::plain("acquisition")),
+            DiagnosticField::new(
+                "source_engine",
+                DiagnosticValue::plain(self.source.observed_engine_version()),
+            ),
+            DiagnosticField::new("source_api", DiagnosticValue::plain(self.source.observed_api_version())),
+            DiagnosticField::new(
+                "resource_kind",
+                DiagnosticValue::plain(resource_kind_name(section_kind)),
+            ),
+        ];
+        if let Some(resource) = finding.resource() {
+            fields.push(DiagnosticField::new(
+                "resource",
+                DiagnosticValue::plain(resource_locator(resource)),
+            ));
+        }
+        if let Some(state) = observation_state {
+            fields.push(DiagnosticField::new("observation_state", DiagnosticValue::plain(state)));
+        }
+        if let Some(path) = finding.field_path() {
+            fields.push(DiagnosticField::new("native_path", DiagnosticValue::plain(path)));
+        }
+        if let Some(occurrence) = finding.occurrence() {
+            fields.push(DiagnosticField::new(
+                "occurrence",
+                DiagnosticValue::plain(occurrence.to_string()),
+            ));
+        }
+        fields
+    }
+
     fn discovery_finding(&mut self, finding: &podman_lens::DiscoveryFinding) {
         let code = finding.code();
         if !invalid_discovery_finding(code) {
-            self.native_finding(code, "discovery");
+            self.native_discovery_finding(finding);
             return;
         }
 
         let source_version = self.source.observed_engine_version();
         let source_api = self.source.observed_api_version();
         let resource = discovery_resource_locator(finding);
+        let subject = resource.clone().unwrap_or_else(|| "podman.discovery".to_owned());
+        let reason = podman_native_summary(code);
         let native = NativeFinding::new(
             "podman",
             "podman-lens",
             code.as_str(),
             "discovery",
             Severity::Warning,
-            podman_lens::Diagnostic::new(code).message(),
+            reason,
         )
+        .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone())))
+        .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)))
+        .with_field(DiagnosticField::new(
+            "observation_origin",
+            DiagnosticValue::plain("discovery"),
+        ))
         .with_field(DiagnosticField::new(
             "source_engine",
             DiagnosticValue::plain(source_version),
@@ -1297,6 +1335,13 @@ impl<'a> Mapping<'a> {
             Severity::Error,
             "Podman resource discovery is incomplete or ambiguous",
         )
+        .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject)))
+        .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)))
+        .with_field(DiagnosticField::new("decision", DiagnosticValue::plain("rejected")))
+        .with_field(DiagnosticField::new(
+            "observation_origin",
+            DiagnosticValue::plain("discovery"),
+        ))
         .with_field(DiagnosticField::new(
             "source_engine",
             DiagnosticValue::plain(source_version),
@@ -1316,23 +1361,65 @@ impl<'a> Mapping<'a> {
         );
     }
 
-    fn native_finding(&mut self, code: podman_lens::DiagnosticCode, stage: &'static str) {
-        let native = NativeFinding::new(
-            "podman",
-            "podman-lens",
-            code.as_str(),
-            stage,
+    fn native_discovery_finding(&mut self, finding: &podman_lens::DiscoveryFinding) {
+        let code = finding.code();
+        let stage = "discovery";
+        let reason = podman_native_summary(code);
+        let resource = discovery_resource_locator(finding);
+        let subject = resource.clone().unwrap_or_else(|| "podman.discovery".to_owned());
+        let native = NativeFinding::new("podman", "podman-lens", code.as_str(), stage, Severity::Warning, reason)
+            .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone())))
+            .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)))
+            .with_field(DiagnosticField::new(
+                "observation_origin",
+                DiagnosticValue::plain(stage),
+            ))
+            .with_field(DiagnosticField::new(
+                "source_engine",
+                DiagnosticValue::plain(self.source.observed_engine_version()),
+            ))
+            .with_field(DiagnosticField::new(
+                "source_api",
+                DiagnosticValue::plain(self.source.observed_api_version()),
+            ));
+        let native = resource.as_deref().map_or(native.clone(), |resource| {
+            native.with_field(DiagnosticField::new("resource", DiagnosticValue::plain(resource)))
+        });
+        let native = finding.field_path().map_or(native.clone(), |path| {
+            native.with_field(DiagnosticField::new("native_path", DiagnosticValue::plain(path)))
+        });
+        let mut diagnostic = diagnostic_with_context(
+            self.importer.unsupported.clone(),
             Severity::Warning,
-            podman_lens::Diagnostic::new(code).message(),
-        );
-        self.diagnostics.push(
-            Diagnostic::new(
-                self.importer.unsupported.clone(),
-                Severity::Warning,
-                "PodmanLens retained a native acquisition or discovery finding",
-            )
-            .with_native_finding(native),
-        );
+            "PodmanLens retained a native discovery finding",
+            &subject,
+            reason,
+            "omitted",
+            Some("partial"),
+        )
+        .with_field(DiagnosticField::new(
+            "available_promotion",
+            DiagnosticValue::plain("none"),
+        ))
+        .with_field(DiagnosticField::new(
+            "observation_origin",
+            DiagnosticValue::plain(stage),
+        ))
+        .with_field(DiagnosticField::new(
+            "source_engine",
+            DiagnosticValue::plain(self.source.observed_engine_version()),
+        ))
+        .with_field(DiagnosticField::new(
+            "source_api",
+            DiagnosticValue::plain(self.source.observed_api_version()),
+        ));
+        if let Some(resource) = resource {
+            diagnostic = diagnostic.with_field(DiagnosticField::new("resource", DiagnosticValue::plain(resource)));
+        }
+        if let Some(path) = finding.field_path() {
+            diagnostic = diagnostic.with_field(DiagnosticField::new("native_path", DiagnosticValue::plain(path)));
+        }
+        self.diagnostics.push(diagnostic.with_native_finding(native));
         self.push_loss(
             format!("podman.{stage}.{}", code.as_str()),
             ConversionKind::Unsupported,
@@ -1340,21 +1427,116 @@ impl<'a> Mapping<'a> {
         );
     }
 
+    fn native_inventory_findings(
+        &mut self,
+        findings: &[(ResourceKind, Option<&'static str>, podman_lens::InventoryFinding)],
+    ) {
+        let Some((section_kind, observation_state, finding)) = findings.first() else {
+            return;
+        };
+        let code = finding.code();
+        let stage = "acquisition";
+        let reason = podman_native_summary(code);
+        let resource = finding.resource().map(resource_locator);
+        let subject = resource
+            .clone()
+            .unwrap_or_else(|| format!("podman.inventory.{}", resource_kind_name(*section_kind)));
+        let native = NativeFinding::new("podman", "podman-lens", code.as_str(), stage, Severity::Warning, reason)
+            .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone())))
+            .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)));
+        let mut diagnostic = diagnostic_with_context(
+            self.importer.unsupported.clone(),
+            Severity::Warning,
+            "PodmanLens retained a native acquisition finding",
+            &subject,
+            reason,
+            "omitted",
+            Some("partial"),
+        )
+        .with_field(DiagnosticField::new(
+            "available_promotion",
+            DiagnosticValue::plain("none"),
+        ));
+
+        let mut context = vec![
+            DiagnosticField::new(
+                "resource_kind",
+                DiagnosticValue::plain(resource_kind_name(*section_kind)),
+            ),
+            DiagnosticField::new("observation_origin", DiagnosticValue::plain(stage)),
+            DiagnosticField::new(
+                "source_engine",
+                DiagnosticValue::plain(self.source.observed_engine_version()),
+            ),
+            DiagnosticField::new("source_api", DiagnosticValue::plain(self.source.observed_api_version())),
+            DiagnosticField::new("occurrence_count", DiagnosticValue::plain(findings.len().to_string())),
+        ];
+        if let Some(resource) = resource {
+            context.push(DiagnosticField::new("resource", DiagnosticValue::plain(resource)));
+        }
+        if let Some(state) = observation_state {
+            context.push(DiagnosticField::new(
+                "observation_state",
+                DiagnosticValue::plain(*state),
+            ));
+        }
+        let paths = findings
+            .iter()
+            .filter_map(|(_, _, finding)| finding.field_path())
+            .collect::<BTreeSet<_>>();
+        if paths.len() == 1 {
+            if let Some(path) = paths.first() {
+                context.push(DiagnosticField::new("native_path", DiagnosticValue::plain(*path)));
+            }
+        } else if !paths.is_empty() {
+            context.push(DiagnosticField::new(
+                "native_path_count",
+                DiagnosticValue::plain(paths.len().to_string()),
+            ));
+            context.push(DiagnosticField::new(
+                "native_path_samples",
+                DiagnosticValue::plain(paths.iter().take(8).copied().collect::<Vec<_>>().join(", ")),
+            ));
+        }
+        let mut native = native;
+        for field in context {
+            native = native.with_field(field.clone());
+            diagnostic = diagnostic.with_field(field);
+        }
+        self.diagnostics.push(diagnostic.with_native_finding(native));
+        for _ in findings {
+            self.push_loss(
+                format!("podman.{stage}.{}", code.as_str()),
+                ConversionKind::Unsupported,
+                self.importer.unsupported.clone(),
+            );
+        }
+    }
+
     fn invalid_observation(&mut self, subject: impl Into<String>, summary: &'static str, identity: &ResourceIdentity) {
+        let subject = subject.into();
         self.diagnostics.push(
-            Diagnostic::new(self.importer.invalid.clone(), Severity::Error, summary)
-                .with_field(DiagnosticField::new(
-                    "source_engine",
-                    DiagnosticValue::plain(self.source.observed_engine_version()),
-                ))
-                .with_field(DiagnosticField::new(
-                    "source_api",
-                    DiagnosticValue::plain(self.source.observed_api_version()),
-                ))
-                .with_field(DiagnosticField::new(
-                    "resource",
-                    DiagnosticValue::plain(resource_locator(identity)),
-                )),
+            diagnostic_with_context(
+                self.importer.invalid.clone(),
+                Severity::Error,
+                summary,
+                &subject,
+                summary,
+                "rejected",
+                None,
+            )
+            .with_field(DiagnosticField::new(
+                "source_engine",
+                DiagnosticValue::plain(self.source.observed_engine_version()),
+            ))
+            .with_field(DiagnosticField::new(
+                "source_api",
+                DiagnosticValue::plain(self.source.observed_api_version()),
+            ))
+            .with_field(DiagnosticField::new(
+                "resource",
+                DiagnosticValue::plain(resource_locator(identity)),
+            )),
         );
         self.push_loss(subject, ConversionKind::Invalid, self.importer.invalid.clone());
     }
@@ -1364,54 +1546,172 @@ impl<'a> Mapping<'a> {
             .push(ConversionOutcome::exact(subject).with_origin(self.origin.clone()));
     }
 
-    fn approximate(&mut self, subject: impl Into<String>, summary: &'static str) {
-        self.diagnostics.push(Diagnostic::new(
-            self.importer.policy.clone(),
-            Severity::Warning,
-            summary,
-        ));
+    fn approximate_with_flag(&mut self, subject: impl Into<String>, summary: &'static str, flag: &'static str) {
+        let subject = subject.into();
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.policy.clone(),
+                Severity::Warning,
+                summary,
+                &subject,
+                summary,
+                "approximated",
+                Some("approximate"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain(flag),
+            ))
+            .with_field(DiagnosticField::new(
+                "observation_origin",
+                DiagnosticValue::plain("effective"),
+            )),
+        );
         self.push_loss(subject, ConversionKind::Approximate, self.importer.policy.clone());
     }
 
     fn promotion_required(&mut self, subject: impl Into<String>, summary: &'static str) {
-        self.diagnostics.push(Diagnostic::new(
-            self.importer.policy.clone(),
-            Severity::Warning,
-            summary,
-        ));
+        let subject = subject.into();
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.policy.clone(),
+                Severity::Warning,
+                summary,
+                &subject,
+                summary,
+                "not-promoted",
+                Some("partial"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain("none"),
+            ))
+            .with_field(DiagnosticField::new(
+                "observation_origin",
+                DiagnosticValue::plain("effective"),
+            )),
+        );
+        self.push_loss(subject, ConversionKind::Unsupported, self.importer.policy.clone());
+    }
+
+    fn promotion_required_with_flag(&mut self, subject: impl Into<String>, summary: &'static str, flag: &'static str) {
+        let subject = subject.into();
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.policy.clone(),
+                Severity::Warning,
+                summary,
+                &subject,
+                summary,
+                "not-promoted",
+                Some("partial"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain(flag),
+            ))
+            .with_field(DiagnosticField::new(
+                "observation_origin",
+                DiagnosticValue::plain("effective"),
+            )),
+        );
         self.push_loss(subject, ConversionKind::Unsupported, self.importer.policy.clone());
     }
 
     fn unsupported(&mut self, subject: impl Into<String>, summary: &'static str) {
-        self.diagnostics.push(Diagnostic::new(
-            self.importer.unsupported.clone(),
-            Severity::Warning,
-            summary,
-        ));
+        let subject = subject.into();
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.unsupported.clone(),
+                Severity::Warning,
+                summary,
+                &subject,
+                summary,
+                "omitted",
+                Some("partial"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain("none"),
+            )),
+        );
+        self.push_loss(subject, ConversionKind::Unsupported, self.importer.unsupported.clone());
+    }
+
+    fn unsupported_with_origin(
+        &mut self,
+        subject: impl Into<String>,
+        summary: &'static str,
+        origin: ObservationOrigin,
+    ) {
+        let subject = subject.into();
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.unsupported.clone(),
+                Severity::Warning,
+                summary,
+                &subject,
+                summary,
+                "omitted",
+                Some("partial"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain("none"),
+            ))
+            .with_field(DiagnosticField::new(
+                "observation_origin",
+                DiagnosticValue::plain(observation_origin_name(origin)),
+            )),
+        );
         self.push_loss(subject, ConversionKind::Unsupported, self.importer.unsupported.clone());
     }
 
     fn identity_conflict(&mut self, subject: impl Into<String>, summary: &'static str) {
-        self.diagnostics.push(Diagnostic::new(
+        let subject = subject.into();
+        self.diagnostics.push(diagnostic_with_context(
             self.importer.identity.clone(),
             Severity::Error,
             summary,
+            &subject,
+            summary,
+            "rejected",
+            None,
         ));
         self.push_loss(subject, ConversionKind::Invalid, self.importer.identity.clone());
     }
 
     fn secret_incomplete(&mut self, subject: impl Into<String>, summary: &'static str) {
-        self.diagnostics.push(Diagnostic::new(
-            self.importer.secret.clone(),
-            Severity::Warning,
-            summary,
-        ));
+        let subject = subject.into();
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.secret.clone(),
+                Severity::Warning,
+                summary,
+                &subject,
+                summary,
+                "omitted",
+                Some("partial"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain("none"),
+            )),
+        );
         self.push_loss(subject, ConversionKind::Unsupported, self.importer.secret.clone());
     }
 
     fn invalid(&mut self, subject: impl Into<String>, summary: &'static str) {
-        self.diagnostics
-            .push(Diagnostic::new(self.importer.invalid.clone(), Severity::Error, summary));
+        let subject = subject.into();
+        self.diagnostics.push(diagnostic_with_context(
+            self.importer.invalid.clone(),
+            Severity::Error,
+            summary,
+            &subject,
+            summary,
+            "rejected",
+            None,
+        ));
         self.push_loss(subject, ConversionKind::Invalid, self.importer.invalid.clone());
     }
 
@@ -1442,6 +1742,58 @@ impl<'a> Mapping<'a> {
 
     fn decision_sourced<T>(&self, value: T) -> Sourced<T> {
         Sourced::from_source(value, Provenance::conversion_decision(self.origin.source_id().clone()))
+    }
+}
+
+fn diagnostic_with_context(
+    code: DiagnosticCode,
+    severity: Severity,
+    summary: impl Into<String>,
+    subject: &str,
+    reason: &str,
+    decision: &'static str,
+    required_loss_policy: Option<&'static str>,
+) -> Diagnostic {
+    let diagnostic = Diagnostic::new(code, severity, summary)
+        .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject)))
+        .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(reason)))
+        .with_field(DiagnosticField::new("decision", DiagnosticValue::plain(decision)));
+    required_loss_policy.map_or(diagnostic.clone(), |policy| {
+        diagnostic.with_field(DiagnosticField::new(
+            "required_loss_policy",
+            DiagnosticValue::plain(policy),
+        ))
+    })
+}
+
+fn podman_native_summary(code: podman_lens::DiagnosticCode) -> &'static str {
+    match code {
+        podman_lens::DiagnosticCode::AdvisoryLabelIncomplete => {
+            "optional Podman application-grouping labels are incomplete; affected resources remain ungrouped"
+        }
+        podman_lens::DiagnosticCode::AdvisoryLabelConflict => {
+            "optional Podman application-grouping labels disagree; affected resources remain ungrouped"
+        }
+        _ => podman_lens::Diagnostic::new(code).message(),
+    }
+}
+
+const fn observation_state_name(state: ResourceObservationState) -> &'static str {
+    match state {
+        ResourceObservationState::Complete => "complete",
+        ResourceObservationState::Unavailable => "unavailable",
+        ResourceObservationState::Malformed => "malformed",
+        _ => "unknown",
+    }
+}
+
+const fn observation_origin_name(origin: ObservationOrigin) -> &'static str {
+    match origin {
+        ObservationOrigin::Configured => "configured",
+        ObservationOrigin::Effective => "effective",
+        ObservationOrigin::RuntimeAssigned => "runtime-assigned",
+        ObservationOrigin::LocalResolution => "local-resolution",
+        _ => "unknown",
     }
 }
 

@@ -5,6 +5,21 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Make every Podman adapter finding identify its safe subject, reason, and conversion decision,
+  plus the required loss policy, promotion option, native rule, and acquisition context when relevant
+  ([#72](https://github.com/Strukturpiloten/boxferry/issues/72)).
+- Group repeated Podman native-field findings by rule, resource, kind, and observation state while
+  retaining occurrence counts and bounded native-path samples
+  ([#72](https://github.com/Strukturpiloten/boxferry/issues/72)).
+
+### Fixed
+
+- Bound Podman support-snapshot serialization and ZIP allocation, show human progress, and retain a
+  base diagnostic ZIP with `BFO3002` when optional snapshot evidence is too large
+  ([#72](https://github.com/Strukturpiloten/boxferry/issues/72)).
+
 ## [0.8.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.0...boxferry-v0.8.1) - 2026-08-26
 
 ### Added
