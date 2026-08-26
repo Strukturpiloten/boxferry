@@ -228,6 +228,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "start_clean_acquisition_outer",
         "runtime-canaries.log",
         ">> \"${canary_log}\" 2>&1 < /dev/null",
+        "selected-container-id",
         "timed_operation 5m 'pull digest-pinned workload image'",
         "podman load --input /boxferry-workload.tar",
         "--privileged",

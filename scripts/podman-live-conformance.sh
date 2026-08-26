@@ -392,7 +392,8 @@ cleanup() {
   for directory in "${discovery_directories[@]:-}"; do
     rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
       "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
-      "${directory}/runtime-canaries.log" "${directory}/start-api"
+      "${directory}/runtime-canaries.log" "${directory}/selected-container-id" \
+      "${directory}/start-api"
     rmdir -- "${directory}" 2> /dev/null || true
   done
   if [[ "${discovery_parent_created}" == true ]]; then
@@ -549,10 +550,11 @@ create_workloads() {
     nested_begin "create small network, volume, and selected container"
     podman network create "${BF_PREFIX}-small-net"
     podman volume create "${BF_PREFIX}-small-data"
-    podman create --name "${BF_PREFIX}-small-web" \
+    selected_container_id="$(podman create --name "${BF_PREFIX}-small-web" \
       --label "io.boxferry.live-run=${BF_PREFIX}" --network "${BF_PREFIX}-small-net" \
       --volume "${BF_PREFIX}-small-data:/var/lib/boxferry" \
-      --env BOXFERRY_LIVE_MODE=small "${portable_image}" sleep 3600
+      --env BOXFERRY_LIVE_MODE=small "${portable_image}" sleep 3600)"
+    printf "%s\n" "${selected_container_id}" > /boxferry-socket/selected-container-id
     nested_pass
     if [ "${BF_WORKLOAD_SCOPE}" = minimal ]; then
       if [ "${BF_INCLUDE_CANARIES}" = true ]; then
@@ -1439,14 +1441,12 @@ start_clean_acquisition_outer() {
     rm --force --ignore -- "${started_outer}" > /dev/null
   rm -f -- "${socket_directory}/podman.sock" "${socket_directory}/bootstrap.log" \
     "${socket_directory}/runtime-evidence.tsv" "${socket_directory}/runtime-evidence.ready" \
-    "${socket_directory}/runtime-canaries.log" "${socket_directory}/start-api"
+    "${socket_directory}/runtime-canaries.log" "${socket_directory}/selected-container-id" \
+    "${socket_directory}/start-api"
   start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
   create_workloads "${started_outer}" "${current_prefix}" "${scope}" "${socket_directory}" false
-  current_selected_container_id="$(
-    podman_socket "${socket_directory}/podman.sock" inspect --format '{{.Id}}' \
-      "${current_prefix}-small-web"
-  )"
-  [[ -n "${current_selected_container_id}" ]] || {
+  current_selected_container_id="$(< "${socket_directory}/selected-container-id")"
+  [[ "${current_selected_container_id}" =~ ^[[:xdigit:]]{64}$ ]] || {
     printf 'Could not resolve selected container ID before acquisition started.\n' >&2
     return 1
   }
@@ -1744,7 +1744,8 @@ run_discovery() {
   rm -f -- "${uid_socket_directory}/podman.sock" "${uid_socket_directory}/bootstrap.log" \
     "${uid_socket_directory}/runtime-evidence.tsv" \
     "${uid_socket_directory}/runtime-evidence.ready" \
-    "${uid_socket_directory}/runtime-canaries.log" "${uid_socket_directory}/start-api"
+    "${uid_socket_directory}/runtime-canaries.log" \
+    "${uid_socket_directory}/selected-container-id" "${uid_socket_directory}/start-api"
   rmdir -- "${uid_socket_directory}"
   if [[ "${discovery_parent_created}" == true ]]; then
     rmdir -- "${uid_runtime_directory}"
