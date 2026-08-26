@@ -2213,7 +2213,9 @@ impl<'a> Mapping<'a> {
         } else {
             self.map_healthy_readiness(service, builder);
         }
-        for environment in service.value().environment() {
+        let mut environment = service.value().environment().iter().collect::<Vec<_>>();
+        environment.sort_by(|left, right| left.value().name().as_str().cmp(right.value().name().as_str()));
+        for environment in environment {
             self.map_environment(subject, environment, builder);
         }
         for (index, environment_file) in service.value().environment_files().iter().enumerate() {

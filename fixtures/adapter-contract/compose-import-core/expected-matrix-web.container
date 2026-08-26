@@ -16,8 +16,8 @@ HealthTimeout=5s
 HealthRetries=3
 HealthStartPeriod=10s
 Environment=EMPTY=
-Environment=PORT=9090
 Environment=OVERRIDE_ONLY=enabled
+Environment=PORT=9090
 AddHost=host.docker.internal:host-gateway
 AddHost=ipv6:[::1]
 AddHost=database:192.0.2.10

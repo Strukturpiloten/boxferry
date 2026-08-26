@@ -2185,6 +2185,35 @@ fn resolves_relative_binds_against_explicit_caller_context() -> Result<(), Box<d
 }
 
 #[test]
+fn sorts_environment_assignments_by_name() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("sorted-environment")?);
+    let mut service = image_service("web")?;
+    for (name, value) in [("Z_LAST", "last"), ("A_FIRST", "first"), ("M_MIDDLE", "middle")] {
+        service.add_environment(sourced(EnvironmentVariable::new(
+            id(name)?,
+            EnvironmentValue::Literal(ProtectedString::plain(value)),
+        ))?);
+    }
+    application.add_service(sourced(service)?)?;
+
+    let authorized = QuadletExporter::new()?
+        .plan(&application, &podman_target(Some(version(6, 0, 2)))?)?
+        .authorize(LossPolicy::ExactOnly);
+    let output = authorized
+        .output()
+        .ok_or("exact Quadlet output")?
+        .file("web.container")
+        .ok_or("container unit")?
+        .text();
+
+    let first = output.find("Environment=A_FIRST=first").ok_or("first environment")?;
+    let middle = output.find("Environment=M_MIDDLE=middle").ok_or("middle environment")?;
+    let last = output.find("Environment=Z_LAST=last").ok_or("last environment")?;
+    assert!(first < middle && middle < last);
+    Ok(())
+}
+
+#[test]
 fn quotes_complex_environment_and_exec_arguments_without_losing_podman_names() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("quoted")?);
     let mut service = image_service("web")?;

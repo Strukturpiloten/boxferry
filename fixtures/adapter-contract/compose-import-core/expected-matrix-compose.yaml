@@ -10,8 +10,8 @@ services:
     environment:
       - EMPTY=
       - FROM_HOST
-      - PORT=9090
       - OVERRIDE_ONLY=enabled
+      - PORT=9090
     user: "1001:1002"
     userns_mode: keep-id
     group_add:

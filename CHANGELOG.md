@@ -7,6 +7,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Sort generated Compose and Quadlet environment assignments by variable name for deterministic review ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
+
 - Group repeated human diagnostics by actionable cause with bounded subject and native-path samples;
   `--verbose` expands every occurrence while JSON reports remain complete
   ([#86](https://github.com/Strukturpiloten/boxferry/issues/86)).
@@ -22,6 +24,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
   ([#82](https://github.com/Strukturpiloten/boxferry/issues/82)).
 
 ### Fixed
+
+- Promote typed Podman network-internal, subnet, gateway, lease-range, and inferred IPv6 observations into non-empty network output when portable-effective settings are authorized; preserve SELinux relabel options when PodmanLens exposes typed `z`/`Z` evidence and clarify that local image references come unchanged from Podman inspect ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
+- Explain that `PLN0021` truncates only the bounded diagnostic path catalogue, not typed observations used by conversion ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
 
 - Explain Podman unmapped-field retention limits, counts, value omission, and configured-image
   preservation while retaining safe image/resource subjects containing slashes

@@ -47,4 +47,7 @@ mappings. `PLN0021` reports that a limit was reached, states the retained count,
 discarded count; the exact discarded paths are unavailable because the safety boundary deliberately
 stops collecting them.
 
+`PLN0021` truncates only the diagnostic path catalogue; typed observations used by conversion
+remain intact.
+
 <!-- boxferry-generated-rule-index -->

@@ -1146,7 +1146,9 @@ impl<'a> Mapping<'a> {
     }
 
     fn map_environment(&mut self, service: &Service, generated: &mut GeneratedService, service_subject: &str) {
-        for environment in service.environment() {
+        let mut environment = service.environment().iter().collect::<Vec<_>>();
+        environment.sort_by(|left, right| left.value().name().as_str().cmp(right.value().name().as_str()));
+        for environment in environment {
             let subject = format!("{service_subject}.environment.{}", environment.value().name().as_str());
             match environment.value().value() {
                 EnvironmentValue::Literal(value) => match generated_string(value)

@@ -1,6 +1,9 @@
 //! `PodmanLens` observations into the neutral application model.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::IpAddr,
+};
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
@@ -9,8 +12,9 @@ use boxferry_engine::{
 use boxferry_model::{
     Application, Command, Entrypoint, EnvironmentValue, EnvironmentVariable, Healthcheck, HealthcheckCommand,
     HealthcheckDuration, HealthcheckRetries, Identifier, ImageReference, MetadataLabel, ModelError, Mount, MountSource,
-    Network, NetworkAttachment as NeutralNetworkAttachment, Port, ProtectedString, Protocol, Provenance,
-    ResourceOwnership, RestartPolicy, Secret, Service, ServiceDependency, ServiceGroup, SourceId, Sourced, Volume,
+    Network, NetworkAttachment as NeutralNetworkAttachment, NetworkIpamConfig, Port, ProtectedString, Protocol,
+    Provenance, ResourceOwnership, RestartPolicy, Secret, SelinuxRelabel, Service, ServiceDependency, ServiceGroup,
+    SourceId, Sourced, Volume,
 };
 use podman_lens::{
     ContainerMountKind, ContainerMountObservation, ContainerMountSource, ContainerObservation,
@@ -148,16 +152,8 @@ impl<'a> Mapping<'a> {
         );
         let mut network = Network::new(name, ownership);
         self.map_network_labels(&subject, details.labels(), &mut network);
-        self.observation_only(
-            &format!("{subject}.internal"),
-            details.internal(),
-            "effective network-internal state needs explicit promotion policy",
-        );
-        self.observation_only(
-            &format!("{subject}.ipam"),
-            details.subnets(),
-            "effective network IPAM needs explicit promotion policy",
-        );
+        self.map_network_internal(&subject, details.internal(), &mut network);
+        self.map_network_ipam(&subject, details.subnets(), &mut network);
         self.observation_only(
             &format!("{subject}.routes"),
             details.routes(),
@@ -171,6 +167,148 @@ impl<'a> Mapping<'a> {
         self.exact(&subject);
         if let Err(error) = application.add_network(self.sourced(network)) {
             self.model_error(subject, &error);
+        }
+    }
+
+    fn map_network_internal(&mut self, subject: &str, field: &ObservationField<bool>, network: &mut Network) {
+        let field_subject = format!("{subject}.internal");
+        let authorized = self.source.promotion_policy().promotes_portable_effective_settings();
+        let Some((internal, promoted)) = self.portable_setting(
+            field,
+            &field_subject,
+            authorized,
+            "effective network-internal state needs explicit promotion policy",
+        ) else {
+            return;
+        };
+
+        network.set_internal(self.portable_sourced(*internal, promoted));
+        if promoted {
+            self.approximate_with_flag(
+                field_subject,
+                "effective network-internal state explicitly promoted as portable intent",
+                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+            );
+        }
+    }
+
+    fn map_network_ipam(
+        &mut self,
+        subject: &str,
+        field: &ObservationField<Vec<podman_lens::NativeNetworkSubnetObservation>>,
+        network: &mut Network,
+    ) {
+        let field_subject = format!("{subject}.ipam");
+        let authorized = self.source.promotion_policy().promotes_portable_effective_settings();
+        let Some((subnets, promoted)) = self.portable_setting(
+            field,
+            &field_subject,
+            authorized,
+            "effective network subnet and address-allocation settings need explicit promotion policy",
+        ) else {
+            return;
+        };
+
+        let mut retained = 0_usize;
+        let mut has_ipv6_subnet = false;
+        for (index, subnet) in subnets.iter().enumerate() {
+            let row_subject = format!("{field_subject}[{index}]");
+            let Some((cidr, _)) = self.portable_setting(
+                subnet.cidr(),
+                &format!("{row_subject}.subnet"),
+                authorized,
+                "effective network subnet needs explicit promotion policy",
+            ) else {
+                continue;
+            };
+            let mut config =
+                match NetworkIpamConfig::new(self.portable_sourced(ProtectedString::plain(cidr.as_str()), promoted)) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        self.model_error(format!("{row_subject}.subnet"), &error);
+                        continue;
+                    }
+                };
+            has_ipv6_subnet |= cidr
+                .as_str()
+                .split_once('/')
+                .and_then(|(address, _)| address.parse::<IpAddr>().ok())
+                .is_some_and(|address| address.is_ipv6());
+
+            if let Some((gateway, _)) = self.portable_setting(
+                subnet.gateway(),
+                &format!("{row_subject}.gateway"),
+                authorized,
+                "effective network gateway needs explicit promotion policy",
+            ) {
+                if let Err(error) =
+                    config.set_gateway(self.portable_sourced(ProtectedString::plain(gateway.to_string()), promoted))
+                {
+                    self.model_error(format!("{row_subject}.gateway"), &error);
+                }
+            }
+
+            self.map_network_lease_range(&row_subject, subnet.lease_range(), authorized, promoted, &mut config);
+            network.add_ipam_config(self.portable_sourced(config, promoted));
+            retained += 1;
+        }
+
+        if has_ipv6_subnet {
+            network.set_ipv6(self.portable_sourced(true, promoted));
+        }
+
+        if promoted && retained > 0 {
+            self.approximate_with_flag(
+                field_subject,
+                "effective network subnet and gateway settings explicitly promoted as portable IPAM intent",
+                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+            );
+        }
+    }
+
+    fn map_network_lease_range(
+        &mut self,
+        row_subject: &str,
+        field: &ObservationField<podman_lens::NativeNetworkLeaseRange>,
+        authorized: bool,
+        promoted: bool,
+        config: &mut NetworkIpamConfig,
+    ) {
+        let range_subject = format!("{row_subject}.lease_range");
+        let Some((range, _)) = self.portable_setting(
+            field,
+            &range_subject,
+            authorized,
+            "effective network lease range needs explicit promotion policy",
+        ) else {
+            return;
+        };
+        let Some((start, _)) = self.portable_setting(
+            range.start_ip(),
+            &format!("{range_subject}.start_ip"),
+            authorized,
+            "effective network lease-range start needs explicit promotion policy",
+        ) else {
+            return;
+        };
+        let Some((end, _)) = self.portable_setting(
+            range.end_ip(),
+            &format!("{range_subject}.end_ip"),
+            authorized,
+            "effective network lease-range end needs explicit promotion policy",
+        ) else {
+            return;
+        };
+        let Some(spelling) = lease_range_spelling(*start, *end) else {
+            self.observation_only(
+                &range_subject,
+                field,
+                "effective network lease-range endpoints use different address families",
+            );
+            return;
+        };
+        if let Err(error) = config.set_ip_range(self.portable_sourced(ProtectedString::plain(spelling), promoted)) {
+            self.model_error(range_subject, &error);
         }
     }
 
@@ -732,7 +870,7 @@ impl<'a> Mapping<'a> {
             &format!("{subject}.local_image_id"),
             details.local_image_id(),
             if configured_image_retained {
-                "Podman local image ID is host-local resolution evidence; the configured image reference was retained instead"
+                "Podman local image ID is host-local resolution evidence; Image= was copied unchanged from Podman inspect $.ImageName"
             } else {
                 "Podman local image ID is host-local resolution evidence; no portable configured image reference was available"
             },
@@ -953,11 +1091,7 @@ impl<'a> Mapping<'a> {
             mount.local_backing_path(),
             "target-local mount backing paths are observation-only",
         );
-        self.observation_only(
-            &format!("{subject}.options"),
-            mount.options(),
-            "native mount options have no complete neutral mapping",
-        );
+        self.report_mount_options(subject, mount);
         self.observation_only(
             &format!("{subject}.propagation"),
             mount.propagation(),
@@ -970,6 +1104,10 @@ impl<'a> Mapping<'a> {
         );
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one ordered mount pipeline keeps promotion and residual-loss decisions adjacent"
+    )]
     fn map_mounts(&mut self, subject: &str, details: &ContainerObservation, service: &mut Service) {
         let field_subject = format!("{subject}.mounts");
         let Some(observed) = details.mounts().observed() else {
@@ -1059,8 +1197,11 @@ impl<'a> Mapping<'a> {
                 continue;
             };
             match Mount::new(MountSource::Volume(volume_name), destination.value(), !writable.value()) {
-                Ok(mount) => {
-                    service.add_mount(self.decision_sourced(mount));
+                Ok(mut mapped) => {
+                    if !Self::apply_mount_selinux_relabel(mount, &mut mapped) {
+                        continue;
+                    }
+                    service.add_mount(self.decision_sourced(mapped));
                     self.approximate_with_flag(
                         mount_subject,
                         "portable named-volume mount promoted by explicit BoxFerry policy",
@@ -1118,8 +1259,11 @@ impl<'a> Mapping<'a> {
             destination.value(),
             !writable.value(),
         ) {
-            Ok(mount) => {
-                service.add_mount(self.decision_sourced(mount));
+            Ok(mut mapped) => {
+                if !Self::apply_mount_selinux_relabel(mount, &mut mapped) {
+                    return;
+                }
+                service.add_mount(self.decision_sourced(mapped));
                 self.approximate_with_flag(
                     subject,
                     "host-local bind mount promoted for a reviewed same-path target",
@@ -1132,14 +1276,7 @@ impl<'a> Mapping<'a> {
 
     fn report_bind_mount_remainders(&mut self, subject: &str, mount: &ContainerMountObservation) {
         self.exact(format!("{subject}.local_backing_path"));
-        match mount.options().observed() {
-            Some(options) if options.value().is_empty() => self.exact(format!("{subject}.options")),
-            _ => self.observation_only(
-                &format!("{subject}.options"),
-                mount.options(),
-                "non-default native bind-mount options have no complete neutral mapping",
-            ),
-        }
+        self.report_mount_options(subject, mount);
         match mount.propagation().observed() {
             Some(propagation) if matches!(propagation.value().as_str(), "" | "private" | "rprivate") => {
                 self.exact(format!("{subject}.propagation"));
@@ -1158,6 +1295,39 @@ impl<'a> Mapping<'a> {
                 "native bind-mount subpath has no reviewed neutral mapping",
             ),
         }
+    }
+
+    fn report_mount_options(&mut self, subject: &str, mount: &ContainerMountObservation) {
+        let option_subject = format!("{subject}.options");
+        let Some(options) = mount.options().observed() else {
+            self.report_state(mount.options(), &option_subject);
+            return;
+        };
+        match decoded_mount_options(options.value()) {
+            Ok((_, true)) => self.exact(option_subject),
+            Ok((_, false)) => self.observation_only(
+                &option_subject,
+                mount.options(),
+                "native mount options beyond access, bind recursion, and SELinux relabeling have no neutral mapping",
+            ),
+            Err(()) => self.invalid(
+                option_subject,
+                "native mount options contain conflicting SELinux relabel modes",
+            ),
+        }
+    }
+
+    fn apply_mount_selinux_relabel(native: &ContainerMountObservation, mapped: &mut Mount) -> bool {
+        let Some(options) = native.options().observed() else {
+            return true;
+        };
+        let Ok((relabel, _)) = decoded_mount_options(options.value()) else {
+            return false;
+        };
+        if let Some(relabel) = relabel {
+            mapped.set_selinux_relabel(relabel);
+        }
+        true
     }
 
     fn report_networking_only(&mut self, subject: &str, field: &ObservationField<NativeNetworkingObservation>) {
@@ -2138,6 +2308,16 @@ impl<'a> Mapping<'a> {
         match code {
             podman_lens::DiagnosticCode::UnknownFieldOverflow => {
                 self.append_unknown_field_limit_context(context, finding);
+                context.push(DiagnosticField::new(
+                    "path_descriptor_purpose",
+                    DiagnosticValue::plain("audit which Podman response fields were not typed or converted"),
+                ));
+                context.push(DiagnosticField::new(
+                    "conversion_impact",
+                    DiagnosticValue::plain(
+                        "only the diagnostic path catalogue was truncated; typed observations used by conversion remain intact",
+                    ),
+                ));
             }
             podman_lens::DiagnosticCode::NativeFieldUnsupported => append_native_paths(context, paths),
             _ => {
@@ -2472,10 +2652,39 @@ fn append_native_paths(context: &mut Vec<DiagnosticField>, paths: &BTreeSet<&str
     }
 }
 
+fn decoded_mount_options(options: &[String]) -> Result<(Option<SelinuxRelabel>, bool), ()> {
+    // This can preserve only relabel intent exposed through typed `Mounts[].Options`.
+    // Engines may retain the authored spelling solely in `HostConfig.Binds`; that
+    // native field remains value-free/unmodelled until PodmanLens exposes it safely.
+    let shared = options.iter().any(|option| option == "z");
+    let private = options.iter().any(|option| option == "Z");
+    if shared && private {
+        return Err(());
+    }
+    let relabel = if shared {
+        Some(SelinuxRelabel::Shared)
+    } else if private {
+        Some(SelinuxRelabel::Private)
+    } else {
+        None
+    };
+    let complete = options
+        .iter()
+        .all(|option| matches!(option.as_str(), "" | "ro" | "rw" | "bind" | "rbind" | "z" | "Z"));
+    Ok((relabel, complete))
+}
+
+fn lease_range_spelling(start: IpAddr, end: IpAddr) -> Option<String> {
+    match (start, end) {
+        (IpAddr::V4(_), IpAddr::V4(_)) | (IpAddr::V6(_), IpAddr::V6(_)) => Some(format!("{start}-{end}")),
+        _ => None,
+    }
+}
+
 fn podman_native_summary(code: podman_lens::DiagnosticCode) -> &'static str {
     match code {
         podman_lens::DiagnosticCode::UnknownFieldOverflow => {
-            "PodmanLens reached its bounded unmapped-field retention limit; at least one additional path descriptor was omitted"
+            "PodmanLens truncated its diagnostic list of unmapped field paths; mapped Podman observations were not discarded"
         }
         podman_lens::DiagnosticCode::NativeFieldUnsupported => {
             "PodmanLens found native response fields without typed portable mappings; path descriptors were retained without values"
