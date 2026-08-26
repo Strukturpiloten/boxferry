@@ -32,8 +32,10 @@ compose-output/
 ```
 
 Runtime-effective, runtime-assigned, and locally resolved observations do not automatically become
-portable desired state. Every required decision or unsupported field remains visible through the
-normal diagnostic and loss-policy contract.
+portable desired state. Add `--promote-podman-portable-effective-settings` to explicitly retain the
+reviewed environment, published-port, restart, normal-health, and DNS subset; reports remain
+redacted. Every other required decision or unsupported field stays visible through the normal
+diagnostic and loss-policy contract.
 
 ## Production checks
 

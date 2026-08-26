@@ -240,6 +240,9 @@ struct PodmanInputOptions {
 
 #[derive(Debug, Args)]
 struct PodmanPromotionOptions {
+    /// Promote reviewed effective environment, ports, restart, health, and DNS settings.
+    #[arg(long)]
+    promote_podman_portable_effective_settings: bool,
     /// Promote effective named-volume mounts into portable neutral intent.
     #[arg(long)]
     promote_podman_effective_named_volumes: bool,
@@ -756,6 +759,7 @@ struct GenericConversion {
     podman_resource_prefixes: Vec<PodmanResourcePrefixInput>,
     podman_labels: Vec<PodmanLabelInput>,
     podman_network_boundaries: Vec<String>,
+    promote_podman_portable_effective_settings: bool,
     promote_podman_effective_named_volumes: bool,
     promote_podman_effective_named_networks: bool,
     interpolate: bool,
@@ -1071,6 +1075,7 @@ impl GenericConversion {
             podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
+            promote_podman_portable_effective_settings,
             promote_podman_effective_named_volumes,
             promote_podman_effective_named_networks,
             include_podman_snapshot,
@@ -1092,6 +1097,7 @@ impl GenericConversion {
                 false,
                 false,
                 false,
+                false,
             ),
             InputRouteOptions::Quadlet(input) => (
                 None,
@@ -1110,6 +1116,7 @@ impl GenericConversion {
                 false,
                 false,
                 false,
+                false,
             ),
             InputRouteOptions::Podman(input) => (
                 None,
@@ -1125,6 +1132,7 @@ impl GenericConversion {
                 input.podman_resource_prefixes,
                 input.podman_labels,
                 input.podman_network_boundaries,
+                input.promotion.promote_podman_portable_effective_settings,
                 input.promotion.promote_podman_effective_named_volumes,
                 input.promotion.promote_podman_effective_named_networks,
                 input.support.include_podman_snapshot,
@@ -1185,6 +1193,7 @@ impl GenericConversion {
             podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
+            promote_podman_portable_effective_settings,
             promote_podman_effective_named_volumes,
             promote_podman_effective_named_networks,
             interpolate,
@@ -1695,6 +1704,10 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
                 .to_string(),
             });
             report.choices.push(ReportChoice {
+                name: "promote_portable_effective_settings".into(),
+                value: arguments.promote_podman_portable_effective_settings.to_string(),
+            });
+            report.choices.push(ReportChoice {
                 name: "promote_effective_named_volumes".into(),
                 value: arguments.promote_podman_effective_named_volumes.to_string(),
             });
@@ -1741,6 +1754,10 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("podman_resource_prefixes", "--podman-resource-prefix"),
         ("podman_labels", "--podman-label"),
         ("podman_network_boundaries", "--podman-network-boundary"),
+        (
+            "promote_podman_portable_effective_settings",
+            "--promote-podman-portable-effective-settings",
+        ),
         (
             "promote_podman_effective_named_volumes",
             "--promote-podman-effective-named-volumes",
@@ -2637,13 +2654,18 @@ async fn generic_podman_convert(
         })?;
     }
     let promotion = boxferry::PodmanPromotionPolicy::conservative()
+        .with_portable_effective_settings(arguments.promote_podman_portable_effective_settings)
         .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
         .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
     print_human_progress(arguments, "Podman input: acquiring the selected read-only inventory...");
     let source = acquire_podman_source(
         application_name.clone(),
         &transport,
-        AcquisitionOptions::redacted(),
+        if arguments.promote_podman_portable_effective_settings {
+            AcquisitionOptions::include_environment_values()
+        } else {
+            AcquisitionOptions::redacted()
+        },
         &request,
         promotion,
     )
@@ -5675,6 +5697,7 @@ mod tests {
             podman_resource_prefixes: Vec::new(),
             podman_labels: Vec::new(),
             podman_network_boundaries: Vec::new(),
+            promote_podman_portable_effective_settings: false,
             promote_podman_effective_named_volumes: false,
             promote_podman_effective_named_networks: false,
             interpolate: true,
@@ -5923,6 +5946,28 @@ mod tests {
             let arguments = arguments(&selection)?;
             assert_eq!(derive_podman_application_name(&arguments)?.as_str(), expected);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn portable_effective_podman_promotion_is_explicit_and_reported() -> Result<(), Box<dyn Error>> {
+        let arguments = parse_validation(&[
+            "boxferry",
+            "validate",
+            "podman",
+            "quadlet",
+            "--podman-resource",
+            "container=web",
+            "--promote-podman-portable-effective-settings",
+        ])?;
+        assert!(arguments.promote_podman_portable_effective_settings);
+        let report = new_report(&arguments, route::find(InputType::Podman, OutputType::Quadlet));
+        assert!(
+            report
+                .choices
+                .iter()
+                .any(|choice| { choice.name == "promote_portable_effective_settings" && choice.value == "true" })
+        );
         Ok(())
     }
 

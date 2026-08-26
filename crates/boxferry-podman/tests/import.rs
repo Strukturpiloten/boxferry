@@ -9,7 +9,7 @@ use std::{
 };
 
 use boxferry_engine::{ConversionKind, ExportAdapter, ImportAdapter, PlatformVersion, TargetProfile};
-use boxferry_model::Identifier;
+use boxferry_model::{EnvironmentValue, HealthcheckCommand, Identifier, RestartPolicy};
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanImporter, PodmanPromotionPolicy, PodmanSource, podman_lens,
 };
@@ -74,6 +74,41 @@ fn legacy_responses(container_inspect: &str) -> Result<Vec<LibpodResponse>, Box<
     ])
 }
 
+fn grouped_selection_with_unrelated_responses() -> Result<Vec<LibpodResponse>, Box<dyn Error>> {
+    let labels = |service: &str| {
+        format!(
+            r#""Labels":{{"com.docker.compose.project":"migration","com.docker.compose.service":"{service}","com.docker.compose.container-number":"1","io.boxferry.keep":"{service}"}}"#
+        )
+    };
+    let selected = |id: &str, name: &str, service: &str| {
+        format!(
+            r#"{{"Id":"{id}","Name":"{name}","ImageName":"example.invalid/legacy:1","Pod":"","Config":{{"Entrypoint":"",{}}},"HostConfig":{{"RestartPolicy":{{"Name":""}}}},"NetworkSettings":{{"Networks":{{}}}},"Mounts":[]}}"#,
+            labels(service)
+        )
+    };
+    Ok(vec![
+        LibpodResponse::new(
+            200,
+            LibpodHeaders::new(vec![LibpodHeader::new("Libpod-API-Version", "3.0.0")?]),
+            [],
+        )?,
+        json(r#"{"Components":[{"Name":"Podman Engine","Version":"3.0.1"}]}"#)?,
+        json(
+            r#"[{"Id":"a-web","Names":["migration-web-1"]},{"Id":"b-worker","Names":["migration-worker-1"]},{"Id":"z-other","Names":["unrelated"]}]"#,
+        )?,
+        json("[]")?,
+        json("[]")?,
+        json("[]")?,
+        json(r#"[{"Id":"sha256:legacy","Names":["example.invalid/legacy:1"]}]"#)?,
+        json(&selected("a-web", "migration-web-1", "web"))?,
+        json(&selected("b-worker", "migration-worker-1", "worker"))?,
+        json(
+            r#"{"Id":"z-other","Name":"unrelated","ImageName":"example.invalid/missing:1","Pod":"","Config":{"Entrypoint":"","Labels":{"com.docker.compose.project":"incomplete"}},"HostConfig":{"RestartPolicy":{"Name":""},"NetworkMode":"pasta:--map-gw"},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#,
+        )?,
+        json(r#"{"Id":"sha256:legacy","RepoTags":["example.invalid/legacy:1"]}"#)?,
+    ])
+}
+
 fn legacy_source(container_inspect: &str) -> Result<PodmanSource, Box<dyn Error>> {
     let responses = legacy_responses(container_inspect)?;
     let mut request = DiscoveryRequest::new();
@@ -85,8 +120,16 @@ fn legacy_source_with_request(
     responses: Vec<LibpodResponse>,
     request: &DiscoveryRequest,
 ) -> Result<PodmanSource, Box<dyn Error>> {
+    legacy_source_with_options(responses, request, AcquisitionOptions::redacted())
+}
+
+fn legacy_source_with_options(
+    responses: Vec<LibpodResponse>,
+    request: &DiscoveryRequest,
+    options: AcquisitionOptions,
+) -> Result<PodmanSource, Box<dyn Error>> {
     let transport = FixtureTransport::new(responses);
-    let inventory = block_on(acquire_inventory(&transport, AcquisitionOptions::redacted()))?;
+    let inventory = block_on(acquire_inventory(&transport, options))?;
     let graph = discover(&inventory, request)?;
     Ok(PodmanSource::new(
         Identifier::new("legacy-migration")?,
@@ -298,6 +341,106 @@ fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result
 }
 
 #[test]
+fn portable_effective_promotion_retains_reviewed_settings_and_redacts_evidence() -> Result<(), Box<dyn Error>> {
+    const SECRET: &str = "portable-environment-canary-never-report";
+    let inspect = format!(
+        r#"{{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{{"Entrypoint":"","Env":["APP_SECRET={SECRET}"],"Labels":{{"com.docker.compose.project":"legacy","com.docker.compose.service":"web","io.boxferry.keep":"yes"}},"Healthcheck":{{"Test":["CMD","/bin/check"],"Interval":30000000000,"Timeout":5000000000,"Retries":3,"StartPeriod":1000000000}}}},"HostConfig":{{"RestartPolicy":{{"Name":"always","MaximumRetryCount":0}},"PortBindings":{{"8080/tcp":[{{"HostIp":"127.0.0.1","HostPort":"18080"}}]}},"Dns":["192.0.2.53"],"DnsSearch":["example.test"],"DnsOptions":["ndots:2"]}},"NetworkSettings":{{"Networks":{{}}}},"Mounts":[]}}"#
+    );
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(
+        legacy_responses(&inspect)?,
+        &request,
+        AcquisitionOptions::include_environment_values(),
+    )?
+    .with_promotion_policy(PodmanPromotionPolicy::conservative().with_portable_effective_settings(true));
+
+    let result = PodmanImporter::new()?.import(&source);
+    let service = result
+        .application()
+        .ok_or("legacy application")?
+        .services()
+        .first()
+        .ok_or("legacy service")?
+        .value();
+    assert_eq!(service.environment().len(), 1);
+    let EnvironmentValue::Literal(value) = service.environment()[0].value().value() else {
+        return Err("expected literal environment value".into());
+    };
+    assert!(value.is_sensitive());
+    assert_eq!(value.expose(), SECRET);
+    assert_eq!(
+        service.restart_policy().map(|value| *value.value()),
+        Some(RestartPolicy::Always)
+    );
+    let healthcheck = service.healthcheck().ok_or("promoted healthcheck")?.value();
+    assert!(matches!(
+        healthcheck.command().map(boxferry_model::Sourced::value),
+        Some(HealthcheckCommand::Exec(arguments)) if arguments.len() == 1 && arguments[0].expose() == "/bin/check"
+    ));
+    assert_eq!(service.ports().len(), 1);
+    assert_eq!(service.ports()[0].value().container(), 8080);
+    assert_eq!(service.ports()[0].value().published(), Some(18_080));
+    assert_eq!(service.ports()[0].value().host_address(), Some("127.0.0.1"));
+    assert_eq!(
+        service
+            .dns_servers()
+            .and_then(|values| values.first())
+            .map(|value| value.value().expose()),
+        Some("192.0.2.53")
+    );
+    assert_eq!(
+        service
+            .labels()
+            .iter()
+            .map(|label| label.value().name().as_str())
+            .collect::<Vec<_>>(),
+        ["io.boxferry.keep"]
+    );
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0003"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "available_promotion"
+                    && field.value().redacted() == "--promote-podman-portable-effective-settings"
+            })
+    }));
+
+    let inventory_snapshot = serde_json::to_string(&source.redacted_inventory_snapshot())?;
+    let graph_snapshot = serde_json::to_string(&source.redacted_graph_snapshot())?;
+    assert!(!inventory_snapshot.contains(SECRET));
+    assert!(!graph_snapshot.contains(SECRET));
+    assert!(!format!("{source:?}").contains(SECRET));
+    Ok(())
+}
+
+#[test]
+fn redacted_acquisition_never_promotes_environment_values() -> Result<(), Box<dyn Error>> {
+    const SECRET: &str = "redacted-environment-canary-never-retain";
+    let inspect = format!(
+        r#"{{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{{"Entrypoint":"","Env":["APP_SECRET={SECRET}"]}},"HostConfig":{{"RestartPolicy":{{"Name":""}}}},"NetworkSettings":{{"Networks":{{}}}},"Mounts":[]}}"#
+    );
+    let source = legacy_source(&inspect)?
+        .with_promotion_policy(PodmanPromotionPolicy::conservative().with_portable_effective_settings(true));
+    let result = PodmanImporter::new()?.import(&source);
+    let service = result
+        .application()
+        .ok_or("legacy application")?
+        .services()
+        .first()
+        .ok_or("legacy service")?
+        .value();
+    assert!(service.environment().is_empty());
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0002"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "reason" && field.value().redacted().contains("environment value remained redacted")
+            })
+    }));
+    assert!(!serde_json::to_string(&source.redacted_inventory_snapshot())?.contains(SECRET));
+    Ok(())
+}
+
+#[test]
 fn empty_user_and_id_derived_hostname_do_not_become_authored_intent() -> Result<(), Box<dyn Error>> {
     let source = legacy_source(
         r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Cmd":["sleep","3600"],"Entrypoint":"","User":"","WorkingDir":"/","Hostname":"c-web"},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#,
@@ -474,6 +617,30 @@ fn unrelated_failed_section_does_not_block_bounded_exact_or_prefix_selection() -
             "an unavailable unrelated volume section must not invalidate a container-only selection"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn selected_group_ignores_unrelated_discovery_findings_and_consumes_compose_labels() -> Result<(), Box<dyn Error>> {
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "migration-web-1")?);
+    let source = legacy_source_with_request(grouped_selection_with_unrelated_responses()?, &request)?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("selected application")?;
+    assert_eq!(
+        application.services().len(),
+        2,
+        "Compose ownership evidence expands the selected group"
+    );
+    for service in application.services() {
+        assert_eq!(service.value().labels().len(), 1);
+        assert_eq!(service.value().labels()[0].value().name().as_str(), "io.boxferry.keep");
+    }
+    assert!(result.diagnostics().iter().all(|diagnostic| {
+        diagnostic
+            .native_finding()
+            .is_none_or(|finding| !matches!(finding.code(), "PLN0024" | "PLN0030" | "PLN0031"))
+    }));
     Ok(())
 }
 

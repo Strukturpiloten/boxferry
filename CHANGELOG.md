@@ -10,6 +10,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 - Sort the top-level command help alphabetically and make release-plz promote reviewed Unreleased
   notes without generating duplicate category headings ([#77](https://github.com/Strukturpiloten/boxferry/issues/77)).
 
+- Add explicit `--promote-podman-portable-effective-settings` migration policy for protected
+  environment values, published ports, restart policy, normal healthchecks, and DNS while keeping
+  reports and snapshots redacted ([#80](https://github.com/Strukturpiloten/boxferry/issues/80)).
+
 ### Fixed
 
 - Resolve bare relative `--error-report-directory` values such as `error` from the current working
@@ -17,6 +21,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 - Compress support bundles and retain bounded redacted Podman snapshots up to 32 MiB per JSON entry
   so production inventories above the former 4 MiB report limit remain debuggable
   ([#77](https://github.com/Strukturpiloten/boxferry/issues/77)).
+
+- Scope Podman discovery diagnostics to the selected graph and consume optional Compose lifecycle
+  labels without leaking unrelated host findings or metadata into converted applications
+  ([#80](https://github.com/Strukturpiloten/boxferry/issues/80)).
 
 ## [0.8.2](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.1...boxferry-v0.8.2) - 2026-08-26
 

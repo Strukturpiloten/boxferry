@@ -50,7 +50,8 @@ boxferry validate podman compose --podman-socket /run/user/1000/podman/podman.so
 `--include-podman-snapshot` requires `--generate-error-report`. It adds the redacted inventory,
 discovery graph, and value-free acquisition findings. It omits environment values, protected
 health commands, credentials, secret payloads and driver values, label values, unknown raw JSON,
-and connection endpoints.
+and connection endpoints. This remains true when `--promote-podman-portable-effective-settings`
+authorizes sensitive values for conversion.
 
 The snapshot is diagnostic serialization, not executable input, a replayable Podman inventory, or
 a PodmanLens cassette. Resource names, image references, IDs, and topology can still be

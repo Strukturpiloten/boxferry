@@ -50,6 +50,9 @@ Choose the output:
   `--promote-podman-effective-named-volumes` authorizes portable desired state.
 - **Shared networks:** use `--promote-podman-effective-named-networks` only after confirming the
   target should recreate that network intent.
+- **Portable effective settings:** `--promote-podman-portable-effective-settings` authorizes the
+  reviewed environment, published-port, restart, normal-health, and DNS subset. It also authorizes
+  environment acquisition into sensitive in-memory wrappers. Reports and snapshots stay redacted.
 - **Bind mounts:** host paths are machine-local. Review every local-resolution diagnostic before
   accepting output for a different host.
 - **Secrets:** inspection cannot reconstruct secret delivery intent. BoxFerry reports incomplete
@@ -59,6 +62,29 @@ Choose the output:
   image and `source.portability` field. Push the image and recreate the source container with a
   registry-qualified tag, or convert to Compose/Quadlet and replace the reference there. BoxFerry
   does not invent a remote image source.
+
+Configured values are mapped directly when the neutral meaning is exact. Effective values remain
+evidence unless an explicit promotion flag covers that field. Runtime-assigned ports and addresses,
+static IP/MAC observations, bind paths, opaque network options, startup healthchecks, logging,
+security, namespaces, and resource controls are never included by the portable-settings flag.
+
+Start a production migration with validation and a local support bundle when the selected graph is
+unexpected:
+
+<!-- boxferry-example: podman-snapshot-error-report -->
+
+```console
+boxferry validate podman compose --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --loss-policy partial --generate-error-report --include-podman-snapshot --error-report-directory reports
+```
+
+After reviewing the diagnostics and redacted snapshots, authorize only the portable families you
+accept:
+
+<!-- boxferry-example: podman-portable-effective-settings -->
+
+```console
+boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output
+```
 
 Podman deployment-v1 JSON is output intent, not an acquired inventory snapshot, and cannot be used
 as Podman input.

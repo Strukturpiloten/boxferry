@@ -251,8 +251,18 @@ stdout-contains = ["command succeeded", "error report:"]
 generated-files = [{ directory = "reports", prefix = "boxferry-error-report-", suffix = ".zip" }]
 
 [[examples]]
+id = "podman-portable-effective-settings"
+pages = ["docs/public/guides/podman-input/index.md"]
+command = "boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output"
+args = ["convert", "podman", "quadlet", "--podman-socket", "/run/user/1000/podman/podman.sock", "--podman-resource", "container=c-observer", "--promote-podman-portable-effective-settings", "--promote-podman-effective-named-volumes", "--promote-podman-effective-named-networks", "--loss-policy", "partial", "--output-directory", "quadlet-portable-output"]
+expected-exit = 0
+stdout-contains = ["command succeeded"]
+podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"
+podman-socket-placeholder = "/run/user/1000/podman/podman.sock"
+
+[[examples]]
 id = "podman-snapshot-error-report"
-pages = ["docs/public/reference/error-reports/index.md"]
+pages = ["docs/public/guides/podman-input/index.md", "docs/public/reference/error-reports/index.md"]
 command = "boxferry validate podman compose --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --loss-policy partial --generate-error-report --include-podman-snapshot --error-report-directory reports"
 args = ["validate", "podman", "compose", "--podman-socket", "/run/user/1000/podman/podman.sock", "--podman-resource", "container=c-observer", "--loss-policy", "partial", "--generate-error-report", "--include-podman-snapshot", "--error-report-directory", "reports"]
 mkdir = ["reports"]

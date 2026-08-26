@@ -55,6 +55,19 @@ operations, or provide a supported deserializer for an inventory snapshot.
    structured outcomes or diagnostics appropriate to their state. Native
    stable IDs remain correlation evidence. Neutral-name collisions and
    ambiguous references are invalid.
+
+   `--promote-podman-portable-effective-settings` is one explicit reviewed policy for effective
+   environment values, published ports, restart policy, normal healthcheck, and DNS settings.
+   It does not authorize runtime-assigned or locally resolved observations, bind paths, static
+   addresses, opaque network options, startup health, logging, security, namespaces, or resource
+   controls. The CLI acquires environment values into opaque sensitive wrappers only when this
+   policy is selected; all snapshots and reports remain redacted.
+
+   Discovery diagnostics are scoped to the selected resource graph. Optional
+   `com.docker.compose.*` ownership and lifecycle labels may expand a group, but missing or
+   conflicting optional grouping evidence is not application-intent loss and those labels never
+   enter neutral metadata.
+
 4. Runtime resources begin with uncertain ownership. Inspected secrets remain
    external or uncertain unless separately authored material exists. Inspection
    cannot reconstruct a secret grant because it does not contain the delivery

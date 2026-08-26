@@ -27,7 +27,10 @@ Source runtime versions never become the target range implicitly.
 
 Runtime-effective, runtime-assigned, and locally resolved observations remain governed by explicit
 promotion and loss policy. The two promotion flags in the example authorize only effective named
-volumes and networks; they do not promote arbitrary runtime-local state.
+volumes and networks; they do not promote arbitrary runtime-local state. Add
+`--promote-podman-portable-effective-settings` only after reviewing environment, published-port,
+restart, normal-health, and DNS evidence. It allows sensitive environment acquisition, but
+diagnostic reports and snapshots remain redacted.
 
 Before using the units on another host, verify bind mounts, `EnvironmentFile=` paths, secret
 references, shared volume data, and network units. BoxFerry writes files; it never installs,
