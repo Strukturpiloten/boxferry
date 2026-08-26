@@ -10,8 +10,8 @@ services:
     environment:
       - EMPTY=
       - FROM_HOST
-      - PORT=9090
       - OVERRIDE_ONLY=enabled
+      - PORT=9090
     labels:
       com.example.empty: ""
       com.example.metadata: "{\"channel\": \"stable\"}"

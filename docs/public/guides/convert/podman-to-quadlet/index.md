@@ -32,6 +32,16 @@ volumes and networks; they do not promote arbitrary runtime-local state. Add
 restart, normal-health, and DNS evidence. It allows sensitive environment acquisition, but
 diagnostic reports and snapshots remain redacted.
 
+The portable-effective flag also promotes typed network-internal, subnet, gateway, and lease-range
+observations. Lease endpoints become Quadlet's supported `<start-IP>-<end-IP>` `IPRange` form. An
+IPv6 subnet enables `IPv6=true`, so an application-owned `.network` unit carries these settings
+instead of remaining empty. Driver, DNS, IPAM-driver, interface, and standalone IPv6 flags remain
+visible losses until PodmanLens exposes safe typed observations.
+
+Typed mount `z`/`Z` evidence is preserved. Relabel intent available only through unmodelled
+`Mounts[].Mode` or `HostConfig.Binds` remains a visible loss until PodmanLens exposes it through the
+typed mount contract.
+
 Add `--promote-podman-effective-bind-mounts` only when the target intentionally reuses the same
 absolute host paths. BoxFerry preserves the source, destination, and read-only state; native-only
 mount options remain visible as findings. Quoted Quadlet output preserves Podman environment names

@@ -56,8 +56,21 @@ Choose the output:
 - **Portable effective settings:** `--promote-podman-portable-effective-settings` authorizes the
   reviewed environment, published-port, restart, normal-health, and DNS subset. It also authorizes
   environment acquisition into sensitive in-memory wrappers. Reports and snapshots stay redacted.
+- **Network definition settings:** the portable-effective flag also promotes typed network-internal,
+  subnet, gateway, and lease-range observations. Inclusive lease endpoints become the supported
+  `<start-IP>-<end-IP>` `IPRange` form. An IPv6 subnet enables IPv6 output. Driver, DNS, IPAM-driver,
+  interface, and standalone IPv6 fields remain visible losses because PodmanLens does not yet expose
+  safe typed values for them. Here, IPAM means the address-allocation subsection of a network
+  definition; it is not a separate network resource.
+- **SELinux relabeling:** typed mount relabel evidence is preserved as `z` or `Z`. Some Podman
+  versions retain the authored spelling only in unmodelled `Mounts[].Mode` or `HostConfig.Binds`;
+  when PodmanLens does not expose it through the typed mount contract, BoxFerry cannot reconstruct
+  the option.
 - **Secrets:** inspection cannot reconstruct secret delivery intent. BoxFerry reports incomplete
   grants instead of inventing them.
+- **Image reference origin:** BoxFerry copies the image reference unchanged from Podman inspect
+  `$.ImageName`; it does not add `docker.io/library/`. Podman may already have normalized a locally
+  built, initially unqualified name to that spelling.
 - **Local images:** `localhost/...`, image IDs, unqualified names, and tagless repositories are not
   portable Podman acquisition sources. Podman output fails with `PLN0048` and names the affected
   image and `source.portability` field. Push the image and recreate the source container with a

@@ -16,8 +16,8 @@ HealthTimeout=5s
 HealthRetries=3
 HealthStartPeriod=10s
 Environment=EMPTY=
-Environment=PORT=9090
 Environment=OVERRIDE_ONLY=enabled
+Environment=PORT=9090
 Label="com.example.empty="
 Label="com.example.metadata={\"channel\": \"stable\"}"
 Label="com.example.literal-specifier=literal%%h"

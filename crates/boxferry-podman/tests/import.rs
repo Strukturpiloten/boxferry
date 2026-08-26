@@ -9,7 +9,9 @@ use std::{
 };
 
 use boxferry_engine::{ConversionKind, ExportAdapter, ImportAdapter, LossPolicy, PlatformVersion, TargetProfile};
-use boxferry_model::{EnvironmentValue, HealthcheckCommand, Identifier, MountSource, ResourceOwnership, RestartPolicy};
+use boxferry_model::{
+    EnvironmentValue, HealthcheckCommand, Identifier, MountSource, ResourceOwnership, RestartPolicy, SelinuxRelabel,
+};
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanImporter, PodmanPromotionPolicy, PodmanSource, podman_lens,
 };
@@ -73,6 +75,21 @@ fn legacy_responses(container_inspect: &str) -> Result<Vec<LibpodResponse>, Box<
         json(r#"{"Name":"legacy-data"}"#)?,
         json(r#"{"Id":"sha256:legacy","RepoTags":["example.invalid/legacy:1"]}"#)?,
     ])
+}
+
+fn modern_responses(container_inspect: &str) -> Result<Vec<LibpodResponse>, Box<dyn Error>> {
+    let mut responses = legacy_responses(container_inspect)?;
+    responses[0] = LibpodResponse::new(
+        200,
+        LibpodHeaders::new(vec![LibpodHeader::new("Libpod-API-Version", "6.0.2")?]),
+        [],
+    )?;
+    responses[1] = json(r#"{"Components":[{"Name":"Podman Engine","Version":"6.0.2"}]}"#)?;
+    responses.insert(7, json("[]")?);
+    responses[9] = json(
+        r#"{"id":"legacy-net","name":"legacy-net","internal":true,"subnets":[{"subnet":"10.88.0.0/16","gateway":"10.88.0.1","lease_range":{"start_ip":"10.88.1.0","end_ip":"10.88.1.255"}},{"subnet":"fd42::/64","gateway":"fd42::1","lease_range":{"start_ip":"fd42::100","end_ip":"fd42::1ff"}}]}"#,
+    )?;
+    Ok(responses)
 }
 
 fn grouped_selection_with_unrelated_responses() -> Result<Vec<LibpodResponse>, Box<dyn Error>> {
@@ -369,7 +386,7 @@ fn native_field_limits_explain_retained_paths_without_retaining_values() -> Resu
             .find(|field| field.name() == name)
             .map(|field| field.value().redacted())
     };
-    assert!(diagnostic.summary().contains("bounded unmapped-field retention limit"));
+    assert!(diagnostic.summary().contains("diagnostic list of unmapped field paths"));
     assert_eq!(field("retention_limit_per_resource"), Some("128"));
     assert_eq!(field("retention_limit_per_inventory"), Some("2048"));
     assert_eq!(field("retained_native_path_count"), Some("128"));
@@ -378,6 +395,14 @@ fn native_field_limits_explain_retained_paths_without_retaining_values() -> Resu
     assert_eq!(
         field("native_value_policy"),
         Some("field paths retained; native values not retained")
+    );
+    assert_eq!(
+        field("path_descriptor_purpose"),
+        Some("audit which Podman response fields were not typed or converted")
+    );
+    assert_eq!(
+        field("conversion_impact"),
+        Some("only the diagnostic path catalogue was truncated; typed observations used by conversion remain intact")
     );
     assert!(field("native_path_samples").is_some_and(|samples| samples.contains("$.SyntheticUnknown000")));
     assert!(!format!("{diagnostic:?}").contains("true"));
@@ -400,7 +425,7 @@ fn local_image_id_diagnostic_explains_that_configured_reference_is_retained() ->
         diagnostic.fields().iter().any(|field| {
             field.name() == "reason"
                 && field.value().redacted()
-                    == "Podman local image ID is host-local resolution evidence; the configured image reference was retained instead"
+                    == "Podman local image ID is host-local resolution evidence; Image= was copied unchanged from Podman inspect $.ImageName"
         })
     }));
     Ok(())
@@ -409,7 +434,7 @@ fn local_image_id_diagnostic_explains_that_configured_reference_is_retained() ->
 #[test]
 fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result<(), Box<dyn Error>> {
     let source = legacy_source(
-        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"volume","Name":"legacy-data","Destination":"/data","RW":true}]}"#,
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"volume","Name":"legacy-data","Destination":"/data","RW":true,"Options":["z"]}]}"#,
     )?
     .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_named_volume_mounts(true));
     let result = PodmanImporter::new()?.import(&source);
@@ -417,6 +442,10 @@ fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result
     let service = application.services().first().ok_or("legacy service")?.value();
     assert_eq!(service.mounts().len(), 1);
     assert_eq!(service.mounts()[0].value().target(), "/data");
+    assert_eq!(
+        service.mounts()[0].value().selinux_relabel(),
+        Some(SelinuxRelabel::Shared)
+    );
     assert!(result.diagnostics().iter().any(|diagnostic| {
         diagnostic.code().as_str() == "BFP0003" && diagnostic.summary().contains("portable named-volume mount promoted")
     }));
@@ -426,18 +455,13 @@ fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result
 #[test]
 fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(), Box<dyn Error>> {
     let source = legacy_source(
-        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":false,"Propagation":"rprivate"}]}"#,
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":false,"Options":["rbind","Z"],"Propagation":"rprivate"}]}"#,
     )?
     .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_bind_mounts(true));
 
     let result = PodmanImporter::new()?.import(&source);
-    let service = result
-        .application()
-        .ok_or("legacy application")?
-        .services()
-        .first()
-        .ok_or("legacy service")?
-        .value();
+    let application = result.application().ok_or("legacy application")?;
+    let service = application.services().first().ok_or("legacy service")?.value();
     assert_eq!(service.mounts().len(), 1);
     assert!(matches!(
         service.mounts()[0].value().source(),
@@ -445,6 +469,28 @@ fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(),
     ));
     assert_eq!(service.mounts()[0].value().target(), "/etc/example");
     assert!(service.mounts()[0].value().read_only());
+    assert_eq!(
+        service.mounts()[0].value().selinux_relabel(),
+        Some(SelinuxRelabel::Private)
+    );
+    let authorized = QuadletExporter::new()?
+        .plan(
+            application,
+            &TargetProfile::new(
+                PODMAN_TARGET,
+                PlatformVersion::new(5, 4, 0),
+                Some(PlatformVersion::new(6, 0, 2)),
+            )?,
+        )?
+        .authorize(LossPolicy::AllowPartial);
+    let output = authorized.output().ok_or("promoted bind Quadlet output")?;
+    assert!(
+        output
+            .file("web.container")
+            .ok_or("container unit")?
+            .text()
+            .contains("Volume=/srv/example/config:/etc/example:ro,Z\n")
+    );
     assert!(result.diagnostics().iter().any(|diagnostic| {
         diagnostic.code().as_str() == "BFP0003"
             && diagnostic.fields().iter().any(|field| {
@@ -456,18 +502,19 @@ fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(),
 }
 
 #[test]
-fn promoted_application_network_is_managed_and_effective_empty_dns_is_not_authored() -> Result<(), Box<dyn Error>> {
+fn combined_promotion_flags_emit_network_ipam_and_keep_effective_empty_dns_unmodelled() -> Result<(), Box<dyn Error>> {
     let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":"","Cmd":["nginx","-g","daemon off;"],"Env":["NC_davstorage.request_timeout=60 seconds"]},"HostConfig":{"RestartPolicy":{"Name":""},"Dns":[],"DnsSearch":[],"DnsOptions":[]},"NetworkSettings":{"Networks":{"legacy-net":{"NetworkID":"legacy-net"}}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":true,"Propagation":"rprivate"}]}"#;
     let mut request = DiscoveryRequest::new();
     request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
     let source = legacy_source_with_options(
-        legacy_responses(inspect)?,
+        modern_responses(inspect)?,
         &request,
         AcquisitionOptions::include_environment_values(),
     )?
     .with_promotion_policy(
         PodmanPromotionPolicy::conservative()
             .with_effective_bind_mounts(true)
+            .with_effective_named_volume_mounts(true)
             .with_effective_named_networks(true)
             .with_portable_effective_settings(true),
     );
@@ -498,7 +545,58 @@ fn promoted_application_network_is_managed_and_effective_empty_dns_is_not_author
     assert!(container.contains("Exec=nginx -g \"daemon off;\""));
     assert!(container.contains("Environment=\"NC_davstorage.request_timeout=60 seconds\""));
     assert!(container.contains("Volume=/srv/example/config:/etc/example"));
-    assert!(output.file("legacy-net.network").is_some());
+    let network = output.file("legacy-net.network").ok_or("managed network unit")?.text();
+    assert!(network.contains("Subnet=10.88.0.0/16\n"));
+    assert!(network.contains("Gateway=10.88.0.1\n"));
+    assert!(network.contains("IPRange=10.88.1.0-10.88.1.255\n"));
+    assert!(network.contains("Subnet=fd42::/64\n"));
+    assert!(network.contains("Gateway=fd42::1\n"));
+    assert!(network.contains("IPRange=fd42::100-fd42::1ff\n"));
+    assert!(network.contains("IPv6=true\n"));
+    assert!(network.contains("Internal=true\n"));
+    assert!(!result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.fields().iter().any(|field| {
+            field.name() == "reason"
+                && field.value().redacted()
+                    == "effective network subnet and address-allocation settings need explicit promotion policy"
+        })
+    }));
+    Ok(())
+}
+
+#[test]
+fn arbitrary_network_lease_endpoints_are_preserved_as_an_ip_range() -> Result<(), Box<dyn Error>> {
+    let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{"legacy-net":{"NetworkID":"legacy-net"}}},"Mounts":[]}"#;
+    let mut responses = modern_responses(inspect)?;
+    responses[9] = json(
+        r#"{"id":"legacy-net","name":"legacy-net","internal":false,"subnets":[{"subnet":"10.88.0.0/16","gateway":"10.88.0.1","lease_range":{"start_ip":"10.88.1.10","end_ip":"10.88.1.20"}}]}"#,
+    )?;
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(responses, &request, AcquisitionOptions::redacted())?
+        .with_promotion_policy(
+            PodmanPromotionPolicy::conservative()
+                .with_effective_named_networks(true)
+                .with_portable_effective_settings(true),
+        );
+
+    let result = PodmanImporter::new()?.import(&source);
+    let network = result
+        .application()
+        .ok_or("legacy application")?
+        .networks()
+        .first()
+        .ok_or("legacy network")?
+        .value();
+    let ipam = network
+        .ipam_configs()
+        .and_then(|rows| rows.first())
+        .ok_or("network IPAM row")?
+        .value();
+    assert_eq!(
+        ipam.ip_range().map(|range| range.value().expose()),
+        Some("10.88.1.10-10.88.1.20")
+    );
     Ok(())
 }
 

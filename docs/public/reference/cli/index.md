@@ -48,6 +48,10 @@ Use route-specific `--help`; it shows only applicable options.
 | `--promote-podman-effective-named-volumes`     | Podman input          | Promote effective named volumes to desired state.                                                                                     |
 | `--promote-podman-effective-named-networks`    | Podman input          | Promote effective named networks to desired state.                                                                                    |
 
+The portable-effective settings flag also covers typed network-internal, subnet, gateway,
+lease-range, and IPv6-subnet observations. Native network fields without a typed PodmanLens contract
+remain reported rather than guessed.
+
 BoxFerry does not read an implicit `.env` file or the complete process environment.
 Podman input requires one selector form: `--podman-all`, `--podman-resource`,
 `--podman-resource-prefix`, or `--podman-label`.

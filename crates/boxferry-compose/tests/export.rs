@@ -831,6 +831,31 @@ fn unimplemented_native_fields_and_structural_groups_remain_visible() -> Result<
 }
 
 #[test]
+fn sorts_environment_assignments_by_name() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(Identifier::new("sorted-environment")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    for (name, value) in [("Z_LAST", "last"), ("A_FIRST", "first"), ("M_MIDDLE", "middle")] {
+        service.add_environment(Sourced::generated(EnvironmentVariable::new(
+            Identifier::new(name)?,
+            EnvironmentValue::Literal(ProtectedString::plain(value)),
+        )));
+    }
+    application.add_service(Sourced::generated(service))?;
+
+    let authorized = ComposeExporter::new()?
+        .plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?
+        .authorize(LossPolicy::ExactOnly);
+    let output = authorized.output().ok_or("exact Compose output")?.text();
+
+    let first = output.find("- A_FIRST=first").ok_or("first environment")?;
+    let middle = output.find("- M_MIDDLE=middle").ok_or("middle environment")?;
+    let last = output.find("- Z_LAST=last").ok_or("last environment")?;
+    assert!(first < middle && middle < last);
+    Ok(())
+}
+
+#[test]
 fn emits_application_owned_file_backed_configs_and_secrets_with_parse_back_and_redaction() -> Result<(), Box<dyn Error>>
 {
     let origin = Provenance::source(SourceId::new("resource-files.compose.yaml")?);
@@ -1471,8 +1496,8 @@ const fn expected_supported_document() -> &'static str {
         "        required: false\n",
         "        format: raw\n",
         "    environment:\n",
-        "      - TOKEN=production-secret\n",
         "      - HOST_VALUE\n",
+        "      - TOKEN=production-secret\n",
         "    labels:\n",
         "      com.example.empty: \"\"\n",
         "      com.example.metadata: \"{\\\"channel\\\": \\\"production-secret\\\"}\"\n",
