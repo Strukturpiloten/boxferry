@@ -31,6 +31,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 - Preserve quoted Podman environment values, dotted variable names, exec arguments, promoted bind
   mounts, and application-owned networks in Quadlet output; omit non-authored empty DNS defaults
   ([#82](https://github.com/Strukturpiloten/boxferry/issues/82)).
+- Preserve non-NUL control characters in Quadlet environment values with reversible systemd escapes
+  while retaining NUL assignments as explicit unsupported intent
+  ([#84](https://github.com/Strukturpiloten/boxferry/issues/84)).
 
 ## [0.8.2](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.1...boxferry-v0.8.2) - 2026-08-26
 

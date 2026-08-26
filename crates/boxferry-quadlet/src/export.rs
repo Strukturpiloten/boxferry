@@ -4002,7 +4002,7 @@ impl<'a> Mapping<'a> {
         let Some(encoded) = encode_quadlet_environment_assignment(name, value.expose()) else {
             self.unsupported(
                 &subject,
-                "environment assignment contains an invalid name, physical line break, NUL byte, or control character",
+                "environment assignment contains an empty name, equals sign, name control character, or NUL value",
                 environment.origins(),
             );
             return;
@@ -5304,7 +5304,38 @@ fn encode_quadlet_environment_assignment(name: &str, value: &str) -> Option<Stri
     {
         return None;
     }
-    encode_quadlet_word(&format!("{name}={value}"))
+    let assignment = format!("{name}={value}");
+    encode_quadlet_word(&assignment).or_else(|| encode_quadlet_environment_control_word(&assignment))
+}
+
+fn encode_quadlet_environment_control_word(value: &str) -> Option<String> {
+    if value.contains('\0') {
+        return None;
+    }
+
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            character if character.is_ascii_control() => {
+                let _ = write!(escaped, "\\x{:02x}", u32::from(character));
+            }
+            character if character.is_control() && u16::try_from(u32::from(character)).is_ok() => {
+                let _ = write!(escaped, "\\u{:04x}", u32::from(character));
+            }
+            character if character.is_control() => {
+                let _ = write!(escaped, "\\U{:08x}", u32::from(character));
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped.push('"');
+    Some(escaped)
 }
 
 fn contains_unresolved_source_variable(value: &str, origins: &[Provenance]) -> bool {

@@ -2225,6 +2225,69 @@ fn quotes_complex_environment_and_exec_arguments_without_losing_podman_names() -
 }
 
 #[test]
+fn escapes_environment_control_characters_but_keeps_nul_unsupported() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(id("control-environment")?);
+    let mut service = image_service("web")?;
+    service.add_environment(sourced(EnvironmentVariable::new(
+        id("CONTROL_VALUE")?,
+        EnvironmentValue::Literal(ProtectedString::sensitive(
+            "line one\nline two\r\ttab\x07\x08\x0c\x0b\x1b\x7f\u{0085}",
+        )),
+    ))?);
+    service.add_environment(sourced(EnvironmentVariable::new(
+        id("NUL_VALUE")?,
+        EnvironmentValue::Literal(ProtectedString::sensitive("before\0after")),
+    ))?);
+    application.add_service(sourced(service)?)?;
+
+    let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.environment.CONTROL_VALUE" && outcome.kind() == ConversionKind::Exact
+    }));
+    assert!(plan.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.environment.NUL_VALUE"
+            && outcome.kind() == ConversionKind::Unsupported
+            && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFQ0003")
+    }));
+
+    let authorized = plan.authorize(LossPolicy::AllowPartial);
+    let output = authorized
+        .output()
+        .and_then(|output| output.file("web.container"))
+        .map(boxferry_quadlet::QuadletFile::text)
+        .ok_or("escaped Quadlet output expected")?;
+    assert!(
+        output.contains(
+            "Environment=\"CONTROL_VALUE=line one\\nline two\\r\\ttab\\x07\\x08\\x0c\\x0b\\x1b\\x7f\\u0085\""
+        )
+    );
+    assert!(!output.contains("NUL_VALUE"));
+
+    let source = parse_source(
+        id("control-environment-round-trip")?,
+        [QuadletDocumentInput::new(
+            "web.container",
+            QuadletSourceId::new(1),
+            output,
+        )],
+    )?;
+    let imported = QuadletImporter::new()?.import(&source);
+    let imported_application = imported.application().ok_or("imported application expected")?;
+    let imported_service = imported_application.services()[0].value();
+    let imported_control = imported_service
+        .environment()
+        .iter()
+        .find(|environment| environment.value().name().as_str() == "CONTROL_VALUE")
+        .ok_or("imported control environment expected")?;
+    assert!(matches!(
+        imported_control.value().value(),
+        EnvironmentValue::Literal(value)
+            if value.expose() == "line one\nline two\r\ttab\x07\x08\x0c\x0b\x1b\x7f\u{0085}"
+    ));
+    Ok(())
+}
+
+#[test]
 fn emits_ordered_environment_files_only_after_approximation_authorization() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("environment-files")?);
     let mut service = image_service("web")?;
