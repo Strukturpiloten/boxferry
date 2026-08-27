@@ -64,7 +64,7 @@ jobs:
         run: rustup component add llvm-tools-preview
       - name: Install pinned cargo-llvm-cov
         # renovate: datasource=crate depName=cargo-llvm-cov
-        run: cargo install --locked --version 0.8.7 cargo-llvm-cov
+        run: cargo install --locked --version 0.9.0 cargo-llvm-cov
       - name: Clean coverage artifacts
         run: cargo llvm-cov clean --locked
       - name: Measure and enforce coarse coverage ratchet

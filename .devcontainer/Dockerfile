@@ -18,7 +18,7 @@ COPY --from=uv_toolchain /uv /uvx /usr/local/bin/
 # renovate: datasource=crate depName=cargo-deny
 ARG CARGO_DENY_VERSION=0.20.2
 # renovate: datasource=crate depName=cargo-llvm-cov
-ARG CARGO_LLVM_COV_VERSION=0.8.7
+ARG CARGO_LLVM_COV_VERSION=0.9.0
 # renovate: datasource=crate depName=cargo-semver-checks
 ARG CARGO_SEMVER_CHECKS_VERSION=0.50.0
 # renovate: datasource=crate depName=lychee
