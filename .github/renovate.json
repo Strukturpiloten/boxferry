@@ -2,6 +2,16 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:best-practices"],
   "dependencyDashboard": true,
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/fixtures/**"
+  ],
   "minimumReleaseAge": "3 days",
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
@@ -104,6 +114,7 @@
     {
       "description": "Require checksum review for downloaded file-quality tools",
       "matchFileNames": ["scripts/install-file-tools.sh"],
+      "dependencyDashboardApproval": true,
       "prBodyNotes": [
         "Review both Linux release assets and update their SHA-256 checksums before merging."
       ]

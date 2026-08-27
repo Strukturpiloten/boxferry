@@ -30,6 +30,14 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Fixed
 
+- Make coverage-tool policy checks compare Renovate-managed exact pins across CI, release, and the Dev Container instead of hard-coding a version in tests ([#104](https://github.com/Strukturpiloten/boxferry/issues/104)).
+- Ignore dependency-looking fixture data during Renovate scans, require dashboard approval for
+  checksum-pinned file-tool updates, and update Tombi with reviewed Linux checksums
+  ([#99](https://github.com/Strukturpiloten/boxferry/issues/99)).
+- Allow reviewed immutable `actions/attest` upgrades without changing a redundant exact-version
+  policy assertion ([#99](https://github.com/Strukturpiloten/boxferry/issues/99)).
+- Split the Podman error-report reference into bounded paragraphs accepted by the website's locked
+  documentation assembly ([#99](https://github.com/Strukturpiloten/boxferry/issues/99)).
 - Decouple published format adapters by keeping adapter-local tests at the neutral-model boundary
   and cross-route coverage in the facade integration suite
   ([#94](https://github.com/Strukturpiloten/boxferry/issues/94)).
