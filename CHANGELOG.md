@@ -30,6 +30,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Fixed
 
+- Publish internal crates in manifest dependency order, including development and build
+  dependencies, so interrupted lockstep releases can resume safely
+  ([#92](https://github.com/Strukturpiloten/boxferry/issues/92)).
+
 - Promote typed Podman network-internal, subnet, gateway, lease-range, and inferred IPv6 observations into non-empty network output when portable-effective settings are authorized; preserve SELinux relabel options when PodmanLens exposes typed `z`/`Z` evidence and clarify that local image references come unchanged from Podman inspect ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
 - Explain that `PLN0021` truncates only the bounded diagnostic path catalogue, not typed observations used by conversion ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
 
