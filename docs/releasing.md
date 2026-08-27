@@ -27,3 +27,12 @@ Release-plz inserts only the dated version heading, with blank lines on both sid
 notes below `Unreleased` thereby become that release's notes exactly once. During release
 preparation, the validator requires an empty `Unreleased` section and
 one dated, usable numbered section matching the workspace version.
+
+## Publication order and recovery
+
+The workflow publishes crates in manifest dependency order. Normal, build, and development
+dependencies must all be available on crates.io before a dependent package is prepared.
+
+The publication helper skips package versions already visible on crates.io. After correcting an
+interrupted release, remove only the unpublished release tag and rerun the workflow from the
+corrected default branch. Never move or remove a tag belonging to a published GitHub release.
