@@ -13,13 +13,13 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-boxferry-engine = { path = "../boxferry-engine", version = "0.8.2" }
-boxferry-model = { path = "../boxferry-model", version = "0.8.2" }
+boxferry-engine = { path = "../boxferry-engine", version = "0.8.3" }
+boxferry-model = { path = "../boxferry-model", version = "0.8.3" }
 podman-lens = { version = "0.2.1", default-features = false }
 serde_json = "1"
 
 [dev-dependencies]
-boxferry-quadlet = { path = "../boxferry-quadlet", version = "0.8.2" }
+boxferry-quadlet = { path = "../boxferry-quadlet", version = "0.8.3" }
 futures = "0.3"
 
 [lints]

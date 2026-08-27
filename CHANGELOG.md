@@ -5,6 +5,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.8.3](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.2...boxferry-v0.8.3) - 2026-08-27
+
 ### Changed
 
 - Keep release-plz's heading-only changelog promotion separated by Markdown blank lines so
