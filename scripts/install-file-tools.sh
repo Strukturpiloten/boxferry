@@ -5,7 +5,7 @@ set -Eeuo pipefail
 readonly install_directory="${1:-/usr/local/bin}"
 
 # renovate: datasource=github-releases depName=tombi-toml/tombi
-readonly tombi_version="1.4.0"
+readonly tombi_version="1.4.1"
 # renovate: datasource=github-releases depName=mvdan/sh
 readonly shfmt_version="3.13.1"
 # renovate: datasource=github-releases depName=koalaman/shellcheck
