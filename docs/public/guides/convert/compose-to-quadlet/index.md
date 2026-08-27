@@ -99,7 +99,7 @@ appears in `fix first`. Add `--interpolate` and provide the missing value.
 
 ## Output policy
 
-- The default target covers Podman 5.4.0 through 6.0.2.
+- The default target covers Podman 5.4.0 through 6.1.0.
 - Change the range with `--podman-minimum-version` and `--podman-maximum-version`.
 - Separate container units are exact by default. `--quadlet-grouping pod` is an approximation.
 - `--loss-policy approximate` accepts documented approximations. `partial` also accepts documented

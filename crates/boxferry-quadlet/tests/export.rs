@@ -155,7 +155,7 @@ fn exports_typed_network_settings_in_native_ipam_row_order() -> Result<(), Box<d
         )),
     );
     assert!(!format!("{output:?}").contains("private"));
-    let beyond_ceiling = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 3)))?)?;
+    let beyond_ceiling = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 1, 1)))?)?;
     assert!(beyond_ceiling.candidate().is_none());
     assert!(
         beyond_ceiling
@@ -721,7 +721,7 @@ fn dns_keys_obey_target_boundaries_and_stay_on_grouped_containers() -> Result<()
     }
     for target in [
         TargetProfile::new("podman", version(5, 3, 0), Some(version(5, 3, 0)))?,
-        TargetProfile::new("podman", version(6, 0, 3), Some(version(6, 0, 3)))?,
+        TargetProfile::new("podman", version(6, 1, 1), Some(version(6, 1, 1)))?,
     ] {
         let plan = exporter.plan(&application, &target)?;
         assert!(plan.candidate().is_none());
@@ -2749,7 +2749,7 @@ fn fails_closed_outside_verified_podman_coverage() -> Result<(), Box<dyn Error>>
     let exporter = QuadletExporter::new()?;
     for target in [
         TargetProfile::new("podman", version(5, 3, 0), Some(version(6, 0, 2)))?,
-        TargetProfile::new("podman", version(5, 4, 0), Some(version(6, 1, 0)))?,
+        TargetProfile::new("podman", version(5, 4, 0), Some(version(6, 1, 1)))?,
         TargetProfile::new("kubernetes", version(1, 34, 0), None)?,
     ] {
         let plan = exporter.plan(&application, &target)?;
@@ -2781,7 +2781,7 @@ fn released_setting_obeys_the_catalogue_version_boundaries() -> Result<(), Box<d
 
     let unsupported = exporter.plan(
         &application,
-        &TargetProfile::new("podman", version(5, 4, 0), Some(version(6, 0, 3)))?,
+        &TargetProfile::new("podman", version(5, 4, 0), Some(version(6, 1, 1)))?,
     )?;
     assert!(unsupported.candidate().is_none());
     assert!(
@@ -2802,7 +2802,7 @@ fn reports_the_finite_evidence_ceiling_when_maximum_is_omitted() -> Result<(), B
             && diagnostic
                 .fields()
                 .iter()
-                .any(|field| field.name() == "verified-through" && field.value().expose() == "6.0.2")
+                .any(|field| field.name() == "verified-through" && field.value().expose() == "6.1.0")
     }));
     assert!(!plan.authorize(LossPolicy::ExactOnly).is_blocked());
     Ok(())

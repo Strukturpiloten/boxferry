@@ -109,7 +109,7 @@ fn facade_preserves_topology_keys_with_their_documented_podman_floors() -> Resul
         &importer,
         &source,
         &exporter,
-        &podman_target(6, 0, 2, 6, 0, 2)?,
+        &podman_target(6, 1, 0, 6, 1, 0)?,
         LossPolicy::AllowApproximate,
     )?;
     assert_topology_output(pod_text(&ceiling)?, true, true);
@@ -118,7 +118,7 @@ fn facade_preserves_topology_keys_with_their_documented_podman_floors() -> Resul
         &importer,
         &source,
         &exporter,
-        &podman_target(6, 0, 3, 6, 0, 3)?,
+        &podman_target(6, 1, 1, 6, 1, 1)?,
         LossPolicy::AllowPartial,
     )?;
     assert!(beyond_ceiling.is_blocked());

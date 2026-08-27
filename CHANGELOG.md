@@ -9,6 +9,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Align Quadlet target selection and compatibility guidance with QuadletLens 0.2.1's reviewed Podman 6.1 support ([#106](https://github.com/Strukturpiloten/boxferry/issues/106)).
+
 - Keep release-plz's heading-only changelog promotion separated by Markdown blank lines so
   generated release pull requests pass repository file checks ([#90](https://github.com/Strukturpiloten/boxferry/issues/90)).
 

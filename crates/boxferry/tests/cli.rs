@@ -2429,7 +2429,7 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
 #[test]
 fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
-    for (minimum, maximum) in [("5.4", "5.8"), ("5.4.0", "6.0.2")] {
+    for (minimum, maximum) in [("5.4", "5.8"), ("5.4", "6.1"), ("5.4.0", "6.1.0")] {
         let result = boxferry_command()
             .args([
                 "validate",
@@ -2454,7 +2454,7 @@ fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<d
         );
         assert!(result.stderr.is_empty());
     }
-    for (minimum, maximum) in [("5.3", "6.0"), ("5.4", "6.1"), ("6.0", "5.4")] {
+    for (minimum, maximum) in [("5.3", "6.0"), ("5.4", "6.2"), ("6.0", "5.4")] {
         let result = boxferry_command()
             .args([
                 "validate",

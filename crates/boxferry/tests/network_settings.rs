@@ -29,7 +29,7 @@ fn compose_network_slice_emits_all_ten_keys_at_the_floor_and_ceiling() -> Result
     let importer = ComposeImporter::new()?;
     let exporter = QuadletExporter::new()?;
 
-    for target in [podman_target(5, 4, 0, 5, 4, 2)?, podman_target(6, 0, 2, 6, 0, 2)?] {
+    for target in [podman_target(5, 4, 0, 5, 4, 2)?, podman_target(6, 1, 0, 6, 1, 0)?] {
         let result = convert(&importer, &source, &exporter, &target, LossPolicy::ExactOnly)?;
         assert!(!result.is_blocked(), "{:#?}", result.diagnostics());
         let network = result
@@ -52,7 +52,7 @@ fn compose_network_slice_emits_all_ten_keys_at_the_floor_and_ceiling() -> Result
         &importer,
         &source,
         &exporter,
-        &podman_target(6, 0, 3, 6, 0, 3)?,
+        &podman_target(6, 1, 1, 6, 1, 1)?,
         LossPolicy::AllowPartial,
     )?;
     assert!(beyond_ceiling.is_blocked());
