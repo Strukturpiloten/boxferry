@@ -30,6 +30,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Fixed
 
+- Decouple published format adapters by keeping adapter-local tests at the neutral-model boundary
+  and cross-route coverage in the facade integration suite
+  ([#94](https://github.com/Strukturpiloten/boxferry/issues/94)).
+
 - Publish internal crates in manifest dependency order, including development and build
   dependencies, so interrupted lockstep releases can resume safely
   ([#92](https://github.com/Strukturpiloten/boxferry/issues/92)).
