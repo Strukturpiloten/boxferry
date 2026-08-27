@@ -890,14 +890,24 @@ fn devcontainer_uses_cargo_default_workspace_target_directory() -> Result<(), St
 
 #[test]
 fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<(), String> {
+    let dockerfile = fs::read_to_string(repository_root().join(".devcontainer/Dockerfile"))
+        .map_err(|error| format!("failed to read Dev Container Dockerfile: {error}"))?;
+    let expected_version = pinned_cargo_llvm_cov_version(&dockerfile, ".devcontainer/Dockerfile")?;
+
     let workflow_path = repository_root().join(".github/workflows/ci.yml");
     let workflow = fs::read_to_string(&workflow_path)
         .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
 
+    let workflow_version = pinned_cargo_llvm_cov_version(&workflow, ".github/workflows/ci.yml")?;
+    if workflow_version != expected_version {
+        return Err(format!(
+            "CI pins cargo-llvm-cov {workflow_version}, but the Dev Container pins {expected_version}"
+        ));
+    }
+
     for required in [
         "  coverage:\n    name: Coverage ratchet",
         "rustup component add llvm-tools-preview",
-        "cargo install --locked --version 0.8.7 cargo-llvm-cov",
         "cargo llvm-cov clean --locked",
         "cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
         "  portability:\n    name: Portability (macOS)",
@@ -964,14 +974,24 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
 
 #[test]
 fn release_workflow_rechecks_coverage_and_msrv_contracts() -> Result<(), String> {
+    let dockerfile = fs::read_to_string(repository_root().join(".devcontainer/Dockerfile"))
+        .map_err(|error| format!("failed to read Dev Container Dockerfile: {error}"))?;
+    let expected_version = pinned_cargo_llvm_cov_version(&dockerfile, ".devcontainer/Dockerfile")?;
+
     let workflow_path = repository_root().join(".github/workflows/release.yml");
     let workflow = fs::read_to_string(&workflow_path)
         .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
 
+    let workflow_version = pinned_cargo_llvm_cov_version(&workflow, ".github/workflows/release.yml")?;
+    if workflow_version != expected_version {
+        return Err(format!(
+            "release workflow pins cargo-llvm-cov {workflow_version}, but the Dev Container pins {expected_version}"
+        ));
+    }
+
     for required in [
         "bash scripts/validate-release-metadata.sh",
         "rustup component add llvm-tools-preview",
-        "cargo install --locked --version 0.8.7 cargo-llvm-cov",
         "cargo llvm-cov clean --locked",
         "cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
         "- name: Read the workspace MSRV",
@@ -985,6 +1005,43 @@ fn release_workflow_rechecks_coverage_and_msrv_contracts() -> Result<(), String>
     }
 
     Ok(())
+}
+
+fn pinned_cargo_llvm_cov_version(document: &str, source: &str) -> Result<String, String> {
+    const WORKFLOW_PREFIX: &str = "run: cargo install --locked --version ";
+    const WORKFLOW_SUFFIX: &str = " cargo-llvm-cov";
+    const DEVCONTAINER_PREFIX: &str = "ARG CARGO_LLVM_COV_VERSION=";
+
+    let versions = document
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            line.strip_prefix(WORKFLOW_PREFIX)
+                .and_then(|value| value.strip_suffix(WORKFLOW_SUFFIX))
+                .or_else(|| line.strip_prefix(DEVCONTAINER_PREFIX))
+        })
+        .collect::<Vec<_>>();
+
+    if versions.len() != 1 {
+        return Err(format!(
+            "{source} must contain exactly one cargo-llvm-cov version pin, found {}",
+            versions.len()
+        ));
+    }
+
+    let version = versions[0];
+    let components = version.split('.').collect::<Vec<_>>();
+    if components.len() != 3
+        || components
+            .iter()
+            .any(|component| component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(format!(
+            "{source} must pin cargo-llvm-cov to an exact major.minor.patch version, found `{version}`"
+        ));
+    }
+
+    Ok(version.to_owned())
 }
 
 #[test]
