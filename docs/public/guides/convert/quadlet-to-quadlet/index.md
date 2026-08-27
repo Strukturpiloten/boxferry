@@ -35,7 +35,7 @@ quadlet-output/
 └── web.container
 ```
 
-The default target covers Podman 5.4.0 through 6.0.2. Every emitted key must work across the whole
+The default target covers Podman 5.4.0 through 6.1.0. Every emitted key must work across the whole
 selected range.
 
 Same-format conversion does not preserve native-only values silently. `EnvironmentFile=` paths,

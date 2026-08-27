@@ -5,13 +5,13 @@ The current CLI supports Linux and all nine Compose, Quadlet, and Podman routes.
 | Input   | Output  | Target contract                                |
 | ------- | ------- | ---------------------------------------------- |
 | Compose | Compose | Rolling Compose Specification generation       |
-| Compose | Quadlet | Podman 5.4.0 through 6.0.2 by default          |
+| Compose | Quadlet | Podman 5.4.0 through 6.1.0 by default          |
 | Compose | Podman  | Reviewed exact Podman target, 6.1.0 by default |
 | Quadlet | Compose | Rolling Compose Specification generation       |
-| Quadlet | Quadlet | Podman 5.4.0 through 6.0.2 by default          |
+| Quadlet | Quadlet | Podman 5.4.0 through 6.1.0 by default          |
 | Quadlet | Podman  | Reviewed exact Podman target, 6.1.0 by default |
 | Podman  | Compose | Rolling Compose Specification generation       |
-| Podman  | Quadlet | Podman 5.4.0 through 6.0.2 by default          |
+| Podman  | Quadlet | Podman 5.4.0 through 6.1.0 by default          |
 | Podman  | Podman  | Reviewed exact Podman target, 6.1.0 by default |
 
 Run `boxferry capabilities` for the installed build's exact route and version data.

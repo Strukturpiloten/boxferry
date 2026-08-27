@@ -36,7 +36,7 @@ serde_json = { version = "1.0.151", optional = true }
 zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [dependencies.jiff]
-version = "=0.2.24"
+version = "=0.2.35"
 default-features = false
 features = ["std", "tz-system"]
 optional = true
@@ -47,7 +47,7 @@ features = ["macros", "rt"]
 optional = true
 
 [dev-dependencies]
-toml = "1.1.4"
+toml = "=1.1.4"
 
 [features]
 default = ["cli", "compose", "podman", "quadlet"]
