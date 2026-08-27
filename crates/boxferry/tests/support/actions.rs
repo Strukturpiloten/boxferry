@@ -194,8 +194,20 @@ fn validate_devcontainer_tooling(repository_root: &Path, errors: &mut Vec<String
     let dockerfile_path = repository_root.join(".devcontainer/Dockerfile");
     let dockerfile = fs::read_to_string(&dockerfile_path)
         .map_err(|error| format!("failed to read {}: {error}", dockerfile_path.display()))?;
+    let cargo_llvm_cov_versions = dockerfile
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("ARG CARGO_LLVM_COV_VERSION="))
+        .collect::<Vec<_>>();
+    if cargo_llvm_cov_versions.len() != 1
+        || !is_exact_version(cargo_llvm_cov_versions.first().copied().unwrap_or_default())
+    {
+        errors.push(format!(
+            "{} must contain one exact CARGO_LLVM_COV_VERSION major.minor.patch pin",
+            dockerfile_path.display()
+        ));
+    }
+
     for required in [
-        "ARG CARGO_LLVM_COV_VERSION=0.8.7",
         "rustup component add llvm-tools-preview",
         "cargo install --locked --version \"${CARGO_LLVM_COV_VERSION}\" cargo-llvm-cov",
     ] {
