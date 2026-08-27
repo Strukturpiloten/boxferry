@@ -7,6 +7,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Keep release-plz's heading-only changelog promotion separated by Markdown blank lines so
+  generated release pull requests pass repository file checks ([#90](https://github.com/Strukturpiloten/boxferry/issues/90)).
+
 - Sort generated Compose and Quadlet environment assignments by variable name for deterministic review ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
 
 - Group repeated human diagnostics by actionable cause with bounded subject and native-path samples;
