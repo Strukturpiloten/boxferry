@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep ZIP archive generation on the newest Rust 1.85-compatible major and stop Renovate from
+  proposing incompatible ZIP 8 releases
+  ([#111](https://github.com/Strukturpiloten/boxferry/issues/111)).
+
 ## [0.8.3](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.2...boxferry-v0.8.3) - 2026-08-27
 
 ### Changed

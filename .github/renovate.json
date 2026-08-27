@@ -78,6 +78,12 @@
       "groupName": "Rust dependencies"
     },
     {
+      "description": "Keep ZIP compatible with the workspace MSRV",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["zip"],
+      "allowedVersions": "<8.0.0"
+    },
+    {
       "description": "Group repository Node development-tool updates",
       "matchManagers": ["npm"],
       "matchDepTypes": ["devDependencies"],

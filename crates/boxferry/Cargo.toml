@@ -33,7 +33,7 @@ boxferry-quadlet = { path = "../boxferry-quadlet", version = "0.8.3", optional =
 clap = { version = "4.6.5", features = ["derive"], optional = true }
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 serde_json = { version = "1.0.151", optional = true }
-zip = { version = "6.0.0", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
+zip = { version = "7.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [dependencies.jiff]
 version = "=0.2.35"
@@ -47,6 +47,7 @@ features = ["macros", "rt"]
 optional = true
 
 [dev-dependencies]
+serde_json = "1.0.151"
 toml = "=1.1.4"
 
 [features]

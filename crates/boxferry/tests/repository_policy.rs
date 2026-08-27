@@ -1784,6 +1784,34 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn renovate_keeps_zip_compatible_with_the_workspace_msrv() -> Result<(), String> {
+    let path = repository_root().join(".github/renovate.json");
+    let renovate = fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&renovate).map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    let rules = renovate["packageRules"]
+        .as_array()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    let zip_rule = rules
+        .iter()
+        .find(|rule| {
+            rule["matchManagers"]
+                .as_array()
+                .is_some_and(|managers| managers.iter().any(|manager| manager == "cargo"))
+                && rule["matchPackageNames"]
+                    .as_array()
+                    .is_some_and(|packages| packages.iter().any(|package| package == "zip"))
+        })
+        .ok_or_else(|| "Renovate must define a Cargo package rule for zip".to_owned())?;
+
+    if zip_rule["allowedVersions"] != "<8.0.0" {
+        return Err("Renovate must keep zip below its Rust 1.88 release line".to_owned());
+    }
+
+    Ok(())
+}
+
 fn run_release_notes_script(root: &Path, version: &str, changelog: &Path) -> Result<Output, String> {
     Command::new("bash")
         .arg(root.join("scripts/extract-release-notes.sh"))
