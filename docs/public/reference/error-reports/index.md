@@ -55,18 +55,26 @@ authorizes sensitive values for conversion.
 
 The snapshot is diagnostic serialization, not executable input, a replayable Podman inventory, or
 a PodmanLens cassette. Resource names, image references, IDs, and topology can still be
-operationally sensitive. The report's redaction count measures redaction markers and deliberately
+operationally sensitive.
+
+The report's redaction count measures redaction markers and deliberately
 omitted values across serialized snapshot entries; it is not a count of distinct source secrets.
 
 Snapshot entries are serialized into bounded buffers of at most 32 MiB per JSON file and compressed
 with DEFLATE. The complete uncompressed bundle is capped at 104 MiB and the final ZIP at 16 MiB.
+
 Human output prints progress before Podman acquisition, snapshot preparation, and atomic ZIP
 publication. The report directory stays empty until the complete archive is ready: BoxFerry never
-exposes a partial ZIP. If optional Podman evidence still cannot fit its entry or archive limit,
+exposes a partial ZIP.
+
+If optional Podman evidence still cannot fit its entry or archive limit,
 BoxFerry writes the base `README.md` and `report.json` bundle. `BFO3002` then names the omitted
-snapshot and the original conversion result remains the primary failure or policy decision. JSON
-and quiet output remain free of progress lines. Default human output groups repeated findings with
-counts and bounded samples. `--verbose` expands the human occurrences. The JSON report and bundle
+snapshot and the original conversion result remains the primary failure or policy decision.
+
+JSON and quiet output remain free of progress lines. Default human output groups repeated findings with
+counts and bounded samples.
+
+`--verbose` expands the human occurrences. The JSON report and bundle
 still contain every structured diagnostic.
 
 ## Before sharing
