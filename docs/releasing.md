@@ -20,7 +20,10 @@ Breaking pre-1.0 changes use `!`, a minor version, and concise migration notes.
 
 Release notes come only from `CHANGELOG.md`. The PR gate runs its validator as a dedicated job
 required by the aggregate gate. Yank a version only when it is unsafe or unusable.
+
 Record user-visible changes in the single `Unreleased` section. Ordinary product pull requests
 must not create a future numbered section, set its date, or bump the lockstep workspace version.
-Release-plz owns those operations. During release preparation, the validator requires an empty
-`Unreleased` section and one dated, usable numbered section matching the workspace version.
+Release-plz inserts only the dated version heading, with blank lines on both sides; the curated
+notes below `Unreleased` thereby become that release's notes exactly once. During release
+preparation, the validator requires an empty `Unreleased` section and
+one dated, usable numbered section matching the workspace version.
