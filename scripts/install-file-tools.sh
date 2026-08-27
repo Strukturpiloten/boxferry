@@ -5,7 +5,7 @@ set -Eeuo pipefail
 readonly install_directory="${1:-/usr/local/bin}"
 
 # renovate: datasource=github-releases depName=tombi-toml/tombi
-readonly tombi_version="1.4.0"
+readonly tombi_version="1.4.1"
 # renovate: datasource=github-releases depName=mvdan/sh
 readonly shfmt_version="3.13.1"
 # renovate: datasource=github-releases depName=koalaman/shellcheck
@@ -18,7 +18,7 @@ case "$(uname -m)" in
     readonly release_architecture="x86_64"
     readonly shfmt_architecture="amd64"
     readonly tombi_architecture="x86_64-unknown-linux-musl"
-    readonly tombi_checksum="e2dc1190e0590b1fd0581fa8f85017215ed9b05a4d85c1cf18e0979b6cf24fe1"
+    readonly tombi_checksum="9aa69eb3e75a4a22a961b8a1c8cc44e4f81328ce25ad5b10d151be1a09faa88d"
     readonly shfmt_checksum="fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1"
     readonly shellcheck_checksum="8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
     readonly hadolint_checksum="c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"
@@ -27,7 +27,7 @@ case "$(uname -m)" in
     readonly release_architecture="aarch64"
     readonly shfmt_architecture="arm64"
     readonly tombi_architecture="aarch64-unknown-linux-musl"
-    readonly tombi_checksum="b70750d462954294c354a014bb90399273876b953c21e3a136aafd3d1d41f5e8"
+    readonly tombi_checksum="21f51d092597053266e0ed051082743b5956b6de2f0db1cecce78e0eb29165e5"
     readonly shfmt_checksum="32d92acaa5cd8abb29fc49dac123dc412442d5713967819d8af2c29f1b3857c7"
     readonly shellcheck_checksum="12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588"
     readonly hadolint_checksum="f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d"

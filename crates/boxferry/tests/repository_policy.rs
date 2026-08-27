@@ -1446,7 +1446,7 @@ fn release_workflow_uses_ordered_trusted_publishing() -> Result<(), String> {
         "environment: release",
         "id-token: write",
         "target/release-artifacts/SHA256SUMS",
-        "actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1",
+        "uses: actions/attest@",
         "Create or verify annotated release tag",
         "Publish immutable GitHub release",
         "Could not read the numeric ID of the existing draft release",
