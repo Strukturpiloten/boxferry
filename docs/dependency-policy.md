@@ -38,7 +38,8 @@ versioned, and explained where it is configured. Never add an exception only to 
 - PodmanLens owns Podman acquisition, observations, evidence, planning, and rendering.
   `boxferry-podman` owns only semantic mapping.
 - ZIP and Jiff are CLI-only implementation details for privacy-safe diagnostic archives and local
-  filenames. They do not enter no-default embedded builds.
+  filenames. They do not enter no-default embedded builds. ZIP stays on the newest release line
+  compatible with Rust 1.85.0; its Renovate ceiling moves only with an intentional MSRV review.
 - ComposeLens and QuadletLens own their native document semantics.
 
 Review the relevant manifest and ADR for exact features and constraints.
