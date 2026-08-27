@@ -18,12 +18,14 @@ const FIXTURE_SUITES: &[&str] = &[
     "real-world",
 ];
 
+const FORMAT_ADAPTER_PACKAGES: &[&str] = &["boxferry-compose", "boxferry-podman", "boxferry-quadlet"];
+
 const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry-model",
     "boxferry-engine",
     "boxferry-compose",
-    "boxferry-quadlet",
     "boxferry-podman",
+    "boxferry-quadlet",
     "boxferry",
 ];
 const CRATES_IO_AUTH_ACTION: &str = "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5";
@@ -1280,6 +1282,51 @@ fn intentional_public_break_semver_path_is_explicit_and_narrow() -> Result<(), S
         .map_err(|error| format!("failed to read release-plz.toml: {error}"))?;
     if !release_plz.contains("semver_check = true") {
         return Err("release-plz must retain semver_check = true".to_owned());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn published_format_adapters_do_not_depend_on_sibling_adapters() -> Result<(), String> {
+    let root = repository_root();
+
+    for adapter in FORMAT_ADAPTER_PACKAGES {
+        let manifest_path = root.join("crates").join(adapter).join("Cargo.toml");
+        let manifest_text = fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+        let manifest = toml::from_str::<toml::Value>(&manifest_text)
+            .map_err(|error| format!("failed to parse {}: {error}", manifest_path.display()))?;
+        let mut dependency_tables = Vec::new();
+
+        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            if let Some(dependencies) = manifest.get(section).and_then(toml::Value::as_table) {
+                dependency_tables.push((section.to_owned(), dependencies));
+            }
+        }
+        if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+            for (target, configuration) in targets {
+                for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    if let Some(dependencies) = configuration.get(section).and_then(toml::Value::as_table) {
+                        dependency_tables.push((format!("target.{target}.{section}"), dependencies));
+                    }
+                }
+            }
+        }
+
+        for (section, dependencies) in dependency_tables {
+            for (dependency_alias, specification) in dependencies {
+                let dependency = specification
+                    .get("package")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or(dependency_alias);
+                if FORMAT_ADAPTER_PACKAGES.contains(&dependency) {
+                    return Err(format!(
+                        "published adapter {adapter} must not have sibling adapter {dependency} in {section}"
+                    ));
+                }
+            }
+        }
     }
 
     Ok(())

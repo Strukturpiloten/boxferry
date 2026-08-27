@@ -19,7 +19,6 @@ podman-lens = { version = "0.2.1", default-features = false }
 serde_json = "1"
 
 [dev-dependencies]
-boxferry-quadlet = { path = "../boxferry-quadlet", version = "0.8.3" }
 futures = "0.3"
 
 [lints]

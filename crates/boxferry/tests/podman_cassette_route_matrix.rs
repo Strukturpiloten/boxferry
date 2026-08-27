@@ -72,7 +72,7 @@ fn cassette_manifest_hashes_pin_every_reviewed_artifact() -> Result<(), Box<dyn 
 }
 
 #[test]
-fn every_complex_cassette_replays_through_every_exporter() -> Result<(), Box<dyn Error>> {
+fn every_complex_podman_cassette_crosses_the_neutral_model_to_every_exporter() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory();
     let root = TemporaryDirectory::new("podman-cassette-routes")?;
     let mut scenarios = BTreeSet::new();

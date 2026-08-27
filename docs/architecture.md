@@ -39,6 +39,10 @@ public orchestration APIs available to embedded callers.
 | `boxferry`               | Facade, CLI, reports, presentation, and create-new file boundary     |
 | Native Lens repositories | Native parsing/acquisition, rendering, evidence, and native findings |
 
+Published format-adapter crates do not depend on sibling adapters in normal, build, development,
+or target-specific dependency sections. Adapter tests stop at their neutral boundary; N:N route
+composition tests belong to the `boxferry` facade.
+
 The neutral model contains no Lens types. Format-specific behavior stays in the owning Lens;
 cross-format meaning stays in the corresponding BoxFerry adapter; orchestration stays out of the
 CLI layer.

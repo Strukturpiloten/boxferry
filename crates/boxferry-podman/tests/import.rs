@@ -8,14 +8,13 @@ use std::{
     sync::Mutex,
 };
 
-use boxferry_engine::{ConversionKind, ExportAdapter, ImportAdapter, LossPolicy, PlatformVersion, TargetProfile};
+use boxferry_engine::{ConversionKind, ExportAdapter, ImportAdapter, PlatformVersion, TargetProfile};
 use boxferry_model::{
     EnvironmentValue, HealthcheckCommand, Identifier, MountSource, ResourceOwnership, RestartPolicy, SelinuxRelabel,
 };
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanImporter, PodmanPromotionPolicy, PodmanSource, podman_lens,
 };
-use boxferry_quadlet::QuadletExporter;
 use futures::executor::block_on;
 use podman_lens::{
     AcquisitionOptions, DiagnosticCode, DiscoveryRequest, LabelSelector, LibpodHeader, LibpodHeaders, LibpodRequest,
@@ -473,24 +472,6 @@ fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(),
         service.mounts()[0].value().selinux_relabel(),
         Some(SelinuxRelabel::Private)
     );
-    let authorized = QuadletExporter::new()?
-        .plan(
-            application,
-            &TargetProfile::new(
-                PODMAN_TARGET,
-                PlatformVersion::new(5, 4, 0),
-                Some(PlatformVersion::new(6, 0, 2)),
-            )?,
-        )?
-        .authorize(LossPolicy::AllowPartial);
-    let output = authorized.output().ok_or("promoted bind Quadlet output")?;
-    assert!(
-        output
-            .file("web.container")
-            .ok_or("container unit")?
-            .text()
-            .contains("Volume=/srv/example/config:/etc/example:ro,Z\n")
-    );
     assert!(result.diagnostics().iter().any(|diagnostic| {
         diagnostic.code().as_str() == "BFP0003"
             && diagnostic.fields().iter().any(|field| {
@@ -502,7 +483,7 @@ fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(),
 }
 
 #[test]
-fn combined_promotion_flags_emit_network_ipam_and_keep_effective_empty_dns_unmodelled() -> Result<(), Box<dyn Error>> {
+fn combined_promotion_flags_model_network_ipam_and_keep_effective_empty_dns_unmodelled() -> Result<(), Box<dyn Error>> {
     let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":"","Cmd":["nginx","-g","daemon off;"],"Env":["NC_davstorage.request_timeout=60 seconds"]},"HostConfig":{"RestartPolicy":{"Name":""},"Dns":[],"DnsSearch":[],"DnsOptions":[]},"NetworkSettings":{"Networks":{"legacy-net":{"NetworkID":"legacy-net"}}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":true,"Propagation":"rprivate"}]}"#;
     let mut request = DiscoveryRequest::new();
     request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
@@ -522,9 +503,29 @@ fn combined_promotion_flags_emit_network_ipam_and_keep_effective_empty_dns_unmod
     let result = PodmanImporter::new()?.import(&source);
     let application = result.application().ok_or("legacy application")?;
     assert_eq!(application.networks().len(), 1);
+    let network = application.networks()[0].value();
+    assert_eq!(network.ownership(), ResourceOwnership::Application);
+    assert_eq!(network.internal().map(|value| *value.value()), Some(true));
+    assert_eq!(network.ipv6().map(|value| *value.value()), Some(true));
+    let ipam = network.ipam_configs().ok_or("promoted network IPAM")?;
+    assert_eq!(ipam.len(), 2);
+    assert_eq!(ipam[0].value().subnet().value().expose(), "10.88.0.0/16");
     assert_eq!(
-        application.networks()[0].value().ownership(),
-        ResourceOwnership::Application
+        ipam[0].value().gateway().map(|value| value.value().expose()),
+        Some("10.88.0.1")
+    );
+    assert_eq!(
+        ipam[0].value().ip_range().map(|value| value.value().expose()),
+        Some("10.88.1.0-10.88.1.255")
+    );
+    assert_eq!(ipam[1].value().subnet().value().expose(), "fd42::/64");
+    assert_eq!(
+        ipam[1].value().gateway().map(|value| value.value().expose()),
+        Some("fd42::1")
+    );
+    assert_eq!(
+        ipam[1].value().ip_range().map(|value| value.value().expose()),
+        Some("fd42::100-fd42::1ff")
     );
     let service = application.services().first().ok_or("legacy service")?.value();
     assert!(service.dns_servers().is_none());
@@ -533,27 +534,6 @@ fn combined_promotion_flags_emit_network_ipam_and_keep_effective_empty_dns_unmod
     assert_eq!(service.mounts().len(), 1);
     assert_eq!(service.environment().len(), 1);
 
-    let target = TargetProfile::new(
-        PODMAN_TARGET,
-        PlatformVersion::new(5, 4, 0),
-        Some(PlatformVersion::new(6, 0, 2)),
-    )?;
-    let plan = QuadletExporter::new()?.plan(application, &target)?;
-    let authorized = plan.authorize(LossPolicy::AllowPartial);
-    let output = authorized.output().ok_or("production-shaped Quadlet output")?;
-    let container = output.file("web.container").ok_or("container unit")?.text();
-    assert!(container.contains("Exec=nginx -g \"daemon off;\""));
-    assert!(container.contains("Environment=\"NC_davstorage.request_timeout=60 seconds\""));
-    assert!(container.contains("Volume=/srv/example/config:/etc/example"));
-    let network = output.file("legacy-net.network").ok_or("managed network unit")?.text();
-    assert!(network.contains("Subnet=10.88.0.0/16\n"));
-    assert!(network.contains("Gateway=10.88.0.1\n"));
-    assert!(network.contains("IPRange=10.88.1.0-10.88.1.255\n"));
-    assert!(network.contains("Subnet=fd42::/64\n"));
-    assert!(network.contains("Gateway=fd42::1\n"));
-    assert!(network.contains("IPRange=fd42::100-fd42::1ff\n"));
-    assert!(network.contains("IPv6=true\n"));
-    assert!(network.contains("Internal=true\n"));
     assert!(!result.diagnostics().iter().any(|diagnostic| {
         diagnostic.fields().iter().any(|field| {
             field.name() == "reason"
