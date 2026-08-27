@@ -75,7 +75,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "boxferry"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "boxferry-compose",
  "boxferry-engine",
@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry-compose"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -102,18 +102,18 @@ dependencies = [
 
 [[package]]
 name = "boxferry-engine"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "boxferry-model",
 ]
 
 [[package]]
 name = "boxferry-model"
-version = "0.8.2"
+version = "0.8.3"
 
 [[package]]
 name = "boxferry-podman"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
@@ -125,7 +125,7 @@ dependencies = [
 
 [[package]]
 name = "boxferry-quadlet"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "boxferry-engine",
  "boxferry-model",
