@@ -1762,10 +1762,22 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         r#""matchManagers": ["github-actions"]"#,
         r#""matchManagers": ["devcontainer"]"#,
         r#""matchManagers": ["rust-toolchain"]"#,
+        "Automerge tested non-major dependency updates",
+        "Do not delay BoxFerry and Lens releases",
+        r#""minimumReleaseAge": "0 days""#,
+        r#""platformAutomerge": false"#,
+        r#""boxferry-model""#,
+        r#""compose-lens""#,
+        r#""podman-lens""#,
+        r#""quadlet-lens""#,
     ] {
         if !renovate.contains(required) {
             return Err(format!("Renovate configuration is missing `{required}`"));
         }
+    }
+
+    if renovate.matches(r#""automerge": false"#).count() != 2 {
+        return Err("Renovate must keep Dev Container features and checksum-pinned tools manual".to_owned());
     }
 
     for workflow_name in ["ci.yml", "release.yml"] {

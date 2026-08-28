@@ -103,11 +103,34 @@
       "groupName": "GitHub Actions"
     },
     {
+      "description": "Automerge tested non-major dependency updates",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false
+    },
+    {
+      "description": "Do not delay BoxFerry and Lens releases",
+      "matchPackageNames": [
+        "boxferry",
+        "boxferry-model",
+        "boxferry-engine",
+        "boxferry-compose",
+        "boxferry-podman",
+        "boxferry-quadlet",
+        "compose-lens",
+        "podman-lens",
+        "quadlet-lens"
+      ],
+      "minimumReleaseAge": "0 days"
+    },
+    {
       "description": "Keep Dev Container feature versions current; the lock file owns digests",
       "matchManagers": ["devcontainer"],
       "matchDepTypes": ["feature"],
       "pinDigests": false,
       "groupName": "Dev Container",
+      "automerge": false,
       "prBodyNotes": [
         "Regenerate and commit the Dev Container feature lock as documented in docs/development-environment.md."
       ]
@@ -121,6 +144,7 @@
       "description": "Require checksum review for downloaded file-quality tools",
       "matchFileNames": ["scripts/install-file-tools.sh"],
       "dependencyDashboardApproval": true,
+      "automerge": false,
       "prBodyNotes": [
         "Review both Linux release assets and update their SHA-256 checksums before merging."
       ]
