@@ -1,7 +1,7 @@
 # boxferry-engine
 
-`boxferry-engine` provides the loss-aware conversion engine behind BoxFerry: adapter contracts,
-target profiles, conversion outcomes, diagnostic rules, and policies that decide whether a
+`boxferry-engine` provides the source-aware conversion engine behind BoxFerry: adapter contracts,
+target profiles, conversion outcomes, diagnostic rules, and loss policies that decide whether a
 candidate output may be returned.
 
 The engine operates on [`boxferry-model`](https://crates.io/crates/boxferry-model) applications and

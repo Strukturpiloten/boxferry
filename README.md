@@ -1,9 +1,9 @@
 # BoxFerry
 
-BoxFerry is an open-source CLI and Rust library for converting container application definitions
-between Docker Compose, Podman resources, and Podman Quadlet. Every conversion passes through a
-format-neutral model, so incompatible intent remains visible as structured diagnostics instead of
-being silently discarded.
+BoxFerry is an open-source CLI and Rust library for source-aware conversion of container
+application definitions between Docker Compose, Podman resources, and Podman Quadlet. Every
+conversion passes through a format-neutral model, so incompatible intent remains visible as
+structured diagnostics instead of being silently discarded.
 
 [Website](https://boxferry.dev/) · [Getting started](https://boxferry.dev/docs/getting-started/) ·
 [crates.io](https://crates.io/crates/boxferry) · [Rust API](https://docs.rs/boxferry)

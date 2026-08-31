@@ -80,7 +80,7 @@ static SUPPORT_BUNDLE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Parser)]
 #[command(
     version,
-    about = "Loss-aware container-definition conversion",
+    about = "Source-aware container-definition conversion",
     propagate_version = true,
     disable_help_subcommand = true
 )]

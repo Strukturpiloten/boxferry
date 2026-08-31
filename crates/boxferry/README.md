@@ -1,6 +1,6 @@
 # BoxFerry
 
-`boxferry` is the supported Rust library facade and Linux CLI for loss-aware conversion between
+`boxferry` is the supported Rust library facade and Linux CLI for source-aware conversion between
 Docker Compose, Podman resources, and Podman Quadlet. Windows users can run the CLI inside WSL2.
 
 [Website](https://boxferry.dev/) · [User documentation](https://boxferry.dev/docs/) ·
