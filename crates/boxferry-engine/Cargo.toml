@@ -14,7 +14,7 @@ categories.workspace = true
 publish = true
 
 [dependencies]
-boxferry-model = { path = "../boxferry-model", version = "0.8.3" }
+boxferry-model = { path = "../boxferry-model", version = "0.8.4" }
 
 [lints]
 workspace = true
