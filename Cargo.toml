@@ -14,10 +14,10 @@ default-members = ["crates/boxferry"]
 version = "0.8.3"
 edition = "2024"
 rust-version = "1.85.0"
-homepage = "https://www.strukturpiloten.de/"
+homepage = "https://boxferry.dev/"
 repository = "https://github.com/Strukturpiloten/boxferry"
 license = "MPL-2.0"
-keywords = ["compose", "containers", "migration", "podman", "quadlet"]
+keywords = ["containers", "docker-compose", "migration", "podman", "quadlet"]
 categories = ["command-line-utilities", "config", "development-tools"]
 
 [workspace.lints.clippy]
