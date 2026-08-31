@@ -1,8 +1,12 @@
 # BoxFerry
 
-BoxFerry converts container application definitions through one neutral model. It keeps
-incompatible intent visible as structured diagnostics and writes output only when the selected
-loss policy allows it.
+BoxFerry is an open-source CLI and Rust library for converting container application definitions
+between Docker Compose, Podman resources, and Podman Quadlet. Every conversion passes through a
+format-neutral model, so incompatible intent remains visible as structured diagnostics instead of
+being silently discarded.
+
+[Website](https://boxferry.dev/) · [Getting started](https://boxferry.dev/docs/getting-started/) ·
+[crates.io](https://crates.io/crates/boxferry) · [Rust API](https://docs.rs/boxferry)
 
 ## What it converts
 
@@ -13,7 +17,7 @@ loss policy allows it.
 | Quadlet | Generated Compose | Reviewable Podman artifacts | Generated unit files |
 
 All nine routes use the same importer → neutral model → exporter pipeline. Same-format conversion
-is never a native passthrough. Docker and Kubernetes are not implemented.
+is never a native passthrough. Docker Engine resources and Kubernetes are not yet implemented.
 
 ## Quick start
 
@@ -55,7 +59,11 @@ and individual adapters. [ComposeLens](https://github.com/Strukturpiloten/compos
 [PodmanLens](https://github.com/Strukturpiloten/podman-lens), and
 [QuadletLens](https://github.com/Strukturpiloten/quadlet-lens) own their native formats.
 
-Run the complete development gate with `./scripts/check-all.sh`. BoxFerry is maintained by
-[Martin “Becks” Beckert](https://github.com/TheRealBecks) through
-[Strukturpiloten OHG](https://www.strukturpiloten.de/) under the
-[Mozilla Public License 2.0](LICENSE).
+## Open source
+
+BoxFerry is maintained by [Martin “Becks” Beckert](https://github.com/TheRealBecks) through
+[Strukturpiloten OHG](https://www.strukturpiloten.de/) and released under the
+[Mozilla Public License 2.0](LICENSE). Contributions, issue reports, and practical migration
+feedback are welcome.
+
+Run the complete development gate with `./scripts/check-all.sh` before submitting a change.
