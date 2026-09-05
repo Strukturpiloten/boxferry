@@ -10,7 +10,7 @@
   "updateRemoteUserUID": true,
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1.1.0": {
-      "version": "2.98.0"
+      "version": "2.99.0"
     }
   },
   "containerEnv": {
