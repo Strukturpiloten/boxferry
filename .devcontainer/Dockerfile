@@ -66,6 +66,13 @@ RUN set -eux; \
     install -m 0755 "${temporary_directory}/actionlint" /usr/local/bin/actionlint; \
     rm -r "${temporary_directory}"
 
+# Install the workspace toolchain as well as the image default. Components belong
+# to individual toolchains; a Renovate update must not lose coverage tooling.
+COPY rust-toolchain.toml /opt/boxferry-toolchain/rust-toolchain.toml
+WORKDIR /opt/boxferry-toolchain
+RUN rustup show active-toolchain
+WORKDIR /
+
 LABEL org.opencontainers.image.authors="Martin Beckert <https://github.com/TheRealBecks>" \
       org.opencontainers.image.vendor="Strukturpiloten OHG" \
       org.opencontainers.image.url="https://www.strukturpiloten.de/"
