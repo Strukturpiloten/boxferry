@@ -7,6 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Fixed
 
+- Install LLVM coverage tools for the pinned workspace Rust toolchain, including after
+  toolchain updates, so Dev Container startup does not fail with a missing component
+  ([#126](https://github.com/Strukturpiloten/boxferry/issues/126)).
+
 - Keep ZIP archive generation on the newest Rust 1.85-compatible major and stop Renovate from
   proposing incompatible ZIP 8 releases
   ([#111](https://github.com/Strukturpiloten/boxferry/issues/111)).

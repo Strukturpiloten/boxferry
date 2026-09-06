@@ -17,6 +17,23 @@ After pulling the change from an older workspace, run **Dev Containers: Rebuild 
 Code. Existing containers retain their original environment until rebuilt. To use the default in
 an already-open terminal before rebuilding, run `unset CARGO_TARGET_DIR`.
 
+## Rust toolchain components
+
+`rust-toolchain.toml` selects the workspace Rust version and its required components:
+Clippy, rustfmt, and LLVM tools for coverage. The Dev Container preinstalls that toolchain;
+Rustup also installs these components when a later checkout changes the pinned version.
+Components installed for the image's default toolchain do not carry over to another version.
+
+If an older container reports missing `llvm-tools-preview`, run these commands from the
+BoxFerry repository root **inside the container**:
+
+```console
+rustup component add llvm-tools-preview
+bash .devcontainer/verify-tools.sh
+```
+
+After pulling the fix, use **Dev Containers: Rebuild Container** for the updated image setup.
+
 ## Local verification
 
 Run the complete gate after the final edit:

@@ -829,6 +829,45 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
 }
 
 #[test]
+fn workspace_toolchain_includes_all_devcontainer_rust_components() -> Result<(), String> {
+    let path = repository_root().join("rust-toolchain.toml");
+    let text = fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let config =
+        toml::from_str::<toml::Value>(&text).map_err(|error| format!("invalid workspace toolchain: {error}"))?;
+    let components = config
+        .get("toolchain")
+        .and_then(|toolchain| toolchain.get("components"))
+        .and_then(toml::Value::as_array)
+        .ok_or("workspace toolchain must declare its required components")?;
+    for required in ["clippy", "llvm-tools-preview", "rustfmt"] {
+        if !components.iter().any(|component| component.as_str() == Some(required)) {
+            return Err(format!(
+                "workspace toolchain must request `{required}`; the image default toolchain's components do not apply to workspace toolchain updates"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn devcontainer_preinstalls_the_workspace_toolchain_from_its_canonical_file() -> Result<(), String> {
+    let path = repository_root().join(".devcontainer/Dockerfile");
+    let dockerfile =
+        fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    for required in [
+        "COPY rust-toolchain.toml /opt/boxferry-toolchain/rust-toolchain.toml",
+        "WORKDIR /opt/boxferry-toolchain\nRUN rustup show active-toolchain\nWORKDIR /",
+    ] {
+        if !dockerfile.contains(required) {
+            return Err(format!(
+                "Dev Container must preinstall the workspace toolchain: `{required}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching() -> Result<(), String> {
     let script_path = repository_root().join(".devcontainer/verify-tools.sh");
     let script = fs::read_to_string(&script_path)
@@ -840,6 +879,9 @@ fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching
         "[[ ! -w \"${persistent_directory}\" ]]",
         "sudo chown -R",
         "chmod 0700 \"${GH_CONFIG_DIR}\"",
+        "installed_components=\"$(rustup component list --installed)\"",
+        "$(rustup show active-toolchain)",
+        "From the BoxFerry repository root, run: rustup component add llvm-tools-preview",
         "for repository in compose-lens podman-lens quadlet-lens boxferry-website; do",
     ] {
         if !script.contains(required) {

@@ -54,8 +54,11 @@ for tool in "${tools[@]}"; do
   fi
 done
 
-if ! rustup component list --installed | grep -q '^llvm-tools-'; then
-  printf 'BoxFerry Dev Container is missing Rust component: llvm-tools-preview\n' >&2
+installed_components="$(rustup component list --installed)"
+if ! grep -q '^llvm-tools-' <<< "${installed_components}"; then
+  printf 'BoxFerry Dev Container is missing Rust component: llvm-tools-preview\nActive toolchain: %s\n' \
+    "$(rustup show active-toolchain)" >&2
+  printf 'From the BoxFerry repository root, run: rustup component add llvm-tools-preview\nThen rerun: bash .devcontainer/verify-tools.sh\n' >&2
   exit 1
 fi
 
