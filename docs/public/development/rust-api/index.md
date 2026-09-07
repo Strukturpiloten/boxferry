@@ -24,4 +24,22 @@ execution method. Applying or deploying artifacts is outside BoxFerry.
 All six supported crates use one pre-1.0 version. Minor releases may remove or replace APIs with
 short migration notes; compatibility shims are not retained by default.
 
+## Unreleased native-evidence migration
+
+The next minor release removes `Service::podman_args` and its setters, plus
+`Volume` getters and setters for `containers_conf_modules`,
+`global_args`, and `podman_args`. Those values are opaque Quadlet source
+evidence, not portable desired state.
+
+After importing, inspect `Application::retained_native_evidence` for typed,
+resource-qualified subjects, ordered value/reset events, protected physical
+segments, and source provenance. `RetainedNativeEvidence::new` requires every
+physical segment to be sensitive, plus provenance for the event and every
+segment; plain segments are rejected before evidence can enter an application.
+`Application::add_retained_native_evidence` requires the owning resource to
+exist. There is intentionally no replacement setter that makes an exporter
+render or execute opaque arguments. Every exporter instead returns one
+unsupported outcome and value-free diagnostic per evidence subject; portable
+typed intent remains independently exportable under the selected loss policy.
+
 Build the API documentation locally with `RUSTDOCFLAGS="-D warnings" cargo ci-doc`.

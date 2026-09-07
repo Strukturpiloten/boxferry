@@ -415,6 +415,10 @@ fn local_image_id_diagnostic_explains_that_configured_reference_is_retained() ->
     )?;
     let result = PodmanImporter::new()?.import(&source);
     let application = result.application().ok_or("legacy application")?;
+    assert!(
+        application.retained_native_evidence().is_empty(),
+        "Podman input must not manufacture Quadlet-native evidence"
+    );
     let service = application.services().first().ok_or("legacy service")?.value();
     assert_eq!(
         service.image().map(|image| image.value().as_str()),

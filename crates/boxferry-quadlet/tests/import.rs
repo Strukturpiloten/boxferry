@@ -5,7 +5,7 @@ use boxferry_model::{
     Application, Command, Entrypoint, EnvironmentFileSyntax, EnvironmentValue, HealthcheckCommand, Identifier,
     ImageAcquisitionSetting, ImageBuildSetting, MountSource, Protocol, PullPolicy, ReloadAction, ResourceGrantSyntax,
     ResourceOwnership, RestartPolicy, SecurityOption, SelinuxRelabel, Service, ServiceDependencyCondition, SourceId,
-    StartupNotification, VolumeImageSource,
+    SourceSpan, StartupNotification, VolumeImageSource,
 };
 use boxferry_quadlet::{
     QuadletDocumentInput, QuadletImporter, QuadletParseDiagnosticOrigin, QuadletParseDiagnosticSeverity,
@@ -19,6 +19,98 @@ fn parse_source(
     inputs: impl IntoIterator<Item = QuadletDocumentInput>,
 ) -> Result<QuadletSource, QuadletParseError> {
     QuadletSource::parse(application_name, inputs).map(QuadletParseResult::into_source)
+}
+
+#[test]
+fn retained_native_evidence_keeps_continuations_resets_spans_and_global_order() -> Result<(), String> {
+    const VOLUME_SOURCE: &str = concat!(
+        "[Volume]\n",
+        "GlobalArgs=before-reset\n",
+        "GlobalArgs= \\\n",
+        "  continued-value\n",
+        "GlobalArgs=   \n",
+        "PodmanArgs=first \\\n",
+        "  second\n",
+    );
+    let source = parse_source(
+        identifier("evidence")?,
+        [
+            QuadletDocumentInput::new("data.volume", QuadletSourceId::new(41), VOLUME_SOURCE),
+            QuadletDocumentInput::new(
+                "web.container",
+                QuadletSourceId::new(42),
+                "[Container]\nRootfs=/srv/rootfs\nPodmanArgs=private-sentinel\n",
+            ),
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    let result = QuadletImporter::new()
+        .map_err(|error| error.to_string())?
+        .import(&source);
+    let evidence = result
+        .application()
+        .ok_or("application expected")?
+        .retained_native_evidence();
+    assert_eq!(evidence.len(), 5);
+    assert!(matches!(
+        evidence[1].event().value(),
+        boxferry_model::RetainedNativeEvidenceEvent::Value(_)
+    ));
+    assert!(matches!(
+        evidence[2].event().value(),
+        boxferry_model::RetainedNativeEvidenceEvent::Reset(_)
+    ));
+    let segments = evidence[3].event().value().physical_segments();
+    assert_eq!(segments.len(), 2);
+    assert_eq!(evidence[3].event().origins().len(), 2);
+    let expected_spans = segments
+        .iter()
+        .map(|segment| {
+            let text = segment.value().expose();
+            let start = VOLUME_SOURCE.find(text).ok_or("segment text in source")?;
+            SourceSpan::new(start, start + text.len())
+                .map(Some)
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        segments
+            .iter()
+            .map(|segment| segment.origins()[0].span())
+            .collect::<Vec<_>>(),
+        expected_spans
+    );
+    assert_eq!(
+        evidence[3]
+            .event()
+            .origins()
+            .iter()
+            .map(boxferry_model::Provenance::span)
+            .collect::<Vec<_>>(),
+        expected_spans
+    );
+    let import_outcome = result
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "volumes.data.podman_args")
+        .ok_or("PodmanArgs import outcome")?;
+    assert_eq!(
+        import_outcome
+            .origins()
+            .iter()
+            .map(boxferry_model::Provenance::span)
+            .collect::<Vec<_>>(),
+        expected_spans
+    );
+    assert!(evidence.iter().all(|item| {
+        item.event()
+            .value()
+            .physical_segments()
+            .iter()
+            .all(|segment| segment.origins().len() == 1 && segment.origins()[0].span().is_some())
+    }));
+    assert!(!format!("{evidence:?}").contains("private-sentinel"));
+    Ok(())
 }
 
 #[test]
@@ -460,7 +552,18 @@ fn retains_rootfs_notify_and_ordered_podman_args_without_synthesizing_them() -> 
         service.startup_notification().map(boxferry_model::Sourced::value),
         Some(StartupNotification::Runtime)
     ));
-    assert_eq!(service.podman_args().map(<[_]>::len), Some(2));
+    let evidence = result
+        .application()
+        .ok_or("application expected")?
+        .retained_native_evidence();
+    assert_eq!(evidence.len(), 2);
+    assert!(evidence.iter().all(|item| {
+        matches!(
+            item.subject(),
+            boxferry_model::RetainedNativeEvidenceSubject::QuadletServicePodmanArgs(name)
+                if name.as_str() == "web"
+        )
+    }));
     assert!(result.outcomes().iter().any(|outcome| {
         outcome.subject() == "services.web.startup_notification" && outcome.kind() == ConversionKind::Exact
     }));
@@ -2284,13 +2387,15 @@ fn imports_typed_volume_settings_and_retains_resets_and_raw_evidence() -> Result
     );
     assert!(volume.labels().is_some_and(<[_]>::is_empty));
     assert_eq!(volume.labels_origins().len(), 1);
-    assert!(volume.containers_conf_modules().is_some_and(<[_]>::is_empty));
-    assert!(volume.global_args().is_some_and(|values| values.len() == 1));
-    assert!(
-        volume
-            .podman_args()
-            .is_some_and(|values| values[0].value().expose().contains("private value"))
-    );
+    let evidence = result
+        .application()
+        .ok_or("application expected")?
+        .retained_native_evidence();
+    assert_eq!(evidence.len(), 4);
+    assert!(matches!(
+        evidence[1].event().value(),
+        boxferry_model::RetainedNativeEvidenceEvent::Reset(_)
+    ));
     assert!(
         matches!(volume.image_source().map(boxferry_model::Sourced::value), Some(VolumeImageSource::ImageAcquisition(name)) if name.as_str() == "base")
     );
@@ -2299,7 +2404,7 @@ fn imports_typed_volume_settings_and_retains_resets_and_raw_evidence() -> Result
             .outcomes()
             .iter()
             .any(|outcome| outcome.subject() == "volumes.data.containers_conf_modules"
-                && outcome.kind() == ConversionKind::Unsupported)
+                && outcome.kind() == ConversionKind::Exact)
     );
     Ok(())
 }

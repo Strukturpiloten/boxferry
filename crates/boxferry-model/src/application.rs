@@ -31,6 +31,22 @@ pub enum ModelError {
         /// Duplicated name.
         name: String,
     },
+    /// Retained native evidence referred to a resource absent from the application.
+    UnknownNativeEvidenceOwner {
+        /// Neutral resource kind.
+        kind: &'static str,
+        /// Missing resource name.
+        name: String,
+    },
+    /// Retained native evidence omitted required authored provenance.
+    MissingNativeEvidenceProvenance {
+        /// Evidence component that lacked a source origin.
+        component: &'static str,
+    },
+    /// Retained native evidence contained no physical source segments.
+    EmptyNativeEvidenceEvent,
+    /// Retained native evidence contained an unprotected physical segment.
+    UnprotectedNativeEvidenceSegment,
     /// A service was added to the same group more than once.
     DuplicateServiceGroupMember {
         /// Service-group name.
@@ -133,6 +149,21 @@ impl fmt::Display for ModelError {
             }
             Self::DuplicateResource { kind, name } => {
                 write!(formatter, "duplicate {kind} `{name}`")
+            }
+            Self::UnknownNativeEvidenceOwner { kind, name } => {
+                write!(formatter, "retained native evidence references unknown {kind} `{name}`")
+            }
+            Self::MissingNativeEvidenceProvenance { component } => {
+                write!(
+                    formatter,
+                    "retained native evidence {component} must carry source provenance"
+                )
+            }
+            Self::EmptyNativeEvidenceEvent => {
+                formatter.write_str("retained native evidence must contain at least one physical source segment")
+            }
+            Self::UnprotectedNativeEvidenceSegment => {
+                formatter.write_str("retained native evidence physical segments must be sensitive")
             }
             Self::DuplicateServiceGroupMember { group, service } => {
                 write!(
@@ -241,6 +272,129 @@ pub enum ResourceOwnership {
     Uncertain,
 }
 
+/// Resource-qualified opaque source fact retained for explanation, never execution.
+///
+/// The variants are model-owned identifiers rather than native-library types. They
+/// deliberately enumerate only facts that have no reviewed portable meaning.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum RetainedNativeEvidenceSubject {
+    /// Quadlet `[Container] PodmanArgs=` entries attached to one service.
+    QuadletServicePodmanArgs(Identifier),
+    /// Quadlet `[Volume] ContainersConfModule=` entries attached to one volume.
+    QuadletVolumeContainersConfModules(Identifier),
+    /// Quadlet `[Volume] GlobalArgs=` entries attached to one volume.
+    QuadletVolumeGlobalArgs(Identifier),
+    /// Quadlet `[Volume] PodmanArgs=` entries attached to one volume.
+    QuadletVolumePodmanArgs(Identifier),
+}
+
+impl RetainedNativeEvidenceSubject {
+    /// Returns the stable conversion subject shared by every exporter.
+    #[must_use]
+    pub fn conversion_subject(&self) -> String {
+        match self {
+            Self::QuadletServicePodmanArgs(name) => {
+                format!("services.{}.podman_args", name.as_str())
+            }
+            Self::QuadletVolumeContainersConfModules(name) => {
+                format!("volumes.{}.containers_conf_modules", name.as_str())
+            }
+            Self::QuadletVolumeGlobalArgs(name) => {
+                format!("volumes.{}.global_args", name.as_str())
+            }
+            Self::QuadletVolumePodmanArgs(name) => {
+                format!("volumes.{}.podman_args", name.as_str())
+            }
+        }
+    }
+
+    const fn owner(&self) -> (&'static str, &Identifier) {
+        match self {
+            Self::QuadletServicePodmanArgs(name) => ("service", name),
+            Self::QuadletVolumeContainersConfModules(name)
+            | Self::QuadletVolumeGlobalArgs(name)
+            | Self::QuadletVolumePodmanArgs(name) => ("volume", name),
+        }
+    }
+}
+
+/// One authored opaque native occurrence retained in source order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RetainedNativeEvidenceEvent {
+    /// Protected physical source segments for one non-reset assignment.
+    Value(Vec<Sourced<ProtectedString>>),
+    /// Protected physical source segments for an assignment with native reset semantics.
+    Reset(Vec<Sourced<ProtectedString>>),
+}
+
+impl RetainedNativeEvidenceEvent {
+    /// Returns exact physical value segments in authored order.
+    #[must_use]
+    pub fn physical_segments(&self) -> &[Sourced<ProtectedString>] {
+        match self {
+            Self::Value(segments) | Self::Reset(segments) => segments,
+        }
+    }
+}
+
+/// One provenance-bearing native evidence event.
+///
+/// Applications keep these events separately from portable service and volume
+/// configuration. Repeated records retain global authored order, including values
+/// that precede a later reset.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetainedNativeEvidence {
+    subject: RetainedNativeEvidenceSubject,
+    event: Sourced<RetainedNativeEvidenceEvent>,
+}
+
+impl RetainedNativeEvidence {
+    /// Creates one retained source event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::MissingNativeEvidenceProvenance`] when the authored
+    /// event or any physical segment has no source origin, and
+    /// [`ModelError::EmptyNativeEvidenceEvent`] when no physical source segment
+    /// is present, or [`ModelError::UnprotectedNativeEvidenceSegment`] when a
+    /// segment is not marked sensitive.
+    pub fn new(
+        subject: RetainedNativeEvidenceSubject,
+        event: Sourced<RetainedNativeEvidenceEvent>,
+    ) -> Result<Self, ModelError> {
+        if event.origins().is_empty() {
+            return Err(ModelError::MissingNativeEvidenceProvenance { component: "event" });
+        }
+        let segments = event.value().physical_segments();
+        if segments.is_empty() {
+            return Err(ModelError::EmptyNativeEvidenceEvent);
+        }
+        if segments.iter().any(|segment| segment.origins().is_empty()) {
+            return Err(ModelError::MissingNativeEvidenceProvenance {
+                component: "physical segment",
+            });
+        }
+        if segments.iter().any(|segment| !segment.value().is_sensitive()) {
+            return Err(ModelError::UnprotectedNativeEvidenceSegment);
+        }
+        Ok(Self { subject, event })
+    }
+
+    /// Returns the typed resource-qualified native subject.
+    #[must_use]
+    pub const fn subject(&self) -> &RetainedNativeEvidenceSubject {
+        &self.subject
+    }
+
+    /// Returns the protected event and its source provenance.
+    #[must_use]
+    pub const fn event(&self) -> &Sourced<RetainedNativeEvidenceEvent> {
+        &self.event
+    }
+}
+
 /// One application-level volume declaration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Volume {
@@ -255,12 +409,6 @@ pub struct Volume {
     labels: Option<Vec<Sourced<MetadataLabel>>>,
     labels_origins: Vec<Provenance>,
     copy: Option<Sourced<bool>>,
-    containers_conf_modules: Option<Vec<Sourced<ProtectedString>>>,
-    containers_conf_modules_origins: Vec<Provenance>,
-    global_args: Option<Vec<Sourced<ProtectedString>>>,
-    global_args_origins: Vec<Provenance>,
-    podman_args: Option<Vec<Sourced<ProtectedString>>>,
-    podman_args_origins: Vec<Provenance>,
     user: Option<Sourced<ProtectedString>>,
     group: Option<Sourced<ProtectedString>>,
     uid: Option<Sourced<ProtectedString>>,
@@ -284,12 +432,6 @@ impl Volume {
             labels: None,
             labels_origins: Vec::new(),
             copy: None,
-            containers_conf_modules: None,
-            containers_conf_modules_origins: Vec::new(),
-            global_args: None,
-            global_args_origins: Vec::new(),
-            podman_args: None,
-            podman_args_origins: Vec::new(),
             user: None,
             group: None,
             uid: None,
@@ -416,81 +558,6 @@ impl Volume {
     #[must_use]
     pub const fn copy(&self) -> Option<&Sourced<bool>> {
         self.copy.as_ref()
-    }
-
-    /// Sets ordered protected `containers.conf` modules, retaining an explicit empty reset.
-    pub fn set_containers_conf_modules(&mut self, values: Vec<Sourced<ProtectedString>>) {
-        self.set_containers_conf_modules_with_origins(values, Vec::new());
-    }
-
-    /// Sets ordered protected `containers.conf` modules with collection-level provenance.
-    pub fn set_containers_conf_modules_with_origins(
-        &mut self,
-        values: Vec<Sourced<ProtectedString>>,
-        origins: Vec<Provenance>,
-    ) {
-        self.containers_conf_modules = Some(values);
-        self.containers_conf_modules_origins = origins;
-    }
-
-    /// Returns protected `containers.conf` modules in authored order, if explicitly present.
-    #[must_use]
-    pub fn containers_conf_modules(&self) -> Option<&[Sourced<ProtectedString>]> {
-        self.containers_conf_modules.as_deref()
-    }
-
-    /// Returns collection-level `containers.conf` module provenance.
-    #[must_use]
-    pub fn containers_conf_modules_origins(&self) -> &[Provenance] {
-        &self.containers_conf_modules_origins
-    }
-
-    /// Sets ordered protected global arguments, retaining an explicit empty reset.
-    pub fn set_global_args(&mut self, values: Vec<Sourced<ProtectedString>>) {
-        self.set_global_args_with_origins(values, Vec::new());
-    }
-
-    /// Sets ordered protected global arguments with collection-level provenance.
-    pub fn set_global_args_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
-        self.global_args = Some(values);
-        self.global_args_origins = origins;
-    }
-
-    /// Returns protected global arguments in authored order, if explicitly present.
-    #[must_use]
-    pub fn global_args(&self) -> Option<&[Sourced<ProtectedString>]> {
-        self.global_args.as_deref()
-    }
-
-    /// Returns collection-level global-argument provenance.
-    #[must_use]
-    pub fn global_args_origins(&self) -> &[Provenance] {
-        &self.global_args_origins
-    }
-
-    /// Sets ordered protected raw Podman arguments authored by the source.
-    ///
-    /// These arguments are evidence only. Adapters must not synthesize them from typed settings.
-    pub fn set_podman_args(&mut self, values: Vec<Sourced<ProtectedString>>) {
-        self.set_podman_args_with_origins(values, Vec::new());
-    }
-
-    /// Sets raw Podman arguments with collection-level provenance.
-    pub fn set_podman_args_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
-        self.podman_args = Some(values);
-        self.podman_args_origins = origins;
-    }
-
-    /// Returns source-authored raw Podman arguments in order, if explicitly present.
-    #[must_use]
-    pub fn podman_args(&self) -> Option<&[Sourced<ProtectedString>]> {
-        self.podman_args.as_deref()
-    }
-
-    /// Returns collection-level raw-Podman-argument provenance.
-    #[must_use]
-    pub fn podman_args_origins(&self) -> &[Provenance] {
-        &self.podman_args_origins
     }
 
     /// Sets the source-authored volume user identity.
@@ -2744,8 +2811,6 @@ pub struct Service {
     devices: Option<Vec<Sourced<Device>>>,
     devices_origins: Vec<Provenance>,
     stop_signal: Option<Sourced<ProtectedString>>,
-    podman_args: Option<Vec<Sourced<ProtectedString>>>,
-    podman_args_origins: Vec<Provenance>,
     environment: Vec<Sourced<EnvironmentVariable>>,
     environment_files: Vec<Sourced<EnvironmentFile>>,
     host_mappings: Vec<Sourced<HostMapping>>,
@@ -2814,8 +2879,6 @@ impl Service {
             devices: None,
             devices_origins: Vec::new(),
             stop_signal: None,
-            podman_args: None,
-            podman_args_origins: Vec::new(),
             environment: Vec::new(),
             environment_files: Vec::new(),
             host_mappings: Vec::new(),
@@ -3444,34 +3507,6 @@ impl Service {
         self.stop_signal.as_ref()
     }
 
-    /// Sets ordered source-authored Podman arguments, retaining an explicit empty collection.
-    pub fn set_podman_args(&mut self, values: Vec<Sourced<ProtectedString>>) {
-        self.set_podman_args_with_origins(values, Vec::new());
-    }
-
-    /// Sets ordered source-authored Podman arguments with collection-level provenance.
-    pub fn set_podman_args_with_origins(&mut self, values: Vec<Sourced<ProtectedString>>, origins: Vec<Provenance>) {
-        self.podman_args = Some(values);
-        self.podman_args_origins = origins;
-    }
-
-    /// Appends one protected source-authored Podman argument in source order.
-    pub fn add_podman_arg(&mut self, value: Sourced<ProtectedString>) {
-        self.podman_args.get_or_insert_default().push(value);
-    }
-
-    /// Returns source-authored Podman arguments, preserving omitted versus explicit-empty state.
-    #[must_use]
-    pub fn podman_args(&self) -> Option<&[Sourced<ProtectedString>]> {
-        self.podman_args.as_deref()
-    }
-
-    /// Returns collection-level Podman-argument provenance.
-    #[must_use]
-    pub fn podman_args_origins(&self) -> &[Provenance] {
-        &self.podman_args_origins
-    }
-
     /// Appends an environment entry.
     pub fn add_environment(&mut self, value: Sourced<EnvironmentVariable>) {
         self.environment.push(value);
@@ -3631,6 +3666,7 @@ impl Service {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Application {
     name: Identifier,
+    retained_native_evidence: Vec<RetainedNativeEvidence>,
     image_acquisitions: Vec<Sourced<ImageAcquisition>>,
     image_builds: Vec<Sourced<ImageBuild>>,
     services: Vec<Sourced<Service>>,
@@ -3647,6 +3683,7 @@ impl Application {
     pub const fn new(name: Identifier) -> Self {
         Self {
             name,
+            retained_native_evidence: Vec::new(),
             image_acquisitions: Vec::new(),
             image_builds: Vec::new(),
             services: Vec::new(),
@@ -3662,6 +3699,35 @@ impl Application {
     #[must_use]
     pub const fn name(&self) -> &Identifier {
         &self.name
+    }
+
+    /// Adds one opaque source event after its owning resource has been declared.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::UnknownNativeEvidenceOwner`] when the typed subject
+    /// refers to a service or volume absent from this application.
+    pub fn add_retained_native_evidence(&mut self, evidence: RetainedNativeEvidence) -> Result<(), ModelError> {
+        let (kind, name) = evidence.subject.owner();
+        let present = match kind {
+            "service" => self.services.iter().any(|entry| entry.value().name() == name),
+            "volume" => self.volumes.iter().any(|entry| entry.value().name() == name),
+            _ => false,
+        };
+        if !present {
+            return Err(ModelError::UnknownNativeEvidenceOwner {
+                kind,
+                name: name.as_str().to_owned(),
+            });
+        }
+        self.retained_native_evidence.push(evidence);
+        Ok(())
+    }
+
+    /// Returns opaque source events in global authored order.
+    #[must_use]
+    pub fn retained_native_evidence(&self) -> &[RetainedNativeEvidence] {
+        &self.retained_native_evidence
     }
 
     /// Adds a uniquely named image-acquisition resource while preserving declaration order.
@@ -4350,25 +4416,7 @@ mod tests {
         let origin = crate::Provenance::source(crate::SourceId::new("data.volume").map_err(|error| error.to_string())?);
         let mut volume = Volume::new(id("data")?, ResourceOwnership::Application);
         assert!(volume.labels().is_none());
-        assert!(volume.containers_conf_modules().is_none());
-        assert!(volume.global_args().is_none());
-        assert!(volume.podman_args().is_none());
         volume.set_labels_with_origins(Vec::new(), vec![origin.clone()]);
-        volume.set_containers_conf_modules_with_origins(Vec::new(), vec![origin.clone()]);
-        volume.set_global_args_with_origins(
-            vec![
-                Sourced::from_source(ProtectedString::plain("--first"), origin.clone()),
-                Sourced::from_source(ProtectedString::sensitive("--token=never-print"), origin.clone()),
-            ],
-            vec![origin.clone()],
-        );
-        volume.set_podman_args_with_origins(
-            vec![
-                Sourced::from_source(ProtectedString::plain("--replace"), origin.clone()),
-                Sourced::from_source(ProtectedString::sensitive("--secret=never-print"), origin.clone()),
-            ],
-            vec![origin.clone()],
-        );
         volume.set_user(Sourced::from_source(
             ProtectedString::plain("named-user"),
             origin.clone(),
@@ -4381,16 +4429,10 @@ mod tests {
         volume.set_gid(Sourced::from_source(ProtectedString::plain("1002"), origin));
 
         assert_eq!(volume.labels().map(<[_]>::len), Some(0));
-        assert_eq!(volume.containers_conf_modules().map(<[_]>::len), Some(0));
-        assert_eq!(volume.global_args().map(<[_]>::len), Some(2));
-        assert_eq!(volume.podman_args().map(<[_]>::len), Some(2));
         assert_eq!(volume.user().map(|value| value.value().expose()), Some("named-user"));
         assert_eq!(volume.group().map(|value| value.value().expose()), Some("named-group"));
         assert_eq!(volume.uid().map(|value| value.value().expose()), Some("1001"));
         assert_eq!(volume.gid().map(|value| value.value().expose()), Some("1002"));
-        let debug = format!("{volume:?}");
-        assert!(!debug.contains("never-print"));
-        assert!(debug.contains("[REDACTED]"));
         Ok(())
     }
 
@@ -4756,21 +4798,10 @@ mod tests {
         let origin = crate::Provenance::source(source);
         let mut service = Service::new(id("web")?);
         service.set_startup_notification(Sourced::from_source(StartupNotification::Healthy, origin.clone()));
-        service.set_podman_args_with_origins(
-            vec![
-                Sourced::from_source(ProtectedString::plain("--replace"), origin.clone()),
-                Sourced::from_source(ProtectedString::sensitive("--secret=never-print"), origin.clone()),
-                Sourced::from_source(ProtectedString::plain("--replace"), origin.clone()),
-            ],
-            vec![origin.clone()],
-        );
-        assert_eq!(service.podman_args().map(<[_]>::len), Some(3));
-        assert_eq!(service.podman_args_origins(), std::slice::from_ref(&origin));
         assert!(matches!(
             service.startup_notification().map(Sourced::value),
             Some(StartupNotification::Healthy)
         ));
-        assert!(!format!("{service:?}").contains("never-print"));
 
         let mut with_image = Service::new(id("image-first")?);
         with_image.set_image(Sourced::generated(

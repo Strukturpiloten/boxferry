@@ -2,10 +2,11 @@
 
 use std::error::Error;
 
-use boxferry_engine::{ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
+use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
 use boxferry_model::{
-    Application, Identifier, ImageReference, Network, NetworkAttachment, ProtectedString, ResourceOwnership, Service,
-    ServiceGroup, Sourced,
+    Application, Identifier, ImageReference, Network, NetworkAttachment, ProtectedString, Provenance,
+    ResourceOwnership, RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Service,
+    ServiceGroup, SourceId, SourceSpan, Sourced,
 };
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanTargetError, resolve_podman_target, reviewed_podman_versions,
@@ -81,9 +82,43 @@ fn caller_selected_execution_context_is_preserved_without_inference() -> Result<
 fn invalid_targets_produce_bfp0006_and_no_candidate() -> Result<(), Box<dyn Error>> {
     let exporter = PodmanExporter::new()?;
     let target = TargetProfile::new(PODMAN_TARGET, version(5, 3, 0), Some(version(5, 3, 99)))?;
-    let plan = exporter.plan(&minimal_application()?, &target)?;
+    let mut application = minimal_application()?;
+    let source = SourceId::new("invalid-target.container")?;
+    let event_origin = Provenance::spanned(source.clone(), SourceSpan::new(0, 9)?);
+    let segment_origin = Provenance::spanned(source, SourceSpan::new(12, 36)?);
+    application.add_retained_native_evidence(RetainedNativeEvidence::new(
+        RetainedNativeEvidenceSubject::QuadletServicePodmanArgs(Identifier::new("web")?),
+        Sourced::from_source(
+            RetainedNativeEvidenceEvent::Value(vec![Sourced::from_source(
+                ProtectedString::sensitive("private-invalid-target-evidence"),
+                segment_origin.clone(),
+            )]),
+            event_origin.clone(),
+        ),
+    )?)?;
+    let plan = exporter.plan(&application, &target)?;
 
     assert!(plan.candidate().is_none());
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| { outcome.subject() == "target.podman" && outcome.kind() == ConversionKind::Invalid })
+    );
+    let evidence_outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.podman_args")
+        .ok_or("missing retained-evidence loss on invalid target")?;
+    assert_eq!(evidence_outcome.kind(), ConversionKind::Unsupported);
+    assert_eq!(evidence_outcome.origins(), &[event_origin, segment_origin]);
+    assert!(plan.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0007"
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.podman_args")
+    }));
+    assert!(!format!("{plan:?}").contains("private-invalid-target-evidence"));
     let diagnostic = plan
         .diagnostics()
         .iter()

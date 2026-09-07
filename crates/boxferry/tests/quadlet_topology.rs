@@ -100,9 +100,10 @@ fn facade_preserves_topology_keys_with_their_documented_podman_floors() -> Resul
         .ok_or("rootfs container output expected")?;
     assert!(container.contains("Rootfs=/srv/rootfs"));
     assert!(container.contains("Notify=healthy"));
-    assert_eq!(container.matches("PodmanArgs=").count(), 2);
-    assert!(container.contains("PodmanArgs=--replace"));
-    assert!(container.contains("PodmanArgs=--secret=private-value"));
+    assert!(!container.contains("PodmanArgs="));
+    assert!(rootfs.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.rootfs.podman_args" && outcome.kind() == ConversionKind::Unsupported
+    }));
     assert!(!format!("{rootfs:?}").contains("private-value"));
 
     let ceiling = convert(

@@ -20,12 +20,17 @@ fn parse_source(
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one version-floor contract reviews all typed and retained volume settings"
+)]
 fn facade_preserves_all_typed_volume_settings_at_their_podman_floors() -> Result<(), Box<dyn Error>> {
     let source = all_volume_settings_source()?;
     let adapter = QuadletImporter::new()?;
     let import_result = adapter.import(&source);
     let application = import_result.application().ok_or("application expected")?;
     let volume = application.volumes()[0].value();
+    assert_eq!(application.retained_native_evidence().len(), 3);
     assert_eq!(volume.name().as_str(), "data");
     assert_eq!(
         volume.runtime_name().map(|value| value.value().expose()),
@@ -95,9 +100,6 @@ fn facade_preserves_all_typed_volume_settings_at_their_podman_floors() -> Result
         "Options=bind",
         "Copy=true",
         "Label=org.example.owner=private-label",
-        "ContainersConfModule=private-module.conf",
-        "GlobalArgs=--log-level=debug",
-        "PodmanArgs=--private-argument",
         "User=alice",
         "Group=staff",
         "UID=1000",
@@ -105,6 +107,24 @@ fn facade_preserves_all_typed_volume_settings_at_their_podman_floors() -> Result
         "ServiceName=volume-service",
     ] {
         assert!(six_output.contains(key), "missing {key}: {six_output}");
+    }
+    for key in ["ContainersConfModule=", "GlobalArgs=", "PodmanArgs="] {
+        assert!(
+            !six_output.contains(key),
+            "opaque evidence escaped into output: {six_output}"
+        );
+    }
+    for subject in [
+        "volumes.data.containers_conf_modules",
+        "volumes.data.global_args",
+        "volumes.data.podman_args",
+    ] {
+        assert!(
+            at_six
+                .outcomes()
+                .iter()
+                .any(|outcome| { outcome.subject() == subject && outcome.kind() == ConversionKind::Unsupported })
+        );
     }
     assert!(
         at_six

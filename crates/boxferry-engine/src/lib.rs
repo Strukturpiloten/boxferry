@@ -2,6 +2,7 @@
 
 mod adapter;
 mod diagnostic;
+mod native_evidence;
 mod outcome;
 mod rule;
 mod target;
@@ -13,6 +14,7 @@ pub use diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, InvalidDiagnosticCode, NativeFinding,
     NativeFindingLabel, NativeFindingLabelKind, Severity,
 };
+pub use native_evidence::retained_native_evidence_losses;
 pub use outcome::{ConversionKind, ConversionOutcome, ConversionPlan, ConversionResult, LossPolicy, PlanError};
 pub use rule::{DiagnosticRule, RULES, RuleId, find_rule};
 pub use target::{ParsePlatformVersionError, PlatformVersion, TargetProfile, TargetProfileError, VersionRange};
