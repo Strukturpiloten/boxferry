@@ -7,6 +7,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Add independent migration-scenario contracts, semantic mutation regressions and
+  reusable live-runner validators ([#129](https://github.com/Strukturpiloten/boxferry/issues/129)).
+
 - Standardize repository-local agent roles and model-independent workflow ownership; add
   non-formatting full verification and regression tests
   ([#141](https://github.com/Strukturpiloten/boxferry/issues/141)).

@@ -87,6 +87,35 @@ engines, so live-resource creation does not depend on nested registry networking
 Retained failure artifacts are local diagnostic evidence. Review them for environment values,
 resource names, image references, paths, and topology before sharing; never commit raw live output.
 
+## Migration scenario contracts
+
+`fixtures/scenarios/<id>/scenario.toml` is a versioned authored acceptance
+contract independent of golden artifacts. It records application/component
+versions and image digests, native inputs, provenance/license/privacy review,
+deployment origin/root mode, and source/target capabilities. Neutral
+expectations state exact included/excluded resources, ownership/shared
+boundaries, required mounts/environment/ports, prerequisites, approved loss
+tuples (`rule`, `subject`, `decision`, `version-scope`), and exact diagnostics.
+
+Every capability-derived importer/exporter pair has an independent outcome
+(`migration-success`, `expected-rejection`, `unsupported-environment`, or
+`known-migration-gap`) plus separate native-validation, runtime-probe, and
+reimport evidence. Only `migration-success` counts as success; every
+non-passing dimension has a reason. The shared validator rejects unknown schema
+or fields, unsafe paths, unpinned digests, duplicate tuples, missing exporters,
+and meaningful drift. It does not normalize semantic values; volatile IDs and
+timestamps require explicit future review.
+
+Manifest evidence entries are expectations, not attestations: the runner builds
+separate observations after each check. Diagnostics match code plus subject,
+and route losses match all four tuple fields. Route capability names must agree
+with the executable registry. Exact numeric versions are required in schema 1.
+The authored-core fixture uses explicitly synthetic digest-shaped image
+identities under example.invalid and no external prerequisites; it is offline
+proof only. Native validation means parsing or native-JSON structure, not an
+external provider, generator or running application. See
+[ADR 0039](../docs/decisions/0039-independent-migration-scenarios.md) for prerequisite grammar and observations.
+
 ## Route scenarios
 
 Every positive adapter or conversion case declares one or more

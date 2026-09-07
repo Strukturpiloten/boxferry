@@ -1,0 +1,103 @@
+schema = 1
+id = "authored-core"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "authored-core"
+version = "1.0.0"
+
+[[components]]
+name = "app"
+version = "1.0.0"
+image = "example.invalid/authored-app"
+digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+[[components]]
+name = "database"
+version = "1.0.0"
+image = "example.invalid/authored-database"
+digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["input-compose.yaml"]
+format-version = "compose-specification"
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored synthetic strings; no captured user data or credentials."
+image-evidence = "Synthetic digest-shaped identities under example.invalid, never pulled; offline semantic evidence only."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = ["service:app", "service:database", "volume:state"]
+excluded-resources = ["service:unrelated"]
+ownership-boundaries = ["volume:state:application"]
+shared-boundaries = ["volume:state:consumers=app"]
+required-mounts = ["app:state:/var/lib/app"]
+required-environment = ["app:APP_MODE=migration"]
+required-ports = ["app:8080:8080/tcp"]
+unpublished-services = ["database"]
+external-prerequisites = []
+expected-diagnostics = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+loss-policy = "partial"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+loss-policy = "partial"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+outcome = "migration-success"
+artifacts = ["app.container", "database.container", "state.volume"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+loss-policy = "partial"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+outcome = "known-migration-gap"
+reason = "Podman output reports unsupported environment and published-port intent."
+artifacts = ["podman.json", "podman-commands.sh"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics = ["BFP0007|services.app.environment.APP_MODE", "BFP0007|services.app.ports"]
+semantic-gaps = ["environment:app:APP_MODE", "publication:app:8080:8080/tcp"]
+
+[[evidence.allowed-losses]]
+rule = "BFP0007"
+subject = "services.app.environment.APP_MODE"
+decision = "unsupported"
+version-scope = "podman@5.4.0..6.1.0"
+
+[[evidence.allowed-losses]]
+rule = "BFP0007"
+subject = "services.app.ports"
+decision = "unsupported"
+version-scope = "podman@5.4.0..6.1.0"

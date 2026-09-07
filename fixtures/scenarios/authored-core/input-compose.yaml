@@ -1,0 +1,17 @@
+---
+services:
+  app:
+    image: example.invalid/authored-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    environment:
+      APP_MODE: migration
+    ports:
+      - "8080:8080"
+    volumes:
+      - state:/var/lib/app
+  database:
+    image: example.invalid/authored-database@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  unrelated:
+    image: example.invalid/unrelated@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    profiles: [unrelated]
+volumes:
+  state: {}

@@ -67,7 +67,18 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         .map_err(|error| format!("failed to read live Podman limitations: {error}"))?;
     validate_live_matrix(&matrix, &limitations)?;
     validate_live_scenarios(&scenarios)?;
-    validate_live_runner(&runner)?;
+    let mut runner_contract = runner.clone();
+    for module in ["scenario-contract.sh", "scenario-validators.sh"] {
+        let source = format!("source \"${{script_directory}}/lib/{module}\"");
+        if !runner.contains(&source) {
+            return Err(format!("live runner must source its shared module: {source}"));
+        }
+        runner_contract.push_str(
+            &fs::read_to_string(root.join("scripts/lib").join(module))
+                .map_err(|error| format!("failed to read live scenario module: {error}"))?,
+        );
+    }
+    validate_live_runner(&runner_contract)?;
     validate_live_workflow(&hosted)
 }
 

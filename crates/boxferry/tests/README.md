@@ -1,5 +1,10 @@
 # BoxFerry application integration tests
 
+The scenario-contract suite discovers versioned migration scenarios, validates
+independent neutral expectations and exact subject-level losses/diagnostics,
+and executes every exporter and applicable semantic reimport. Mutation tests
+must fail for their own reason; unperformed checks cannot count as passed.
+
 Cargo-discovered integration-test entry points for application-level and cross-repository policy checks live here. Shared test-only helpers live in `support/` and must not become part of the application or a public library API.
 
 The root [`tests/`](../../../tests/README.md) directory documents cross-crate scenario ownership, and the root [`fixtures/`](../../../fixtures/README.md) directory contains their inputs.
