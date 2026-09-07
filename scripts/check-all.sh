@@ -26,6 +26,17 @@ report_failure() {
 
 trap report_failure ERR
 
+format_mode="fix"
+if (($# > 1)); then
+  fail "Usage: $0 [--check|--fix]"
+fi
+case "${1:---fix}" in
+  --check) format_mode="check" ;;
+  --fix) ;;
+  *) fail "Usage: $0 [--check|--fix]" ;;
+esac
+readonly format_mode
+
 # Public API compatibility normally infers the release type from the package
 # versions. An explicitly recorded breaking change may validate the intended
 # pre-1.0 release with the same major rule used by CI. Keep this opt-in narrow:
@@ -144,8 +155,13 @@ if [[ -n "${semver_release_type}" ]]; then
   semver_check+=(--release-type "${semver_release_type}")
 fi
 
-run_step "Format Rust" cargo fmt --all
-run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
+if [[ "${format_mode}" == "check" ]]; then
+  run_step "Check Rust formatting" cargo fmt --all -- --check
+  run_step "Check non-Rust files" bash scripts/check-files.sh --check
+else
+  run_step "Format Rust" cargo fmt --all
+  run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
+fi
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
 run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh
 run_step "Check whitespace errors" git --no-pager diff --check
