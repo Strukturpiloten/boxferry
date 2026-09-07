@@ -484,4 +484,5 @@ temp*/
 *.profraw
 *.profdata
 .boxferry-workspace/
+.codegraph/
 .lycheecache
