@@ -2053,8 +2053,8 @@ fn agent_roles_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
     let root = repository_root();
     let config = fs::read_to_string(root.join(".codex/config.toml"))?;
     for required in [
-        "model = \"gpt-6-astra\"",
-        "model_reasoning_effort = \"high\"",
+        "model = \"gpt-5.6-sol\"",
+        "model_reasoning_effort = \"xhigh\"",
         "max_concurrent_threads_per_session = 3",
         "default_subagent_model = \"gpt-5.6-terra\"",
         "default_subagent_reasoning_effort = \"medium\"",
