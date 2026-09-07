@@ -1,0 +1,64 @@
+schema = 1
+id = "quadlet-native-values"
+suite = "conversion"
+description = "Exercises independently authored Quadlet quoting, IPv6 publications, native mount options, environment assignments, and explicit unsupported native forms through every exporter."
+secrets_reviewed = true
+files = [
+  "native.container",
+  "expected-compose.yaml",
+  "expected-native.container",
+  "expected-podman-commands.sh",
+  "expected-podman.json",
+]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+redistribution = "allowed"
+modifications = "none"
+
+[environment]
+description = "No host environment, runtime, external process input, or systemd expansion is used."
+
+[expectations]
+summary = "Decoded quoted command and environment values, bracketed IPv6, and reviewed mount options enter the neutral model; port ranges and tmpfs mounts remain policy-controlled explicit losses."
+
+[[extensions.scenarios]]
+id = "quadlet"
+input = "quadlet"
+sources = ["native.container"]
+application-name = "quadlet-native-values"
+protected-values = ["hello quoted command", "hello native world"]
+
+[extensions.scenarios.exports.compose]
+loss-policy = "partial"
+diagnostic-codes = ["BFQ1003", "BFQ1003"]
+artifact-values = ["hello quoted command", "hello native world"]
+
+[[extensions.scenarios.exports.compose.artifacts]]
+artifact = "compose.yaml"
+expected = "expected-compose.yaml"
+
+[extensions.scenarios.exports.quadlet]
+loss-policy = "partial"
+diagnostic-codes = ["BFQ0003", "BFQ1003", "BFQ1003"]
+podman-minimum = "5.4.0"
+podman-maximum = "6.0.2"
+artifact-values = ["hello quoted command", "hello native world"]
+
+[[extensions.scenarios.exports.quadlet.artifacts]]
+artifact = "native.container"
+expected = "expected-native.container"
+
+[extensions.scenarios.exports.podman]
+loss-policy = "partial"
+diagnostic-codes = ["BFP0007", "BFP0007", "BFP0007", "BFP0007", "BFP0007", "BFP0007", "BFQ1003", "BFQ1003"]
+artifact-values = ["hello quoted command"]
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman-commands.sh"
+expected = "expected-podman-commands.sh"
+
+[[extensions.scenarios.exports.podman.artifacts]]
+artifact = "podman.json"
+expected = "expected-podman.json"

@@ -733,11 +733,12 @@ dependencies = [
 
 [[package]]
 name = "quadlet-lens"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77d49c1f0b5b86c906c411a4aa5c9a6123f9c9186eb7f11188674ba4af071bd5"
+checksum = "1d030a28d73c8e000a609e6e5d60502f0b0a8eb9d399dd84777c0f6ab62aa91c"
 dependencies = [
  "serde",
+ "serde_json",
  "toml",
 ]
 

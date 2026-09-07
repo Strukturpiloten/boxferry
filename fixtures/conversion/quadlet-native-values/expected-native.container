@@ -1,0 +1,8 @@
+[Container]
+Image=example.invalid/quadlet-native-values:1
+Exec=/usr/bin/printf "hello quoted command"
+Entrypoint=["/usr/bin/env","sh"]
+Environment=EMPTY=
+Environment="GREETING=hello native world"
+Volume=external-data:/var/lib/native:ro,Z
+Volume=/srv/native:/etc/native:ro,z

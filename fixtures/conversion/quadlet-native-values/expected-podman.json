@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "status": "exact",
+  "connection": null,
+  "external_preconditions": [
+    {
+      "kind": "volume",
+      "name": "external-data"
+    }
+  ],
+  "operations": [
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "native-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "example.invalid/quadlet-native-values:1"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=example.invalid%2Fquadlet-native-values%3A1&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "native"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "native",
+          "--pull=never",
+          "--volume",
+          "external-data:/var/lib/native:ro,copy",
+          "--entrypoint",
+          "[\"/usr/bin/env\",\"sh\"]",
+          "example.invalid/quadlet-native-values:1",
+          "/usr/bin/printf",
+          "hello quoted command"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=native",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {},
+            "command": [
+              "/usr/bin/printf",
+              "hello quoted command"
+            ],
+            "entrypoint": [
+              "/usr/bin/env",
+              "sh"
+            ],
+            "image": "example.invalid/quadlet-native-values:1",
+            "volumes": [
+              {
+                "Dest": "/var/lib/native",
+                "Name": "external-data",
+                "Options": [
+                  "ro",
+                  "copy"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "native"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "start",
+          "native"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/native/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    }
+  ]
+}

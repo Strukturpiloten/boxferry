@@ -28,7 +28,7 @@ fn imports_semantic_environment_assignments_and_reports_contextual_forms() -> Re
         [QuadletDocumentInput::new(
             "web.container",
             QuadletSourceId::new(1),
-            "[Container]\nImage=example.invalid/web:1\nEnvironment=ONE=one \"TWO=two words\" THREE=\nEnvironment=DEFERRED=%h\nEnvironment=BARE\nEnvironment=\n",
+            "[Container]\nImage=example.invalid/web:1\nEnvironment=ONE=one \"TWO=two words\" THREE=\nEnvironment=DEFERRED=%h\nEnvironment=BARE\nEnvironment=\nEnvironment=AFTER=\"after words\"\n",
         )],
     )
     .map_err(|error| error.to_string())?;
@@ -36,11 +36,11 @@ fn imports_semantic_environment_assignments_and_reports_contextual_forms() -> Re
         .map_err(|error| error.to_string())?
         .import(&source);
     let service = result.application().ok_or("application")?.services()[0].value();
-    assert_eq!(service.environment().len(), 3);
-    assert_eq!(service.environment()[0].value().name().as_str(), "ONE");
+    assert_eq!(service.environment().len(), 1);
+    assert_eq!(service.environment()[0].value().name().as_str(), "AFTER");
     assert!(matches!(
-        service.environment()[1].value().value(),
-        EnvironmentValue::Literal(value) if value.is_sensitive()
+        service.environment()[0].value().value(),
+        EnvironmentValue::Literal(value) if value.is_sensitive() && value.expose() == "after words"
     ));
     assert!(result.outcomes().iter().any(|outcome| {
         outcome.subject() == "services.web.environment.DEFERRED" && outcome.kind() == ConversionKind::Unsupported
@@ -49,7 +49,7 @@ fn imports_semantic_environment_assignments_and_reports_contextual_forms() -> Re
         outcome.subject() == "services.web.environment.BARE" && outcome.kind() == ConversionKind::Unsupported
     }));
     assert!(result.outcomes().iter().any(|outcome| {
-        outcome.subject() == "services.web.environment" && outcome.kind() == ConversionKind::Invalid
+        outcome.subject() == "services.web.environment" && outcome.kind() == ConversionKind::Unsupported
     }));
     assert!(
         result
@@ -216,7 +216,7 @@ fn environment_semantic_findings_do_not_duplicate_directive_losses() -> Result<(
             .count()
     };
     assert_eq!(unsupported("services.web.environment.DEFERRED"), 1);
-    assert_eq!(unsupported("services.web.environment"), 2);
+    assert_eq!(unsupported("services.web.environment"), 1);
     assert_eq!(
         result
             .outcomes()
@@ -225,7 +225,7 @@ fn environment_semantic_findings_do_not_duplicate_directive_losses() -> Result<(
                 |outcome| outcome.subject() == "services.web.environment" && outcome.kind() == ConversionKind::Invalid
             )
             .count(),
-        1
+        2
     );
     assert_eq!(
         result
@@ -1043,7 +1043,7 @@ fn assert_ports_mounts_and_networks(application: &Application) {
 }
 
 #[test]
-fn ambiguous_native_forms_remain_explicit_and_do_not_enter_the_neutral_model() -> Result<(), String> {
+fn decoded_native_forms_enter_the_model_while_deferred_forms_remain_explicit() -> Result<(), String> {
     let source = parse_source(
         identifier("example")?,
         [QuadletDocumentInput::new(
@@ -1068,13 +1068,21 @@ fn ambiguous_native_forms_remain_explicit_and_do_not_enter_the_neutral_model() -
         .import(&source);
     let application = result.application().ok_or("expected imported application")?;
     let service = application.services()[0].value();
-    assert!(service.command().is_none());
+    assert!(matches!(
+        service.command().map(boxferry_model::Sourced::value),
+        Some(Command::Exec(arguments))
+            if arguments.iter().map(boxferry_model::ProtectedString::expose).collect::<Vec<_>>()
+                == ["sh", "-c", "echo private-command"]
+    ));
     assert_eq!(service.environment().len(), 1);
     assert!(matches!(
         service.environment()[0].value().value(),
         EnvironmentValue::Literal(value) if value.is_sensitive()
     ));
-    assert!(service.ports().is_empty());
+    assert_eq!(service.ports().len(), 1);
+    assert_eq!(service.ports()[0].value().host_address(), Some("::1"));
+    assert_eq!(service.ports()[0].value().published(), Some(8080));
+    assert_eq!(service.ports()[0].value().container(), 80);
     assert!(service.mounts().is_empty());
     assert!(service.networks().is_empty());
     assert_eq!(
@@ -1083,7 +1091,7 @@ fn ambiguous_native_forms_remain_explicit_and_do_not_enter_the_neutral_model() -
             .iter()
             .filter(|outcome| outcome.kind() == ConversionKind::Unsupported)
             .count(),
-        5
+        3
     );
     let debug = format!("{:?}", result.diagnostics());
     assert!(!debug.contains("private-command"));
