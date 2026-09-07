@@ -92,13 +92,41 @@ the merged state and merge commit.
 Use release-worthy Conventional Commit types only for product changes. Use `docs`, `test`,
 `ci`, `build`, `style`, or `chore` for non-release work.
 
-The primary Sol agent runs this workflow with high reasoning effort. Sol owns integration, final
-verification, Git writes, and GitHub readback. Terra subagents may perform bounded research,
+The primary agent runs this workflow with high reasoning effort. The primary agent owns integration, final
+verification, Git writes, and GitHub readback. Worker subagents may perform bounded research,
 editing, or read-only review but never execute the Git or GitHub write steps. The complete gate
-remains Sol's responsibility.
+remains the primary agent's responsibility.
 
 ## Multi-repository work
 
 The primary BoxFerry agent defines the shared contract before delegating. Agents may edit separate
 repository checkouts concurrently but never the same checkout. The primary agent reviews and
 verifies every final diff.
+
+## Agent roles and verification
+
+Model defaults belong in [`.codex/config.toml`](.codex/config.toml); task-specific models and
+reasoning belong in [`.codex/agents/`](.codex/agents/). Use the repository's high-effort primary
+default for normal work; explicitly request `xhigh` for unusually difficult architecture or
+migration analysis. These are defaults, not permission grants.
+
+- Delegate only when the user or applicable instructions request it, and assign a bounded task.
+- Use at most three subagents. Define the shared contract and file ownership before delegation.
+- Never run two writers in one checkout. Research and review remain read-only.
+- The reviewer checks the original requirements and independent expected results, not just agreement
+  between the implementation and its tests.
+- After writing finishes, the verifier runs `./scripts/check-all.sh --check`. It reports failures
+  without formatting or editing tracked files; ignored build artifacts and caches are allowed.
+- Avoid concurrent full gates or heavy runtime tests. The primary agent owns integration, the final
+  complete gate, and every authorized Git or GitHub write.
+
+The default `./scripts/check-all.sh` still formats before checking. `--check` runs the same
+complete gate without source formatting; it is not a reduced test tier. A later edit invalidates
+either result. Neither mode grants release, publication, or deployment authority.
+
+## Code discovery
+
+For code discovery, use an available codebase-memory graph first; otherwise use CodeGraph only if
+the repository already has a usable index. Do not create an index without user authorization.
+If neither graph is available or a query cannot answer the question, use `rg` and targeted reads.
+For string literals, configuration, scripts, and documentation, start with `rg` directly.

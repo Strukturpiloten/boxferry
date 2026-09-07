@@ -16,7 +16,7 @@ Do not change cross-repository APIs without approval from the primary agent.
 Preserve unrelated working-tree changes.
 Add focused tests and update relevant documentation.
 Run focused validation for the code you changed.
-Do not commit, push, publish, tag, or create releases.
+Do not commit, push, publish, tag, deploy, create releases, or perform GitHub writes.
 
 Return a concise summary containing:
 - files changed;

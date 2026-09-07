@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Standardize repository-local agent roles and model-independent workflow ownership; add
+  non-formatting full verification and regression tests
+  ([#141](https://github.com/Strukturpiloten/boxferry/issues/141)).
+
 ### Fixed
 
 - Install LLVM coverage tools for the pinned workspace Rust toolchain, including after
