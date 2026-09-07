@@ -5,6 +5,7 @@ use std::convert::TryFrom;
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue,
     ExportAdapter, InvalidDiagnosticCode, PlanError, PlatformVersion, RuleId, Severity, TargetProfile,
+    retained_native_evidence_losses,
 };
 use boxferry_model::{
     Application, Command, Config, ConfigMaterial, Device, Entrypoint, EnvironmentFileFormat, EnvironmentFileSyntax,
@@ -109,7 +110,11 @@ impl ExportAdapter for ComposeExporter {
         if mapping.validate_target() {
             mapping.map_application();
         }
-        let (candidate, outcomes, diagnostics) = mapping.finish();
+        let (candidate, mut outcomes, mut diagnostics) = mapping.finish();
+        let (evidence_outcomes, evidence_diagnostics) =
+            retained_native_evidence_losses(application, &self.codes.unsupported)?;
+        outcomes.extend(evidence_outcomes);
+        diagnostics.extend(evidence_diagnostics);
         ConversionPlan::new(candidate, outcomes, diagnostics)
     }
 }
@@ -891,23 +896,6 @@ impl<'a> Mapping<'a> {
                 "Quadlet-only volume setting has no reviewed Compose volume-definition mapping",
                 value.origins(),
             );
-        }
-        for (name, values, origins) in [
-            (
-                "containers_conf_modules",
-                volume.containers_conf_modules(),
-                volume.containers_conf_modules_origins(),
-            ),
-            ("global_args", volume.global_args(), volume.global_args_origins()),
-            ("podman_args", volume.podman_args(), volume.podman_args_origins()),
-        ] {
-            if let Some(values) = values {
-                self.unsupported(
-                    &format!("{subject}.{name}"),
-                    "Quadlet-only volume setting has no reviewed Compose volume-definition mapping",
-                    &collection_or_item_origins(values, origins),
-                );
-            }
         }
         if let Some(image) = volume.image_source() {
             self.unsupported(
@@ -1884,22 +1872,6 @@ impl<'a> Mapping<'a> {
                 "Compose has no root-filesystem source field; rootfs is never rewritten as an image",
                 rootfs.origins(),
             );
-        }
-        if let Some(arguments) = service.podman_args() {
-            for (index, argument) in arguments.iter().enumerate() {
-                self.unsupported(
-                    &format!("{service_subject}.podman_args[{index}]"),
-                    "Compose has no native Podman-argument field; authored arguments are never synthesized",
-                    argument.origins(),
-                );
-            }
-            if arguments.is_empty() {
-                self.unsupported(
-                    &format!("{service_subject}.podman_args"),
-                    "Compose has no native Podman-argument field; authored arguments are never synthesized",
-                    service.podman_args_origins(),
-                );
-            }
         }
     }
 

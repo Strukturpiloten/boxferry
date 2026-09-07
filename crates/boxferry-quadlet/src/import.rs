@@ -26,6 +26,8 @@ use quadlet_lens::model::{
     ValueKind, VolumeKey,
 };
 
+use boxferry_model::{RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject};
+
 use crate::QuadletSource;
 
 /// Maps an explicitly parsed Quadlet document set into `BoxFerry`'s neutral model.
@@ -123,6 +125,7 @@ impl ImportAdapter for QuadletImporter {
         }
 
         mapping.finish_pod_groups(&mut application, pod_order, pod_groups);
+        mapping.collect_retained_native_evidence(&mut application);
         if let Err(error) = application.validate_image_artifact_references() {
             mapping.invalid_model("volumes", "quadlet", &error.to_string(), None);
         }
@@ -223,6 +226,115 @@ impl<'a> Mapping<'a> {
             source,
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
+        }
+    }
+
+    fn retain_native_evidence(
+        &mut self,
+        application: &mut Application,
+        filename: &str,
+        subject: RetainedNativeEvidenceSubject,
+        entry: &TypedEntry,
+    ) {
+        let conversion_subject = subject.conversion_subject();
+        let segments = std::iter::once(entry.value().primary())
+            .chain(entry.value().continuations())
+            .map(|segment| {
+                Sourced::from_source(
+                    ProtectedString::sensitive(segment.text()),
+                    self.provenance(segment.span()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let segment_count = segments.len();
+        let logical_value_is_empty = std::iter::once(entry.value().primary())
+            .chain(entry.value().continuations())
+            .enumerate()
+            .all(|(index, segment)| {
+                let value = segment.text().trim_end();
+                let logical_segment = if index + 1 < segment_count {
+                    value.strip_suffix('\\').unwrap_or(value)
+                } else {
+                    value
+                };
+                logical_segment.trim().is_empty()
+            });
+        let event = if logical_value_is_empty {
+            RetainedNativeEvidenceEvent::Reset(segments)
+        } else {
+            RetainedNativeEvidenceEvent::Value(segments)
+        };
+        let mut event = Sourced::from_source(event, self.provenance(entry.value().primary().span()));
+        for segment in entry.value().continuations() {
+            event.add_origin(self.provenance(segment.span()));
+        }
+        let evidence = match RetainedNativeEvidence::new(subject, event) {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                self.invalid_model(
+                    &conversion_subject,
+                    filename,
+                    &error.to_string(),
+                    Some(self.entry_origin(entry)),
+                );
+                return;
+            }
+        };
+        if let Err(error) = application.add_retained_native_evidence(evidence) {
+            self.invalid_model(
+                &conversion_subject,
+                filename,
+                &error.to_string(),
+                Some(self.entry_origin(entry)),
+            );
+            return;
+        }
+        let mut outcome = ConversionOutcome::exact(conversion_subject);
+        for segment in std::iter::once(entry.value().primary()).chain(entry.value().continuations()) {
+            outcome = outcome.with_origin(self.provenance(segment.span()));
+        }
+        self.outcomes.push(outcome);
+    }
+
+    fn collect_retained_native_evidence(&mut self, application: &mut Application) {
+        for named in self.source.documents().documents() {
+            let document = named.document();
+            let filename = named.name().as_str();
+            let name = match Identifier::new(unit_stem(filename)) {
+                Ok(name) => name,
+                Err(error) => {
+                    self.invalid_model(
+                        "native_evidence",
+                        filename,
+                        &error.to_string(),
+                        Some(self.document_origin(document.source_span())),
+                    );
+                    continue;
+                }
+            };
+            for section in document.sections() {
+                for entry in section.entries() {
+                    let subject = match entry.kind() {
+                        EntryKind::Container(ContainerKey::PodmanArgs) => {
+                            Some(RetainedNativeEvidenceSubject::QuadletServicePodmanArgs(name.clone()))
+                        }
+                        EntryKind::Volume(VolumeKey::ContainersConfModule) => Some(
+                            RetainedNativeEvidenceSubject::QuadletVolumeContainersConfModules(name.clone()),
+                        ),
+                        EntryKind::Volume(VolumeKey::GlobalArgs) => {
+                            Some(RetainedNativeEvidenceSubject::QuadletVolumeGlobalArgs(name.clone()))
+                        }
+                        EntryKind::Volume(VolumeKey::PodmanArgs) => {
+                            Some(RetainedNativeEvidenceSubject::QuadletVolumePodmanArgs(name.clone()))
+                        }
+                        _ => None,
+                    };
+                    let Some(subject) = subject else {
+                        continue;
+                    };
+                    self.retain_native_evidence(application, filename, subject, entry);
+                }
+            }
         }
     }
 
@@ -392,12 +504,6 @@ impl<'a> Mapping<'a> {
         let mut singletons = BTreeSet::new();
         let mut labels = None;
         let mut label_origins = Vec::new();
-        let mut modules = None;
-        let mut module_origins = Vec::new();
-        let mut global_args = None;
-        let mut global_args_origins = Vec::new();
-        let mut podman_args = None;
-        let mut podman_args_origins = Vec::new();
         for section in sections {
             for entry in section.entries() {
                 let origin = self.entry_origin(entry);
@@ -417,6 +523,12 @@ impl<'a> Mapping<'a> {
                         "Quadlet volume singleton is declared more than once",
                         Some(origin),
                     );
+                    continue;
+                }
+                if matches!(
+                    key,
+                    VolumeKey::ContainersConfModule | VolumeKey::GlobalArgs | VolumeKey::PodmanArgs
+                ) {
                     continue;
                 }
                 let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
@@ -490,66 +602,7 @@ impl<'a> Mapping<'a> {
                             origin,
                         ),
                     },
-                    VolumeKey::ContainersConfModule => {
-                        if value.is_empty() {
-                            modules = Some(Vec::new());
-                            module_origins = vec![origin.clone()];
-                            self.unsupported_value(
-                                &format!("{subject}.containers_conf_modules"),
-                                filename,
-                                "ContainersConfModule",
-                                "an empty assignment reset cannot be regenerated exactly",
-                                origin,
-                            );
-                        } else {
-                            let modules = modules.get_or_insert_default();
-                            modules.push(sourced(value));
-                            self.exact(
-                                format!("{subject}.containers_conf_modules[{}]", modules.len() - 1),
-                                Some(origin),
-                            );
-                        }
-                    }
-                    VolumeKey::GlobalArgs => {
-                        if value.is_empty() {
-                            global_args = Some(Vec::new());
-                            global_args_origins = vec![origin.clone()];
-                            self.unsupported_value(
-                                &format!("{subject}.global_args"),
-                                filename,
-                                "GlobalArgs",
-                                "an empty assignment reset cannot be regenerated exactly",
-                                origin,
-                            );
-                        } else {
-                            let global_args = global_args.get_or_insert_default();
-                            global_args.push(sourced(value));
-                            self.exact(
-                                format!("{subject}.global_args[{}]", global_args.len() - 1),
-                                Some(origin),
-                            );
-                        }
-                    }
-                    VolumeKey::PodmanArgs => {
-                        if value.is_empty() {
-                            podman_args = Some(Vec::new());
-                            podman_args_origins = vec![origin.clone()];
-                            self.unsupported_value(
-                                &format!("{subject}.podman_args"),
-                                filename,
-                                "PodmanArgs",
-                                "an empty assignment reset cannot be regenerated exactly",
-                                origin,
-                            );
-                        } else {
-                            let podman_args = podman_args.get_or_insert_default();
-                            podman_args.push(sourced(value));
-                            self.exact(
-                                format!("{subject}.podman_args[{}]", podman_args.len() - 1),
-                                Some(origin),
-                            );
-                        }
-                    }
+                    VolumeKey::ContainersConfModule | VolumeKey::GlobalArgs | VolumeKey::PodmanArgs => {}
                     VolumeKey::User => {
                         volume.set_user(sourced(value));
                         self.exact(format!("{subject}.user"), Some(origin));
@@ -604,15 +657,6 @@ impl<'a> Mapping<'a> {
         }
         if let Some(labels) = labels {
             volume.set_labels_with_origins(labels, label_origins);
-        }
-        if let Some(modules) = modules {
-            volume.set_containers_conf_modules_with_origins(modules, module_origins);
-        }
-        if let Some(global_args) = global_args {
-            volume.set_global_args_with_origins(global_args, global_args_origins);
-        }
-        if let Some(podman_args) = podman_args {
-            volume.set_podman_args_with_origins(podman_args, podman_args_origins);
         }
         if volume.volume_type().is_some() && volume.device().is_none() {
             self.invalid_model(
@@ -1950,9 +1994,6 @@ impl<'a> Mapping<'a> {
                 EntryKind::Container(ContainerKey::Notify) => {
                     self.map_startup_notification(filename, &service_name, service, entry);
                 }
-                EntryKind::Container(ContainerKey::PodmanArgs) => {
-                    self.map_podman_args(filename, &service_name, service, entry);
-                }
                 EntryKind::Container(ContainerKey::ContainerName) => {
                     self.map_container_name(filename, &service_name, service, entry);
                 }
@@ -1963,7 +2004,8 @@ impl<'a> Mapping<'a> {
                     | ContainerKey::Environment
                     | ContainerKey::PublishPort
                     | ContainerKey::Volume
-                    | ContainerKey::Mount,
+                    | ContainerKey::Mount
+                    | ContainerKey::PodmanArgs,
                 ) => {}
                 EntryKind::Container(ContainerKey::RunInit) => {
                     self.map_run_init(filename, &service_name, service, entry);
@@ -2529,40 +2571,6 @@ impl<'a> Mapping<'a> {
         };
         service.set_startup_notification(Sourced::from_source(notification, origin.clone()));
         self.exact(subject, Some(origin));
-    }
-
-    fn map_podman_args(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
-        let subject = format!("services.{service_name}.podman_args");
-        let origin = self.entry_origin(entry);
-        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
-            return;
-        };
-        let mut values = service.podman_args().map_or_else(Vec::new, ToOwned::to_owned);
-        let mut origins = service.podman_args_origins().to_vec();
-        if value.is_empty() {
-            values.clear();
-            origins = vec![origin.clone()];
-            self.unsupported_value(
-                &subject,
-                filename,
-                "PodmanArgs",
-                "an empty PodmanArgs assignment resets the effective list",
-                origin,
-            );
-        } else {
-            values.push(Sourced::from_source(ProtectedString::sensitive(value), origin.clone()));
-            if !origins.contains(&origin) {
-                origins.push(origin.clone());
-            }
-            self.unsupported_value(
-                &subject,
-                filename,
-                "PodmanArgs",
-                "PodmanArgs is retained as authored native evidence and is never synthesized",
-                origin,
-            );
-        }
-        service.set_podman_args_with_origins(values, origins);
     }
 
     fn map_raw_service_value(

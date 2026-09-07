@@ -22,7 +22,12 @@ fn imports_iteration_one_compose_fields_without_conflating_command_or_published_
     let source = ComposeSource::new(project, Identifier::new("iteration-one")?)?
         .with_source_id(id, SourceId::new("iteration-one.yaml")?);
     let result = ComposeImporter::new()?.import(&source);
-    let service = result.application().ok_or("application")?.services()[0].value();
+    let application = result.application().ok_or("application")?;
+    assert!(
+        application.retained_native_evidence().is_empty(),
+        "Compose input must not manufacture Quadlet-native evidence"
+    );
+    let service = application.services()[0].value();
     assert!(
         matches!(service.entrypoint().map(boxferry_model::Sourced::value), Some(Entrypoint::Exec(values)) if values[0].expose() == "/bin/web")
     );

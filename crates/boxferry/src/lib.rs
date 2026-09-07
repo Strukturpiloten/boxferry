@@ -65,9 +65,10 @@ pub use boxferry_model::{
     ImageBuild, ImageBuildSetting, ImageReference, KernelParameter, Logging, LoggingOption, MetadataLabel, ModelError,
     Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, ProtectedString,
     Protocol, Provenance, ProvenanceKind, PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit,
-    ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service,
-    ServiceDependency, ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime, SourceBuildSecret,
-    SourceBuildSetting, SourceId, SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
+    ResourceOwnership, RestartPolicy, RetainedNativeEvidence, RetainedNativeEvidenceEvent,
+    RetainedNativeEvidenceSubject, Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependency,
+    ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime, SourceBuildSecret, SourceBuildSetting, SourceId,
+    SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 
 #[cfg(feature = "compose")]

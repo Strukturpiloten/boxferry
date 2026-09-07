@@ -230,7 +230,11 @@ impl ExportAdapter for QuadletExporter {
         if mapping.validate_target() {
             mapping.map_application();
         }
-        let (candidate, outcomes, diagnostics) = mapping.finish();
+        let (candidate, mut outcomes, mut diagnostics) = mapping.finish();
+        let (evidence_outcomes, evidence_diagnostics) =
+            boxferry_engine::retained_native_evidence_losses(application, &self.codes.unsupported)?;
+        outcomes.extend(evidence_outcomes);
+        diagnostics.extend(evidence_diagnostics);
         ConversionPlan::new(candidate, outcomes, diagnostics)
     }
 }
@@ -1309,56 +1313,6 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
-        for (field, values, key, capability) in [
-            (
-                "containers_conf_modules",
-                volume.containers_conf_modules(),
-                VolumeKey::ContainersConfModule,
-                "quadlet.volume.containers-conf-module",
-            ),
-            (
-                "global_args",
-                volume.global_args(),
-                VolumeKey::GlobalArgs,
-                "quadlet.volume.global-args",
-            ),
-            (
-                "podman_args",
-                volume.podman_args(),
-                VolumeKey::PodmanArgs,
-                "quadlet.volume.podman-args",
-            ),
-        ] {
-            if let Some(values) = values {
-                if values.is_empty() {
-                    let origins = match field {
-                        "containers_conf_modules" => volume.containers_conf_modules_origins(),
-                        "global_args" => volume.global_args_origins(),
-                        _ => volume.podman_args_origins(),
-                    };
-                    self.unsupported(
-                        &format!("{subject}.{field}"),
-                        "an explicit empty collection has no safe Quadlet reset encoding",
-                        origins,
-                    );
-                }
-                for (index, value) in values.iter().enumerate() {
-                    let item = format!("{subject}.{field}[{index}]");
-                    if is_safe_network_scalar(value.value().expose(), false)
-                        && self.capability(capability, &item, value.origins())
-                        && self.push_volume(builder, key, value.value().expose(), &item, value.origins())
-                    {
-                        self.exact(item, value.origins());
-                    } else {
-                        self.unsupported(
-                            &item,
-                            "protected raw volume arguments are retained but only safe physical forms can be regenerated",
-                            value.origins(),
-                        );
-                    }
-                }
-            }
-        }
         if let Some(image) = volume.image_source() {
             let item = format!("{subject}.image");
             let text = match image.value() {
@@ -2246,39 +2200,6 @@ impl<'a> Mapping<'a> {
             self.map_mount(subject, index, mount, builder);
         }
         self.map_pod_or_networks(subject, service, pod_name, builder);
-        if let Some(arguments) = service.value().podman_args() {
-            if arguments.is_empty() {
-                let field = format!("{subject}.podman_args");
-                if self.capability(
-                    "quadlet.container.podman-args",
-                    &field,
-                    service.value().podman_args_origins(),
-                ) && self.push_container(
-                    builder,
-                    ContainerKey::PodmanArgs,
-                    "",
-                    &field,
-                    service.value().podman_args_origins(),
-                ) {
-                    self.exact(field, service.value().podman_args_origins());
-                }
-            }
-            for (index, argument) in arguments.iter().enumerate() {
-                let field = format!("{subject}.podman_args[{index}]");
-                let raw = argument.value().expose();
-                if raw.contains(['\0', '\r', '\n']) {
-                    self.unsupported(
-                        &field,
-                        "authored PodmanArgs contains an unsafe physical-line control character",
-                        argument.origins(),
-                    );
-                } else if self.capability("quadlet.container.podman-args", &field, argument.origins())
-                    && self.push_container(builder, ContainerKey::PodmanArgs, raw, &field, argument.origins())
-                {
-                    self.exact(field, argument.origins());
-                }
-            }
-        }
     }
 
     fn map_startup_notification(

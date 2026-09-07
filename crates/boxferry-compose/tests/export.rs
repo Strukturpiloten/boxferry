@@ -1052,13 +1052,6 @@ fn reports_native_service_and_group_runtime_fields_without_leaking_them_to_a_ser
         origin.clone(),
     ));
     service.set_startup_notification(Sourced::from_source(StartupNotification::Healthy, origin.clone()));
-    service.set_podman_args_with_origins(
-        vec![Sourced::from_source(
-            ProtectedString::sensitive("--secret=never-print"),
-            origin.clone(),
-        )],
-        vec![origin.clone()],
-    );
 
     let mut group_runtime = ServiceGroupRuntime::new();
     group_runtime.set_runtime_name(Sourced::from_source(
@@ -1115,7 +1108,6 @@ fn reports_native_service_and_group_runtime_fields_without_leaking_them_to_a_ser
 
     for subject in [
         "services.web.startup_notification",
-        "services.web.podman_args[0]",
         "service_groups.pod",
         "service_groups.pod.runtime",
         "service_groups.pod.runtime.runtime_name",
@@ -1369,18 +1361,11 @@ fn external_volume_emits_only_name_and_reports_quadlet_only_configuration() -> R
     ));
     volume.set_driver(Sourced::from_source(ProtectedString::plain("local"), origin.clone()));
     volume.set_copy(Sourced::from_source(false, origin.clone()));
-    volume.set_podman_args_with_origins(
-        vec![Sourced::from_source(
-            ProtectedString::sensitive("--private"),
-            origin.clone(),
-        )],
-        vec![origin.clone()],
-    );
     let mut application = minimal_application()?;
     application.add_volume(Sourced::from_source(volume, origin))?;
 
     let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(2, 30, 0))?)?;
-    for subject in ["volumes.data.driver", "volumes.data.copy", "volumes.data.podman_args"] {
+    for subject in ["volumes.data.driver", "volumes.data.copy"] {
         assert!(
             plan.outcomes()
                 .iter()

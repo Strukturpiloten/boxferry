@@ -180,9 +180,6 @@ fn exports_typed_volume_settings_at_their_capability_floors() -> Result<(), Box<
         id("org.example.owner")?,
         ProtectedString::sensitive("private"),
     ))?);
-    volume.set_containers_conf_modules(vec![sourced(ProtectedString::sensitive("base.conf"))?]);
-    volume.set_global_args(vec![sourced(ProtectedString::sensitive("--log-level=debug"))?]);
-    volume.set_podman_args(vec![sourced(ProtectedString::sensitive("--retry=3"))?]);
     volume.set_user(sourced(ProtectedString::sensitive("alice"))?);
     volume.set_group(sourced(ProtectedString::sensitive("staff"))?);
     volume.set_service_name(sourced(ProtectedString::sensitive("data-custom"))?);
@@ -209,9 +206,6 @@ fn exports_typed_volume_settings_at_their_capability_floors() -> Result<(), Box<
         "Options=bind",
         "Copy=true",
         "Label=org.example.owner=private",
-        "ContainersConfModule=base.conf",
-        "GlobalArgs=--log-level=debug",
-        "PodmanArgs=--retry=3",
         "User=alice",
         "Group=staff",
         "ServiceName=data-custom",
@@ -2683,19 +2677,26 @@ fn preserves_an_omitted_native_pod_name_without_synthesizing_one() -> Result<(),
 }
 
 #[test]
-fn emits_rootfs_notification_and_only_explicitly_authored_podman_args() -> Result<(), Box<dyn Error>> {
+fn emits_typed_rootfs_and_notification_but_not_retained_native_evidence() -> Result<(), Box<dyn Error>> {
     let mut application = Application::new(id("rootfs")?);
     let mut service = Service::new(id("web")?);
     service.set_rootfs(sourced(ProtectedString::sensitive("/srv/rootfs"))?)?;
     service.set_startup_notification(sourced(StartupNotification::Healthy)?);
-    service.set_podman_args_with_origins(
-        vec![sourced(ProtectedString::sensitive("--replace"))?],
-        vec![Provenance::source(SourceId::new("authored.container")?)],
-    );
     application.add_service(sourced(service)?)?;
+    let origin = Provenance::source(SourceId::new("authored.container")?);
+    application.add_retained_native_evidence(boxferry_model::RetainedNativeEvidence::new(
+        boxferry_model::RetainedNativeEvidenceSubject::QuadletServicePodmanArgs(id("web")?),
+        Sourced::from_source(
+            boxferry_model::RetainedNativeEvidenceEvent::Value(vec![Sourced::from_source(
+                ProtectedString::sensitive("--replace"),
+                origin.clone(),
+            )]),
+            origin,
+        ),
+    )?)?;
     let plan = QuadletExporter::new()?.plan(&application, &podman_target(Some(version(6, 0, 2)))?)?;
     assert!(plan.outcomes().iter().any(|outcome| {
-        outcome.subject() == "services.web.podman_args[0]" && outcome.kind() == ConversionKind::Exact
+        outcome.subject() == "services.web.podman_args" && outcome.kind() == ConversionKind::Unsupported
     }));
     let result = plan.authorize(LossPolicy::AllowPartial);
     let container = result
@@ -2705,7 +2706,7 @@ fn emits_rootfs_notification_and_only_explicitly_authored_podman_args() -> Resul
         .text();
     assert!(container.contains("Rootfs=/srv/rootfs"));
     assert!(container.contains("Notify=healthy"));
-    assert!(container.contains("PodmanArgs=--replace"));
+    assert!(!container.contains("PodmanArgs="));
     Ok(())
 }
 

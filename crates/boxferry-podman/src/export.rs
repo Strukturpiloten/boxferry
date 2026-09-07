@@ -159,6 +159,8 @@ impl ExportAdapter for PodmanExporter {
         application: &Application,
         target: &TargetProfile,
     ) -> Result<ConversionPlan<Self::Output>, PlanError> {
+        let (evidence_outcomes, evidence_diagnostics) =
+            boxferry_engine::retained_native_evidence_losses(application, &self.codes.unsupported)?;
         let resolved = match resolve_podman_target(target) {
             Ok(resolved) => resolved,
             Err(error) => {
@@ -188,18 +190,24 @@ impl ExportAdapter for PodmanExporter {
                         "reviewed_targets",
                         DiagnosticValue::plain(supported),
                     ));
-                let outcome = ConversionOutcome::loss(
+                let target_outcome = ConversionOutcome::loss(
                     "target.podman",
                     ConversionKind::Invalid,
                     self.codes.invalid_target.clone(),
                 )?;
-                return ConversionPlan::new(None, vec![outcome], vec![diagnostic]);
+                let mut outcomes = vec![target_outcome];
+                outcomes.extend(evidence_outcomes);
+                let mut diagnostics = vec![diagnostic];
+                diagnostics.extend(evidence_diagnostics);
+                return ConversionPlan::new(None, outcomes, diagnostics);
             }
         };
 
         let mut profile = resolved.profile().clone();
         profile.set_execution_context(self.execution_context);
         let mut mapping = Mapping::new(self, application, DeploymentIntent::new(profile));
+        mapping.outcomes.extend(evidence_outcomes);
+        mapping.diagnostics.extend(evidence_diagnostics);
         mapping.map_application();
         let Some(intent) = mapping.intent.take() else {
             return ConversionPlan::new(None, mapping.outcomes, mapping.diagnostics);
@@ -772,7 +780,6 @@ impl<'a> Mapping<'a> {
             ("ulimits", service.ulimits().is_some()),
             ("devices", service.devices().is_some()),
             ("stop_signal", service.stop_signal().is_some()),
-            ("podman_args", service.podman_args().is_some()),
             ("environment_files", !service.environment_files().is_empty()),
             ("host_mappings", !service.host_mappings().is_empty()),
             ("ports", !service.ports().is_empty()),

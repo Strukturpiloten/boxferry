@@ -17,8 +17,9 @@ pub use application::{
     HostAddress, HostAddressKind, HostMapping, Identifier, KernelParameter, Logging, LoggingOption, MetadataLabel,
     ModelError, Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Port, Protocol,
     PullPolicy, ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy,
-    Secret, SecretMaterial, SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition,
-    ServiceGroup, ServiceGroupRuntime, StartupNotification, StopTimeout, Volume, VolumeImageSource,
+    RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Secret, SecretMaterial,
+    SecurityOption, SelinuxRelabel, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
+    ServiceGroupRuntime, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 pub use image::ImageReference;
 pub use image_artifact::{

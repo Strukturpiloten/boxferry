@@ -35,6 +35,7 @@ active table; superseded records are history and are read only when that history
 | [0037](0037-finite-podman-input-and-live-conformance.md)              | Finite legacy Podman input, diagnostic snapshots, and live conformance       |
 | [0038](0038-bounded-human-diagnostic-presentation.md)                 | Bounded human diagnostics with complete structured evidence                  |
 | [0040](0040-quadlet-native-value-decoder-boundary.md)                 | QuadletLens-owned native values and BoxFerry-owned neutral meaning           |
+| [0041](0041-portable-intent-and-retained-native-evidence.md)          | Portable intent and provenance-bearing opaque native evidence                |
 
 ## Superseded history
 
