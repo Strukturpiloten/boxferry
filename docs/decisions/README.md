@@ -1,5 +1,8 @@
 # Architecture decision records
 
+[ADR 0039](0039-independent-migration-scenarios.md) defines independent,
+versioned migration-scenario expectations and separate observed evidence.
+
 ADRs explain durable constraints and why they were chosen. Current work should start with the
 active table; superseded records are history and are read only when that history matters.
 

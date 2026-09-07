@@ -20,6 +20,19 @@ Run the complete deterministic gate before every pull request:
 Every behavior change needs a positive case and a relevant failure case. A mapping is incomplete
 until unsupported values and target-version boundaries are tested.
 
+## Independent migration scenarios
+
+The [scenario contract](../fixtures/README.md#migration-scenario-contracts) checks
+independent neutral intent, every exporter, exact losses/diagnostics and actual
+reimports.
+[ADR 0039](decisions/0039-independent-migration-scenarios.md) defines evidence
+boundaries and synthetic image identities.
+
+The [live entry point](../scripts/podman-live-conformance.sh) sources reusable
+[scenario](../scripts/lib/scenario-contract.sh) and
+[validator](../scripts/lib/scenario-validators.sh) modules; it retains ownership
+of deadlines, numbered progress, isolation and cleanup.
+
 ## Fixture route corpus
 
 Fixtures live under `fixtures/<suite>/<id>/`; their complete contract is in
