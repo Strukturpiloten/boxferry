@@ -15,3 +15,5 @@ approximation when another output format cannot preserve systemd or Podman loadi
 Before moving files between hosts, review bind-mount paths, secret references, network unit
 relationships, and the selected output version. Source Podman or systemd versions never silently
 become target choices.
+
+QuadletLens decodes quoted container/build environment assignments, command and entrypoint arguments, bracketed IPv6 `PublishPort=` values, and short/long mount syntax. BoxFerry maps only portable neutral meaning; ranges, deferred systemd values, opaque mount options, and unsupported mount types remain source-spanned review outcomes. Command and environment values stay protected in diagnostics even when authorized artifacts contain them.

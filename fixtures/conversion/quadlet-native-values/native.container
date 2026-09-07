@@ -1,0 +1,10 @@
+[Container]
+Image=example.invalid/quadlet-native-values:1
+Entrypoint=["/usr/bin/env","sh"]
+Exec=/usr/bin/printf "hello quoted command"
+Environment="GREETING=hello native world" EMPTY=
+PublishPort=[::1]:18080:8080/tcp
+PublishPort=20000-20001:9000-9001/udp
+Volume=external-data:/var/lib/native:ro,Z
+Mount=type=bind,source=/srv/native,destination=/etc/native,readonly,relabel=shared
+Mount=type=tmpfs,destination=/run/native-cache

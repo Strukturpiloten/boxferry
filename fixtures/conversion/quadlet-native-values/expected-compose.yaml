@@ -1,0 +1,28 @@
+---
+name: quadlet-native-values
+services:
+  native:
+    image: example.invalid/quadlet-native-values:1
+    entrypoint:
+      - /usr/bin/env
+      - sh
+    command:
+      - /usr/bin/printf
+      - hello quoted command
+    environment:
+      - EMPTY=
+      - GREETING=hello native world
+    ports:
+      - target: 8080
+        published: "18080"
+        host_ip: ::1
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: external-data
+        target: /var/lib/native
+        read_only: true
+      - /srv/native:/etc/native:z,ro
+volumes:
+  external-data:
+    external: true

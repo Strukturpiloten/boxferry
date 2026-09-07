@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
-const EXPECTED_FIXTURE_IDS: [&str; 7] = [
+const EXPECTED_FIXTURE_IDS: [&str; 8] = [
     "compose-import-core",
     "compose-to-quadlet-core",
     "compose-to-quadlet-dependencies",
@@ -23,8 +23,9 @@ const EXPECTED_FIXTURE_IDS: [&str; 7] = [
     "compose-to-quadlet-pod",
     "compose-to-quadlet-secrets",
     "document-route-matrix",
+    "quadlet-native-values",
 ];
-const EXPECTED_SCENARIO_IDS: [&str; 10] = [
+const EXPECTED_SCENARIO_IDS: [&str; 11] = [
     "compose-import-core/compose",
     "compose-to-quadlet-core/compose",
     "compose-to-quadlet-dependencies/compose",
@@ -35,6 +36,7 @@ const EXPECTED_SCENARIO_IDS: [&str; 10] = [
     "document-route-matrix/normal-compose",
     "document-route-matrix/normal-quadlet",
     "document-route-matrix/tmpfs-compose",
+    "quadlet-native-values/quadlet",
 ];
 
 #[derive(Debug, Deserialize)]

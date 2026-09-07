@@ -16,7 +16,7 @@ publish = true
 [dependencies]
 boxferry-engine = { path = "../boxferry-engine", version = "0.8.3" }
 boxferry-model = { path = "../boxferry-model", version = "0.8.3" }
-quadlet-lens = { version = "0.2.0", default-features = false }
+quadlet-lens = { version = "0.2.3", default-features = false }
 serde_json = "1.0.151"
 
 [lints]

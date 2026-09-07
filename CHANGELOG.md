@@ -7,6 +7,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Delegate authored Quadlet ports, mounts, commands, and container/build environment decoding to QuadletLens 0.2.3 while preserving source spans, ordered resets, sensitive values, and explicit unsupported intent ([#130](https://github.com/Strukturpiloten/boxferry/issues/130)).
+
 - Add independent migration-scenario contracts, semantic mutation regressions and
   reusable live-runner validators ([#129](https://github.com/Strukturpiloten/boxferry/issues/129)).
 

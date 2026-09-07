@@ -1,6 +1,7 @@
 //! Quadlet-to-application mapping with explicit fidelity decisions.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue, ImportAdapter,
@@ -18,7 +19,9 @@ use boxferry_model::{
     SourceSpan, Sourced, StartupNotification, StopTimeout, Volume, VolumeImageSource,
 };
 use quadlet_lens::model::{
-    AuthoredContainerEnvironmentDirective, BuildKey, ContainerKey, EntryKind, ImageKey, NetworkKey, PodKey,
+    AuthoredContainerEnvironmentDirective, BuildKey, ContainerKey, EntryKind, ImageKey, NativeCommandDirective,
+    NativeCommandKind, NativeCommandSyntax, NativeMountDirective, NativeMountOption, NativeMountSpecification,
+    NativePortProtocol, NativePortPublication, NativePortRange, NativePortSpecification, NetworkKey, PodKey,
     QuadletDocument, QuadletUnitType, SectionKind, SystemdUnitKey, TypedEntry, TypedSection, UnitReferenceKind,
     ValueKind, VolumeKey,
 };
@@ -242,6 +245,44 @@ impl<'a> Mapping<'a> {
         }
     }
 
+    fn report_native_value_diagnostics(
+        &mut self,
+        context: &'static str,
+        diagnostics: &[quadlet_lens::diagnostic::Diagnostic],
+    ) {
+        for diagnostic in diagnostics {
+            let mut finding = NativeFinding::new(
+                "quadlet",
+                "quadlet-lens",
+                diagnostic.code().as_str(),
+                context,
+                match diagnostic.severity() {
+                    quadlet_lens::diagnostic::Severity::Error => Severity::Error,
+                    quadlet_lens::diagnostic::Severity::Warning => Severity::Warning,
+                    quadlet_lens::diagnostic::Severity::Note => Severity::Note,
+                },
+                diagnostic.summary(),
+            );
+            for label in diagnostic.labels() {
+                finding = finding.with_label(boxferry_engine::NativeFindingLabel::new(
+                    boxferry_engine::NativeFindingLabelKind::Primary,
+                    label.span().source_id().get(),
+                    label.span().start(),
+                    label.span().end(),
+                    label.message(),
+                ));
+            }
+            self.diagnostics.push(
+                Diagnostic::new(
+                    self.codes.native_model.clone(),
+                    finding.severity(),
+                    "QuadletLens reported a native value finding",
+                )
+                .with_native_finding(finding),
+            );
+        }
+    }
+
     /// Records every authored Kube or Artifact entry separately. Neither unit type has a safe
     /// format-neutral meaning yet, so even generic-systemd, `[Quadlet]`, unknown, and repeated
     /// entries need a value-free outcome rather than disappearing behind the primary section.
@@ -296,7 +337,7 @@ impl<'a> Mapping<'a> {
                 }
                 QuadletUnitType::Build => {
                     if let Some(name) = self.identifier(stem, "image_builds", document_origin.clone()) {
-                        let build = self.map_build_definition(filename, name, document.sections(), document_origin);
+                        let build = self.map_build_definition(filename, name, document, document_origin);
                         if let Err(error) = application.add_image_build(build) {
                             self.invalid_model("image_builds", filename, &error.to_string(), None);
                         }
@@ -323,8 +364,7 @@ impl<'a> Mapping<'a> {
                     }
                 }
                 QuadletUnitType::Pod => {
-                    if let Some(group) =
-                        self.map_pod_definition(filename, stem, application, document.sections(), document_origin)
+                    if let Some(group) = self.map_pod_definition(filename, stem, application, document, document_origin)
                     {
                         pod_order.push(stem.to_owned());
                         pod_groups.insert(stem.to_owned(), group);
@@ -1051,7 +1091,7 @@ impl<'a> Mapping<'a> {
         &mut self,
         filename: &str,
         name: Identifier,
-        sections: &[TypedSection],
+        document: &QuadletDocument,
         document_origin: Provenance,
     ) -> Sourced<ImageBuild> {
         let subject = format!("image_builds.{}", name.as_str());
@@ -1059,7 +1099,9 @@ impl<'a> Mapping<'a> {
         let mut settings = Vec::new();
         let mut origins = Vec::new();
         let mut singletons = BTreeSet::new();
-        for section in sections {
+        let environment = document.build_environment();
+        self.report_native_value_diagnostics("build-environment", environment.diagnostics());
+        for section in document.sections() {
             for entry in section.entries() {
                 let origin = self.entry_origin(entry);
                 origins.push(origin.clone());
@@ -1069,6 +1111,17 @@ impl<'a> Mapping<'a> {
                         filename,
                         "Quadlet build singleton is declared more than once",
                         Some(origin),
+                    );
+                    continue;
+                }
+                if matches!(entry.kind(), EntryKind::Build(BuildKey::Environment)) {
+                    self.map_build_environment_entry(
+                        filename,
+                        &subject,
+                        entry,
+                        environment.directives(),
+                        &mut settings,
+                        &origin,
                     );
                     continue;
                 }
@@ -1087,6 +1140,95 @@ impl<'a> Mapping<'a> {
         }
         resource.set_settings_with_origins(settings, origins);
         Sourced::from_source(resource, document_origin)
+    }
+
+    fn map_build_environment_entry(
+        &mut self,
+        filename: &str,
+        build_subject: &str,
+        entry: &TypedEntry,
+        directives: &[AuthoredContainerEnvironmentDirective],
+        settings: &mut Vec<Sourced<ImageBuildSetting>>,
+        origin: &Provenance,
+    ) {
+        let span = entry.value().primary().span();
+        let mut values = Vec::new();
+        let mut matched = false;
+        let mut reset = false;
+        for directive in directives.iter().filter(|directive| directive.span() == span) {
+            matched = true;
+            match directive {
+                AuthoredContainerEnvironmentDirective::Assignment { name, value, .. } => {
+                    let subject = format!("{build_subject}.Environment.{name}");
+                    remove_build_environment_assignment(settings, name);
+                    values.retain(|assignment: &Sourced<ImageArtifactAssignment>| {
+                        assignment.value().name().expose() != name
+                    });
+                    values.push(Sourced::from_source(
+                        ImageArtifactAssignment::new(
+                            ProtectedString::sensitive(name),
+                            Some(ProtectedString::sensitive(value)),
+                        ),
+                        origin.clone(),
+                    ));
+                    self.exact(subject, Some(origin.clone()));
+                }
+                AuthoredContainerEnvironmentDirective::Reset { .. } => {
+                    reset = true;
+                    values.clear();
+                    self.exact(format!("{build_subject}.Environment"), Some(origin.clone()));
+                }
+                AuthoredContainerEnvironmentDirective::BareName { name, .. } => {
+                    remove_build_environment_assignment(settings, name);
+                    values.retain(|assignment| assignment.value().name().expose() != name);
+                    self.unsupported_value(
+                        &format!("{build_subject}.Environment.{name}"),
+                        filename,
+                        "Environment",
+                        "a bare build Environment name requires systemd manager or process context",
+                        origin.clone(),
+                    );
+                }
+                AuthoredContainerEnvironmentDirective::Deferred { name, .. } => {
+                    remove_build_environment_assignment(settings, name);
+                    values.retain(|assignment| assignment.value().name().expose() != name);
+                    self.unsupported_value(
+                        &format!("{build_subject}.Environment.{name}"),
+                        filename,
+                        "Environment",
+                        "a build Environment value with a systemd specifier is deferred until manager expansion",
+                        origin.clone(),
+                    );
+                }
+                AuthoredContainerEnvironmentDirective::Unmodeled { .. } => {
+                    clear_build_environment_settings(settings);
+                    values.clear();
+                    self.invalid_model(
+                        &format!("{build_subject}.Environment"),
+                        filename,
+                        "QuadletLens could not decode a malformed build Environment assignment",
+                        Some(origin.clone()),
+                    );
+                }
+                _ => {
+                    clear_build_environment_settings(settings);
+                    values.clear();
+                    self.unsupported_value(
+                        &format!("{build_subject}.Environment"),
+                        filename,
+                        "Environment",
+                        "a newer QuadletLens build Environment directive is not represented by this neutral-model adapter",
+                        origin.clone(),
+                    );
+                }
+            }
+        }
+        if matched && (reset || !values.is_empty()) {
+            settings.push(Sourced::from_source(
+                ImageBuildSetting::Environment(BuildSettingValues::new(BuildSyntax::Repeated, values)),
+                origin.clone(),
+            ));
+        }
     }
 
     fn map_singleton_build_setting(
@@ -1204,9 +1346,6 @@ impl<'a> Mapping<'a> {
             (SectionKind::Build, EntryKind::Build(BuildKey::Annotation)) => {
                 Some(ImageBuildSetting::Annotations(repeated_assignment(value)))
             }
-            (SectionKind::Build, EntryKind::Build(BuildKey::Environment)) => {
-                Some(ImageBuildSetting::Environment(repeated_assignment(value)))
-            }
             (SectionKind::Build, EntryKind::Build(BuildKey::ContainersConfModule)) => {
                 Some(ImageBuildSetting::ContainersConfigModules(repeated_plain(value)))
             }
@@ -1268,7 +1407,7 @@ impl<'a> Mapping<'a> {
         filename: &str,
         stem: &str,
         application: &mut Application,
-        sections: &[TypedSection],
+        document: &QuadletDocument,
         document_origin: Provenance,
     ) -> Option<PodImportGroup> {
         let name = self.identifier(stem, "service_groups", document_origin.clone())?;
@@ -1277,7 +1416,7 @@ impl<'a> Mapping<'a> {
         let mut singletons = BTreeSet::new();
         let mut runtime = ServiceGroupRuntime::new();
 
-        for section in sections {
+        for section in document.sections() {
             for entry in section.entries() {
                 match (section.kind(), entry.kind()) {
                     (SectionKind::Pod, EntryKind::Pod(PodKey::PodName)) => {
@@ -1308,7 +1447,9 @@ impl<'a> Mapping<'a> {
                             );
                             continue;
                         }
-                        self.map_pod_runtime_entry(filename, stem, application, &mut runtime, entry);
+                        if !matches!(key, PodKey::PublishPort | PodKey::Volume) {
+                            self.map_pod_runtime_entry(filename, stem, application, &mut runtime, entry);
+                        }
                     }
                     _ => self.unsupported(
                         &format!("service_groups.{stem}.quadlet.{}", entry.key().text()),
@@ -1319,6 +1460,9 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
+
+        self.map_pod_ports(filename, stem, &mut runtime, document);
+        self.map_pod_mounts(filename, stem, application, &mut runtime, document);
 
         if runtime.networks().is_some_and(|networks| {
             networks
@@ -1380,26 +1524,6 @@ impl<'a> Mapping<'a> {
                 }
                 Err(ValueIssue::Invalid(reason)) => self.invalid_model(&subject, filename, reason, Some(origin)),
             },
-            EntryKind::Pod(PodKey::PublishPort) if value.is_empty() => {
-                runtime.set_ports_with_origins(Vec::new(), vec![origin.clone()]);
-                self.unsupported_value(
-                    &subject,
-                    filename,
-                    "PublishPort",
-                    "an empty PublishPort assignment resets the effective list",
-                    origin,
-                );
-            }
-            EntryKind::Pod(PodKey::PublishPort) => match decode_port(value) {
-                Ok(value) => {
-                    runtime.add_port(Sourced::from_source(value, origin.clone()));
-                    self.exact(subject, Some(origin));
-                }
-                Err(ValueIssue::Unsupported(reason)) => {
-                    self.unsupported_value(&subject, filename, "PublishPort", reason, origin);
-                }
-                Err(ValueIssue::Invalid(reason)) => self.invalid_model(&subject, filename, reason, Some(origin)),
-            },
             EntryKind::Pod(PodKey::Network) => {
                 if value.is_empty() {
                     runtime.set_networks_with_origins(Vec::new(), vec![origin.clone()]);
@@ -1443,31 +1567,6 @@ impl<'a> Mapping<'a> {
                 ));
                 self.exact(subject, Some(origin));
             }
-            EntryKind::Pod(PodKey::Volume) if value.is_empty() => {
-                runtime.set_mounts_with_origins(Vec::new(), vec![origin.clone()]);
-                self.unsupported_value(
-                    &subject,
-                    filename,
-                    "Volume",
-                    "an empty Volume assignment resets the effective list",
-                    origin,
-                );
-            }
-            EntryKind::Pod(PodKey::Volume) => match decode_mount(value, entry.value_kind()) {
-                Ok((mount, external)) => {
-                    if let Some(name) = external {
-                        if !self.ensure_external_volume(application, &name, filename, origin.clone()) {
-                            return;
-                        }
-                    }
-                    runtime.add_mount(Sourced::from_source(mount, origin.clone()));
-                    self.exact(subject, Some(origin));
-                }
-                Err(ValueIssue::Unsupported(reason)) => {
-                    self.unsupported_value(&subject, filename, "Volume", reason, origin);
-                }
-                Err(ValueIssue::Invalid(reason)) => self.invalid_model(&subject, filename, reason, Some(origin)),
-            },
             EntryKind::Pod(PodKey::UserNS) => {
                 runtime.set_user_namespace(Sourced::from_source(ProtectedString::plain(value), origin.clone()));
                 self.exact(subject, Some(origin));
@@ -1538,6 +1637,152 @@ impl<'a> Mapping<'a> {
             }
             _ => self.unsupported(&subject, filename, entry.key().text(), origin),
         }
+    }
+
+    fn map_pod_ports(
+        &mut self,
+        filename: &str,
+        stem: &str,
+        runtime: &mut ServiceGroupRuntime,
+        document: &QuadletDocument,
+    ) {
+        let publications = document.pod_ports();
+        self.report_native_value_diagnostics("pod-port", publications.diagnostics());
+        if publications.directives().is_empty() {
+            return;
+        }
+        let mut ports = Vec::new();
+        let mut origins = Vec::new();
+        for (index, directive) in publications.directives().iter().enumerate() {
+            let subject = format!("service_groups.{stem}.runtime.ports[{index}]");
+            let origin = self.provenance(directive.span());
+            match directive {
+                NativePortPublication::Publication(publication) => match neutral_port(publication) {
+                    Ok(port) => {
+                        ports.push(Sourced::from_source(port, origin.clone()));
+                        origins.push(origin.clone());
+                        self.exact(subject, Some(origin));
+                    }
+                    Err(ValueIssue::Unsupported(reason)) => {
+                        self.unsupported_value(&subject, filename, "PublishPort", reason, origin);
+                    }
+                    Err(ValueIssue::Invalid(reason)) => {
+                        self.invalid_model(&subject, filename, reason, Some(origin));
+                    }
+                },
+                NativePortPublication::Reset { .. } => {
+                    ports.clear();
+                    origins.clear();
+                    origins.push(origin.clone());
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        "PublishPort",
+                        "an empty PublishPort directive is valid native reset intent; its effective result is retained but the neutral model cannot retain the reset directive itself",
+                        origin,
+                    );
+                }
+                NativePortPublication::Deferred { .. } => self.unsupported_value(
+                    &subject,
+                    filename,
+                    "PublishPort",
+                    "the native publication contains a systemd specifier and is deferred until manager expansion",
+                    origin,
+                ),
+                NativePortPublication::Unmodeled { .. } => self.invalid_model(
+                    &subject,
+                    filename,
+                    "QuadletLens could not decode malformed native PublishPort syntax",
+                    Some(origin),
+                ),
+                _ => self.unsupported_value(
+                    &subject,
+                    filename,
+                    "PublishPort",
+                    "a newer QuadletLens port directive is not represented by this neutral-model adapter",
+                    origin,
+                ),
+            }
+        }
+        runtime.set_ports_with_origins(ports, origins);
+    }
+
+    fn map_pod_mounts(
+        &mut self,
+        filename: &str,
+        stem: &str,
+        application: &mut Application,
+        runtime: &mut ServiceGroupRuntime,
+        document: &QuadletDocument,
+    ) {
+        let specifications = document.pod_mounts();
+        self.report_native_value_diagnostics("pod-mount", specifications.diagnostics());
+        if specifications.directives().is_empty() {
+            return;
+        }
+        let mut pending_mounts = Vec::new();
+        let mut origins = Vec::new();
+        for (index, directive) in specifications.directives().iter().enumerate() {
+            let subject = format!("service_groups.{stem}.runtime.mounts[{index}]");
+            let origin = self.provenance(directive.span());
+            match directive {
+                NativeMountDirective::Mount(specification) => match neutral_mount(specification) {
+                    Ok((mount, external_volume)) => {
+                        self.exact(subject, Some(origin.clone()));
+                        pending_mounts.push((mount, external_volume, origin));
+                    }
+                    Err(ValueIssue::Unsupported(reason)) => {
+                        self.unsupported_value(&subject, filename, "Volume", reason, origin);
+                    }
+                    Err(ValueIssue::Invalid(reason)) => {
+                        self.invalid_model(&subject, filename, reason, Some(origin));
+                    }
+                },
+                NativeMountDirective::Reset { .. } => {
+                    pending_mounts.clear();
+                    origins.clear();
+                    origins.push(origin.clone());
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        "Volume",
+                        "an empty Volume directive is valid native reset intent; its effective result is retained but the neutral model cannot retain the reset directive itself",
+                        origin,
+                    );
+                }
+                NativeMountDirective::Deferred { .. } => self.unsupported_value(
+                    &subject,
+                    filename,
+                    "Volume",
+                    "the native mount contains a systemd specifier and is deferred until manager expansion",
+                    origin,
+                ),
+                NativeMountDirective::Unmodeled { .. } => self.invalid_model(
+                    &subject,
+                    filename,
+                    "QuadletLens could not decode malformed native mount syntax",
+                    Some(origin),
+                ),
+                _ => self.unsupported_value(
+                    &subject,
+                    filename,
+                    "Volume",
+                    "a newer QuadletLens mount directive is not represented by this neutral-model adapter",
+                    origin,
+                ),
+            }
+        }
+        let mut mounts = Vec::new();
+        for (mount, external_volume, origin) in pending_mounts {
+            if let Some(name) = external_volume {
+                if !self.ensure_external_volume(application, &name, filename, origin.clone()) {
+                    continue;
+                }
+            }
+            mounts.push(Sourced::from_source(mount, origin.clone()));
+            origins.push(origin.clone());
+        }
+        runtime.set_mounts_with_origins(mounts, origins);
     }
 
     fn map_pod_membership(
@@ -1624,7 +1869,10 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
+        self.map_container_commands(filename, &service_name, service, document);
         self.map_container_environment(filename, &service_name, service, document);
+        self.map_container_ports(filename, &service_name, service, document);
+        self.map_container_mounts(filename, &service_name, application, service, document);
         self.map_unit_relations(filename, &service_name, service, state.relations);
         if let Some(entry) = state.group_entry {
             self.map_group(filename, &service_name, service, entry);
@@ -1708,12 +1956,15 @@ impl<'a> Mapping<'a> {
                 EntryKind::Container(ContainerKey::ContainerName) => {
                     self.map_container_name(filename, &service_name, service, entry);
                 }
-                EntryKind::Container(ContainerKey::Exec) => {
-                    self.map_command(filename, &service_name, service, entry);
-                }
-                EntryKind::Container(ContainerKey::Entrypoint) => {
-                    self.map_entrypoint(filename, &service_name, service, entry);
-                }
+                // QuadletLens document views decode these native values once after entry traversal.
+                EntryKind::Container(
+                    ContainerKey::Exec
+                    | ContainerKey::Entrypoint
+                    | ContainerKey::Environment
+                    | ContainerKey::PublishPort
+                    | ContainerKey::Volume
+                    | ContainerKey::Mount,
+                ) => {}
                 EntryKind::Container(ContainerKey::RunInit) => {
                     self.map_run_init(filename, &service_name, service, entry);
                 }
@@ -1722,9 +1973,6 @@ impl<'a> Mapping<'a> {
                 }
                 EntryKind::Container(ContainerKey::Pull) => self.map_pull(filename, &service_name, service, entry),
                 EntryKind::Container(ContainerKey::Memory) => self.map_memory(filename, &service_name, service, entry),
-                // Environment= is decoded once for the complete document below. The Lens semantic
-                // view handles systemd quoting, multiple assignments, resets, and deferred forms.
-                EntryKind::Container(ContainerKey::Environment) => {}
                 EntryKind::Container(ContainerKey::EnvironmentFile) => {
                     self.map_environment_file(filename, &service_name, service, entry);
                 }
@@ -1737,14 +1985,8 @@ impl<'a> Mapping<'a> {
                 EntryKind::Container(ContainerKey::DNSSearch) => {
                     self.map_dns_value(filename, &service_name, service, entry, "dns_search");
                 }
-                EntryKind::Container(ContainerKey::PublishPort) => {
-                    self.map_port(filename, &service_name, service, entry);
-                }
                 EntryKind::Container(ContainerKey::ExposeHostPort) => {
                     self.map_exposed_port(filename, &service_name, service, entry);
-                }
-                EntryKind::Container(ContainerKey::Volume) => {
-                    self.map_mount(filename, &service_name, application, service, entry);
                 }
                 EntryKind::Container(ContainerKey::Network) => {
                     self.map_network(filename, &service_name, application, service, entry);
@@ -2590,29 +2832,6 @@ impl<'a> Mapping<'a> {
         }
     }
 
-    fn map_entrypoint(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
-        let subject = format!("services.{service_name}.entrypoint");
-        let origin = self.entry_origin(entry);
-        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
-            return;
-        };
-        let Some(args) = decode_json_exec_array(value) else {
-            self.unsupported_value(
-                &subject,
-                filename,
-                entry.key().text(),
-                "Entrypoint is exact only for reviewed JSON exec arrays",
-                origin,
-            );
-            return;
-        };
-        service.set_entrypoint(Sourced::from_source(
-            Entrypoint::Exec(args.into_iter().map(ProtectedString::plain).collect()),
-            origin.clone(),
-        ));
-        self.exact(subject, Some(origin));
-    }
-
     fn map_run_init(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
         let subject = format!("services.{service_name}.run_init");
         let origin = self.entry_origin(entry);
@@ -2702,31 +2921,6 @@ impl<'a> Mapping<'a> {
         }
     }
 
-    fn map_command(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
-        let subject = format!("services.{service_name}.command");
-        let origin = self.entry_origin(entry);
-        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
-            return;
-        };
-        let arguments: Vec<_> = value.split_ascii_whitespace().collect();
-        if arguments.is_empty() || !arguments.iter().all(|argument| is_safe_word(argument, false)) {
-            self.unsupported_value(
-                &subject,
-                filename,
-                entry.key().text(),
-                "Exec requires systemd command-line decoding outside the exact unquoted-word subset",
-                origin,
-            );
-            return;
-        }
-
-        service.set_command(Sourced::from_source(
-            Command::Exec(arguments.into_iter().map(ProtectedString::plain).collect()),
-            origin.clone(),
-        ));
-        self.exact(subject, Some(origin));
-    }
-
     fn map_container_environment(
         &mut self,
         filename: &str,
@@ -2735,86 +2929,322 @@ impl<'a> Mapping<'a> {
         document: &QuadletDocument,
     ) {
         let environment = document.container_environment();
-        for diagnostic in environment.diagnostics() {
-            let mut finding = NativeFinding::new(
-                "quadlet",
-                "quadlet-lens",
-                diagnostic.code().as_str(),
-                "container-environment",
-                match diagnostic.severity() {
-                    quadlet_lens::diagnostic::Severity::Error => Severity::Error,
-                    quadlet_lens::diagnostic::Severity::Warning => Severity::Warning,
-                    quadlet_lens::diagnostic::Severity::Note => Severity::Note,
-                },
-                diagnostic.summary(),
-            );
-            for label in diagnostic.labels() {
-                finding = finding.with_label(boxferry_engine::NativeFindingLabel::new(
-                    boxferry_engine::NativeFindingLabelKind::Primary,
-                    label.span().source_id().get(),
-                    label.span().start(),
-                    label.span().end(),
-                    label.message(),
-                ));
-            }
-            self.diagnostics.push(
-                Diagnostic::new(
-                    self.codes.native_model.clone(),
-                    finding.severity(),
-                    "QuadletLens reported a native container Environment finding",
-                )
-                .with_native_finding(finding),
-            );
-        }
+        self.report_native_value_diagnostics("container-environment", environment.diagnostics());
+        let mut assignments = Vec::new();
         for directive in environment.directives() {
             let origin = self.provenance(directive.span());
             match directive {
                 AuthoredContainerEnvironmentDirective::Assignment { name, value, .. } => {
                     let subject = format!("services.{service_name}.environment.{name}");
+                    assignments
+                        .retain(|assignment: &Sourced<EnvironmentVariable>| assignment.value().name().as_str() != name);
                     let Some(name) = self.identifier(name, &subject, origin.clone()) else {
                         continue;
                     };
-                    service.add_environment(Sourced::from_source(
+                    assignments.push(Sourced::from_source(
                         EnvironmentVariable::new(name, EnvironmentValue::Literal(ProtectedString::sensitive(value))),
                         origin.clone(),
                     ));
                     self.exact(subject, Some(origin));
                 }
-                AuthoredContainerEnvironmentDirective::Reset { .. } => self.invalid_model(
-                    &format!("services.{service_name}.environment"),
+                AuthoredContainerEnvironmentDirective::Reset { .. } => {
+                    assignments.clear();
+                    self.unsupported_value(
+                        &format!("services.{service_name}.environment"),
+                        filename,
+                        "Environment",
+                        "an empty Environment directive is valid native reset intent; its effective result is retained but the neutral model cannot retain the reset directive itself",
+                        origin,
+                    );
+                }
+                AuthoredContainerEnvironmentDirective::BareName { name, .. } => {
+                    assignments.retain(|assignment| assignment.value().name().as_str() != name);
+                    self.unsupported_value(
+                        &format!("services.{service_name}.environment.{name}"),
+                        filename,
+                        "Environment",
+                        "a bare Environment name requires systemd manager or process context",
+                        origin,
+                    );
+                }
+                AuthoredContainerEnvironmentDirective::Deferred { name, .. } => {
+                    assignments.retain(|assignment| assignment.value().name().as_str() != name);
+                    self.unsupported_value(
+                        &format!("services.{service_name}.environment.{name}"),
+                        filename,
+                        "Environment",
+                        "an Environment value with a systemd specifier is deferred until manager expansion",
+                        origin,
+                    );
+                }
+                AuthoredContainerEnvironmentDirective::Unmodeled { .. } => {
+                    assignments.clear();
+                    self.invalid_model(
+                        &format!("services.{service_name}.environment"),
+                        filename,
+                        "QuadletLens could not decode malformed container Environment syntax",
+                        Some(origin),
+                    );
+                }
+                _ => {
+                    assignments.clear();
+                    self.unsupported_value(
+                        &format!("services.{service_name}.environment"),
+                        filename,
+                        "Environment",
+                        "a newer QuadletLens Environment directive is not represented by this neutral-model adapter",
+                        origin,
+                    );
+                }
+            }
+        }
+        for assignment in assignments {
+            service.add_environment(assignment);
+        }
+    }
+
+    fn map_container_commands(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        document: &QuadletDocument,
+    ) {
+        let commands = document.container_commands();
+        self.report_native_value_diagnostics("container-command", commands.diagnostics());
+        let mut command = None;
+        let mut entrypoint = None;
+        for directive in commands.directives() {
+            match directive {
+                NativeCommandDirective::Command { kind, command: value } => {
+                    let origin = self.provenance(value.span());
+                    let arguments = value.arguments().iter().map(ProtectedString::sensitive).collect();
+                    match kind {
+                        NativeCommandKind::Exec => {
+                            let subject = format!("services.{service_name}.command");
+                            command = Some(Sourced::from_source(Command::Exec(arguments), origin.clone()));
+                            self.exact(subject, Some(origin));
+                        }
+                        NativeCommandKind::Entrypoint => {
+                            let subject = format!("services.{service_name}.entrypoint");
+                            let value = if value.arguments().is_empty()
+                                && matches!(value.syntax(), NativeCommandSyntax::EntrypointJsonArray)
+                            {
+                                Entrypoint::Empty
+                            } else {
+                                Entrypoint::Exec(arguments)
+                            };
+                            entrypoint = Some(Sourced::from_source(value, origin.clone()));
+                            self.exact(subject, Some(origin));
+                        }
+                        _ => {
+                            discard_all_native_command_state(&mut command, &mut entrypoint);
+                            self.unsupported_value(
+                                &format!("services.{service_name}.command"),
+                                filename,
+                                "Exec/Entrypoint",
+                                "a newer QuadletLens command kind is not represented by this neutral-model adapter",
+                                origin,
+                            );
+                        }
+                    }
+                }
+                NativeCommandDirective::Reset { kind, span } => {
+                    let origin = self.provenance(*span);
+                    match kind {
+                        NativeCommandKind::Exec => {
+                            let subject = format!("services.{service_name}.command");
+                            command = Some(Sourced::from_source(Command::Empty, origin.clone()));
+                            self.exact(subject, Some(origin));
+                        }
+                        NativeCommandKind::Entrypoint => {
+                            let subject = format!("services.{service_name}.entrypoint");
+                            entrypoint = Some(Sourced::from_source(Entrypoint::Empty, origin.clone()));
+                            self.exact(subject, Some(origin));
+                        }
+                        _ => {
+                            discard_all_native_command_state(&mut command, &mut entrypoint);
+                            self.unsupported_value(
+                                &format!("services.{service_name}.command"),
+                                filename,
+                                "Exec/Entrypoint",
+                                "a newer QuadletLens command reset is not represented by this neutral-model adapter",
+                                origin,
+                            );
+                        }
+                    }
+                }
+                NativeCommandDirective::Deferred { kind, span } => {
+                    discard_native_command_state(*kind, &mut command, &mut entrypoint);
+                    let origin = self.provenance(*span);
+                    self.unsupported_value(
+                        &command_subject(service_name, *kind),
+                        filename,
+                        command_key(*kind),
+                        "the native command contains a systemd specifier and is deferred until manager expansion",
+                        origin,
+                    );
+                }
+                NativeCommandDirective::Unmodeled { kind, span } => {
+                    discard_native_command_state(*kind, &mut command, &mut entrypoint);
+                    let origin = self.provenance(*span);
+                    self.invalid_model(
+                        &command_subject(service_name, *kind),
+                        filename,
+                        "QuadletLens could not decode malformed native command syntax",
+                        Some(origin),
+                    );
+                }
+                _ => {
+                    discard_all_native_command_state(&mut command, &mut entrypoint);
+                    self.unsupported_value(
+                        &format!("services.{service_name}.command"),
+                        filename,
+                        "Exec/Entrypoint",
+                        "a newer QuadletLens command directive is not represented by this neutral-model adapter",
+                        self.document_origin(document.source_span()),
+                    );
+                }
+            }
+        }
+        set_pending_native_commands(service, command, entrypoint);
+    }
+
+    fn map_container_ports(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        service: &mut Service,
+        document: &QuadletDocument,
+    ) {
+        let publications = document.container_ports();
+        self.report_native_value_diagnostics("container-port", publications.diagnostics());
+        let mut ports = Vec::new();
+        for (index, directive) in publications.directives().iter().enumerate() {
+            let subject = format!("services.{service_name}.ports[{index}]");
+            match directive {
+                NativePortPublication::Publication(publication) => {
+                    let origin = self.provenance(publication.span());
+                    match neutral_port(publication) {
+                        Ok(port) => {
+                            ports.push(Sourced::from_source(port, origin.clone()));
+                            self.exact(subject, Some(origin));
+                        }
+                        Err(ValueIssue::Unsupported(reason)) => {
+                            self.unsupported_value(&subject, filename, "PublishPort", reason, origin);
+                        }
+                        Err(ValueIssue::Invalid(reason)) => {
+                            self.invalid_model(&subject, filename, reason, Some(origin));
+                        }
+                    }
+                }
+                NativePortPublication::Reset { span } => {
+                    let origin = self.provenance(*span);
+                    ports.clear();
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        "PublishPort",
+                        "an empty PublishPort directive is valid native reset intent; its effective result is retained but the neutral model cannot retain the reset directive itself",
+                        origin,
+                    );
+                }
+                NativePortPublication::Deferred { span } => self.unsupported_value(
+                    &subject,
                     filename,
-                    "an empty Environment directive resets prior values and cannot be represented by the neutral model",
-                    Some(origin),
+                    "PublishPort",
+                    "the native publication contains a systemd specifier and is deferred until manager expansion",
+                    self.provenance(*span),
                 ),
-                AuthoredContainerEnvironmentDirective::BareName { name, .. } => self.unsupported_value(
-                    &format!("services.{service_name}.environment.{name}"),
+                NativePortPublication::Unmodeled { span } => self.invalid_model(
+                    &subject,
                     filename,
-                    "Environment",
-                    "a bare Environment name requires systemd manager or process context",
-                    origin,
-                ),
-                AuthoredContainerEnvironmentDirective::Deferred { name, .. } => self.unsupported_value(
-                    &format!("services.{service_name}.environment.{name}"),
-                    filename,
-                    "Environment",
-                    "an Environment value with a systemd specifier is deferred until manager expansion",
-                    origin,
-                ),
-                AuthoredContainerEnvironmentDirective::Unmodeled { .. } => self.unsupported_value(
-                    &format!("services.{service_name}.environment"),
-                    filename,
-                    "Environment",
-                    "Environment syntax is not represented by the reviewed semantic subset",
-                    origin,
+                    "QuadletLens could not decode malformed native PublishPort syntax",
+                    Some(self.provenance(*span)),
                 ),
                 _ => self.unsupported_value(
-                    &format!("services.{service_name}.environment"),
+                    &subject,
                     filename,
-                    "Environment",
-                    "a newer QuadletLens Environment directive is not represented by this neutral-model adapter",
-                    origin,
+                    "PublishPort",
+                    "a newer QuadletLens port directive is not represented by this neutral-model adapter",
+                    self.document_origin(document.source_span()),
                 ),
             }
+        }
+        for port in ports {
+            service.add_port(port);
+        }
+    }
+
+    fn map_container_mounts(
+        &mut self,
+        filename: &str,
+        service_name: &str,
+        application: &mut Application,
+        service: &mut Service,
+        document: &QuadletDocument,
+    ) {
+        let specifications = document.container_mounts();
+        self.report_native_value_diagnostics("container-mount", specifications.diagnostics());
+        let mut pending_mounts = Vec::new();
+        for (index, directive) in specifications.directives().iter().enumerate() {
+            let subject = format!("services.{service_name}.mounts[{index}]");
+            match directive {
+                NativeMountDirective::Mount(specification) => {
+                    let origin = self.provenance(specification.span());
+                    match neutral_mount(specification) {
+                        Ok((mount, external_volume)) => {
+                            self.exact(subject, Some(origin.clone()));
+                            pending_mounts.push((mount, external_volume, origin));
+                        }
+                        Err(ValueIssue::Unsupported(reason)) => {
+                            self.unsupported_value(&subject, filename, "Volume/Mount", reason, origin);
+                        }
+                        Err(ValueIssue::Invalid(reason)) => {
+                            self.invalid_model(&subject, filename, reason, Some(origin));
+                        }
+                    }
+                }
+                NativeMountDirective::Reset { span } => {
+                    let origin = self.provenance(*span);
+                    pending_mounts.clear();
+                    self.unsupported_value(
+                        &subject,
+                        filename,
+                        "Volume/Mount",
+                        "an empty native mount directive is valid reset intent; its effective result is retained but the neutral model cannot retain the reset directive itself",
+                        origin,
+                    );
+                }
+                NativeMountDirective::Deferred { span } => self.unsupported_value(
+                    &subject,
+                    filename,
+                    "Volume/Mount",
+                    "the native mount contains a systemd specifier and is deferred until manager expansion",
+                    self.provenance(*span),
+                ),
+                NativeMountDirective::Unmodeled { span } => self.invalid_model(
+                    &subject,
+                    filename,
+                    "QuadletLens could not decode malformed native mount syntax",
+                    Some(self.provenance(*span)),
+                ),
+                _ => self.unsupported_value(
+                    &subject,
+                    filename,
+                    "Volume/Mount",
+                    "a newer QuadletLens mount directive is not represented by this neutral-model adapter",
+                    self.document_origin(document.source_span()),
+                ),
+            }
+        }
+        for (mount, external_volume, origin) in pending_mounts {
+            if let Some(name) = external_volume {
+                if !self.ensure_external_volume(application, &name, filename, origin.clone()) {
+                    continue;
+                }
+            }
+            service.add_mount(Sourced::from_source(mount, origin.clone()));
         }
     }
 
@@ -2925,61 +3355,6 @@ impl<'a> Mapping<'a> {
             "Quadlet and Compose environment-file parsers are not yet proven equivalent; the declaration is retained without reading the file",
             origin,
         );
-    }
-
-    fn map_port(&mut self, filename: &str, service_name: &str, service: &mut Service, entry: &TypedEntry) {
-        let index = service.ports().len();
-        let subject = format!("services.{service_name}.ports[{index}]");
-        let origin = self.entry_origin(entry);
-        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
-            return;
-        };
-        match decode_port(value) {
-            Ok(port) => {
-                service.add_port(Sourced::from_source(port, origin.clone()));
-                self.exact(subject, Some(origin));
-            }
-            Err(ValueIssue::Unsupported(reason)) => {
-                self.unsupported_value(&subject, filename, entry.key().text(), reason, origin);
-            }
-            Err(ValueIssue::Invalid(reason)) => self.invalid_model(&subject, filename, reason, Some(origin)),
-        }
-    }
-
-    fn map_mount(
-        &mut self,
-        filename: &str,
-        service_name: &str,
-        application: &mut Application,
-        service: &mut Service,
-        entry: &TypedEntry,
-    ) {
-        let index = service.mounts().len();
-        let subject = format!("services.{service_name}.mounts[{index}]");
-        let origin = self.entry_origin(entry);
-        let Some(value) = self.direct_value(filename, &subject, entry, origin.clone()) else {
-            return;
-        };
-        let decoded = decode_mount(value, entry.value_kind());
-        let (mount, external_volume) = match decoded {
-            Ok(decoded) => decoded,
-            Err(ValueIssue::Unsupported(reason)) => {
-                self.unsupported_value(&subject, filename, entry.key().text(), reason, origin);
-                return;
-            }
-            Err(ValueIssue::Invalid(reason)) => {
-                self.invalid_model(&subject, filename, reason, Some(origin));
-                return;
-            }
-        };
-
-        if let Some(name) = external_volume {
-            if !self.ensure_external_volume(application, &name, filename, origin.clone()) {
-                return;
-            }
-        }
-        service.add_mount(Sourced::from_source(mount, origin.clone()));
-        self.exact(subject, Some(origin));
     }
 
     fn map_network(
@@ -4101,8 +4476,6 @@ const fn singleton_field(key: ContainerKey) -> Option<&'static str> {
         ContainerKey::Image => Some("image"),
         ContainerKey::Rootfs => Some("rootfs"),
         ContainerKey::ContainerName => Some("runtime_name"),
-        ContainerKey::Exec => Some("command"),
-        ContainerKey::Entrypoint => Some("entrypoint"),
         ContainerKey::RunInit => Some("run_init"),
         ContainerKey::StopTimeout => Some("stop_timeout"),
         ContainerKey::StopSignal => Some("stop_signal"),
@@ -4134,22 +4507,6 @@ const fn singleton_field(key: ContainerKey) -> Option<&'static str> {
         ContainerKey::SecurityLabelType => Some("security_options.security_label_type"),
         _ => None,
     }
-}
-
-fn decode_json_exec_array(value: &str) -> Option<Vec<String>> {
-    let inner = value.strip_prefix('[')?.strip_suffix(']')?;
-    if inner.is_empty() {
-        return None;
-    }
-    let mut values = Vec::new();
-    for item in inner.split(',') {
-        let item = item.strip_prefix('"')?.strip_suffix('"')?;
-        if item.is_empty() || item.contains(['\\', '\r', '\n', '\0']) {
-            return None;
-        }
-        values.push(item.to_owned());
-    }
-    Some(values)
 }
 
 fn is_positive_memory(value: &str) -> bool {
@@ -4438,146 +4795,320 @@ fn decode_host_mappings(value: &str) -> Result<Vec<HostMapping>, ValueIssue> {
         .collect()
 }
 
-fn decode_port(value: &str) -> Result<Port, ValueIssue> {
-    if value.is_empty() {
-        return Err(ValueIssue::Invalid("PublishPort value is empty"));
+fn set_pending_native_commands(
+    service: &mut Service,
+    command: Option<Sourced<Command>>,
+    entrypoint: Option<Sourced<Entrypoint>>,
+) {
+    if let Some(command) = command {
+        service.set_command(command);
     }
-    if value.contains('-') {
+    if let Some(entrypoint) = entrypoint {
+        service.set_entrypoint(entrypoint);
+    }
+}
+
+fn discard_native_command_state(
+    kind: NativeCommandKind,
+    command: &mut Option<Sourced<Command>>,
+    entrypoint: &mut Option<Sourced<Entrypoint>>,
+) {
+    match kind {
+        NativeCommandKind::Exec => *command = None,
+        NativeCommandKind::Entrypoint => *entrypoint = None,
+        _ => discard_all_native_command_state(command, entrypoint),
+    }
+}
+
+fn discard_all_native_command_state(
+    command: &mut Option<Sourced<Command>>,
+    entrypoint: &mut Option<Sourced<Entrypoint>>,
+) {
+    *command = None;
+    *entrypoint = None;
+}
+
+fn remove_build_environment_assignment(settings: &mut Vec<Sourced<ImageBuildSetting>>, name: &str) {
+    let mut index = 0;
+    while index < settings.len() {
+        let ImageBuildSetting::Environment(values) = settings[index].value() else {
+            index += 1;
+            continue;
+        };
+        let syntax = values.syntax();
+        let was_empty = values.values().is_empty();
+        let retained = values
+            .values()
+            .iter()
+            .filter(|assignment| assignment.value().name().expose() != name)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !was_empty && retained.is_empty() {
+            settings.remove(index);
+            continue;
+        }
+        let origins = settings[index].origins().to_vec();
+        let mut replacement = Sourced::generated(ImageBuildSetting::Environment(BuildSettingValues::new(
+            syntax, retained,
+        )));
+        for origin in origins {
+            replacement.add_origin(origin);
+        }
+        settings[index] = replacement;
+        index += 1;
+    }
+}
+
+fn clear_build_environment_settings(settings: &mut Vec<Sourced<ImageBuildSetting>>) {
+    settings.retain(|setting| !matches!(setting.value(), ImageBuildSetting::Environment(_)));
+}
+
+fn neutral_port(publication: &NativePortSpecification) -> Result<Port, ValueIssue> {
+    if !publication.container().is_single() || publication.published().is_some_and(|port| !port.is_single()) {
         return Err(ValueIssue::Unsupported(
-            "port ranges are not represented by the neutral port model",
+            "native port ranges are valid but are not represented by the neutral scalar port model",
         ));
     }
-    let (addressing, protocol) = value
-        .rsplit_once('/')
-        .map_or((value, "tcp"), |(ports, protocol)| (ports, protocol));
-    let protocol = match protocol {
-        "tcp" => Protocol::Tcp,
-        "udp" => Protocol::Udp,
-        "sctp" => Protocol::Sctp,
-        _ => return Err(ValueIssue::Invalid("PublishPort protocol must be tcp, udp, or sctp")),
-    };
-    let parts: Vec<_> = addressing.split(':').collect();
-    let (host_address, published, container) = match parts.as_slice() {
-        [container] => (None, None, *container),
-        [published, container] => (None, optional_port(published)?, *container),
-        [address, published, container] if address.is_empty() || is_ipv4_address(address) => (
-            (!address.is_empty()).then(|| (*address).to_owned()),
-            optional_port(published)?,
-            *container,
-        ),
+    let protocol = match publication.protocol() {
+        NativePortProtocol::Tcp => Protocol::Tcp,
+        NativePortProtocol::Udp => Protocol::Udp,
+        NativePortProtocol::Sctp => Protocol::Sctp,
         _ => {
             return Err(ValueIssue::Unsupported(
-                "IPv6 host addresses and target-specific PublishPort forms are outside the exact scalar subset",
+                "a newer QuadletLens port protocol is not represented by this neutral-model adapter",
             ));
         }
     };
-    let container = required_port(container)?;
-    Port::new(container, published, host_address, protocol)
-        .map_err(|_| ValueIssue::Invalid("PublishPort container port must be non-zero"))
+    let host_address = publication.host().map(normalize_native_host).transpose()?;
+    Port::new(
+        publication.container().start(),
+        publication.published().map(NativePortRange::start),
+        host_address,
+        protocol,
+    )
+    .map_err(|_| ValueIssue::Invalid("decoded PublishPort value cannot enter the neutral port model"))
 }
 
-fn optional_port(value: &str) -> Result<Option<u16>, ValueIssue> {
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        value
-            .parse()
-            .map(Some)
-            .map_err(|_| ValueIssue::Invalid("PublishPort host port is not an unsigned 16-bit integer"))
+fn normalize_native_host(host: &str) -> Result<String, ValueIssue> {
+    if let Some(address) = host.strip_prefix('[').and_then(|host| host.strip_suffix(']')) {
+        return address
+            .parse::<std::net::Ipv6Addr>()
+            .map(|_| address.to_owned())
+            .map_err(|_| ValueIssue::Unsupported("bracketed PublishPort host is not a literal IPv6 address"));
     }
+    host.parse::<std::net::Ipv4Addr>()
+        .map(|_| host.to_owned())
+        .map_err(|_| ValueIssue::Unsupported("PublishPort host is not a literal IPv4 or bracketed IPv6 address"))
 }
 
-fn required_port(value: &str) -> Result<u16, ValueIssue> {
-    value
-        .parse()
-        .map_err(|_| ValueIssue::Invalid("PublishPort container port is not an unsigned 16-bit integer"))
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NeutralMountType {
+    Bind,
+    Volume,
 }
 
-fn decode_mount(value: &str, value_kind: ValueKind) -> Result<(Mount, Option<Identifier>), ValueIssue> {
-    if value.is_empty() {
-        return Err(ValueIssue::Invalid("Volume value is empty"));
-    }
-    let parts: Vec<_> = value.split(':').collect();
-    let (source, target, options) = match parts.as_slice() {
-        [target] => (None, *target, None),
-        [source, target] => (Some(*source), *target, None),
-        [source, target, options] => (Some(*source), *target, Some(*options)),
-        _ => {
-            return Err(ValueIssue::Unsupported(
-                "Volume values containing additional colon-delimited fields are outside the exact compact subset",
-            ));
-        }
-    };
-    if !target.starts_with('/') || !is_safe_mount_part(target) {
+fn neutral_mount(specification: &NativeMountSpecification) -> Result<(Mount, Option<Identifier>), ValueIssue> {
+    let (mount_type, read_only, relabel) = neutral_mount_options(specification)?;
+    let target = specification
+        .destination()
+        .ok_or(ValueIssue::Invalid("decoded native mount does not have a destination"))?;
+    if !target.starts_with('/') {
         return Err(ValueIssue::Unsupported(
-            "container mount target must be an unquoted absolute path in the exact compact subset",
+            "a native relative mount destination is valid decoded evidence but is not portable neutral intent",
         ));
     }
-
-    let mut read_only = false;
-    let mut writable = false;
-    let mut relabel = None;
-    if let Some(options) = options {
-        for option in options.split(',') {
-            match option {
-                "ro" if !writable => read_only = true,
-                "rw" if !read_only => writable = true,
-                "z" if relabel.is_none() => relabel = Some(SelinuxRelabel::Shared),
-                "Z" if relabel.is_none() => relabel = Some(SelinuxRelabel::Private),
-                "ro" | "rw" => {
-                    return Err(ValueIssue::Invalid(
-                        "Volume options contain conflicting ro and rw intent",
-                    ));
-                }
-                "z" | "Z" => {
-                    return Err(ValueIssue::Invalid(
-                        "Volume options contain conflicting or repeated SELinux relabel intent",
-                    ));
-                }
-                _ => {
-                    return Err(ValueIssue::Unsupported(
-                        "Volume option is not represented by the neutral mount model",
-                    ));
-                }
-            }
-        }
-    }
-
-    let (mount_source, external_volume) = match source {
-        None | Some("") => (MountSource::Anonymous, None),
-        Some(source) if value_kind == ValueKind::UnitReference(UnitReferenceKind::Volume) => {
-            let name = source
-                .strip_suffix(".volume")
-                .ok_or(ValueIssue::Invalid("invalid .volume unit reference"))?;
-            let identifier = Identifier::new(name)
-                .map_err(|_| ValueIssue::Invalid(".volume unit reference cannot enter the neutral identifier model"))?;
-            (MountSource::Volume(identifier), None)
-        }
-        Some(source) if source.starts_with('/') && is_safe_mount_part(source) => {
-            (MountSource::HostPath(source.to_owned()), None)
-        }
-        Some(source) if source.starts_with('.') || source.contains('%') => {
-            return Err(ValueIssue::Unsupported(
-                "unit-relative and systemd-specifier bind sources require explicit path resolution",
-            ));
-        }
-        Some(source) if is_native_atom(source) => {
-            let identifier = Identifier::new(source)
-                .map_err(|_| ValueIssue::Invalid("named volume cannot enter the neutral identifier model"))?;
-            (MountSource::Volume(identifier.clone()), Some(identifier))
-        }
-        Some(_) => {
-            return Err(ValueIssue::Unsupported(
-                "Volume source requires native quoting or target-specific path interpretation",
-            ));
-        }
-    };
-    let mut mount = Mount::new(mount_source, target, read_only)
-        .map_err(|_| ValueIssue::Invalid("Volume target cannot enter the neutral mount model"))?;
+    let (source, external_volume) = neutral_mount_source(specification.source(), mount_type)?;
+    let mut mount = Mount::new(source, target, read_only)
+        .map_err(|_| ValueIssue::Invalid("decoded native mount destination cannot enter the neutral mount model"))?;
     if let Some(relabel) = relabel {
         mount.set_selinux_relabel(relabel);
     }
     Ok((mount, external_volume))
+}
+
+fn neutral_mount_source(
+    source: Option<&str>,
+    mount_type: Option<NeutralMountType>,
+) -> Result<(MountSource, Option<Identifier>), ValueIssue> {
+    if !matches!(mount_type, Some(NeutralMountType::Bind))
+        && source.is_some_and(|source| {
+            !source.starts_with('/')
+                && Path::new(source)
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("image"))
+        })
+    {
+        return Err(ValueIssue::Unsupported(
+            "native image-backed mounts are not represented by the neutral mount model",
+        ));
+    }
+    if matches!(mount_type, Some(NeutralMountType::Bind)) {
+        let source = source.ok_or(ValueIssue::Invalid("native bind Mount requires a source"))?;
+        if !source.starts_with('/') {
+            return Err(ValueIssue::Unsupported(
+                "relative native bind sources require explicit target-host path resolution",
+            ));
+        }
+        return Ok((MountSource::HostPath(source.to_owned()), None));
+    }
+    if matches!(mount_type, Some(NeutralMountType::Volume)) || source.is_none_or(|source| !source.starts_with('/')) {
+        let Some(source) = source.filter(|source| !source.is_empty()) else {
+            return Ok((MountSource::Anonymous, None));
+        };
+        let (name, external) = source
+            .strip_suffix(".volume")
+            .map_or((source, true), |name| (name, false));
+        if name.starts_with('.') {
+            return Err(ValueIssue::Unsupported(
+                "relative native mount sources require explicit target-host path resolution",
+            ));
+        }
+        let identifier = Identifier::new(name).map_err(|_| {
+            ValueIssue::Unsupported("native named mount source cannot enter the neutral identifier model")
+        })?;
+        return Ok((MountSource::Volume(identifier.clone()), external.then_some(identifier)));
+    }
+    let source = source.ok_or(ValueIssue::Invalid("decoded native mount source is absent"))?;
+    Ok((MountSource::HostPath(source.to_owned()), None))
+}
+
+fn neutral_mount_options(
+    specification: &NativeMountSpecification,
+) -> Result<(Option<NeutralMountType>, bool, Option<SelinuxRelabel>), ValueIssue> {
+    let mut mount_type = None;
+    let mut read_only = false;
+    let mut access_seen = false;
+    let mut relabel = None;
+    for option in specification.options() {
+        match option {
+            NativeMountOption::Flag(option) => match option.as_str() {
+                "ro" | "readonly" if !access_seen => {
+                    read_only = true;
+                    access_seen = true;
+                }
+                "rw" if !access_seen => access_seen = true,
+                "ro" | "readonly" | "rw" => {
+                    return Err(ValueIssue::Unsupported(
+                        "native mount options contain conflicting access modes",
+                    ));
+                }
+                "z" if relabel.is_none() => relabel = Some(SelinuxRelabel::Shared),
+                "Z" if relabel.is_none() => relabel = Some(SelinuxRelabel::Private),
+                "z" | "Z" => {
+                    return Err(ValueIssue::Unsupported(
+                        "native mount options contain conflicting or repeated SELinux relabel intent",
+                    ));
+                }
+                _ => {
+                    return Err(ValueIssue::Unsupported(
+                        "native mount option is valid decoded evidence but is not represented by the neutral mount model",
+                    ));
+                }
+            },
+            NativeMountOption::Assignment { name, value } => {
+                apply_native_mount_assignment(
+                    name,
+                    value,
+                    &mut mount_type,
+                    &mut read_only,
+                    &mut access_seen,
+                    &mut relabel,
+                )?;
+            }
+            _ => {
+                return Err(ValueIssue::Unsupported(
+                    "a newer QuadletLens mount option is not represented by this neutral-model adapter",
+                ));
+            }
+        }
+    }
+    Ok((mount_type, read_only, relabel))
+}
+
+fn apply_native_mount_assignment(
+    name: &str,
+    value: &str,
+    mount_type: &mut Option<NeutralMountType>,
+    read_only: &mut bool,
+    access_seen: &mut bool,
+    relabel: &mut Option<SelinuxRelabel>,
+) -> Result<(), ValueIssue> {
+    match name {
+        "type" if mount_type.is_none() => {
+            *mount_type = Some(match value {
+                "bind" => NeutralMountType::Bind,
+                "volume" => NeutralMountType::Volume,
+                _ => {
+                    return Err(ValueIssue::Unsupported(
+                        "native Mount type is valid decoded evidence but is not represented by the neutral mount model",
+                    ));
+                }
+            });
+        }
+        "type" => return Err(ValueIssue::Unsupported("native Mount declares type more than once")),
+        "source" | "src" | "destination" | "dst" | "target" => {}
+        "readonly" | "ro" | "rw" => apply_native_mount_access(name, value, read_only, access_seen)?,
+        "relabel" if relabel.is_none() && value == "shared" => *relabel = Some(SelinuxRelabel::Shared),
+        "relabel" if relabel.is_none() && value == "private" => *relabel = Some(SelinuxRelabel::Private),
+        "relabel" if matches!(value, "shared" | "private") => {
+            return Err(ValueIssue::Unsupported(
+                "native Mount options contain conflicting or repeated SELinux relabel intent",
+            ));
+        }
+        "relabel" => {
+            return Err(ValueIssue::Unsupported(
+                "native Mount relabel option must be shared or private",
+            ));
+        }
+        _ => {
+            return Err(ValueIssue::Unsupported(
+                "native Mount option is valid decoded evidence but is not represented by the neutral mount model",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_native_mount_access(
+    name: &str,
+    value: &str,
+    read_only: &mut bool,
+    access_seen: &mut bool,
+) -> Result<(), ValueIssue> {
+    if *access_seen {
+        return Err(ValueIssue::Unsupported(
+            "native Mount options contain conflicting access modes",
+        ));
+    }
+    let enabled = parse_native_bool(value).ok_or(ValueIssue::Unsupported(
+        "native Mount access option must contain a boolean value",
+    ))?;
+    *read_only = if name == "rw" { !enabled } else { enabled };
+    *access_seen = true;
+    Ok(())
+}
+
+fn parse_native_bool(value: &str) -> Option<bool> {
+    match value {
+        "1" | "true" | "yes" => Some(true),
+        "0" | "false" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+fn command_subject(service_name: &str, kind: NativeCommandKind) -> String {
+    match kind {
+        NativeCommandKind::Entrypoint => format!("services.{service_name}.entrypoint"),
+        _ => format!("services.{service_name}.command"),
+    }
+}
+
+const fn command_key(kind: NativeCommandKind) -> &'static str {
+    match kind {
+        NativeCommandKind::Exec => "Exec",
+        NativeCommandKind::Entrypoint => "Entrypoint",
+        _ => "Exec/Entrypoint",
+    }
 }
 
 fn is_safe_absolute_environment_file_path(value: &str) -> bool {
@@ -4762,10 +5293,6 @@ fn is_safe_mount_part(value: &str) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b'@' | b'+' | b'=' | b'%')
         })
-}
-
-fn is_ipv4_address(value: &str) -> bool {
-    value.parse::<std::net::Ipv4Addr>().is_ok()
 }
 
 fn repeated<T>(value: T, origin: Provenance) -> BuildSettingValues<T> {
