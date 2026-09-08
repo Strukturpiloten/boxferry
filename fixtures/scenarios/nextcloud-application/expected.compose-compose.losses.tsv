@@ -1,0 +1,13 @@
+BFC0007	services.app.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.app.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.cache.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.cron.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.db.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.edge-proxy.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.edge-proxy.dependencies[1]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.edge-proxy.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.frontend.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.frontend.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.init.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.init.dependencies[1]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.second-app.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1

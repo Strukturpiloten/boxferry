@@ -1,0 +1,17 @@
+[Unit]
+Requires=app.service
+After=app.service
+
+[Container]
+Image=docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+Volume=nextcloud-data.volume:/var/www/html:ro
+Volume=/srv/boxferry-fixture/nextcloud-application/frontend.conf:/etc/nginx/conf.d/nextcloud.conf:ro,Z
+Network=backend.network
+Network=edge.network
+HealthCmd=["CMD","nginx","-t"]
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=12
+
+[Service]
+Restart=always

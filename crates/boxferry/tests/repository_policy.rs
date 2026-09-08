@@ -68,7 +68,11 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
     validate_live_matrix(&matrix, &limitations)?;
     validate_live_scenarios(&scenarios)?;
     let mut runner_contract = runner.clone();
-    for module in ["scenario-contract.sh", "scenario-validators.sh"] {
+    for module in [
+        "scenario-contract.sh",
+        "scenario-validators.sh",
+        "nextcloud-application.sh",
+    ] {
         let source = format!("source \"${{script_directory}}/lib/{module}\"");
         if !runner.contains(&source) {
             return Err(format!("live runner must source its shared module: {source}"));
@@ -76,6 +80,22 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         runner_contract.push_str(
             &fs::read_to_string(root.join("scripts/lib").join(module))
                 .map_err(|error| format!("failed to read live scenario module: {error}"))?,
+        );
+    }
+    for fixture in [
+        "compose.yaml",
+        "frontend.conf",
+        "images.tsv",
+        "providers.tsv",
+        "proxy.conf",
+        "second-index.html",
+        "published-probe.php",
+        "webdav-probe.php",
+        "README.md",
+    ] {
+        runner_contract.push_str(
+            &fs::read_to_string(root.join("fixtures/conformance/nextcloud-application").join(fixture))
+                .map_err(|error| format!("failed to read Nextcloud application fixture: {error}"))?,
         );
     }
     validate_live_runner(&runner_contract)?;
@@ -165,9 +185,9 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.split('\t').collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    if scenario_rows.len() != 27 {
+    if scenario_rows.len() != 28 {
         return Err(format!(
-            "live Podman scenario catalogue must contain twenty-seven cases, found {}",
+            "live Podman scenario catalogue must contain twenty-eight cases, found {}",
             scenario_rows.len()
         ));
     }
@@ -209,6 +229,7 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         "disappeared-selected-container",
         "partial-inventory-section",
         "external-apply-reacquire",
+        "nextcloud-application-runtime",
     ] {
         if !scenario_ids.contains(required) {
             return Err(format!("live Podman scenario catalogue is missing {required}"));
@@ -257,6 +278,27 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "image inspect --format '{{.Digest}}'",
         "cap_setuid=ep",
         "cap_setgid=ep",
+        "--profile <smoke|full-container|application>",
+        "run_nextcloud_application_cell()",
+        "local nested_archive=${5:-${workload_archive}}",
+        "run_nextcloud_application_cell \"$@\"",
+        "nextcloud_assert_clean_prefix",
+        "podman_socket \"${socket}\" \"Nextcloud ${1:-command}\" \"$@\"",
+        "nextcloud_webdav_round_trip \"${socket}\" \"${prefix}\" \"${mode}\" false",
+        "user: www-data",
+        "create --pull=never --user www-data --name \"${prefix}-cloud-init\"",
+        "- redis:/data",
+        "${prefix}-cloud-redis:/data",
+        "pull_policy: never",
+        "php -r '$$s=json_decode",
+        "nextcloud:32.0.10-apache@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
+        "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
+        "redis:8.2.1-alpine@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232",
+        "nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+        "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
+        "downloaded-test-tool",
+        "transient-test-pull",
+        ".versionstring == \"32.0.10\"",
     ] {
         if !runner.contains(required) {
             return Err(format!("live Podman runner is missing `{required}`"));
@@ -271,6 +313,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
             return Err(format!("live Podman runner must not expose `{forbidden}` to an image"));
         }
     }
+    validate_live_application_cell(runner)?;
     for apply_target_contract in [
         "'$1 == \"podman-6.1-rootful\" { print; exit }'",
         "\"${id}\" == podman-6.1-rootful",
@@ -297,6 +340,23 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_live_application_cell(runner: &str) -> Result<(), String> {
+    for application_contract in [
+        "application) [[ \"${id}\" == podman-6.1-rootless && (-z \"${matrix_cell}\" || \"${id}\" == \"${matrix_cell}\") ]] ;;",
+        "[[ \"${id}-${mode}\" == podman-6.1-rootless-rootless ]]",
+    ] {
+        if !runner.contains(application_contract) {
+            return Err(format!(
+                "live Podman runner must pin the rootless application cell: `{application_contract}`"
+            ));
+        }
+    }
+    if runner.contains("podman-6.1-rootful-rootful ||") {
+        return Err("live Podman application profile must not admit the unverified rootful cell".to_owned());
+    }
+    Ok(())
+}
+
 fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     let required = "sudo env BOXFERRY_BIN=\"${BOXFERRY_BIN}\" bash scripts/podman-live-conformance.sh --profile \"${PROFILE}\" --matrix-cell \"${MATRIX_CELL}\" --engine podman";
     if !hosted.contains(required) {
@@ -316,6 +376,17 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
         "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
         "chmod +x target/debug/boxferry",
+        "application:",
+        "name: Nextcloud application / podman-6.1-rootless",
+        "timeout-minutes: 60",
+        "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64",
+        "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
+        "BOXFERRY_COMPOSE_BIN: ${{ github.workspace }}/target/tools/docker-compose",
+        "BOXFERRY_COMPOSE_BIN=\"${BOXFERRY_COMPOSE_BIN}\"",
+        "--profile application",
+        "--matrix-cell podman-6.1-rootless",
+        "github.event_name == 'pull_request' &&",
+        "sha256sum --check --strict",
     ] {
         if !hosted.contains(required) {
             return Err(format!("hosted live Podman workflow is missing `{required}`"));

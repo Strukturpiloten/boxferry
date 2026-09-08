@@ -1,0 +1,168 @@
+---
+services:
+  db:
+    image: ${BF_POSTGRES_IMAGE:?}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-cloud-db
+    labels: &application-labels
+      io.boxferry.live-run: ${BF_RUN:?}
+      io.boxferry.application: ${BF_PREFIX}-cloud
+    environment:
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: boxferry
+      POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U boxferry -d nextcloud"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    networks:
+      backend:
+        aliases: [db]
+    volumes:
+      - database:/var/lib/postgresql/data
+
+  cache:
+    image: ${BF_REDIS_IMAGE:?}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-cloud-cache
+    labels: *application-labels
+    command: ["redis-server", "--requirepass", "${BF_REDIS_PASSWORD:?}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${BF_REDIS_PASSWORD}", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+    networks:
+      backend:
+        aliases: [cache]
+    volumes:
+      - redis:/data
+
+  app:
+    image: &nextcloud-image ${BF_NEXTCLOUD_IMAGE:?}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-cloud-app
+    labels: *application-labels
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    environment: &nextcloud-environment
+      POSTGRES_HOST: db
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: boxferry
+      POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?}
+      REDIS_HOST: cache
+      REDIS_HOST_PASSWORD: ${BF_REDIS_PASSWORD:?}
+      NEXTCLOUD_ADMIN_USER: boxferry-admin
+      NEXTCLOUD_ADMIN_PASSWORD: ${BF_ADMIN_PASSWORD:?}
+      NEXTCLOUD_TRUSTED_DOMAINS: cloud.example.invalid frontend proxy localhost
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          php -r '$$s=json_decode(@file_get_contents("http://localhost/status.php"),true); exit(is_array($$s)&&($$s["installed"]??false)&&!($$s["maintenance"]??true)&&!($$s["needsDbUpgrade"]??true)?0:1);'
+      interval: 5s
+      timeout: 5s
+      retries: 120
+    networks:
+      backend:
+        aliases: [app]
+    volumes:
+      - nextcloud:/var/www/html
+
+  init:
+    image: *nextcloud-image
+    pull_policy: never
+    container_name: ${BF_PREFIX}-cloud-init
+    labels: *application-labels
+    user: www-data
+    depends_on:
+      app:
+        condition: service_healthy
+    environment: *nextcloud-environment
+    command: ["php", "/var/www/html/occ", "status"]
+    networks: [backend]
+    volumes:
+      - nextcloud:/var/www/html
+
+  cron:
+    image: *nextcloud-image
+    pull_policy: never
+    container_name: ${BF_PREFIX}-cloud-cron
+    labels: *application-labels
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    environment: *nextcloud-environment
+    command: ["/cron.sh"]
+    networks: [backend]
+    volumes:
+      - nextcloud:/var/www/html
+
+  frontend:
+    image: ${BF_NGINX_IMAGE:?}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-cloud-frontend
+    labels: *application-labels
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      backend:
+        aliases: [frontend]
+      edge:
+        aliases: [frontend]
+    volumes:
+      - nextcloud:/var/www/html:ro
+      - ${BF_FIXTURE_ROOT:?}/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+
+  proxy:
+    image: ${BF_NGINX_IMAGE:?}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-shared-proxy
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?}
+      io.boxferry.shared: "true"
+    networks:
+      edge:
+        aliases: [proxy]
+    ports:
+      - "127.0.0.1:18443:8080"
+    volumes:
+      - ${BF_FIXTURE_ROOT:?}/proxy.conf:/etc/nginx/conf.d/default.conf:ro
+
+  second:
+    image: ${BF_NGINX_IMAGE:?}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-second-app
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?}
+      io.boxferry.application: ${BF_PREFIX}-second
+    volumes:
+      - ${BF_FIXTURE_ROOT:?}/second-index.html:/usr/share/nginx/html/index.html:ro
+    networks:
+      edge:
+        aliases: [second]
+
+volumes:
+  database:
+    name: ${BF_PREFIX}-cloud-database
+    labels: *application-labels
+  redis:
+    name: ${BF_PREFIX}-cloud-redis
+    labels: *application-labels
+  nextcloud:
+    name: ${BF_PREFIX}-cloud-nextcloud
+    labels: *application-labels
+
+networks:
+  backend:
+    name: ${BF_PREFIX}-cloud-backend
+    internal: true
+    labels: *application-labels
+  edge:
+    name: ${BF_PREFIX}-shared-edge
+    external: true

@@ -1,0 +1,5 @@
+# schema=1; id reference version license provenance redistribution
+nextcloud	docker.io/library/nextcloud:32.0.10-apache@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d	32.0.10-apache	AGPL-3.0-only	https://github.com/nextcloud/docker	transient-test-pull
+postgres	docker.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94	17.6-alpine	PostgreSQL	https://github.com/docker-library/postgres	transient-test-pull
+redis	docker.io/library/redis:8.2.1-alpine@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232	8.2.1-alpine	AGPL-3.0-only OR LicenseRef-RSALv2 OR SSPL-1.0	https://github.com/redis/docker-library-redis	transient-test-pull
+nginx	docker.io/library/nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8	1.29.1-alpine	BSD-2-Clause	https://github.com/nginx/docker-nginx	transient-test-pull

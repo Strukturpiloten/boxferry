@@ -1,0 +1,7 @@
+BFQ0009	services.app.restart_policy	approximate	podman@6.1.0..6.1.0	1
+BFQ0009	services.cache.restart_policy	approximate	podman@6.1.0..6.1.0	1
+BFQ0009	services.cron.restart_policy	approximate	podman@6.1.0..6.1.0	1
+BFQ0009	services.db.restart_policy	approximate	podman@6.1.0..6.1.0	1
+BFQ0009	services.edge-proxy.restart_policy	approximate	podman@6.1.0..6.1.0	1
+BFQ0009	services.frontend.restart_policy	approximate	podman@6.1.0..6.1.0	1
+BFQ0009	services.second-app.restart_policy	approximate	podman@6.1.0..6.1.0	1

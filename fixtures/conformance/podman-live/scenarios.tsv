@@ -27,3 +27,4 @@ malformed-selected-container	fault-proxy	exact-small	malformed inspect response 
 disappeared-selected-container	fault-proxy	exact-small	404 inspect response blocks every exporter	yes
 partial-inventory-section	fault-proxy	all/label/exact	volume-list failure blocks unbounded selectors while a volume-independent exact container remains usable	yes
 external-apply-reacquire	portable-apply	exact apply-safe container	generated Podman commands run only in a fresh 6.1 harness target and reacquire identically	yes
+nextcloud-application-runtime	nextcloud	all	reviewed Podman 6.1 rootless cell independently provisions Podman CLI and Docker Compose application behavior selectors exports persistence privacy and cleanup	yes

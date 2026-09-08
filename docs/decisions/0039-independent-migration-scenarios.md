@@ -68,3 +68,22 @@ compares the observed missing files and records unperformed evidence dimensions.
 Deriving expectations from exported artifacts or relying only on round trips was
 rejected because importer/exporter defects can agree. Duplicating the live matrix
 in each Lens repository was rejected because ownership and evidence would drift.
+
+## Live application conformance boundary
+
+A production-shaped application check may be harness-owned when it proves runtime behavior
+independently of the authored scenario catalogue. The Nextcloud application profile is one
+test-owned topology provisioned once with direct Podman commands and once with the official
+standalone Docker Compose provider. The provider is an external test oracle: CI downloads
+the exact reviewed asset, verifies its SHA-256, and exposes only a disposable nested socket.
+The live application check is bounded to the reviewed Podman 6.1 rootless cell.
+Provider and image provenance, versions, licenses, redistribution treatment, and immutable
+digests remain checked-in metadata; binaries and images are never redistributed by BoxFerry.
+The host loads verified image archives before the nested API starts, so the nested runtime
+has no registry or repository access. The runner retains collision refusal, bounded
+deadlines, numbered progress, target and image verification, isolation, and prefix-scoped
+cleanup.
+
+Privacy assertions cover BoxFerry reports and redacted evidence. Test-owned native
+definitions and generated migration artifacts may retain explicitly authorized public
+canaries. Retained live failure artifacts require review before sharing.

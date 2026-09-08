@@ -1,0 +1,106 @@
+---
+name: nextcloud-application
+
+services:
+  db:
+    image: docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    restart: always
+    environment:
+      POSTGRES_DB: nextcloud_test
+      POSTGRES_USER: nextcloud_test
+      POSTGRES_PASSWORD: ${BF_TEST_DB_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  cache:
+    image: docker.io/library/redis@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232
+    restart: always
+    environment:
+      BOXFERRY_REDIS_TEST_PASSWORD: ${BF_TEST_CACHE_PASSWORD}
+    volumes:
+      - redis-data:/data
+    networks:
+      - backend
+
+  init:
+    image: docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d
+    command: ["/opt/boxferry/init-nextcloud", "--non-interactive"]
+    restart: "no"
+    environment:
+      POSTGRES_HOST: db
+      REDIS_HOST: cache
+      NEXTCLOUD_ADMIN_USER: boxferry-test-admin
+      NEXTCLOUD_ADMIN_PASSWORD: ${BF_TEST_ADMIN_PASSWORD}
+      POSTGRES_PASSWORD: ${BF_TEST_DB_PASSWORD}
+      REDIS_PASSWORD: ${BF_TEST_CACHE_PASSWORD}
+    volumes:
+      - nextcloud-data:/var/www/html
+    networks:
+      - backend
+
+  app:
+    image: docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d
+    restart: always
+    environment:
+      POSTGRES_HOST: db
+      REDIS_HOST: cache
+      POSTGRES_PASSWORD: ${BF_TEST_DB_PASSWORD}
+      REDIS_PASSWORD: ${BF_TEST_CACHE_PASSWORD}
+    volumes:
+      - nextcloud-data:/var/www/html
+    networks:
+      - backend
+
+  frontend:
+    image: docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+    restart: always
+    volumes:
+      - nextcloud-data:/var/www/html:ro
+    networks:
+      - backend
+      - edge
+
+  cron:
+    image: docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d
+    command: ["/cron.sh"]
+    restart: always
+    environment:
+      POSTGRES_HOST: db
+      REDIS_HOST: cache
+      POSTGRES_PASSWORD: ${BF_TEST_DB_PASSWORD}
+      REDIS_PASSWORD: ${BF_TEST_CACHE_PASSWORD}
+    volumes:
+      - nextcloud-data:/var/www/html
+    networks:
+      - backend
+
+  edge-proxy:
+    image: docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+    restart: always
+    environment:
+      BOXFERRY_EDGE_TEST_TOKEN: ${BF_TEST_EDGE_TOKEN}
+    ports:
+      - "127.0.0.1:18443:8443"
+    volumes:
+      - ${NEXTCLOUD_APPLICATION_ROOT:-/srv/boxferry-fixture/nextcloud-application}/edge-proxy.conf:/etc/nginx/conf.d/edge.conf:ro,Z
+    networks:
+      - edge
+
+  second-app:
+    image: docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+    restart: always
+    networks:
+      - edge
+
+volumes:
+  db-data:
+  redis-data:
+  nextcloud-data:
+
+networks:
+  backend:
+    internal: true
+  edge:
+    internal: false
