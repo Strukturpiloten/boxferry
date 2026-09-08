@@ -1,0 +1,17 @@
+BFP0007	networks.backend.internal	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.db.environment.POSTGRES_DB	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.db.environment.POSTGRES_PASSWORD	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.db.environment.POSTGRES_USER	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__database__DB_TYPE	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__database__HOST	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__database__NAME	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__database__PASSWD	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__database__SSL_MODE	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__database__USER	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__security__INSTALL_LOCK	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__security__SECRET_KEY	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__server__DOMAIN	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__server__ROOT_URL	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__server__SSH_DOMAIN	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.environment.FORGEJO__server__SSH_PORT	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.forgejo.ports	unsupported	podman@6.1.0..6.1.0	1

@@ -37,6 +37,7 @@ active table; superseded records are history and are read only when that history
 | [0040](0040-quadlet-native-value-decoder-boundary.md)                 | QuadletLens-owned native values and BoxFerry-owned neutral meaning           |
 | [0041](0041-portable-intent-and-retained-native-evidence.md)          | Portable intent and provenance-bearing opaque native evidence                |
 | [0042](0042-bounded-podman-creation-evidence-and-intent-promotion.md) | Bounded Podman creation evidence and explicit intent promotion               |
+| [0043](0043-bounded-forgejo-live-application-acceptance.md)           | Bounded Forgejo rootful and rootless live application acceptance             |
 
 ## Superseded history
 

@@ -70,6 +70,14 @@ archive into the isolated rootless 6.1 target, and gives Compose only that dispo
 Direct CLI and Compose provisioning share a reviewed topology but remain independent. Redis
 uses a named `/data` volume so selector and cleanup assertions cover every resource.
 
+`conformance/forgejo-application/` is a separate harness-owned live fixture. Three immutable
+images cover Forgejo 16.0.3-rootless, PostgreSQL, and the Git client/boundary peer. The same archive
+is loaded into reviewed `podman-arch-rootful` and `podman-6.1-rootless` targets before API activation. Native CLI and Docker Compose provisioning independently prove real HTTP and SSH Git operations, private database networking; Compose keeps the peer in a separate project so shared-edge exclusion, collision refusal, and volume persistence after
+container recreation. Only public test canaries are used; the generated SSH private key remains in
+the disposable outer fixture directory and scoped cleanup removes it. Rootless receives the
+no-firewall drop-in while the reviewed Arch rootful target retains stock Netavark publication with
+its included `nft`; the upstream-source rootful target is excluded because it lacks `nft`.
+
 Retained live logs and artifacts require human privacy review before sharing. Never commit raw
 live output.
 

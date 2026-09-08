@@ -1,0 +1,7 @@
+[Container]
+Image=docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+Environment=POSTGRES_DB=forgejo
+Environment=POSTGRES_USER=forgejo
+Environment=POSTGRES_PASSWORD=boxferry-public-db-password-canary
+Volume=db-data.volume:/var/lib/postgresql/data
+Network=backend.network

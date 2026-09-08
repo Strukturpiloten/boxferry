@@ -1,0 +1,2 @@
+BoxFerry Forgejo migration proof
+This content must survive HTTP and SSH Git operations plus container recreation.

@@ -72,6 +72,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         "scenario-contract.sh",
         "scenario-validators.sh",
         "nextcloud-application.sh",
+        "forgejo-application.sh",
     ] {
         let source = format!("source \"${{script_directory}}/lib/{module}\"");
         if !runner.contains(&source) {
@@ -96,6 +97,20 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         runner_contract.push_str(
             &fs::read_to_string(root.join("fixtures/conformance/nextcloud-application").join(fixture))
                 .map_err(|error| format!("failed to read Nextcloud application fixture: {error}"))?,
+        );
+    }
+    for fixture in [
+        "compose.yaml",
+        "peer.compose.yaml",
+        "git-probe.sh",
+        "images.tsv",
+        "providers.tsv",
+        "repository-proof.txt",
+        "README.md",
+    ] {
+        runner_contract.push_str(
+            &fs::read_to_string(root.join("fixtures/conformance/forgejo-application").join(fixture))
+                .map_err(|error| format!("failed to read Forgejo application fixture: {error}"))?,
         );
     }
     validate_live_runner(&runner_contract)?;
@@ -185,9 +200,9 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.split('\t').collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    if scenario_rows.len() != 28 {
+    if scenario_rows.len() != 29 {
         return Err(format!(
-            "live Podman scenario catalogue must contain twenty-eight cases, found {}",
+            "live Podman scenario catalogue must contain twenty-nine cases, found {}",
             scenario_rows.len()
         ));
     }
@@ -230,6 +245,7 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         "partial-inventory-section",
         "external-apply-reacquire",
         "nextcloud-application-runtime",
+        "forgejo-application-runtime",
     ] {
         if !scenario_ids.contains(required) {
             return Err(format!("live Podman scenario catalogue is missing {required}"));
@@ -278,7 +294,6 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "image inspect --format '{{.Digest}}'",
         "cap_setuid=ep",
         "cap_setgid=ep",
-        "--profile <smoke|full-container|application>",
         "run_nextcloud_application_cell()",
         "local nested_archive=${5:-${workload_archive}}",
         "run_nextcloud_application_cell \"$@\"",
@@ -290,6 +305,8 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "- redis:/data",
         "${prefix}-cloud-redis:/data",
         "pull_policy: never",
+        "forgejo/forgejo:16.0.3-rootless@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685",
+        "alpine/git:v2.54.0@sha256:6f3b5029566da8e90b24945933dcd806be866b64b1e706f51828bf84faccf21b",
         "php -r '$$s=json_decode",
         "nextcloud:32.0.10-apache@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
         "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
@@ -314,6 +331,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         }
     }
     validate_live_application_cell(runner)?;
+    validate_live_forgejo_application_cells(runner)?;
     for apply_target_contract in [
         "'$1 == \"podman-6.1-rootful\" { print; exit }'",
         "\"${id}\" == podman-6.1-rootful",
@@ -357,6 +375,34 @@ fn validate_live_application_cell(runner: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
+    for contract in [
+        "--profile <smoke|full-container|application|forgejo-application>",
+        "run_forgejo_application_cell()",
+        "forgejo_assert_clean_prefix",
+        "forgejo_git_probe",
+        "forgejo_clear_probe_state",
+        "forgejo_expect_collision",
+        "forgejo_peer_compose_project",
+        "Rootless Podman can remove a container before reporting a netns teardown error.",
+        "--project-name \"${prefix}-peer\"",
+        "firewall_driver=none drop-in would prevent real HTTP and SSH DNAT",
+        "forgejo-application)",
+        "\"${id}\" == podman-arch-rootful || \"${id}\" == podman-6.1-rootless",
+        "podman-arch-rootful-rootful | podman-6.1-rootless-rootless",
+        "prepare rootless Forgejo network configuration",
+        "verify rootful Forgejo target uses stock firewall configuration",
+        "upstream-source 6.1 rootful target omits nft and cannot install real DNAT.",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!(
+                "live Podman runner must pin both Forgejo application cells: `{contract}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     let required = "sudo env BOXFERRY_BIN=\"${BOXFERRY_BIN}\" bash scripts/podman-live-conformance.sh --profile \"${PROFILE}\" --matrix-cell \"${MATRIX_CELL}\" --engine podman";
     if !hosted.contains(required) {
@@ -385,6 +431,11 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
         "BOXFERRY_COMPOSE_BIN=\"${BOXFERRY_COMPOSE_BIN}\"",
         "--profile application",
         "--matrix-cell podman-6.1-rootless",
+        "forgejo-application:",
+        "name: Forgejo application / Podman 6.1 Arch rootful and rootless",
+        "timeout-minutes: 30",
+        "Run checked-in Forgejo application profile",
+        "--profile forgejo-application --engine podman",
         "github.event_name == 'pull_request' &&",
         "sha256sum --check --strict",
     ] {
@@ -392,6 +443,13 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
             return Err(format!("hosted live Podman workflow is missing `{required}`"));
         }
     }
+    if hosted.contains("--profile forgejo-application --matrix-cell") {
+        return Err("Forgejo application workflow must run both reviewed cells".to_owned());
+    }
+    if hosted.matches("github.event_name == 'pull_request' &&").count() < 2 {
+        return Err("each privileged application job must reject fork-authored code".to_owned());
+    }
+
     for smoke in [
         "podman-5.4-rootless",
         "podman-6.1-rootful",

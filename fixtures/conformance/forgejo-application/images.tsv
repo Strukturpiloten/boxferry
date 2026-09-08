@@ -1,0 +1,4 @@
+# schema=1; id	reference	version	license	provenance	redistribution
+forgejo	codeberg.org/forgejo/forgejo:16.0.3-rootless@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685	16.0.3-rootless	GPL-3.0-or-later	https://codeberg.org/forgejo/forgejo	transient-test-pull
+postgres	docker.io/library/postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94	17.6-alpine	PostgreSQL	https://github.com/docker-library/postgres	transient-test-pull
+git-client	docker.io/alpine/git:v2.54.0@sha256:6f3b5029566da8e90b24945933dcd806be866b64b1e706f51828bf84faccf21b	2.54.0	Apache-2.0	https://github.com/alpine-docker/git	transient-test-pull
