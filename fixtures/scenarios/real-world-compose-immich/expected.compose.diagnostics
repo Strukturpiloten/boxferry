@@ -1,0 +1,15 @@
+BFC0007|services.immich-server.healthcheck
+BFC0007|services.immich-server.dependencies[0]
+BFC0007|services.immich-server.dependencies[1]
+BFC0007|services.immich-machine-learning.healthcheck
+BFC0007|services.redis.healthcheck
+BFC0007|services.database.healthcheck
+BFC0009|services.redis.image
+BFC0009|services.database.image
+BFC0105|services.immich-server.image
+BFC0105|services.immich-server.volumes[0]
+BFC0105|services.immich-machine-learning.image
+BFC0105|services.database.environment.POSTGRES_PASSWORD
+BFC0105|services.database.environment.POSTGRES_USER
+BFC0105|services.database.environment.POSTGRES_DB
+BFC0105|services.database.volumes[0]

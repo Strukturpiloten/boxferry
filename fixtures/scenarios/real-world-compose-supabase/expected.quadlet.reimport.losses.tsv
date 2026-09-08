@@ -1,0 +1,12 @@
+BFQ1003	services.kong.networks.aliases	unsupported	podman@5.4.0..6.1.0	1
+BFQ1004	services.auth.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.db.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.functions.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.imgproxy.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.kong.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.meta.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.realtime.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.rest.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.storage.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.studio.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.supavisor.restart_policy	approximate	podman@5.4.0..6.1.0	1

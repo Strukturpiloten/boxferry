@@ -1,0 +1,105 @@
+schema = 1
+
+[[scenarios]]
+id = "authored-core"
+manifest = "fixtures/scenarios/authored-core/scenario.toml"
+
+[[scenarios]]
+id = "podman-portable-intent"
+manifest = "fixtures/scenarios/podman-portable-intent/scenario.toml"
+
+[[scenarios]]
+id = "document-route-normal"
+manifest = "fixtures/conversion/document-route-matrix/document-route-normal.scenario.toml"
+
+[[scenarios]]
+id = "document-route-tmpfs"
+manifest = "fixtures/conversion/document-route-matrix/document-route-tmpfs.scenario.toml"
+
+[[scenarios]]
+id = "compose-to-quadlet-interpolation"
+manifest = "fixtures/conversion/compose-to-quadlet-interpolation/scenario.toml"
+
+[[scenarios]]
+id = "document-route-negative"
+manifest = "fixtures/conversion/document-route-matrix/document-route-negative.scenario.toml"
+
+[[scenarios]]
+id = "compose-to-quadlet-dependencies"
+manifest = "fixtures/conversion/compose-to-quadlet-dependencies/scenario.toml"
+
+[[scenarios]]
+id = "document-route-unresolved"
+manifest = "fixtures/conversion/document-route-matrix/document-route-unresolved.scenario.toml"
+
+[[scenarios]]
+id = "document-route-interpolation"
+manifest = "fixtures/conversion/document-route-matrix/document-route-interpolation.scenario.toml"
+
+[[scenarios]]
+id = "compose-import-core"
+manifest = "fixtures/adapter-contract/compose-import-core/scenario.toml"
+
+[[scenarios]]
+id = "compose-to-quadlet-core"
+manifest = "fixtures/conversion/compose-to-quadlet-core/scenario.toml"
+
+[[scenarios]]
+id = "compose-to-quadlet-pod"
+manifest = "fixtures/conversion/compose-to-quadlet-pod/scenario.toml"
+
+[[scenarios]]
+id = "compose-to-quadlet-secrets"
+manifest = "fixtures/conversion/compose-to-quadlet-secrets/scenario.toml"
+
+[[scenarios]]
+id = "quadlet-native-values"
+manifest = "fixtures/conversion/quadlet-native-values/scenario.toml"
+
+[[scenarios]]
+id = "document-route-lossy"
+manifest = "fixtures/conversion/document-route-matrix/document-route-lossy.scenario.toml"
+
+[[scenarios]]
+id = "podman-lens-complex-corpus"
+manifest = "fixtures/differential/podman-lens-complex-corpus/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-apache-superset"
+manifest = "fixtures/scenarios/real-world-compose-apache-superset/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-appwrite"
+manifest = "fixtures/scenarios/real-world-compose-appwrite/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-immich"
+manifest = "fixtures/scenarios/real-world-compose-immich/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-librechat"
+manifest = "fixtures/scenarios/real-world-compose-librechat/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-mailcow"
+manifest = "fixtures/scenarios/real-world-compose-mailcow/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-mattermost"
+manifest = "fixtures/scenarios/real-world-compose-mattermost/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-nextcloud"
+manifest = "fixtures/scenarios/real-world-compose-nextcloud/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-paperless-ngx"
+manifest = "fixtures/scenarios/real-world-compose-paperless-ngx/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-plausible"
+manifest = "fixtures/scenarios/real-world-compose-plausible/scenario.toml"
+
+[[scenarios]]
+id = "real-world-compose-supabase"
+manifest = "fixtures/scenarios/real-world-compose-supabase/scenario.toml"

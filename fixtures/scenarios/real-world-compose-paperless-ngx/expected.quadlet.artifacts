@@ -1,0 +1,7 @@
+broker.container
+data.volume
+db.container
+media.volume
+pgdata.volume
+redisdata.volume
+webserver.container

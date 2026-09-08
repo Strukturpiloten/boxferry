@@ -37,6 +37,16 @@ scenario and validator modules retain its existing assertion behavior while the
 entry point owns deadlines, progress, isolation and cleanup. Native libraries
 retain their independent fixture formats and own native conformance evidence.
 
+### Catalogue and corpus boundary
+
+Ordinary tests discover scenarios only through `fixtures/scenarios/catalogue.toml`. Schema 1 accepts `scenario.toml` in an ID-named directory and `<id>.scenario.toml`; finding an unregistered file on disk is never implicit authorization to execute it. Every successful input has one route for every exporter in the executable capability registry. Expected importer rejection is represented for every exporter too, without pretending an artifact was emitted.
+
+The ten real-world Compose sources are vendored immutable Git blobs with their reviewed upstream license text and, where supplied upstream, NOTICE text. They run offline in the ordinary gate. `fixtures/real-world/corpus.toml` and its remote-fetch command are refresh/provenance controls only: a network result is not acceptance evidence until the vendored blob, license, manifest, and exact expectations are reviewed together.
+
+Scenario expectations may use confined nonempty sidecars for artifacts, diagnostics, export losses, reimport diagnostics, and reimport losses. Inline and sidecar forms cannot be mixed. Protected values are declared explicitly and must remain absent from reports and diagnostics. Compose profile selection, multi-file merge order, environment files, and interpolation values are part of the input contract rather than ambient process state.
+
+A generated Podman document is a deployment plan, not observed inventory. Its create set, external preconditions, image operations, and container start order are checked directly; no reimport claim is made. Native parsing and offline reimport checks do not claim provider conformance or application runtime success.
+
 ## Consequences
 
 Scenario schema changes require review. Unsupported assertion forms fail closed;

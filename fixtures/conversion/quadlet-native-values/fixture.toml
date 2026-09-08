@@ -32,7 +32,7 @@ protected-values = ["hello quoted command", "hello native world"]
 
 [extensions.scenarios.exports.compose]
 loss-policy = "partial"
-diagnostic-codes = ["BFQ1003", "BFQ1003"]
+diagnostic-codes = ["BFC0007", "BFQ1003", "BFQ1003"]
 artifact-values = ["hello quoted command", "hello native world"]
 
 [[extensions.scenarios.exports.compose.artifacts]]

@@ -1,0 +1,178 @@
+# Pinned upstream source with independently transcribed intent and exact route evidence.
+schema = 1
+id = "real-world-compose-paperless-ngx"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = []
+
+[application]
+name = "paperless-ngx"
+revision = "47727de11673c2a08d27b144048bd5f1a2ac8179"
+
+[[components]]
+name = "broker"
+configured-image = "docker.io/valkey/valkey:9-alpine"
+
+[[components]]
+name = "db"
+configured-image = "docker.io/library/postgres:18"
+
+[[components]]
+name = "webserver"
+configured-image = "ghcr.io/paperless-ngx/paperless-ngx:latest"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["input.compose.yaml"]
+format-version = "compose-specification"
+all-profiles = true
+
+[provenance]
+source = "external"
+corpus-project = "paperless-ngx"
+license = "GPL-3.0-only"
+privacy-reviewed = true
+test-data = "Immutable public upstream Compose blob; no environment files, credentials, or runtime observations were added."
+image-evidence = "Configured image/build references are independently transcribed; no image is pulled."
+
+[deployment]
+origin = "external"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "service:broker",
+  "service:db",
+  "service:webserver",
+  "volume:data",
+  "volume:media",
+  "volume:pgdata",
+  "volume:redisdata",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:data:application",
+  "volume:media:application",
+  "volume:pgdata:application",
+  "volume:redisdata:application",
+]
+shared-boundaries = [
+  "volume:data:consumers=webserver",
+  "volume:media:consumers=webserver",
+  "volume:pgdata:consumers=db",
+  "volume:redisdata:consumers=broker",
+]
+required-mounts = [
+  "broker:redisdata:/data",
+  "db:pgdata:/var/lib/postgresql",
+  "webserver:data:/usr/src/paperless/data",
+  "webserver:media:/usr/src/paperless/media",
+]
+# REVIEW-GAP unrepresentable relative/plain bind: webserver:./export:/usr/src/paperless/export:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: webserver:./consume:/usr/src/paperless/consume:read-only=false:selinux=none
+required-environment = [
+  "db:POSTGRES_DB=paperless",
+  "db:POSTGRES_USER=paperless",
+  "db:POSTGRES_PASSWORD=paperless",
+  "webserver:PAPERLESS_REDIS=redis://broker:6379",
+  "webserver:PAPERLESS_DBHOST=db",
+  "webserver:PAPERLESS_DBENGINE=postgresql",
+]
+required-environment-order = []
+required-restart = [
+  "broker:unless-stopped",
+  "db:unless-stopped",
+  "webserver:unless-stopped",
+]
+required-runtime-names = []
+unpublished-services = [
+  "broker",
+  "db",
+]
+external-prerequisites = []
+expected-diagnostics = []
+required-image-builds = []
+required-image-sources = [
+  { service = "broker", kind = "literal", value = "docker.io/valkey/valkey:9-alpine" },
+  { service = "db", kind = "literal", value = "docker.io/library/postgres:18" },
+  { service = "webserver", kind = "literal", value = "ghcr.io/paperless-ngx/paperless-ngx:latest" },
+]
+required-commands = [
+  { service = "broker", kind = "absent", values = [] },
+  { service = "db", kind = "absent", values = [] },
+  { service = "webserver", kind = "absent", values = [] },
+]
+required-entrypoints = [
+  { service = "broker", kind = "absent", values = [] },
+  { service = "db", kind = "absent", values = [] },
+  { service = "webserver", kind = "absent", values = [] },
+]
+required-dependencies = [
+  { service = "webserver", dependency = "db", condition = "unspecified" },
+  { service = "webserver", dependency = "broker", condition = "unspecified" },
+]
+required-healthchecks = []
+required-port-bindings = [
+  { service = "webserver", container = 8000, published = 8000, protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "broker", source = "redisdata", target = "/data", read-only = false },
+  { service = "db", source = "pgdata", target = "/var/lib/postgresql", read-only = false },
+  { service = "webserver", source = "data", target = "/usr/src/paperless/data", read-only = false },
+  { service = "webserver", source = "media", target = "/usr/src/paperless/media", read-only = false },
+]
+required-networks = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies."
+artifacts-file = "expected.compose.artifacts"
+diagnostics-file = "expected.compose.diagnostics"
+allowed-losses-file = "expected.compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies." }
+reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Quadlet output is emitted, but reimport cannot reconstruct the reviewed dependencies and restart policies."
+artifacts-file = "expected.quadlet.artifacts"
+diagnostics-file = "expected.quadlet.diagnostics"
+reimport-diagnostics-file = "expected.quadlet.reimport.diagnostics"
+allowed-losses-file = "expected.quadlet.losses.tsv"
+reimport-allowed-losses-file = "expected.quadlet.reimport.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependencies and restart policies." }
+reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "restart:broker", "restart:db", "restart:webserver"]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output omits the reviewed dependencies, literal environment assignments, and publication."
+artifacts-file = "expected.podman.artifacts"
+diagnostics-file = "expected.podman.diagnostics"
+allowed-losses-file = "expected.podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "environment:db:POSTGRES_DB", "environment:db:POSTGRES_PASSWORD", "environment:db:POSTGRES_USER", "environment:webserver:PAPERLESS_DBENGINE", "environment:webserver:PAPERLESS_DBHOST", "environment:webserver:PAPERLESS_REDIS", "port:webserver:8000:Some(8000)"]

@@ -1,0 +1,4 @@
+# Preserve reviewed upstream bytes; whitespace belongs to the source evidence.
+fixtures/scenarios/real-world-compose-*/UPSTREAM-LICENSE -whitespace
+fixtures/scenarios/real-world-compose-*/UPSTREAM-NOTICE -whitespace
+fixtures/scenarios/real-world-compose-*/input.compose.yaml -whitespace

@@ -78,6 +78,7 @@ check_yaml_document_markers() {
 
   for file in "${structured_files[@]}"; do
     case "${file}" in
+      fixtures/scenarios/real-world-compose-*/input.compose.yaml) continue ;;
       *.yaml | *.yml) ;;
       *) continue ;;
     esac

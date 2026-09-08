@@ -1,0 +1,6 @@
+BFQ0003	services.webserver.env_file[0]	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.webserver.mounts[2]	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.webserver.mounts[3]	unsupported	podman@5.4.0..6.1.0	1
+BFQ0009	services.broker.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.db.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.webserver.restart_policy	approximate	podman@5.4.0..6.1.0	1

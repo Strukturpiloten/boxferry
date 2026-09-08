@@ -1,0 +1,300 @@
+# Pinned upstream source with independently transcribed intent and exact route evidence.
+schema = 1
+id = "real-world-compose-apache-superset"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = []
+
+[application]
+name = "apache-superset"
+revision = "816f37f5b97b2e060a30cc53eaa6ac87f58320b3"
+
+[[components]]
+name = "nginx"
+configured-image = "nginx:latest"
+
+[[components]]
+name = "redis"
+configured-image = "redis:7"
+
+[[components]]
+name = "db"
+configured-image = "postgres:17"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["input.compose.yaml"]
+format-version = "compose-specification"
+all-profiles = true
+import-diagnostics-file = "expected.import.diagnostics"
+
+[provenance]
+source = "external"
+corpus-project = "apache-superset"
+license = "Apache-2.0"
+privacy-reviewed = true
+test-data = "Immutable public upstream Compose blob; no environment files, credentials, or runtime observations were added."
+image-evidence = "Configured image/build references are independently transcribed; no image is pulled."
+
+[deployment]
+origin = "external"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "service:nginx",
+  "service:redis",
+  "service:db",
+  "service:superset",
+  "service:superset-websocket",
+  "service:superset-init",
+  "service:superset-node",
+  "service:superset-worker",
+  "service:superset-worker-beat",
+  "service:superset-tests-worker",
+  "volume:superset_home",
+  "volume:db_home",
+  "volume:redis",
+  "volume:superset_data",
+  "image-build:superset-build",
+  "image-build:superset-websocket-build",
+  "image-build:superset-init-build",
+  "image-build:superset-node-build",
+  "image-build:superset-worker-build",
+  "image-build:superset-worker-beat-build",
+  "image-build:superset-tests-worker-build",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:superset_home:application",
+  "volume:db_home:application",
+  "volume:redis:application",
+  "volume:superset_data:application",
+]
+shared-boundaries = [
+  "volume:superset_home:consumers=superset,superset-init,superset-node,superset-worker,superset-worker-beat,superset-tests-worker",
+  "volume:db_home:consumers=db",
+  "volume:redis:consumers=redis",
+  "volume:superset_data:consumers=superset,superset-init,superset-node,superset-worker,superset-worker-beat,superset-tests-worker",
+]
+required-mounts = [
+  "redis:redis:/data",
+  "db:db_home:/var/lib/postgresql/data",
+  "superset:superset_home:/app/superset_home",
+  "superset:superset_data:/app/data",
+  "superset-init:superset_home:/app/superset_home",
+  "superset-init:superset_data:/app/data",
+  "superset-node:superset_home:/app/superset_home",
+  "superset-node:superset_data:/app/data",
+  "superset-worker:superset_home:/app/superset_home",
+  "superset-worker:superset_data:/app/data",
+  "superset-worker-beat:superset_home:/app/superset_home",
+  "superset-worker-beat:superset_data:/app/data",
+  "superset-tests-worker:superset_home:/app/superset_home",
+  "superset-tests-worker:superset_data:/app/data",
+]
+# REVIEW-GAP unrepresentable relative/plain bind: nginx:./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:read-only=true:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: nginx:./docker/nginx/templates:/etc/nginx/templates:read-only=true:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: db:./docker/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset:./docker:/app/docker:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset:./superset:/app/superset:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset:./superset-core:/app/superset-core:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset:./superset-frontend:/app/superset-frontend:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset:./tests:/app/tests:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset:./local_extensions:/app/local_extensions:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-websocket:./superset-websocket:/home/superset-websocket:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-websocket:./docker/superset-websocket/config.example.json:/home/superset-websocket/config.json:read-only=true:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-init:./docker:/app/docker:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-init:./superset:/app/superset:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-init:./superset-core:/app/superset-core:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-init:./superset-frontend:/app/superset-frontend:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-init:./tests:/app/tests:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-init:./local_extensions:/app/local_extensions:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-node:./docker:/app/docker:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-node:./superset:/app/superset:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-node:./superset-core:/app/superset-core:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-node:./superset-frontend:/app/superset-frontend:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-node:./tests:/app/tests:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-node:./local_extensions:/app/local_extensions:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker:./docker:/app/docker:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker:./superset:/app/superset:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker:./superset-core:/app/superset-core:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker:./superset-frontend:/app/superset-frontend:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker:./tests:/app/tests:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker:./local_extensions:/app/local_extensions:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker-beat:./docker:/app/docker:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker-beat:./superset:/app/superset:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker-beat:./superset-core:/app/superset-core:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker-beat:./superset-frontend:/app/superset-frontend:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker-beat:./tests:/app/tests:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-worker-beat:./local_extensions:/app/local_extensions:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-tests-worker:./docker:/app/docker:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-tests-worker:./superset:/app/superset:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-tests-worker:./superset-core:/app/superset-core:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-tests-worker:./superset-frontend:/app/superset-frontend:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-tests-worker:./tests:/app/tests:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: superset-tests-worker:./local_extensions:/app/local_extensions:read-only=false:selinux=none
+required-environment = [
+  "superset-websocket:PORT=8080",
+  "superset-websocket:REDIS_HOST=redis",
+  "superset-websocket:REDIS_PORT=6379",
+  "superset-websocket:REDIS_SSL=false",
+  "superset-node:BUILD_SUPERSET_FRONTEND_IN_DOCKER=true",
+  "superset-node:NPM_RUN_PRUNE=false",
+  "superset-node:superset=http://superset:8088",
+  "superset-node:WEBPACK_DEVSERVER_HOST=0.0.0.0",
+  "superset-worker:CELERYD_CONCURRENCY=2",
+  "superset-tests-worker:DATABASE_HOST=localhost",
+  "superset-tests-worker:DATABASE_DB=test",
+  "superset-tests-worker:REDIS_CELERY_DB=2",
+  "superset-tests-worker:REDIS_RESULTS_DB=3",
+  "superset-tests-worker:REDIS_HOST=localhost",
+  "superset-tests-worker:CELERYD_CONCURRENCY=8",
+]
+required-environment-order = []
+required-restart = [
+  "nginx:unless-stopped",
+  "redis:unless-stopped",
+  "db:unless-stopped",
+  "superset:unless-stopped",
+  "superset-websocket:absent",
+  "superset-init:absent",
+  "superset-node:absent",
+  "superset-worker:unless-stopped",
+  "superset-worker-beat:unless-stopped",
+  "superset-tests-worker:absent",
+]
+required-runtime-names = []
+unpublished-services = [
+  "superset-init",
+  "superset-worker",
+  "superset-worker-beat",
+  "superset-tests-worker",
+]
+external-prerequisites = []
+expected-diagnostics = []
+required-image-builds = [
+  "superset-build",
+  "superset-websocket-build",
+  "superset-init-build",
+  "superset-node-build",
+  "superset-worker-build",
+  "superset-worker-beat-build",
+  "superset-tests-worker-build",
+]
+required-image-sources = [
+  { service = "nginx", kind = "literal", value = "nginx:latest" },
+  { service = "redis", kind = "literal", value = "redis:7" },
+  { service = "db", kind = "literal", value = "postgres:17" },
+  { service = "superset", kind = "build", value = "superset-build" },
+  { service = "superset-websocket", kind = "build", value = "superset-websocket-build" },
+  { service = "superset-init", kind = "build", value = "superset-init-build" },
+  { service = "superset-node", kind = "build", value = "superset-node-build" },
+  { service = "superset-worker", kind = "build", value = "superset-worker-build" },
+  { service = "superset-worker-beat", kind = "build", value = "superset-worker-beat-build" },
+  { service = "superset-tests-worker", kind = "build", value = "superset-tests-worker-build" },
+]
+required-commands = [
+  { service = "nginx", kind = "exec", values = ["/bin/bash", "-c", "url=\"http://host.docker.internal:9000/static/assets/manifest.json\"\nmax_attempts=300  # ~10 minutes at 2s intervals; first build can be slow\necho \"Waiting for webpack dev server at $$url...\"\nattempt=0\nuntil curl -sf --max-time 5 -H \"Host: localhost\" -o /dev/null \"$$url\"; do\n  attempt=$$((attempt + 1))\n  if [ \"$$attempt\" -ge \"$$max_attempts\" ]; then\n    echo \"ERROR: webpack dev server did not serve $$url after $$max_attempts attempts.\" >&2\n    echo \"Is the dev server running? With BUILD_SUPERSET_FRONTEND_IN_DOCKER=false you must start it on the host (e.g. 'npm run dev' in superset-frontend).\" >&2\n    exit 1\n  fi\n  if [ $$((attempt % 15)) -eq 0 ]; then\n    echo \"Still waiting for webpack dev server... ($$attempt/$$max_attempts)\"\n  fi\n  sleep 2\ndone\necho \"Webpack dev server is ready; starting nginx.\"\nexec /docker-entrypoint.sh nginx -g 'daemon off;'\n"] },
+  { service = "redis", kind = "absent", values = [] },
+  { service = "db", kind = "absent", values = [] },
+  { service = "superset", kind = "exec", values = ["/app/docker/docker-bootstrap.sh", "app"] },
+  { service = "superset-websocket", kind = "absent", values = [] },
+  { service = "superset-init", kind = "exec", values = ["/app/docker/docker-init.sh"] },
+  { service = "superset-node", kind = "exec", values = ["/app/docker/docker-frontend.sh"] },
+  { service = "superset-worker", kind = "exec", values = ["/app/docker/docker-bootstrap.sh", "worker"] },
+  { service = "superset-worker-beat", kind = "exec", values = ["/app/docker/docker-bootstrap.sh", "beat"] },
+  { service = "superset-tests-worker", kind = "exec", values = ["/app/docker/docker-bootstrap.sh", "worker"] },
+]
+required-entrypoints = [
+  { service = "nginx", kind = "absent", values = [] },
+  { service = "redis", kind = "absent", values = [] },
+  { service = "db", kind = "absent", values = [] },
+  { service = "superset", kind = "absent", values = [] },
+  { service = "superset-websocket", kind = "absent", values = [] },
+  { service = "superset-init", kind = "absent", values = [] },
+  { service = "superset-node", kind = "absent", values = [] },
+  { service = "superset-worker", kind = "absent", values = [] },
+  { service = "superset-worker-beat", kind = "absent", values = [] },
+  { service = "superset-tests-worker", kind = "absent", values = [] },
+]
+required-dependencies = [
+  { service = "superset", dependency = "superset-init", condition = "completed-successfully" },
+  { service = "superset-websocket", dependency = "redis", condition = "unspecified" },
+  { service = "superset-init", dependency = "db", condition = "started" },
+  { service = "superset-init", dependency = "redis", condition = "started" },
+  { service = "superset-worker", dependency = "superset-init", condition = "completed-successfully" },
+  { service = "superset-worker-beat", dependency = "superset-worker", condition = "unspecified" },
+  { service = "superset-tests-worker", dependency = "superset-init", condition = "completed-successfully" },
+]
+required-healthchecks = [
+  { service = "superset-worker", command-kind = "shell", command = ["celery -A superset.tasks.celery_app:app inspect ping -d celery@$$HOSTNAME"] },
+  { service = "superset-tests-worker", command-kind = "shell", command = ["celery inspect ping -A superset.tasks.celery_app:app -d celery@$$HOSTNAME"] },
+]
+required-port-bindings = []
+required-volume-mounts = [
+  { service = "redis", source = "redis", target = "/data", read-only = false },
+  { service = "db", source = "db_home", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "superset", source = "superset_home", target = "/app/superset_home", read-only = false },
+  { service = "superset", source = "superset_data", target = "/app/data", read-only = false },
+  { service = "superset-init", source = "superset_home", target = "/app/superset_home", read-only = false },
+  { service = "superset-init", source = "superset_data", target = "/app/data", read-only = false },
+  { service = "superset-node", source = "superset_home", target = "/app/superset_home", read-only = false },
+  { service = "superset-node", source = "superset_data", target = "/app/data", read-only = false },
+  { service = "superset-worker", source = "superset_home", target = "/app/superset_home", read-only = false },
+  { service = "superset-worker", source = "superset_data", target = "/app/data", read-only = false },
+  { service = "superset-worker-beat", source = "superset_home", target = "/app/superset_home", read-only = false },
+  { service = "superset-worker-beat", source = "superset_data", target = "/app/data", read-only = false },
+  { service = "superset-tests-worker", source = "superset_home", target = "/app/superset_home", read-only = false },
+  { service = "superset-tests-worker", source = "superset_data", target = "/app/data", read-only = false },
+]
+required-networks = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.compose.diagnostics"
+allowed-losses-file = "expected.compose.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.quadlet.diagnostics"
+allowed-losses-file = "expected.quadlet.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.podman.diagnostics"
+allowed-losses-file = "expected.podman.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }

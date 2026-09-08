@@ -1,0 +1,7 @@
+db-data.volume
+event-data.volume
+event-logs.volume
+plausible-data.volume
+plausible.container
+plausible_db.container
+plausible_events_db.container

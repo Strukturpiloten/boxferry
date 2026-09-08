@@ -1,0 +1,7 @@
+BFC0004	services.admin-panel.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0004	services.api.ports[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.admin-panel.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.api.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.api.dependencies[1]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.rag_api.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0009	services.api.extra_hosts[0]	approximate	compose-specification@1.0.0..1.0.0	1

@@ -1,0 +1,14 @@
+api.container
+backup.container
+database.container
+database-data.volume
+data-net.network
+edge-net.network
+isolated-control.container
+isolated-net.network
+metrics.container
+observer.container
+observer-cache.volume
+proxy.container
+shared-assets.volume
+worker.container

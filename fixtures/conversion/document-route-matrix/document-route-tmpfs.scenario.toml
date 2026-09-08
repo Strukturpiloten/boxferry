@@ -1,0 +1,85 @@
+schema = 1
+id = "document-route-tmpfs"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "route-matrix-tmpfs"
+version = "1.0.0"
+
+[[components]]
+name = "worker"
+version = "1.0.0"
+image = "example.invalid/worker"
+digest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+configured-image = "example.invalid/worker:1"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["tmpfs-compose.yaml"]
+format-version = "compose-specification"
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored synthetic names and paths; no captured user data or credentials."
+image-evidence = "Synthetic example.invalid image identity is never pulled; digest-shaped metadata is offline-only."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = ["service:worker"]
+excluded-resources = []
+ownership-boundaries = []
+shared-boundaries = []
+required-mounts = []
+required-tmpfs = ["worker:/run/boxferry"]
+required-environment = []
+required-ports = []
+required-restart = ["worker:absent"]
+unpublished-services = ["worker"]
+external-prerequisites = []
+expected-diagnostics = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["worker.container"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["podman-commands.sh", "podman.json"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }

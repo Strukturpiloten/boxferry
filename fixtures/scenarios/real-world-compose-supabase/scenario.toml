@@ -1,0 +1,386 @@
+# Pinned upstream source with independently transcribed intent and exact route evidence.
+schema = 1
+id = "real-world-compose-supabase"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = []
+
+[application]
+name = "supabase"
+revision = "9952d6f10fb9a7b2d9d8c3312b279bfab2c4ba96"
+
+[[components]]
+name = "studio"
+configured-image = "supabase/studio:2026.08.03-sha-022b374"
+
+[[components]]
+name = "kong"
+configured-image = "kong/kong:3.9.3"
+
+[[components]]
+name = "auth"
+configured-image = "supabase/gotrue:v2.189.0"
+
+[[components]]
+name = "rest"
+configured-image = "postgrest/postgrest:v14.12"
+
+[[components]]
+name = "realtime"
+configured-image = "supabase/realtime:v2.102.3"
+
+[[components]]
+name = "storage"
+configured-image = "supabase/storage-api:v1.60.4"
+
+[[components]]
+name = "imgproxy"
+configured-image = "darthsim/imgproxy:v3.30.1"
+
+[[components]]
+name = "meta"
+configured-image = "supabase/postgres-meta:v0.96.6"
+
+[[components]]
+name = "functions"
+configured-image = "supabase/edge-runtime:v1.74.0"
+
+[[components]]
+name = "db"
+configured-image = "supabase/postgres:17.6.1.136"
+
+[[components]]
+name = "supavisor"
+configured-image = "supabase/supavisor:2.9.5"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["input.compose.yaml"]
+format-version = "compose-specification"
+all-profiles = true
+import-diagnostics-file = "expected.import.diagnostics"
+
+[provenance]
+source = "external"
+corpus-project = "supabase"
+license = "Apache-2.0"
+privacy-reviewed = true
+test-data = "Immutable public upstream Compose blob; no environment files, credentials, or runtime observations were added."
+image-evidence = "Configured image/build references are independently transcribed; no image is pulled."
+
+[deployment]
+origin = "external"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "service:studio",
+  "service:kong",
+  "service:auth",
+  "service:rest",
+  "service:realtime",
+  "service:storage",
+  "service:imgproxy",
+  "service:meta",
+  "service:functions",
+  "service:db",
+  "service:supavisor",
+  "volume:db-config",
+  "volume:deno-cache",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:db-config:application",
+  "volume:deno-cache:application",
+]
+shared-boundaries = [
+  "volume:db-config:consumers=db",
+  "volume:deno-cache:consumers=functions",
+]
+required-mounts = [
+  "functions:deno-cache:/root/.cache/deno",
+  "db:db-config:/etc/postgresql-custom",
+]
+# REVIEW-GAP unrepresentable relative/plain bind: studio:./volumes/snippets:/app/snippets:read-only=false:selinux=shared
+# REVIEW-GAP unrepresentable relative/plain bind: studio:./volumes/functions:/app/edge-functions:read-only=true:selinux=shared
+# REVIEW-GAP unrepresentable relative/plain bind: kong:./volumes/api/kong.yml:/home/kong/temp.yml:read-only=true:selinux=shared
+# REVIEW-GAP unrepresentable relative/plain bind: kong:./volumes/api/kong-entrypoint.sh:/home/kong/kong-entrypoint.sh:read-only=true:selinux=shared
+# REVIEW-GAP unrepresentable relative/plain bind: storage:./volumes/storage:/var/lib/storage:read-only=false:selinux=shared
+# REVIEW-GAP unrepresentable relative/plain bind: imgproxy:./volumes/storage:/var/lib/storage:read-only=false:selinux=shared
+# REVIEW-GAP unrepresentable relative/plain bind: functions:./volumes/functions:/home/deno/functions:read-only=false:selinux=shared
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/realtime.sql:/docker-entrypoint-initdb.d/migrations/99-realtime.sql:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/webhooks.sql:/docker-entrypoint-initdb.d/init-scripts/98-webhooks.sql:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/jwt.sql:/docker-entrypoint-initdb.d/init-scripts/99-jwt.sql:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/data:/var/lib/postgresql/data:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/_supabase.sql:/docker-entrypoint-initdb.d/migrations/97-_supabase.sql:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/logs.sql:/docker-entrypoint-initdb.d/migrations/99-logs.sql:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: db:./volumes/db/pooler.sql:/docker-entrypoint-initdb.d/migrations/99-pooler.sql:read-only=false:selinux=private
+# REVIEW-GAP unrepresentable relative/plain bind: supavisor:./volumes/pooler/pooler.exs:/etc/pooler/pooler.exs:read-only=true:selinux=shared
+required-environment = [
+  "studio:HOSTNAME=0.0.0.0",
+  "studio:STUDIO_PG_META_URL=http://meta:8080",
+  "studio:POSTGRES_USER_READ_WRITE=postgres",
+  "studio:SUPABASE_URL=http://kong:8000",
+  "studio:ENABLED_FEATURES_LOGS_ALL=false",
+  "studio:SNIPPETS_MANAGEMENT_FOLDER=/app/snippets",
+  "studio:EDGE_FUNCTIONS_MANAGEMENT_FOLDER=/app/edge-functions",
+  "kong:KONG_DATABASE=off",
+  "kong:KONG_DECLARATIVE_CONFIG=/usr/local/kong/kong.yml",
+  "kong:KONG_ROUTER_FLAVOR=expressions",
+  "kong:KONG_DNS_ORDER=LAST,A,CNAME",
+  "kong:KONG_DNS_NOT_FOUND_TTL=1",
+  "kong:KONG_DNS_VALID_TTL=5",
+  "kong:KONG_PLUGINS=request-transformer,cors,key-auth,acl,basic-auth,request-termination,ip-restriction,post-function",
+  "kong:KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
+  "kong:KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
+  "kong:KONG_PROXY_ACCESS_LOG=/dev/stdout combined",
+  "auth:GOTRUE_API_HOST=0.0.0.0",
+  "auth:GOTRUE_API_PORT=9999",
+  "auth:GOTRUE_DB_DRIVER=postgres",
+  "auth:GOTRUE_JWT_ADMIN_ROLES=service_role",
+  "auth:GOTRUE_JWT_AUD=authenticated",
+  "auth:GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated",
+  "rest:PGRST_DB_ANON_ROLE=anon",
+  "rest:PGRST_ADMIN_SERVER_PORT=3001",
+  "rest:PGRST_ADMIN_SERVER_HOST=localhost",
+  "rest:PGRST_DB_USE_LEGACY_GUCS=false",
+  "realtime:PORT=4000",
+  "realtime:DB_USER=supabase_admin",
+  "realtime:DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
+  "realtime:ERL_AFLAGS=-proto_dist inet_tcp",
+  "realtime:DNS_NODES=''",
+  "realtime:RLIMIT_NOFILE=10000",
+  "realtime:APP_NAME=realtime",
+  "realtime:SEED_SELF_HOST=true",
+  "realtime:RUN_JANITOR=true",
+  "realtime:DISABLE_HEALTHCHECK_LOGGING=true",
+  "storage:POSTGREST_URL=http://rest:3000",
+  "storage:REQUEST_ALLOW_X_FORWARDED_PATH=true",
+  "storage:FILE_SIZE_LIMIT=52428800",
+  "storage:STORAGE_BACKEND=file",
+  "storage:FILE_STORAGE_BACKEND_PATH=/var/lib/storage",
+  "storage:ENABLE_IMAGE_TRANSFORMATION=true",
+  "storage:IMGPROXY_URL=http://imgproxy:5001",
+  "imgproxy:IMGPROXY_BIND=:5001",
+  "imgproxy:IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
+  "imgproxy:IMGPROXY_USE_ETAG=true",
+  "imgproxy:IMGPROXY_MAX_SRC_RESOLUTION=16.8",
+  "meta:PG_META_PORT=8080",
+  "meta:PG_META_DB_USER=postgres",
+  "functions:SUPABASE_URL=http://kong:8000",
+  "db:POSTGRES_HOST=/var/run/postgresql",
+  "supavisor:PORT=4000",
+  "supavisor:CLUSTER_POSTGRES=true",
+  "supavisor:REGION=local",
+  "supavisor:ERL_AFLAGS=-proto_dist inet_tcp",
+  "supavisor:POOLER_POOL_MODE=transaction",
+]
+required-environment-order = []
+required-restart = [
+  "studio:unless-stopped",
+  "kong:unless-stopped",
+  "auth:unless-stopped",
+  "rest:unless-stopped",
+  "realtime:unless-stopped",
+  "storage:unless-stopped",
+  "imgproxy:unless-stopped",
+  "meta:unless-stopped",
+  "functions:unless-stopped",
+  "db:unless-stopped",
+  "supavisor:unless-stopped",
+]
+required-runtime-names = [
+  "studio:supabase-studio",
+  "kong:supabase-kong",
+  "auth:supabase-auth",
+  "rest:supabase-rest",
+  "realtime:realtime-dev.supabase-realtime",
+  "storage:supabase-storage",
+  "imgproxy:supabase-imgproxy",
+  "meta:supabase-meta",
+  "functions:supabase-edge-functions",
+  "db:supabase-db",
+  "supavisor:supabase-pooler",
+]
+unpublished-services = [
+  "studio",
+  "auth",
+  "rest",
+  "realtime",
+  "storage",
+  "imgproxy",
+  "meta",
+  "functions",
+  "db",
+]
+external-prerequisites = []
+expected-diagnostics = []
+required-image-builds = []
+required-image-sources = [
+  { service = "studio", kind = "literal", value = "supabase/studio:2026.08.03-sha-022b374" },
+  { service = "kong", kind = "literal", value = "kong/kong:3.9.3" },
+  { service = "auth", kind = "literal", value = "supabase/gotrue:v2.189.0" },
+  { service = "rest", kind = "literal", value = "postgrest/postgrest:v14.12" },
+  { service = "realtime", kind = "literal", value = "supabase/realtime:v2.102.3" },
+  { service = "storage", kind = "literal", value = "supabase/storage-api:v1.60.4" },
+  { service = "imgproxy", kind = "literal", value = "darthsim/imgproxy:v3.30.1" },
+  { service = "meta", kind = "literal", value = "supabase/postgres-meta:v0.96.6" },
+  { service = "functions", kind = "literal", value = "supabase/edge-runtime:v1.74.0" },
+  { service = "db", kind = "literal", value = "supabase/postgres:17.6.1.136" },
+  { service = "supavisor", kind = "literal", value = "supabase/supavisor:2.9.5" },
+]
+required-commands = [
+  { service = "studio", kind = "absent", values = [] },
+  { service = "kong", kind = "absent", values = [] },
+  { service = "auth", kind = "absent", values = [] },
+  { service = "rest", kind = "exec", values = ["postgrest"] },
+  { service = "realtime", kind = "absent", values = [] },
+  { service = "storage", kind = "absent", values = [] },
+  { service = "imgproxy", kind = "absent", values = [] },
+  { service = "meta", kind = "absent", values = [] },
+  { service = "functions", kind = "exec", values = ["start", "--main-service", "/home/deno/functions/main"] },
+  { service = "db", kind = "exec", values = ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"] },
+  { service = "supavisor", kind = "exec", values = ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/supavisor eval \"$$(cat /etc/pooler/pooler.exs)\" && /app/bin/server"] },
+]
+required-entrypoints = [
+  { service = "studio", kind = "absent", values = [] },
+  { service = "kong", kind = "exec", values = ["/bin/sh", "/home/kong/kong-entrypoint.sh"] },
+  { service = "auth", kind = "absent", values = [] },
+  { service = "rest", kind = "absent", values = [] },
+  { service = "realtime", kind = "absent", values = [] },
+  { service = "storage", kind = "absent", values = [] },
+  { service = "imgproxy", kind = "absent", values = [] },
+  { service = "meta", kind = "absent", values = [] },
+  { service = "functions", kind = "absent", values = [] },
+  { service = "db", kind = "absent", values = [] },
+  { service = "supavisor", kind = "absent", values = [] },
+]
+required-dependencies = [
+  { service = "kong", dependency = "studio", condition = "healthy" },
+  { service = "auth", dependency = "db", condition = "healthy" },
+  { service = "rest", dependency = "db", condition = "healthy" },
+  { service = "realtime", dependency = "db", condition = "healthy" },
+  { service = "storage", dependency = "db", condition = "healthy" },
+  { service = "storage", dependency = "rest", condition = "started" },
+  { service = "storage", dependency = "imgproxy", condition = "started" },
+  { service = "meta", dependency = "db", condition = "healthy" },
+  { service = "functions", dependency = "kong", condition = "healthy" },
+  { service = "supavisor", dependency = "db", condition = "healthy" },
+]
+required-healthchecks = [
+  { service = "studio", command-kind = "shell", command = ["node -e \"fetch('http://localhost:3000/api/platform/profile').then((r) => {if (r.status !== 200) throw new Error(r.status)})\""] },
+  { service = "kong", command-kind = "exec", command = ["kong", "health"] },
+  { service = "auth", command-kind = "exec", command = ["wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"] },
+  { service = "rest", command-kind = "exec", command = ["postgrest", "--ready"] },
+  { service = "realtime", command-kind = "shell", command = ["curl -sSfL --head -o /dev/null -H \"Authorization: Bearer ${ANON_KEY}\" http://localhost:4000/api/tenants/realtime-dev/health"] },
+  { service = "storage", command-kind = "exec", command = ["wget", "--no-verbose", "--tries=1", "--spider", "http://storage:5000/status"] },
+  { service = "imgproxy", command-kind = "exec", command = ["imgproxy", "health"] },
+  { service = "functions", command-kind = "shell", command = ["timeout 1 bash -c '</dev/tcp/127.0.0.1/9000'"] },
+  { service = "db", command-kind = "exec", command = ["pg_isready", "-U", "postgres", "-h", "localhost"] },
+  { service = "supavisor", command-kind = "exec", command = ["curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"] },
+]
+required-port-bindings = []
+required-volume-mounts = [
+  { service = "functions", source = "deno-cache", target = "/root/.cache/deno", read-only = false },
+  { service = "db", source = "db-config", target = "/etc/postgresql-custom", read-only = false },
+]
+required-networks = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies and healthchecks."
+artifacts-file = "expected.compose.artifacts"
+diagnostics-file = "expected.compose.diagnostics"
+reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
+allowed-losses-file = "expected.compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies and healthchecks." }
+reimport-semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:kong",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:supavisor:db",
+  "healthcheck:auth",
+  "healthcheck:db",
+  "healthcheck:functions",
+  "healthcheck:imgproxy",
+  "healthcheck:kong",
+  "healthcheck:realtime",
+  "healthcheck:rest",
+  "healthcheck:storage",
+  "healthcheck:studio",
+  "healthcheck:supavisor",
+]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Quadlet output is emitted, but reimport cannot reconstruct the reviewed command, dependencies, and restart policies."
+artifacts-file = "expected.quadlet.artifacts"
+diagnostics-file = "expected.quadlet.diagnostics"
+reimport-diagnostics-file = "expected.quadlet.reimport.diagnostics"
+allowed-losses-file = "expected.quadlet.losses.tsv"
+reimport-allowed-losses-file = "expected.quadlet.reimport.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed command, dependencies, and restart policies." }
+reimport-semantic-gaps = [
+  "command:supavisor",
+  "dependency:auth:db",
+  "dependency:functions:kong",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:supavisor:db",
+  "restart:auth",
+  "restart:db",
+  "restart:functions",
+  "restart:imgproxy",
+  "restart:kong",
+  "restart:meta",
+  "restart:realtime",
+  "restart:rest",
+  "restart:storage",
+  "restart:studio",
+  "restart:supavisor",
+]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.podman.diagnostics"
+allowed-losses-file = "expected.podman.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }

@@ -1,0 +1,1419 @@
+# Pinned upstream source with independently transcribed intent and exact route evidence.
+schema = 1
+id = "real-world-compose-appwrite"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = []
+
+[application]
+name = "appwrite"
+revision = "9595616bdad93e3e2579348afea645f244a9062c"
+
+[[components]]
+name = "traefik"
+configured-image = "traefik:3.6"
+
+[[components]]
+name = "appwrite"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-console"
+configured-image = "appwrite/new:0.3.32"
+
+[[components]]
+name = "appwrite-realtime"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-webhooks"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-deletes"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-databases"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-builds"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-jobs"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-screenshots"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-certificates"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-functions"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-mails"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-notifications"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-messaging"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-worker-migrations"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-task-maintenance"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-task-interval"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-task-scheduler-functions"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-task-scheduler-executions"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-task-scheduler-messages"
+configured-image = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}"
+
+[[components]]
+name = "appwrite-assistant"
+configured-image = "appwrite/assistant:0.8.4"
+
+[[components]]
+name = "appwrite-browser"
+configured-image = "appwrite/browser:0.3.3"
+
+[[components]]
+name = "appwrite-geo"
+configured-image = "appwrite/geo:0.3.1"
+
+[[components]]
+name = "openruntimes-executor"
+configured-image = "openruntimes/executor:0.25.4"
+
+[[components]]
+name = "orchestrator-jobs"
+configured-image = "ghcr.io/open-runtimes/orchestrator/jobs-service:0.18.0"
+
+[[components]]
+name = "mariadb"
+configured-image = "mariadb:10.11"
+
+[[components]]
+name = "mongodb"
+configured-image = "mongo:8.2.5"
+
+[[components]]
+name = "postgresql"
+configured-image = "appwrite/postgres:0.1.0"
+
+[[components]]
+name = "appwrite-embedding"
+configured-image = "appwrite/embedding:0.1.0"
+
+[[components]]
+name = "redis"
+configured-image = "redis:7.4.7-alpine"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["input.compose.yaml"]
+format-version = "compose-specification"
+all-profiles = true
+import-diagnostics-file = "expected.import.diagnostics"
+
+[provenance]
+source = "external"
+corpus-project = "appwrite"
+license = "BSD-3-Clause"
+privacy-reviewed = true
+test-data = "Immutable public upstream Compose blob; no environment files, credentials, or runtime observations were added."
+image-evidence = "Configured image/build references are independently transcribed; no image is pulled."
+
+[deployment]
+origin = "external"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "service:traefik",
+  "service:appwrite",
+  "service:appwrite-console",
+  "service:appwrite-realtime",
+  "service:appwrite-worker-webhooks",
+  "service:appwrite-worker-deletes",
+  "service:appwrite-worker-databases",
+  "service:appwrite-worker-builds",
+  "service:appwrite-worker-jobs",
+  "service:appwrite-worker-screenshots",
+  "service:appwrite-worker-certificates",
+  "service:appwrite-worker-functions",
+  "service:appwrite-worker-mails",
+  "service:appwrite-worker-notifications",
+  "service:appwrite-worker-messaging",
+  "service:appwrite-worker-migrations",
+  "service:appwrite-task-maintenance",
+  "service:appwrite-task-interval",
+  "service:appwrite-task-scheduler-functions",
+  "service:appwrite-task-scheduler-executions",
+  "service:appwrite-task-scheduler-messages",
+  "service:appwrite-assistant",
+  "service:appwrite-browser",
+  "service:appwrite-geo",
+  "service:openruntimes-executor",
+  "service:orchestrator-jobs",
+  "service:mariadb",
+  "service:mongodb",
+  "service:postgresql",
+  "service:appwrite-embedding",
+  "service:redis",
+  "volume:appwrite-mariadb",
+  "volume:appwrite-mongodb",
+  "volume:appwrite-mongodb-keyfile",
+  "volume:appwrite-postgresql",
+  "volume:appwrite-redis",
+  "volume:appwrite-cache",
+  "volume:appwrite-uploads",
+  "volume:appwrite-imports",
+  "volume:appwrite-certificates",
+  "volume:appwrite-functions",
+  "volume:appwrite-sites",
+  "volume:appwrite-builds",
+  "volume:appwrite-config",
+  "volume:appwrite-models",
+  "volume:openruntimes-node-modules-cache",
+  "network:gateway",
+  "network:appwrite",
+  "network:runtimes",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:appwrite-mariadb:application",
+  "volume:appwrite-mongodb:application",
+  "volume:appwrite-mongodb-keyfile:application",
+  "volume:appwrite-postgresql:application",
+  "volume:appwrite-redis:application",
+  "volume:appwrite-cache:application",
+  "volume:appwrite-uploads:application",
+  "volume:appwrite-imports:application",
+  "volume:appwrite-certificates:application",
+  "volume:appwrite-functions:application",
+  "volume:appwrite-sites:application",
+  "volume:appwrite-builds:application",
+  "volume:appwrite-config:application",
+  "volume:appwrite-models:application",
+  "volume:openruntimes-node-modules-cache:application",
+]
+shared-boundaries = [
+  "volume:appwrite-mariadb:consumers=mariadb",
+  "volume:appwrite-mongodb:consumers=mongodb",
+  "volume:appwrite-mongodb-keyfile:consumers=mongodb",
+  "volume:appwrite-postgresql:consumers=postgresql",
+  "volume:appwrite-redis:consumers=redis",
+  "volume:appwrite-cache:consumers=appwrite,appwrite-worker-deletes",
+  "volume:appwrite-uploads:consumers=appwrite,appwrite-worker-deletes,appwrite-worker-screenshots,appwrite-worker-messaging,appwrite-worker-migrations",
+  "volume:appwrite-imports:consumers=appwrite,appwrite-worker-migrations",
+  "volume:appwrite-certificates:consumers=traefik,appwrite,appwrite-worker-deletes,appwrite-worker-certificates",
+  "volume:appwrite-functions:consumers=appwrite,appwrite-worker-deletes,appwrite-worker-builds,openruntimes-executor",
+  "volume:appwrite-sites:consumers=appwrite,appwrite-worker-deletes,appwrite-worker-builds,openruntimes-executor",
+  "volume:appwrite-builds:consumers=appwrite,appwrite-worker-deletes,appwrite-worker-builds,appwrite-worker-jobs,openruntimes-executor",
+  "volume:appwrite-config:consumers=traefik,appwrite,appwrite-worker-certificates",
+  "volume:appwrite-models:consumers=appwrite-embedding",
+  "volume:openruntimes-node-modules-cache:consumers=none",
+]
+required-mounts = [
+  "traefik:appwrite-config:/storage/config",
+  "traefik:appwrite-certificates:/storage/certificates",
+  "appwrite:appwrite-uploads:/storage/uploads",
+  "appwrite:appwrite-imports:/storage/imports",
+  "appwrite:appwrite-cache:/storage/cache",
+  "appwrite:appwrite-config:/storage/config",
+  "appwrite:appwrite-certificates:/storage/certificates",
+  "appwrite:appwrite-functions:/storage/functions",
+  "appwrite:appwrite-sites:/storage/sites",
+  "appwrite:appwrite-builds:/storage/builds",
+  "appwrite-worker-deletes:appwrite-uploads:/storage/uploads",
+  "appwrite-worker-deletes:appwrite-cache:/storage/cache",
+  "appwrite-worker-deletes:appwrite-functions:/storage/functions",
+  "appwrite-worker-deletes:appwrite-sites:/storage/sites",
+  "appwrite-worker-deletes:appwrite-builds:/storage/builds",
+  "appwrite-worker-deletes:appwrite-certificates:/storage/certificates",
+  "appwrite-worker-builds:appwrite-functions:/storage/functions",
+  "appwrite-worker-builds:appwrite-sites:/storage/sites",
+  "appwrite-worker-builds:appwrite-builds:/storage/builds",
+  "appwrite-worker-jobs:appwrite-builds:/storage/builds",
+  "appwrite-worker-screenshots:appwrite-uploads:/storage/uploads",
+  "appwrite-worker-certificates:appwrite-config:/storage/config",
+  "appwrite-worker-certificates:appwrite-certificates:/storage/certificates",
+  "appwrite-worker-messaging:appwrite-uploads:/storage/uploads",
+  "appwrite-worker-migrations:appwrite-imports:/storage/imports",
+  "appwrite-worker-migrations:appwrite-uploads:/storage/uploads",
+  "openruntimes-executor:appwrite-builds:/storage/builds",
+  "openruntimes-executor:appwrite-functions:/storage/functions",
+  "openruntimes-executor:appwrite-sites:/storage/sites",
+  "mariadb:appwrite-mariadb:/var/lib/mysql",
+  "mongodb:appwrite-mongodb:/data/db",
+  "mongodb:appwrite-mongodb-keyfile:/data/keyfile",
+  "postgresql:appwrite-postgresql:/var/lib/postgresql/18/data",
+  "appwrite-embedding:appwrite-models:/home/embedder/models",
+  "redis:appwrite-redis:/data",
+]
+# REVIEW-GAP unrepresentable relative/plain bind: traefik:/var/run/docker.sock:/var/run/docker.sock:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: openruntimes-executor:/var/run/docker.sock:/var/run/docker.sock:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: openruntimes-executor:/tmp:/tmp:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: orchestrator-jobs:/var/run/docker.sock:/var/run/docker.sock:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: mongodb:./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:read-only=true:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: mongodb:./mongo-entrypoint.sh:/mongo-entrypoint.sh:read-only=true:selinux=none
+required-environment = [
+  "appwrite:_APP_CONSOLE_URL_SCHEME=root",
+  "appwrite-console:VITE_CONSOLE_PROFILE=self-hosted",
+  "appwrite-console:APPWRITE_ENDPOINT_SAME_ORIGIN=true",
+  "appwrite-console:VITE_GROWTH_ENDPOINT=https://growth.appwrite.io/v1",
+  "appwrite-realtime:_APP_POOL_ADAPTER=swoole",
+  "appwrite-worker-webhooks:_APP_WORKERS_NUM=1",
+  "appwrite-worker-webhooks:_APP_WORKER_MAX_COROUTINES=8",
+  "appwrite-worker-webhooks:_APP_CONSOLE_URL_SCHEME=root",
+  "appwrite-worker-deletes:_APP_WORKERS_NUM=1",
+  "appwrite-worker-deletes:_APP_WORKER_MAX_COROUTINES=8",
+  "appwrite-worker-databases:_APP_WORKERS_NUM=1",
+  "appwrite-worker-databases:_APP_WORKER_MAX_COROUTINES=1",
+  "appwrite-worker-builds:_APP_WORKERS_NUM=1",
+  "appwrite-worker-builds:_APP_WORKER_MAX_COROUTINES=8",
+  "appwrite-worker-builds:_APP_CONSOLE_URL_SCHEME=root",
+  "appwrite-worker-jobs:_APP_WORKERS_NUM=1",
+  "appwrite-worker-jobs:_APP_WORKER_MAX_COROUTINES=8",
+  "appwrite-worker-screenshots:_APP_WORKERS_NUM=1",
+  "appwrite-worker-screenshots:_APP_WORKER_MAX_COROUTINES=8",
+  "appwrite-worker-certificates:_APP_WORKERS_NUM=1",
+  "appwrite-worker-certificates:_APP_WORKER_MAX_COROUTINES=8",
+  "appwrite-worker-functions:_APP_WORKERS_NUM=1",
+  "appwrite-worker-functions:_APP_WORKER_MAX_COROUTINES=8",
+  "appwrite-worker-mails:_APP_WORKERS_NUM=1",
+  "appwrite-worker-mails:_APP_WORKER_MAX_COROUTINES=1",
+  "appwrite-worker-messaging:_APP_WORKERS_NUM=1",
+  "appwrite-worker-messaging:_APP_WORKER_MAX_COROUTINES=1",
+  "appwrite-worker-migrations:_APP_WORKERS_NUM=1",
+  "appwrite-worker-migrations:_APP_WORKER_MAX_COROUTINES=1",
+  "openruntimes-executor:OPR_EXECUTOR_RUNTIME_VERSIONS=v5",
+  "openruntimes-executor:OPR_EXECUTOR_CONNECTION_BUILD_CACHE_STORAGE=",
+  "orchestrator-jobs:ORCHESTRATOR_BACKEND=docker",
+  "orchestrator-jobs:ORCHESTRATOR_NETWORK=appwrite",
+  "orchestrator-jobs:ARTIFACT_ENDPOINT=http://orchestrator-jobs:8080",
+  "orchestrator-jobs:JOB_SIDECAR_IMAGE=ghcr.io/open-runtimes/orchestrator/job-sidecar:0.18.0",
+  "mariadb:MARIADB_AUTO_UPGRADE=1",
+  "mongodb:MONGO_INITDB_ROOT_USERNAME=root",
+]
+required-environment-order = []
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_EDITION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_LOCALE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_COMPRESSION_ENABLED
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_COMPRESSION_MIN_SIZE_BYTES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_WHITELIST_ROOT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_WHITELIST_EMAILS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_SESSION_ALERTS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_WHITELIST_IPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_HOSTNAMES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SYSTEM_EMAIL_NAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SYSTEM_EMAIL_ADDRESS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SYSTEM_TEAM_EMAIL
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_EMAIL_SECURITY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SYSTEM_RESPONSE_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_OPTIONS_ABUSE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_OPTIONS_ROUTER_PROTECTION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_OPTIONS_ROUTER_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_NOTIFICATIONS_TRACKING_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_TRUSTED_PROJECTS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DOMAIN_TARGET_CNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DOMAIN_TARGET_AAAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DOMAIN_TARGET_A
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DOMAIN_TARGET_CAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DNS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DOMAIN_FUNCTIONS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_ADAPTER_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_HOST_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_PORT_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_SCHEMA_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_USER_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DB_PASS_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SMTP_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SMTP_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SMTP_SECURE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SMTP_USERNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SMTP_PASSWORD
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_LIMIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_PREVIEW_LIMIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_ANTIVIRUS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_ANTIVIRUS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_ANTIVIRUS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_DEVICE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_S3_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_S3_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_S3_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_S3_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_S3_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_DO_SPACES_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_DO_SPACES_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_DO_SPACES_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_DO_SPACES_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_BACKBLAZE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_BACKBLAZE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_BACKBLAZE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_BACKBLAZE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_LINODE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_LINODE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_LINODE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_LINODE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_WASABI_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_WASABI_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_WASABI_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_STORAGE_WASABI_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_COMPUTE_SIZE_LIMIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_FUNCTIONS_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SITES_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_COMPUTE_BUILD_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_COMPUTE_CPUS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_COMPUTE_MEMORY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_FUNCTIONS_RUNTIMES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SITES_RUNTIMES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DOMAIN_SITES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_EXECUTOR_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_EXECUTOR_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_BUILDS_VOLUME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_JOBS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_JOBS_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_JOBS_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_LOCKING_ENABLED
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_INTERVAL
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_RETENTION_EXECUTION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_RETENTION_CACHE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_RETENTION_ABUSE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_RETENTION_AUDIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_RETENTION_AUDIT_CONSOLE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_RETENTION_USAGE_HOURLY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MAINTENANCE_RETENTION_SCHEDULES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SMS_PROVIDER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_SMS_FROM
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_GRAPHQL_INTROSPECTION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_GRAPHQL_MAX_BATCH_SIZE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_GRAPHQL_MAX_COMPLEXITY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_GRAPHQL_MAX_DEPTH
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITHUB_APP_NAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITHUB_PRIVATE_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITHUB_APP_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITHUB_WEBHOOK_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITHUB_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITHUB_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITEA_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITEA_BROWSER_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITEA_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITEA_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITEA_WEBHOOK_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITLAB_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITLAB_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_GITLAB_WEBHOOK_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_VCS_WEBHOOK_URL
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MIGRATIONS_FIREBASE_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MIGRATIONS_FIREBASE_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_ASSISTANT_OPENAI_API_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CONSOLE_COUNTRIES_DENYLIST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_EXPERIMENT_LOGGING_PROVIDER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_EXPERIMENT_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_DATABASE_SHARED_NAMESPACE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_FUNCTIONS_CREATION_ABUSE_LIMIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_CUSTOM_DOMAIN_DENY_LIST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_TRUSTED_HEADERS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_MIGRATION_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_GEO_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite:_APP_GEO_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_OPTIONS_ABUSE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_OPTIONS_ROUTER_PROTECTION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_REALTIME_TAIL_RATE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_ADAPTER_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_HOST_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_PORT_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_SCHEMA_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_USER_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DB_PASS_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_LOGGING_CONFIG_REALTIME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-realtime:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_EMAIL_SECURITY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_WEBHOOK_MAX_FAILED_ATTEMPTS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-webhooks:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_DEVICE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_S3_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_S3_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_S3_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_S3_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_S3_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_DO_SPACES_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_DO_SPACES_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_DO_SPACES_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_DO_SPACES_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_BACKBLAZE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_BACKBLAZE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_BACKBLAZE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_BACKBLAZE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_LINODE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_LINODE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_LINODE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_LINODE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_WASABI_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_WASABI_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_WASABI_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_STORAGE_WASABI_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_EXECUTOR_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_EXECUTOR_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_EMAIL_CERTIFICATES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_MAINTENANCE_RETENTION_AUDIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-deletes:_APP_MAINTENANCE_RETENTION_AUDIT_CONSOLE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_ADAPTER_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_HOST_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_PORT_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_SCHEMA_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_USER_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DB_PASS_VECTORSDB
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_QUEUE_NAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-databases:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_EXECUTOR_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_EXECUTOR_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITHUB_APP_NAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITHUB_PRIVATE_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITHUB_APP_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITEA_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITEA_BROWSER_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITEA_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITEA_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITEA_WEBHOOK_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITLAB_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITLAB_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_GITLAB_WEBHOOK_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_VCS_WEBHOOK_URL
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_FUNCTIONS_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_SITES_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_COMPUTE_BUILD_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_COMPUTE_CPUS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_COMPUTE_MEMORY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_OPEN_RUNTIMES_NFT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_COMPUTE_SIZE_LIMIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_OPTIONS_ROUTER_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_CONSOLE_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_CONSOLE_TRUSTED_PROJECTS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_DEVICE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_S3_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_S3_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_S3_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_S3_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_S3_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_DO_SPACES_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_DO_SPACES_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_DO_SPACES_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_DO_SPACES_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_BACKBLAZE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_BACKBLAZE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_BACKBLAZE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_BACKBLAZE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_LINODE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_LINODE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_LINODE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_LINODE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_WASABI_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_WASABI_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_WASABI_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_STORAGE_WASABI_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_DOMAIN_SITES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_BUILDS_VOLUME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_JOBS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_JOBS_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-builds:_APP_JOBS_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_JOBS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_JOBS_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-jobs:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_BROWSER_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_WORKER_SCREENSHOTS_ROUTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_DEVICE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_S3_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_S3_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_S3_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_S3_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_S3_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_DO_SPACES_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_DO_SPACES_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_DO_SPACES_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_DO_SPACES_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_BACKBLAZE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_BACKBLAZE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_BACKBLAZE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_BACKBLAZE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_LINODE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_LINODE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_LINODE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_LINODE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_WASABI_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_WASABI_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_WASABI_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-screenshots:_APP_STORAGE_WASABI_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DOMAIN_TARGET_CNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DOMAIN_TARGET_AAAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DOMAIN_TARGET_A
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DOMAIN_TARGET_CAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DNS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DOMAIN_FUNCTIONS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DOMAIN_SITES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_EMAIL_CERTIFICATES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-certificates:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_FUNCTIONS_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_SITES_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_COMPUTE_BUILD_TIMEOUT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_COMPUTE_CPUS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_COMPUTE_MEMORY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_EXECUTOR_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_EXECUTOR_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DOCKER_HUB_USERNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DOCKER_HUB_PASSWORD
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_LOGGING_PROVIDER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-functions:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_NOTIFICATIONS_TRACKING_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_SYSTEM_EMAIL_NAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_SYSTEM_EMAIL_ADDRESS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_SMTP_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_SMTP_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_SMTP_SECURE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_SMTP_USERNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_SMTP_PASSWORD
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-mails:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_NOTIFICATIONS_TRACKING_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_SYSTEM_EMAIL_NAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_SYSTEM_EMAIL_ADDRESS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_SMTP_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_SMTP_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_SMTP_SECURE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_SMTP_USERNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_SMTP_PASSWORD
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-notifications:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_SMS_FROM
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_SMS_PROVIDER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_SMS_PROJECTS_DENY_LIST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_DEVICE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_S3_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_S3_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_S3_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_S3_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_S3_ENDPOINT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_DO_SPACES_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_DO_SPACES_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_DO_SPACES_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_DO_SPACES_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_BACKBLAZE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_BACKBLAZE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_BACKBLAZE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_BACKBLAZE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_LINODE_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_LINODE_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_LINODE_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_LINODE_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_WASABI_ACCESS_KEY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_WASABI_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_WASABI_REGION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_STORAGE_WASABI_BUCKET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-messaging:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DOMAIN_TARGET_CNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DOMAIN_TARGET_AAAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DOMAIN_TARGET_A
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DOMAIN_TARGET_CAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DNS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_EMAIL_SECURITY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_LOGGING_CONFIG
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_MIGRATIONS_FIREBASE_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_MIGRATIONS_FIREBASE_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-worker-migrations:_APP_MIGRATION_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DOMAIN_TARGET_CNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DOMAIN_TARGET_AAAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DOMAIN_TARGET_A
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DOMAIN_TARGET_CAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DNS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DOMAIN_FUNCTIONS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_INTERVAL
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_RETENTION_EXECUTION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_RETENTION_CACHE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_RETENTION_ABUSE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_RETENTION_AUDIT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_RETENTION_AUDIT_CONSOLE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_RETENTION_USAGE_HOURLY
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_RETENTION_SCHEDULES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_MAINTENANCE_START_TIME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-maintenance:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DOMAIN_TARGET_CNAME
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DOMAIN_TARGET_AAAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DOMAIN_TARGET_A
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DOMAIN_TARGET_CAA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DNS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DOMAIN_FUNCTIONS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DOMAIN_SITES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_INTERVAL_DOMAIN_VERIFICATION
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-interval:_APP_INTERVAL_CLEANUP_STALE_EXECUTIONS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_CONSOLE_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DOMAIN_FUNCTIONS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DOMAIN_SITES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_MIGRATION_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_CONSOLE_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-functions:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_OPTIONS_FORCE_HTTPS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_CONSOLE_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DOMAIN_FUNCTIONS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DOMAIN_SITES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_MIGRATION_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_CONSOLE_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-executions:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_ENV
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_LOGGING_FORMAT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_WORKER_PER_CORE
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_POOL_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_OPENSSL_KEY_V1
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_REDIS_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_REDIS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_REDIS_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_REDIS_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_DB_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_DB_HOST
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_DB_PORT
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_DB_SCHEMA
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_DB_USER
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_DB_PASS
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-task-scheduler-messages:_APP_DATABASE_SHARED_TABLES
+# REVIEW-GAP inherited environment not expressible as literal: appwrite-assistant:_APP_ASSISTANT_OPENAI_API_KEY
+required-restart = [
+  "traefik:absent",
+  "appwrite:absent",
+  "appwrite-console:unless-stopped",
+  "appwrite-realtime:unless-stopped",
+  "appwrite-worker-webhooks:absent",
+  "appwrite-worker-deletes:absent",
+  "appwrite-worker-databases:absent",
+  "appwrite-worker-builds:absent",
+  "appwrite-worker-jobs:absent",
+  "appwrite-worker-screenshots:absent",
+  "appwrite-worker-certificates:absent",
+  "appwrite-worker-functions:absent",
+  "appwrite-worker-mails:absent",
+  "appwrite-worker-notifications:unless-stopped",
+  "appwrite-worker-messaging:unless-stopped",
+  "appwrite-worker-migrations:unless-stopped",
+  "appwrite-task-maintenance:unless-stopped",
+  "appwrite-task-interval:unless-stopped",
+  "appwrite-task-scheduler-functions:unless-stopped",
+  "appwrite-task-scheduler-executions:unless-stopped",
+  "appwrite-task-scheduler-messages:unless-stopped",
+  "appwrite-assistant:absent",
+  "appwrite-browser:absent",
+  "appwrite-geo:unless-stopped",
+  "openruntimes-executor:unless-stopped",
+  "orchestrator-jobs:unless-stopped",
+  "mariadb:absent",
+  "mongodb:unless-stopped",
+  "postgresql:absent",
+  "appwrite-embedding:unless-stopped",
+  "redis:absent",
+]
+required-runtime-names = [
+  "traefik:appwrite-traefik",
+  "appwrite:appwrite",
+  "appwrite-console:appwrite-console",
+  "appwrite-realtime:appwrite-realtime",
+  "appwrite-worker-webhooks:appwrite-worker-webhooks",
+  "appwrite-worker-deletes:appwrite-worker-deletes",
+  "appwrite-worker-databases:appwrite-worker-databases",
+  "appwrite-worker-builds:appwrite-worker-builds",
+  "appwrite-worker-jobs:appwrite-worker-jobs",
+  "appwrite-worker-screenshots:appwrite-worker-screenshots",
+  "appwrite-worker-certificates:appwrite-worker-certificates",
+  "appwrite-worker-functions:appwrite-worker-functions",
+  "appwrite-worker-mails:appwrite-worker-mails",
+  "appwrite-worker-notifications:appwrite-worker-notifications",
+  "appwrite-worker-messaging:appwrite-worker-messaging",
+  "appwrite-worker-migrations:appwrite-worker-migrations",
+  "appwrite-task-maintenance:appwrite-task-maintenance",
+  "appwrite-task-interval:appwrite-task-interval",
+  "appwrite-task-scheduler-functions:appwrite-task-scheduler-functions",
+  "appwrite-task-scheduler-executions:appwrite-task-scheduler-executions",
+  "appwrite-task-scheduler-messages:appwrite-task-scheduler-messages",
+  "appwrite-assistant:appwrite-assistant",
+  "appwrite-browser:appwrite-browser",
+  "appwrite-geo:appwrite-geo",
+  "openruntimes-executor:exc1",
+  "orchestrator-jobs:orchestrator-jobs",
+  "mariadb:appwrite-mariadb",
+  "mongodb:appwrite-mongodb",
+  "postgresql:appwrite-postgresql",
+  "appwrite-embedding:appwrite-embedding",
+  "redis:appwrite-redis",
+]
+unpublished-services = [
+  "appwrite",
+  "appwrite-console",
+  "appwrite-realtime",
+  "appwrite-worker-webhooks",
+  "appwrite-worker-deletes",
+  "appwrite-worker-databases",
+  "appwrite-worker-builds",
+  "appwrite-worker-jobs",
+  "appwrite-worker-screenshots",
+  "appwrite-worker-certificates",
+  "appwrite-worker-functions",
+  "appwrite-worker-mails",
+  "appwrite-worker-notifications",
+  "appwrite-worker-messaging",
+  "appwrite-worker-migrations",
+  "appwrite-task-maintenance",
+  "appwrite-task-interval",
+  "appwrite-task-scheduler-functions",
+  "appwrite-task-scheduler-executions",
+  "appwrite-task-scheduler-messages",
+  "appwrite-assistant",
+  "appwrite-browser",
+  "appwrite-geo",
+  "openruntimes-executor",
+  "orchestrator-jobs",
+  "mariadb",
+  "mongodb",
+  "postgresql",
+  "appwrite-embedding",
+  "redis",
+]
+external-prerequisites = []
+expected-diagnostics = []
+required-image-builds = []
+required-image-sources = [
+  { service = "traefik", kind = "literal", value = "traefik:3.6" },
+  { service = "appwrite", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-console", kind = "literal", value = "appwrite/new:0.3.32" },
+  { service = "appwrite-realtime", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-webhooks", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-deletes", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-databases", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-builds", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-jobs", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-screenshots", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-certificates", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-functions", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-mails", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-notifications", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-messaging", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-worker-migrations", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-task-maintenance", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-task-interval", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-task-scheduler-functions", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-task-scheduler-executions", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-task-scheduler-messages", kind = "literal", value = "${_APP_IMAGE:-appwrite/appwrite}:${_APP_VERSION:-latest}" },
+  { service = "appwrite-assistant", kind = "literal", value = "appwrite/assistant:0.8.4" },
+  { service = "appwrite-browser", kind = "literal", value = "appwrite/browser:0.3.3" },
+  { service = "appwrite-geo", kind = "literal", value = "appwrite/geo:0.3.1" },
+  { service = "openruntimes-executor", kind = "literal", value = "openruntimes/executor:0.25.4" },
+  { service = "orchestrator-jobs", kind = "literal", value = "ghcr.io/open-runtimes/orchestrator/jobs-service:0.18.0" },
+  { service = "mariadb", kind = "literal", value = "mariadb:10.11" },
+  { service = "mongodb", kind = "literal", value = "mongo:8.2.5" },
+  { service = "postgresql", kind = "literal", value = "appwrite/postgres:0.1.0" },
+  { service = "appwrite-embedding", kind = "literal", value = "appwrite/embedding:0.1.0" },
+  { service = "redis", kind = "literal", value = "redis:7.4.7-alpine" },
+]
+required-commands = [
+  { service = "traefik", kind = "exec", values = ["--providers.file.directory=/storage/config", "--providers.file.watch=true", "--providers.docker=true", "--providers.docker.exposedByDefault=false", "--providers.docker.constraints=Label(`traefik.constraint-label-stack`,`appwrite`)", "--entrypoints.appwrite_web.address=:80", "--entrypoints.appwrite_websecure.address=:443"] },
+  { service = "appwrite", kind = "absent", values = [] },
+  { service = "appwrite-console", kind = "absent", values = [] },
+  { service = "appwrite-realtime", kind = "absent", values = [] },
+  { service = "appwrite-worker-webhooks", kind = "absent", values = [] },
+  { service = "appwrite-worker-deletes", kind = "absent", values = [] },
+  { service = "appwrite-worker-databases", kind = "absent", values = [] },
+  { service = "appwrite-worker-builds", kind = "absent", values = [] },
+  { service = "appwrite-worker-jobs", kind = "absent", values = [] },
+  { service = "appwrite-worker-screenshots", kind = "absent", values = [] },
+  { service = "appwrite-worker-certificates", kind = "absent", values = [] },
+  { service = "appwrite-worker-functions", kind = "absent", values = [] },
+  { service = "appwrite-worker-mails", kind = "absent", values = [] },
+  { service = "appwrite-worker-notifications", kind = "absent", values = [] },
+  { service = "appwrite-worker-messaging", kind = "absent", values = [] },
+  { service = "appwrite-worker-migrations", kind = "absent", values = [] },
+  { service = "appwrite-task-maintenance", kind = "absent", values = [] },
+  { service = "appwrite-task-interval", kind = "absent", values = [] },
+  { service = "appwrite-task-scheduler-functions", kind = "absent", values = [] },
+  { service = "appwrite-task-scheduler-executions", kind = "absent", values = [] },
+  { service = "appwrite-task-scheduler-messages", kind = "absent", values = [] },
+  { service = "appwrite-assistant", kind = "absent", values = [] },
+  { service = "appwrite-browser", kind = "absent", values = [] },
+  { service = "appwrite-geo", kind = "absent", values = [] },
+  { service = "openruntimes-executor", kind = "absent", values = [] },
+  { service = "orchestrator-jobs", kind = "absent", values = [] },
+  { service = "mariadb", kind = "exec", values = ["mysqld", "--innodb-flush-method=fsync"] },
+  { service = "mongodb", kind = "absent", values = [] },
+  { service = "postgresql", kind = "exec", values = ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"] },
+  { service = "appwrite-embedding", kind = "absent", values = [] },
+  { service = "redis", kind = "exec", values = ["redis-server", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru", "--maxmemory-samples", "5"] },
+]
+required-entrypoints = [
+  { service = "traefik", kind = "absent", values = [] },
+  { service = "appwrite", kind = "absent", values = [] },
+  { service = "appwrite-console", kind = "absent", values = [] },
+  { service = "appwrite-realtime", kind = "shell", values = ["realtime"] },
+  { service = "appwrite-worker-webhooks", kind = "shell", values = ["worker-webhooks"] },
+  { service = "appwrite-worker-deletes", kind = "shell", values = ["worker-deletes"] },
+  { service = "appwrite-worker-databases", kind = "shell", values = ["worker-databases"] },
+  { service = "appwrite-worker-builds", kind = "shell", values = ["worker-builds"] },
+  { service = "appwrite-worker-jobs", kind = "shell", values = ["worker-jobs"] },
+  { service = "appwrite-worker-screenshots", kind = "shell", values = ["worker-screenshots"] },
+  { service = "appwrite-worker-certificates", kind = "shell", values = ["worker-certificates"] },
+  { service = "appwrite-worker-functions", kind = "shell", values = ["worker-functions"] },
+  { service = "appwrite-worker-mails", kind = "shell", values = ["worker-mails"] },
+  { service = "appwrite-worker-notifications", kind = "shell", values = ["worker-notifications"] },
+  { service = "appwrite-worker-messaging", kind = "shell", values = ["worker-messaging"] },
+  { service = "appwrite-worker-migrations", kind = "shell", values = ["worker-migrations"] },
+  { service = "appwrite-task-maintenance", kind = "shell", values = ["maintenance"] },
+  { service = "appwrite-task-interval", kind = "shell", values = ["interval"] },
+  { service = "appwrite-task-scheduler-functions", kind = "shell", values = ["schedule-functions"] },
+  { service = "appwrite-task-scheduler-executions", kind = "shell", values = ["schedule-executions"] },
+  { service = "appwrite-task-scheduler-messages", kind = "shell", values = ["schedule-messages"] },
+  { service = "appwrite-assistant", kind = "absent", values = [] },
+  { service = "appwrite-browser", kind = "absent", values = [] },
+  { service = "appwrite-geo", kind = "absent", values = [] },
+  { service = "openruntimes-executor", kind = "absent", values = [] },
+  { service = "orchestrator-jobs", kind = "absent", values = [] },
+  { service = "mariadb", kind = "absent", values = [] },
+  { service = "mongodb", kind = "exec", values = ["/bin/bash", "/mongo-entrypoint.sh"] },
+  { service = "postgresql", kind = "absent", values = [] },
+  { service = "appwrite-embedding", kind = "absent", values = [] },
+  { service = "redis", kind = "absent", values = [] },
+]
+required-dependencies = [
+  { service = "traefik", dependency = "appwrite", condition = "unspecified" },
+  { service = "appwrite", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite", dependency = "appwrite-geo", condition = "unspecified" },
+  { service = "appwrite-realtime", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-realtime", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-realtime", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-worker-webhooks", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-webhooks", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-webhooks", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-worker-deletes", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-deletes", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-deletes", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-worker-databases", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-databases", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-databases", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-worker-builds", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-builds", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-builds", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-worker-jobs", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-jobs", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-screenshots", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-screenshots", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-certificates", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-certificates", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-certificates", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-worker-functions", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-functions", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-mails", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-mails", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-notifications", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-notifications", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-worker-messaging", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-worker-migrations", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-task-maintenance", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-task-maintenance", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-task-interval", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-task-interval", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-functions", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-functions", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-functions", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-executions", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-executions", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-executions", dependency = "appwrite-embedding", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-messages", dependency = "${_APP_DB_HOST:-postgresql}", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-messages", dependency = "redis", condition = "unspecified" },
+  { service = "appwrite-task-scheduler-messages", dependency = "appwrite-embedding", condition = "unspecified" },
+]
+required-healthchecks = [
+  { service = "appwrite", command-kind = "shell", command = ["curl -fsS -o /dev/null -H \"Host: $${_APP_DOMAIN:-localhost}\" http://localhost/v1/health/version"] },
+  { service = "appwrite-geo", command-kind = "shell", command = ["php -r \"exit(json_decode(file_get_contents('http://localhost/v1/health'))->status === 'ok' ? 0 : 1);\""] },
+  { service = "openruntimes-executor", command-kind = "shell", command = ["curl -fsS -H \"Authorization: Bearer $$OPR_EXECUTOR_SECRET\" http://localhost/v1/health >/dev/null"] },
+  { service = "mariadb", command-kind = "exec", command = ["healthcheck.sh", "--connect", "--innodb_initialized"] },
+  { service = "mongodb", command-kind = "shell", command = ["bash -c \"\n  mongosh -u root -p ${_APP_DB_ROOT_PASS} --authenticationDatabase admin --quiet --eval \\\"\n    try {\n      const hello = db.adminCommand({hello: 1});\n      if (hello.isWritablePrimary && hello.setName === 'rs0') {\n        quit(0);\n      }\n    } catch (e) {}\n\n    try {\n      rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'appwrite-mongodb:27017'}]});\n    } catch (e) {}\n\n    quit(1);\n  \\\" 2>/dev/null\n\"\n"] },
+  { service = "postgresql", command-kind = "shell", command = ["pg_isready -U ${_APP_DB_USER} -d ${_APP_DB_SCHEMA}"] },
+  { service = "redis", command-kind = "exec", command = ["redis-cli", "ping"] },
+]
+required-port-bindings = []
+required-volume-mounts = [
+  { service = "traefik", source = "appwrite-config", target = "/storage/config", read-only = true },
+  { service = "traefik", source = "appwrite-certificates", target = "/storage/certificates", read-only = true },
+  { service = "appwrite", source = "appwrite-uploads", target = "/storage/uploads", read-only = false },
+  { service = "appwrite", source = "appwrite-imports", target = "/storage/imports", read-only = false },
+  { service = "appwrite", source = "appwrite-cache", target = "/storage/cache", read-only = false },
+  { service = "appwrite", source = "appwrite-config", target = "/storage/config", read-only = false },
+  { service = "appwrite", source = "appwrite-certificates", target = "/storage/certificates", read-only = false },
+  { service = "appwrite", source = "appwrite-functions", target = "/storage/functions", read-only = false },
+  { service = "appwrite", source = "appwrite-sites", target = "/storage/sites", read-only = false },
+  { service = "appwrite", source = "appwrite-builds", target = "/storage/builds", read-only = false },
+  { service = "appwrite-worker-deletes", source = "appwrite-uploads", target = "/storage/uploads", read-only = false },
+  { service = "appwrite-worker-deletes", source = "appwrite-cache", target = "/storage/cache", read-only = false },
+  { service = "appwrite-worker-deletes", source = "appwrite-functions", target = "/storage/functions", read-only = false },
+  { service = "appwrite-worker-deletes", source = "appwrite-sites", target = "/storage/sites", read-only = false },
+  { service = "appwrite-worker-deletes", source = "appwrite-builds", target = "/storage/builds", read-only = false },
+  { service = "appwrite-worker-deletes", source = "appwrite-certificates", target = "/storage/certificates", read-only = false },
+  { service = "appwrite-worker-builds", source = "appwrite-functions", target = "/storage/functions", read-only = false },
+  { service = "appwrite-worker-builds", source = "appwrite-sites", target = "/storage/sites", read-only = false },
+  { service = "appwrite-worker-builds", source = "appwrite-builds", target = "/storage/builds", read-only = false },
+  { service = "appwrite-worker-jobs", source = "appwrite-builds", target = "/storage/builds", read-only = false },
+  { service = "appwrite-worker-screenshots", source = "appwrite-uploads", target = "/storage/uploads", read-only = false },
+  { service = "appwrite-worker-certificates", source = "appwrite-config", target = "/storage/config", read-only = false },
+  { service = "appwrite-worker-certificates", source = "appwrite-certificates", target = "/storage/certificates", read-only = false },
+  { service = "appwrite-worker-messaging", source = "appwrite-uploads", target = "/storage/uploads", read-only = false },
+  { service = "appwrite-worker-migrations", source = "appwrite-imports", target = "/storage/imports", read-only = false },
+  { service = "appwrite-worker-migrations", source = "appwrite-uploads", target = "/storage/uploads", read-only = false },
+  { service = "openruntimes-executor", source = "appwrite-builds", target = "/storage/builds", read-only = false },
+  { service = "openruntimes-executor", source = "appwrite-functions", target = "/storage/functions", read-only = false },
+  { service = "openruntimes-executor", source = "appwrite-sites", target = "/storage/sites", read-only = false },
+  { service = "mariadb", source = "appwrite-mariadb", target = "/var/lib/mysql", read-only = false },
+  { service = "mongodb", source = "appwrite-mongodb", target = "/data/db", read-only = false },
+  { service = "mongodb", source = "appwrite-mongodb-keyfile", target = "/data/keyfile", read-only = false },
+  { service = "postgresql", source = "appwrite-postgresql", target = "/var/lib/postgresql/18/data", read-only = false },
+  { service = "appwrite-embedding", source = "appwrite-models", target = "/home/embedder/models", read-only = false },
+  { service = "redis", source = "appwrite-redis", target = "/data", read-only = false },
+]
+required-networks = [
+  { name = "gateway", ownership = "application" },
+  { name = "appwrite", ownership = "application" },
+  { name = "runtimes", ownership = "application" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependency and healthcheck semantics."
+artifacts-file = "expected.compose.artifacts"
+diagnostics-file = "expected.compose.diagnostics"
+reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
+allowed-losses-file = "expected.compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependency and healthcheck semantics." }
+reimport-semantic-gaps = [
+  "dependency:appwrite-realtime:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-realtime:appwrite-embedding",
+  "dependency:appwrite-realtime:redis",
+  "dependency:appwrite-task-interval:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-task-interval:redis",
+  "dependency:appwrite-task-maintenance:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-task-maintenance:redis",
+  "dependency:appwrite-task-scheduler-executions:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-task-scheduler-executions:appwrite-embedding",
+  "dependency:appwrite-task-scheduler-executions:redis",
+  "dependency:appwrite-task-scheduler-functions:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-task-scheduler-functions:appwrite-embedding",
+  "dependency:appwrite-task-scheduler-functions:redis",
+  "dependency:appwrite-task-scheduler-messages:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-task-scheduler-messages:appwrite-embedding",
+  "dependency:appwrite-task-scheduler-messages:redis",
+  "dependency:appwrite-worker-builds:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-builds:appwrite-embedding",
+  "dependency:appwrite-worker-builds:redis",
+  "dependency:appwrite-worker-certificates:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-certificates:appwrite-embedding",
+  "dependency:appwrite-worker-certificates:redis",
+  "dependency:appwrite-worker-databases:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-databases:appwrite-embedding",
+  "dependency:appwrite-worker-databases:redis",
+  "dependency:appwrite-worker-deletes:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-deletes:appwrite-embedding",
+  "dependency:appwrite-worker-deletes:redis",
+  "dependency:appwrite-worker-functions:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-functions:redis",
+  "dependency:appwrite-worker-jobs:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-jobs:redis",
+  "dependency:appwrite-worker-mails:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-mails:redis",
+  "dependency:appwrite-worker-messaging:redis",
+  "dependency:appwrite-worker-migrations:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-notifications:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-notifications:redis",
+  "dependency:appwrite-worker-screenshots:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-screenshots:redis",
+  "dependency:appwrite-worker-webhooks:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite-worker-webhooks:appwrite-embedding",
+  "dependency:appwrite-worker-webhooks:redis",
+  "dependency:appwrite:${_APP_DB_HOST:-postgresql}",
+  "dependency:appwrite:appwrite-embedding",
+  "dependency:appwrite:appwrite-geo",
+  "dependency:appwrite:redis",
+  "dependency:traefik:appwrite",
+  "healthcheck:appwrite",
+  "healthcheck:appwrite-geo",
+  "healthcheck:mariadb",
+  "healthcheck:mongodb",
+  "healthcheck:openruntimes-executor",
+  "healthcheck:postgresql",
+  "healthcheck:redis",
+]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.quadlet.diagnostics"
+allowed-losses-file = "expected.quadlet.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.podman.diagnostics"
+allowed-losses-file = "expected.podman.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }

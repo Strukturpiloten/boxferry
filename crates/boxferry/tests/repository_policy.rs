@@ -556,6 +556,7 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
         "prettier --write",
         "prettier --check",
         "check_yaml_document_markers",
+        "fixtures/scenarios/real-world-compose-*/input.compose.yaml) continue ;;",
         "tombi format --check --offline",
         "tombi lint --error-on-warnings --offline",
         "shfmt -w",
@@ -605,11 +606,13 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
             "fixtures/**/expected-podman.json",
             "fixtures/**/expected-*-podman.json",
             "fixtures/differential/podman-lens-complex-corpus/*.cassette.json",
+            "fixtures/scenarios/real-world-compose-*/input.compose.yaml",
         ]
     {
-        return Err("Prettier exclusions must remain limited to reviewed generated artifacts".to_owned());
+        return Err(
+            "Prettier exclusions must remain limited to reviewed generated or immutable third-party inputs".to_owned(),
+        );
     }
-
     let markdown_format = script
         .find(r#"prettier --write --ignore-path .prettierignore --ignore-unknown "${markdown_files[@]}""#)
         .ok_or("non-Rust file runner must format Markdown with Prettier")?;
@@ -700,6 +703,16 @@ fn complete_yaml_documents_use_explicit_start_markers() -> Result<(), String> {
         if deleted.contains(path) {
             continue;
         }
+        let immutable_upstream_compose = path.file_name().and_then(|name| name.to_str()) == Some("input.compose.yaml")
+            && path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .is_some_and(|directory| directory.starts_with("real-world-compose-"))
+            && path.parent().and_then(Path::parent) == Some(Path::new("fixtures/scenarios"));
+        if immutable_upstream_compose {
+            continue;
+        }
         let contents =
             fs::read_to_string(&absolute).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         if contents.lines().next() != Some("---") {
@@ -707,6 +720,26 @@ fn complete_yaml_documents_use_explicit_start_markers() -> Result<(), String> {
         }
     }
 
+    Ok(())
+}
+
+#[test]
+fn immutable_upstream_whitespace_exceptions_are_narrow() -> Result<(), String> {
+    let attributes = fs::read_to_string(repository_root().join(".gitattributes"))
+        .map_err(|error| format!("failed to read .gitattributes: {error}"))?;
+    let rules = attributes
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rules,
+        [
+            "fixtures/scenarios/real-world-compose-*/UPSTREAM-LICENSE -whitespace",
+            "fixtures/scenarios/real-world-compose-*/UPSTREAM-NOTICE -whitespace",
+            "fixtures/scenarios/real-world-compose-*/input.compose.yaml -whitespace",
+        ],
+        "Git whitespace exceptions must remain limited to immutable upstream evidence"
+    );
     Ok(())
 }
 

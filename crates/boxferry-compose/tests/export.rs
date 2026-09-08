@@ -1422,6 +1422,39 @@ fn refuses_sensitive_volume_runtime_names_without_leaking_them() -> Result<(), B
     Ok(())
 }
 
+#[test]
+fn reports_named_volume_selinux_relabel_as_unsupported_when_renderer_cannot_preserve_it() -> Result<(), Box<dyn Error>>
+{
+    let origin = Provenance::source(SourceId::new("named-volume-relabel.yaml")?);
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::from_source(
+        ImageReference::parse("example.invalid/web:1")?,
+        origin.clone(),
+    ));
+    let mut mount = Mount::new(MountSource::Volume(Identifier::new("data")?), "/data", true)?;
+    mount.set_selinux_relabel(SelinuxRelabel::Private);
+    service.add_mount(Sourced::from_source(mount, origin.clone()));
+    let mut application = Application::new(Identifier::new("named-volume-relabel")?);
+    application.add_volume(Sourced::from_source(
+        Volume::new(Identifier::new("data")?, ResourceOwnership::Application),
+        origin.clone(),
+    ))?;
+    application.add_service(Sourced::from_source(service, origin))?;
+    let plan = ComposeExporter::new()?.plan(&application, &exact_target(DOCKER_COMPOSE_TARGET, version(5, 3, 1))?)?;
+    let loss = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "services.web.mounts[0]")
+        .ok_or("mount loss")?;
+    assert_eq!(loss.kind(), ConversionKind::Unsupported);
+    assert_eq!(
+        loss.diagnostic().map(boxferry_engine::DiagnosticCode::as_str),
+        Some("BFC0007")
+    );
+    assert!(!plan.candidate().ok_or("partial candidate")?.text().contains(":Z"));
+    assert!(plan.authorize(LossPolicy::ExactOnly).output().is_none());
+    Ok(())
+}
 fn minimal_application() -> Result<Application, Box<dyn Error>> {
     let mut service = Service::new(Identifier::new("web")?);
     service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));

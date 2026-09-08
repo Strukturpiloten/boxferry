@@ -1,0 +1,14 @@
+BFQ0004|image_builds.proxy-build
+BFQ0005|application
+BFQ0003|image_builds.proxy-build.source_declaration
+BFQ0003|services.web.networks.default
+BFQ0003|services.cron.entrypoint
+BFQ0009|services.db.restart_policy
+BFQ0009|services.redis.restart_policy
+BFQ0009|services.app.restart_policy
+BFQ0009|services.web.restart_policy
+BFQ0009|services.cron.restart_policy
+BFQ0009|services.proxy.restart_policy
+BFQ0009|services.letsencrypt-companion.restart_policy
+BFQ0010|services.db.env_file[0]
+BFQ0010|services.app.env_file[0]

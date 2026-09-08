@@ -1,0 +1,7 @@
+BFQ1004	services.admin-panel.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.api.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.meilisearch.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.mongodb.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.rag_api.env_file[0]	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.rag_api.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.vectordb.restart_policy	approximate	podman@5.4.0..6.1.0	1

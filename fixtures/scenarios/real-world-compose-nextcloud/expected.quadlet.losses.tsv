@@ -1,0 +1,15 @@
+BFQ0003	image_builds.proxy-build.source_declaration	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.app.env_file[0]	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.cron.entrypoint	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.db.env_file[0]	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.web.mounts[0]	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.web.networks.default	unsupported	podman@5.4.0..6.1.0	1
+BFQ0004	image_builds.proxy-build	invalid	podman@5.4.0..6.1.0	1
+BFQ0005	application	invalid	podman@5.4.0..6.1.0	1
+BFQ0009	services.app.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.cron.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.db.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.letsencrypt-companion.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.proxy.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.redis.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.web.restart_policy	approximate	podman@5.4.0..6.1.0	1

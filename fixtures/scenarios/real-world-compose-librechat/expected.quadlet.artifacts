@@ -1,0 +1,7 @@
+admin-panel.container
+api.container
+meilisearch.container
+mongodb.container
+pgdata2.volume
+rag_api.container
+vectordb.container

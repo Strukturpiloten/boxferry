@@ -1,0 +1,95 @@
+schema = 1
+id = "document-route-unresolved"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "route-matrix"
+version = "1.0.0"
+
+[[components]]
+name = "web"
+configured-image = "${IMAGE}"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose-unresolved.yaml"]
+format-version = "compose-specification"
+import-diagnostics = ["BFC0105|services.web.image"]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored unresolved interpolation token; no captured user data or credentials."
+image-evidence = "The unresolved image token is source syntax evidence only and is never pulled."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = ["service:web"]
+excluded-resources = []
+ownership-boundaries = []
+shared-boundaries = []
+required-image-sources = [{ service = "web", kind = "literal", value = "${IMAGE}" }]
+required-mounts = []
+required-environment = []
+required-ports = []
+required-restart = ["web:absent"]
+unpublished-services = ["web"]
+external-prerequisites = []
+expected-diagnostics = ["BFC0105|services.web.image"]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+diagnostics = ["BFC0105|services.web.image"]
+reimport-diagnostics = ["BFC0105|services.web.image"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Quadlet cannot emit an unresolved image interpolation token."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFC0105|services.web.image", "BFQ0014|services.web.image"]
+allowed-losses = [
+  { rule = "BFQ0014", subject = "services.web.image", decision = "invalid", version-scope = "podman@5.4.0..6.1.0" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Podman deployment output cannot emit an unresolved image interpolation token."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFC0105|services.web.image", "BFP0008|services.web.image"]
+allowed-losses = [
+  { rule = "BFP0008", subject = "services.web.image", decision = "invalid", version-scope = "podman@5.4.0..6.1.0" },
+]

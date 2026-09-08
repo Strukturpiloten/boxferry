@@ -1,0 +1,4 @@
+BFQ1004	services.broker.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.db.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.webserver.env_file[0]	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.webserver.restart_policy	approximate	podman@5.4.0..6.1.0	1
