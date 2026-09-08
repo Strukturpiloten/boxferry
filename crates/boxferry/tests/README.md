@@ -21,3 +21,9 @@ reviewed artifacts and diagnostic sequences across the policy lattice, and re-im
 generated result to a same-format fixed point. The remaining route, CLI, report, and
 repository-policy tests exercise focused Compose/Quadlet behaviors and their public orchestration
 boundary.
+
+## Scenario acceptance ownership
+
+`scenario_contract.rs` owns catalogue-only application acceptance. It validates both supported manifest spellings, all exporters for every input, independent neutral intent, exact artifact/diagnostic/loss sidecars, protected-value counterfactuals, and applicable reimports. Real-world Compose blobs are vendored with pinned Git provenance and reviewed legal files so this suite remains offline. Remote corpus fetching is a refresh check, not a test dependency.
+
+Podman JSON and command artifacts are validated as deployment plans—including creates, external preconditions, image operations, start order, and CLI/API parity—and are never treated as observed inventory. `native-validation`, `runtime-probe`, and `reimport` remain separate dimensions; a reviewed gap in one cannot be renamed migration success by updating a golden file.

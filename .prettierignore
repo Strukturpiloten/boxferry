@@ -5,5 +5,6 @@
 fixtures/**/expected-podman.json
 fixtures/**/expected-*-podman.json
 
-# Immutable third-party cassettes retain their reviewed upstream hashes.
+# Immutable third-party inputs retain their reviewed upstream hashes.
 fixtures/differential/podman-lens-complex-corpus/*.cassette.json
+fixtures/scenarios/real-world-compose-*/input.compose.yaml

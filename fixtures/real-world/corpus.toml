@@ -1,5 +1,5 @@
 schema = 1
-reviewed = "2026-08-05"
+reviewed = "2026-09-08"
 
 # The upstream files are not vendored. Each entry identifies one immutable Git commit and blob.
 # `cargo ci-real-world-compose` retrieves those exact files into a temporary directory.
@@ -132,7 +132,7 @@ goals = [
   "short-volume SELinux z and Z modes",
   "build versus image services",
   "entrypoint overrides",
-  "external proxy network",
+  "project-scoped proxy-tier network",
 ]
 
 [[projects]]

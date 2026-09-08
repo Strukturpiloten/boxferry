@@ -1,0 +1,9 @@
+BFC0105	services.database.volumes[0]	unsupported	podman@5.4.0..6.1.0	1
+BFC0105	services.immich-server.volumes[0]	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.database.environment.POSTGRES_DB	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.database.environment.POSTGRES_PASSWORD	unsupported	podman@5.4.0..6.1.0	1
+BFQ0003	services.database.environment.POSTGRES_USER	unsupported	podman@5.4.0..6.1.0	1
+BFQ0009	services.database.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0009	services.redis.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ0014	services.immich-machine-learning.image	invalid	podman@5.4.0..6.1.0	1
+BFQ0014	services.immich-server.image	invalid	podman@5.4.0..6.1.0	1

@@ -1,0 +1,101 @@
+schema = 1
+id = "document-route-interpolation"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "route-matrix"
+version = "1.0.0"
+
+[[components]]
+name = "web"
+configured-image = "example.invalid/web:2026.08.24"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose-interpolation.yaml"]
+format-version = "compose-specification"
+interpolate = true
+environment-files = ["variables.env"]
+environment = ["LOG_LEVEL=warning"]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored interpolation precedence values; no captured user data or credentials."
+image-evidence = "The example.invalid configured image is synthetic offline-only evidence and is never pulled."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = ["service:web"]
+excluded-resources = []
+ownership-boundaries = []
+shared-boundaries = []
+required-image-sources = [{ service = "web", kind = "literal", value = "example.invalid/web:2026.08.24" }]
+required-mounts = []
+required-environment = ["web:LOG_LEVEL=warning"]
+required-ports = []
+required-restart = ["web:always"]
+unpublished-services = ["web"]
+external-prerequisites = []
+expected-diagnostics = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+environment-order = ["web:LOG_LEVEL=warning"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "approximate"
+outcome = "migration-success"
+artifacts = ["web.container"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+diagnostics = ["BFQ0009|services.web.restart_policy"]
+allowed-losses = [
+  { rule = "BFQ0009", subject = "services.web.restart_policy", decision = "approximate", version-scope = "podman@5.4.0..6.1.0" },
+]
+reimport-diagnostics = ["BFQ1004|<global>"]
+reimport-allowed-losses = [
+  { rule = "BFQ1004", subject = "services.web.restart_policy", decision = "approximate", version-scope = "podman@5.4.0..6.1.0" },
+]
+environment-order = ["web:LOG_LEVEL=warning"]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output redacts the explicitly interpolated environment value from review artifacts."
+artifacts = ["podman-commands.sh", "podman.json"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics = ["BFP0007|services.web.environment.LOG_LEVEL"]
+semantic-gaps = ["environment:web:LOG_LEVEL"]
+allowed-losses = [
+  { rule = "BFP0007", subject = "services.web.environment.LOG_LEVEL", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]

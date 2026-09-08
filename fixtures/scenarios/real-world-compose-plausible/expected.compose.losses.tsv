@@ -1,0 +1,4 @@
+BFC0007	services.plausible.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.plausible.dependencies[1]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.plausible_db.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.plausible_events_db.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1

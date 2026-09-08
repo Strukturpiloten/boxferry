@@ -1,0 +1,13 @@
+auth.container
+db-config.volume
+db.container
+deno-cache.volume
+functions.container
+imgproxy.container
+kong.container
+meta.container
+realtime.container
+rest.container
+storage.container
+studio.container
+supavisor.container

@@ -1,0 +1,10 @@
+BFP0007|services.db.environment.POSTGRES_DB
+BFP0007|services.db.environment.POSTGRES_USER
+BFP0007|services.db.environment.POSTGRES_PASSWORD
+BFP0007|services.webserver.environment.PAPERLESS_REDIS
+BFP0007|services.webserver.environment.PAPERLESS_DBHOST
+BFP0007|services.webserver.environment.PAPERLESS_DBENGINE
+BFP0007|services.webserver.mounts[2].source
+BFP0007|services.webserver.mounts[3].source
+BFP0007|services.webserver.environment_files
+BFP0007|services.webserver.ports

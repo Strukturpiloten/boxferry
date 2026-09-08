@@ -1,0 +1,209 @@
+# Pinned upstream source with independently transcribed intent and exact route evidence.
+schema = 1
+id = "real-world-compose-librechat"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = []
+
+[application]
+name = "librechat"
+revision = "120ee2afa6579fa1efa28dfb69d99fa7e9a4c040"
+
+[[components]]
+name = "api"
+configured-image = "registry.librechat.ai/danny-avila/librechat-dev:latest"
+
+[[components]]
+name = "admin-panel"
+configured-image = "registry.librechat.ai/clickhouse/librechat-admin-panel:latest"
+
+[[components]]
+name = "mongodb"
+configured-image = "mongo:8.0.20"
+
+[[components]]
+name = "meilisearch"
+configured-image = "getmeili/meilisearch:v1.35.1"
+
+[[components]]
+name = "vectordb"
+configured-image = "pgvector/pgvector:0.8.0-pg15-trixie"
+
+[[components]]
+name = "rag_api"
+configured-image = "registry.librechat.ai/danny-avila/librechat-rag-api-dev-lite:latest"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["input.compose.yaml"]
+format-version = "compose-specification"
+all-profiles = true
+import-diagnostics-file = "expected.import.diagnostics"
+
+[provenance]
+source = "external"
+corpus-project = "librechat"
+license = "MIT"
+privacy-reviewed = true
+test-data = "Immutable public upstream Compose blob; no environment files, credentials, or runtime observations were added."
+image-evidence = "Configured image/build references are independently transcribed; no image is pulled."
+
+[deployment]
+origin = "external"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "service:api",
+  "service:admin-panel",
+  "service:mongodb",
+  "service:meilisearch",
+  "service:vectordb",
+  "service:rag_api",
+  "volume:pgdata2",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:pgdata2:application",
+]
+shared-boundaries = [
+  "volume:pgdata2:consumers=vectordb",
+]
+required-mounts = [
+  "vectordb:pgdata2:/var/lib/postgresql/data",
+]
+# REVIEW-GAP unrepresentable relative/plain bind: api:./.env:/app/.env:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: api:./images:/app/client/public/images:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: api:./uploads:/app/uploads:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: api:./logs:/app/logs:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: api:./skill:/app/skill:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: mongodb:./data-node:/data/db:read-only=false:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: meilisearch:./meili_data_v1.35.1:/meili_data:read-only=false:selinux=none
+required-environment = [
+  "api:HOST=0.0.0.0",
+  "api:MONGO_URI=mongodb://mongodb:27017/LibreChat",
+  "api:MEILI_HOST=http://meilisearch:7700",
+  "admin-panel:PORT=3000",
+  "meilisearch:MEILI_HOST=http://meilisearch:7700",
+  "meilisearch:MEILI_NO_ANALYTICS=true",
+  "vectordb:POSTGRES_DB=mydatabase",
+  "vectordb:POSTGRES_USER=myuser",
+  "vectordb:POSTGRES_PASSWORD=mypassword",
+  "rag_api:DB_HOST=vectordb",
+]
+required-environment-order = []
+required-restart = [
+  "api:always",
+  "admin-panel:always",
+  "mongodb:always",
+  "meilisearch:always",
+  "vectordb:always",
+  "rag_api:always",
+]
+required-runtime-names = [
+  "api:LibreChat",
+  "admin-panel:admin-panel",
+  "mongodb:chat-mongodb",
+  "meilisearch:chat-meilisearch",
+  "vectordb:vectordb",
+  "rag_api:rag_api",
+]
+unpublished-services = [
+  "mongodb",
+  "meilisearch",
+  "vectordb",
+  "rag_api",
+]
+external-prerequisites = []
+expected-diagnostics = []
+required-image-builds = []
+required-image-sources = [
+  { service = "api", kind = "literal", value = "registry.librechat.ai/danny-avila/librechat-dev:latest" },
+  { service = "admin-panel", kind = "literal", value = "registry.librechat.ai/clickhouse/librechat-admin-panel:latest" },
+  { service = "mongodb", kind = "literal", value = "mongo:8.0.20" },
+  { service = "meilisearch", kind = "literal", value = "getmeili/meilisearch:v1.35.1" },
+  { service = "vectordb", kind = "literal", value = "pgvector/pgvector:0.8.0-pg15-trixie" },
+  { service = "rag_api", kind = "literal", value = "registry.librechat.ai/danny-avila/librechat-rag-api-dev-lite:latest" },
+]
+required-commands = [
+  { service = "api", kind = "absent", values = [] },
+  { service = "admin-panel", kind = "absent", values = [] },
+  { service = "mongodb", kind = "shell", values = ["mongod --noauth"] },
+  { service = "meilisearch", kind = "absent", values = [] },
+  { service = "vectordb", kind = "absent", values = [] },
+  { service = "rag_api", kind = "absent", values = [] },
+]
+required-entrypoints = [
+  { service = "api", kind = "absent", values = [] },
+  { service = "admin-panel", kind = "absent", values = [] },
+  { service = "mongodb", kind = "absent", values = [] },
+  { service = "meilisearch", kind = "absent", values = [] },
+  { service = "vectordb", kind = "absent", values = [] },
+  { service = "rag_api", kind = "absent", values = [] },
+]
+required-dependencies = [
+  { service = "api", dependency = "mongodb", condition = "unspecified" },
+  { service = "api", dependency = "rag_api", condition = "unspecified" },
+  { service = "admin-panel", dependency = "api", condition = "unspecified" },
+  { service = "rag_api", dependency = "vectordb", condition = "unspecified" },
+]
+required-healthchecks = []
+required-port-bindings = []
+required-volume-mounts = [
+  { service = "vectordb", source = "pgdata2", target = "/var/lib/postgresql/data", read-only = false },
+]
+required-networks = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies."
+artifacts-file = "expected.compose.artifacts"
+diagnostics-file = "expected.compose.diagnostics"
+reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
+allowed-losses-file = "expected.compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies." }
+reimport-semantic-gaps = ["dependency:admin-panel:api", "dependency:api:mongodb", "dependency:api:rag_api", "dependency:rag_api:vectordb"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Quadlet output is emitted, but reimport cannot reconstruct the reviewed command and dependencies."
+artifacts-file = "expected.quadlet.artifacts"
+diagnostics-file = "expected.quadlet.diagnostics"
+reimport-diagnostics-file = "expected.quadlet.reimport.diagnostics"
+allowed-losses-file = "expected.quadlet.losses.tsv"
+reimport-allowed-losses-file = "expected.quadlet.reimport.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed command and dependencies." }
+reimport-semantic-gaps = ["command:mongodb", "dependency:admin-panel:api", "dependency:api:mongodb", "dependency:api:rag_api", "dependency:rag_api:vectordb"]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.podman.diagnostics"
+allowed-losses-file = "expected.podman.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }

@@ -2,6 +2,7 @@ schema = 1
 id = "podman-portable-intent"
 source-capabilities = ["podman"]
 target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = ["podman-portable-zeta-canary", "podman-portable-alpha-canary"]
 
 [application]
 name = "podman-portable-intent"
@@ -87,7 +88,7 @@ reason = "ComposeLens 0.3.0 cannot generate the independently required IPAM conf
 artifacts = ["compose.yaml"]
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "passed" }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
 diagnostics = [
   "BFC0007|networks.scenario-net.ipam.config",
   "BFP0002|container:portable-app",
@@ -152,6 +153,10 @@ diagnostics = [
   "BFP0003|services.portable-app.security",
 ]
 reimport-diagnostics = ["BFQ1003|<global>"]
+reimport-version-scope = "quadlet-lens@0.2.3..0.2.3"
+reimport-allowed-losses = [
+  { rule = "BFQ1003", subject = "networks.scenario-net.ipam_configs", decision = "unsupported", version-scope = "quadlet-lens@0.2.3..0.2.3" },
+]
 environment-order = [
   "portable-app:ALPHA=podman-portable-alpha-canary",
   "portable-app:EMPTY=",

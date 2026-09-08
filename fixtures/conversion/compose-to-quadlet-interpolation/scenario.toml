@@ -1,0 +1,100 @@
+schema = 1
+id = "compose-to-quadlet-interpolation"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = ["explicit-secret"]
+
+[application]
+name = "interpolation-demo"
+version = "2.1.0"
+
+[[components]]
+name = "app"
+version = "2.1.0"
+image = "example.invalid/app"
+digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+configured-image = "example.invalid/app:2.1"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+interpolate = true
+environment = ["TAG=2.1", "TOKEN=explicit-secret"]
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored interpolation canaries; explicit-secret is a synthetic protected test value."
+image-evidence = "Synthetic example.invalid image identity is never pulled; digest-shaped metadata is offline-only."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = ["service:app"]
+excluded-resources = []
+ownership-boundaries = []
+shared-boundaries = []
+required-mounts = []
+required-environment = ["app:TOKEN=explicit-secret", "app:UNAUTHORIZED=safe-default"]
+required-environment-order = ["app:TOKEN=explicit-secret", "app:UNAUTHORIZED=safe-default"]
+required-ports = []
+required-restart = ["app:never"]
+unpublished-services = ["app"]
+external-prerequisites = []
+expected-diagnostics = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+environment-order = ["app:TOKEN=explicit-secret", "app:UNAUTHORIZED=safe-default"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "exact"
+outcome = "migration-success"
+artifacts = ["app.container"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+environment-order = ["app:TOKEN=explicit-secret", "app:UNAUTHORIZED=safe-default"]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain source environment assignments in this adapter revision."
+artifacts = ["podman-commands.sh", "podman.json"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics = [
+  "BFP0007|services.app.environment.TOKEN",
+  "BFP0007|services.app.environment.UNAUTHORIZED",
+]
+semantic-gaps = ["environment:app:TOKEN", "environment:app:UNAUTHORIZED"]
+allowed-losses = [
+  { rule = "BFP0007", subject = "services.app.environment.TOKEN", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.app.environment.UNAUTHORIZED", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]

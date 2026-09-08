@@ -1332,6 +1332,7 @@ impl<'a> Mapping<'a> {
                 }
                 None => None,
             };
+            let named_volume_relabel = matches!(mount.value().source(), MountSource::Volume(_)) && selinux.is_some();
             let value = match mount.value().source() {
                 MountSource::Volume(source) => {
                     GeneratedMount::volume(source.as_str(), mount.value().target(), mount.value().read_only())
@@ -1352,7 +1353,13 @@ impl<'a> Mapping<'a> {
             match value {
                 Ok(value) => {
                     generated.add_mount(value);
-                    if mount.value().selinux_relabel().is_some() {
+                    if named_volume_relabel {
+                        self.unsupported(
+                            &subject,
+                            "ComposeLens generated named-volume syntax cannot represent SELinux relabel intent",
+                            mount.origins(),
+                        );
+                    } else if mount.value().selinux_relabel().is_some() {
                         self.compatibility(&subject, CompatibilityFeature::ShortBindSelinuxRelabel, mount.origins());
                     } else {
                         self.exact(subject, mount.origins());

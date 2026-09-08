@@ -1,0 +1,130 @@
+schema = 1
+id = "document-route-negative"
+components = []
+source-capabilities = ["compose", "quadlet"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "route-matrix-rejection"
+version = "1.0.0"
+
+[[native-inputs]]
+id = "compose-required"
+importer = "compose"
+files = ["compose-required.yaml"]
+format-version = "compose-specification"
+outcome = "expected-rejection"
+reason = "Required interpolation variable is absent."
+interpolate = true
+
+[[native-inputs]]
+id = "quadlet-invalid"
+importer = "quadlet"
+files = ["invalid.container"]
+format-version = "0.2.3"
+outcome = "expected-rejection"
+reason = "Quadlet input is syntactically invalid."
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored malformed and missing-variable inputs; no captured user data or credentials."
+image-evidence = "Rejected before a neutral application or image decision exists."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = []
+
+[[evidence]]
+input = "compose-required"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Required interpolation variable is absent."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFC0102|<global>"]
+
+[[evidence]]
+input = "compose-required"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Required interpolation variable is absent."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFC0102|<global>"]
+
+[[evidence]]
+input = "compose-required"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Required interpolation variable is absent."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFC0102|<global>"]
+
+[[evidence]]
+input = "quadlet-invalid"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Quadlet input is syntactically invalid."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFQ1102|<global>"]
+
+[[evidence]]
+input = "quadlet-invalid"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Quadlet input is syntactically invalid."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFQ1102|<global>"]
+
+[[evidence]]
+input = "quadlet-invalid"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Quadlet input is syntactically invalid."
+artifacts = []
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+diagnostics = ["BFQ1102|<global>"]

@@ -1,0 +1,14 @@
+BFQ0014|services.immich-server.image
+BFQ0014|services.immich-machine-learning.image
+BFC0105|services.immich-server.image
+BFC0105|services.immich-server.volumes[0]
+BFC0105|services.immich-machine-learning.image
+BFC0105|services.database.environment.POSTGRES_PASSWORD
+BFC0105|services.database.environment.POSTGRES_USER
+BFC0105|services.database.environment.POSTGRES_DB
+BFC0105|services.database.volumes[0]
+BFQ0003|services.database.environment.POSTGRES_DB
+BFQ0003|services.database.environment.POSTGRES_PASSWORD
+BFQ0003|services.database.environment.POSTGRES_USER
+BFQ0009|services.redis.restart_policy
+BFQ0009|services.database.restart_policy

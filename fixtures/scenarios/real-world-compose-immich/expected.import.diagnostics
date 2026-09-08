@@ -1,0 +1,7 @@
+BFC0105|services.immich-server.image
+BFC0105|services.immich-server.volumes[0]
+BFC0105|services.immich-machine-learning.image
+BFC0105|services.database.environment.POSTGRES_PASSWORD
+BFC0105|services.database.environment.POSTGRES_USER
+BFC0105|services.database.environment.POSTGRES_DB
+BFC0105|services.database.volumes[0]

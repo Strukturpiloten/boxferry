@@ -1,0 +1,165 @@
+schema = 1
+id = "compose-import-core"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "ferry-demo"
+version = "1.0.0"
+
+[[components]]
+name = "web"
+version = "1.0.0"
+configured-image = "registry.example:5000/team/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml", "compose.override.yaml"]
+format-version = "compose-specification"
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored synthetic Compose fixture; no user data or credentials."
+image-evidence = "Synthetic registry.example digest identity used only for offline assertions."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = ["network:frontend", "service:web", "volume:data"]
+excluded-resources = ["service:worker"]
+ownership-boundaries = ["volume:data:application"]
+shared-boundaries = ["volume:data:consumers=web"]
+required-environment = ["web:EMPTY=", "web:OVERRIDE_ONLY=enabled", "web:PORT=9090"]
+required-runtime-names = ["web:ferry-web"]
+required-networks = [{ name = "frontend", ownership = "application" }]
+required-commands = [{ service = "web", kind = "exec", values = ["php", "-v"] }]
+required-healthchecks = [{ service = "web", command-kind = "shell", command = ["curl --fail http://127.0.0.1/health || exit 1"] }]
+required-port-bindings = [
+  { service = "web", container = 80, published = 8080, host-address = "127.0.0.1", protocol = "tcp" },
+  { service = "web", container = 8443, published = 8443, protocol = "tcp" },
+]
+required-volume-mounts = [{ service = "web", source = "data", target = "/var/lib/data", read-only = true }]
+external-prerequisites = []
+expected-diagnostics = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain every reviewed network, healthcheck, user-namespace, and host-mapping detail."
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics = [
+  "BFC0007|services.web.networks.frontend",
+  "BFC0007|services.web.healthcheck",
+  "BFC0009|services.web.user_namespace",
+  "BFC0009|services.web.extra_hosts[0]",
+]
+semantic-gaps = ["healthcheck:web"]
+reimport-semantic-gaps = ["healthcheck:web"]
+allowed-losses = [
+  { rule = "BFC0007", subject = "services.web.networks.frontend", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "services.web.healthcheck", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0009", subject = "services.web.user_namespace", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0009", subject = "services.web.extra_hosts[0]", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Quadlet cannot retain host-sourced environment and restart-policy intent exactly."
+artifacts = ["frontend.network", "data.volume", "web.container"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+diagnostics = [
+  "BFQ0003|services.web.restart_policy",
+  "BFQ0003|services.web.environment.FROM_HOST",
+]
+semantic-gaps = ["environment:web:FROM_HOST", "restart-policy:web"]
+allowed-losses = [
+  { rule = "BFQ0003", subject = "services.web.restart_policy", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFQ0003", subject = "services.web.environment.FROM_HOST", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFQ0003", subject = "services.web.mounts[1]", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFQ0003", subject = "services.web.mounts[2]", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFQ0003", subject = "services.web.mounts[3]", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output omits reviewed environment, execution-context, mount, host-mapping, healthcheck, runtime-name, and publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics = [
+  "BFP0007|services.web.environment.EMPTY",
+  "BFP0007|services.web.environment.FROM_HOST",
+  "BFP0007|services.web.environment.OVERRIDE_ONLY",
+  "BFP0007|services.web.environment.PORT",
+  "BFP0007|services.web.restart_policy",
+  "BFP0007|services.web.mounts[1].source",
+  "BFP0007|services.web.mounts[1].selinux_relabel",
+  "BFP0007|services.web.mounts[2].source",
+  "BFP0007|services.web.mounts[2].selinux_relabel",
+  "BFP0007|services.web.mounts[3].source",
+  "BFP0007|services.web.mounts[3].selinux_relabel",
+  "BFP0007|services.web.runtime_name",
+  "BFP0007|services.web.healthcheck",
+  "BFP0007|services.web.user_namespace",
+  "BFP0007|services.web.supplementary_groups",
+  "BFP0007|services.web.read_only_root_filesystem",
+  "BFP0007|services.web.host_mappings",
+  "BFP0007|services.web.ports",
+]
+semantic-gaps = [
+  "environment:web:EMPTY",
+  "environment:web:OVERRIDE_ONLY",
+  "environment:web:PORT",
+  "runtime-name:web",
+  "healthcheck:web",
+  "port:web:80:Some(8080)",
+  "port:web:8443:Some(8443)",
+]
+allowed-losses = [
+  { rule = "BFP0007", subject = "services.web.environment.EMPTY", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.environment.FROM_HOST", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.environment.OVERRIDE_ONLY", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.environment.PORT", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.restart_policy", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.mounts[1].source", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.mounts[1].selinux_relabel", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.mounts[2].source", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.mounts[2].selinux_relabel", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.mounts[3].source", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.mounts[3].selinux_relabel", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.runtime_name", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.healthcheck", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.user_namespace", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.supplementary_groups", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.read_only_root_filesystem", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.host_mappings", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.ports", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]

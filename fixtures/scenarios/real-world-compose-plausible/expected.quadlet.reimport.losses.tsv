@@ -1,0 +1,3 @@
+BFQ1004	services.plausible.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.plausible_db.restart_policy	approximate	podman@5.4.0..6.1.0	1
+BFQ1004	services.plausible_events_db.restart_policy	approximate	podman@5.4.0..6.1.0	1

@@ -1,0 +1,10 @@
+BFC0007	services.database.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.immich-machine-learning.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.immich-server.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.immich-server.dependencies[1]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.immich-server.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0007	services.redis.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0009	services.database.image	approximate	compose-specification@1.0.0..1.0.0	1
+BFC0009	services.redis.image	approximate	compose-specification@1.0.0..1.0.0	1
+BFC0105	services.database.volumes[0]	unsupported	compose-specification@1.0.0..1.0.0	1
+BFC0105	services.immich-server.volumes[0]	unsupported	compose-specification@1.0.0..1.0.0	1

@@ -1,0 +1,6 @@
+BFC0007|services.plausible_db.healthcheck
+BFC0007|services.plausible_events_db.healthcheck
+BFC0007|services.plausible.dependencies[0]
+BFC0007|services.plausible.dependencies[1]
+BFC0105|services.plausible.environment.BASE_URL
+BFC0105|services.plausible.environment.SECRET_KEY_BASE

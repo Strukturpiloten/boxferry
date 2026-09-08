@@ -1,0 +1,207 @@
+# Pinned upstream source with independently transcribed intent and exact route evidence.
+schema = 1
+id = "real-world-compose-plausible"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = []
+
+[application]
+name = "plausible"
+revision = "ec6c4da776547516d8f48159ce1a704df4f475ad"
+
+[[components]]
+name = "plausible_db"
+configured-image = "postgres:16-alpine"
+
+[[components]]
+name = "plausible_events_db"
+configured-image = "clickhouse/clickhouse-server:24.12-alpine"
+
+[[components]]
+name = "plausible"
+configured-image = "ghcr.io/plausible/community-edition:v3.2.1"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["input.compose.yaml"]
+format-version = "compose-specification"
+all-profiles = true
+import-diagnostics-file = "expected.import.diagnostics"
+
+[provenance]
+source = "external"
+corpus-project = "plausible"
+license = "MIT"
+privacy-reviewed = true
+test-data = "Immutable public upstream Compose blob; no environment files, credentials, or runtime observations were added."
+image-evidence = "Configured image/build references are independently transcribed; no image is pulled."
+
+[deployment]
+origin = "external"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "service:plausible_db",
+  "service:plausible_events_db",
+  "service:plausible",
+  "volume:db-data",
+  "volume:event-data",
+  "volume:event-logs",
+  "volume:plausible-data",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:db-data:application",
+  "volume:event-data:application",
+  "volume:event-logs:application",
+  "volume:plausible-data:application",
+]
+shared-boundaries = [
+  "volume:db-data:consumers=plausible_db",
+  "volume:event-data:consumers=plausible_events_db",
+  "volume:event-logs:consumers=plausible_events_db",
+  "volume:plausible-data:consumers=plausible",
+]
+required-mounts = [
+  "plausible_db:db-data:/var/lib/postgresql/data",
+  "plausible_events_db:event-data:/var/lib/clickhouse",
+  "plausible_events_db:event-logs:/var/log/clickhouse-server",
+  "plausible:plausible-data:/var/lib/plausible",
+]
+# REVIEW-GAP unrepresentable relative/plain bind: plausible_events_db:./clickhouse/logs.xml:/etc/clickhouse-server/config.d/logs.xml:read-only=true:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: plausible_events_db:./clickhouse/ipv4-only.xml:/etc/clickhouse-server/config.d/ipv4-only.xml:read-only=true:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: plausible_events_db:./clickhouse/low-resources.xml:/etc/clickhouse-server/config.d/low-resources.xml:read-only=true:selinux=none
+# REVIEW-GAP unrepresentable relative/plain bind: plausible_events_db:./clickhouse/default-profile-low-resources-overrides.xml:/etc/clickhouse-server/users.d/default-profile-low-resources-overrides.xml:read-only=true:selinux=none
+required-environment = [
+  "plausible_db:POSTGRES_PASSWORD=postgres",
+  "plausible_events_db:CLICKHOUSE_SKIP_USER_SETUP=1",
+  "plausible:TMPDIR=/var/lib/plausible/tmp",
+]
+required-environment-order = []
+# REVIEW-GAP inherited environment not expressible as literal: plausible:TOTP_VAULT_KEY
+# REVIEW-GAP inherited environment not expressible as literal: plausible:DISABLE_REGISTRATION
+# REVIEW-GAP inherited environment not expressible as literal: plausible:ENABLE_EMAIL_VERIFICATION
+# REVIEW-GAP inherited environment not expressible as literal: plausible:HTTP_PORT
+# REVIEW-GAP inherited environment not expressible as literal: plausible:HTTPS_PORT
+# REVIEW-GAP inherited environment not expressible as literal: plausible:DATABASE_URL
+# REVIEW-GAP inherited environment not expressible as literal: plausible:CLICKHOUSE_DATABASE_URL
+# REVIEW-GAP inherited environment not expressible as literal: plausible:GOOGLE_CLIENT_ID
+# REVIEW-GAP inherited environment not expressible as literal: plausible:GOOGLE_CLIENT_SECRET
+# REVIEW-GAP inherited environment not expressible as literal: plausible:IP_GEOLOCATION_DB
+# REVIEW-GAP inherited environment not expressible as literal: plausible:GEONAMES_SOURCE_FILE
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAXMIND_LICENSE_KEY
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAXMIND_EDITION
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAILER_ADAPTER
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAILER_EMAIL
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAILER_NAME
+# REVIEW-GAP inherited environment not expressible as literal: plausible:SMTP_HOST_ADDR
+# REVIEW-GAP inherited environment not expressible as literal: plausible:SMTP_HOST_PORT
+# REVIEW-GAP inherited environment not expressible as literal: plausible:SMTP_USER_NAME
+# REVIEW-GAP inherited environment not expressible as literal: plausible:SMTP_USER_PWD
+# REVIEW-GAP inherited environment not expressible as literal: plausible:SMTP_HOST_SSL_ENABLED
+# REVIEW-GAP inherited environment not expressible as literal: plausible:POSTMARK_API_KEY
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAILGUN_API_KEY
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAILGUN_DOMAIN
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MAILGUN_BASE_URI
+# REVIEW-GAP inherited environment not expressible as literal: plausible:MANDRILL_API_KEY
+# REVIEW-GAP inherited environment not expressible as literal: plausible:SENDGRID_API_KEY
+required-restart = [
+  "plausible_db:always",
+  "plausible_events_db:always",
+  "plausible:always",
+]
+required-runtime-names = []
+unpublished-services = [
+  "plausible_db",
+  "plausible_events_db",
+  "plausible",
+]
+external-prerequisites = []
+expected-diagnostics = []
+required-image-builds = []
+required-image-sources = [
+  { service = "plausible_db", kind = "literal", value = "postgres:16-alpine" },
+  { service = "plausible_events_db", kind = "literal", value = "clickhouse/clickhouse-server:24.12-alpine" },
+  { service = "plausible", kind = "literal", value = "ghcr.io/plausible/community-edition:v3.2.1" },
+]
+required-commands = [
+  { service = "plausible_db", kind = "absent", values = [] },
+  { service = "plausible_events_db", kind = "absent", values = [] },
+  { service = "plausible", kind = "shell", values = ["sh -c \"/entrypoint.sh db createdb && /entrypoint.sh db migrate && /entrypoint.sh run\""] },
+]
+required-entrypoints = [
+  { service = "plausible_db", kind = "absent", values = [] },
+  { service = "plausible_events_db", kind = "absent", values = [] },
+  { service = "plausible", kind = "absent", values = [] },
+]
+required-dependencies = [
+  { service = "plausible", dependency = "plausible_db", condition = "healthy" },
+  { service = "plausible", dependency = "plausible_events_db", condition = "healthy" },
+]
+required-healthchecks = [
+  { service = "plausible_db", command-kind = "shell", command = ["pg_isready -U postgres"] },
+  { service = "plausible_events_db", command-kind = "shell", command = ["wget --no-verbose --tries=1 -O - http://127.0.0.1:8123/ping || exit 1"] },
+]
+required-port-bindings = []
+required-volume-mounts = [
+  { service = "plausible_db", source = "db-data", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "plausible_events_db", source = "event-data", target = "/var/lib/clickhouse", read-only = false },
+  { service = "plausible_events_db", source = "event-logs", target = "/var/log/clickhouse-server", read-only = false },
+  { service = "plausible", source = "plausible-data", target = "/var/lib/plausible", read-only = false },
+]
+required-networks = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies and healthchecks."
+artifacts-file = "expected.compose.artifacts"
+diagnostics-file = "expected.compose.diagnostics"
+reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
+allowed-losses-file = "expected.compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies and healthchecks." }
+reimport-semantic-gaps = ["dependency:plausible:plausible_db", "dependency:plausible:plausible_events_db", "healthcheck:plausible_db", "healthcheck:plausible_events_db"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Quadlet output is emitted, but reimport cannot reconstruct the reviewed command and dependencies."
+artifacts-file = "expected.quadlet.artifacts"
+diagnostics-file = "expected.quadlet.diagnostics"
+reimport-diagnostics-file = "expected.quadlet.reimport.diagnostics"
+allowed-losses-file = "expected.quadlet.losses.tsv"
+reimport-allowed-losses-file = "expected.quadlet.reimport.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed command and dependencies." }
+reimport-semantic-gaps = ["command:plausible", "dependency:plausible:plausible_db", "dependency:plausible:plausible_events_db"]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "expected-rejection"
+reason = "Rejected before artifact emission; no native artifact was emitted."
+artifacts = []
+diagnostics-file = "expected.podman.diagnostics"
+allowed-losses-file = "expected.podman.losses.tsv"
+native-validation = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Rejected before artifact emission; no native artifact was emitted." }

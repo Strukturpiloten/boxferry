@@ -1,0 +1,1654 @@
+schema = 1
+id = "podman-lens-complex-corpus"
+source-capabilities = ["podman"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = [
+  "COMPLEX_PROTECTED_VALUE_NEVER_PRINT",
+  "COMPLEX_DB_PROTECTED_VALUE",
+  "COMPLEX_IMAGE_PROTECTED_VALUE",
+  "COMPLEX_NORMAL_HEALTH_SENTINEL",
+  "COMPLEX_STARTUP_HEALTH_SENTINEL",
+]
+
+[application]
+name = "complex"
+version = "1.0.0"
+
+[[components]]
+name = "api"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/api:1"
+
+[[components]]
+name = "backup"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/db:1"
+
+[[components]]
+name = "database"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/db:1"
+
+[[components]]
+name = "isolated-control"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/proxy:1"
+
+[[components]]
+name = "metrics"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/proxy:1"
+
+[[components]]
+name = "observer"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/proxy:1"
+
+[[components]]
+name = "proxy"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/proxy:1"
+
+[[components]]
+name = "worker"
+version = "1.0.0"
+configured-image = "registry.example.invalid/complex/api:1"
+
+[[native-inputs]]
+id = "podman-5-4-0-rootful"
+importer = "podman"
+files = ["complex-5.4.0-rootful.cassette.json"]
+format-version = "5.4.0"
+import-diagnostics-file = "expectations/import-54-rootful.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.4.0-rootful"
+root-mode = "rootful"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-4-0-rootless"
+importer = "podman"
+files = ["complex-5.4.0-rootless.cassette.json"]
+format-version = "5.4.0"
+import-diagnostics-file = "expectations/import-54-rootless.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.4.0-rootless"
+root-mode = "rootless"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-5-0-rootful"
+importer = "podman"
+files = ["complex-5.5.0-rootful.cassette.json"]
+format-version = "5.5.0"
+import-diagnostics-file = "expectations/import-55-rootful.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.5.0-rootful"
+root-mode = "rootful"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-5-0-rootless"
+importer = "podman"
+files = ["complex-5.5.0-rootless.cassette.json"]
+format-version = "5.5.0"
+import-diagnostics-file = "expectations/import-55-rootless.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.5.0-rootless"
+root-mode = "rootless"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-6-0-rootful"
+importer = "podman"
+files = ["complex-5.6.0-rootful.cassette.json"]
+format-version = "5.6.0"
+import-diagnostics-file = "expectations/import-55-rootful.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.6.0-rootful"
+root-mode = "rootful"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-6-0-rootless"
+importer = "podman"
+files = ["complex-5.6.0-rootless.cassette.json"]
+format-version = "5.6.0"
+import-diagnostics-file = "expectations/import-55-rootless.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.6.0-rootless"
+root-mode = "rootless"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-7-0-rootful"
+importer = "podman"
+files = ["complex-5.7.0-rootful.cassette.json"]
+format-version = "5.7.0"
+import-diagnostics-file = "expectations/import-55-rootful.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.7.0-rootful"
+root-mode = "rootful"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-7-0-rootless"
+importer = "podman"
+files = ["complex-5.7.0-rootless.cassette.json"]
+format-version = "5.7.0"
+import-diagnostics-file = "expectations/import-55-rootless.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.7.0-rootless"
+root-mode = "rootless"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-8-6-rootful"
+importer = "podman"
+files = ["complex-5.8.6-rootful.cassette.json"]
+format-version = "5.8.6"
+import-diagnostics-file = "expectations/import-55-rootful.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.8.6-rootful"
+root-mode = "rootful"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-5-8-6-rootless"
+importer = "podman"
+files = ["complex-5.8.6-rootless.cassette.json"]
+format-version = "5.8.6"
+import-diagnostics-file = "expectations/import-55-rootless.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-5.8.6-rootless"
+root-mode = "rootless"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-6-0-0-rootful"
+importer = "podman"
+files = ["complex-6.0.0-rootful.cassette.json"]
+format-version = "6.0.0"
+import-diagnostics-file = "expectations/import-6-any.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-6.0.0-rootful"
+root-mode = "rootful"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-6-0-0-rootless"
+importer = "podman"
+files = ["complex-6.0.0-rootless.cassette.json"]
+format-version = "6.0.0"
+import-diagnostics-file = "expectations/import-6-any.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-6.0.0-rootless"
+root-mode = "rootless"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-6-1-0-rootful"
+importer = "podman"
+files = ["complex-6.1.0-rootful.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expectations/import-6-any.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-6.1.0-rootful"
+root-mode = "rootful"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[[native-inputs]]
+id = "podman-6-1-0-rootless"
+importer = "podman"
+files = ["complex-6.1.0-rootless.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expectations/import-6-any.diagnostics"
+
+[native-inputs.podman]
+application = "complex"
+all = true
+cassette-scenario-id = "complex-6.1.0-rootless"
+root-mode = "rootless"
+include-environment-values = false
+selectors = []
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = false }
+
+[provenance]
+source = "external"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Fourteen synthetic request-aware PodmanLens 0.1.1 cassettes retained from immutable revision 65d5c28fe04ff03a74131923de0b62d3eef44d3c."
+image-evidence = "Synthetic registry.example.invalid image metadata is evidence only; configured literal references are the neutral image source."
+
+[deployment]
+origin = "external"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "group:application",
+  "group:edge",
+  "network:app-net",
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "secret:db-password",
+  "secret:tls-certificate",
+  "service:api",
+  "service:backup",
+  "service:database",
+  "service:isolated-control",
+  "service:metrics",
+  "service:observer",
+  "service:proxy",
+  "service:worker",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:database-data:application",
+  "volume:observer-cache:application",
+  "volume:shared-assets:application",
+]
+shared-boundaries = [
+  "volume:database-data:consumers=backup,database",
+  "volume:observer-cache:consumers=observer",
+  "volume:shared-assets:consumers=api,proxy,worker",
+]
+required-environment = []
+required-environment-order = []
+required-dependencies = [
+  { service = "api", dependency = "database", condition = "unspecified" },
+  { service = "backup", dependency = "database", condition = "unspecified" },
+  { service = "proxy", dependency = "api", condition = "unspecified" },
+  { service = "worker", dependency = "api", condition = "unspecified" },
+]
+required-healthchecks = []
+required-ports = []
+required-restart = []
+required-runtime-names = []
+unpublished-services = ["api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+external-prerequisites = []
+expected-diagnostics = []
+required-networks = [
+  { name = "app-net", ownership = "external" },
+  { name = "data-net", ownership = "application" },
+  { name = "edge-net", ownership = "application" },
+  { name = "isolated-net", ownership = "application" },
+]
+required-groups = [
+  { name = "application", ownership = "uncertain", members = ["api", "worker"] },
+  { name = "edge", ownership = "uncertain", members = ["metrics", "proxy"] },
+]
+required-commands = [
+  { service = "api", kind = "exec", values = ["serve", "--safe"] },
+  { service = "backup", kind = "exec", values = ["backup"] },
+  { service = "database", kind = "exec", values = ["database"] },
+  { service = "isolated-control", kind = "exec", values = ["idle"] },
+  { service = "metrics", kind = "exec", values = ["metrics"] },
+  { service = "observer", kind = "exec", values = ["observe"] },
+  { service = "proxy", kind = "exec", values = ["proxy"] },
+  { service = "worker", kind = "exec", values = ["work"] },
+]
+required-entrypoints = [
+  { service = "api", kind = "exec", values = ["/usr/bin/complex-api"] },
+  { service = "backup", kind = "absent" },
+  { service = "database", kind = "absent" },
+  { service = "isolated-control", kind = "absent" },
+  { service = "metrics", kind = "absent" },
+  { service = "observer", kind = "absent" },
+  { service = "proxy", kind = "absent" },
+  { service = "worker", kind = "absent" },
+]
+required-config-grants = []
+required-secret-grants = []
+required-image-acquisitions = []
+required-image-builds = []
+required-image-sources = [
+  { service = "api", kind = "literal", value = "registry.example.invalid/complex/api:1" },
+  { service = "backup", kind = "literal", value = "registry.example.invalid/complex/db:1" },
+  { service = "database", kind = "literal", value = "registry.example.invalid/complex/db:1" },
+  { service = "isolated-control", kind = "literal", value = "registry.example.invalid/complex/proxy:1" },
+  { service = "metrics", kind = "literal", value = "registry.example.invalid/complex/proxy:1" },
+  { service = "observer", kind = "literal", value = "registry.example.invalid/complex/proxy:1" },
+  { service = "proxy", kind = "literal", value = "registry.example.invalid/complex/proxy:1" },
+  { service = "worker", kind = "literal", value = "registry.example.invalid/complex/api:1" },
+]
+required-port-bindings = [
+  { service = "database", container = 5432, published = 15432, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "api", source = "shared-assets", target = "/srv/assets", read-only = false },
+  { service = "backup", source = "database-data", target = "/var/lib/database", read-only = true },
+  { service = "database", source = "database-data", target = "/var/lib/database", read-only = false },
+  { service = "observer", source = "observer-cache", target = "/var/cache/observer", read-only = false },
+  { service = "proxy", source = "shared-assets", target = "/srv/assets", read-only = true },
+  { service = "worker", source = "shared-assets", target = "/srv/assets", read-only = true },
+]
+
+[[evidence]]
+input = "podman-5-4-0-rootful"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-54-rootful-compose.diagnostics"
+allowed-losses-file = "expectations/route-54-rootful-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-4-0-rootful"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-54-rootful-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-54-rootful-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-4-0-rootful"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-54-rootful-podman.diagnostics"
+allowed-losses-file = "expectations/route-54-rootful-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-4-0-rootless"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-54-rootless-compose.diagnostics"
+allowed-losses-file = "expectations/route-54-rootless-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-4-0-rootless"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-54-rootless-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-54-rootless-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-4-0-rootless"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-54-rootless-podman.diagnostics"
+allowed-losses-file = "expectations/route-54-rootless-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-5-0-rootful"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootful-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-5-0-rootful"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootful-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-5-0-rootful"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootful-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-5-0-rootless"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootless-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-5-0-rootless"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootless-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-5-0-rootless"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootless-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-6-0-rootful"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootful-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-6-0-rootful"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootful-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-6-0-rootful"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootful-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-6-0-rootless"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootless-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-6-0-rootless"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootless-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-6-0-rootless"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootless-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-7-0-rootful"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootful-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-7-0-rootful"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootful-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-7-0-rootful"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootful-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-7-0-rootless"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootless-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-7-0-rootless"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootless-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-7-0-rootless"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootless-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-8-6-rootful"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootful-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-8-6-rootful"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootful-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-8-6-rootful"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootful-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootful-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-5-8-6-rootless"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-55-rootless-compose.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-8-6-rootless"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-55-rootless-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-5-8-6-rootless"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-55-rootless-podman.diagnostics"
+allowed-losses-file = "expectations/route-55-rootless-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-6-0-0-rootful"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-6-any-compose.diagnostics"
+allowed-losses-file = "expectations/route-6-any-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-0-0-rootful"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-6-any-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-6-any-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-0-0-rootful"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-6-any-podman.diagnostics"
+allowed-losses-file = "expectations/route-6-any-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-6-0-0-rootless"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-6-any-compose.diagnostics"
+allowed-losses-file = "expectations/route-6-any-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-0-0-rootless"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-6-any-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-6-any-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-0-0-rootless"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-6-any-podman.diagnostics"
+allowed-losses-file = "expectations/route-6-any-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-6-1-0-rootful"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-6-any-compose.diagnostics"
+allowed-losses-file = "expectations/route-6-any-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-1-0-rootful"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-6-any-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-6-any-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-1-0-rootful"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-6-any-podman.diagnostics"
+allowed-losses-file = "expectations/route-6-any-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]
+
+[[evidence]]
+input = "podman-6-1-0-rootless"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose omits uncertain groups, uncertain secrets, app-net labels, and dependency edges with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/compose.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics-file = "expectations/route-6-any-compose.diagnostics"
+allowed-losses-file = "expectations/route-6-any-compose.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-1-0-rootless"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Separate Quadlet output omits uncertain groups and uncertain secrets with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/quadlet.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependency relationships." }
+diagnostics-file = "expectations/route-6-any-quadlet.diagnostics"
+allowed-losses-file = "expectations/route-6-any-quadlet.losses.tsv"
+semantic-gaps = ["resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+reimport-semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "resource:group:application", "resource:group:edge", "resource:secret:db-password", "resource:secret:tls-certificate"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman-6-1-0-rootless"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan omits retained labels, volume settings, uncertain group metadata, DNS, and ports with exact reviewed losses."
+artifacts = []
+artifacts-file = "expectations/podman.artifacts"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics-file = "expectations/route-6-any-podman.diagnostics"
+allowed-losses-file = "expectations/route-6-any-podman.losses.tsv"
+semantic-gaps = ["dependency:api:database", "dependency:backup:database", "dependency:proxy:api", "dependency:worker:api", "port:database:5432:Some(15432)"]
+reimport-semantic-gaps = []
+unavailable-prerequisites = []
+
+[evidence.podman-plan]
+creatable-resources = [
+  "network:data-net",
+  "network:edge-net",
+  "network:isolated-net",
+  "volume:database-data",
+  "volume:observer-cache",
+  "volume:shared-assets",
+  "container:api",
+  "container:backup",
+  "container:database",
+  "container:isolated-control",
+  "container:metrics",
+  "container:observer",
+  "container:proxy",
+  "container:worker",
+]
+external-preconditions = ["network:app-net", "secret:db-password", "secret:tls-certificate"]
+image-operations = [
+  { resource = "api-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+  { resource = "backup-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "database-image", reference = "registry.example.invalid/complex/db:1", policy = "missing" },
+  { resource = "isolated-control-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "metrics-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "observer-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "proxy-image", reference = "registry.example.invalid/complex/proxy:1", policy = "missing" },
+  { resource = "worker-image", reference = "registry.example.invalid/complex/api:1", policy = "missing" },
+]
+start-order = ["database", "api", "backup", "isolated-control", "metrics", "observer", "proxy", "worker"]

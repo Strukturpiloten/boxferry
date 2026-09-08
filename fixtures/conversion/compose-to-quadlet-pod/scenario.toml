@@ -1,0 +1,134 @@
+schema = 1
+id = "compose-to-quadlet-pod"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "ferry-pod"
+version = "1.0.0"
+
+[[components]]
+name = "web"
+version = "1.0.0"
+configured-image = "example.invalid/web:1"
+
+[[components]]
+name = "worker"
+version = "1.0.0"
+configured-image = "example.invalid/worker:1"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored compatible pod-grouping fixture."
+image-evidence = "Synthetic example.invalid image identities used only for offline assertions."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = ["network:frontend", "service:web", "service:worker"]
+required-dependencies = [{ service = "worker", dependency = "web", condition = "unspecified" }]
+required-ports = ["web:8080:80/tcp", "worker:9090:90/tcp"]
+required-networks = [{ name = "frontend", ownership = "application" }]
+external-prerequisites = []
+expected-diagnostics = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain the reviewed dependency and execution-context details exactly."
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics = [
+  "BFC0007|services.worker.dependencies[0]",
+  "BFC0009|services.web.user_namespace",
+  "BFC0009|services.web.extra_hosts[0]",
+  "BFC0009|services.worker.user_namespace",
+  "BFC0009|services.worker.extra_hosts[0]",
+]
+semantic-gaps = ["dependency:worker:web"]
+reimport-semantic-gaps = ["dependency:worker:web"]
+allowed-losses = [
+  { rule = "BFC0007", subject = "services.worker.dependencies[0]", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0009", subject = "services.web.user_namespace", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0009", subject = "services.web.extra_hosts[0]", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0009", subject = "services.worker.user_namespace", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0009", subject = "services.worker.extra_hosts[0]", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "approximate"
+outcome = "known-migration-gap"
+reason = "Single-pod grouping is an explicit approximate topology transformation."
+artifacts = ["frontend.network", "ferry-pod.pod", "web.container", "worker.container"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "QuadletLens 0.2.3 cannot reconstruct generated pod membership and systemd dependency relationships exactly." }
+grouping = "pod"
+pod-name = "ferry-pod"
+diagnostics = ["BFQ0007|application.grouping"]
+reimport-semantic-gaps = [
+  "dependency:worker:web",
+  "publication:web:8080:80/tcp",
+  "publication:worker:9090:90/tcp",
+  "unexpected-resource:group:ferry-pod",
+]
+allowed-losses = [
+  { rule = "BFQ0007", subject = "application.grouping", decision = "approximate", version-scope = "podman@5.4.0..6.1.0" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output omits per-service user namespaces, host mappings, and publications."
+artifacts = ["podman-commands.sh", "podman.json"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics = [
+  "BFP0007|services.web.user_namespace",
+  "BFP0007|services.web.host_mappings",
+  "BFP0007|services.web.ports",
+  "BFP0007|services.worker.user_namespace",
+  "BFP0007|services.worker.host_mappings",
+  "BFP0007|services.worker.ports",
+]
+semantic-gaps = [
+  "dependency:worker:web",
+  "publication:web:8080:80/tcp",
+  "publication:worker:9090:90/tcp",
+]
+allowed-losses = [
+  { rule = "BFP0007", subject = "services.web.user_namespace", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.host_mappings", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.ports", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.worker.user_namespace", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.worker.host_mappings", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.worker.ports", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]

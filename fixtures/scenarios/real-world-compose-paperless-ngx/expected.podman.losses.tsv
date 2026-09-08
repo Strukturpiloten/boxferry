@@ -1,0 +1,10 @@
+BFP0007	services.db.environment.POSTGRES_DB	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.db.environment.POSTGRES_PASSWORD	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.db.environment.POSTGRES_USER	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.webserver.environment.PAPERLESS_DBENGINE	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.webserver.environment.PAPERLESS_DBHOST	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.webserver.environment.PAPERLESS_REDIS	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.webserver.environment_files	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.webserver.mounts[2].source	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.webserver.mounts[3].source	unsupported	podman@5.4.0..6.1.0	1
+BFP0007	services.webserver.ports	unsupported	podman@5.4.0..6.1.0	1

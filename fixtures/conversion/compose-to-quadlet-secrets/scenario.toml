@@ -1,0 +1,188 @@
+schema = 1
+id = "compose-to-quadlet-secrets"
+source-capabilities = ["compose"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "ferry-secrets"
+version = "1.0.0"
+
+[[components]]
+name = "web"
+version = "1.0.0"
+configured-image = "example.invalid/web:1"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored config and secret references; LOCAL_PASSWORD is never resolved."
+image-evidence = "Synthetic example.invalid image identity used only for offline assertions."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "config:settings",
+  "secret:api-token",
+  "secret:certificate",
+  "secret:database-password",
+  "secret:local-password",
+  "service:web",
+]
+required-config-grants = [
+  { service = "web", source = "settings", syntax = "short" },
+]
+required-secret-grants = [
+  { service = "web", source = "database-password", syntax = "short" },
+  { service = "web", source = "api-token", syntax = "short" },
+  { service = "web", source = "certificate", syntax = "long", target = "/etc/example/certificate.pem", uid = "101", gid = "102", mode = "0440" },
+  { service = "web", source = "local-password", syntax = "short" },
+]
+external-prerequisites = []
+expected-diagnostics = []
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot rematerialize reviewed config and secret definitions or grants."
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
+diagnostics = [
+  "BFC0007|configs.settings.material",
+  "BFC0007|secrets.database-password",
+  "BFC0007|secrets.api-token",
+  "BFC0007|secrets.api-token.runtime_name",
+  "BFC0007|secrets.certificate",
+  "BFC0007|secrets.local-password.material",
+  "BFC0007|services.web.config_grants[0]",
+  "BFC0007|services.web.secret_grants[0]",
+  "BFC0007|services.web.secret_grants[1]",
+  "BFC0007|services.web.secret_grants[2]",
+  "BFC0007|services.web.secret_grants[3]",
+]
+semantic-gaps = [
+  "resource:config:settings",
+  "resource:secret:api-token",
+  "resource:secret:certificate",
+  "resource:secret:database-password",
+  "resource:secret:local-password",
+  "config-grant:web:settings",
+  "secret-grant:web:database-password",
+  "secret-grant:web:api-token",
+  "secret-grant:web:certificate",
+  "secret-grant:web:local-password",
+]
+reimport-semantic-gaps = [
+  "resource:config:settings",
+  "resource:secret:api-token",
+  "resource:secret:certificate",
+  "resource:secret:database-password",
+  "resource:secret:local-password",
+  "config-grant:web:settings",
+  "secret-grant:web:database-password",
+  "secret-grant:web:api-token",
+  "secret-grant:web:certificate",
+  "secret-grant:web:local-password",
+]
+allowed-losses = [
+  { rule = "BFC0007", subject = "configs.settings.material", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "secrets.database-password", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "secrets.api-token", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "secrets.api-token.runtime_name", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "secrets.certificate", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "secrets.local-password.material", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "services.web.config_grants[0]", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "services.web.secret_grants[0]", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "services.web.secret_grants[1]", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "services.web.secret_grants[2]", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFC0007", subject = "services.web.secret_grants[3]", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Quadlet cannot encode the application-owned config and local secret."
+artifacts = ["web.container"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reimport resources and grants that were not emitted." }
+diagnostics = [
+  "BFQ0003|configs.settings",
+  "BFQ0003|secrets.local-password",
+  "BFQ0003|services.web.configs[0]",
+  "BFQ0003|services.web.secrets[3]",
+]
+semantic-gaps = [
+  "resource:config:settings",
+  "resource:secret:local-password",
+  "config-grant:web:settings",
+  "secret-grant:web:local-password",
+]
+reimport-semantic-gaps = [
+  "resource:config:settings",
+  "resource:secret:api-token",
+  "resource:secret:local-password",
+  "config-grant:web:settings",
+  "secret-grant:web:api-token",
+  "secret-grant:web:local-password",
+  "unexpected-resource:secret:company-api-token",
+]
+allowed-losses = [
+  { rule = "BFQ0003", subject = "configs.settings", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFQ0003", subject = "secrets.local-password", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFQ0003", subject = "services.web.configs[0]", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFQ0003", subject = "services.web.secrets[3]", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "5.4.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output provisions reviewed resources but cannot attach config and secret grants."
+artifacts = ["podman-commands.sh", "podman.json"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics = [
+  "BFP0007|secrets.api-token.runtime_name",
+  "BFP0007|services.web.config_grants",
+  "BFP0007|services.web.secret_grants",
+]
+semantic-gaps = [
+  "config-grant:web:settings",
+  "secret-grant:web:database-password",
+  "secret-grant:web:api-token",
+  "secret-grant:web:certificate",
+  "secret-grant:web:local-password",
+]
+podman-plan = { creatable-resources = ["secret:local-password", "container:web"], external-preconditions = ["secret:api-token", "secret:certificate", "secret:database-password"], image-operations = [{ resource = "web-image", reference = "example.invalid/web:1", policy = "missing" }], start-order = ["web"] }
+allowed-losses = [
+  { rule = "BFP0007", subject = "secrets.api-token.runtime_name", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.config_grants", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.web.secret_grants", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
+]
