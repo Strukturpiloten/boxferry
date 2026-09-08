@@ -1,0 +1,19 @@
+---
+services:
+  peer:
+    image: ${BF_GIT_CLIENT_IMAGE:?}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-peer-app
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?}
+      io.boxferry.application: ${BF_PREFIX}-peer
+    entrypoint: ["/bin/sh", "-ceu"]
+    command: ["sleep 3600"]
+    networks:
+      edge:
+        aliases: [peer]
+
+networks:
+  edge:
+    name: ${BF_PREFIX}-shared-edge
+    external: true

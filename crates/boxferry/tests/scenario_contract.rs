@@ -207,7 +207,7 @@ fn scenario_catalogue_is_explicit_bounded_and_sidecar_ready() -> Result<(), Box<
     let root = repository_root();
     let catalogue: ScenarioCatalogue = toml::from_str(&fs::read_to_string(root.join(SCENARIO_CATALOGUE))?)?;
     let registered = validate_scenario_catalogue(&root, &catalogue)?;
-    assert_eq!(registered.len(), 27);
+    assert_eq!(registered.len(), 28);
     assert!(is_scenario_manifest_name(
         Path::new("fixtures/conversion/document-route-matrix/document-route-normal.scenario.toml"),
         "document-route-normal"

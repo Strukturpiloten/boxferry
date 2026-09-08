@@ -9,6 +9,10 @@ id = "nextcloud-application"
 manifest = "fixtures/scenarios/nextcloud-application/scenario.toml"
 
 [[scenarios]]
+id = "forgejo-application"
+manifest = "fixtures/scenarios/forgejo-application/scenario.toml"
+
+[[scenarios]]
 id = "podman-portable-intent"
 manifest = "fixtures/scenarios/podman-portable-intent/scenario.toml"
 

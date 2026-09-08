@@ -1,0 +1,17 @@
+BFP0007|networks.backend.internal
+BFP0007|services.forgejo.environment.FORGEJO__database__DB_TYPE
+BFP0007|services.forgejo.environment.FORGEJO__database__HOST
+BFP0007|services.forgejo.environment.FORGEJO__database__NAME
+BFP0007|services.forgejo.environment.FORGEJO__database__PASSWD
+BFP0007|services.forgejo.environment.FORGEJO__database__SSL_MODE
+BFP0007|services.forgejo.environment.FORGEJO__database__USER
+BFP0007|services.forgejo.environment.FORGEJO__security__INSTALL_LOCK
+BFP0007|services.forgejo.environment.FORGEJO__security__SECRET_KEY
+BFP0007|services.forgejo.environment.FORGEJO__server__DOMAIN
+BFP0007|services.forgejo.environment.FORGEJO__server__ROOT_URL
+BFP0007|services.forgejo.environment.FORGEJO__server__SSH_DOMAIN
+BFP0007|services.forgejo.environment.FORGEJO__server__SSH_PORT
+BFP0007|services.forgejo.ports
+BFP0007|services.db.environment.POSTGRES_DB
+BFP0007|services.db.environment.POSTGRES_PASSWORD
+BFP0007|services.db.environment.POSTGRES_USER

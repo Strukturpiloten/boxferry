@@ -112,6 +112,21 @@ BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
 sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" bash scripts/podman-live-conformance.sh --profile application --matrix-cell podman-6.1-rootless --engine podman
 ```
 
+The separate `forgejo-application` profile runs reviewed `podman-arch-rootful` and
+`podman-6.1-rootless` cells sequentially under a 30-minute job limit. One three-image archive is reused. Each cell independently provisions Forgejo and PostgreSQL through native Podman and Docker
+Compose. Compose provisions the boundary peer as a separate project on the external edge, keeping
+selector ownership independent. It proves private-repository creation, HTTP push/clone, SSH clone/push, database
+non-publication, selector isolation, report redaction, and both named volumes after container
+recreation. Rootless alone receives the no-firewall drop-in; the reviewed Arch rootful target
+retains stock Netavark configuration and includes `nft`, so both published ports are exercised. The reviewed upstream-source rootful target is excluded because its missing `nft` makes real
+DNAT impossible. Expected cold duration is below 12 minutes.
+
+```console
+cargo build --locked --package boxferry --bin boxferry --features podman
+BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
+sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" scripts/podman-live-conformance.sh --profile forgejo-application --engine podman
+```
+
 The complete profile runs all reviewed rootful and rootless cells:
 
 ```console

@@ -1,0 +1,390 @@
+schema = 1
+id = "forgejo-application"
+source-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = [
+  "boxferry-public-db-password-canary",
+  "boxferry-public-forgejo-secret-canary",
+]
+
+[application]
+name = "forgejo-application"
+version = "16.0.3"
+
+[[components]]
+name = "forgejo"
+version = "16.0.3"
+image = "codeberg.org/forgejo/forgejo"
+digest = "sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685"
+configured-image = "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685"
+
+[[components]]
+name = "db"
+version = "17.6.0"
+image = "docker.io/library/postgres"
+digest = "sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
+configured-image = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+interpolate = true
+environment-files = ["forgejo.env.example"]
+import-diagnostics = []
+
+[[native-inputs]]
+id = "quadlet"
+importer = "quadlet"
+files = [
+  "forgejo.container",
+  "backend.network",
+  "db.container",
+  "forgejo-data.volume",
+  "db-data.volume",
+]
+format-version = "0.2.3"
+import-diagnostics = []
+
+[[native-inputs]]
+id = "podman"
+importer = "podman"
+files = ["input-podman.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expected.podman-import.diagnostics"
+
+[native-inputs.podman]
+application = "forgejo-application"
+cassette-scenario-id = "forgejo-application-podman-6.1.0"
+root-mode = "rootful"
+include-environment-values = true
+selectors = [
+  { kind = "container", exact = "db" },
+  { kind = "container", exact = "forgejo" },
+  { kind = "network", exact = "backend" },
+  { kind = "volume", exact = "db-data" },
+  { kind = "volume", exact = "forgejo-data" },
+]
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored offline Forgejo application contract with reviewed digest-only image references and conspicuously fake protected values."
+image-evidence = "Reviewed Forgejo 16.0.3-rootless and PostgreSQL 17.6 identities; offline importers never pull images and this fixture alone makes no runtime claim."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "network:backend",
+  "network:edge",
+  "service:db",
+  "service:forgejo",
+  "volume:db-data",
+  "volume:forgejo-data",
+]
+excluded-resources = ["service:boundary-peer"]
+ownership-boundaries = [
+  "volume:db-data:application",
+  "volume:forgejo-data:application",
+]
+shared-boundaries = [
+  "volume:db-data:consumers=db",
+  "volume:forgejo-data:consumers=forgejo",
+]
+required-mounts = [
+  "db:db-data:/var/lib/postgresql/data",
+  "forgejo:forgejo-data:/var/lib/gitea",
+]
+required-environment = [
+  "forgejo:FORGEJO__database__DB_TYPE=postgres",
+  "forgejo:FORGEJO__database__HOST=db:5432",
+  "forgejo:FORGEJO__database__NAME=forgejo",
+  "forgejo:FORGEJO__database__USER=forgejo",
+  "forgejo:FORGEJO__database__PASSWD=boxferry-public-db-password-canary",
+  "forgejo:FORGEJO__database__SSL_MODE=disable",
+  "forgejo:FORGEJO__security__INSTALL_LOCK=true",
+  "forgejo:FORGEJO__security__SECRET_KEY=boxferry-public-forgejo-secret-canary",
+  "forgejo:FORGEJO__server__DOMAIN=127.0.0.1",
+  "forgejo:FORGEJO__server__ROOT_URL=http://127.0.0.1:13000/",
+  "forgejo:FORGEJO__server__SSH_DOMAIN=127.0.0.1",
+  "forgejo:FORGEJO__server__SSH_PORT=12222",
+  "db:POSTGRES_DB=forgejo",
+  "db:POSTGRES_USER=forgejo",
+  "db:POSTGRES_PASSWORD=boxferry-public-db-password-canary",
+]
+required-environment-order = []
+required-dependencies = []
+required-healthchecks = []
+required-ports = [
+  "forgejo:13000:3000/tcp",
+  "forgejo:12222:2222/tcp",
+]
+required-restart = []
+required-runtime-names = []
+unpublished-services = ["db"]
+external-prerequisites = []
+expected-diagnostics = []
+required-networks = [
+  { name = "backend", ownership = "application", internal = true },
+  { name = "edge", ownership = "external" },
+]
+required-groups = []
+required-commands = [
+  { service = "db", kind = "absent" },
+  { service = "forgejo", kind = "absent" },
+]
+required-entrypoints = [
+  { service = "db", kind = "absent" },
+  { service = "forgejo", kind = "absent" },
+]
+required-image-acquisitions = []
+required-image-builds = []
+required-image-sources = [
+  { service = "db", kind = "literal", value = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94" },
+  { service = "forgejo", kind = "literal", value = "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685" },
+]
+required-port-bindings = [
+  { service = "forgejo", container = 3000, published = 13000, host-address = "127.0.0.1", protocol = "tcp" },
+  { service = "forgejo", container = 2222, published = 12222, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "db", source = "db-data", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "forgejo", source = "forgejo-data", target = "/var/lib/gitea", read-only = false },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "db-data.volume", "db.container", "forgejo-data.volume", "forgejo.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain protected environment, internal-network, or HTTP/SSH publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.compose-podman.diagnostics"
+allowed-losses-file = "expected.compose-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "environment:forgejo:FORGEJO__database__DB_TYPE",
+  "environment:forgejo:FORGEJO__database__HOST",
+  "environment:forgejo:FORGEJO__database__NAME",
+  "environment:forgejo:FORGEJO__database__USER",
+  "environment:forgejo:FORGEJO__database__PASSWD",
+  "environment:forgejo:FORGEJO__database__SSL_MODE",
+  "environment:forgejo:FORGEJO__security__INSTALL_LOCK",
+  "environment:forgejo:FORGEJO__security__SECRET_KEY",
+  "environment:forgejo:FORGEJO__server__DOMAIN",
+  "environment:forgejo:FORGEJO__server__ROOT_URL",
+  "environment:forgejo:FORGEJO__server__SSH_DOMAIN",
+  "environment:forgejo:FORGEJO__server__SSH_PORT",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_USER",
+  "environment:db:POSTGRES_PASSWORD",
+  "network-internal:backend",
+  "port:forgejo:3000:Some(13000)",
+  "port:forgejo:2222:Some(12222)",
+  "publication:forgejo:13000:3000/tcp",
+  "publication:forgejo:12222:2222/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:db", "container:forgejo", "network:backend", "volume:db-data", "volume:forgejo-data"], external-preconditions = ["network:edge"], image-operations = [
+  { resource = "db-image", reference = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94", policy = "missing" },
+  { resource = "forgejo-image", reference = "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685", policy = "missing" },
+], start-order = ["db", "forgejo"] }
+
+[[evidence]]
+input = "quadlet"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "quadlet"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "db-data.volume", "db.container", "forgejo-data.volume", "forgejo.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "quadlet"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain protected environment, internal-network, or HTTP/SSH publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.quadlet-podman.diagnostics"
+allowed-losses-file = "expected.quadlet-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "environment:forgejo:FORGEJO__database__DB_TYPE",
+  "environment:forgejo:FORGEJO__database__HOST",
+  "environment:forgejo:FORGEJO__database__NAME",
+  "environment:forgejo:FORGEJO__database__USER",
+  "environment:forgejo:FORGEJO__database__PASSWD",
+  "environment:forgejo:FORGEJO__database__SSL_MODE",
+  "environment:forgejo:FORGEJO__security__INSTALL_LOCK",
+  "environment:forgejo:FORGEJO__security__SECRET_KEY",
+  "environment:forgejo:FORGEJO__server__DOMAIN",
+  "environment:forgejo:FORGEJO__server__ROOT_URL",
+  "environment:forgejo:FORGEJO__server__SSH_DOMAIN",
+  "environment:forgejo:FORGEJO__server__SSH_PORT",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_USER",
+  "environment:db:POSTGRES_PASSWORD",
+  "network-internal:backend",
+  "port:forgejo:3000:Some(13000)",
+  "port:forgejo:2222:Some(12222)",
+  "publication:forgejo:13000:3000/tcp",
+  "publication:forgejo:12222:2222/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:db", "container:forgejo", "network:backend", "volume:db-data", "volume:forgejo-data"], external-preconditions = ["network:edge"], image-operations = [
+  { resource = "db-image", reference = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94", policy = "missing" },
+  { resource = "forgejo-image", reference = "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685", policy = "missing" },
+], start-order = ["db", "forgejo"] }
+
+[[evidence]]
+input = "podman"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.podman-compose.diagnostics"
+allowed-losses-file = "expected.podman-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "podman"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "db-data.volume", "db.container", "forgejo-data.volume", "forgejo.container"]
+diagnostics-file = "expected.podman-quadlet.diagnostics"
+allowed-losses-file = "expected.podman-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "podman"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain reviewed environment, internal-network, or HTTP/SSH publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.podman-podman.diagnostics"
+allowed-losses-file = "expected.podman-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "environment:forgejo:FORGEJO__database__DB_TYPE",
+  "environment:forgejo:FORGEJO__database__HOST",
+  "environment:forgejo:FORGEJO__database__NAME",
+  "environment:forgejo:FORGEJO__database__USER",
+  "environment:forgejo:FORGEJO__database__PASSWD",
+  "environment:forgejo:FORGEJO__database__SSL_MODE",
+  "environment:forgejo:FORGEJO__security__INSTALL_LOCK",
+  "environment:forgejo:FORGEJO__security__SECRET_KEY",
+  "environment:forgejo:FORGEJO__server__DOMAIN",
+  "environment:forgejo:FORGEJO__server__ROOT_URL",
+  "environment:forgejo:FORGEJO__server__SSH_DOMAIN",
+  "environment:forgejo:FORGEJO__server__SSH_PORT",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_USER",
+  "environment:db:POSTGRES_PASSWORD",
+  "network-internal:backend",
+  "port:forgejo:3000:Some(13000)",
+  "port:forgejo:2222:Some(12222)",
+  "publication:forgejo:13000:3000/tcp",
+  "publication:forgejo:12222:2222/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:db", "container:forgejo", "network:backend", "volume:db-data", "volume:forgejo-data"], external-preconditions = ["network:edge"], image-operations = [
+  { resource = "db-image", reference = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94", policy = "missing" },
+  { resource = "forgejo-image", reference = "codeberg.org/forgejo/forgejo@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685", policy = "missing" },
+], start-order = ["db", "forgejo"] }

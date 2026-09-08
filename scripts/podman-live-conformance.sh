@@ -15,6 +15,8 @@ source "${script_directory}/lib/scenario-contract.sh"
 source "${script_directory}/lib/scenario-validators.sh"
 # shellcheck source=scripts/lib/nextcloud-application.sh
 source "${script_directory}/lib/nextcloud-application.sh"
+# shellcheck source=scripts/lib/forgejo-application.sh
+source "${script_directory}/lib/forgejo-application.sh"
 
 profile=""
 matrix_cell=""
@@ -30,7 +32,7 @@ workload_local_tag="localhost/boxferry-live/alpine:634a8f35b5f16dcf4aaa0822adc0b
 
 usage() {
   cat << 'EOF'
-Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application> [OPTIONS]
+Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application|forgejo-application> [OPTIONS]
 
 Options:
   --engine <PATH>       Outer Podman executable (default: podman).
@@ -85,9 +87,9 @@ while (($# > 0)); do
 done
 
 case "${profile}" in
-  smoke | full-container | application) ;;
+  smoke | full-container | application | forgejo-application) ;;
   *)
-    printf '%s\n' '--profile must be smoke, full-container, or application.' >&2
+    printf '%s\n' '--profile must be smoke, full-container, application, or forgejo-application.' >&2
     usage >&2
     exit 2
     ;;
@@ -474,6 +476,10 @@ selected() {
     smoke) contains_smoke_cell "${id}" && [[ -z "${matrix_cell}" || "${id}" == "${matrix_cell}" ]] ;;
     full-container) [[ "${lane}" == container && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] ;;
     application) [[ "${id}" == podman-6.1-rootless && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] ;;
+    forgejo-application)
+      [[ ("${id}" == podman-arch-rootful || "${id}" == podman-6.1-rootless) &&
+        (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
+      ;;
   esac
 }
 
@@ -1439,6 +1445,10 @@ run_cell() {
   local id=$1 image=$2 declared_version=$3 distribution=$4 mode=$5 lane=$6 architecture=$7
   if [[ "${profile}" == application ]]; then
     run_nextcloud_application_cell "$@"
+    return
+  fi
+  if [[ "${profile}" == forgejo-application ]]; then
+    run_forgejo_application_cell "$@"
     return
   fi
 
