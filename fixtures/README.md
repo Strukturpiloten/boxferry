@@ -45,47 +45,33 @@ The repository-policy suite validates these rules.
 
 ## Live conformance matrix
 
-`fixtures/conformance/podman-live/matrix.tsv` is not a parser fixture and does not enter the
-deterministic fixture corpus. It is the reviewed inventory of trusted Strukturpiloten nested-Podman
-images used only by `scripts/podman-live-conformance.sh`. Each row names one image, its declared
-Podman/package version, distribution family, inner root mode, and execution lane.
+`conformance/podman-live/matrix.tsv` is a reviewed inventory for the opt-in live
+runner, not a deterministic parser fixture. Each row pins one trusted nested-Podman image
+and records its version, distribution, root mode, and lane. `scenarios.tsv` inventories
+routes; `limitations.tsv` records reviewed image-level coverage exceptions. The runner
+validates all three catalogues before pulling anything.
 
-`scenarios.tsv` is the equally reviewed end-to-end route inventory. `limitations.tsv` records a
-temporary, verified image-level reason why one container cell cannot run that route inventory. The
-runner validates all three catalogues before it pulls an image, so changing a selector, exporter,
-reimport, supported image, or coverage exception is an explicit review event. Its
-external apply/reacquire case runs generated commands only inside a fresh disposable Podman 6.1
-harness target; BoxFerry remains read-only and nonexecuting.
-That target receives `podman-live/apply-target-containers.conf`, which disables Netavark firewall
-rules because the pinned nested image has no `nft` binary. The case therefore proves resource
-planning, isolated network membership, and reacquisition—not NAT or host firewall behavior.
+All 48 installed-build cells are digest-pinned. Forty-three execute the complete live-resource
+suite. Five UBI/openSUSE rootless images prove a specific `newuidmap` helper failure and make
+no resource-coverage claim. Delete those limitation rows when corrected images initialize
+nested rootless Podman. The nine-cell smoke profile spans the finite 3.0.1 through 6.1 parser
+boundaries and both root modes; version-independent policy checks run once on 6.1 rootful.
+Evidence is labelled `smoke` or `full`.
 
-The matrix has exactly 48 rootful/rootless cells. It is conformance evidence, not the public finite
-compatibility contract; `boxferry capabilities` is the installed-build source of truth. Every image
-column is a tag plus exact `@sha256:` digest; the runner rejects an unpinned row before it pulls
-anything. Each row records its expected `amd64` architecture, and the evidence captures resolved
-digest, package version, Podman/API version, and rootless state.
+The external apply/reacquire case executes generated commands only inside a fresh disposable
+6.1 target. A checked-in target drop-in disables unavailable nested firewall rules, so the case
+proves planning, isolated network membership, and reacquisition rather than host NAT.
+BoxFerry remains read-only and non-executing.
 
-All 48 cells run as digest-pinned images inside disposable privileged outer Podman containers.
-Forty-three execute the complete live-resource suite. The five UBI/openSUSE rootless rows in
-`limitations.tsv` verify the published images' `newuidmap` permission failure and report no
-resource coverage. Once corrected image digests initialize nested rootless Podman, remove their
-limitation rows so they execute the same suite as every other cell.
+`conformance/nextcloud-application/` is a harness-owned live fixture, not an authored
+scenario contract. Four application images and the standalone Docker Compose provider have
+immutable reviewed metadata. The host verifies every digest and provider checksum, loads an
+archive into the isolated rootless 6.1 target, and gives Compose only that disposable socket.
+Direct CLI and Compose provisioning share a reviewed topology but remain independent. Redis
+uses a named `/data` volume so selector and cleanup assertions cover every resource.
 
-The nine-cell pull-request smoke profile uses the same runner and real workloads but a bounded
-scenario subset. It covers the finite 3.0.1, 3.4.4, 4.3.1, 4.9.3, 4.9.4, 5.4, and 6.1 live-input
-boundaries while retaining both root modes at the oldest and newest edges. Every cell uses a
-minimal container/network/volume workload and exports one exact selection to all targets.
-Version-independent CLI, policy, redaction, and malformed-input checks run once on Podman 6.1
-rootful, along with one live conventional-socket discovery check. The complete distribution,
-minor-version, workload, and runtime matrix remains in
-`full-container`. Only `full-container` evidence is labelled `full`; smoke evidence is labelled
-`smoke`. Each cell prints its planned test count, timestamped start/pass/fail events, and elapsed
-time. The host engine verifies the pinned workload image and passes an archive to the nested
-engines, so live-resource creation does not depend on nested registry networking.
-
-Retained failure artifacts are local diagnostic evidence. Review them for environment values,
-resource names, image references, paths, and topology before sharing; never commit raw live output.
+Retained live logs and artifacts require human privacy review before sharing. Never commit raw
+live output.
 
 ## Migration scenario contracts
 
@@ -107,6 +93,15 @@ non-passing dimension has a reason. The shared validator rejects unknown schema
 or fields, unsafe paths, unpinned digests, duplicate tuples, missing exporters,
 and meaningful drift. It does not normalize semantic values; volatile IDs and
 timestamps require explicit future review.
+Dependency expectations compare edge options by default.
+`required-dependencies[].assert-options = false` asserts only the named service-to-dependency
+edge; condition, required, and restart remain unconstrained. Omitted optional network settings
+are also unconstrained. Supplied `internal`, `ipv6`, and `ipam` values compare exactly.
+
+`required-bind-mounts` compares service, fake absolute source, target, mode, and SELinux
+relabel. A route that cannot retain the bind records
+`bind-mount:<service>:<target>` in `semantic-gaps`; the gap key intentionally omits the host
+source.
 
 Manifest evidence entries are expectations, not attestations: the runner builds
 separate observations after each check. Diagnostics match code plus subject,

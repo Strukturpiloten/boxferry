@@ -1,0 +1,94 @@
+---
+services:
+  db:
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "nextcloud_test"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  cache:
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  init:
+    depends_on:
+      db:
+        condition: service_started
+        required: true
+      cache:
+        condition: service_started
+        required: true
+    volumes:
+      - type: bind
+        source: /srv/boxferry-fixture/nextcloud-application/nextcloud.config.php
+        target: /opt/boxferry/config.php
+        read_only: true
+        bind:
+          selinux: Z
+
+  app:
+    depends_on:
+      init:
+        condition: service_started
+        required: true
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/nextcloud-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  frontend:
+    depends_on:
+      app:
+        condition: service_started
+        required: true
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - type: bind
+        source: /srv/boxferry-fixture/nextcloud-application/frontend.conf
+        target: /etc/nginx/conf.d/nextcloud.conf
+        read_only: true
+        bind:
+          selinux: Z
+
+  cron:
+    depends_on:
+      app:
+        condition: service_started
+        required: true
+
+  edge-proxy:
+    depends_on:
+      frontend:
+        condition: service_started
+        required: true
+      second-app:
+        condition: service_started
+        required: true
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - type: bind
+        source: /srv/boxferry-fixture/nextcloud-application/edge-proxy.conf
+        target: /etc/nginx/conf.d/edge.conf
+        read_only: true
+        bind:
+          selinux: Z
+
+  second-app:
+    healthcheck:
+      test: ["CMD", "/bin/true"]
+      interval: 10s
+      timeout: 3s
+      retries: 12

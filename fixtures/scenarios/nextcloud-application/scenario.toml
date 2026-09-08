@@ -1,0 +1,633 @@
+schema = 1
+id = "nextcloud-application"
+source-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = [
+  "boxferry-test-db-password-not-secret",
+  "boxferry-test-cache-password-not-secret",
+  "boxferry-test-admin-password-not-secret",
+  "boxferry-test-edge-token-not-secret",
+]
+
+[application]
+name = "nextcloud-application"
+version = "32.0.10"
+
+[[components]]
+name = "db"
+version = "17.6.0"
+image = "docker.io/library/postgres"
+digest = "sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
+configured-image = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
+
+[[components]]
+name = "cache"
+version = "8.2.1"
+image = "docker.io/library/redis"
+digest = "sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232"
+configured-image = "docker.io/library/redis@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232"
+
+[[components]]
+name = "init"
+version = "32.0.10"
+image = "docker.io/library/nextcloud"
+digest = "sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d"
+configured-image = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d"
+
+[[components]]
+name = "app"
+version = "32.0.10"
+image = "docker.io/library/nextcloud"
+digest = "sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d"
+configured-image = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d"
+
+[[components]]
+name = "frontend"
+version = "1.29.1"
+image = "docker.io/library/nginx"
+digest = "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+configured-image = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+
+[[components]]
+name = "cron"
+version = "32.0.10"
+image = "docker.io/library/nextcloud"
+digest = "sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d"
+configured-image = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d"
+
+[[components]]
+name = "edge-proxy"
+version = "1.29.1"
+image = "docker.io/library/nginx"
+digest = "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+configured-image = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+
+[[components]]
+name = "second-app"
+version = "3.22.0"
+image = "docker.io/library/alpine"
+digest = "sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+configured-image = "docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml", "compose.acceptance.yaml"]
+format-version = "compose-specification"
+interpolate = true
+environment-files = ["nextcloud.env.example"]
+import-diagnostics = []
+
+[[native-inputs]]
+id = "quadlet"
+importer = "quadlet"
+files = [
+  "app.container",
+  "backend.network",
+  "edge.network",
+  "cache.container",
+  "cron.container",
+  "db.container",
+  "db-data.volume",
+  "edge-proxy.container",
+  "frontend.container",
+  "init.container",
+  "nextcloud-data.volume",
+  "redis-data.volume",
+  "second-app.container",
+]
+format-version = "0.2.3"
+import-diagnostics-file = "expected.quadlet-import.diagnostics"
+
+[[native-inputs]]
+id = "podman"
+importer = "podman"
+files = ["input-podman.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expected.podman-import.diagnostics"
+
+[native-inputs.podman]
+application = "nextcloud-application"
+cassette-scenario-id = "nextcloud-application-podman-6.1.0"
+root-mode = "rootful"
+include-environment-values = true
+selectors = [
+  { kind = "container", exact = "app" },
+  { kind = "container", exact = "cache" },
+  { kind = "container", exact = "cron" },
+  { kind = "container", exact = "db" },
+  { kind = "container", exact = "edge-proxy" },
+  { kind = "container", exact = "frontend" },
+  { kind = "container", exact = "init" },
+  { kind = "container", exact = "second-app" },
+  { kind = "network", exact = "backend" },
+  { kind = "volume", exact = "db-data" },
+  { kind = "volume", exact = "nextcloud-data" },
+  { kind = "volume", exact = "redis-data" },
+]
+promotion-policy = { effective-bind-mounts = true, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored offline Nextcloud application contract with reviewed digest-only image references, fake absolute bind sources, and conspicuously fake protected values."
+image-evidence = "Reviewed digests and separately recorded role versions correspond to the live application tag-plus-digest metadata; offline importers do not pull images and this fixture alone makes no runtime claim."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "network:backend",
+  "network:edge",
+  "service:app",
+  "service:cache",
+  "service:cron",
+  "service:db",
+  "service:edge-proxy",
+  "service:frontend",
+  "service:init",
+  "service:second-app",
+  "volume:db-data",
+  "volume:nextcloud-data",
+  "volume:redis-data",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:db-data:application",
+  "volume:nextcloud-data:application",
+  "volume:redis-data:application",
+]
+shared-boundaries = [
+  "volume:db-data:consumers=db",
+  "volume:nextcloud-data:consumers=app,cron,frontend,init",
+  "volume:redis-data:consumers=cache",
+]
+required-bind-mounts = [
+  { service = "edge-proxy", source = "/srv/boxferry-fixture/nextcloud-application/edge-proxy.conf", target = "/etc/nginx/conf.d/edge.conf", read-only = true, selinux-relabel = "private" },
+  { service = "frontend", source = "/srv/boxferry-fixture/nextcloud-application/frontend.conf", target = "/etc/nginx/conf.d/nextcloud.conf", read-only = true, selinux-relabel = "private" },
+  { service = "init", source = "/srv/boxferry-fixture/nextcloud-application/nextcloud.config.php", target = "/opt/boxferry/config.php", read-only = true, selinux-relabel = "private" },
+]
+required-environment = [
+  "app:POSTGRES_HOST=db",
+  "app:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "app:REDIS_HOST=cache",
+  "app:REDIS_PASSWORD=boxferry-test-cache-password-not-secret",
+  "cache:BOXFERRY_REDIS_TEST_PASSWORD=boxferry-test-cache-password-not-secret",
+  "cron:POSTGRES_HOST=db",
+  "cron:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "cron:REDIS_HOST=cache",
+  "cron:REDIS_PASSWORD=boxferry-test-cache-password-not-secret",
+  "db:POSTGRES_DB=nextcloud_test",
+  "db:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "db:POSTGRES_USER=nextcloud_test",
+  "edge-proxy:BOXFERRY_EDGE_TEST_TOKEN=boxferry-test-edge-token-not-secret",
+  "init:NEXTCLOUD_ADMIN_PASSWORD=boxferry-test-admin-password-not-secret",
+  "init:NEXTCLOUD_ADMIN_USER=boxferry-test-admin",
+  "init:POSTGRES_HOST=db",
+  "init:POSTGRES_PASSWORD=boxferry-test-db-password-not-secret",
+  "init:REDIS_HOST=cache",
+  "init:REDIS_PASSWORD=boxferry-test-cache-password-not-secret",
+]
+required-environment-order = []
+required-dependencies = [
+  { service = "app", dependency = "init", condition = "unspecified", assert-options = false },
+  { service = "cron", dependency = "app", condition = "unspecified", assert-options = false },
+  { service = "edge-proxy", dependency = "frontend", condition = "unspecified", assert-options = false },
+  { service = "edge-proxy", dependency = "second-app", condition = "unspecified", assert-options = false },
+  { service = "frontend", dependency = "app", condition = "unspecified", assert-options = false },
+  { service = "init", dependency = "cache", condition = "unspecified", assert-options = false },
+  { service = "init", dependency = "db", condition = "unspecified", assert-options = false },
+]
+required-healthchecks = [
+  { service = "app", command-kind = "exec", command = ["/usr/local/bin/nextcloud-health"] },
+  { service = "cache", command-kind = "exec", command = ["redis-cli", "ping"] },
+  { service = "db", command-kind = "exec", command = ["pg_isready", "-U", "nextcloud_test"] },
+  { service = "edge-proxy", command-kind = "exec", command = ["nginx", "-t"] },
+  { service = "frontend", command-kind = "exec", command = ["nginx", "-t"] },
+  { service = "second-app", command-kind = "exec", command = ["/bin/true"] },
+]
+required-ports = ["edge-proxy:18443:8443/tcp"]
+required-restart = [
+  "app:always",
+  "cache:always",
+  "cron:always",
+  "db:always",
+  "edge-proxy:always",
+  "frontend:always",
+  "init:never",
+  "second-app:always",
+]
+required-runtime-names = []
+unpublished-services = ["app", "cache", "cron", "db", "frontend", "init", "second-app"]
+external-prerequisites = []
+expected-diagnostics = []
+required-networks = [
+  { name = "backend", ownership = "application", internal = true },
+  { name = "edge", ownership = "application", internal = false },
+]
+required-commands = [
+  { service = "app", kind = "absent" },
+  { service = "cache", kind = "absent" },
+  { service = "cron", kind = "exec", values = ["/cron.sh"] },
+  { service = "db", kind = "absent" },
+  { service = "edge-proxy", kind = "absent" },
+  { service = "frontend", kind = "absent" },
+  { service = "init", kind = "exec", values = ["/opt/boxferry/init-nextcloud", "--non-interactive"] },
+  { service = "second-app", kind = "absent" },
+]
+required-entrypoints = [
+  { service = "app", kind = "absent" },
+  { service = "cache", kind = "absent" },
+  { service = "cron", kind = "absent" },
+  { service = "db", kind = "absent" },
+  { service = "edge-proxy", kind = "absent" },
+  { service = "frontend", kind = "absent" },
+  { service = "init", kind = "absent" },
+  { service = "second-app", kind = "absent" },
+]
+required-image-sources = [
+  { service = "app", kind = "literal", value = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d" },
+  { service = "cache", kind = "literal", value = "docker.io/library/redis@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232" },
+  { service = "cron", kind = "literal", value = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d" },
+  { service = "db", kind = "literal", value = "docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94" },
+  { service = "edge-proxy", kind = "literal", value = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8" },
+  { service = "frontend", kind = "literal", value = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8" },
+  { service = "init", kind = "literal", value = "docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d" },
+  { service = "second-app", kind = "literal", value = "docker.io/library/alpine@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce" },
+]
+required-port-bindings = [
+  { service = "edge-proxy", container = 8443, published = 18443, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "app", source = "nextcloud-data", target = "/var/www/html", read-only = false },
+  { service = "cache", source = "redis-data", target = "/data", read-only = false },
+  { service = "cron", source = "nextcloud-data", target = "/var/www/html", read-only = false },
+  { service = "db", source = "db-data", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "frontend", source = "nextcloud-data", target = "/var/www/html", read-only = true },
+  { service = "init", source = "nextcloud-data", target = "/var/www/html", read-only = false },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain reviewed dependency and healthcheck intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.compose-compose.diagnostics"
+allowed-losses-file = "expected.compose-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct reviewed dependency and healthcheck gaps." }
+semantic-gaps = [
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+]
+reimport-semantic-gaps = [
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["app.container", "backend.network", "edge.network", "cache.container", "cron.container", "db.container", "db-data.volume", "edge-proxy.container", "frontend.container", "init.container", "nextcloud-data.volume", "redis-data.volume", "second-app.container"]
+diagnostics-file = "expected.compose-quadlet.diagnostics"
+allowed-losses-file = "expected.compose-quadlet.losses.tsv"
+reimport-diagnostics-file = "expected.compose-quadlet.reimport.diagnostics"
+reimport-allowed-losses-file = "expected.compose-quadlet.reimport.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan cannot retain protected environment, healthcheck, dependency-condition, bind-source, internal-network, or publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.compose-podman.diagnostics"
+allowed-losses-file = "expected.compose-podman.losses.tsv"
+semantic-gaps = [
+  "bind-mount:edge-proxy:/etc/nginx/conf.d/edge.conf",
+  "bind-mount:frontend:/etc/nginx/conf.d/nextcloud.conf",
+  "bind-mount:init:/opt/boxferry/config.php",
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "environment:app:POSTGRES_HOST",
+  "environment:app:POSTGRES_PASSWORD",
+  "environment:app:REDIS_HOST",
+  "environment:app:REDIS_PASSWORD",
+  "environment:cache:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:cron:POSTGRES_HOST",
+  "environment:cron:POSTGRES_PASSWORD",
+  "environment:cron:REDIS_HOST",
+  "environment:cron:REDIS_PASSWORD",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:edge-proxy:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:init:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:init:NEXTCLOUD_ADMIN_USER",
+  "environment:init:POSTGRES_HOST",
+  "environment:init:POSTGRES_PASSWORD",
+  "environment:init:REDIS_HOST",
+  "environment:init:REDIS_PASSWORD",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+  "network-internal:backend",
+  "network-internal:edge",
+  "port:edge-proxy:8443:Some(18443)",
+  "publication:edge-proxy:18443:8443/tcp",
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+
+[[evidence]]
+input = "quadlet"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain reviewed dependency healthcheck intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.quadlet-compose.diagnostics"
+allowed-losses-file = "expected.quadlet-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct reviewed dependency healthcheck gaps." }
+semantic-gaps = [
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+]
+reimport-semantic-gaps = [
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+]
+
+[[evidence]]
+input = "quadlet"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["app.container", "backend.network", "edge.network", "cache.container", "cron.container", "db.container", "db-data.volume", "edge-proxy.container", "frontend.container", "init.container", "nextcloud-data.volume", "redis-data.volume", "second-app.container"]
+diagnostics-file = "expected.quadlet-quadlet.diagnostics"
+allowed-losses-file = "expected.quadlet-quadlet.losses.tsv"
+reimport-diagnostics-file = "expected.quadlet-quadlet.reimport.diagnostics"
+reimport-allowed-losses-file = "expected.quadlet-quadlet.reimport.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "quadlet"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan cannot retain protected environment, healthcheck, dependency-condition, bind-source, internal-network, or publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.quadlet-podman.diagnostics"
+allowed-losses-file = "expected.quadlet-podman.losses.tsv"
+semantic-gaps = [
+  "bind-mount:edge-proxy:/etc/nginx/conf.d/edge.conf",
+  "bind-mount:frontend:/etc/nginx/conf.d/nextcloud.conf",
+  "bind-mount:init:/opt/boxferry/config.php",
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "environment:app:POSTGRES_HOST",
+  "environment:app:POSTGRES_PASSWORD",
+  "environment:app:REDIS_HOST",
+  "environment:app:REDIS_PASSWORD",
+  "environment:cache:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:cron:POSTGRES_HOST",
+  "environment:cron:POSTGRES_PASSWORD",
+  "environment:cron:REDIS_HOST",
+  "environment:cron:REDIS_PASSWORD",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:edge-proxy:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:init:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:init:NEXTCLOUD_ADMIN_USER",
+  "environment:init:POSTGRES_HOST",
+  "environment:init:POSTGRES_PASSWORD",
+  "environment:init:REDIS_HOST",
+  "environment:init:REDIS_PASSWORD",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+  "network-internal:backend",
+  "network-internal:edge",
+  "port:edge-proxy:8443:Some(18443)",
+  "publication:edge-proxy:18443:8443/tcp",
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+
+[[evidence]]
+input = "podman"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain reviewed dependency healthcheck intent or Podman observation-only evidence."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.podman-compose.diagnostics"
+allowed-losses-file = "expected.podman-compose.losses.tsv"
+semantic-gaps = [
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+]
+reimport-semantic-gaps = [
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct reviewed dependency and healthcheck gaps." }
+
+[[evidence]]
+input = "podman"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+diagnostics-file = "expected.podman-quadlet.diagnostics"
+allowed-losses-file = "expected.podman-quadlet.losses.tsv"
+reimport-diagnostics-file = "expected.compose-quadlet.reimport.diagnostics"
+reimport-allowed-losses-file = "expected.compose-quadlet.reimport.losses.tsv"
+artifacts = ["app.container", "backend.network", "edge.network", "cache.container", "cron.container", "db.container", "db-data.volume", "edge-proxy.container", "frontend.container", "init.container", "nextcloud-data.volume", "redis-data.volume", "second-app.container"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "podman"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman plan cannot retain reviewed environment, healthcheck, bind-source, internal-network, publication, or observation-only evidence."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.podman-podman.diagnostics"
+allowed-losses-file = "expected.podman-podman.losses.tsv"
+semantic-gaps = [
+  "bind-mount:edge-proxy:/etc/nginx/conf.d/edge.conf",
+  "bind-mount:frontend:/etc/nginx/conf.d/nextcloud.conf",
+  "bind-mount:init:/opt/boxferry/config.php",
+  "dependency:app:init",
+  "dependency:cron:app",
+  "dependency:edge-proxy:frontend",
+  "dependency:edge-proxy:second-app",
+  "dependency:frontend:app",
+  "dependency:init:cache",
+  "dependency:init:db",
+  "environment:app:POSTGRES_HOST",
+  "environment:app:POSTGRES_PASSWORD",
+  "environment:app:REDIS_HOST",
+  "environment:app:REDIS_PASSWORD",
+  "environment:cache:BOXFERRY_REDIS_TEST_PASSWORD",
+  "environment:cron:POSTGRES_HOST",
+  "environment:cron:POSTGRES_PASSWORD",
+  "environment:cron:REDIS_HOST",
+  "environment:cron:REDIS_PASSWORD",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:edge-proxy:BOXFERRY_EDGE_TEST_TOKEN",
+  "environment:init:NEXTCLOUD_ADMIN_PASSWORD",
+  "environment:init:NEXTCLOUD_ADMIN_USER",
+  "environment:init:POSTGRES_HOST",
+  "environment:init:POSTGRES_PASSWORD",
+  "environment:init:REDIS_HOST",
+  "environment:init:REDIS_PASSWORD",
+  "healthcheck:app",
+  "healthcheck:cache",
+  "healthcheck:db",
+  "healthcheck:edge-proxy",
+  "healthcheck:frontend",
+  "healthcheck:second-app",
+  "network-internal:backend",
+  "network-internal:edge",
+  "port:edge-proxy:8443:Some(18443)",
+  "publication:edge-proxy:18443:8443/tcp",
+]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }

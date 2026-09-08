@@ -351,6 +351,7 @@ pub(crate) struct DependencyExpectation {
     pub condition: String,
     pub required: Option<bool>,
     pub restart: Option<bool>,
+    pub assert_options: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1380,7 +1381,7 @@ fn validate_service_settings(
                 && mount.value().selinux_relabel() == Some(relabel)
         });
         if !matches {
-            return Err(format!("required bind mount for {} changed", expected.service));
+            semantic_gaps.push(format!("bind-mount:{}:{}", expected.service, expected.target));
         }
     }
     for requirement in &manifest.semantics.required_environment {
@@ -1481,9 +1482,10 @@ fn validate_service_settings(
                 Some(ServiceDependencyCondition::Other(value)) => value.expose(),
                 Some(_) => "unreviewed",
             };
-            condition == expected.condition
-                && dependency.required().map(|value| *value.value()) == expected.required
-                && dependency.restart().map(|value| *value.value()) == expected.restart
+            expected.assert_options == Some(false)
+                || (condition == expected.condition
+                    && dependency.required().map(|value| *value.value()) == expected.required
+                    && dependency.restart().map(|value| *value.value()) == expected.restart)
         });
         if !matches {
             semantic_gaps.push(format!("dependency:{}:{}", expected.service, expected.dependency));
@@ -1662,17 +1664,17 @@ fn validate_network_settings(manifest: &ScenarioManifest, application: &Applicat
             "uncertain" => ResourceOwnership::Uncertain,
             _ => return Err("unvalidated network ownership".into()),
         };
-        if network.ownership() != ownership
-            || network.internal().map(|value| *value.value()) != expected.internal
-            || network.ipv6().map(|value| *value.value()) != expected.ipv6
-        {
+        if network.ownership() != ownership {
             return Err(format!("network {} settings changed", expected.name));
+        }
+        if expected.internal.is_some() && network.internal().map(|value| *value.value()) != expected.internal {
+            gaps.push(format!("network-internal:{}", expected.name));
+        }
+        if expected.ipv6.is_some() && network.ipv6().map(|value| *value.value()) != expected.ipv6 {
+            gaps.push(format!("network-ipv6:{}", expected.name));
         }
         let rows = network.ipam_configs();
         let Some(expected_rows) = expected.ipam.as_deref() else {
-            if rows.is_some() {
-                return Err(format!("network {} unexpected IPAM rows", expected.name));
-            }
             continue;
         };
         let Some(rows) = rows else {

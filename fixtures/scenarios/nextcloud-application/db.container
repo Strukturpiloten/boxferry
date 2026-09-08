@@ -1,0 +1,14 @@
+[Container]
+Image=docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+Environment=POSTGRES_DB=nextcloud_test
+Environment=POSTGRES_USER=nextcloud_test
+Environment=POSTGRES_PASSWORD=boxferry-test-db-password-not-secret
+Volume=db-data.volume:/var/lib/postgresql/data
+Network=backend.network
+HealthCmd=["CMD","pg_isready","-U","nextcloud_test"]
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=12
+
+[Service]
+Restart=always

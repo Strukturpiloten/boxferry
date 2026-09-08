@@ -207,7 +207,7 @@ fn scenario_catalogue_is_explicit_bounded_and_sidecar_ready() -> Result<(), Box<
     let root = repository_root();
     let catalogue: ScenarioCatalogue = toml::from_str(&fs::read_to_string(root.join(SCENARIO_CATALOGUE))?)?;
     let registered = validate_scenario_catalogue(&root, &catalogue)?;
-    assert_eq!(registered.len(), 26);
+    assert_eq!(registered.len(), 27);
     assert!(is_scenario_manifest_name(
         Path::new("fixtures/conversion/document-route-matrix/document-route-normal.scenario.toml"),
         "document-route-normal"
@@ -361,7 +361,8 @@ fn authored_scenarios_execute_every_exporter_and_record_independent_evidence() -
                 }
                 continue;
             }
-            let imported = import_native_input(&manifest, input, fixture)?;
+            let imported = import_native_input(&manifest, input, fixture)
+                .map_err(|error| format!("scenario {} input {}: {error}", manifest.id, input.id))?;
             validate_no_error_diagnostics(imported.diagnostics())?;
             assert_no_protected_environment_values(
                 &manifest,
@@ -804,19 +805,21 @@ fn podman_semantics(
     if let Some(expected) = &route.podman_plan {
         validate_podman_plan_observation(expected, value, operations)?;
     } else {
+        let external = value["external_preconditions"]
+            .as_array()
+            .ok_or("native external preconditions")?;
         let actual = creates
             .iter()
-            .map(|operation| {
-                let kind = match operation["resource"]["kind"].as_str().ok_or("resource kind")? {
+            .map(|operation| &operation["resource"])
+            .chain(external.iter())
+            .map(|resource| {
+                let kind = match resource["kind"].as_str().ok_or("resource kind")? {
                     "container" => "service",
                     "volume" => "volume",
                     "network" => "network",
                     _ => return Err("unreviewed Podman resource kind".into()),
                 };
-                Ok(format!(
-                    "{kind}:{}",
-                    operation["resource"]["name"].as_str().ok_or("resource name")?
-                ))
+                Ok(format!("{kind}:{}", resource["name"].as_str().ok_or("resource name")?))
             })
             .collect::<Result<BTreeSet<_>, Box<dyn Error>>>()?;
         assert_eq!(actual, manifest.semantics.selected_resources.iter().cloned().collect());

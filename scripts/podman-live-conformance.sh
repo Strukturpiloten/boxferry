@@ -13,6 +13,8 @@ readonly script_directory repository_root
 source "${script_directory}/lib/scenario-contract.sh"
 # shellcheck source=scripts/lib/scenario-validators.sh
 source "${script_directory}/lib/scenario-validators.sh"
+# shellcheck source=scripts/lib/nextcloud-application.sh
+source "${script_directory}/lib/nextcloud-application.sh"
 
 profile=""
 matrix_cell=""
@@ -28,7 +30,7 @@ workload_local_tag="localhost/boxferry-live/alpine:634a8f35b5f16dcf4aaa0822adc0b
 
 usage() {
   cat << 'EOF'
-Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container> [OPTIONS]
+Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application> [OPTIONS]
 
 Options:
   --engine <PATH>       Outer Podman executable (default: podman).
@@ -39,7 +41,7 @@ Options:
   --retain-artifacts    Keep target/podman-live/<run-id> after success.
   -h, --help            Show this help.
 
-Both profiles must run as root (for example, `sudo bash ...`) and operate only inside disposable
+All profiles must run as root (for example, `sudo bash ...`) and operate only inside disposable
 outer containers. They never mount a host Podman socket, checkout, or credentials into an image.
 EOF
 }
@@ -83,9 +85,9 @@ while (($# > 0)); do
 done
 
 case "${profile}" in
-  smoke | full-container) ;;
+  smoke | full-container | application) ;;
   *)
-    printf '%s\n' '--profile must be smoke or full-container.' >&2
+    printf '%s\n' '--profile must be smoke, full-container, or application.' >&2
     usage >&2
     exit 2
     ;;
@@ -217,6 +219,7 @@ apply_target_outer=""
 apply_target_socket=""
 current_podman_major=""
 current_podman_rootless=""
+# shellcheck disable=SC2034 # Consumed by sourced scenario validators.
 current_default_podman_network_present=""
 current_selected_container_id=""
 progress_active=false
@@ -470,6 +473,7 @@ selected() {
   case "${profile}" in
     smoke) contains_smoke_cell "${id}" && [[ -z "${matrix_cell}" || "${id}" == "${matrix_cell}" ]] ;;
     full-container) [[ "${lane}" == container && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] ;;
+    application) [[ "${id}" == podman-6.1-rootless && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] ;;
   esac
 }
 
@@ -808,6 +812,7 @@ prepare_matrix_image() {
 
 start_outer_runtime() {
   local id=$1 image=$2 mode=$3 socket_directory=$4
+  local nested_archive=${5:-${workload_archive}}
   local outer_digest
   outer_digest="$(printf '%s' "${id}" | sha256sum)"
   local outer="${run_id:0:36}-${outer_digest:0:16}"
@@ -824,7 +829,7 @@ start_outer_runtime() {
     timeout --signal=TERM --kill-after=10s 90s \
     "${engine}" run --detach --rm --name "${outer}" --stop-timeout 1 --privileged --device /dev/fuse \
     --security-opt label=disable --volume "${socket_directory}:/boxferry-socket:Z" \
-    --volume "${workload_archive}:/boxferry-workload.tar:ro" \
+    --volume "${nested_archive}:/boxferry-workload.tar:ro" \
     --env "BF_SOCKET=/boxferry-socket/podman.sock" "${image}" /bin/sh -ceu '
       trap "exit 0" INT TERM
       umask 000
@@ -1432,6 +1437,11 @@ configure_cell_progress() {
 
 run_cell() {
   local id=$1 image=$2 declared_version=$3 distribution=$4 mode=$5 lane=$6 architecture=$7
+  if [[ "${profile}" == application ]]; then
+    run_nextcloud_application_cell "$@"
+    return
+  fi
+
   current_case="${artifact_root}/${id}"
   current_prefix="${run_id}-${id}"
   # Keep generated container names valid as single DNS-label network aliases.
@@ -1472,8 +1482,10 @@ run_cell() {
     "${lane}" "${architecture}" "${artifact_root}/${id}" nested-image "${coverage_level}"
   progress_pass
   socket="${socket_directory}/podman.sock"
+  # shellcheck disable=SC2034 # Consumed by sourced scenario validators.
   current_podman_major="$(awk '{ split($3, version, "."); print version[1] }' \
     "${artifact_root}/${id}.podman-version")"
+  # shellcheck disable=SC2034 # Consumed by sourced scenario validators.
   current_podman_rootless="$(< "${artifact_root}/${id}.rootless")"
   runtime_test_name='verify live runtime semantics (9 scenario groups) and start acquisition socket'
   if [[ "${workload_scope}" == minimal ]]; then

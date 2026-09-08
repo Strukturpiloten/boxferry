@@ -1,0 +1,16 @@
+[Unit]
+Requires=app.service
+After=app.service
+
+[Container]
+Image=docker.io/library/nextcloud@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d
+Exec=/cron.sh
+Environment=POSTGRES_HOST=db
+Environment=REDIS_HOST=cache
+Environment=POSTGRES_PASSWORD=boxferry-test-db-password-not-secret
+Environment=REDIS_PASSWORD=boxferry-test-cache-password-not-secret
+Volume=nextcloud-data.volume:/var/www/html
+Network=backend.network
+
+[Service]
+Restart=always

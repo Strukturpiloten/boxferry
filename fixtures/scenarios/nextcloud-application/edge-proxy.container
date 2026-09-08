@@ -1,0 +1,17 @@
+[Unit]
+Requires=frontend.service second-app.service
+After=frontend.service second-app.service
+
+[Container]
+Image=docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8
+Environment=BOXFERRY_EDGE_TEST_TOKEN=boxferry-test-edge-token-not-secret
+PublishPort=127.0.0.1:18443:8443/tcp
+Volume=/srv/boxferry-fixture/nextcloud-application/edge-proxy.conf:/etc/nginx/conf.d/edge.conf:ro,Z
+Network=edge.network
+HealthCmd=["CMD","nginx","-t"]
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=12
+
+[Service]
+Restart=always

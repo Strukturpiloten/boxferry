@@ -1,0 +1,13 @@
+BFC0007|services.app.dependencies[0]
+BFC0007|services.app.healthcheck
+BFC0007|services.cache.healthcheck
+BFC0007|services.cron.dependencies[0]
+BFC0007|services.db.healthcheck
+BFC0007|services.edge-proxy.dependencies[0]
+BFC0007|services.edge-proxy.dependencies[1]
+BFC0007|services.edge-proxy.healthcheck
+BFC0007|services.frontend.dependencies[0]
+BFC0007|services.frontend.healthcheck
+BFC0007|services.init.dependencies[0]
+BFC0007|services.init.dependencies[1]
+BFC0007|services.second-app.healthcheck
