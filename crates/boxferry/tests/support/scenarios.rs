@@ -1,12 +1,15 @@
 //! Authored expectations and run-derived observations for migration scenarios.
 #![allow(dead_code)] // Shared by separately compiled integration-test entry points.
 
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use boxferry::LossPolicy;
 use boxferry::{
     Application, ConversionKind, ConversionOutcome, Diagnostic, EnvironmentValue, MountSource, PlatformVersion,
-    ResourceOwnership, TargetProfile,
+    ResourceOwnership, SelinuxRelabel, TargetProfile,
 };
 use serde::Deserialize;
 
@@ -40,6 +43,8 @@ pub(crate) struct Component {
     pub version: String,
     pub image: String,
     pub digest: String,
+    #[serde(rename = "configured-image")]
+    pub configured_image: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +54,36 @@ pub(crate) struct NativeInput {
     pub importer: String,
     pub files: Vec<String>,
     pub format_version: String,
+    pub podman: Option<PodmanInput>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct PodmanInput {
+    pub application: String,
+    pub include_environment_values: bool,
+    pub selectors: Vec<PodmanSelector>,
+    pub promotion_policy: PodmanPromotionPolicy,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct PodmanSelector {
+    pub kind: String,
+    pub exact: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the scenario contract mirrors four independent user-facing Podman promotion switches"
+)]
+pub(crate) struct PodmanPromotionPolicy {
+    pub effective_bind_mounts: bool,
+    pub effective_named_volume_mounts: bool,
+    pub effective_named_networks: bool,
+    pub portable_effective_settings: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,9 +162,15 @@ pub(crate) struct RouteExpectation {
     #[serde(default)]
     pub diagnostics: Vec<String>,
     #[serde(default)]
+    pub reimport_diagnostics: Vec<String>,
+    #[serde(default)]
     pub allowed_losses: Vec<LossTuple>,
     #[serde(default)]
     pub semantic_gaps: Vec<String>,
+    #[serde(default)]
+    pub reimport_semantic_gaps: Vec<String>,
+    #[serde(default)]
+    pub environment_order: Vec<String>,
     #[serde(default)]
     pub unavailable_prerequisites: Vec<String>,
 }
@@ -178,6 +219,12 @@ pub(crate) struct LossTuple {
     pub subject: String,
     pub decision: String,
     pub version_scope: String,
+    #[serde(default = "default_loss_count")]
+    pub count: usize,
+}
+
+const fn default_loss_count() -> usize {
+    1
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,7 +240,11 @@ pub(crate) struct Semantics {
     #[serde(default)]
     pub required_mounts: Vec<String>,
     #[serde(default)]
+    pub required_bind_mounts: Vec<BindMountExpectation>,
+    #[serde(default)]
     pub required_environment: Vec<String>,
+    #[serde(default)]
+    pub required_environment_order: Vec<String>,
     #[serde(default)]
     pub required_ports: Vec<String>,
     #[serde(default)]
@@ -202,6 +253,36 @@ pub(crate) struct Semantics {
     pub external_prerequisites: Vec<String>,
     #[serde(default)]
     pub expected_diagnostics: Vec<String>,
+    #[serde(default)]
+    pub required_networks: Vec<NetworkExpectation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct BindMountExpectation {
+    pub service: String,
+    pub source: String,
+    pub target: String,
+    pub read_only: bool,
+    pub selinux_relabel: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct NetworkExpectation {
+    pub name: String,
+    pub ownership: String,
+    pub internal: bool,
+    pub ipv6: bool,
+    pub ipam: Vec<NetworkIpamExpectation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct NetworkIpamExpectation {
+    pub subnet: String,
+    pub gateway: Option<String>,
+    pub ip_range: Option<String>,
 }
 
 pub(crate) fn validate_manifest(manifest: &ScenarioManifest, directory: &Path) -> Result<(), String> {
@@ -225,6 +306,9 @@ pub(crate) fn validate_manifest(manifest: &ScenarioManifest, directory: &Path) -
         required("component name", &component.name)?;
         pinned_version(&component.version)?;
         required("component image", &component.image)?;
+        if let Some(configured) = &component.configured_image {
+            required("component configured image", configured)?;
+        }
         if component.digest.len() != 71
             || !component.digest.starts_with("sha256:")
             || !component.digest[7..]
@@ -252,6 +336,7 @@ pub(crate) fn validate_manifest(manifest: &ScenarioManifest, directory: &Path) -
         for file in &input.files {
             contained_file(directory, file)?;
         }
+        validate_native_input(input, &manifest.application.name)?;
     }
     for value in [
         &manifest.provenance.source,
@@ -327,6 +412,10 @@ fn validate_routes(manifest: &ScenarioManifest) -> Result<(), String> {
             }
         }
         unique("artifacts", route.artifacts.iter().map(String::as_str))?;
+        unique(
+            "route environment order",
+            route.environment_order.iter().map(String::as_str),
+        )?;
         if route.artifacts.iter().any(|file| !safe_path(file)) {
             return Err("unsafe artifact path".into());
         }
@@ -336,9 +425,18 @@ fn validate_routes(manifest: &ScenarioManifest) -> Result<(), String> {
             required("loss subject", &loss.subject)?;
             if !matches!(loss.decision.as_str(), "approximate" | "unsupported" | "invalid")
                 || loss.version_scope != route.version_scope()
-                || !losses.insert(loss)
+                || loss.count == 0
+                || !losses.insert((
+                    loss.rule.as_str(),
+                    loss.subject.as_str(),
+                    loss.decision.as_str(),
+                    loss.version_scope.as_str(),
+                ))
             {
-                return Err("loss tuples must be unique, non-exact and scoped to this route target".into());
+                return Err(
+                    "loss tuples must have a positive count, be unique, non-exact and scoped to this route target"
+                        .into(),
+                );
             }
         }
     }
@@ -428,31 +526,47 @@ pub(crate) fn validate_evidence(expected: &RouteExpectation, actual: &RouteObser
 }
 
 pub(crate) fn validate_losses(expected: &[LossTuple], actual: &[ConversionOutcome], scope: &str) -> Result<(), String> {
-    let mut observed = Vec::new();
+    let mut observed_counts = BTreeMap::new();
     for outcome in actual.iter().filter(|outcome| outcome.kind() != ConversionKind::Exact) {
-        observed.push(LossTuple {
-            rule: outcome
-                .diagnostic()
-                .ok_or("non-exact outcome lacks a rule")?
-                .as_str()
-                .to_owned(),
-            subject: outcome.subject().to_owned(),
-            decision: match outcome.kind() {
-                ConversionKind::Approximate => "approximate",
-                ConversionKind::Unsupported => "unsupported",
-                ConversionKind::Invalid => "invalid",
-                _ => return Err("unreviewed conversion kind".into()),
-            }
-            .into(),
-            version_scope: scope.into(),
-        });
+        let rule = outcome
+            .diagnostic()
+            .ok_or("non-exact outcome lacks a rule")?
+            .as_str()
+            .to_owned();
+        let subject = outcome.subject().to_owned();
+        let decision = match outcome.kind() {
+            ConversionKind::Approximate => "approximate",
+            ConversionKind::Unsupported => "unsupported",
+            ConversionKind::Invalid => "invalid",
+            _ => return Err("unreviewed conversion kind".into()),
+        }
+        .to_owned();
+        *observed_counts.entry((rule, subject, decision)).or_insert(0) += 1;
     }
+    let mut observed = observed_counts
+        .into_iter()
+        .map(|((rule, subject, decision), count)| LossTuple {
+            rule,
+            subject,
+            decision,
+            version_scope: scope.into(),
+            count,
+        })
+        .collect::<Vec<_>>();
     let mut wanted = expected.to_vec();
     wanted.sort();
     observed.sort();
     if wanted != observed {
+        let missing = wanted
+            .iter()
+            .filter(|expected| !observed.contains(expected))
+            .collect::<Vec<_>>();
+        let unexpected = observed
+            .iter()
+            .filter(|actual| !wanted.contains(actual))
+            .collect::<Vec<_>>();
         return Err(format!(
-            "loss tuples differ: expected {wanted:?}, observed {observed:?}"
+            "loss tuples differ: missing {missing:?}; unexpected {unexpected:?}"
         ));
     }
     Ok(())
@@ -488,11 +602,22 @@ pub(crate) fn validate_diagnostics(expected: &[String], actual: &[String]) -> Re
 pub(crate) fn validate_neutral_application(
     manifest: &ScenarioManifest,
     application: &Application,
+    environment_order: &[String],
+    expected_gaps: &[String],
 ) -> Result<(), String> {
+    let gaps = validate_neutral_application_collecting_gaps(manifest, application, environment_order)?;
+    validate_diagnostics(expected_gaps, &gaps)
+}
+
+fn validate_neutral_application_collecting_gaps(
+    manifest: &ScenarioManifest,
+    application: &Application,
+    environment_order: &[String],
+) -> Result<Vec<String>, String> {
     validate_resources(manifest, application)?;
     validate_images(manifest, application)?;
     validate_volume_boundaries(manifest, application)?;
-    validate_service_settings(manifest, application)
+    validate_service_settings(manifest, application, environment_order)
 }
 
 fn validate_resources(manifest: &ScenarioManifest, application: &Application) -> Result<(), String> {
@@ -567,7 +692,8 @@ fn validate_images(manifest: &ScenarioManifest, application: &Application) -> Re
             .value()
             .image()
             .ok_or_else(|| format!("service {name} has no image"))?;
-        let expected = format!("{}@{}", component.image, component.digest);
+        let digest_reference = format!("{}@{}", component.image, component.digest);
+        let expected = component.configured_image.as_deref().unwrap_or(&digest_reference);
         if image.value().as_str() != expected {
             return Err(format!("service {name} image/digest changed"));
         }
@@ -624,7 +750,11 @@ fn validate_volume_boundaries(manifest: &ScenarioManifest, application: &Applica
     Ok(())
 }
 
-fn validate_service_settings(manifest: &ScenarioManifest, application: &Application) -> Result<(), String> {
+fn validate_service_settings(
+    manifest: &ScenarioManifest,
+    application: &Application,
+    environment_order: &[String],
+) -> Result<Vec<String>, String> {
     for requirement in &manifest.semantics.required_mounts {
         let (service_name, volume_name, target) = split_three(requirement)?;
         let service = service(application, service_name)?;
@@ -636,6 +766,23 @@ fn validate_service_settings(manifest: &ScenarioManifest, application: &Applicat
             return Err(format!("required mount {requirement} is absent"));
         }
     }
+    for expected in &manifest.semantics.required_bind_mounts {
+        let service = service(application, &expected.service)?;
+        let relabel = match expected.selinux_relabel.as_str() {
+            "shared" => SelinuxRelabel::Shared,
+            "private" => SelinuxRelabel::Private,
+            _ => return Err("unvalidated bind-mount relabel".into()),
+        };
+        let matches = service.mounts().iter().any(|mount| {
+            matches!(mount.value().source(), MountSource::HostPath(path) if path == &expected.source)
+                && mount.value().target() == expected.target
+                && mount.value().read_only() == expected.read_only
+                && mount.value().selinux_relabel() == Some(relabel)
+        });
+        if !matches {
+            return Err(format!("required bind mount for {} changed", expected.service));
+        }
+    }
     for requirement in &manifest.semantics.required_environment {
         let (service_name, assignment) = requirement.split_once(':').ok_or("invalid environment assertion")?;
         let (name, expected) = assignment.split_once('=').ok_or("invalid environment assignment")?;
@@ -645,6 +792,30 @@ fn validate_service_settings(manifest: &ScenarioManifest, application: &Applicat
                 && matches!(environment.value().value(), EnvironmentValue::Literal(value) if value.expose() == expected)
         }) {
             return Err(format!("required environment {service_name}:{name} changed"));
+        }
+    }
+    let ordered_services = environment_order
+        .iter()
+        .map(|requirement| requirement.split_once(':').map(|(owner, _)| owner))
+        .collect::<Option<BTreeSet<_>>>()
+        .ok_or("invalid ordered environment assertion")?;
+    for owner in ordered_services {
+        let expected = environment_order
+            .iter()
+            .filter_map(|requirement| requirement.strip_prefix(&format!("{owner}:")))
+            .collect::<Vec<_>>();
+        let actual = service(application, owner)?
+            .environment()
+            .iter()
+            .map(|environment| match environment.value().value() {
+                EnvironmentValue::Literal(value) => {
+                    Ok(format!("{}={}", environment.value().name().as_str(), value.expose()))
+                }
+                _ => Err("ordered environment must be literal"),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if actual != expected {
+            return Err(format!("service {owner} environment order changed"));
         }
     }
     for requirement in &manifest.semantics.required_ports {
@@ -669,11 +840,88 @@ fn validate_service_settings(manifest: &ScenarioManifest, application: &Applicat
             return Err(format!("service {name} must not publish a database/internal port"));
         }
     }
-    Ok(())
+    validate_network_settings(manifest, application)
+}
+
+fn validate_network_settings(manifest: &ScenarioManifest, application: &Application) -> Result<Vec<String>, String> {
+    let mut gaps = Vec::new();
+    for expected in &manifest.semantics.required_networks {
+        let network = application
+            .networks()
+            .iter()
+            .find(|network| network.value().name().as_str() == expected.name)
+            .map(boxferry::Sourced::value)
+            .ok_or_else(|| format!("required network {} absent", expected.name))?;
+        let ownership = match expected.ownership.as_str() {
+            "application" => ResourceOwnership::Application,
+            "external" => ResourceOwnership::External,
+            "implicit" => ResourceOwnership::Implicit,
+            "uncertain" => ResourceOwnership::Uncertain,
+            _ => return Err("unvalidated network ownership".into()),
+        };
+        if network.ownership() != ownership
+            || network.internal().map(|value| *value.value()) != Some(expected.internal)
+            || network.ipv6().map(|value| *value.value()) != Some(expected.ipv6)
+        {
+            return Err(format!("network {} settings changed", expected.name));
+        }
+        let Some(rows) = network.ipam_configs() else {
+            gaps.push(format!("network-ipam:{}", expected.name));
+            continue;
+        };
+        if rows.len() != expected.ipam.len() {
+            return Err(format!("network {} IPAM row count changed", expected.name));
+        }
+        for (actual, expected) in rows.iter().zip(&expected.ipam) {
+            let actual = actual.value();
+            if actual.subnet().value().expose() != expected.subnet
+                || actual.gateway().map(|value| value.value().expose()) != expected.gateway.as_deref()
+                || actual.ip_range().map(|value| value.value().expose()) != expected.ip_range.as_deref()
+            {
+                return Err(format!("network {} IPAM changed", network.name().as_str()));
+            }
+        }
+    }
+    Ok(gaps)
 }
 
 pub(crate) fn validate_prerequisites(manifest: &ScenarioManifest, observed: &[String]) -> Result<(), String> {
     validate_diagnostics(&manifest.semantics.external_prerequisites, observed)
+}
+
+fn validate_native_input(input: &NativeInput, application: &str) -> Result<(), String> {
+    match (input.importer.as_str(), input.podman.as_ref()) {
+        ("podman", Some(podman)) => {
+            if input.files.len() != 1 {
+                return Err("Podman scenario input needs exactly one cassette".into());
+            }
+            pinned_version(&input.format_version)?;
+            required("Podman application", &podman.application)?;
+            if podman.application != application {
+                return Err("Podman input application must match scenario application".into());
+            }
+            if podman.selectors.is_empty() {
+                return Err("Podman input needs at least one exact selector".into());
+            }
+            let mut selectors = BTreeSet::new();
+            for selector in &podman.selectors {
+                if !matches!(
+                    selector.kind.as_str(),
+                    "container" | "pod" | "network" | "volume" | "image" | "secret"
+                ) {
+                    return Err("unsupported Podman scenario selector kind".into());
+                }
+                required("Podman exact selector", &selector.exact)?;
+                if !selectors.insert((&selector.kind, &selector.exact)) {
+                    return Err("duplicate Podman exact selector".into());
+                }
+            }
+        }
+        ("podman", None) => return Err("Podman scenario input lacks acquisition metadata".into()),
+        (_, Some(_)) => return Err("Podman metadata belongs only to Podman inputs".into()),
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Read-only preflight for explicitly declared, fixture-relative file prerequisites.
@@ -721,11 +969,54 @@ fn validate_semantics(semantics: &Semantics) -> Result<(), String> {
         &semantics.shared_boundaries,
         &semantics.required_mounts,
         &semantics.required_environment,
+        &semantics.required_environment_order,
         &semantics.required_ports,
         &semantics.unpublished_services,
         &semantics.external_prerequisites,
     ] {
         unique("semantic assertions", values.iter().map(String::as_str))?;
+    }
+    unique(
+        "ordered environment assertions",
+        semantics.required_environment_order.iter().map(String::as_str),
+    )?;
+    let mut binds = BTreeSet::new();
+    for bind in &semantics.required_bind_mounts {
+        for value in [&bind.service, &bind.source, &bind.target] {
+            required("bind-mount assertion", value)?;
+        }
+        if !bind.source.starts_with('/') || !bind.target.starts_with('/') {
+            return Err("bind-mount assertions require absolute source and target".into());
+        }
+        if !matches!(bind.selinux_relabel.as_str(), "shared" | "private") {
+            return Err("bind-mount SELinux relabel must be shared or private".into());
+        }
+        if !binds.insert((&bind.service, &bind.source, &bind.target)) {
+            return Err("duplicate bind-mount assertion".into());
+        }
+    }
+    let mut networks = BTreeSet::new();
+    for network in &semantics.required_networks {
+        required("network assertion", &network.name)?;
+        if !matches!(
+            network.ownership.as_str(),
+            "application" | "external" | "implicit" | "uncertain"
+        ) {
+            return Err("unknown network ownership assertion".into());
+        }
+        if network.ipam.is_empty() || !networks.insert(&network.name) {
+            return Err("network assertions require unique names and IPAM rows".into());
+        }
+        let mut subnets = BTreeSet::new();
+        for row in &network.ipam {
+            required("network IPAM subnet", &row.subnet)?;
+            if !subnets.insert(&row.subnet) {
+                return Err("duplicate network IPAM subnet".into());
+            }
+            for value in [row.gateway.as_deref(), row.ip_range.as_deref()].into_iter().flatten() {
+                required("network IPAM value", value)?;
+            }
+        }
     }
     for resource in semantics.selected_resources.iter().chain(&semantics.excluded_resources) {
         let (kind, name) = resource

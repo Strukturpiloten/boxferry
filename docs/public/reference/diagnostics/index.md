@@ -50,4 +50,12 @@ stops collecting them.
 `PLN0021` truncates only the diagnostic path catalogue; typed observations used by conversion
 remain intact.
 
+For Podman creation evidence, `PLN0050` remains nested native provenance while the public `BFP0002`
+occurrence names either `services.<name>.image.authored_spelling` or
+`services.<name>.creation_evidence.mount_relabels[<index>]`; the independently trusted typed mount
+relabel remains exact. The diagnostic records `decision=omitted`, `available_promotion=none`, and
+value-free remediation. Malformed optional
+creation evidence uses `services.<name>.creation_evidence` and does not invalidate otherwise
+complete typed intent. Raw creation arguments never appear.
+
 <!-- boxferry-generated-rule-index -->

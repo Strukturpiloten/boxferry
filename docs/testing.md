@@ -118,9 +118,9 @@ a time. They cover the finite live-input boundaries: Podman 3.0.1 rootful/rootle
 4.3.1 rootful, 4.9.3 rootless, 4.9.4 rootful, 5.4 rootless, and 6.1 rootful/rootless.
 
 Every cell runs ten checks: setup, evidence, a minimal real workload, runtime assertions, all three
-exports, and cleanup. Podman 6.1 rootful adds six version-independent checks: glob rejection,
-determinism, strict loss policy, support redaction, malformed input, and conventional socket
-discovery. That is 96 checks; repeating those checks on every version would add no compatibility
+exports, and cleanup. Podman 6.1 rootful adds seven version-independent checks: glob rejection,
+determinism, strict loss policy, support redaction, malformed input, relabeling,
+and conventional socket discovery. That is 97 checks; repeating those checks on every version would add no compatibility
 evidence.
 
 The complete runtime matrix, representative live socket discovery, every selector, re-imports,
@@ -150,9 +150,9 @@ BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" 
 
 GitHub workflows invoke the same runner. Pull requests from this repository run the nine-cell smoke
 profile. Manual `workflow_dispatch` selects the same smoke profile or all 48 container cells. The
-full profile plans 30 checks for 33 complete cells, 31 for nine external-apply cells, 32 for the
+full profile plans 30 checks for 33 complete cells, 31 for nine external-apply cells, 33 for the
 Podman 6.1 rootful external-apply and discovery cell, and four limitation checks for each of five
-published rootless images: 1,321 checks in total. There is deliberately no nightly schedule.
+published rootless images: 1,322 checks in total. There is deliberately no nightly schedule.
 
 ## Gate contents
 

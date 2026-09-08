@@ -1,0 +1,247 @@
+schema = 1
+id = "podman-portable-intent"
+source-capabilities = ["podman"]
+target-capabilities = ["compose", "podman", "quadlet"]
+
+[application]
+name = "podman-portable-intent"
+version = "1.0.0"
+
+[[components]]
+name = "portable-app"
+version = "1.0.0"
+image = "example.invalid/portable/app"
+digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+configured-image = "example.invalid/portable/app:1.0.0"
+
+[[native-inputs]]
+id = "podman"
+importer = "podman"
+files = ["input-podman.cassette.json"]
+format-version = "6.1.0"
+
+[native-inputs.podman]
+application = "podman-portable-intent"
+include-environment-values = true
+selectors = [{ kind = "container", exact = "portable-app" }]
+promotion-policy = { effective-bind-mounts = true, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored deterministic Libpod JSON; synthetic names, paths, addresses, and explicit test-only environment canaries only."
+image-evidence = "The configured tag is the independent semantic expectation; the synthetic digest-shaped observation is provenance evidence only and was never pulled."
+
+[deployment]
+origin = "native-cli"
+root-mode = "rootful"
+
+[semantics]
+selected-resources = ["network:scenario-net", "service:portable-app"]
+excluded-resources = []
+ownership-boundaries = []
+shared-boundaries = []
+required-mounts = []
+required-bind-mounts = [
+  { service = "portable-app", source = "/srv/boxferry-scenario/private", target = "/etc/boxferry-scenario", read-only = true, selinux-relabel = "private" },
+  { service = "portable-app", source = "/srv/boxferry-scenario/shared", target = "/srv/boxferry-scenario", read-only = false, selinux-relabel = "shared" },
+]
+required-environment = [
+  "portable-app:ZETA=podman-portable-zeta-canary",
+  "portable-app:ALPHA=podman-portable-alpha-canary",
+  "portable-app:EMPTY=",
+]
+required-environment-order = [
+  "portable-app:ZETA=podman-portable-zeta-canary",
+  "portable-app:ALPHA=podman-portable-alpha-canary",
+  "portable-app:EMPTY=",
+]
+required-ports = []
+unpublished-services = []
+external-prerequisites = []
+expected-diagnostics = [
+  "BFP0002|container:portable-app",
+  "BFP0003|networks.scenario-net.internal",
+  "BFP0003|networks.scenario-net.ipam",
+  "BFP0003|services.portable-app.environment",
+  "BFP0003|services.portable-app.mounts[0]",
+  "BFP0003|services.portable-app.mounts[1]",
+  "BFP0003|services.portable-app.namespaces",
+  "BFP0003|services.portable-app.networks",
+  "BFP0003|services.portable-app.resource_controls",
+  "BFP0003|services.portable-app.restart_policy",
+  "BFP0003|services.portable-app.security",
+]
+required-networks = [{ name = "scenario-net", ownership = "application", internal = true, ipv6 = true, ipam = [{ subnet = "10.89.0.0/24", gateway = "10.89.0.1", ip-range = "10.89.0.64-10.89.0.127" }, { subnet = "fd42:bf::/64", gateway = "fd42:bf::1", ip-range = "fd42:bf::100-fd42:bf::1ff" }] }]
+
+[[evidence]]
+input = "podman"
+exporter = "compose"
+loss-policy = "partial"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+outcome = "known-migration-gap"
+reason = "ComposeLens 0.3.0 cannot generate the independently required IPAM configuration."
+artifacts = ["compose.yaml"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+diagnostics = [
+  "BFC0007|networks.scenario-net.ipam.config",
+  "BFP0002|container:portable-app",
+  "BFP0003|networks.scenario-net.internal",
+  "BFP0003|networks.scenario-net.ipam",
+  "BFP0003|services.portable-app.environment",
+  "BFP0003|services.portable-app.mounts[0]",
+  "BFP0003|services.portable-app.mounts[1]",
+  "BFP0003|services.portable-app.namespaces",
+  "BFP0003|services.portable-app.networks",
+  "BFP0003|services.portable-app.resource_controls",
+  "BFP0003|services.portable-app.restart_policy",
+  "BFP0003|services.portable-app.security",
+]
+environment-order = [
+  "portable-app:ALPHA=podman-portable-alpha-canary",
+  "portable-app:EMPTY=",
+  "portable-app:ZETA=podman-portable-zeta-canary",
+]
+allowed-losses = [
+  { rule = "BFC0007", subject = "networks.scenario-net.ipam.config", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0002", subject = "podman.acquisition.PLN0023", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0", count = 2 },
+  { rule = "BFP0003", subject = "networks.scenario-net.internal", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "networks.scenario-net.ipam", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.environment", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[0]", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[1]", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.namespaces", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.networks", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.resource_controls", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.restart_policy", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
+  { rule = "BFP0003", subject = "services.portable-app.security", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
+]
+semantic-gaps = ["network-ipam:scenario-net"]
+reimport-semantic-gaps = ["network-ipam:scenario-net"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman"
+exporter = "quadlet"
+loss-policy = "partial"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+outcome = "known-migration-gap"
+reason = "Generated Quadlet preserves every ordered IPAM row, but QuadletLens 0.2.3 cannot reimport the multi-row unit."
+artifacts = ["portable-app.container", "scenario-net.network"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "QuadletLens 0.2.3 cannot reimport multiple ordered IPAM rows from the generated network unit." }
+diagnostics = [
+  "BFP0002|container:portable-app",
+  "BFP0003|networks.scenario-net.internal",
+  "BFP0003|networks.scenario-net.ipam",
+  "BFP0003|services.portable-app.environment",
+  "BFP0003|services.portable-app.mounts[0]",
+  "BFP0003|services.portable-app.mounts[1]",
+  "BFP0003|services.portable-app.namespaces",
+  "BFP0003|services.portable-app.networks",
+  "BFP0003|services.portable-app.resource_controls",
+  "BFP0003|services.portable-app.restart_policy",
+  "BFP0003|services.portable-app.security",
+]
+reimport-diagnostics = ["BFQ1003|<global>"]
+environment-order = [
+  "portable-app:ALPHA=podman-portable-alpha-canary",
+  "portable-app:EMPTY=",
+  "portable-app:ZETA=podman-portable-zeta-canary",
+]
+allowed-losses = [
+  { rule = "BFP0002", subject = "podman.acquisition.PLN0023", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0", count = 2 },
+  { rule = "BFP0003", subject = "networks.scenario-net.internal", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "networks.scenario-net.ipam", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.environment", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[0]", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[1]", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.namespaces", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.networks", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.resource_controls", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.security", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+]
+semantic-gaps = []
+reimport-semantic-gaps = ["network-ipam:scenario-net"]
+unavailable-prerequisites = []
+
+[[evidence]]
+input = "podman"
+exporter = "podman"
+loss-policy = "partial"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+outcome = "known-migration-gap"
+reason = "Podman output omits protected environment values, host bind mounts, and typed network settings with exact diagnostics."
+artifacts = ["podman.json", "podman-commands.sh"]
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+diagnostics = [
+  "BFP0002|container:portable-app",
+  "BFP0003|networks.scenario-net.internal",
+  "BFP0003|networks.scenario-net.ipam",
+  "BFP0003|services.portable-app.environment",
+  "BFP0003|services.portable-app.mounts[0]",
+  "BFP0003|services.portable-app.mounts[1]",
+  "BFP0003|services.portable-app.namespaces",
+  "BFP0003|services.portable-app.networks",
+  "BFP0003|services.portable-app.resource_controls",
+  "BFP0003|services.portable-app.restart_policy",
+  "BFP0003|services.portable-app.security",
+  "BFP0007|networks.scenario-net.internal",
+  "BFP0007|networks.scenario-net.ipam_configs",
+  "BFP0007|networks.scenario-net.ipv6",
+  "BFP0007|services.portable-app.environment.ALPHA",
+  "BFP0007|services.portable-app.environment.EMPTY",
+  "BFP0007|services.portable-app.environment.ZETA",
+  "BFP0007|services.portable-app.mounts[0].selinux_relabel",
+  "BFP0007|services.portable-app.mounts[0].source",
+  "BFP0007|services.portable-app.mounts[1].selinux_relabel",
+  "BFP0007|services.portable-app.mounts[1].source",
+]
+environment-order = []
+allowed-losses = [
+  { rule = "BFP0002", subject = "podman.acquisition.PLN0023", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0", count = 2 },
+  { rule = "BFP0003", subject = "networks.scenario-net.internal", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "networks.scenario-net.ipam", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.environment", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[0]", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.mounts[1]", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.namespaces", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.networks", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.resource_controls", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.restart_policy", decision = "approximate", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0003", subject = "services.portable-app.security", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "networks.scenario-net.internal", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "networks.scenario-net.ipam_configs", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "networks.scenario-net.ipv6", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.portable-app.environment.ALPHA", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.portable-app.environment.EMPTY", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.portable-app.environment.ZETA", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.portable-app.mounts[0].selinux_relabel", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.portable-app.mounts[0].source", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.portable-app.mounts[1].selinux_relabel", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+  { rule = "BFP0007", subject = "services.portable-app.mounts[1].source", decision = "unsupported", version-scope = "podman@6.1.0..6.1.0" },
+]
+semantic-gaps = [
+  "bind-mount:portable-app:/etc/boxferry-scenario",
+  "bind-mount:portable-app:/srv/boxferry-scenario",
+  "environment:portable-app:ALPHA",
+  "environment:portable-app:EMPTY",
+  "environment:portable-app:ZETA",
+  "network-internal:scenario-net",
+  "network-ipam:scenario-net",
+  "network-ipv6:scenario-net",
+]
+unavailable-prerequisites = []

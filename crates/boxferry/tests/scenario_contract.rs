@@ -19,18 +19,25 @@ use boxferry::compose::compose_lens::{
     profiles::{ProfileRequest, select_profiles},
     source::SourceId as ComposeSourceId,
 };
+use boxferry::podman::podman_lens::{
+    AcquisitionOptions, DiscoveryRequest, ReadOnlyUnixTransport, ReadOnlyUnixTransportTimeouts,
+    ResourceKind as PodmanResourceKind, ResourceSelector, TransportLimits, UnixConnection,
+};
 use boxferry::{
     ComposeExporter, ComposeImporter, ComposeSource, ConversionResult, Identifier, ImportAdapter, ImportResult,
-    PodmanExporter, QuadletDocumentInput, QuadletExporter, QuadletImporter, QuadletSource, SourceId, convert_imported,
+    PodmanExporter, PodmanImporter, PodmanPromotionPolicy, QuadletDocumentInput, QuadletExporter, QuadletImporter,
+    QuadletSource, SourceId, acquire_podman_source, convert_imported,
 };
 use support::{
-    Dimension, DimensionState, Outcome, RouteExpectation, RouteObservation, ScenarioManifest, diagnostic_facts,
-    observe_prerequisites, validate_diagnostics, validate_evidence, validate_exporter_coverage, validate_losses,
-    validate_manifest, validate_neutral_application,
+    Dimension, DimensionState, Outcome, PodmanCassette, PodmanCassetteServer, RouteExpectation, RouteObservation,
+    ScenarioManifest, diagnostic_facts, observe_prerequisites, validate_diagnostics, validate_evidence,
+    validate_exporter_coverage, validate_losses, validate_manifest, validate_neutral_application,
 };
 
 const OFFLINE: &str = "Offline authored fixture; no runtime operation is claimed.";
 const NO_PODMAN_REIMPORT: &str = "Deployment plans are not observed Podman inventories.";
+const QUADLET_MULTI_ROW_REIMPORT: &str =
+    "QuadletLens 0.2.3 cannot reimport multiple ordered IPAM rows from the generated network unit.";
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -46,23 +53,31 @@ fn authored_scenarios_execute_every_exporter_and_record_independent_evidence() -
         validate_manifest(&manifest, &fixture)?;
         validate_exporter_coverage(&manifest, &capability_routes()?)?;
         for input in &manifest.native_inputs {
-            // A new importer case must get an implementation, never a silent skip.
-            if input.importer != "compose" {
-                return Err("unimplemented scenario input loader".into());
-            }
-            assert_eq!(
-                input.files.len(),
-                1,
-                "authored loader currently accepts one explicit source"
-            );
-            assert_eq!(input.format_version, "compose-specification");
+            assert_eq!(input.files.len(), 1, "scenario loaders accept one explicit source");
             let source_path = fixture.join(&input.files[0]);
-            let imported = import_compose(&fs::read_to_string(&source_path)?, &manifest.application.name)?;
+            let imported = match input.importer.as_str() {
+                "compose" => {
+                    assert_eq!(input.format_version, "compose-specification");
+                    import_compose(&fs::read_to_string(&source_path)?, &manifest.application.name)?
+                }
+                "podman" => import_podman(&manifest, &input.id, &source_path)?,
+                _ => return Err("unimplemented scenario input loader".into()),
+            };
+            assert_no_protected_environment_values(
+                &manifest,
+                &format!("{:?}", imported.diagnostics()),
+                "library diagnostics",
+            )?;
             validate_diagnostics(
                 &manifest.semantics.expected_diagnostics,
                 &diagnostic_facts(imported.diagnostics()),
             )?;
-            validate_neutral_application(&manifest, imported.application().ok_or("missing imported Application")?)?;
+            validate_neutral_application(
+                &manifest,
+                imported.application().ok_or("missing imported Application")?,
+                &manifest.semantics.required_environment_order,
+                &[],
+            )?;
             for route in manifest.evidence.iter().filter(|route| route.input == input.id) {
                 run_route(&manifest, route, &source_path, &fixture, imported.clone())?;
             }
@@ -104,7 +119,7 @@ fn run_route(
         _ => return Err("registered exporter has no scenario runner".into()),
     }
     let output = TemporaryDirectory::new(&route.exporter)?;
-    let report = convert_cli(source, route, output.path())?;
+    let report = convert_cli(manifest, source, route, output.path())?;
     let diagnostics = report["diagnostics"]
         .as_array()
         .ok_or("missing CLI diagnostics")?
@@ -166,11 +181,17 @@ fn observe_native_output(
                 &fs::read_to_string(output.join("compose.yaml"))?,
                 &manifest.application.name,
             )?;
-            validate_diagnostics(&[], &diagnostic_facts(reimport.diagnostics()))?;
-            validate_neutral_application(manifest, reimport.application().ok_or("Compose reimport failed")?)?;
-            (true, Dimension::passed())
+            validate_diagnostics(&route.reimport_diagnostics, &diagnostic_facts(reimport.diagnostics()))?;
+            validate_neutral_application(
+                manifest,
+                reimport.application().ok_or("Compose reimport failed")?,
+                &route.environment_order,
+                &route.reimport_semantic_gaps,
+            )?;
+            (route.semantic_gaps.is_empty(), Dimension::passed())
         }
         "quadlet" => {
+            validate_quadlet_network_artifacts(manifest, output)?;
             let units = artifacts
                 .iter()
                 .enumerate()
@@ -185,18 +206,74 @@ fn observe_native_output(
             let parsed = QuadletSource::parse(Identifier::new(&manifest.application.name)?, units)?;
             assert!(parsed.diagnostics().is_empty(), "unexpected native Quadlet diagnostics");
             let reimport = QuadletImporter::new()?.import(parsed.source());
-            validate_diagnostics(&[], &diagnostic_facts(reimport.diagnostics()))?;
-            validate_neutral_application(manifest, reimport.application().ok_or("Quadlet reimport failed")?)?;
-            (true, Dimension::passed())
+            validate_diagnostics(&route.reimport_diagnostics, &diagnostic_facts(reimport.diagnostics()))?;
+            validate_neutral_application(
+                manifest,
+                reimport.application().ok_or("Quadlet reimport failed")?,
+                &route.environment_order,
+                &route.reimport_semantic_gaps,
+            )?;
+            let reimport = if route.reimport_semantic_gaps.is_empty() {
+                Dimension::passed()
+            } else {
+                Dimension {
+                    state: DimensionState::KnownMigrationGap,
+                    reason: Some(QUADLET_MULTI_ROW_REIMPORT.into()),
+                }
+            };
+            (true, reimport)
         }
         "podman" => {
             let native: serde_json::Value = serde_json::from_str(&fs::read_to_string(output.join("podman.json"))?)?;
-            let observed_gaps = podman_semantics(manifest, &native)?;
+            let observed_gaps = podman_semantics(manifest, route, &native)?;
             validate_diagnostics(&route.semantic_gaps, &observed_gaps)?;
             (observed_gaps.is_empty(), Dimension::not_applicable(NO_PODMAN_REIMPORT))
         }
         _ => return Err("missing native validator".into()),
     })
+}
+
+fn validate_quadlet_network_artifacts(manifest: &ScenarioManifest, output: &Path) -> Result<(), Box<dyn Error>> {
+    for expected in &manifest.semantics.required_networks {
+        let source = fs::read_to_string(output.join(format!("{}.network", expected.name)))?;
+        let lines = source.lines().collect::<Vec<_>>();
+        for setting in [
+            format!("Internal={}", expected.internal),
+            format!("IPv6={}", expected.ipv6),
+        ] {
+            let count = lines.iter().filter(|line| **line == setting).count();
+            if count != 1 {
+                return Err(format!(
+                    "Quadlet network {} must contain exactly one {setting}, observed {count}",
+                    expected.name
+                )
+                .into());
+            }
+        }
+
+        let expected_ipam = expected
+            .ipam
+            .iter()
+            .flat_map(|row| {
+                std::iter::once(format!("Subnet={}", row.subnet))
+                    .chain(row.gateway.iter().map(|value| format!("Gateway={value}")))
+                    .chain(row.ip_range.iter().map(|value| format!("IPRange={value}")))
+            })
+            .collect::<Vec<_>>();
+        let actual_ipam = lines
+            .iter()
+            .filter(|line| line.starts_with("Subnet=") || line.starts_with("Gateway=") || line.starts_with("IPRange="))
+            .map(|line| (*line).to_owned())
+            .collect::<Vec<_>>();
+        if actual_ipam != expected_ipam {
+            return Err(format!(
+                "Quadlet network {} IPAM order differs: expected {expected_ipam:?}, observed {actual_ipam:?}",
+                expected.name
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 const NOT_EMITTED: &str = "Loss policy blocked output; no native artifact was emitted.";
@@ -234,7 +311,11 @@ fn validate_result<T>(route: &RouteExpectation, result: &ConversionResult<T>) ->
 
 /// Validate the native JSON shape and independent desired create operations. A
 /// deployment artifact cannot be passed to the inventory importer as a round trip.
-fn podman_semantics(manifest: &ScenarioManifest, value: &serde_json::Value) -> Result<Vec<String>, Box<dyn Error>> {
+fn podman_semantics(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    value: &serde_json::Value,
+) -> Result<Vec<String>, Box<dyn Error>> {
     assert_eq!(value["schema_version"], 1);
     let operations = value["operations"].as_array().ok_or("native deployment operations")?;
     let creates = operations
@@ -278,15 +359,23 @@ fn podman_semantics(manifest: &ScenarioManifest, value: &serde_json::Value) -> R
             .ok_or("missing container create")?;
         let argv = create["cli"]["argv"].as_array().ok_or("create argv")?;
         let body = &create["libpod"]["body"]["json"];
-        let image = format!("{}@{}", component.image, component.digest);
+        let digest_reference = format!("{}\x40{}", component.image, component.digest);
+        let image = component.configured_image.as_deref().unwrap_or(&digest_reference);
         // This authored fixture requests no command override: the image must be
         // the final argument, not a label value or a later command operand.
-        assert_eq!(argv.last().and_then(serde_json::Value::as_str), Some(image.as_str()));
+        assert_eq!(argv.last().and_then(serde_json::Value::as_str), Some(image));
         assert_eq!(body["image"], image);
         let options = &argv[..argv.len() - 1];
-        gaps.extend(podman_environment_and_ports(manifest, &component.name, options, body)?);
-        validate_podman_mounts(manifest, &component.name, options, body)?;
+        gaps.extend(podman_environment_and_ports(
+            manifest,
+            route,
+            &component.name,
+            options,
+            body,
+        )?);
+        gaps.extend(validate_podman_mounts(manifest, &component.name, options, body)?);
     }
+    gaps.extend(podman_network_gaps(manifest, &creates)?);
     Ok(gaps)
 }
 
@@ -310,6 +399,7 @@ fn option_values<'a>(argv: &'a [serde_json::Value], names: &[&str]) -> Vec<&'a s
 
 fn podman_environment_and_ports(
     manifest: &ScenarioManifest,
+    route: &RouteExpectation,
     name: &str,
     options: &[serde_json::Value],
     body: &serde_json::Value,
@@ -324,6 +414,24 @@ fn podman_environment_and_ports(
         .get("portmappings")
         .map(|value| value.as_array().ok_or("native portmappings must be an array"))
         .transpose()?;
+    let expected_order = route
+        .environment_order
+        .iter()
+        .filter_map(|requirement| requirement.strip_prefix(&format!("{name}:")))
+        .collect::<Vec<_>>();
+    if environment != expected_order {
+        return Err(format!("Podman CLI environment order changed for {name}").into());
+    }
+    if let Some(values) = api_environment {
+        let expected_keys = expected_order
+            .iter()
+            .map(|assignment| assignment.split_once('=').map(|(key, _)| key))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("ordered environment assignment")?;
+        if values.keys().map(String::as_str).collect::<Vec<_>>() != expected_keys {
+            return Err(format!("Podman API environment order changed for {name}").into());
+        }
+    }
     let mut gaps = Vec::new();
     for requirement in &manifest.semantics.required_environment {
         let (owner, assignment) = requirement.split_once(':').ok_or("environment grammar")?;
@@ -381,7 +489,7 @@ fn validate_podman_mounts(
     name: &str,
     options: &[serde_json::Value],
     body: &serde_json::Value,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Vec<String>, Box<dyn Error>> {
     let volumes = option_values(options, &["--volume", "-v"]);
     for requirement in &manifest.semantics.required_mounts {
         let (owner, rest) = requirement.split_once(':').ok_or("mount grammar")?;
@@ -402,6 +510,145 @@ fn validate_podman_mounts(
             "required native API volume changed"
         );
     }
+    let mut gaps = Vec::new();
+    for expected in manifest
+        .semantics
+        .required_bind_mounts
+        .iter()
+        .filter(|expected| expected.service == name)
+    {
+        let access = if expected.read_only { "ro" } else { "rw" };
+        let relabel = match expected.selinux_relabel.as_str() {
+            "shared" => "z",
+            "private" => "Z",
+            _ => return Err("unvalidated bind-mount relabel".into()),
+        };
+        let spelling = format!("{}:{}:{access},{relabel}", expected.source, expected.target);
+        let cli_has = volumes.contains(&spelling.as_str());
+        let body_text = body.to_string();
+        let api_has = body_text.contains(&expected.source) && body_text.contains(&expected.target);
+        assert_eq!(cli_has, api_has, "CLI/API bind-mount evidence diverges");
+        if !cli_has {
+            gaps.push(format!("bind-mount:{name}:{}", expected.target));
+        }
+    }
+    Ok(gaps)
+}
+
+fn podman_network_gaps(
+    manifest: &ScenarioManifest,
+    creates: &[&serde_json::Value],
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let mut gaps = Vec::new();
+    for expected in &manifest.semantics.required_networks {
+        let create = creates
+            .iter()
+            .find(|operation| {
+                operation["resource"]["kind"] == "network" && operation["resource"]["name"] == expected.name
+            })
+            .ok_or("missing network create")?;
+        let argv = create["cli"]["argv"].as_array().ok_or("network create argv")?;
+        let body = &create["libpod"]["body"]["json"];
+        for (field, cli_has, api_has) in [
+            (
+                "internal",
+                argv.iter().any(|argument| argument == "--internal"),
+                body.get("internal").is_some(),
+            ),
+            (
+                "ipv6",
+                argv.iter().any(|argument| argument == "--ipv6"),
+                body.get("ipv6_enabled").is_some(),
+            ),
+            (
+                "ipam",
+                argv.iter()
+                    .any(|argument| matches!(argument.as_str(), Some("--subnet" | "--gateway" | "--ip-range"))),
+                body.get("subnets").is_some(),
+            ),
+        ] {
+            if cli_has != api_has {
+                return Err(format!("Podman CLI/API network {field} evidence diverges for {}", expected.name).into());
+            }
+            if !cli_has {
+                gaps.push(format!("network-{field}:{}", expected.name));
+            }
+        }
+    }
+    Ok(gaps)
+}
+
+#[test]
+fn unavailable_typed_network_values_have_exact_actionable_import_evidence() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/podman-portable-intent");
+    let manifest = read_manifest(&fixture)?;
+    let mut cassette = PodmanCassette::load(&fixture.join("input-podman.cassette.json"))?;
+    let network_path = "/v6.1.0/libpod/networks/n-portable/json";
+    cassette.insert_body_field(network_path, "driver", serde_json::json!("bridge"))?;
+    cassette.insert_body_field(network_path, "ipv6_enabled", serde_json::json!(true))?;
+    cassette.insert_body_field(
+        network_path,
+        "ipam_options",
+        serde_json::json!({"driver": "host-local"}),
+    )?;
+    let imported = import_podman_cassette(&manifest, "podman", cassette)?;
+    let application = imported.application().ok_or("mutated Podman application")?;
+    let network = application
+        .networks()
+        .iter()
+        .find(|network| network.value().name().as_str() == "scenario-net")
+        .ok_or("mutated scenario network")?
+        .value();
+    assert_eq!(
+        network.ipv6().map(|value| *value.value()),
+        Some(true),
+        "typed IPv6 subnet must retain neutral IPv6 intent"
+    );
+    let remediation = "Author this network field separately on the target; no BoxFerry promotion option can recover it from current PodmanLens evidence.";
+    let expected = [
+        "networks.scenario-net.driver",
+        "networks.scenario-net.ipam_driver",
+        "networks.scenario-net.native_ipv6_enabled",
+    ];
+    for subject in expected {
+        let diagnostic = imported
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| {
+                diagnostic.code().as_str() == "BFP0002"
+                    && diagnostic
+                        .fields()
+                        .iter()
+                        .any(|field| field.name() == "subject" && field.value().redacted() == subject)
+            })
+            .ok_or_else(|| format!("missing diagnostic for {subject}"))?;
+        for (name, value) in [
+            ("decision", "omitted"),
+            ("available_promotion", "none"),
+            ("remediation", remediation),
+        ] {
+            assert!(
+                diagnostic
+                    .fields()
+                    .iter()
+                    .any(|field| { field.name() == name && field.value().redacted() == value }),
+                "{subject} diagnostic field {name} changed"
+            );
+        }
+        assert!(
+            imported.outcomes().iter().any(|outcome| {
+                outcome.subject() == subject
+                    && outcome.kind() == boxferry::ConversionKind::Unsupported
+                    && outcome.diagnostic().is_some_and(|code| code.as_str() == "BFP0002")
+            }),
+            "{subject} unsupported loss changed"
+        );
+    }
+    assert_no_protected_environment_values(
+        &manifest,
+        &format!("{:?}", imported.diagnostics()),
+        "mutated-cassette diagnostics",
+    )?;
     Ok(())
 }
 
@@ -502,9 +749,14 @@ fn six_independent_mutations_fail_for_their_own_reason() -> Result<(), Box<dyn E
     ] {
         assert_ne!(source, mutation, "{name} must actually mutate its input");
         let imported = import_compose(&mutation, &manifest.application.name)?;
-        let error = validate_neutral_application(&manifest, imported.application().ok_or("mutated import")?)
-            .err()
-            .ok_or("semantic mutation must fail")?;
+        let error = validate_neutral_application(
+            &manifest,
+            imported.application().ok_or("mutated import")?,
+            &manifest.semantics.required_environment_order,
+            &[],
+        )
+        .err()
+        .ok_or("semantic mutation must fail")?;
         assert!(error.contains(message), "{name} failed for the wrong reason: {error}");
     }
     let diagnostic = boxferry::Diagnostic::new(
@@ -579,9 +831,14 @@ fn metadata_and_evidence_cannot_claim_unperformed_or_unscoped_success() -> Resul
         &fs::read_to_string(fixture.join("input-compose.yaml"))?,
         &changed.application.name,
     )?;
-    validate_neutral_application(&changed, imported.application().ok_or("application")?)
-        .err()
-        .ok_or("a changed expected image must not silently pass")?;
+    validate_neutral_application(
+        &changed,
+        imported.application().ok_or("application")?,
+        &changed.semantics.required_environment_order,
+        &[],
+    )
+    .err()
+    .ok_or("a changed expected image must not silently pass")?;
     validate_diagnostics(
         &["BFP0007|services.app.ports".into()],
         &["BFP0007|services.database.ports".into()],
@@ -682,22 +939,176 @@ fn import_compose(text: &str, name: &str) -> Result<ImportResult, Box<dyn Error>
     Ok(ComposeImporter::new()?.import(&source))
 }
 
+fn assert_no_protected_environment_values(
+    manifest: &ScenarioManifest,
+    text: &str,
+    evidence: &str,
+) -> Result<(), Box<dyn Error>> {
+    for requirement in &manifest.semantics.required_environment {
+        let (_, assignment) = requirement.split_once(':').ok_or("invalid environment assertion")?;
+        let (name, value) = assignment.split_once('=').ok_or("invalid environment assignment")?;
+        if !value.is_empty() && text.contains(value) {
+            return Err(format!("{evidence} disclosed protected environment {name}").into());
+        }
+    }
+    Ok(())
+}
+
+fn import_podman(manifest: &ScenarioManifest, input_id: &str, path: &Path) -> Result<ImportResult, Box<dyn Error>> {
+    import_podman_cassette(manifest, input_id, PodmanCassette::load(path)?)
+}
+
+fn import_podman_cassette(
+    manifest: &ScenarioManifest,
+    input_id: &str,
+    cassette: PodmanCassette,
+) -> Result<ImportResult, Box<dyn Error>> {
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == input_id)
+        .ok_or("missing Podman scenario input")?;
+    let podman = input.podman.as_ref().ok_or("missing Podman input metadata")?;
+    if cassette.scenario_id() != manifest.id
+        || cassette.engine_version() != input.format_version
+        || cassette.execution_context() != manifest.deployment.root_mode
+    {
+        return Err("Podman cassette identity differs from scenario metadata".into());
+    }
+    let server = PodmanCassetteServer::start(cassette)?;
+    let transport = ReadOnlyUnixTransport::new(
+        UnixConnection::new(server.socket())?,
+        TransportLimits::default(),
+        ReadOnlyUnixTransportTimeouts::default(),
+    )?;
+    let request = podman_discovery_request(manifest, input_id)?;
+    let policy = podman_promotion_policy(manifest, input_id)?;
+    let acquisition = if podman.include_environment_values {
+        AcquisitionOptions::include_environment_values()
+    } else {
+        AcquisitionOptions::redacted()
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    let source = runtime.block_on(acquire_podman_source(
+        Identifier::new(&podman.application)?,
+        &transport,
+        acquisition,
+        &request,
+        policy,
+    ))?;
+    let inventory_snapshot = serde_json::to_string(&source.redacted_inventory_snapshot())?;
+    let graph_snapshot = serde_json::to_string(&source.redacted_graph_snapshot())?;
+    assert_no_protected_environment_values(manifest, &inventory_snapshot, "inventory snapshot")?;
+    assert_no_protected_environment_values(manifest, &graph_snapshot, "graph snapshot")?;
+    assert_no_protected_environment_values(manifest, &format!("{source:?}"), "Podman source debug")?;
+    server.finish()?;
+    Ok(PodmanImporter::new()?.import(&source))
+}
+
+fn podman_discovery_request(manifest: &ScenarioManifest, input_id: &str) -> Result<DiscoveryRequest, Box<dyn Error>> {
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == input_id)
+        .ok_or("missing Podman scenario input")?;
+    let podman = input.podman.as_ref().ok_or("missing Podman input metadata")?;
+    let mut request = DiscoveryRequest::new();
+    for selector in &podman.selectors {
+        let kind = match selector.kind.as_str() {
+            "container" => PodmanResourceKind::Container,
+            "pod" => PodmanResourceKind::Pod,
+            "network" => PodmanResourceKind::Network,
+            "volume" => PodmanResourceKind::Volume,
+            "image" => PodmanResourceKind::Image,
+            "secret" => PodmanResourceKind::Secret,
+            _ => return Err("unvalidated Podman selector kind".into()),
+        };
+        request.add_root(ResourceSelector::exact(kind, &selector.exact)?);
+    }
+    Ok(request)
+}
+
+fn podman_promotion_policy(
+    manifest: &ScenarioManifest,
+    input_id: &str,
+) -> Result<PodmanPromotionPolicy, Box<dyn Error>> {
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == input_id)
+        .ok_or("missing Podman scenario input")?;
+    let policy = input
+        .podman
+        .as_ref()
+        .ok_or("missing Podman input metadata")?
+        .promotion_policy;
+    Ok(PodmanPromotionPolicy::conservative()
+        .with_effective_bind_mounts(policy.effective_bind_mounts)
+        .with_effective_named_volume_mounts(policy.effective_named_volume_mounts)
+        .with_effective_named_networks(policy.effective_named_networks)
+        .with_portable_effective_settings(policy.portable_effective_settings))
+}
+
 fn convert_cli(
-    input: &Path,
+    manifest: &ScenarioManifest,
+    source: &Path,
     route: &RouteExpectation,
     destination: &Path,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
+    let input = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == route.input)
+        .ok_or("missing scenario route input")?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+    command.args(["convert", &input.importer, &route.exporter]);
+    let mut server = None;
+    match input.importer.as_str() {
+        "compose" => {
+            command
+                .arg("--input-file")
+                .arg(source)
+                .args(["--project-name", &manifest.application.name]);
+        }
+        "podman" => {
+            let podman = input.podman.as_ref().ok_or("missing Podman input metadata")?;
+            let cassette_server = PodmanCassetteServer::start(PodmanCassette::load(source)?)?;
+            command
+                .arg("--podman-socket")
+                .arg(cassette_server.socket())
+                .args(["--application-name", &podman.application]);
+            for selector in &podman.selectors {
+                command.args(["--podman-resource", &format!("{}={}", selector.kind, selector.exact)]);
+            }
+            let policy = podman.promotion_policy;
+            for (enabled, argument) in [
+                (policy.effective_bind_mounts, "--promote-podman-effective-bind-mounts"),
+                (
+                    policy.effective_named_volume_mounts,
+                    "--promote-podman-effective-named-volumes",
+                ),
+                (
+                    policy.effective_named_networks,
+                    "--promote-podman-effective-named-networks",
+                ),
+                (
+                    policy.portable_effective_settings,
+                    "--promote-podman-portable-effective-settings",
+                ),
+            ] {
+                if enabled {
+                    command.arg(argument);
+                }
+            }
+            server = Some(cassette_server);
+        }
+        _ => return Err("unimplemented scenario CLI input".into()),
+    }
     command
-        .args(["convert", "compose", &route.exporter, "--input-file"])
-        .arg(input)
-        .args([
-            "--project-name",
-            "authored-core",
-            "--loss-policy",
-            &route.loss_policy,
-            "--output-directory",
-        ])
+        .args(["--loss-policy", &route.loss_policy, "--output-directory"])
         .arg(destination);
     if route.exporter == "quadlet" {
         command.args([
@@ -708,14 +1119,22 @@ fn convert_cli(
         ]);
     }
     if route.exporter == "podman" {
+        let context = match manifest.deployment.root_mode.as_str() {
+            "rootful" | "rootless" => manifest.deployment.root_mode.as_str(),
+            _ => "unknown",
+        };
         command.args([
             "--podman-target-context",
-            "unknown",
+            context,
             "--podman-max-version",
             &route.target_maximum,
         ]);
     }
     let result = command.args(["--console-format", "json"]).output()?;
+    assert_no_protected_environment_values(manifest, &String::from_utf8_lossy(&result.stdout), "CLI JSON report")?;
+    if let Some(server) = server {
+        server.finish()?;
+    }
     assert!(
         result.stderr.is_empty(),
         "unexpected CLI failure: {}",

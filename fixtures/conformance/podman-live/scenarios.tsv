@@ -18,6 +18,7 @@ pod-members-and-standalone	topology	label-large	Podman inspect proves members of
 image-identities	images	label-large	Podman inspect proves configured portable registry tags plus resolved image-ID evidence	yes
 network-boundaries	networks	network-boundary	Podman inspect proves private/edge attachment aliases and private boundary	yes
 mount-matrix	storage	label-large	Podman inspect proves shared named-volume RW/RO bind propagation and tmpfs mounts	yes
+selinux-relabel-promotion	storage	exact-small	Podman 6.1 rootful proves default same-host bind omission and explicit shared/private z/Z promotion	no
 environment-matrix	environment	label-large	Podman inspect proves inline and env-file values before redaction test	yes
 runtime-policy-matrix	policy	label-large	Podman inspect proves requested portable runtime policy values	yes
 secret-conditional	secrets	label-large	Podman secret is created only when endpoint supports it	yes

@@ -1,12 +1,13 @@
 //! Podman target resolution and reviewable export contracts.
 
-use std::error::Error;
+use std::{collections::BTreeSet, error::Error};
 
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
 use boxferry_model::{
-    Application, Identifier, ImageReference, Network, NetworkAttachment, ProtectedString, Provenance,
-    ResourceOwnership, RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Service,
-    ServiceGroup, SourceId, SourceSpan, Sourced,
+    Application, EnvironmentValue, EnvironmentVariable, Identifier, ImageReference, Mount, MountSource, Network,
+    NetworkAttachment, NetworkIpamConfig, ProtectedString, Provenance, ResourceOwnership, RetainedNativeEvidence,
+    RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, SelinuxRelabel, Service, ServiceGroup, SourceId,
+    SourceSpan, Sourced,
 };
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanTargetError, resolve_podman_target, reviewed_podman_versions,
@@ -352,6 +353,173 @@ fn local_image_portability_failure_reports_resource_and_field() -> Result<(), Bo
             .iter()
             .any(|field| { field.name() == "intent_field" && field.value().expose() == "source.portability" })
     );
+    Ok(())
+}
+
+#[test]
+fn neutral_network_losses_are_reported_per_present_field() -> Result<(), Box<dyn Error>> {
+    let mut application = minimal_application()?;
+    let mut network = Network::new(Identifier::new("front")?, ResourceOwnership::Application);
+    network.set_runtime_name(Sourced::generated(ProtectedString::plain("runtime-front")));
+    network.set_driver(Sourced::generated(ProtectedString::plain("bridge")));
+    network.set_driver_options(Vec::new());
+    network.set_labels(Vec::new());
+    network.set_internal(Sourced::generated(true));
+    network.set_ipv6(Sourced::generated(true));
+    network.set_ipam_driver(Sourced::generated(ProtectedString::plain("host-local")));
+    network.add_ipam_config(Sourced::generated(NetworkIpamConfig::new(Sourced::generated(
+        ProtectedString::plain("10.88.0.0/16"),
+    ))?));
+    application.add_network(Sourced::generated(network))?;
+
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    let expected = BTreeSet::from([
+        "networks.front.driver".to_owned(),
+        "networks.front.internal".to_owned(),
+        "networks.front.ipam_configs".to_owned(),
+        "networks.front.ipam_driver".to_owned(),
+        "networks.front.ipv6".to_owned(),
+        "networks.front.runtime_name".to_owned(),
+    ]);
+    let actual = plan
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code().as_str() == "BFP0007")
+        .filter_map(|diagnostic| {
+            diagnostic.fields().iter().find_map(|field| {
+                (field.name() == "subject" && field.value().redacted().starts_with("networks.front."))
+                    .then(|| field.value().redacted().to_owned())
+            })
+        })
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(actual, expected);
+    assert!(!actual.contains("networks.front.settings"));
+    for diagnostic in plan.diagnostics().iter().filter(|diagnostic| {
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| field.name() == "subject" && expected.contains(field.value().redacted()))
+    }) {
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| { field.name() == "decision" && field.value().redacted() == "omitted" })
+        );
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| { field.name() == "available_promotion" && field.value().redacted() == "none" })
+        );
+        assert!(diagnostic.fields().iter().any(|field| {
+            field.name() == "remediation" && field.value().redacted().contains("no automatic promotion exists")
+        }));
+    }
+    assert!(plan.authorize(LossPolicy::AllowPartial).output().is_some());
+    Ok(())
+}
+
+#[test]
+fn host_bind_and_selinux_losses_name_exact_fields() -> Result<(), Box<dyn Error>> {
+    const PRIVATE_SOURCE: &str = "/private/source/never-render";
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    let mut mount = Mount::new(MountSource::HostPath(PRIVATE_SOURCE.to_owned()), "/etc/example", true)?;
+    mount.set_selinux_relabel(SelinuxRelabel::Private);
+    service.add_mount(Sourced::generated(mount));
+    let mut application = Application::new(Identifier::new("mount-fields")?);
+    application.add_service(Sourced::generated(service))?;
+
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    let expected = BTreeSet::from([
+        "services.web.mounts[0].selinux_relabel".to_owned(),
+        "services.web.mounts[0].source".to_owned(),
+    ]);
+    let actual = plan
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code().as_str() == "BFP0007")
+        .filter_map(|diagnostic| {
+            diagnostic.fields().iter().find_map(|field| {
+                (field.name() == "subject" && field.value().redacted().starts_with("services.web.mounts[0]."))
+                    .then(|| field.value().redacted().to_owned())
+            })
+        })
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(actual, expected);
+    for diagnostic in plan.diagnostics().iter().filter(|diagnostic| {
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| field.name() == "subject" && expected.contains(field.value().redacted()))
+    }) {
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| { field.name() == "decision" && field.value().redacted() == "omitted" })
+        );
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| { field.name() == "available_promotion" && field.value().redacted() == "none" })
+        );
+        assert!(diagnostic.fields().iter().any(|field| {
+            field.name() == "remediation" && field.value().redacted().contains("no automatic promotion exists")
+        }));
+    }
+    let authorized = plan.authorize(LossPolicy::AllowPartial);
+    let output = authorized.output().ok_or("partial Podman output")?;
+    assert!(!output.deployment_json().contains(PRIVATE_SOURCE));
+    assert!(!output.commands_shell().contains(PRIVATE_SOURCE));
+    Ok(())
+}
+
+#[test]
+fn generated_podman_environment_is_key_sorted() -> Result<(), Box<dyn Error>> {
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    for (name, value) in [("ZETA", "z"), ("ALPHA", "a"), ("MIDDLE", "m")] {
+        service.add_environment(Sourced::generated(EnvironmentVariable::new(
+            Identifier::new(name)?,
+            EnvironmentValue::Literal(ProtectedString::plain(value)),
+        )));
+    }
+    let mut application = Application::new(Identifier::new("environment-order")?);
+    application.add_service(Sourced::generated(service))?;
+
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let result = PodmanExporter::new()?
+        .plan(&application, &target)?
+        .authorize(LossPolicy::ExactOnly);
+    let output = result.output().ok_or("exact Podman output")?;
+    let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+    let argv = deployment["operations"]
+        .as_array()
+        .and_then(|operations| {
+            operations.iter().find_map(|operation| {
+                (operation["action"] == "create" && operation["resource"]["kind"] == "container")
+                    .then(|| operation["cli"]["argv"].as_array())
+                    .flatten()
+            })
+        })
+        .ok_or("container create argv")?;
+    let assignments = argv
+        .windows(2)
+        .filter_map(|arguments| {
+            (arguments[0] == "--env")
+                .then(|| arguments[1].as_str().map(ToOwned::to_owned))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(assignments, ["ALPHA=a", "MIDDLE=m", "ZETA=z"]);
     Ok(())
 }
 

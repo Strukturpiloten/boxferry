@@ -96,6 +96,8 @@ deployment origin/root mode, and source/target capabilities. Neutral
 expectations state exact included/excluded resources, ownership/shared
 boundaries, required mounts/environment/ports, prerequisites, approved loss
 tuples (`rule`, `subject`, `decision`, `version-scope`), and exact diagnostics.
+Podman scenarios declare cassette/promotion metadata, bind/network expectations, reimport
+evidence, and loss counts.
 
 Every capability-derived importer/exporter pair has an independent outcome
 (`migration-success`, `expected-rejection`, `unsupported-environment`, or

@@ -165,9 +165,9 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.split('\t').collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    if scenario_rows.len() != 26 {
+    if scenario_rows.len() != 27 {
         return Err(format!(
-            "live Podman scenario catalogue must contain twenty-six cases, found {}",
+            "live Podman scenario catalogue must contain twenty-seven cases, found {}",
             scenario_rows.len()
         ));
     }
@@ -200,6 +200,7 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         "image-identities",
         "network-boundaries",
         "mount-matrix",
+        "selinux-relabel-promotion",
         "environment-matrix",
         "runtime-policy-matrix",
         "secret-conditional",

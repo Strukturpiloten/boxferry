@@ -52,6 +52,14 @@ The portable-effective settings flag also covers typed network-internal, subnet,
 lease-range, and IPv6-subnet observations. Native network fields without a typed PodmanLens contract
 remain reported rather than guessed.
 
+Promotion flags are independent: named-network promotion authorizes ownership, portable-effective
+promotion authorizes its typed internal/IPAM settings, named-volume promotion authorizes volume
+identity, and bind promotion authorizes reviewed same-host paths. No flag recovers network driver,
+IPAM driver, standalone IPv6, build recipes, registry provenance, or path contents. Untyped
+configuration fields remain actionable omissions with `available_promotion=none`. Runtime-assigned
+container addresses and local-resolution facts remain structured, non-actionable evidence rather
+than portable-intent losses.
+
 BoxFerry does not read an implicit `.env` file or the complete process environment.
 Podman input requires one selector form: `--podman-all`, `--podman-resource`,
 `--podman-resource-prefix`, or `--podman-label`.

@@ -29,6 +29,17 @@ podman-output/
 contract for every Podman output route. BoxFerry never executes the script. Running
 `podman-commands.sh` yourself performs real operations against your selected Podman connection.
 
+Configured local image spellings remain unchanged, but local availability does not supply a portable
+pull source, registry provenance, or build recipe. Import-side same-host bind promotion retains
+reviewed source, target, access, and typed SELinux relabel intent in the neutral model. The current
+Podman deployment contract cannot render host binds or SELinux relabel modes, so Podman output
+reports exact `.source` and `.selinux_relabel` omissions with `available_promotion=none` and requires
+the operator to re-author target-compatible storage. Generated environment assignments are
+key-sorted where order is semantically equivalent. Driver, IPAM-driver, and standalone IPv6 are
+actionable omissions with no automatic promotion. Runtime-assigned container addresses and local
+resolution facts remain structured, non-actionable evidence; they are not reported as portable
+intent losses.
+
 ## Production checks
 
 - The source engine version and execution context never become target choices implicitly.
