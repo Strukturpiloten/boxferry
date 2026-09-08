@@ -76,6 +76,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
   ([#92](https://github.com/Strukturpiloten/boxferry/issues/92)).
 
 - Promote typed Podman network-internal, subnet, gateway, lease-range, and inferred IPv6 observations into non-empty network output when portable-effective settings are authorized; preserve SELinux relabel options when PodmanLens exposes typed `z`/`Z` evidence and clarify that local image references come unchanged from Podman inspect ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
+- Consume PodmanLens 0.2.3 bounded creation evidence only as corroboration, keep configured
+  local image references without invented build or registry provenance, and report image or mount
+  conflicts against exact value-free subjects ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
+- Separate non-actionable runtime facts from actionable Podman migration losses, preserve genuine
+  residual mount options, and exclude raw creation environment, path, image, and command payloads
+  from support bundles ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
 - Explain that `PLN0021` truncates only the bounded diagnostic path catalogue, not typed observations used by conversion ([#88](https://github.com/Strukturpiloten/boxferry/issues/88)).
 
 - Explain Podman unmapped-field retention limits, counts, value omission, and configured-image

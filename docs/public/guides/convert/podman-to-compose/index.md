@@ -41,6 +41,13 @@ Use `--promote-podman-effective-bind-mounts` only for a target that deliberately
 absolute host paths. The flag preserves source, destination, and read-only state; it does not claim
 that the paths or their contents were migrated.
 
+A configured local image spelling remains the service image; `image_builds` stays empty because local
+availability is not a build recipe or registry provenance. A promoted named network needs both the
+named-network and portable-effective settings authorizations before its typed internal, subnet,
+gateway, lease-range, and inferred IPv6 definition is emitted. Driver, IPAM-driver, and standalone
+IPv6 observations currently have no automatic promotion. Newly generated environment mappings are
+key-sorted only after duplicate and last-wins semantics have been resolved by PodmanLens.
+
 ## Production checks
 
 - Add `--podman-network-boundary NAME_OR_ID` only for a network that discovery may cross.

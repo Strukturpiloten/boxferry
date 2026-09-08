@@ -17,7 +17,8 @@ use boxferry_model::{
     SourceId, Sourced, Volume,
 };
 use podman_lens::{
-    ContainerMountKind, ContainerMountObservation, ContainerMountSource, ContainerObservation,
+    AuthoredImageSpellingHint, AuthoredMountRelabelHint, ContainerCreationEvidence, ContainerMountKind,
+    ContainerMountObservation, ContainerMountSelinuxRelabel, ContainerMountSource, ContainerObservation,
     ContainerSecretGrantObservation, DiscoveryExplanationKind, MAX_UNKNOWN_FIELDS_PER_INVENTORY,
     MAX_UNKNOWN_FIELDS_PER_RECORD, NativeHealthCheckObservation, NativeHealthCommand, NativeNamespaceMode,
     NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol, NativeRestartPolicyName,
@@ -432,6 +433,7 @@ impl<'a> Mapping<'a> {
         self.map_pod_membership(&subject, observation.header().identity(), details);
 
         self.map_configured_image(&subject, details, &mut service);
+        self.report_creation_evidence(&subject, details);
         self.map_configured_settings(&subject, observation.header().identity().id(), details, &mut service);
         self.map_container_labels(&subject, details.labels(), &mut service);
         self.map_mounts(&subject, details, &mut service);
@@ -877,6 +879,141 @@ impl<'a> Mapping<'a> {
         );
     }
 
+    fn report_creation_evidence(&mut self, subject: &str, details: &ContainerObservation) {
+        let evidence_subject = format!("{subject}.creation_evidence");
+        let ObservationField::Observed(observed) = details.creation_evidence() else {
+            match details.creation_evidence() {
+                ObservationField::Absent | ObservationField::NotApplicable => self.exact(evidence_subject),
+                // PodmanLens owns the field-specific PLN0017 diagnostic for malformed
+                // optional creation evidence. Avoid a second contradictory generic loss.
+                ObservationField::Malformed => {}
+                ObservationField::Unavailable
+                | ObservationField::VersionInapplicable
+                | ObservationField::Unmodelled(_) => self.unsupported(
+                    evidence_subject,
+                    "optional recorded creation evidence was not safely usable; no automatic promotion exists",
+                ),
+                _ => self.unsupported(evidence_subject, "future creation-evidence state is not reviewed"),
+            }
+            return;
+        };
+        if observed.origin() != ObservationOrigin::Configured {
+            self.unsupported_with_origin(
+                evidence_subject,
+                "creation-command projection is corroborating evidence only and cannot become desired state",
+                observed.origin(),
+            );
+            return;
+        }
+        self.exact(&evidence_subject);
+        self.report_creation_image_hint(subject, observed.value().image());
+        self.report_creation_mount_hints(subject, observed.value(), details.mounts());
+    }
+
+    fn report_creation_image_hint(&mut self, subject: &str, field: &ObservationField<AuthoredImageSpellingHint>) {
+        let hint_subject = format!("{subject}.image.authored_spelling");
+        let ObservationField::Observed(observed) = field else {
+            match field {
+                ObservationField::Absent | ObservationField::NotApplicable => self.exact(hint_subject),
+                ObservationField::Unavailable
+                | ObservationField::Malformed
+                | ObservationField::VersionInapplicable
+                | ObservationField::Unmodelled(_) => self.unsupported(
+                    hint_subject,
+                    "authored image spelling could not be corroborated; no automatic promotion exists",
+                ),
+                _ => self.unsupported(hint_subject, "future authored-image evidence state is not reviewed"),
+            }
+            return;
+        };
+        if observed.origin() != ObservationOrigin::Configured {
+            self.unsupported_with_origin(
+                hint_subject,
+                "authored image consistency evidence cannot replace configured image intent",
+                observed.origin(),
+            );
+            return;
+        }
+        match observed.value() {
+            AuthoredImageSpellingHint::MatchesConfiguredImage => self.exact(hint_subject),
+            AuthoredImageSpellingHint::MatchesLocalImageId => self.unsupported(
+                hint_subject,
+                "recorded creation operand matched a host-local image ID, not portable image intent; no automatic promotion exists",
+            ),
+            // PodmanLens emits PLN0050 for this exact field. The native-finding
+            // mapping below owns the one actionable outcome and diagnostic.
+            AuthoredImageSpellingHint::Contradictory => {}
+            _ => self.unsupported(hint_subject, "future authored-image hint is not reviewed"),
+        }
+    }
+
+    fn report_creation_mount_hints(
+        &mut self,
+        subject: &str,
+        evidence: &ContainerCreationEvidence,
+        mounts: &ObservationField<Vec<ContainerMountObservation>>,
+    ) {
+        let field_subject = format!("{subject}.creation_evidence.mount_relabels");
+        let ObservationField::Observed(observed) = evidence.mount_relabels() else {
+            match evidence.mount_relabels() {
+                ObservationField::Absent | ObservationField::NotApplicable => self.exact(field_subject),
+                ObservationField::Unavailable
+                | ObservationField::Malformed
+                | ObservationField::VersionInapplicable
+                | ObservationField::Unmodelled(_) => self.unsupported(
+                    field_subject,
+                    "authored mount relabel hints could not be correlated; no automatic promotion exists",
+                ),
+                _ => self.unsupported(field_subject, "future authored-mount evidence state is not reviewed"),
+            }
+            return;
+        };
+        if observed.origin() != ObservationOrigin::Configured {
+            self.unsupported_with_origin(
+                field_subject,
+                "creation-command relabel hints are corroborating evidence only",
+                observed.origin(),
+            );
+            return;
+        }
+        for (hint_position, hint) in observed.value().iter().enumerate() {
+            let (mount_index, expected) = match hint {
+                AuthoredMountRelabelHint::Shared { mount_index } => {
+                    (*mount_index, Some(ContainerMountSelinuxRelabel::Shared))
+                }
+                AuthoredMountRelabelHint::Private { mount_index } => {
+                    (*mount_index, Some(ContainerMountSelinuxRelabel::Private))
+                }
+                AuthoredMountRelabelHint::Contradictory { .. } => {
+                    // PLN0050 owns the field-specific actionable conflict.
+                    continue;
+                }
+                _ => {
+                    self.unsupported(
+                        format!("{field_subject}[{hint_position}]"),
+                        "future authored-mount relabel hint is not reviewed",
+                    );
+                    continue;
+                }
+            };
+            let mount_subject = format!("{subject}.mounts[{mount_index}].selinux_relabel");
+            let typed = mounts
+                .observed()
+                .and_then(|mounts| mounts.value().get(mount_index))
+                .and_then(|mount| mount.selinux_relabel().observed());
+            if expected.is_some_and(|expected| {
+                typed.is_some_and(|typed| typed.origin() == ObservationOrigin::Configured && *typed.value() == expected)
+            }) {
+                self.exact(format!("{field_subject}[{hint_position}]"));
+            } else {
+                self.unsupported(
+                    mount_subject,
+                    "recorded creation relabel hint does not corroborate typed configured mount evidence; no automatic promotion exists",
+                );
+            }
+        }
+    }
+
     fn map_configured_settings(
         &mut self,
         subject: &str,
@@ -1029,9 +1166,10 @@ impl<'a> Mapping<'a> {
         report!("pod_membership", details.pod_membership());
         report!("native_dependencies", details.native_dependencies());
         report!("mounts", details.mounts());
+        self.report_creation_evidence(subject, details);
         if let Some(mounts) = details.mounts().observed() {
             for (index, mount) in mounts.value().iter().enumerate() {
-                self.report_unpromoted_mount(&format!("{subject}.mounts[{index}]"), mount);
+                self.report_unpromoted_mount(&format!("{subject}.mounts[{index}]"), mount, None);
             }
         }
         self.report_secret_grants(&format!("{subject}.secret_grants"), details.secret_grants());
@@ -1062,8 +1200,51 @@ impl<'a> Mapping<'a> {
         self.pod_memberships.insert(identity.id().to_owned(), group);
     }
 
-    fn report_unpromoted_mount(&mut self, subject: &str, mount: &ContainerMountObservation) {
+    fn report_unpromoted_mount(
+        &mut self,
+        subject: &str,
+        mount: &ContainerMountObservation,
+        available_promotion: Option<&'static str>,
+    ) {
         self.report_mount_core(subject, mount);
+        let relabel_subject = format!("{subject}.selinux_relabel");
+        let field = mount.selinux_relabel();
+        let ObservationField::Observed(observed) = field else {
+            match field {
+                ObservationField::Absent | ObservationField::NotApplicable => self.exact(relabel_subject),
+                ObservationField::Unavailable
+                | ObservationField::Malformed
+                | ObservationField::VersionInapplicable
+                | ObservationField::Unmodelled(_) => self.unsupported(
+                    relabel_subject,
+                    "typed SELinux relabel evidence is unavailable; author it separately on the target",
+                ),
+                _ => self.unsupported(relabel_subject, "future SELinux relabel evidence state is not reviewed"),
+            }
+            self.report_mount_remainders(subject, mount);
+            return;
+        };
+        match observed.origin() {
+            ObservationOrigin::Configured | ObservationOrigin::Effective => {
+                if let Some(flag) = available_promotion {
+                    self.promotion_required_with_flag(
+                        relabel_subject,
+                        "SELinux relabel requires promotion of its parent mount",
+                        flag,
+                    );
+                } else {
+                    self.unsupported_with_origin(
+                        relabel_subject,
+                        "SELinux relabel cannot be emitted because its parent mount is not portable intent",
+                        observed.origin(),
+                    );
+                }
+            }
+            ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
+                self.evidence_only(relabel_subject);
+            }
+            _ => self.unsupported(relabel_subject, "future SELinux relabel origin is not reviewed"),
+        }
         self.report_mount_remainders(subject, mount);
     }
 
@@ -1116,7 +1297,7 @@ impl<'a> Mapping<'a> {
         };
         if observed.origin() != ObservationOrigin::Effective {
             for (index, mount) in observed.value().iter().enumerate() {
-                self.report_unpromoted_mount(&format!("{field_subject}[{index}]"), mount);
+                self.report_unpromoted_mount(&format!("{field_subject}[{index}]"), mount, None);
             }
             self.unsupported(
                 &field_subject,
@@ -1128,7 +1309,12 @@ impl<'a> Mapping<'a> {
             && !self.source.promotion_policy().promotes_effective_bind_mounts()
         {
             for (index, mount) in observed.value().iter().enumerate() {
-                self.report_unpromoted_mount(&format!("{field_subject}[{index}]"), mount);
+                let flag = match mount.kind() {
+                    ContainerMountKind::Bind => EFFECTIVE_BIND_MOUNTS_FLAG,
+                    ContainerMountKind::NamedVolume => "--promote-podman-effective-named-volumes",
+                    _ => "--promote-podman-effective-named-volumes or --promote-podman-effective-bind-mounts",
+                };
+                self.report_unpromoted_mount(&format!("{field_subject}[{index}]"), mount, Some(flag));
             }
             self.promotion_required_with_flag(
                 &field_subject,
@@ -1144,7 +1330,7 @@ impl<'a> Mapping<'a> {
                 continue;
             }
             if !self.source.promotion_policy().promotes_effective_named_volume_mounts() {
-                self.report_unpromoted_mount(&mount_subject, mount);
+                self.report_unpromoted_mount(&mount_subject, mount, Some("--promote-podman-effective-named-volumes"));
                 self.promotion_required_with_flag(
                     mount_subject,
                     "effective named-volume mount requires explicit promotion authorization",
@@ -1198,7 +1384,7 @@ impl<'a> Mapping<'a> {
             };
             match Mount::new(MountSource::Volume(volume_name), destination.value(), !writable.value()) {
                 Ok(mut mapped) => {
-                    if !Self::apply_mount_selinux_relabel(mount, &mut mapped) {
+                    if !self.apply_mount_selinux_relabel(&mount_subject, mount, &mut mapped) {
                         continue;
                     }
                     service.add_mount(self.decision_sourced(mapped));
@@ -1215,7 +1401,7 @@ impl<'a> Mapping<'a> {
 
     fn map_effective_bind_mount(&mut self, subject: &str, mount: &ContainerMountObservation, service: &mut Service) {
         if !self.source.promotion_policy().promotes_effective_bind_mounts() {
-            self.report_unpromoted_mount(subject, mount);
+            self.report_unpromoted_mount(subject, mount, Some(EFFECTIVE_BIND_MOUNTS_FLAG));
             self.promotion_required_with_flag(
                 subject,
                 "host-local bind mount requires explicit same-path promotion authorization",
@@ -1260,7 +1446,7 @@ impl<'a> Mapping<'a> {
             !writable.value(),
         ) {
             Ok(mut mapped) => {
-                if !Self::apply_mount_selinux_relabel(mount, &mut mapped) {
+                if !self.apply_mount_selinux_relabel(subject, mount, &mut mapped) {
                     return;
                 }
                 service.add_mount(self.decision_sourced(mapped));
@@ -1298,36 +1484,100 @@ impl<'a> Mapping<'a> {
     }
 
     fn report_mount_options(&mut self, subject: &str, mount: &ContainerMountObservation) {
-        let option_subject = format!("{subject}.options");
-        let Some(options) = mount.options().observed() else {
-            self.report_state(mount.options(), &option_subject);
-            return;
+        let field_subject = format!("{subject}.options");
+        let represented_by_typed_relabel = match (mount.options().observed(), mount.selinux_relabel().observed()) {
+            (Some(options), _) if options.value().is_empty() => true,
+            (Some(options), Some(relabel)) if relabel.origin() == ObservationOrigin::Configured => {
+                options.value().iter().all(|option| match relabel.value() {
+                    ContainerMountSelinuxRelabel::Shared => option == "z",
+                    ContainerMountSelinuxRelabel::Private => option == "Z",
+                    _ => false,
+                })
+            }
+            _ => false,
         };
-        match decoded_mount_options(options.value()) {
-            Ok((_, true)) => self.exact(option_subject),
-            Ok((_, false)) => self.observation_only(
-                &option_subject,
+
+        if represented_by_typed_relabel {
+            self.exact(field_subject);
+        } else {
+            self.observation_only(
+                &field_subject,
                 mount.options(),
-                "native mount options beyond access, bind recursion, and SELinux relabeling have no neutral mapping",
-            ),
-            Err(()) => self.invalid(
-                option_subject,
-                "native mount options contain conflicting SELinux relabel modes",
-            ),
+                "residual effective native mount options remain evidence after typed access, relabel, propagation, and subpath handling; no automatic promotion exists",
+            );
         }
     }
 
-    fn apply_mount_selinux_relabel(native: &ContainerMountObservation, mapped: &mut Mount) -> bool {
-        let Some(options) = native.options().observed() else {
-            return true;
-        };
-        let Ok((relabel, _)) = decoded_mount_options(options.value()) else {
-            return false;
-        };
-        if let Some(relabel) = relabel {
-            mapped.set_selinux_relabel(relabel);
+    fn apply_mount_selinux_relabel(
+        &mut self,
+        subject: &str,
+        native: &ContainerMountObservation,
+        mapped: &mut Mount,
+    ) -> bool {
+        let field_subject = format!("{subject}.selinux_relabel");
+        match native.selinux_relabel() {
+            ObservationField::Observed(observed) => match observed.origin() {
+                ObservationOrigin::Configured => {
+                    let relabel = match observed.value() {
+                        ContainerMountSelinuxRelabel::Shared => SelinuxRelabel::Shared,
+                        ContainerMountSelinuxRelabel::Private => SelinuxRelabel::Private,
+                        _ => {
+                            self.unsupported(
+                                field_subject,
+                                "future typed SELinux relabel mode is not reviewed; no automatic promotion exists",
+                            );
+                            return true;
+                        }
+                    };
+                    mapped.set_selinux_relabel(relabel);
+                    self.exact(field_subject);
+                    true
+                }
+                ObservationOrigin::Effective => {
+                    self.promotion_required(
+                        field_subject,
+                        "effective SELinux relabel evidence is not configured intent; no automatic promotion exists",
+                    );
+                    true
+                }
+                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
+                    self.evidence_only(field_subject);
+                    true
+                }
+                _ => {
+                    self.unsupported(
+                        field_subject,
+                        "future SELinux relabel observation origin is not reviewed; no automatic promotion exists",
+                    );
+                    true
+                }
+            },
+            ObservationField::Absent | ObservationField::NotApplicable => {
+                self.exact(field_subject);
+                true
+            }
+            ObservationField::Unavailable | ObservationField::Malformed => {
+                self.unsupported(
+                    field_subject,
+                    "typed SELinux relabel evidence is incomplete or malformed",
+                );
+                true
+            }
+            ObservationField::VersionInapplicable | ObservationField::Unmodelled(_) => {
+                self.unsupported(
+                    field_subject,
+                    "typed SELinux relabel evidence is not usable; no automatic promotion exists",
+                );
+                true
+            }
+            _ => {
+                self.unsupported(
+                    field_subject,
+                    "future SELinux relabel state is not reviewed; no automatic promotion exists",
+                );
+                true
+            }
         }
-        true
     }
 
     fn report_networking_only(&mut self, subject: &str, field: &ObservationField<NativeNetworkingObservation>) {
@@ -1720,11 +1970,7 @@ impl<'a> Mapping<'a> {
                 None
             }
             ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
-                self.unsupported_with_origin(
-                    subject,
-                    "runtime-assigned and local-resolution observations are never authored intent",
-                    observed.origin(),
-                );
+                self.evidence_only(subject);
                 None
             }
             _ => {
@@ -1756,11 +2002,7 @@ impl<'a> Mapping<'a> {
                 None
             }
             ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
-                self.unsupported_with_origin(
-                    subject,
-                    "runtime-assigned and local-resolution observations are never promoted as portable settings",
-                    observed.origin(),
-                );
+                self.evidence_only(subject);
                 None
             }
             _ => {
@@ -1801,11 +2043,7 @@ impl<'a> Mapping<'a> {
                 None
             }
             ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
-                self.unsupported_with_origin(
-                    subject,
-                    "runtime-assigned and local-resolution observations are never authored intent",
-                    observed.origin(),
-                );
+                self.evidence_only(subject);
                 None
             }
             _ => {
@@ -1821,7 +2059,7 @@ impl<'a> Mapping<'a> {
                 ObservationOrigin::Configured => self.unsupported_with_origin(subject, reason, observed.origin()),
                 ObservationOrigin::Effective => self.promotion_required(subject, reason),
                 ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
-                    self.unsupported_with_origin(subject, reason, observed.origin());
+                    self.evidence_only(subject);
                 }
                 _ => self.unsupported(subject, "future observation origin is not reviewed"),
             },
@@ -1844,12 +2082,9 @@ impl<'a> Mapping<'a> {
                     subject,
                     "effective observation requires explicit field-specific promotion",
                 ),
-                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => self
-                    .unsupported_with_origin(
-                        subject,
-                        "runtime-assigned and local-resolution observations are never authored intent",
-                        observed.origin(),
-                    ),
+                ObservationOrigin::RuntimeAssigned | ObservationOrigin::LocalResolution => {
+                    self.evidence_only(subject);
+                }
                 _ => self.unsupported(subject, "future observation origin is not reviewed for promotion"),
             },
             ObservationField::Unavailable => {
@@ -1866,7 +2101,12 @@ impl<'a> Mapping<'a> {
     }
 
     fn require_complete(&mut self, observation: &ResourceObservation, subject: &str) -> bool {
-        if observation.header().state() == ResourceObservationState::Complete {
+        let findings = observation.header().findings();
+        if observation.header().state() == ResourceObservationState::Complete
+            || (observation.header().state() == ResourceObservationState::Malformed
+                && !findings.is_empty()
+                && findings.iter().all(optional_creation_finding))
+        {
             true
         } else {
             let has_causal_finding = observation
@@ -1947,6 +2187,45 @@ impl<'a> Mapping<'a> {
             Vec<(ResourceKind, Option<&'static str>, podman_lens::InventoryFinding)>,
         >::new();
         for (kind, state, finding) in inventory_findings {
+            if optional_creation_finding(&finding) {
+                let subject = finding.resource().map_or_else(
+                    || "podman.creation_evidence".to_owned(),
+                    |identity| format!("services.{}.creation_evidence", identity_name(identity)),
+                );
+                self.native_mapping_limitation(
+                    &finding,
+                    kind,
+                    state,
+                    subject,
+                    "optional recorded creation evidence was malformed; typed inspect intent remains usable",
+                    "Recreate the container with a supported podman create or run command if authored image or relabel corroboration is required; no automatic promotion exists.",
+                );
+                continue;
+            }
+            if let Some(subject) = network_mapping_limitation_subject(kind, &finding) {
+                self.native_mapping_limitation(
+                    &finding,
+                    kind,
+                    state,
+                    subject,
+                    "PodmanLens does not expose this network value through its typed public contract",
+                    "Author this network field separately on the target; no BoxFerry promotion option can recover it from current PodmanLens evidence.",
+                );
+                continue;
+            }
+            if finding.code() == podman_lens::DiagnosticCode::CreationEvidenceConflict {
+                let subject =
+                    creation_conflict_subject(&finding).unwrap_or_else(|| "podman.creation_evidence".to_owned());
+                self.native_mapping_limitation(
+                    &finding,
+                    kind,
+                    state,
+                    subject,
+                    "recorded creation evidence conflicts with typed inspect evidence and was ignored",
+                    "Review and author the affected field separately; conflicting creation evidence has no automatic promotion.",
+                );
+                continue;
+            }
             if invalid_inventory_finding(finding.code()) {
                 self.inventory_finding(&finding, kind, state);
                 continue;
@@ -2003,6 +2282,50 @@ impl<'a> Mapping<'a> {
             || !graph.requested_label_roots().is_empty()
             || graph.requested_roots().iter().any(|selector| selector.kind() == kind)
             || self.selected.iter().any(|identity| identity.kind() == kind)
+    }
+
+    fn native_mapping_limitation(
+        &mut self,
+        finding: &podman_lens::InventoryFinding,
+        section_kind: ResourceKind,
+        observation_state: Option<&'static str>,
+        subject: String,
+        summary: &'static str,
+        remediation: &'static str,
+    ) {
+        let code = finding.code();
+        let context = self.inventory_finding_context(finding, section_kind, observation_state);
+        let mut native = NativeFinding::new(
+            "podman",
+            "podman-lens",
+            code.as_str(),
+            "acquisition",
+            Severity::Warning,
+            podman_native_summary(code),
+        )
+        .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(subject.clone())))
+        .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(summary)));
+        let adapter_code = self.importer.unsupported.clone();
+        let mut diagnostic = diagnostic_with_context(
+            adapter_code.clone(),
+            Severity::Warning,
+            summary,
+            &subject,
+            summary,
+            "omitted",
+            Some("partial"),
+        )
+        .with_field(DiagnosticField::new(
+            "available_promotion",
+            DiagnosticValue::plain("none"),
+        ))
+        .with_field(DiagnosticField::new("remediation", DiagnosticValue::plain(remediation)));
+        for field in context {
+            native = native.with_field(field.clone());
+            diagnostic = diagnostic.with_field(field);
+        }
+        self.diagnostics.push(diagnostic.with_native_finding(native));
+        self.push_loss(subject, ConversionKind::Unsupported, adapter_code);
     }
 
     fn inventory_finding(
@@ -2406,6 +2729,10 @@ impl<'a> Mapping<'a> {
         self.push_loss(subject, ConversionKind::Invalid, self.importer.invalid.clone());
     }
 
+    fn evidence_only(&mut self, subject: impl Into<String>) {
+        self.exact(subject);
+    }
+
     fn exact(&mut self, subject: impl Into<String>) {
         self.outcomes
             .push(ConversionOutcome::exact(subject).with_origin(self.origin.clone()));
@@ -2430,6 +2757,12 @@ impl<'a> Mapping<'a> {
             .with_field(DiagnosticField::new(
                 "observation_origin",
                 DiagnosticValue::plain("effective"),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain(format!(
+                    "Review target prerequisites for the approximation authorized by {flag}."
+                )),
             )),
         );
         self.push_loss(subject, ConversionKind::Approximate, self.importer.policy.clone());
@@ -2454,6 +2787,10 @@ impl<'a> Mapping<'a> {
             .with_field(DiagnosticField::new(
                 "observation_origin",
                 DiagnosticValue::plain("effective"),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain("Author this field separately on the target; no automatic promotion exists."),
             )),
         );
         self.push_loss(subject, ConversionKind::Unsupported, self.importer.policy.clone());
@@ -2478,6 +2815,12 @@ impl<'a> Mapping<'a> {
             .with_field(DiagnosticField::new(
                 "observation_origin",
                 DiagnosticValue::plain("effective"),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain(format!(
+                    "Review the observed intent and enable {flag} when it is valid for the target."
+                )),
             )),
         );
         self.push_loss(subject, ConversionKind::Unsupported, self.importer.policy.clone());
@@ -2498,6 +2841,10 @@ impl<'a> Mapping<'a> {
             .with_field(DiagnosticField::new(
                 "available_promotion",
                 DiagnosticValue::plain("none"),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain("Author this field separately on the target; no automatic promotion exists."),
             )),
         );
         self.push_loss(subject, ConversionKind::Unsupported, self.importer.unsupported.clone());
@@ -2527,6 +2874,10 @@ impl<'a> Mapping<'a> {
             .with_field(DiagnosticField::new(
                 "observation_origin",
                 DiagnosticValue::plain(observation_origin_name(origin)),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain("Author this field separately on the target; no automatic promotion exists."),
             )),
         );
         self.push_loss(subject, ConversionKind::Unsupported, self.importer.unsupported.clone());
@@ -2652,33 +3003,52 @@ fn append_native_paths(context: &mut Vec<DiagnosticField>, paths: &BTreeSet<&str
     }
 }
 
-fn decoded_mount_options(options: &[String]) -> Result<(Option<SelinuxRelabel>, bool), ()> {
-    // This can preserve only relabel intent exposed through typed `Mounts[].Options`.
-    // Engines may retain the authored spelling solely in `HostConfig.Binds`; that
-    // native field remains value-free/unmodelled until PodmanLens exposes it safely.
-    let shared = options.iter().any(|option| option == "z");
-    let private = options.iter().any(|option| option == "Z");
-    if shared && private {
-        return Err(());
-    }
-    let relabel = if shared {
-        Some(SelinuxRelabel::Shared)
-    } else if private {
-        Some(SelinuxRelabel::Private)
-    } else {
-        None
-    };
-    let complete = options
-        .iter()
-        .all(|option| matches!(option.as_str(), "" | "ro" | "rw" | "bind" | "rbind" | "z" | "Z"));
-    Ok((relabel, complete))
-}
-
 fn lease_range_spelling(start: IpAddr, end: IpAddr) -> Option<String> {
     match (start, end) {
         (IpAddr::V4(_), IpAddr::V4(_)) | (IpAddr::V6(_), IpAddr::V6(_)) => Some(format!("{start}-{end}")),
         _ => None,
     }
+}
+
+fn optional_creation_finding(finding: &podman_lens::InventoryFinding) -> bool {
+    finding.code() == podman_lens::DiagnosticCode::ResourceMalformed
+        && finding.field_path() == Some("$.Config.CreateCommand")
+        && finding
+            .resource()
+            .is_some_and(|identity| identity.kind() == ResourceKind::Container)
+}
+
+fn network_mapping_limitation_subject(
+    section_kind: ResourceKind,
+    finding: &podman_lens::InventoryFinding,
+) -> Option<String> {
+    if section_kind != ResourceKind::Network || finding.code() != podman_lens::DiagnosticCode::NativeFieldUnsupported {
+        return None;
+    }
+    let field = match finding.field_path()? {
+        "$.driver" => "driver",
+        "$.ipam_options" => "ipam_driver",
+        "$.ipv6_enabled" => "native_ipv6_enabled",
+        _ => return None,
+    };
+    let identity = finding.resource()?;
+    Some(format!("networks.{}.{field}", identity_name(identity)))
+}
+
+fn creation_conflict_subject(finding: &podman_lens::InventoryFinding) -> Option<String> {
+    let identity = finding.resource()?;
+    if identity.kind() != ResourceKind::Container {
+        return None;
+    }
+    Some(finding.occurrence().map_or_else(
+        || format!("services.{}.image.authored_spelling", identity_name(identity)),
+        |index| {
+            format!(
+                "services.{}.creation_evidence.mount_relabels[{index}]",
+                identity_name(identity)
+            )
+        },
+    ))
 }
 
 fn podman_native_summary(code: podman_lens::DiagnosticCode) -> &'static str {

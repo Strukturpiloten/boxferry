@@ -86,7 +86,7 @@ fn modern_responses(container_inspect: &str) -> Result<Vec<LibpodResponse>, Box<
     responses[1] = json(r#"{"Components":[{"Name":"Podman Engine","Version":"6.0.2"}]}"#)?;
     responses.insert(7, json("[]")?);
     responses[9] = json(
-        r#"{"id":"legacy-net","name":"legacy-net","internal":true,"subnets":[{"subnet":"10.88.0.0/16","gateway":"10.88.0.1","lease_range":{"start_ip":"10.88.1.0","end_ip":"10.88.1.255"}},{"subnet":"fd42::/64","gateway":"fd42::1","lease_range":{"start_ip":"fd42::100","end_ip":"fd42::1ff"}}]}"#,
+        r#"{"id":"legacy-net","name":"legacy-net","driver":"bridge","ipv6_enabled":true,"internal":true,"ipam_options":{"driver":"host-local"},"subnets":[{"subnet":"10.88.0.0/16","gateway":"10.88.0.1","lease_range":{"start_ip":"10.88.1.0","end_ip":"10.88.1.255"}},{"subnet":"fd42::/64","gateway":"fd42::1","lease_range":{"start_ip":"fd42::100","end_ip":"fd42::1ff"}}]}"#,
     )?;
     Ok(responses)
 }
@@ -409,27 +409,377 @@ fn native_field_limits_explain_retained_paths_without_retaining_values() -> Resu
 }
 
 #[test]
-fn local_image_id_diagnostic_explains_that_configured_reference_is_retained() -> Result<(), Box<dyn Error>> {
+fn configured_local_image_reference_is_retained_without_inventing_build_or_runtime_loss() -> Result<(), Box<dyn Error>>
+{
     let source = legacy_source(
         r#"{"Id":"c-web","Name":"web","ImageName":"localhost/example/team-app:latest","Image":"sha256:local-only","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#,
     )?;
     let result = PodmanImporter::new()?.import(&source);
     let application = result.application().ok_or("legacy application")?;
-    assert!(
-        application.retained_native_evidence().is_empty(),
-        "Podman input must not manufacture Quadlet-native evidence"
-    );
+    assert!(application.retained_native_evidence().is_empty());
+    assert!(application.image_builds().is_empty());
     let service = application.services().first().ok_or("legacy service")?.value();
     assert_eq!(
         service.image().map(|image| image.value().as_str()),
         Some("localhost/example/team-app:latest")
     );
-    assert!(result.diagnostics().iter().any(|diagnostic| {
-        diagnostic.fields().iter().any(|field| {
-            field.name() == "reason"
-                && field.value().redacted()
-                    == "Podman local image ID is host-local resolution evidence; Image= was copied unchanged from Podman inspect $.ImageName"
+    assert!(result.diagnostics().iter().all(|diagnostic| {
+        diagnostic
+            .fields()
+            .iter()
+            .all(|field| field.name() != "subject" || field.value().redacted() != "services.web.local_image_id")
+    }));
+    Ok(())
+}
+
+#[test]
+fn typed_creation_evidence_corroborates_image_and_bind_relabel_without_retaining_values() -> Result<(), Box<dyn Error>>
+{
+    const PRIVATE: &str = "creation-evidence-private-canary";
+    let inspect = format!(
+        r#"{{"Id":"c-web","Name":"web","ImageName":"localhost/example/team-app:latest","Image":"sha256:local-only","Pod":"","Config":{{"Entrypoint":"","CreateCommand":["podman","create","--name","web","--volume","/srv/example/config:/etc/example:Z","--env","APP_SECRET={PRIVATE}","localhost/example/team-app:latest","serve"]}},"HostConfig":{{"RestartPolicy":{{"Name":""}},"Binds":["/srv/example/config:/etc/example:Z"]}},"NetworkSettings":{{"Networks":{{}}}},"Mounts":[{{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":true,"Propagation":"rprivate"}}]}}"#
+    );
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(modern_responses(&inspect)?, &request, AcquisitionOptions::redacted())?
+        .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_bind_mounts(true));
+
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    assert!(application.image_builds().is_empty());
+    let service = application.services().first().ok_or("service")?.value();
+    assert_eq!(
+        service.image().map(|image| image.value().as_str()),
+        Some("localhost/example/team-app:latest")
+    );
+    assert_eq!(service.mounts().len(), 1);
+    assert_eq!(
+        service.mounts()[0].value().selinux_relabel(),
+        Some(SelinuxRelabel::Private)
+    );
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.image.authored_spelling" && outcome.kind() == ConversionKind::Exact
+    }));
+    let serialized = format!("{:?}", result.diagnostics());
+    assert!(!serialized.contains(PRIVATE));
+    assert!(!serialized.contains("/srv/example/config"));
+    Ok(())
+}
+
+#[test]
+fn contradictory_creation_image_hint_names_the_exact_unpromotable_field() -> Result<(), Box<dyn Error>> {
+    const PRIVATE: &str = "creation-image-conflict-private-canary";
+    let inspect = format!(
+        r#"{{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Image":"sha256:legacy","Pod":"","Config":{{"Entrypoint":"","CreateCommand":["podman","create","--env","PRIVATE={PRIVATE}","example.invalid/conflicting:2"]}},"HostConfig":{{"RestartPolicy":{{"Name":""}}}},"NetworkSettings":{{"Networks":{{}}}},"Mounts":[]}}"#
+    );
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(modern_responses(&inspect)?, &request, AcquisitionOptions::redacted())?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("typed image intent remains usable")?;
+
+    assert_eq!(
+        application.services()[0]
+            .value()
+            .image()
+            .map(|image| image.value().as_str()),
+        Some("example.invalid/legacy:1")
+    );
+    let diagnostic = result
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.fields().iter().any(|field| {
+                field.name() == "subject" && field.value().redacted() == "services.web.image.authored_spelling"
+            })
         })
+        .ok_or("field-specific image conflict diagnostic")?;
+    let field_outcomes = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == "services.web.image.authored_spelling")
+        .collect::<Vec<_>>();
+    assert_eq!(field_outcomes.len(), 1, "{field_outcomes:?}");
+    assert_eq!(
+        field_outcomes[0].kind(),
+        ConversionKind::Unsupported,
+        "{field_outcomes:?}"
+    );
+    assert_eq!(diagnostic.code().as_str(), "BFP0002");
+    assert!(
+        diagnostic
+            .native_finding()
+            .is_some_and(|finding| finding.code() == "PLN0050")
+    );
+    assert!(
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| { field.name() == "decision" && field.value().redacted() == "omitted" })
+    );
+    assert!(
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| { field.name() == "available_promotion" && field.value().redacted() == "none" })
+    );
+    assert!(
+        diagnostic.fields().iter().any(|field| {
+            field.name() == "remediation" && field.value().redacted().contains("no automatic promotion")
+        })
+    );
+    let diagnostics = format!("{:?}", result.diagnostics());
+    assert!(!diagnostics.contains(PRIVATE));
+    assert!(!diagnostics.contains("example.invalid/conflicting:2"));
+    Ok(())
+}
+
+#[test]
+fn contradictory_creation_mount_hint_has_distinct_evidence_outcome() -> Result<(), Box<dyn Error>> {
+    const PRIVATE_SOURCE: &str = "/creation-conflict/private-source";
+    const TYPED_SUBJECT: &str = "services.web.mounts[0].selinux_relabel";
+    const EVIDENCE_SUBJECT: &str = "services.web.creation_evidence.mount_relabels[0]";
+    let inspect = format!(
+        r#"{{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Image":"sha256:legacy","Pod":"","Config":{{"Entrypoint":"","CreateCommand":["podman","create","--volume","{PRIVATE_SOURCE}:/etc/example:z","example.invalid/legacy:1"]}},"HostConfig":{{"RestartPolicy":{{"Name":""}},"Binds":["{PRIVATE_SOURCE}:/etc/example:Z"]}},"NetworkSettings":{{"Networks":{{}}}},"Mounts":[{{"Type":"bind","Source":"{PRIVATE_SOURCE}","Destination":"/etc/example","RW":true,"Mode":"Z","Propagation":"rprivate"}}]}}"#
+    );
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(modern_responses(&inspect)?, &request, AcquisitionOptions::redacted())?
+        .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_bind_mounts(true));
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("typed mount intent remains usable")?;
+    let service = application.services().first().ok_or("service")?.value();
+
+    assert_eq!(service.mounts().len(), 1);
+    assert_eq!(
+        service.mounts()[0].value().selinux_relabel(),
+        Some(SelinuxRelabel::Private)
+    );
+    let typed_outcomes = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == TYPED_SUBJECT)
+        .collect::<Vec<_>>();
+    assert_eq!(typed_outcomes.len(), 1, "{typed_outcomes:?}");
+    assert_eq!(typed_outcomes[0].kind(), ConversionKind::Exact);
+    let evidence_outcomes = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == EVIDENCE_SUBJECT)
+        .collect::<Vec<_>>();
+    assert_eq!(evidence_outcomes.len(), 1, "{evidence_outcomes:?}");
+    assert_eq!(evidence_outcomes[0].kind(), ConversionKind::Unsupported);
+    assert!(
+        !result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == TYPED_SUBJECT && outcome.kind() == ConversionKind::Unsupported)
+    );
+    let diagnostic = result
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == EVIDENCE_SUBJECT)
+        })
+        .ok_or("creation-evidence-specific mount conflict diagnostic")?;
+    assert_eq!(diagnostic.code().as_str(), "BFP0002");
+    assert!(
+        diagnostic
+            .native_finding()
+            .is_some_and(|finding| finding.code() == "PLN0050")
+    );
+    assert!(
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| { field.name() == "decision" && field.value().redacted() == "omitted" })
+    );
+    assert!(
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| { field.name() == "available_promotion" && field.value().redacted() == "none" })
+    );
+    assert!(
+        diagnostic.fields().iter().any(|field| {
+            field.name() == "remediation" && field.value().redacted().contains("no automatic promotion")
+        })
+    );
+    assert!(!format!("{:?}", result.diagnostics()).contains(PRIVATE_SOURCE));
+    Ok(())
+}
+
+#[test]
+fn unavailable_creation_mount_relabel_hint_preserves_parent_mount_core() -> Result<(), Box<dyn Error>> {
+    const PRIVATE_SOURCE: &str = "/creation-unavailable/private-source";
+    let inspect = format!(
+        r#"{{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Image":"sha256:legacy","Pod":"","Config":{{"Entrypoint":"","CreateCommand":["podman","create","--mount","type=bind,src={PRIVATE_SOURCE},target=/etc/example,relabel=private,future-option=value","example.invalid/legacy:1"]}},"HostConfig":{{"RestartPolicy":{{"Name":""}}}},"NetworkSettings":{{"Networks":{{}}}},"Mounts":[{{"Type":"bind","Source":"{PRIVATE_SOURCE}","Destination":"/etc/example","RW":false,"Propagation":"rprivate"}}]}}"#
+    );
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(modern_responses(&inspect)?, &request, AcquisitionOptions::redacted())?
+        .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_bind_mounts(true));
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result
+        .application()
+        .ok_or("typed parent mount remains usable under partial policy")?;
+    let service = application.services().first().ok_or("service")?.value();
+
+    assert_eq!(service.mounts().len(), 1);
+    assert!(service.mounts()[0].value().read_only());
+    assert_eq!(service.mounts()[0].value().selinux_relabel(), None);
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| { diagnostic.code().as_str() != "BFP0001" })
+    );
+    let diagnostic = result
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.fields().iter().any(|field| {
+                field.name() == "subject" && field.value().redacted() == "services.web.creation_evidence.mount_relabels"
+            })
+        })
+        .ok_or("field-specific unavailable relabel diagnostic")?;
+    assert_eq!(diagnostic.code().as_str(), "BFP0002");
+    assert!(diagnostic.fields().iter().any(|field| {
+        field.name() == "reason" && field.value().redacted().contains("no automatic promotion exists")
+    }));
+    assert!(!format!("{:?}", result.diagnostics()).contains(PRIVATE_SOURCE));
+    Ok(())
+}
+
+#[test]
+fn malformed_optional_creation_evidence_does_not_reject_complete_typed_intent() -> Result<(), Box<dyn Error>> {
+    let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Image":"sha256:legacy","Pod":"","Config":{"Entrypoint":"","CreateCommand":17},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#;
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(modern_responses(inspect)?, &request, AcquisitionOptions::redacted())?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("typed intent remains usable")?;
+    let service = application.services().first().ok_or("service")?.value();
+    assert_eq!(
+        service.image().map(|image| image.value().as_str()),
+        Some("example.invalid/legacy:1")
+    );
+    let creation_diagnostics = result
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.creation_evidence")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(creation_diagnostics.len(), 1, "{creation_diagnostics:?}");
+    assert!(
+        creation_diagnostics[0]
+            .native_finding()
+            .is_some_and(|finding| finding.code() == "PLN0017")
+    );
+    let creation_outcomes = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == "services.web.creation_evidence")
+        .collect::<Vec<_>>();
+    assert_eq!(creation_outcomes.len(), 1, "{creation_outcomes:?}");
+    assert_eq!(
+        creation_outcomes[0].kind(),
+        ConversionKind::Unsupported,
+        "{creation_outcomes:?}"
+    );
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0002"
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.creation_evidence")
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "remediation" && field.value().redacted().contains("no automatic promotion")
+            })
+    }));
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code().as_str() != "BFP0001")
+    );
+    Ok(())
+}
+
+#[test]
+fn malformed_optional_creation_evidence_on_a_selected_infra_container_is_non_invalidating() -> Result<(), Box<dyn Error>>
+{
+    let inspect = r#"{"Id":"c-web","Name":"web","IsInfra":true,"ImageName":"example.invalid/legacy:1","Image":"sha256:legacy","Pod":"","Config":{"Entrypoint":"","CreateCommand":17},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#;
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(modern_responses(inspect)?, &request, AcquisitionOptions::redacted())?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("infra application remains usable")?;
+    assert!(application.services().is_empty());
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code().as_str() != "BFP0001"),
+        "{:?}",
+        result.diagnostics()
+    );
+    let creation_diagnostics = result
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.creation_evidence")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(creation_diagnostics.len(), 1, "{creation_diagnostics:?}");
+    assert!(
+        creation_diagnostics[0]
+            .native_finding()
+            .is_some_and(|finding| finding.code() == "PLN0017")
+    );
+    assert!(
+        creation_diagnostics[0].fields().iter().any(|field| {
+            field.name() == "remediation" && field.value().redacted().contains("no automatic promotion")
+        })
+    );
+    let creation_outcomes = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == "services.web.creation_evidence")
+        .collect::<Vec<_>>();
+    assert_eq!(creation_outcomes.len(), 1, "{creation_outcomes:?}");
+    assert_eq!(creation_outcomes[0].kind(), ConversionKind::Unsupported);
+    Ok(())
+}
+
+#[test]
+fn local_id_creation_hint_is_actionable_but_does_not_invent_image_build() -> Result<(), Box<dyn Error>> {
+    let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Image":"sha256:legacy","Pod":"","Config":{"Entrypoint":"","CreateCommand":["podman","create","--name","web","sha256:legacy"]},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#;
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    let source = legacy_source_with_options(modern_responses(inspect)?, &request, AcquisitionOptions::redacted())?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    assert!(application.image_builds().is_empty());
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0002"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "subject" && field.value().redacted() == "services.web.image.authored_spelling"
+            })
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "available_promotion" && field.value().redacted() == "none")
     }));
     Ok(())
 }
@@ -437,7 +787,7 @@ fn local_image_id_diagnostic_explains_that_configured_reference_is_retained() ->
 #[test]
 fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result<(), Box<dyn Error>> {
     let source = legacy_source(
-        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"volume","Name":"legacy-data","Destination":"/data","RW":true,"Options":["z"]}]}"#,
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"volume","Name":"legacy-data","Destination":"/data","RW":true,"Mode":"z","Options":["z"]}]}"#,
     )?
     .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_named_volume_mounts(true));
     let result = PodmanImporter::new()?.import(&source);
@@ -452,13 +802,19 @@ fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result
     assert!(result.diagnostics().iter().any(|diagnostic| {
         diagnostic.code().as_str() == "BFP0003" && diagnostic.summary().contains("portable named-volume mount promoted")
     }));
+    assert!(!result.diagnostics().iter().any(|diagnostic| {
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.mounts[0].options")
+    }));
     Ok(())
 }
 
 #[test]
 fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(), Box<dyn Error>> {
     let source = legacy_source(
-        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":false,"Options":["rbind","Z"],"Propagation":"rprivate"}]}"#,
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""},"Binds":["/srv/example/config:/etc/example:ro,Z"]},"NetworkSettings":{"Networks":{}},"Mounts":[{"Type":"bind","Source":"/srv/example/config","Destination":"/etc/example","RW":false,"Options":["rbind"],"Propagation":"rprivate"}]}"#,
     )?
     .with_promotion_policy(PodmanPromotionPolicy::conservative().with_effective_bind_mounts(true));
 
@@ -481,6 +837,20 @@ fn explicit_bind_mount_promotion_preserves_same_path_core_intent() -> Result<(),
             && diagnostic.fields().iter().any(|field| {
                 field.name() == "available_promotion"
                     && field.value().redacted() == "--promote-podman-effective-bind-mounts"
+            })
+    }));
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0003"
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.mounts[0].options")
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "reason"
+                    && field
+                        .value()
+                        .redacted()
+                        .contains("residual effective native mount options")
             })
     }));
     Ok(())
@@ -531,6 +901,48 @@ fn combined_promotion_flags_model_network_ipam_and_keep_effective_empty_dns_unmo
         ipam[1].value().ip_range().map(|value| value.value().expose()),
         Some("fd42::100-fd42::1ff")
     );
+    let limitation_subjects = result
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code().as_str() == "BFP0002")
+        .filter_map(|diagnostic| {
+            diagnostic.fields().iter().find_map(|field| {
+                (field.name() == "subject" && field.value().redacted().starts_with("networks."))
+                    .then(|| field.value().redacted().to_owned())
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        limitation_subjects,
+        BTreeSet::from([
+            "networks.legacy-net.driver".to_owned(),
+            "networks.legacy-net.ipam_driver".to_owned(),
+            "networks.legacy-net.native_ipv6_enabled".to_owned(),
+        ])
+    );
+    for diagnostic in result.diagnostics().iter().filter(|diagnostic| {
+        diagnostic
+            .fields()
+            .iter()
+            .any(|field| field.name() == "subject" && limitation_subjects.contains(field.value().redacted()))
+    }) {
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| { field.name() == "decision" && field.value().redacted() == "omitted" })
+        );
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .any(|field| { field.name() == "available_promotion" && field.value().redacted() == "none" })
+        );
+        assert!(diagnostic.fields().iter().any(|field| {
+            field.name() == "remediation" && field.value().redacted().contains("no BoxFerry promotion option")
+        }));
+    }
+
     let service = application.services().first().ok_or("legacy service")?.value();
     assert!(service.dns_servers().is_none());
     assert!(service.dns_search_domains().is_none());

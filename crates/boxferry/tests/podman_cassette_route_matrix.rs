@@ -123,9 +123,43 @@ fn every_complex_podman_cassette_crosses_the_neutral_model_to_every_exporter() -
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one privacy boundary test keeps injected values, command evidence, and every support-bundle surface adjacent"
+)]
 fn opted_in_support_bundle_contains_only_redacted_podman_snapshots() -> Result<(), Box<dyn Error>> {
     let cassette_path = fixture_directory().join("complex-6.1.0-rootless.cassette.json");
-    let cassette = PodmanCassette::load(&cassette_path)?;
+    let mut cassette_document: serde_json::Value = serde_json::from_slice(&fs::read(&cassette_path)?)?;
+    let inspect_path = "/v6.1.0/libpod/containers/c-api/json";
+    let inspect = cassette_document["interactions"]
+        .as_array_mut()
+        .ok_or("cassette interactions")?
+        .iter_mut()
+        .find(|interaction| interaction["request"]["path"].as_str() == Some(inspect_path))
+        .ok_or("API inspect interaction")?;
+    let config = inspect["response"]["body"]["Config"]
+        .as_object_mut()
+        .ok_or("API inspect Config")?;
+    config.insert(
+        "CreateCommand".to_owned(),
+        serde_json::json!([
+            "podman",
+            "create",
+            "--name",
+            "api",
+            "--env",
+            "CREATE_COMMAND_SECRET=CREATE_COMMAND_PRIVATE_VALUE",
+            "--secret",
+            "CREATE_COMMAND_SECRET_SPEC",
+            "--credential",
+            "CREATE_COMMAND_CREDENTIAL_SPEC",
+            "--volume",
+            "/create-command/private/source:/create-command/private/target",
+            "CREATE_COMMAND_PRIVATE_IMAGE",
+            "CREATE_COMMAND_POST_IMAGE_PAYLOAD"
+        ]),
+    );
+    let cassette: PodmanCassette = serde_json::from_value(cassette_document)?;
     let server = PodmanCassetteServer::start(cassette)?;
     let socket = server.socket().to_owned();
     let root = TemporaryDirectory::new("podman-support-bundle")?;
@@ -199,6 +233,14 @@ fn opted_in_support_bundle_contains_only_redacted_podman_snapshots() -> Result<(
             "COMPLEX_DB_PROTECTED_VALUE",
             "COMPLEX_NORMAL_HEALTH_SENTINEL",
             "COMPLEX_STARTUP_HEALTH_SENTINEL",
+            "CREATE_COMMAND_SECRET",
+            "CREATE_COMMAND_PRIVATE_VALUE",
+            "CREATE_COMMAND_SECRET_SPEC",
+            "CREATE_COMMAND_CREDENTIAL_SPEC",
+            "/create-command/private/source",
+            "/create-command/private/target",
+            "CREATE_COMMAND_POST_IMAGE_PAYLOAD",
+            "CREATE_COMMAND_PRIVATE_IMAGE",
         ] {
             assert!(!contents.contains(protected), "{name} retained protected Podman value");
         }

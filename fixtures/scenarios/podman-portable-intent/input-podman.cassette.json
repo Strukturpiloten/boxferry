@@ -1,0 +1,169 @@
+{
+  "scenario_id": "podman-portable-intent",
+  "engine_version": "6.1.0",
+  "execution_context": "rootful",
+  "interactions": [
+    {
+      "request": { "method": "GET", "path": "/libpod/_ping" },
+      "response": { "status": 200, "headers": [["libpod-api-version", "6.1.0"]], "body": null }
+    },
+    {
+      "request": { "method": "GET", "path": "/v4.0.0/libpod/version" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Components": [{ "Name": "Podman Engine", "Version": "6.1.0" }] }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/json?all=true&sync=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [{ "Id": "c-portable", "Names": ["portable-app"] }]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/pods/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [{ "id": "n-portable", "name": "scenario-net" }]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Volumes": [] }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/images/json?all=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "Id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "Names": ["example.invalid/portable/app:1.0.0"]
+          }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/secrets/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-portable/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-portable",
+          "Name": "portable-app",
+          "Image": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "ImageName": "example.invalid/portable/app:1.0.0",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "ZETA=podman-portable-zeta-canary",
+              "ALPHA=podman-portable-alpha-canary",
+              "EMPTY="
+            ],
+            "CreateCommand": [
+              "podman",
+              "create",
+              "--name",
+              "portable-app",
+              "--volume",
+              "/srv/boxferry-scenario/private:/etc/boxferry-scenario:ro,Z",
+              "--volume",
+              "/srv/boxferry-scenario/shared:/srv/boxferry-scenario:rw,z",
+              "--env",
+              "ZETA=podman-portable-zeta-canary",
+              "--env",
+              "ALPHA=podman-portable-alpha-canary",
+              "--env",
+              "EMPTY=",
+              "--network",
+              "scenario-net",
+              "example.invalid/portable/app:1.0.0"
+            ]
+          },
+          "HostConfig": {
+            "RestartPolicy": { "Name": "" },
+            "Binds": [
+              "/srv/boxferry-scenario/private:/etc/boxferry-scenario:ro,Z",
+              "/srv/boxferry-scenario/shared:/srv/boxferry-scenario:rw,z"
+            ]
+          },
+          "NetworkSettings": { "Networks": { "scenario-net": { "NetworkID": "n-portable" } } },
+          "Mounts": [
+            {
+              "Type": "bind",
+              "Source": "/srv/boxferry-scenario/private",
+              "Destination": "/etc/boxferry-scenario",
+              "RW": false,
+              "Mode": "ro,Z",
+              "Propagation": "rprivate"
+            },
+            {
+              "Type": "bind",
+              "Source": "/srv/boxferry-scenario/shared",
+              "Destination": "/srv/boxferry-scenario",
+              "RW": true,
+              "Mode": "rw,z",
+              "Propagation": "rprivate"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/n-portable/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-portable",
+          "name": "scenario-net",
+          "internal": true,
+          "subnets": [
+            {
+              "subnet": "10.89.0.0/24",
+              "gateway": "10.89.0.1",
+              "lease_range": { "start_ip": "10.89.0.64", "end_ip": "10.89.0.127" }
+            },
+            {
+              "subnet": "fd42:bf::/64",
+              "gateway": "fd42:bf::1",
+              "lease_range": { "start_ip": "fd42:bf::100", "end_ip": "fd42:bf::1ff" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Acccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "RepoTags": ["example.invalid/portable/app:1.0.0"]
+        }
+      }
+    }
+  ]
+}

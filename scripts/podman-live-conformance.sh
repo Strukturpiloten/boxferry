@@ -1135,9 +1135,86 @@ assert_redacted_support_bundle() {
   grep --fixed-strings --quiet 'BOXFERRY_LIVE_MODE' <<< "${contents}"
 }
 
+assert_selinux_relabel_promotion() {
+  local socket=$1
+  local container="${current_prefix:?caller must supply current_prefix}-relabel"
+  local shared_bind_source="/tmp/${container}-shared-source"
+  local private_bind_source="/tmp/${container}-private-source"
+  local root="${current_case:?caller must supply current_case}/relabel-promotion"
+  local default_output="${root}/default"
+  local promoted_output="${root}/promoted"
+  local default_report="${root}/default.report.json"
+  local promoted_report="${root}/promoted.report.json"
+  local application_name="${current_prefix}-relabel"
+  local image="registry.example.invalid/boxferry/${current_prefix}:1"
+
+  mkdir -p -- "${root}"
+  engine_operation 'create isolated relabel source directories' \
+    exec "${started_outer}" mkdir -p -- "${shared_bind_source}" "${private_bind_source}"
+  podman_socket "${socket}" 'create isolated relabel evidence' \
+    create --name "${container}" --network "${current_prefix}-small-net" \
+    --volume "${shared_bind_source}:/relabel-shared:ro,z" \
+    --volume "${private_bind_source}:/relabel-private:ro,Z" \
+    "${image}" sleep 3600 > /dev/null
+
+  podman_socket "${socket}" 'inspect isolated relabel evidence' inspect "${container}" |
+    jq --exit-status \
+      --arg shared_source "${shared_bind_source}" \
+      --arg private_source "${private_bind_source}" '
+      any(.[0].HostConfig.Binds[]?;
+        startswith($shared_source + ":/relabel-shared:")
+        and ((split(":")[-1] | split(",") | index("z")) != null))
+      and any(.[0].HostConfig.Binds[]?;
+        startswith($private_source + ":/relabel-private:")
+        and ((split(":")[-1] | split(",") | index("Z")) != null))
+    ' > /dev/null
+
+  boxferry_operation 'BoxFerry default relabel omission' \
+    convert podman quadlet --podman-socket "${socket}" \
+    --application-name "${application_name}" \
+    --podman-resource "container=${container}" \
+    --loss-policy partial --output-directory "${default_output}" \
+    --console-format json > "${default_report}"
+  assert_successful_conversion quadlet relabel-default "${default_output}" "${default_report}"
+  if grep --recursive --fixed-strings --quiet -- "${shared_bind_source}" "${default_output}" ||
+    grep --recursive --fixed-strings --quiet -- "${private_bind_source}" "${default_output}"; then
+    printf 'Default Podman import unexpectedly promoted same-host bind path.\n' >&2
+    return 1
+  fi
+  local mount_index
+  for mount_index in 0 1; do
+    jq --exit-status --arg subject "services.${container}.mounts[${mount_index}].selinux_relabel" '
+      any(.diagnostics[]?;
+        .code == "BFP0003"
+        and any(.fields[]?; .name == "subject" and .value == $subject)
+        and any(.fields[]?;
+          .name == "available_promotion"
+          and .value == "--promote-podman-effective-bind-mounts"))
+    ' "${default_report}" > /dev/null
+  done
+
+  boxferry_operation 'BoxFerry explicit relabel promotion' \
+    convert podman quadlet --podman-socket "${socket}" \
+    --application-name "${application_name}" \
+    --podman-resource "container=${container}" \
+    --promote-podman-effective-bind-mounts \
+    --loss-policy partial --output-directory "${promoted_output}" \
+    --console-format json > "${promoted_report}"
+  assert_successful_conversion quadlet relabel-promoted "${promoted_output}" "${promoted_report}"
+  grep --recursive --extended-regexp --line-regexp --quiet \
+    "Volume=${shared_bind_source}:/relabel-shared:(ro,z|z,ro)" "${promoted_output}"
+  grep --recursive --extended-regexp --line-regexp --quiet \
+    "Volume=${private_bind_source}:/relabel-private:(ro,Z|Z,ro)" "${promoted_output}"
+
+  podman_socket "${socket}" 'remove isolated relabel evidence' \
+    rm --force --ignore -- "${container}" > /dev/null
+  engine_operation 'remove isolated relabel source directories' \
+    exec "${started_outer}" rmdir -- "${shared_bind_source}" "${private_bind_source}"
+}
+
 podman_socket() {
   local socket=$1 action=${2:-command}
-  shift
+  shift 2
   if [[ -n "${started_outer}" && ! -S "${socket}" ]]; then
     engine_operation "nested Podman ${action} through matching container CLI" \
       exec "${started_outer}" podman "$@"
@@ -1343,6 +1420,9 @@ configure_cell_progress() {
       progress_total=31
     fi
   fi
+  if is_smoke_diagnostics_cell "${id}"; then
+    ((progress_total += 1))
+  fi
   if should_run_discovery "${id}"; then
     ((progress_total += 1))
   fi
@@ -1356,8 +1436,8 @@ run_cell() {
   current_prefix="${run_id}-${id}"
   # Keep generated container names valid as single DNS-label network aliases.
   current_prefix="${current_prefix:0:48}"
-  if [[ "${current_prefix}" == *- ]]; then
-    current_prefix="${current_prefix%-}x"
+  if [[ "${current_prefix}" == *[-.] ]]; then
+    current_prefix="${current_prefix%?}x"
   fi
   mkdir -p -- "${current_case}"
   local socket_directory="${runtime_root}/${id}"
@@ -1464,6 +1544,12 @@ run_cell() {
         run_external_apply_reacquire "${socket}"
     fi
   fi
+  if is_smoke_diagnostics_cell "${id}"; then
+    require_scenario selinux-relabel-promotion
+    progress_run 'verify SELinux relabel omission and promotion' \
+      assert_selinux_relabel_promotion "${socket}"
+  fi
+
   if should_run_discovery "${id}"; then
     require_scenario socket-discovery
     progress_run 'discover local Podman socket' run_discovery "${id}" "${image}" "${mode}"

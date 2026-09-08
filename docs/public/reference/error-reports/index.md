@@ -54,7 +54,14 @@ and connection endpoints. This remains true when `--promote-podman-portable-effe
 authorizes sensitive values for conversion.
 
 The snapshot is diagnostic serialization, not executable input, a replayable Podman inventory, or
-a PodmanLens cassette. Resource names, image references, IDs, and topology can still be
+a PodmanLens cassette.
+
+Bounded Podman creation evidence is serialized only as typed state. Raw `CreateCommand` image
+spellings, environment assignments, host paths, and post-image command payloads are excluded even
+when they caused a value-free native finding. Configured resource identities may still appear under
+the ordinary operationally sensitive snapshot contract.
+
+Resource names, image references, IDs, and topology can still be
 operationally sensitive.
 
 The report's redaction count measures redaction markers and deliberately

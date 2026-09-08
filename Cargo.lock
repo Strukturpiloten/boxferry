@@ -683,9 +683,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "podman-lens"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5696c55e136ca0bad8e9ac7f49a4d83370f77f9f40151c250041cb90c85a609a"
+checksum = "caab4f2deb9209cde078650dc2efa0cfe791dbd49f73f59410e889d8bc8b0697"
 dependencies = [
  "bytes",
  "http-body-util",

@@ -62,20 +62,23 @@ Choose the output:
   interface, and standalone IPv6 fields remain visible losses because PodmanLens does not yet expose
   safe typed values for them. Here, IPAM means the address-allocation subsection of a network
   definition; it is not a separate network resource.
-- **SELinux relabeling:** typed mount relabel evidence is preserved as `z` or `Z`. Some Podman
-  versions retain the authored spelling only in unmodelled `Mounts[].Mode` or `HostConfig.Binds`;
-  when PodmanLens does not expose it through the typed mount contract, BoxFerry cannot reconstruct
-  the option.
+- **SELinux relabeling:** typed configured `z` and `Z` evidence maps to shared and private
+  neutral relabel intent. BoxFerry does not parse `HostConfig.Binds` or `Mounts[].Mode`; bounded
+  PodmanLens creation evidence may only corroborate the typed mount. Missing or unusable optional
+  evidence retains the parent mount and reports relabel omission.
 - **Secrets:** inspection cannot reconstruct secret delivery intent. BoxFerry reports incomplete
   grants instead of inventing them.
-- **Image reference origin:** BoxFerry copies the image reference unchanged from Podman inspect
-  `$.ImageName`; it does not add `docker.io/library/`. Podman may already have normalized a locally
-  built, initially unqualified name to that spelling.
-- **Local images:** `localhost/...`, image IDs, unqualified names, and tagless repositories are not
-  portable Podman acquisition sources. Podman output fails with `PLN0048` and names the affected
-  image and `source.portability` field. Push the image and recreate the source container with a
-  registry-qualified tag, or convert to Compose/Quadlet and replace the reference there. BoxFerry
-  does not invent a remote image source.
+- **Creation evidence:** a matching authored-image hint corroborates configured `$.ImageName`.
+  A local-ID match or contradiction is value-free actionable evidence, never permission to recover
+  a build, pull policy, command, environment, or mount from raw `CreateCommand`.
+- **Image reference origin:** BoxFerry copies configured `$.ImageName` unchanged. Podman may already
+  have normalized an initially unqualified name. That spelling does not prove registry or pull
+  provenance.
+- **Local images:** `localhost/...`, IDs, unqualified names, and tagless repositories do not prove a
+  portable Podman acquisition source. BoxFerry keeps configured image intent and leaves
+  `image_builds` empty; it never invents a Containerfile, build context, or remote source. Podman
+  output may report `PLN0048` against `source.portability` until the operator supplies a portable
+  source.
 
 Configured values are mapped directly when the neutral meaning is exact. Effective values remain
 evidence unless an explicit promotion flag covers that field. Runtime-assigned ports and addresses,

@@ -296,18 +296,52 @@ impl<'a> Mapping<'a> {
                     _ => ExternalPrecondition::new(id).map(DeploymentResource::ExternalPrecondition),
                 });
             self.add_resource_result(&subject, result);
-            if network.runtime_name().is_some()
-                || network.driver().is_some()
-                || network.driver_options().is_some()
-                || network.labels().is_some()
-                || network.internal().is_some()
-                || network.ipv6().is_some()
-                || network.ipam_driver().is_some()
-                || network.ipam_configs().is_some()
-            {
+            if network.runtime_name().is_some() {
                 self.unsupported(
-                    format!("{subject}.settings"),
-                    "PodmanLens network intent does not yet expose all neutral network settings",
+                    format!("{subject}.runtime_name"),
+                    "PodmanLens network intent does not expose neutral runtime names; no automatic promotion exists",
+                );
+            }
+            if network.driver().is_some() {
+                self.unsupported(
+                    format!("{subject}.driver"),
+                    "PodmanLens network intent does not expose neutral network drivers; no automatic promotion exists",
+                );
+            }
+            if network.driver_options().is_some_and(|options| !options.is_empty()) {
+                self.unsupported(
+                    format!("{subject}.driver_options"),
+                    "PodmanLens network intent does not expose neutral driver options; no automatic promotion exists",
+                );
+            }
+            if network.labels().is_some_and(|labels| !labels.is_empty()) {
+                self.unsupported(
+                    format!("{subject}.labels"),
+                    "PodmanLens network intent does not expose neutral labels; no automatic promotion exists",
+                );
+            }
+            if network.internal().is_some() {
+                self.unsupported(
+                    format!("{subject}.internal"),
+                    "PodmanLens network intent does not expose neutral internal state; no automatic promotion exists",
+                );
+            }
+            if network.ipv6().is_some() {
+                self.unsupported(
+                    format!("{subject}.ipv6"),
+                    "PodmanLens network intent does not expose neutral IPv6 state; no automatic promotion exists",
+                );
+            }
+            if network.ipam_driver().is_some() {
+                self.unsupported(
+                    format!("{subject}.ipam_driver"),
+                    "PodmanLens network intent does not expose neutral IPAM drivers; no automatic promotion exists",
+                );
+            }
+            if network.ipam_configs().is_some() {
+                self.unsupported(
+                    format!("{subject}.ipam_configs"),
+                    "PodmanLens network intent does not expose neutral IPAM configuration rows; no automatic promotion exists",
                 );
             }
         }
@@ -543,7 +577,9 @@ impl<'a> Mapping<'a> {
                 PublicLabelValue::new(label.value().value().expose())?,
             ))?;
         }
-        for environment in service.environment() {
+        let mut environments = service.environment().iter().collect::<Vec<_>>();
+        environments.sort_by(|left, right| left.value().name().as_str().cmp(right.value().name().as_str()));
+        for environment in environments {
             let value = match environment.value().value() {
                 EnvironmentValue::Literal(value) if !value.is_sensitive() => {
                     DeploymentEnvironmentValue::Public(PublicEnvironmentValue::new(value.expose())?)
@@ -615,18 +651,31 @@ impl<'a> Mapping<'a> {
                         NamedVolumeCopyMode::Copy,
                     )?);
                 }
-                MountSource::HostPath(_) | MountSource::Anonymous => self.unsupported(
-                    format!("services.{}.mounts[{index}]", service.name().as_str()),
-                    "host and anonymous mount resolution requires explicit target-side policy",
+                MountSource::HostPath(_) => self.unsupported(
+                    format!(
+                        "services.{}.mounts[{index}].source",
+                        service.name().as_str()
+                    ),
+                    "PodmanLens deployment intent does not expose host bind sources; no automatic promotion exists",
+                ),
+                MountSource::Anonymous => self.unsupported(
+                    format!(
+                        "services.{}.mounts[{index}].source",
+                        service.name().as_str()
+                    ),
+                    "PodmanLens deployment intent does not expose anonymous mount sources; no automatic promotion exists",
                 ),
                 _ => self.unsupported(
-                    format!("services.{}.mounts[{index}]", service.name().as_str()),
-                    "future neutral mount source is not reviewed for Podman",
+                    format!(
+                        "services.{}.mounts[{index}].source",
+                        service.name().as_str()
+                    ),
+                    "future neutral mount source is not reviewed for Podman; no automatic promotion exists",
                 ),
             }
             if mount.value().selinux_relabel().is_some() {
                 self.unsupported(
-                    format!("services.{}.mounts[{index}].selinux", service.name().as_str()),
+                    format!("services.{}.mounts[{index}].selinux_relabel", service.name().as_str()),
                     "PodmanLens named-volume intent does not expose SELinux relabel mode",
                 );
             }
@@ -837,14 +886,37 @@ impl<'a> Mapping<'a> {
         let subject = subject.into();
         let summary = summary.into();
         self.diagnostics.push(
-            Diagnostic::new(self.exporter.codes.unsupported.clone(), Severity::Warning, &summary)
-                .with_field(DiagnosticField::new("subject", DiagnosticValue::plain(&subject)))
-                .with_field(DiagnosticField::new("reason", DiagnosticValue::plain(summary)))
-                .with_field(DiagnosticField::new("decision", DiagnosticValue::plain("omitted")))
-                .with_field(DiagnosticField::new(
-                    "required_loss_policy",
-                    DiagnosticValue::plain("partial"),
-                )),
+            Diagnostic::new(
+                self.exporter.codes.unsupported.clone(),
+                Severity::Warning,
+                &summary,
+            )
+            .with_field(DiagnosticField::new(
+                "subject",
+                DiagnosticValue::plain(&subject),
+            ))
+            .with_field(DiagnosticField::new(
+                "reason",
+                DiagnosticValue::plain(summary),
+            ))
+            .with_field(DiagnosticField::new(
+                "decision",
+                DiagnosticValue::plain("omitted"),
+            ))
+            .with_field(DiagnosticField::new(
+                "required_loss_policy",
+                DiagnosticValue::plain("partial"),
+            ))
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain("none"),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain(
+                    "Re-author the omitted field in target-compatible configuration or remove it after review; no automatic promotion exists.",
+                ),
+            )),
         );
         if let Ok(outcome) = ConversionOutcome::loss(
             subject,

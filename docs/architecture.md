@@ -69,6 +69,12 @@ and dependency intent. It returns every planning and rendering finding. The exac
 and rootful, rootless, or unknown context come from the target profile, never from the source or
 development host.
 
+PodmanLens also owns bounded decoding of optional creation evidence and native mount relabel values.
+BoxFerry uses those hints only to corroborate typed configured inspect fields. They never create
+neutral image builds, mounts, commands, or environment. Effective named resources and portable
+settings require their independent promotion flags; absolute bind sources remain reviewed same-host
+evidence. See [ADR 0042](decisions/0042-bounded-podman-creation-evidence-and-intent-promotion.md).
+
 ## Output boundary
 
 Compose and Quadlet output are documents that can be imported again, so tests cover chained

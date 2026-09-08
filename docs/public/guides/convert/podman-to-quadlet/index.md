@@ -38,9 +38,10 @@ IPv6 subnet enables `IPv6=true`, so an application-owned `.network` unit carries
 instead of remaining empty. Driver, DNS, IPAM-driver, interface, and standalone IPv6 flags remain
 visible losses until PodmanLens exposes safe typed observations.
 
-Typed mount `z`/`Z` evidence is preserved. Relabel intent available only through unmodelled
-`Mounts[].Mode` or `HostConfig.Binds` remains a visible loss until PodmanLens exposes it through the
-typed mount contract.
+Typed configured `z`/`Z` evidence is preserved as shared/private relabel intent through the neutral
+model. PodmanLens owns decoding `Mounts[].Mode` and `HostConfig.Binds`; BoxFerry never reparses
+those native values. Bounded creation evidence may corroborate the typed result but cannot create or
+override it. Missing optional corroboration retains the parent mount and reports the relabel omission.
 
 Add `--promote-podman-effective-bind-mounts` only when the target intentionally reuses the same
 absolute host paths. BoxFerry preserves the source, destination, and read-only state; native-only
