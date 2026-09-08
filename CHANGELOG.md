@@ -5,6 +5,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.3...boxferry-v0.9.0) - 2026-09-08
+
 ### Changed
 
 - [**breaking**] Separate portable neutral intent from provenance-bearing retained
