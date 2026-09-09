@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in, fail-closed Paperless Libpod capture proxy.
+"""Opt-in, fail-closed application Libpod capture proxy.
 
 Raw requests and responses stay in memory. Only a fully sanitized cassette candidate
 and its manifest may be written, and only to a pre-existing private directory outside
@@ -31,6 +31,13 @@ CASSETTE_NAME = "paperless-ngx-6.1.0-rootless.cassette.json"
 MANIFEST_NAME = "capture-manifest-6.1.0-rootless.json"
 CHECKSUM_NAME = "SHA256SUMS"
 SANITIZER_VERSION = 2
+APPLICATION = "paperless"
+APPLICATION_SUFFIX = "paperless"
+CAPTURE_PLACEHOLDER = "paperless-captured"
+SCENARIO_ID = "paperless-ngx-application-podman-6.1.0-rootless-captured"
+IMAGE_CATALOGUE = "fixtures/conformance/paperless-ngx-application/images.tsv"
+IMAGE_COUNT = 5
+SETUP_SCRIPT = "scripts/lib/paperless-application.sh"
 PODMAN_REVISION = "cade97a52ebdf9dbf9e81de8009015776837a074"
 MATRIX_SHA256 = "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25"
 RUNTIME_IMAGE = (
@@ -45,6 +52,51 @@ SOURCE_FILES = (
     "fixtures/conformance/podman-live/matrix.tsv",
     "fixtures/conformance/podman-live/capture_proxy.py",
 )
+
+
+def configure_application(application: str) -> None:
+    """Select one reviewed capture policy without weakening the common sanitizer."""
+    global APPLICATION, APPLICATION_SUFFIX, CAPTURE_PLACEHOLDER
+    global CASSETTE_NAME, MANIFEST_NAME, SCENARIO_ID
+    global IMAGE_CATALOGUE, IMAGE_COUNT, SETUP_SCRIPT, SOURCE_FILES
+    APPLICATION = application
+    if application == "paperless":
+        APPLICATION_SUFFIX = "paperless"
+        CAPTURE_PLACEHOLDER = "paperless-captured"
+        CASSETTE_NAME = "paperless-ngx-6.1.0-rootless.cassette.json"
+        MANIFEST_NAME = "capture-manifest-6.1.0-rootless.json"
+        SCENARIO_ID = "paperless-ngx-application-podman-6.1.0-rootless-captured"
+        IMAGE_CATALOGUE = "fixtures/conformance/paperless-ngx-application/images.tsv"
+        IMAGE_COUNT = 5
+        SETUP_SCRIPT = "scripts/lib/paperless-application.sh"
+        SOURCE_FILES = (
+            SETUP_SCRIPT,
+            "scripts/podman-live-conformance.sh",
+            "fixtures/conformance/paperless-ngx-application/compose.yaml",
+            IMAGE_CATALOGUE,
+            "fixtures/conformance/podman-live/matrix.tsv",
+            "fixtures/conformance/podman-live/capture_proxy.py",
+        )
+    elif application == "immich":
+        APPLICATION_SUFFIX = "immich"
+        CAPTURE_PLACEHOLDER = "immich-captured"
+        CASSETTE_NAME = "immich-application-6.1.0-rootless.cassette.json"
+        MANIFEST_NAME = "immich-capture-manifest-6.1.0-rootless.json"
+        SCENARIO_ID = "immich-application-podman-6.1.0-rootless-captured"
+        IMAGE_CATALOGUE = "fixtures/conformance/immich-application/images.tsv"
+        IMAGE_COUNT = 4
+        SETUP_SCRIPT = "scripts/lib/immich-application.sh"
+        SOURCE_FILES = (
+            SETUP_SCRIPT,
+            "scripts/podman-live-conformance.sh",
+            "fixtures/conformance/immich-application/compose.yaml",
+            "fixtures/conformance/immich-application/media-probe.py",
+            IMAGE_CATALOGUE,
+            "fixtures/conformance/podman-live/matrix.tsv",
+            "fixtures/conformance/podman-live/capture_proxy.py",
+        )
+    else:
+        raise CaptureError(f"unsupported capture application: {application}")
 ALLOWED_PATH = re.compile(
     r"^/libpod/_ping$|^/v[0-9]+(?:\.[0-9]+){2}/libpod/"
     r"(?:version|(?:containers|images|networks|pods|secrets|volumes)"
@@ -100,9 +152,23 @@ PRIVATE_PATH_MARKERS = (
 REVIEWED_IMAGE_METADATA_URLS = {
     "https://docs.paperless-ngx.com/",
     "https://github.com/gotenberg/gotenberg",
+    "https://github.com/immich-app/base-images",
+    "https://github.com/immich-app/immich",
     "https://github.com/paperless-ngx/paperless-ngx",
     "https://github.com/valkey-io/valkey",
     "https://gotenberg.dev",
+}
+REVIEWED_LOCAL_ENDPOINT_HOSTS = {
+    "127.0.0.1",
+    "localhost",
+    "broker",
+    "database",
+    "db",
+    "gotenberg",
+    "immich-machine-learning",
+    "immich-server",
+    "redis",
+    "tika",
 }
 
 
@@ -227,7 +293,7 @@ class Sanitizer:
         image_digests: set[str],
     ) -> None:
         if not prefix or any(character.isspace() for character in prefix):
-            raise CaptureError("unsafe empty or whitespace-bearing Paperless prefix")
+            raise CaptureError("unsafe empty or whitespace-bearing application prefix")
         self.prefix = prefix
         self.repository = str(repository.resolve())
         self.upstream_socket = str(upstream_socket.resolve())
@@ -240,10 +306,11 @@ class Sanitizer:
         self.hostnames: dict[str, str] = {}
         self.paths: dict[str, str] = {}
         self.secrets = {
-            "boxferry-public-admin-canary": "<redacted:PAPERLESS_ADMIN_PASSWORD>",
+            "boxferry-public-admin-canary": f"<redacted:{APPLICATION.upper()}_ADMIN_PASSWORD>",
             "boxferry-public-database-canary": "<redacted:PAPERLESS_DB_PASSWORD>",
             "boxferry-public-broker-canary": "<redacted:PAPERLESS_REDIS_PASSWORD>",
             "boxferry-public-paperless-secret-canary": "<redacted:PAPERLESS_SECRET_KEY>",
+            "boxferry-public-immich-db-password-canary": "<redacted:IMMICH_DB_PASSWORD>",
         }
 
     def _replace_ipv4(self, match: re.Match[str]) -> str:
@@ -290,11 +357,11 @@ class Sanitizer:
             return value
         if value not in self.ids:
             ordinal = len(self.ids) + 1
-            seed = f"boxferry-paperless-native-id-{ordinal:06d}".encode()
+            seed = f"boxferry-{APPLICATION}-native-id-{ordinal:06d}".encode()
             replacement = hashlib.sha256(seed).hexdigest()
             while replacement in self.image_digests or replacement in self.ids.values():
                 ordinal += 1
-                seed = f"boxferry-paperless-native-id-{ordinal:06d}".encode()
+                seed = f"boxferry-{APPLICATION}-native-id-{ordinal:06d}".encode()
                 replacement = hashlib.sha256(seed).hexdigest()
             self.ids[value] = replacement
         return self.ids[value]
@@ -312,7 +379,7 @@ class Sanitizer:
             ordinal = len(self.references) + 1
             if ordinal > 99:
                 raise CaptureError("capture contains too many reference identifiers")
-            self.references[value] = f"fixture-reference-paperless-{ordinal:02d}"
+            self.references[value] = f"fixture-reference-{APPLICATION}-{ordinal:02d}"
         return self.references[value]
 
     @staticmethod
@@ -326,17 +393,9 @@ class Sanitizer:
             return "<redacted-endpoint>"
         if parsed.username or parsed.password:
             return "<redacted-endpoint>"
-        if parsed.hostname in {
-            "127.0.0.1",
-            "localhost",
-            "broker",
-            "db",
-            "gotenberg",
-            "tika",
-        }:
+        if parsed.hostname in REVIEWED_LOCAL_ENDPOINT_HOSTS:
             return candidate
         return "<redacted-endpoint>"
-
     def _replace_private_paths(self, value: str) -> str:
         while True:
             lowered = value.casefold()
@@ -363,7 +422,7 @@ class Sanitizer:
             return f"{assignment.group(1)}=redacted"
         value = value.replace(self.repository, "<repository-root>")
         value = value.replace(self.upstream_socket, "<podman-socket>")
-        value = value.replace(self.prefix, "paperless-captured")
+        value = value.replace(self.prefix, CAPTURE_PLACEHOLDER)
         reviewed_gotenberg_values = {
             "file:///tmp/.*": "file:///fixture-tmp/.*",
             "--chromium-allow-list=file:///tmp/.*": (
@@ -371,7 +430,7 @@ class Sanitizer:
             ),
         }
         value = reviewed_gotenberg_values.get(value.casefold(), value)
-        fixture_root = "/tmp/boxferry-fixture/paperless-captured"
+        fixture_root = f"/tmp/boxferry-fixture/{CAPTURE_PLACEHOLDER}"
         reviewed_fixture_values = {
             fixture_root: "/sanitized/fixture-root",
             f"{fixture_root}:/fixture:rw": "/sanitized/fixture-root:/fixture:rw",
@@ -588,14 +647,7 @@ class Sanitizer:
                 raise CaptureError("sanitized output retains a malformed URL") from error
             if parsed.username or parsed.password:
                 raise CaptureError("sanitized output retains URL credentials")
-            if parsed.hostname not in {
-                "127.0.0.1",
-                "localhost",
-                "broker",
-                "db",
-                "gotenberg",
-                "tika",
-            }:
+            if parsed.hostname not in REVIEWED_LOCAL_ENDPOINT_HOSTS:
                 raise CaptureError(f"unreviewed endpoint in sanitized output: {parsed.hostname}")
 
 
@@ -737,16 +789,18 @@ def sanitize_interaction(
 
 def load_images(repository: Path) -> tuple[list[str], set[str]]:
     references = []
-    path = repository / "fixtures/conformance/paperless-ngx-application/images.tsv"
+    path = repository / IMAGE_CATALOGUE
     for line in path.read_text().splitlines():
         if not line or line.startswith("#"):
             continue
         columns = line.split("\t")
         if len(columns) != 6 or "@sha256:" not in columns[1]:
-            raise CaptureError("invalid Paperless image catalogue")
+            raise CaptureError(f"invalid {APPLICATION} image catalogue")
         references.append(columns[1])
-    if len(references) != 5 or len(set(references)) != 5:
-        raise CaptureError("Paperless capture requires exactly five reviewed images")
+    if len(references) != IMAGE_COUNT or len(set(references)) != IMAGE_COUNT:
+        raise CaptureError(
+            f"{APPLICATION} capture requires exactly {IMAGE_COUNT} reviewed images"
+        )
     return references, {reference.rsplit("sha256:", 1)[1] for reference in references}
 
 
@@ -764,7 +818,7 @@ def validate_matrix(repository: Path) -> str:
     matrix = repository / "fixtures/conformance/podman-live/matrix.tsv"
     observed_hash = sha256_bytes(matrix.read_bytes())
     if observed_hash != MATRIX_SHA256:
-        raise CaptureError("live matrix differs from reviewed Paperless capture matrix")
+        raise CaptureError("live matrix differs from reviewed application capture matrix")
     rows = [
         line.split("\t")
         for line in matrix.read_text().splitlines()
@@ -806,7 +860,7 @@ def build_artifacts(
     cassette = {
         "schema_version": 1,
         "fixture_kind": "libpod-cassette",
-        "scenario_id": "paperless-ngx-application-podman-6.1.0-rootless-captured",
+        "scenario_id": SCENARIO_ID,
         "scenario_revision": 1,
         "engine_version": "6.1.0",
         "api_version": "6.1.0",
@@ -879,9 +933,7 @@ def build_artifacts(
             "runtime_revision": revision,
             "runtime_matrix_cell": "podman-6.1-rootless",
             "runtime_matrix_sha256": MATRIX_SHA256,
-            "setup_script_sha256": source_sha256[
-                "scripts/lib/paperless-application.sh"
-            ],
+            "setup_script_sha256": source_sha256[SETUP_SCRIPT],
             "request_recorder_source_sha256": source_sha256[
                 "fixtures/conformance/podman-live/capture_proxy.py"
             ],
@@ -993,7 +1045,7 @@ def record(arguments: argparse.Namespace) -> None:
     if not boxferry.is_file() or not os.access(boxferry, os.X_OK):
         raise CaptureError("BoxFerry capture binary is not executable")
     proxy = Proxy(arguments.proxy_socket, upstream)
-    worker = threading.Thread(target=proxy.serve, name="paperless-capture-proxy")
+    worker = threading.Thread(target=proxy.serve, name=f"{APPLICATION}-capture-proxy")
     worker.start()
     command = [
         str(boxferry),
@@ -1003,9 +1055,9 @@ def record(arguments: argparse.Namespace) -> None:
         "--podman-socket",
         str(arguments.proxy_socket),
         "--application-name",
-        f"{arguments.prefix}-paperless",
+        f"{arguments.prefix}-{APPLICATION_SUFFIX}",
         "--podman-label",
-        f"io.boxferry.application={arguments.prefix}-paperless",
+        f"io.boxferry.application={arguments.prefix}-{APPLICATION_SUFFIX}",
         "--promote-podman-effective-named-volumes",
         "--promote-podman-effective-named-networks",
         "--promote-podman-portable-effective-settings",
@@ -1283,6 +1335,7 @@ def sanitizer_policy_self_test() -> None:
 
 
 def self_test() -> None:
+    configure_application("paperless")
     sanitizer_policy_self_test()
     request = b"GET /v6.1.0/libpod/containers/json?all=true HTTP/1.1\r\nHost: podman\r\n\r\n"
     assert parse_request(request)[0].endswith("all=true")
@@ -1538,11 +1591,29 @@ def self_test() -> None:
         assert isinstance(rejected_proxy.failure, CaptureError)
         assert not rejected_proxy_path.exists()
 
+    configure_application("immich")
+    assert CASSETTE_NAME == "immich-application-6.1.0-rootless.cassette.json"
+    assert IMAGE_COUNT == 4
+    immich_sanitizer = Sanitizer(
+        "safe-immich", Path("/private/repository"), Path("/private/podman.sock"), set()
+    )
+    assert immich_sanitizer.string("safe-immich-server") == "immich-captured-server"
+    assert (
+        immich_sanitizer.string("boxferry-public-immich-db-password-canary")
+        == "<redacted:IMMICH_DB_PASSWORD>"
+    )
+    assert (
+        immich_sanitizer.string("boxferry-public-admin-canary")
+        == "<redacted:IMMICH_ADMIN_PASSWORD>"
+    )
+    configure_application("paperless")
+
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--self-test", action="store_true")
     result.add_argument("--verify-cassette", type=Path)
+    result.add_argument("--application", choices=("paperless", "immich"), default="paperless")
     result.add_argument("--repository", type=Path)
     result.add_argument("--output-directory", type=Path)
     result.add_argument("--upstream-socket", type=Path)
@@ -1555,6 +1626,7 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     arguments = parser().parse_args()
     try:
+        configure_application(arguments.application)
         if arguments.self_test:
             self_test()
         elif arguments.verify_cassette is not None:
@@ -1562,7 +1634,7 @@ def main() -> int:
                 raise CaptureError("cassette verification requires --repository")
             cassette = json.loads(arguments.verify_cassette.read_bytes())
             Sanitizer(
-                prefix="paperless-captured",
+                prefix=CAPTURE_PLACEHOLDER,
                 repository=arguments.repository,
                 upstream_socket=Path("/podman-socket"),
                 image_digests=set(),

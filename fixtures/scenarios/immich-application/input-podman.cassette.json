@@ -1,0 +1,362 @@
+{
+  "scenario_id": "immich-application-authored-podman-6.1.0",
+  "engine_version": "6.1.0",
+  "execution_context": "rootless",
+  "interactions": [
+    {
+      "request": { "method": "GET", "path": "/libpod/_ping" },
+      "response": { "status": 200, "headers": [["libpod-api-version", "6.1.0"]], "body": null }
+    },
+    {
+      "request": { "method": "GET", "path": "/v4.0.0/libpod/version" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Components": [{ "Name": "Podman Engine", "Version": "6.1.0" }] }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/json?all=true&sync=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          { "Id": "c-database", "Names": ["database"] },
+          { "Id": "c-immich-machine-learning", "Names": ["immich-machine-learning"] },
+          { "Id": "c-immich-server", "Names": ["immich-server"] },
+          { "Id": "c-redis", "Names": ["redis"] }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/pods/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          { "id": "n-backend", "name": "backend" },
+          { "id": "n-edge", "name": "edge" }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Volumes": [
+            { "Name": "library" },
+            { "Name": "model-cache" },
+            { "Name": "pgdata" },
+            { "Name": "redisdata" }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/images/json?all=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "Id": "sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+            "Names": [
+              "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23"
+            ]
+          },
+          {
+            "Id": "sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e",
+            "Names": [
+              "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e"
+            ]
+          },
+          {
+            "Id": "sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb",
+            "Names": [
+              "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb"
+            ]
+          },
+          {
+            "Id": "sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411",
+            "Names": [
+              "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/secrets/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-database/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-database",
+          "Name": "database",
+          "Image": "sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+          "ImageName": "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "POSTGRES_DB=immich",
+              "POSTGRES_USER=immich",
+              "POSTGRES_PASSWORD=boxferry-public-immich-db-password-canary",
+              "POSTGRES_INITDB_ARGS=--data-checksums"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "pgdata",
+              "Source": "/home/test/.local/share/containers/storage/volumes/pgdata/_data",
+              "Destination": "/var/lib/postgresql/data",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/c-immich-machine-learning/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-immich-machine-learning",
+          "Name": "immich-machine-learning",
+          "Image": "sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e",
+          "ImageName": "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e",
+          "Pod": "",
+          "Config": { "Entrypoint": "" },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "model-cache",
+              "Source": "/home/test/.local/share/containers/storage/volumes/model-cache/_data",
+              "Destination": "/cache",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-immich-server/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-immich-server",
+          "Name": "immich-server",
+          "Image": "sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb",
+          "ImageName": "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb",
+          "Pod": "",
+          "Dependencies": ["c-database", "c-immich-machine-learning", "c-redis"],
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "DB_HOSTNAME=database",
+              "DB_DATABASE_NAME=immich",
+              "DB_USERNAME=immich",
+              "DB_PASSWORD=boxferry-public-immich-db-password-canary",
+              "REDIS_HOSTNAME=redis",
+              "IMMICH_MACHINE_LEARNING_URL=http://immich-machine-learning:3003",
+              "TZ=Etc/UTC"
+            ]
+          },
+          "HostConfig": {
+            "PortBindings": { "2283/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "18283" }] }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": { "NetworkID": "n-backend" },
+              "edge": { "NetworkID": "n-edge" }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "library",
+              "Source": "/home/test/.local/share/containers/storage/volumes/library/_data",
+              "Destination": "/data",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-redis/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-redis",
+          "Name": "redis",
+          "Image": "sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411",
+          "ImageName": "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411",
+          "Pod": "",
+          "Config": { "Entrypoint": "" },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "redisdata",
+              "Source": "/home/test/.local/share/containers/storage/volumes/redisdata/_data",
+              "Destination": "/data",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/n-backend/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-backend",
+          "name": "backend",
+          "internal": true,
+          "subnets": [],
+          "containers": {
+            "c-database": { "name": "database" },
+            "c-immich-machine-learning": { "name": "immich-machine-learning" },
+            "c-immich-server": { "name": "immich-server" },
+            "c-redis": { "name": "redis" }
+          }
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/n-edge/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-edge",
+          "name": "edge",
+          "internal": false,
+          "subnets": [],
+          "containers": { "c-immich-server": { "name": "immich-server" } }
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/library/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "library", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/model-cache/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "model-cache", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/pgdata/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "pgdata", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/redisdata/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "redisdata", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e",
+          "RepoDigests": [
+            "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411",
+          "RepoDigests": [
+            "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Ab434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb",
+          "RepoDigests": [
+            "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Abcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23",
+          "RepoDigests": [
+            "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23"
+          ]
+        }
+      }
+    }
+  ]
+}

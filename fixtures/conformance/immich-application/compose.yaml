@@ -1,0 +1,123 @@
+---
+services:
+  database:
+    image: ${BF_POSTGRES_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-immich-database
+    labels: &application-labels
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-immich
+    environment:
+      POSTGRES_DB: immich
+      POSTGRES_INITDB_ARGS: --data-checksums
+      POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?required}
+      POSTGRES_USER: immich
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=vchord.so
+      - -c
+      - search_path="$$user", public, vectors
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - wal_compression=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U immich -d immich"]
+      interval: 2s
+      timeout: 2s
+      retries: 120
+    networks:
+      backend:
+        aliases: [database]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: ${BF_VALKEY_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-immich-redis
+    labels: *application-labels
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 120
+    networks:
+      backend:
+        aliases: [redis]
+    volumes:
+      - redisdata:/data
+
+  immich-machine-learning:
+    image: ${BF_MACHINE_LEARNING_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-immich-machine-learning
+    labels: *application-labels
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python3 -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:3003/ping', timeout=5)"
+      interval: 2s
+      timeout: 6s
+      retries: 120
+    networks:
+      backend:
+        aliases: [immich-machine-learning]
+    volumes:
+      - model-cache:/cache
+      - ${BF_FIXTURE_ROOT:?required}:/fixture:rw
+
+  immich-server:
+    image: ${BF_SERVER_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-immich-server
+    labels: *application-labels
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      immich-machine-learning:
+        condition: service_healthy
+    environment:
+      DB_DATABASE_NAME: immich
+      DB_HOSTNAME: database
+      DB_PASSWORD: ${BF_DB_PASSWORD:?required}
+      DB_USERNAME: immich
+      IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+      REDIS_HOSTNAME: redis
+      TZ: Etc/UTC
+    ports:
+      - "127.0.0.1:18283:2283"
+    networks:
+      backend:
+      edge:
+        aliases: [immich-server]
+    volumes:
+      - library:/data
+
+networks:
+  backend:
+    name: ${BF_PREFIX}-immich-backend
+    internal: true
+    labels: *application-labels
+  edge:
+    name: ${BF_PREFIX}-immich-edge
+    labels: *application-labels
+
+volumes:
+  library:
+    name: ${BF_PREFIX}-immich-library
+    labels: *application-labels
+  model-cache:
+    name: ${BF_PREFIX}-immich-model-cache
+    labels: *application-labels
+  pgdata:
+    name: ${BF_PREFIX}-immich-pgdata
+    labels: *application-labels
+  redisdata:
+    name: ${BF_PREFIX}-immich-redisdata
+    labels: *application-labels

@@ -1,0 +1,425 @@
+schema = 1
+id = "immich-application"
+source-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = ["boxferry-public-immich-db-password-canary"]
+
+[application]
+name = "immich-application"
+version = "3.1.0"
+
+[[components]]
+name = "immich-server"
+version = "3.1.0"
+image = "ghcr.io/immich-app/immich-server"
+digest = "sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb"
+configured-image = "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb"
+
+[[components]]
+name = "immich-machine-learning"
+version = "3.1.0"
+image = "ghcr.io/immich-app/immich-machine-learning"
+digest = "sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e"
+configured-image = "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e"
+
+[[components]]
+name = "redis"
+version = "9.1.0"
+image = "docker.io/valkey/valkey"
+digest = "sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
+configured-image = "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411"
+
+[[components]]
+name = "database"
+version = "14.19.0"
+image = "ghcr.io/immich-app/postgres"
+digest = "sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23"
+configured-image = "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+interpolate = true
+environment-files = ["immich.env.example"]
+import-diagnostics = []
+
+[[native-inputs]]
+id = "quadlet"
+importer = "quadlet"
+files = [
+  "backend.network",
+  "database.container",
+  "edge.network",
+  "immich-machine-learning.container",
+  "immich-server.container",
+  "library.volume",
+  "model-cache.volume",
+  "pgdata.volume",
+  "redis.container",
+  "redisdata.volume",
+]
+format-version = "0.2.3"
+import-diagnostics = []
+
+[[native-inputs]]
+id = "podman"
+importer = "podman"
+files = ["input-podman.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expected.podman-import.diagnostics"
+
+[native-inputs.podman]
+application = "immich-application"
+cassette-scenario-id = "immich-application-authored-podman-6.1.0"
+root-mode = "rootless"
+include-environment-values = true
+selectors = [
+  { kind = "container", exact = "database" },
+  { kind = "container", exact = "immich-machine-learning" },
+  { kind = "container", exact = "immich-server" },
+  { kind = "container", exact = "redis" },
+  { kind = "network", exact = "backend" },
+  { kind = "network", exact = "edge" },
+  { kind = "volume", exact = "library" },
+  { kind = "volume", exact = "model-cache" },
+  { kind = "volume", exact = "pgdata" },
+  { kind = "volume", exact = "redisdata" },
+]
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored offline Immich definitions and deterministic Libpod replay with a conspicuously public canary; this is not captured-native evidence."
+image-evidence = "Reviewed Immich 3.1.0 CPU-only, Valkey 9.1.0, and PostgreSQL 14.19 VectorChord image identities; offline tests never pull images or claim media processing."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "network:backend",
+  "network:edge",
+  "service:database",
+  "service:immich-machine-learning",
+  "service:immich-server",
+  "service:redis",
+  "volume:library",
+  "volume:model-cache",
+  "volume:pgdata",
+  "volume:redisdata",
+]
+excluded-resources = ["service:boundary-peer"]
+ownership-boundaries = [
+  "volume:library:application",
+  "volume:model-cache:application",
+  "volume:pgdata:application",
+  "volume:redisdata:application",
+]
+shared-boundaries = [
+  "volume:library:consumers=immich-server",
+  "volume:model-cache:consumers=immich-machine-learning",
+  "volume:pgdata:consumers=database",
+  "volume:redisdata:consumers=redis",
+]
+required-mounts = [
+  "database:pgdata:/var/lib/postgresql/data",
+  "immich-machine-learning:model-cache:/cache",
+  "immich-server:library:/data",
+  "redis:redisdata:/data",
+]
+required-environment = [
+  "database:POSTGRES_DB=immich",
+  "database:POSTGRES_INITDB_ARGS=--data-checksums",
+  "database:POSTGRES_PASSWORD=boxferry-public-immich-db-password-canary",
+  "database:POSTGRES_USER=immich",
+  "immich-server:DB_DATABASE_NAME=immich",
+  "immich-server:DB_HOSTNAME=database",
+  "immich-server:DB_PASSWORD=boxferry-public-immich-db-password-canary",
+  "immich-server:DB_USERNAME=immich",
+  "immich-server:IMMICH_MACHINE_LEARNING_URL=http://immich-machine-learning:3003",
+  "immich-server:REDIS_HOSTNAME=redis",
+  "immich-server:TZ=Etc/UTC",
+]
+required-environment-order = []
+required-dependencies = [
+  { service = "immich-server", dependency = "database", condition = "unspecified", assert-options = false },
+  { service = "immich-server", dependency = "immich-machine-learning", condition = "unspecified", assert-options = false },
+  { service = "immich-server", dependency = "redis", condition = "unspecified", assert-options = false },
+]
+required-healthchecks = []
+required-ports = ["immich-server:18283:2283/tcp"]
+required-restart = []
+required-runtime-names = []
+unpublished-services = ["database", "immich-machine-learning", "redis"]
+external-prerequisites = []
+expected-diagnostics = []
+required-networks = [
+  { name = "backend", ownership = "application", internal = true },
+  { name = "edge", ownership = "application" },
+]
+required-groups = []
+required-commands = [
+  { service = "database", kind = "absent" },
+  { service = "immich-machine-learning", kind = "absent" },
+  { service = "immich-server", kind = "absent" },
+  { service = "redis", kind = "absent" },
+]
+required-entrypoints = [
+  { service = "database", kind = "absent" },
+  { service = "immich-machine-learning", kind = "absent" },
+  { service = "immich-server", kind = "absent" },
+  { service = "redis", kind = "absent" },
+]
+required-image-acquisitions = []
+required-image-builds = []
+required-image-sources = [
+  { service = "database", kind = "literal", value = "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23" },
+  { service = "immich-machine-learning", kind = "literal", value = "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e" },
+  { service = "immich-server", kind = "literal", value = "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb" },
+  { service = "redis", kind = "literal", value = "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411" },
+]
+required-port-bindings = [
+  { service = "immich-server", container = 2283, published = 18283, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "database", source = "pgdata", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "immich-machine-learning", source = "model-cache", target = "/cache", read-only = false },
+  { service = "immich-server", source = "library", target = "/data", read-only = false },
+  { service = "redis", source = "redisdata", target = "/data", read-only = false },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.compose-compose.diagnostics"
+allowed-losses-file = "expected.compose-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:immich-machine-learning", "dependency:immich-server:redis"]
+reimport-semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:immich-machine-learning", "dependency:immich-server:redis"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "database.container", "edge.network", "immich-machine-learning.container", "immich-server.container", "library.volume", "model-cache.volume", "pgdata.volume", "redis.container", "redisdata.volume"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain dependencies, protected environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.compose-podman.diagnostics"
+allowed-losses-file = "expected.compose-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:immich-server:database",
+  "dependency:immich-server:immich-machine-learning",
+  "dependency:immich-server:redis",
+  "environment:database:POSTGRES_DB",
+  "environment:database:POSTGRES_INITDB_ARGS",
+  "environment:database:POSTGRES_PASSWORD",
+  "environment:database:POSTGRES_USER",
+  "environment:immich-server:DB_DATABASE_NAME",
+  "environment:immich-server:DB_HOSTNAME",
+  "environment:immich-server:DB_PASSWORD",
+  "environment:immich-server:DB_USERNAME",
+  "environment:immich-server:IMMICH_MACHINE_LEARNING_URL",
+  "environment:immich-server:REDIS_HOSTNAME",
+  "environment:immich-server:TZ",
+  "network-internal:backend",
+  "port:immich-server:2283:Some(18283)",
+  "publication:immich-server:18283:2283/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:database", "container:immich-machine-learning", "container:immich-server", "container:redis", "network:backend", "network:edge", "volume:library", "volume:model-cache", "volume:pgdata", "volume:redisdata"], external-preconditions = [], image-operations = [
+  { resource = "database-image", reference = "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23", policy = "missing" },
+  { resource = "immich-machine-learning-image", reference = "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e", policy = "missing" },
+  { resource = "immich-server-image", reference = "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb", policy = "missing" },
+  { resource = "redis-image", reference = "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411", policy = "missing" },
+], start-order = ["database", "immich-machine-learning", "redis", "immich-server"] }
+
+[[evidence]]
+input = "quadlet"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.quadlet-compose.diagnostics"
+allowed-losses-file = "expected.quadlet-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:immich-machine-learning", "dependency:immich-server:redis"]
+reimport-semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:immich-machine-learning", "dependency:immich-server:redis"]
+
+[[evidence]]
+input = "quadlet"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "database.container", "edge.network", "immich-machine-learning.container", "immich-server.container", "library.volume", "model-cache.volume", "pgdata.volume", "redis.container", "redisdata.volume"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "quadlet"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain dependency options, protected environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.quadlet-podman.diagnostics"
+allowed-losses-file = "expected.quadlet-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:immich-server:database",
+  "dependency:immich-server:immich-machine-learning",
+  "dependency:immich-server:redis",
+  "environment:database:POSTGRES_DB",
+  "environment:database:POSTGRES_INITDB_ARGS",
+  "environment:database:POSTGRES_PASSWORD",
+  "environment:database:POSTGRES_USER",
+  "environment:immich-server:DB_DATABASE_NAME",
+  "environment:immich-server:DB_HOSTNAME",
+  "environment:immich-server:DB_PASSWORD",
+  "environment:immich-server:DB_USERNAME",
+  "environment:immich-server:IMMICH_MACHINE_LEARNING_URL",
+  "environment:immich-server:REDIS_HOSTNAME",
+  "environment:immich-server:TZ",
+  "network-internal:backend",
+  "port:immich-server:2283:Some(18283)",
+  "publication:immich-server:18283:2283/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:database", "container:immich-machine-learning", "container:immich-server", "container:redis", "network:backend", "network:edge", "volume:library", "volume:model-cache", "volume:pgdata", "volume:redisdata"], external-preconditions = [], image-operations = [
+  { resource = "database-image", reference = "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23", policy = "missing" },
+  { resource = "immich-machine-learning-image", reference = "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e", policy = "missing" },
+  { resource = "immich-server-image", reference = "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb", policy = "missing" },
+  { resource = "redis-image", reference = "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411", policy = "missing" },
+], start-order = ["database", "immich-machine-learning", "redis", "immich-server"] }
+
+[[evidence]]
+input = "podman"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.podman-compose.diagnostics"
+allowed-losses-file = "expected.podman-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:immich-machine-learning", "dependency:immich-server:redis"]
+reimport-semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:immich-machine-learning", "dependency:immich-server:redis"]
+
+[[evidence]]
+input = "podman"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "database.container", "edge.network", "immich-machine-learning.container", "immich-server.container", "library.volume", "model-cache.volume", "pgdata.volume", "redis.container", "redisdata.volume"]
+diagnostics-file = "expected.podman-quadlet.diagnostics"
+allowed-losses-file = "expected.podman-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "podman"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain reviewed dependencies, environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.podman-podman.diagnostics"
+allowed-losses-file = "expected.podman-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:immich-server:database",
+  "dependency:immich-server:immich-machine-learning",
+  "dependency:immich-server:redis",
+  "environment:database:POSTGRES_DB",
+  "environment:database:POSTGRES_INITDB_ARGS",
+  "environment:database:POSTGRES_PASSWORD",
+  "environment:database:POSTGRES_USER",
+  "environment:immich-server:DB_DATABASE_NAME",
+  "environment:immich-server:DB_HOSTNAME",
+  "environment:immich-server:DB_PASSWORD",
+  "environment:immich-server:DB_USERNAME",
+  "environment:immich-server:IMMICH_MACHINE_LEARNING_URL",
+  "environment:immich-server:REDIS_HOSTNAME",
+  "environment:immich-server:TZ",
+  "network-internal:backend",
+  "port:immich-server:2283:Some(18283)",
+  "publication:immich-server:18283:2283/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:database", "container:immich-machine-learning", "container:immich-server", "container:redis", "network:backend", "network:edge", "volume:library", "volume:model-cache", "volume:pgdata", "volume:redisdata"], external-preconditions = [], image-operations = [
+  { resource = "database-image", reference = "ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23", policy = "missing" },
+  { resource = "immich-machine-learning-image", reference = "ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e", policy = "missing" },
+  { resource = "immich-server-image", reference = "ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb", policy = "missing" },
+  { resource = "redis-image", reference = "docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411", policy = "missing" },
+], start-order = ["database", "immich-machine-learning", "redis", "immich-server"] }

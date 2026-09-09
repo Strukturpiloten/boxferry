@@ -19,6 +19,8 @@ source "${script_directory}/lib/nextcloud-application.sh"
 source "${script_directory}/lib/forgejo-application.sh"
 # shellcheck source=scripts/lib/paperless-application.sh
 source "${script_directory}/lib/paperless-application.sh"
+# shellcheck source=scripts/lib/immich-application.sh
+source "${script_directory}/lib/immich-application.sh"
 
 profile=""
 matrix_cell=""
@@ -34,7 +36,7 @@ workload_local_tag="localhost/boxferry-live/alpine:634a8f35b5f16dcf4aaa0822adc0b
 
 usage() {
   cat << 'EOF'
-Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application|forgejo-application|paperless-application> [OPTIONS]
+Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application|forgejo-application|paperless-application|immich-application> [OPTIONS]
 
 Options:
   --engine <PATH>       Outer Podman executable (default: podman).
@@ -89,9 +91,9 @@ while (($# > 0)); do
 done
 
 case "${profile}" in
-  smoke | full-container | application | forgejo-application | paperless-application) ;;
+  smoke | full-container | application | forgejo-application | paperless-application | immich-application) ;;
   *)
-    printf '%s\n' '--profile must be smoke, full-container, application, forgejo-application, or paperless-application.' >&2
+    printf '%s\n' '--profile must be smoke, full-container, application, forgejo-application, paperless-application, or immich-application.' >&2
     usage >&2
     exit 2
     ;;
@@ -483,6 +485,10 @@ selected() {
         (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
       ;;
     paperless-application)
+      [[ "${id}" == podman-6.1-rootless &&
+        (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
+      ;;
+    immich-application)
       [[ "${id}" == podman-6.1-rootless &&
         (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
       ;;
@@ -1459,6 +1465,10 @@ run_cell() {
   fi
   if [[ "${profile}" == paperless-application ]]; then
     run_paperless_application_cell "$@"
+    return
+  fi
+  if [[ "${profile}" == immich-application ]]; then
+    run_immich_application_cell "$@"
     return
   fi
 

@@ -1,0 +1,5 @@
+# schema=1; id reference version license provenance redistribution
+server	ghcr.io/immich-app/immich-server:v3.1.0@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb	3.1.0	AGPL-3.0-only	https://github.com/immich-app/immich	transient-test-pull
+machine-learning	ghcr.io/immich-app/immich-machine-learning:v3.1.0@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e	3.1.0	AGPL-3.0-only	https://github.com/immich-app/immich	transient-test-pull
+valkey	docker.io/valkey/valkey:9@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411	9.1.0	BSD-3-Clause	https://github.com/valkey-io/valkey-container	transient-test-pull
+postgres	ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23	14.19-vectorchord0.4.3-pgvector0.8.1	AGPL-3.0-only AND PostgreSQL AND (AGPL-3.0-only OR Elastic-2.0) AND Apache-2.0	https://github.com/immich-app/base-images	transient-test-pull

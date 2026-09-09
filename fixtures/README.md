@@ -85,6 +85,9 @@ Capture is local-only, sanitized, CI-disabled, and privacy-reviewed. One reviewe
 rootless cassette is supplementary acquisition replay evidence only; policy prevents its 143
 redacted environment assignments from replacing authored semantic input.
 
+`conformance/immich-application/` proves bounded CPU-only Immich 3.1.0 media processing and
+persistence on Podman 6.1 rootless. Its manual sanitized capture is never automatically admitted.
+
 ## Migration scenario contracts
 
 `fixtures/scenarios/<id>/scenario.toml` is a versioned authored acceptance

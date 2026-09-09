@@ -1,5 +1,6 @@
 # schema=1; selector and route inventory performed by scripts/podman-live-conformance.sh
 # id	workload	selector	output_or_assertion	reimport
+immich-application-runtime	immich	exact/label/all	reviewed Podman 6.1 rootless cell independently provisions Podman CLI and Docker Compose CPU-only PNG upload metadata derivative processing retrieval persistence private services selectors privacy resource budgets cleanup	yes
 exact-small	small	container=<run>-small-web	compose	no
 prefix-large	large	container-prefix=<run>-large-	quadlet	no
 label-large	large	io.boxferry.live-run=<run>	podman	no

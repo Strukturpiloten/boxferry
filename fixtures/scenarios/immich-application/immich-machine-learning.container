@@ -1,0 +1,6 @@
+[Container]
+
+Image=ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e
+Volume=model-cache.volume:/cache
+Network=backend.network
+ContainerName=immich-machine-learning
