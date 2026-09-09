@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -54,9 +55,55 @@ TIMESTAMP = re.compile(
 )
 MAC = re.compile(r"\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b")
 IPV4 = re.compile(r"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9.])")
-IPV6 = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{1,4}:){2,}[0-9A-Fa-f:]+")
+IPV6 = re.compile(r"(?<![0-9A-Fa-f:])[0-9A-Fa-f:]*:[0-9A-Fa-f:]+(?![0-9A-Fa-f:])")
 HEX_ID = re.compile(r"(?<![0-9a-f])([0-9a-f]{64})(?![0-9a-f])")
-URL = re.compile(r"https?://[^\s\"']+")
+URL = re.compile(r"https?://[^\s\"']+", re.IGNORECASE)
+ENVIRONMENT_ASSIGNMENT = re.compile(r"^([A-Za-z0-9_]+)=.*$", re.DOTALL)
+SANITIZED_REFERENCE = re.compile(
+    r"^fixture-reference-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?-(?:0[1-9]|[1-9][0-9])$"
+)
+CAPTURED_TIMESTAMP_KEYS = {
+    "created",
+    "createdat",
+    "startedat",
+    "finishedat",
+    "buildtime",
+    "builttime",
+}
+PRIVATE_MARKERS = (
+    "bearer ",
+    "basic ",
+    "unix://",
+    "tcp://",
+    "ssh://",
+    "/home/",
+    "/root/",
+    "/run/user/",
+    "/tmp/",
+    "/var/lib/containers",
+    "/run/containers",
+    "/capture-input",
+    "/capture-socket",
+    "podman.sock",
+    "sentinel_private",
+)
+PRIVATE_PATH_MARKERS = (
+    "/home/",
+    "/root/",
+    "/run/user/",
+    "/tmp/",
+    "/var/lib/containers",
+    "/run/containers",
+    "/capture-input",
+    "/capture-socket",
+)
+REVIEWED_IMAGE_METADATA_URLS = {
+    "https://docs.paperless-ngx.com/",
+    "https://github.com/gotenberg/gotenberg",
+    "https://github.com/paperless-ngx/paperless-ngx",
+    "https://github.com/valkey-io/valkey",
+    "https://gotenberg.dev",
+}
 
 
 class CaptureError(RuntimeError):
@@ -189,6 +236,9 @@ class Sanitizer:
         self.ipv4: dict[str, str] = {}
         self.ipv6: dict[str, str] = {}
         self.macs: dict[str, str] = {}
+        self.references: dict[str, str] = {}
+        self.hostnames: dict[str, str] = {}
+        self.paths: dict[str, str] = {}
         self.secrets = {
             "boxferry-public-admin-canary": "<redacted:PAPERLESS_ADMIN_PASSWORD>",
             "boxferry-public-database-canary": "<redacted:PAPERLESS_DB_PASSWORD>",
@@ -196,55 +246,130 @@ class Sanitizer:
             "boxferry-public-paperless-secret-canary": "<redacted:PAPERLESS_SECRET_KEY>",
         }
 
-    @staticmethod
-    def _token(mapping: dict[str, str], value: str, label: str) -> str:
-        if value not in mapping:
-            mapping[value] = f"<{label}-{len(mapping) + 1:03d}>"
-        return mapping[value]
-
     def _replace_ipv4(self, match: re.Match[str]) -> str:
         value = match.group(0)
-        if value in {"0.0.0.0", "127.0.0.1", "255.255.255.255"}:
+        if value in {"0.0.0.0", "127.0.0.1"}:
             return value
         octets = value.split(".")
         if any(int(octet) > 255 for octet in octets):
             return value
-        token = self._token(self.ipv4, value, "ipv4")
-        return f"192.0.2.{int(token[-4:-1])}"
+        if value not in self.ipv4:
+            ordinal = len(self.ipv4) + 1
+            if ordinal > 254:
+                raise CaptureError("capture contains too many IPv4 addresses")
+            self.ipv4[value] = f"192.0.2.{ordinal}"
+        return self.ipv4[value]
 
     def _replace_ipv6(self, match: re.Match[str]) -> str:
         value = match.group(0)
+        try:
+            ipaddress.IPv6Address(value)
+        except ValueError:
+            return value
         if value in {"::", "::1"}:
             return value
-        token = self._token(self.ipv6, value, "ipv6")
-        return f"2001:db8::{int(token[-4:-1])}"
+        if value not in self.ipv6:
+            ordinal = len(self.ipv6) + 1
+            if ordinal > 65_535:
+                raise CaptureError("capture contains too many IPv6 addresses")
+            self.ipv6[value] = f"2001:db8::{ordinal:x}"
+        return self.ipv6[value]
 
     def _replace_mac(self, match: re.Match[str]) -> str:
         value = match.group(0)
-        token = self._token(self.macs, value, "mac")
-        return f"02:00:00:00:00:{int(token[-4:-1]):02x}"
+        if value not in self.macs:
+            ordinal = len(self.macs) + 1
+            if ordinal > 255:
+                raise CaptureError("capture contains too many MAC addresses")
+            self.macs[value] = f"02:00:00:00:00:{ordinal:02x}"
+        return self.macs[value]
 
     def _replace_hex_id(self, match: re.Match[str]) -> str:
         value = match.group(1)
         if value in self.image_digests:
             return value
-        return self._token(self.ids, value, "native-id")
+        if value not in self.ids:
+            ordinal = len(self.ids) + 1
+            seed = f"boxferry-paperless-native-id-{ordinal:06d}".encode()
+            replacement = hashlib.sha256(seed).hexdigest()
+            while replacement in self.image_digests or replacement in self.ids.values():
+                ordinal += 1
+                seed = f"boxferry-paperless-native-id-{ordinal:06d}".encode()
+                replacement = hashlib.sha256(seed).hexdigest()
+            self.ids[value] = replacement
+        return self.ids[value]
+
+    def _replace_hostname(self, value: str) -> str:
+        if value not in self.hostnames:
+            ordinal = len(self.hostnames) + 1
+            if ordinal > 999:
+                raise CaptureError("capture contains too many native hostnames")
+            self.hostnames[value] = f"fixture-host-{ordinal:03d}"
+        return self.hostnames[value]
+
+    def _replace_reference(self, value: str) -> str:
+        if value not in self.references:
+            ordinal = len(self.references) + 1
+            if ordinal > 99:
+                raise CaptureError("capture contains too many reference identifiers")
+            self.references[value] = f"fixture-reference-paperless-{ordinal:02d}"
+        return self.references[value]
+
+    def _replace_private_paths(self, value: str) -> str:
+        while True:
+            lowered = value.casefold()
+            starts = [
+                index
+                for marker in PRIVATE_PATH_MARKERS
+                if (index := lowered.find(marker)) >= 0
+            ]
+            if not starts:
+                return value
+            start = min(starts)
+            end = len(value)
+            private_path = value[start:end]
+            if private_path not in self.paths:
+                ordinal = len(self.paths) + 1
+                if ordinal > 999:
+                    raise CaptureError("capture contains too many private paths")
+                self.paths[private_path] = f"/sanitized/path-{ordinal:03d}"
+            value = value[:start] + self.paths[private_path] + value[end:]
 
     def string(self, value: str) -> str:
+        assignment = ENVIRONMENT_ASSIGNMENT.fullmatch(value)
+        if assignment:
+            return f"{assignment.group(1)}=redacted"
         value = value.replace(self.repository, "<repository-root>")
         value = value.replace(self.upstream_socket, "<podman-socket>")
         value = value.replace(self.prefix, "paperless-captured")
+        reviewed_gotenberg_values = {
+            "file:///tmp/.*": "file:///fixture-tmp/.*",
+            "--chromium-allow-list=file:///tmp/.*": (
+                "--chromium-allow-list=file:///fixture-tmp/.*"
+            ),
+        }
+        value = reviewed_gotenberg_values.get(value.casefold(), value)
+        fixture_root = "/tmp/boxferry-fixture/paperless-captured"
+        reviewed_fixture_values = {
+            fixture_root: "/sanitized/fixture-root",
+            f"{fixture_root}:/fixture:rw": "/sanitized/fixture-root:/fixture:rw",
+        }
+        value = reviewed_fixture_values.get(value.casefold(), value)
+        value = self._replace_private_paths(value)
+        value = re.sub(r"podman\.sock", "fixture.sock", value, flags=re.IGNORECASE)
         value = re.sub(
-            r"/tmp/boxferry-fixture/[A-Za-z0-9_.-]+",
-            "/tmp/boxferry-fixture/paperless-captured",
+            r"sentinel_private", "sentinel-redacted", value, flags=re.IGNORECASE
+        )
+        value = re.sub(
+            r"(?i)\b(?:unix|tcp|ssh)://[^\s\"']+",
+            "<redacted-endpoint>",
             value,
         )
         value = re.sub(
-            r"/home/[^/]+/(?:\.local/share/containers/storage|\.config/containers)",
-            "/sanitized/rootless-storage",
+            r"(?i)\b(?:bearer|basic)\s+[^\s\"']+",
+            "<redacted-authorization>",
             value,
         )
-        value = re.sub(r"/run/user/\d+", "/sanitized/rootless-runtime", value)
         for secret, replacement in self.secrets.items():
             value = value.replace(secret, replacement)
         value = re.sub(
@@ -276,26 +401,141 @@ class Sanitizer:
         if isinstance(value, list):
             return [self.value(item, key) for item in value]
         if isinstance(value, str):
-            if lowered in {"date", "created", "createdat", "startedat", "finishedat"}:
+            if lowered == "date":
+                return "Sat, 01 Jan 2000 00:00:00 GMT"
+            if lowered in {"created", "createdat", "startedat", "finishedat"}:
                 return "2000-01-01T00:00:00Z"
-            if lowered in {"requestid", "request-id", "referenceid", "reference-id"}:
-                return "<request-id>"
-            return self.string(value)
-        if isinstance(value, (int, float)) and any(
-            word in lowered for word in ("created", "timestamp", "started", "finished")
-        ):
+            if lowered in {
+                "requestid",
+                "request-id",
+                "referenceid",
+                "reference-id",
+                "x-reference-id",
+            }:
+                return self._replace_reference(value)
+            sanitized = self.string(value)
+            if (
+                lowered == "hostname"
+                and sanitized
+                and all(character in "0123456789abcdefABCDEF" for character in sanitized)
+            ):
+                return self._replace_hostname(sanitized)
+            return sanitized
+        if isinstance(value, (int, float)) and self._is_timestamp_key(lowered):
             return 946684800
         return value
 
+    @staticmethod
+    def _is_timestamp_key(key: str) -> bool:
+        lowered = key.casefold()
+        return lowered in CAPTURED_TIMESTAMP_KEYS or lowered.endswith(".created")
+
+    @staticmethod
+    def _looks_like_mac(value: str) -> bool:
+        parts = value.split(":")
+        return len(parts) == 6 and all(
+            len(part) == 2 and all(character in "0123456789abcdefABCDEF" for character in part)
+            for part in parts
+        )
+
+    @staticmethod
+    def _address_is_private(value: str) -> bool:
+        candidate = value.split("/", 1)[0]
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            return False
+        if address.is_unspecified or address.is_loopback:
+            return False
+        if isinstance(address, ipaddress.IPv4Address):
+            documentation = (
+                ipaddress.ip_network("192.0.2.0/24"),
+                ipaddress.ip_network("198.51.100.0/24"),
+                ipaddress.ip_network("203.0.113.0/24"),
+            )
+            return not any(address in network for network in documentation)
+        return address not in ipaddress.ip_network("2001:db8::/32")
+
+    def _verify_value(self, value: Any, parent_key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key.casefold() in {"secretdata", "authorization"}:
+                    raise CaptureError(f"forbidden field in sanitized evidence: {key}")
+                self._verify_value(child, key)
+            return
+        if isinstance(value, list):
+            for child in value:
+                self._verify_value(child, parent_key)
+            return
+        if isinstance(value, str):
+            lowered = value.casefold()
+            if any(marker in lowered for marker in PRIVATE_MARKERS):
+                raise CaptureError("sanitized output retains forbidden native data")
+            assignment = ENVIRONMENT_ASSIGNMENT.fullmatch(value)
+            if assignment and value.split("=", 1)[1] != "redacted":
+                raise CaptureError("sanitized output retains an environment value")
+            if parent_key is not None:
+                lowered_key = parent_key.casefold()
+                if (
+                    lowered_key == "hostname"
+                    and value
+                    and all(character in "0123456789abcdefABCDEF" for character in value)
+                ):
+                    raise CaptureError("sanitized output retains a native hostname")
+                if self._is_timestamp_key(lowered_key) and value not in {
+                    "2000-01-01T00:00:00Z",
+                    "0001-01-01T00:00:00Z",
+                }:
+                    raise CaptureError("sanitized output retains a native timestamp")
+            if self._looks_like_mac(value) and not lowered.startswith("02:00:00:00:00:"):
+                raise CaptureError("sanitized output retains a native MAC address")
+            if self._address_is_private(value):
+                raise CaptureError("sanitized output retains a native IP address")
+            return
+        if parent_key is not None and self._is_timestamp_key(parent_key):
+            if type(value) is not int or value not in {0, 946_684_800}:
+                raise CaptureError("sanitized output retains a numeric native timestamp")
+
+    def _verify_response_headers(self, value: Any) -> None:
+        if isinstance(value, dict):
+            response = value.get("response")
+            if isinstance(response, dict) and "headers" in response:
+                headers = response["headers"]
+                if not isinstance(headers, list):
+                    raise CaptureError("sanitized response headers are malformed")
+                for pair in headers:
+                    if (
+                        not isinstance(pair, list)
+                        or len(pair) != 2
+                        or not all(isinstance(item, str) for item in pair)
+                    ):
+                        raise CaptureError("sanitized response header is malformed")
+                    name, header_value = pair
+                    lowered = name.casefold()
+                    if lowered in {"authorization", "cookie", "set-cookie"}:
+                        raise CaptureError(f"forbidden sanitized response header: {name}")
+                    if (
+                        lowered == "date"
+                        and header_value != "Sat, 01 Jan 2000 00:00:00 GMT"
+                    ):
+                        raise CaptureError("sanitized Date response header is not canonical")
+                    if lowered == "x-reference-id" and not SANITIZED_REFERENCE.fullmatch(
+                        header_value
+                    ):
+                        raise CaptureError("sanitized reference identifier is malformed")
+            for child in value.values():
+                self._verify_response_headers(child)
+        elif isinstance(value, list):
+            for child in value:
+                self._verify_response_headers(child)
+
     def verify(self, value: Any) -> None:
+        self._verify_response_headers(value)
+        self._verify_value(value)
         rendered = json.dumps(value, ensure_ascii=False)
         forbidden = (
-            "SecretData",
-            "Authorization",
             self.repository,
             self.upstream_socket,
-            "/home/",
-            "/run/user/",
         )
         if any(item and item in rendered for item in forbidden):
             raise CaptureError("sanitized output retains forbidden native data")
@@ -303,8 +543,7 @@ class Sanitizer:
             if secret in rendered:
                 raise CaptureError("sanitized output retains a protected canary")
         for candidate in URL.findall(rendered):
-            candidate = candidate.rstrip(",.;)]}")
-            reviewed_source = candidate in {
+            reviewed_source = candidate in REVIEWED_IMAGE_METADATA_URLS or candidate in {
                 (
                     "https://github.com/containers/podman/tree/"
                     f"{PODMAN_REVISION}/pkg/api/handlers/libpod"
@@ -317,7 +556,10 @@ class Sanitizer:
             )
             if reviewed_source:
                 continue
-            parsed = urlsplit(candidate)
+            try:
+                parsed = urlsplit(candidate)
+            except ValueError as error:
+                raise CaptureError("sanitized output retains a malformed URL") from error
             if parsed.username or parsed.password:
                 raise CaptureError("sanitized output retains URL credentials")
             if parsed.hostname not in {
@@ -414,7 +656,7 @@ def parse_response(raw: bytes) -> tuple[int, list[tuple[str, str]], Any, bytes, 
             raise CaptureError("malformed HTTP response header")
         name, value = line.split(":", 1)
         name, value = name.strip(), value.strip()
-        if name.casefold() in {"authorization", "set-cookie"}:
+        if name.casefold() in {"authorization", "cookie", "set-cookie"}:
             raise CaptureError(f"forbidden response header: {name}")
         if name.casefold() == "transfer-encoding" and value.casefold() == "chunked":
             chunked = True
@@ -786,7 +1028,232 @@ def response(body: Any, headers: list[tuple[str, str]] | None = None) -> bytes:
     return head.encode() + b"\r\n" + encoded
 
 
+def sanitizer_policy_self_test() -> None:
+    """Exercise every privacy rule required by captured-cassette admission."""
+    repository = Path("/private/boxferry-repository")
+    socket_path = Path("/private/runtime/podman.sock")
+    reviewed_digest = "f" * 64
+    native_id = "a" * 64
+    other_native_id = "b" * 64
+    raw_reference = "550e8400-e29b-41d4-a716-446655440000"
+    sanitizer = Sanitizer("run-123-paper", repository, socket_path, {reviewed_digest})
+
+    native = {
+        "Id": native_id,
+        "ImageDigest": reviewed_digest,
+        "Hostname": "abcdef123456",
+        "Created": "2026-09-09T12:00:00.123Z",
+        "BuildTime": 1_788_955_200,
+        "Config": {
+            "Env": [
+                "EMPTY=",
+                "POSTGRES_PASSWORD=database-secret",
+                "PAPERLESS_URL=http://127.0.0.1:18000",
+                "ORDINARY=value",
+            ],
+            "CreateCommand": [
+                "--chromium-allow-list=file:///tmp/.*",
+                "/tmp/boxferry-fixture/run-123-paper:/fixture:rw",
+            ],
+        },
+        "Addresses": ["10.88.0.2", "fd00::2", "aa:bb:cc:dd:ee:ff"],
+    }
+    sanitized = sanitizer.value(native)
+    assert re.fullmatch(r"[0-9a-f]{64}", sanitized["Id"])
+    assert sanitized["Id"] != native_id
+    assert sanitized["ImageDigest"] == reviewed_digest
+    assert sanitized["Hostname"] == "fixture-host-001"
+    assert sanitized["Created"] == "2000-01-01T00:00:00Z"
+    assert sanitized["BuildTime"] == 946_684_800
+    assert sanitized["Config"]["Env"] == [
+        "EMPTY=redacted",
+        "POSTGRES_PASSWORD=redacted",
+        "PAPERLESS_URL=redacted",
+        "ORDINARY=redacted",
+    ]
+    assert sanitized["Config"]["CreateCommand"] == [
+        "--chromium-allow-list=file:///fixture-tmp/.*",
+        "/sanitized/fixture-root:/fixture:rw",
+    ]
+    assert sanitized["Addresses"][0].startswith("192.0.2.")
+    assert sanitized["Addresses"][1].startswith("2001:db8::")
+    assert sanitized["Addresses"][2].startswith("02:00:00:00:00:")
+
+    repeated = sanitizer.value({"Id": native_id, "Hostname": "abcdef123456"})
+    distinct = sanitizer.value({"Id": other_native_id, "Hostname": "abcdef123457"})
+    assert repeated["Id"] == sanitized["Id"]
+    assert repeated["Hostname"] == sanitized["Hostname"]
+    assert distinct["Id"] != sanitized["Id"]
+    assert distinct["Hostname"] == "fixture-host-002"
+    fresh = Sanitizer("run-123-paper", repository, socket_path, {reviewed_digest})
+    assert fresh.value(native) == sanitized
+
+    request = (
+        f"GET /v6.1.0/libpod/containers/{native_id}/json HTTP/1.1\r\n"
+        "Host: podman\r\n\r\n"
+    ).encode()
+    interaction, _ = sanitize_interaction(
+        sanitizer,
+        request,
+        response(
+            native,
+            [
+                ("Date", "Wed, 09 Sep 2026 12:00:00 GMT"),
+                ("X-Reference-Id", raw_reference),
+            ],
+        ),
+    )
+    headers = dict(interaction["response"]["headers"])
+    assert headers["date"] == "Sat, 01 Jan 2000 00:00:00 GMT"
+    assert headers["x-reference-id"] == "fixture-reference-paperless-01"
+    assert interaction["request"]["path"].endswith(f"/{sanitized['Id']}/json")
+    assert interaction["response"]["body"]["Id"] == sanitized["Id"]
+
+    repeated_reference, _ = sanitize_interaction(
+        sanitizer,
+        request,
+        response({}, [("X-Reference-Id", raw_reference)]),
+    )
+    distinct_reference, _ = sanitize_interaction(
+        sanitizer,
+        request,
+        response({}, [("X-Reference-Id", "650e8400-e29b-41d4-a716-446655440000")]),
+    )
+    assert dict(repeated_reference["response"]["headers"])["x-reference-id"] == (
+        "fixture-reference-paperless-01"
+    )
+    assert dict(distinct_reference["response"]["headers"])["x-reference-id"] == (
+        "fixture-reference-paperless-02"
+    )
+
+    reference_bound = Sanitizer("paper", repository, socket_path, set())
+    for ordinal in range(1, 100):
+        assert reference_bound._replace_reference(f"reference-{ordinal}").endswith(
+            f"-{ordinal:02d}"
+        )
+    try:
+        reference_bound._replace_reference("reference-100")
+    except CaptureError:
+        pass
+    else:
+        raise AssertionError("one hundredth reference identifier was accepted")
+
+    raw_markers = (
+        "BeArEr private-token",
+        "BaSiC private-token",
+        "UnIx:///capture-socket/podman.sock",
+        "TcP://private.example.invalid",
+        "SsH://private.example.invalid",
+        "/HoMe/alice/private",
+        "/RoOt/private",
+        "/RuN/UsEr/1000/private",
+        "/TmP/private",
+        "/VaR/LiB/CoNtAiNeRs/private",
+        "/RuN/CoNtAiNeRs/private",
+        "/CaPtUrE-InPuT/private",
+        "/CaPtUrE-SoCkEt/private",
+        "PoDmAn.SoCk",
+        "SeNtInEl_PrIvAtE",
+    )
+    for marker in raw_markers:
+        cleaned = sanitizer.string(marker)
+        assert not any(needle in cleaned.casefold() for needle in PRIVATE_MARKERS)
+        try:
+            sanitizer.verify({"value": marker})
+        except CaptureError:
+            pass
+        else:
+            raise AssertionError(f"privacy marker was accepted: {marker}")
+
+    private_suffixes = {
+        "/home/Alice/private": ("alice", "private"),
+        "/tmp/private-customer-file": ("private-customer-file",),
+        "/root/customer/secret:/container:ro": ("customer", "secret"),
+        "/root/account:credential": ("account", "credential"),
+        "/run/user/1000/customer.sock": ("1000", "customer.sock"),
+        "/tmp/customer,name": ("customer", "name"),
+        "/tmp/customer:secret": ("customer", "secret"),
+        "/tmp/boxferry-fixture/run-123-paper:credential": ("credential",),
+        "--chromium-allow-list=file:///tmp/.*credential": ("credential",),
+    }
+    for private_path, suffixes in private_suffixes.items():
+        cleaned = sanitizer.string(private_path).casefold()
+        assert "/sanitized/path-" in cleaned
+        assert not any(suffix in cleaned for suffix in suffixes)
+
+    sanitizer.verify(
+        {
+            "Created": "0001-01-01T00:00:00Z",
+            "BuildTime": 0,
+            "Hostname": "fixture-host-001",
+            "Env": ["NAME=redacted"],
+            "Addresses": [
+                "0.0.0.0",
+                "127.0.0.1",
+                "192.0.2.1/24",
+                "198.51.100.1",
+                "203.0.113.1",
+                "::",
+                "::1",
+                "2001:db8::1/64",
+                "02:00:00:00:00:01",
+            ],
+        }
+    )
+    sanitizer.verify(
+        {
+            "Labels": {
+                "org.opencontainers.image.documentation": (
+                    "https://docs.paperless-ngx.com/"
+                ),
+                "org.opencontainers.image.source": (
+                    "https://github.com/paperless-ngx/paperless-ngx"
+                ),
+                "org.opencontainers.image.url": (
+                    "https://github.com/paperless-ngx/paperless-ngx"
+                ),
+                "valkey.source": "https://github.com/valkey-io/valkey",
+                "gotenberg.documentation": "https://gotenberg.dev",
+                "gotenberg.source": "https://github.com/gotenberg/gotenberg",
+            }
+        }
+    )
+    rejected_values = (
+        {"SecretData": "redacted"},
+        {"aUtHoRiZaTiOn": "redacted"},
+        {"Env": ["NAME=private"]},
+        {"Hostname": "abcdef123456"},
+        {"Created": "2026-09-09T12:00:00Z"},
+        {"BuildTime": 1},
+        {"MacAddress": "aa:bb:cc:dd:ee:ff"},
+        {"IPAddress": "10.88.0.2"},
+        {"IPAddress": "8.8.8.8"},
+        {"response": {"headers": [["date", "Wed, 09 Sep 2026 12:00:00 GMT"]]}},
+        {"response": {"headers": [["x-reference-id", "fixture-reference-paperless-00"]]}},
+        {"Labels": {"org.opencontainers.image.url": "https://gotenberg.dev/private"}},
+        {"Labels": {"org.opencontainers.image.url": "HTTPS://customer.internal/Alice"}},
+        {"Labels": {"org.opencontainers.image.url": "https://gotenberg.dev]"}},
+        {"Labels": {"org.opencontainers.image.url": "https://gotenberg.dev..."}},
+    )
+    for rejected in rejected_values:
+        try:
+            sanitizer.verify(rejected)
+        except CaptureError:
+            pass
+        else:
+            raise AssertionError(f"private captured value was accepted: {rejected!r}")
+
+    for forbidden_header in ("Cookie", "Set-Cookie", "Authorization"):
+        try:
+            parse_response(response({}, [(forbidden_header, "private")]))
+        except CaptureError:
+            pass
+        else:
+            raise AssertionError(f"forbidden response header was accepted: {forbidden_header}")
+
+
 def self_test() -> None:
+    sanitizer_policy_self_test()
     request = b"GET /v6.1.0/libpod/containers/json?all=true HTTP/1.1\r\nHost: podman\r\n\r\n"
     assert parse_request(request)[0].endswith("all=true")
     for rejected in (
@@ -870,7 +1337,7 @@ def self_test() -> None:
         assert json_bytes(first) == json_bytes(second)
         assert first["Config"]["NullIsPreserved"] is None
         assert list(first["Config"]) == ["CreateCommand", "NullIsPreserved"]
-        assert first["Config"]["CreateCommand"][3].endswith("=<redacted>")
+        assert first["Config"]["CreateCommand"][3].endswith("=redacted")
         assert first["Addresses"][0].startswith("192.0.2.")
         assert first["Addresses"][1].startswith("2001:db8::")
         assert first["Addresses"][2].startswith("02:00:00:00:00:")

@@ -938,6 +938,27 @@ paperless_assert_output_semantics() {
   grep --recursive --fixed-strings --quiet -- '--chromium-allow-list=file:///tmp/.*' "${directory}"
 }
 
+paperless_report_conversion_failure() {
+  local report=$1
+  if [[ ! -s "${report}" ]]; then
+    printf 'Paperless conversion failed without a JSON report: %s\n' "${report}" >&2
+    return
+  fi
+  if grep --fixed-strings --quiet \
+    -e "${PAPERLESS_ADMIN_PASSWORD}" -e "${PAPERLESS_DB_PASSWORD}" \
+    -e "${PAPERLESS_REDIS_PASSWORD}" -e "${PAPERLESS_SECRET_KEY}" \
+    "${report}"; then
+    printf 'Paperless conversion failure report withheld because redaction failed.\n' >&2
+    return
+  fi
+  if ! jq empty "${report}" > /dev/null 2>&1; then
+    printf 'Paperless conversion failed with an invalid JSON report: %s\n' "${report}" >&2
+    return
+  fi
+  jq '{schema_version, status, exit_category, primary_diagnostic_code, diagnostics, fidelity}' \
+    "${report}" >&2
+}
+
 paperless_run_exports() {
   local mode=$1 socket=$2 prefix=$3
   local selection output directory report
@@ -953,14 +974,17 @@ paperless_run_exports() {
       directory="${current_case}/outputs/${mode}-${selection}-${output}"
       report="${directory}.report.json"
       local -a target_arguments=()
-      [[ "${output}" == podman ]] && target_arguments+=(--podman-target-context rootful)
-      boxferry_operation "Paperless ${mode} ${selection} Podman-to-${output}" \
+      [[ "${output}" == podman ]] && target_arguments+=(--podman-target-context rootless)
+      if ! boxferry_operation "Paperless ${mode} ${selection} Podman-to-${output}" \
         convert podman "${output}" --podman-socket "${socket}" \
         --application-name "${prefix}-paperless" --loss-policy partial \
         --promote-podman-effective-named-volumes --promote-podman-effective-named-networks \
         --promote-podman-portable-effective-settings \
         --output-directory "${directory}" --console-format json \
-        "${target_arguments[@]}" "${selection_arguments[@]}" > "${report}"
+        "${target_arguments[@]}" "${selection_arguments[@]}" > "${report}"; then
+        paperless_report_conversion_failure "${report}"
+        return 1
+      fi
       jq --exit-status '
         .schema_version == 1 and .status == "success" and .exit_category == "success" and
         ([.diagnostics[]? | select(.severity == "error")] | length == 0) and
