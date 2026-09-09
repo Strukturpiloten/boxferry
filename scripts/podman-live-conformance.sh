@@ -439,7 +439,9 @@ revalidation_baseline_runtime_identity=""
 revalidation_baseline_socket_namespace=""
 revalidation_baseline_graph_root_identity=""
 revalidation_baseline_name_prefix=""
+revalidation_baseline_outer=""
 revalidation_candidate_outer=""
+revalidation_apply_target_outer=""
 revalidation_mounted_image_active=""
 revalidation_mounted_image_root=""
 candidate_baseline_image=""
@@ -574,6 +576,10 @@ progress_begin() {
   progress_test_name=$1
   if [[ "${revalidation_capture_checks}" == true ]]; then
     case "${progress_test_name}" in
+      'start isolated Podman container and collect runtime evidence')
+        revalidation_phase="replacement-runtime"
+        revalidation_failure_code="runtime-metadata-mismatch"
+        ;;
       'externally apply and reacquire Podman plan')
         revalidation_phase="external-apply"
         revalidation_failure_code="external-apply-failed"
@@ -737,6 +743,7 @@ cleanup() {
   local status=$?
   local outer directory image pid socket existence_status
   local cleanup_failed=false
+  local baseline_removed=false replacement_removed=false apply_target_removed=false
   for outer in "${outer_containers[@]}"; do
     if ! timeout --signal=TERM --kill-after=10s 30s \
       "${engine}" rm --force --ignore -- "${outer}" > /dev/null 2>&1; then
@@ -748,7 +755,22 @@ cleanup() {
         cleanup_failed=true
       else
         existence_status=$?
-        ((existence_status == 1)) || cleanup_failed=true
+        if ((existence_status == 1)); then
+          if [[ -n "${revalidation_baseline_outer}" &&
+            "${outer}" == "${revalidation_baseline_outer}" ]]; then
+            baseline_removed=true
+          fi
+          if [[ -n "${revalidation_candidate_outer}" &&
+            "${outer}" == "${revalidation_candidate_outer}" ]]; then
+            replacement_removed=true
+          fi
+          if [[ -n "${revalidation_apply_target_outer}" &&
+            "${outer}" == "${revalidation_apply_target_outer}" ]]; then
+            apply_target_removed=true
+          fi
+        else
+          cleanup_failed=true
+        fi
       fi
     fi
   done
@@ -794,6 +816,23 @@ cleanup() {
   fi
   if ! rm -rf -- "${runtime_root}"; then
     [[ "${profile}" == limitation-revalidation ]] && cleanup_failed=true
+  fi
+  if [[ "${profile}" == limitation-revalidation && -f "${revalidation_evidence}" &&
+    "${cleanup_failed}" == false ]] &&
+    jq --exit-status '.evidence_kind == "podman-limitation-revalidation"' \
+      "${revalidation_evidence}" > /dev/null 2>&1; then
+    if [[ "${baseline_removed}" == true ]] &&
+      ! mark_revalidation_result cleanup.baseline_removed; then
+      cleanup_failed=true
+    fi
+    if [[ "${replacement_removed}" == true ]] &&
+      ! mark_revalidation_result cleanup.replacement_removed; then
+      cleanup_failed=true
+    fi
+    if [[ "${apply_target_removed}" == true ]] &&
+      ! mark_revalidation_result cleanup.apply_target_removed; then
+      cleanup_failed=true
+    fi
   fi
   if [[ "${profile}" == limitation-revalidation && "${cleanup_failed}" == true ]]; then
     revalidation_phase="cleanup"
@@ -1326,7 +1365,15 @@ prepare_matrix_image() {
 start_outer_runtime() {
   local id=$1 image=$2 mode=$3 socket_directory=$4
   local nested_archive=${5:-${workload_archive}}
+  local cleanup_role=${6:-}
   local outer_digest
+  case "${cleanup_role}" in
+    "" | replacement | apply-target) ;;
+    *)
+      printf 'Unknown limitation-revalidation cleanup role: %s\n' "${cleanup_role}" >&2
+      return 2
+      ;;
+  esac
   outer_digest="$(printf '%s' "${id}" | sha256sum)"
   local outer="${run_id:0:36}-${outer_digest:0:16}"
   mkdir -p -- "${socket_directory}"
@@ -1372,6 +1419,12 @@ start_outer_runtime() {
     ' \
     > "${artifact_root}/${id}.outer.log"
 
+  case "${cleanup_role}" in
+    replacement) revalidation_candidate_outer="${outer}" ;;
+    apply-target) revalidation_apply_target_outer="${outer}" ;;
+    "") ;;
+  esac
+
   if ! startup_substep 'wait for nested runtime evidence (deadline 60s)' \
     wait_for_file "${socket_directory}/runtime-evidence.ready" 'nested runtime evidence'; then
     cat -- "${socket_directory}/bootstrap.log" >&2 || true
@@ -1396,6 +1449,9 @@ start_outer_runtime() {
     printf 'Required Podman evidence was empty for %s.\n' "${id}" >&2
     return 1
   }
+  if [[ "${cleanup_role}" == replacement ]]; then
+    record_revalidation_candidate_runtime_observations "${id}" "${outer}"
+  fi
   if [[ "${mode}" == rootless ]]; then
     [[ "$(< "${artifact_root}/${id}.rootless")" == true ]] || {
       printf 'Matrix rootless cell did not report rootless Podman: %s\n' "${id}" >&2
@@ -1520,7 +1576,12 @@ start_apply_target() {
   }
   local source_outer="${started_outer}"
   local socket_directory="${runtime_root}/apply-target"
-  start_outer_runtime "${id}-apply-target" "${image}" "${mode}" "${socket_directory}"
+  local cleanup_role=""
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    cleanup_role=apply-target
+  fi
+  start_outer_runtime "${id}-apply-target" "${image}" "${mode}" "${socket_directory}" \
+    "${workload_archive}" "${cleanup_role}"
   apply_target_outer="${started_outer}"
   apply_target_socket="${socket_directory}/podman.sock"
   engine_operation 'prepare apply-target configuration directory' \
@@ -2042,6 +2103,25 @@ revalidation_observed_distribution() {
   esac
 }
 
+record_revalidation_candidate_runtime_observations() {
+  local id=$1 outer=$2 observed_version observed_distribution
+  collect_revalidation_runtime_identity "${outer}" "${artifact_root}/${id}.distribution"
+  observed_version="$(awk '{ print $3 }' "${artifact_root}/${id}.podman-version")"
+  observed_version="${observed_version%-rhel}"
+  observed_distribution="$(revalidation_observed_distribution \
+    "${candidate_distribution}" "${artifact_root}/${id}.distribution")" || return 1
+  record_revalidation_observation replacement.observed.podman_version "${observed_version}"
+  record_revalidation_observation replacement.observed.api_version \
+    "$(< "${artifact_root}/${id}.api-version")"
+  record_revalidation_observation replacement.observed.package_revision \
+    "$(< "${artifact_root}/${id}.package-version")"
+  record_revalidation_observation replacement.observed.distribution "${observed_distribution}"
+  record_revalidation_observation replacement.observed.architecture \
+    "$(< "${artifact_root}/${id}.architecture")"
+  record_revalidation_observation replacement.observed.rootless \
+    "$(< "${artifact_root}/${id}.rootless")"
+}
+
 assert_revalidation_fresh_store() {
   local outer=$1 socket_namespace=$2 name_prefix=$3
   local runtime_identity graph_root_identity
@@ -2135,8 +2215,10 @@ run_cell() {
   fi
   mkdir -p -- "${current_case}"
   local socket_directory="${runtime_root}/${id}"
+  local cleanup_role=""
   if [[ "${profile}" == limitation-revalidation ]]; then
     socket_directory="${runtime_root}/revalidation-candidate/${id}"
+    cleanup_role=replacement
   fi
   local outer socket coverage_level workload_scope=full runtime_test_name
   if [[ "${profile}" == smoke ]]; then
@@ -2147,9 +2229,9 @@ run_cell() {
   progress_run 'prepare digest-pinned workload archive' prepare_workload_archive
   progress_run 'pull and verify reviewed Podman image' prepare_matrix_image "${id}" "${image}"
   progress_run 'start isolated Podman container and collect runtime evidence' \
-    start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
+    start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}" \
+    "${workload_archive}" "${cleanup_role}"
   if [[ "${profile}" == limitation-revalidation ]]; then
-    revalidation_candidate_outer="${started_outer}"
     assert_revalidation_fresh_store \
       "${revalidation_candidate_outer}" "${socket_directory}" "${current_prefix}"
   fi
@@ -2383,6 +2465,7 @@ run_revalidation_baseline_collision() {
     --volume "${baseline_socket_namespace}:/boxferry-socket:Z" \
     "${image}" /bin/sh -ceu 'trap "exit 0" INT TERM; sleep 3600' \
     > "${baseline_case}/outer.id"
+  revalidation_baseline_outer="${outer}"
   revalidation_baseline_runtime_identity="$(engine_operation \
     'read historical outer runtime identity' container inspect --format '{{.Id}}' "${outer}")"
   revalidation_baseline_socket_namespace="${baseline_socket_namespace}"
@@ -2488,7 +2571,6 @@ run_revalidation_baseline_collision() {
     printf 'Historical limitation container survived cleanup: %s\n' "${id}" >&2
     return 1
   fi
-  mark_revalidation_result cleanup.baseline_removed
 }
 
 configure_revalidation_required_checks() {
@@ -2559,6 +2641,8 @@ run_limitation_revalidation() {
   verify_revalidation_candidate_provenance \
     "${candidate_replacement_image}" "${candidate_source_repository}" \
     "${candidate_source_revision}" "${candidate_source_license}" "${candidate_published_at}"
+  record_revalidation_observation replacement.observed.source_revision \
+    "${candidate_source_revision}"
 
   revalidation_checks=()
   revalidation_capture_checks=true
@@ -2577,7 +2661,6 @@ run_limitation_revalidation() {
     printf '%s\n' 'Candidate outer runtime survived limitation-revalidation cleanup.' >&2
     return 1
   fi
-  mark_revalidation_result cleanup.replacement_removed
 
   revalidation_phase="replacement-runtime"
   revalidation_failure_code="runtime-metadata-mismatch"
@@ -2594,18 +2677,6 @@ run_limitation_revalidation() {
   [[ "${observed_version}" == "${candidate_version}" ]]
   [[ "$(< "${artifact_root}/${candidate_cell}.rootless")" == true ]]
   [[ "$(< "${artifact_root}/${candidate_cell}.source-revision")" == "${candidate_source_revision}" ]]
-  record_revalidation_observation replacement.observed.podman_version "${observed_version}"
-  record_revalidation_observation replacement.observed.api_version \
-    "$(< "${artifact_root}/${candidate_cell}.api-version")"
-  record_revalidation_observation replacement.observed.package_revision \
-    "$(< "${artifact_root}/${candidate_cell}.package-version")"
-  record_revalidation_observation replacement.observed.distribution "${observed_distribution}"
-  record_revalidation_observation replacement.observed.architecture \
-    "$(< "${artifact_root}/${candidate_cell}.architecture")"
-  record_revalidation_observation replacement.observed.rootless \
-    "$(< "${artifact_root}/${candidate_cell}.rootless")"
-  record_revalidation_observation replacement.observed.source_revision \
-    "$(< "${artifact_root}/${candidate_cell}.source-revision")"
   assert_revalidation_required_checks
 
   revalidation_phase="cleanup"
@@ -2617,7 +2688,6 @@ run_limitation_revalidation() {
       return 1
     fi
   fi
-  mark_revalidation_result cleanup.apply_target_removed
 
   revalidation_ready_to_finalize=true
 }

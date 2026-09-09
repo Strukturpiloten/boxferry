@@ -1680,10 +1680,12 @@ def record_observation_document(
         "replacement.observed.podman_version": candidate["expected-podman-version"],
         "replacement.observed.source_revision": candidate["source-revision"],
     }
-    if field in {"baseline.observed.rootless", "replacement.observed.rootless"}:
+    if field == "baseline.observed.rootless":
         parsed_value: Any = parse_bool(value)
         if parsed_value is not True:
             raise ContractError("runtime observation must report rootless=true")
+    elif field == "replacement.observed.rootless":
+        parsed_value = parse_bool(value)
     elif field == "baseline.observed.uid":
         if value != "1000":
             raise ContractError("baseline observation must report uid=1000")
@@ -2084,6 +2086,24 @@ def self_test() -> None:
             limitations_path=limitations,
             candidate_cell=candidate["id"],
             expected_repository_commit="1" * 40,
+        )
+        replacement_rootless_failure = copy.deepcopy(document)
+        record_observation_document(
+            replacement_rootless_failure,
+            "replacement.observed.rootless",
+            "false",
+            candidate,
+        )
+        assert replacement_rootless_failure["replacement"]["observed"]["rootless"] is False
+        validate_evidence(replacement_rootless_failure)
+        expect_contract_error(
+            lambda: record_observation_document(
+                copy.deepcopy(document),
+                "baseline.observed.rootless",
+                "false",
+                candidate,
+            ),
+            "baseline rootless=false observation",
         )
         tumbleweed = candidates[1]
         tumbleweed_document = initialize_document(
