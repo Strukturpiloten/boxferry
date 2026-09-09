@@ -13,6 +13,7 @@ on:
         options:
           - smoke
           - full-container
+          - paperless-capture
 
 permissions:
   contents: read
@@ -51,6 +52,8 @@ jobs:
               $1 == "podman-ubuntu-22.04-rootless" ||
               $1 == "podman-ubuntu-24.04-rootless" { print $1 }
             ' fixtures/conformance/podman-live/matrix.tsv)"
+          elif [[ "${PROFILE}" == paperless-capture ]]; then
+            cells="podman-6.1-rootless"
           else
             cells="$(awk -F '\t' '$1 !~ /^#/ && $6 == "container" { print $1 }' fixtures/conformance/podman-live/matrix.tsv)"
           fi
@@ -83,8 +86,9 @@ jobs:
     # Nested privileged containers execute only reviewed image names. Fork changes cannot alter a
     # privileged GitHub-hosted runner. The job receives no secrets and never mounts a host socket.
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      needs.matrix.outputs.profile != 'paperless-capture' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     needs: [matrix, build-boxferry]
     strategy:
       fail-fast: false
@@ -202,3 +206,62 @@ jobs:
         run: >-
           sudo env BOXFERRY_BIN="${BOXFERRY_BIN}" BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}"
           bash scripts/podman-live-conformance.sh --profile forgejo-application --engine podman
+
+  paperless-application:
+    name: Paperless-ngx application / podman-6.1-rootless
+    # Match the privileged conformance trust boundary: fork-authored code never reaches the runner.
+    if: >-
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture')
+    needs: [matrix, build-boxferry]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install outer Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcap2-bin podman
+      - name: Download BoxFerry binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: boxferry-live-binary
+          path: target/debug
+      - name: Restore executable permission
+        run: chmod +x target/debug/boxferry
+      - name: Download and verify Docker Compose provider
+        env:
+          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
+          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
+        run: |
+          set -Eeuo pipefail
+          mkdir -p target/tools
+          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
+          printf '%s %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
+          chmod +x target/tools/docker-compose
+      - name: Run checked-in Paperless-ngx application profile
+        env:
+          BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
+          BOXFERRY_COMPOSE_BIN: ${{ github.workspace }}/target/tools/docker-compose
+          BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture' && format('{0}/paperless-capture-parent/candidate', runner.temp) || '' }}
+        run: |
+          set -Eeuo pipefail
+          if [[ -n "${BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY}" ]]; then
+            install -d -m 0700 "${RUNNER_TEMP}/paperless-capture-parent"
+          fi
+          sudo env BOXFERRY_BIN="${BOXFERRY_BIN}" BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}" \
+          BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY="${BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY}" \
+          bash scripts/podman-live-conformance.sh --profile paperless-application \
+          --matrix-cell podman-6.1-rootless --engine podman
+      - name: Upload sanitized Paperless native capture candidate
+        if: github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture' && success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: paperless-native-capture-candidate
+          path: ${{ runner.temp }}/paperless-capture-parent/candidate
+          if-no-files-found: error
+          retention-days: 1

@@ -127,6 +127,23 @@ BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
 sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" scripts/podman-live-conformance.sh --profile forgejo-application --engine podman
 ```
 
+The `paperless-application` profile uses `podman-6.1-rootless` with a 60-minute deadline. Native
+Podman and Docker Compose 5.5.0 provision its five-service converter topology. PDF, DOCX, and ODT
+inputs must pass ingestion, search, retrieval, and office-to-PDF conversion. Checks cover private
+networking, storage permissions, collision refusal, and persistent PostgreSQL/Valkey volumes. It
+requires two CPUs, 6 GiB RAM, 12 GiB disk, and at most 2.5 GiB compressed images.
+
+```console
+cargo build --locked --package boxferry --bin boxferry --features podman
+BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
+sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" bash scripts/podman-live-conformance.sh --profile paperless-application --matrix-cell podman-6.1-rootless --engine podman
+```
+
+Set `BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY` only for a local one-off candidate in a private directory
+outside the repository. Capture is no-follow, sanitized, and privacy-reviewed; pull requests never
+enable it, and manual artifacts expire after one day. One reviewed cassette is supplementary replay
+evidence; redaction forbids replacing authored semantics, and replay consumes all 27 `GET` requests.
+
 The complete profile runs all reviewed rootful and rootless cells:
 
 ```console

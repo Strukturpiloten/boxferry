@@ -1,0 +1,490 @@
+schema = 1
+id = "paperless-ngx-document-converters"
+source-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = [
+  "boxferry-public-paperless-db-password-canary",
+  "boxferry-public-paperless-secret-key-canary",
+]
+
+[application]
+name = "paperless-ngx-document-converters"
+version = "3.1.3"
+
+[[components]]
+name = "webserver"
+version = "3.1.3"
+image = "ghcr.io/paperless-ngx/paperless-ngx"
+digest = "sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a"
+configured-image = "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a"
+
+[[components]]
+name = "broker"
+version = "9.1.2"
+image = "docker.io/valkey/valkey"
+digest = "sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b"
+configured-image = "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b"
+
+[[components]]
+name = "db"
+version = "18.6.0"
+image = "docker.io/library/postgres"
+digest = "sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
+configured-image = "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
+
+[[components]]
+name = "gotenberg"
+version = "8.34.0"
+image = "docker.io/gotenberg/gotenberg"
+digest = "sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923"
+configured-image = "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923"
+
+[[components]]
+name = "tika"
+version = "3.3.1"
+image = "docker.io/apache/tika"
+digest = "sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973"
+configured-image = "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+interpolate = true
+environment-files = ["paperless.env.example"]
+import-diagnostics = []
+
+[[native-inputs]]
+id = "quadlet"
+importer = "quadlet"
+files = [
+  "backend.network",
+  "broker.container",
+  "consume.volume",
+  "data.volume",
+  "db.container",
+  "export.volume",
+  "gotenberg.container",
+  "media.volume",
+  "pgdata.volume",
+  "redisdata.volume",
+  "tika.container",
+  "webserver.container",
+]
+format-version = "0.2.3"
+import-diagnostics = []
+
+[[native-inputs]]
+id = "podman"
+importer = "podman"
+files = ["input-podman.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expected.podman-import.diagnostics"
+
+[native-inputs.podman]
+application = "paperless-ngx-document-converters"
+cassette-scenario-id = "paperless-ngx-document-converters-podman-6.1.0"
+root-mode = "rootless"
+include-environment-values = true
+selectors = [
+  { kind = "container", exact = "broker" },
+  { kind = "container", exact = "db" },
+  { kind = "container", exact = "gotenberg" },
+  { kind = "container", exact = "tika" },
+  { kind = "container", exact = "webserver" },
+  { kind = "network", exact = "backend" },
+  { kind = "volume", exact = "consume" },
+  { kind = "volume", exact = "data" },
+  { kind = "volume", exact = "export" },
+  { kind = "volume", exact = "media" },
+  { kind = "volume", exact = "pgdata" },
+  { kind = "volume", exact = "redisdata" },
+]
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored offline Paperless-ngx converter definitions and deterministic Libpod replay with conspicuously public canaries; this is not captured-native evidence."
+image-evidence = "Reviewed Paperless-ngx 3.1.3, Valkey 9.1.2-alpine, PostgreSQL 18.6-alpine, Gotenberg 8.34.0, and Tika 3.3.1.0 digest identities; offline tests never pull images or claim runtime processing."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "network:backend",
+  "service:broker",
+  "service:db",
+  "service:gotenberg",
+  "service:tika",
+  "service:webserver",
+  "volume:consume",
+  "volume:data",
+  "volume:export",
+  "volume:media",
+  "volume:pgdata",
+  "volume:redisdata",
+]
+excluded-resources = ["service:worker"]
+ownership-boundaries = [
+  "volume:consume:application",
+  "volume:data:application",
+  "volume:export:application",
+  "volume:media:application",
+  "volume:pgdata:application",
+  "volume:redisdata:application",
+]
+shared-boundaries = [
+  "volume:consume:consumers=webserver",
+  "volume:data:consumers=webserver",
+  "volume:export:consumers=webserver",
+  "volume:media:consumers=webserver",
+  "volume:pgdata:consumers=db",
+  "volume:redisdata:consumers=broker",
+]
+required-mounts = [
+  "broker:redisdata:/data",
+  "db:pgdata:/var/lib/postgresql",
+  "webserver:consume:/usr/src/paperless/consume",
+  "webserver:data:/usr/src/paperless/data",
+  "webserver:export:/usr/src/paperless/export",
+  "webserver:media:/usr/src/paperless/media",
+]
+required-environment = [
+  "db:POSTGRES_DB=paperless",
+  "db:POSTGRES_PASSWORD=boxferry-public-paperless-db-password-canary",
+  "db:POSTGRES_USER=paperless",
+  "webserver:PAPERLESS_DBHOST=db",
+  "webserver:PAPERLESS_DBNAME=paperless",
+  "webserver:PAPERLESS_DBPASS=boxferry-public-paperless-db-password-canary",
+  "webserver:PAPERLESS_DBUSER=paperless",
+  "webserver:USERMAP_GID=1000",
+  "webserver:PAPERLESS_OCR_LANGUAGE=eng",
+  "webserver:PAPERLESS_REDIS=redis://broker:6379",
+  "webserver:PAPERLESS_SECRET_KEY=boxferry-public-paperless-secret-key-canary",
+  "webserver:PAPERLESS_TIKA_ENABLED=1",
+  "webserver:PAPERLESS_TIKA_ENDPOINT=http://tika:9998",
+  "webserver:PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://gotenberg:3000",
+  "webserver:PAPERLESS_TASK_WORKERS=1",
+  "webserver:PAPERLESS_THREADS_PER_WORKER=1",
+  "webserver:PAPERLESS_TIME_ZONE=Europe/Berlin",
+  "webserver:USERMAP_UID=1000",
+  "webserver:PAPERLESS_WEBSERVER_WORKERS=1",
+]
+required-environment-order = []
+required-dependencies = [
+  { service = "webserver", dependency = "broker", condition = "unspecified", assert-options = false },
+  { service = "webserver", dependency = "db", condition = "unspecified", assert-options = false },
+  { service = "webserver", dependency = "gotenberg", condition = "unspecified", assert-options = false },
+  { service = "webserver", dependency = "tika", condition = "unspecified", assert-options = false },
+]
+required-healthchecks = []
+required-ports = ["webserver:18000:8000/tcp"]
+required-restart = []
+required-runtime-names = []
+unpublished-services = ["broker", "db", "gotenberg", "tika"]
+external-prerequisites = []
+expected-diagnostics = []
+required-networks = [
+  { name = "backend", ownership = "application", internal = true },
+]
+required-groups = []
+required-commands = [
+  { service = "broker", kind = "absent" },
+  { service = "db", kind = "absent" },
+  { service = "gotenberg", kind = "exec", values = ["gotenberg", "--chromium-disable-javascript=true", "--chromium-allow-list=file:///tmp/.*"] },
+  { service = "tika", kind = "absent" },
+  { service = "webserver", kind = "absent" },
+]
+required-entrypoints = [
+  { service = "broker", kind = "absent" },
+  { service = "db", kind = "absent" },
+  { service = "gotenberg", kind = "absent" },
+  { service = "tika", kind = "absent" },
+  { service = "webserver", kind = "absent" },
+]
+required-image-acquisitions = []
+required-image-builds = []
+required-image-sources = [
+  { service = "broker", kind = "literal", value = "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b" },
+  { service = "db", kind = "literal", value = "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2" },
+  { service = "gotenberg", kind = "literal", value = "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923" },
+  { service = "tika", kind = "literal", value = "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973" },
+  { service = "webserver", kind = "literal", value = "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a" },
+]
+required-port-bindings = [
+  { service = "webserver", container = 8000, published = 18000, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "broker", source = "redisdata", target = "/data", read-only = false },
+  { service = "db", source = "pgdata", target = "/var/lib/postgresql", read-only = false },
+  { service = "webserver", source = "consume", target = "/usr/src/paperless/consume", read-only = false },
+  { service = "webserver", source = "data", target = "/usr/src/paperless/data", read-only = false },
+  { service = "webserver", source = "export", target = "/usr/src/paperless/export", read-only = false },
+  { service = "webserver", source = "media", target = "/usr/src/paperless/media", read-only = false },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.compose-compose.diagnostics"
+allowed-losses-file = "expected.compose-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "dependency:webserver:gotenberg", "dependency:webserver:tika"]
+reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "dependency:webserver:gotenberg", "dependency:webserver:tika"]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "broker.container", "consume.volume", "data.volume", "db.container", "export.volume", "gotenberg.container", "media.volume", "pgdata.volume", "redisdata.volume", "tika.container", "webserver.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain protected environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.compose-podman.diagnostics"
+allowed-losses-file = "expected.compose-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:webserver:broker",
+  "dependency:webserver:db",
+  "dependency:webserver:gotenberg",
+  "dependency:webserver:tika",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:webserver:PAPERLESS_DBHOST",
+  "environment:webserver:PAPERLESS_DBNAME",
+  "environment:webserver:PAPERLESS_DBPASS",
+  "environment:webserver:PAPERLESS_DBUSER",
+  "environment:webserver:USERMAP_GID",
+  "environment:webserver:PAPERLESS_OCR_LANGUAGE",
+  "environment:webserver:PAPERLESS_REDIS",
+  "environment:webserver:PAPERLESS_SECRET_KEY",
+  "environment:webserver:PAPERLESS_TASK_WORKERS",
+  "environment:webserver:PAPERLESS_THREADS_PER_WORKER",
+  "environment:webserver:PAPERLESS_TIKA_ENABLED",
+  "environment:webserver:PAPERLESS_TIKA_ENDPOINT",
+  "environment:webserver:PAPERLESS_TIKA_GOTENBERG_ENDPOINT",
+  "environment:webserver:PAPERLESS_TIME_ZONE",
+  "environment:webserver:USERMAP_UID",
+  "environment:webserver:PAPERLESS_WEBSERVER_WORKERS",
+  "network-internal:backend",
+  "port:webserver:8000:Some(18000)",
+  "publication:webserver:18000:8000/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:broker", "container:db", "container:gotenberg", "container:tika", "container:webserver", "network:backend", "volume:consume", "volume:data", "volume:export", "volume:media", "volume:pgdata", "volume:redisdata"], external-preconditions = [], image-operations = [
+  { resource = "broker-image", reference = "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b", policy = "missing" },
+  { resource = "db-image", reference = "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2", policy = "missing" },
+  { resource = "gotenberg-image", reference = "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923", policy = "missing" },
+  { resource = "tika-image", reference = "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973", policy = "missing" },
+  { resource = "webserver-image", reference = "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a", policy = "missing" },
+], start-order = ["broker", "db", "gotenberg", "tika", "webserver"] }
+
+[[evidence]]
+input = "quadlet"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.quadlet-compose.diagnostics"
+allowed-losses-file = "expected.quadlet-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "dependency:webserver:gotenberg", "dependency:webserver:tika"]
+reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "dependency:webserver:gotenberg", "dependency:webserver:tika"]
+
+[[evidence]]
+input = "quadlet"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "broker.container", "consume.volume", "data.volume", "db.container", "export.volume", "gotenberg.container", "media.volume", "pgdata.volume", "redisdata.volume", "tika.container", "webserver.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "quadlet"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain dependency options, protected environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.quadlet-podman.diagnostics"
+allowed-losses-file = "expected.quadlet-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:webserver:broker",
+  "dependency:webserver:db",
+  "dependency:webserver:gotenberg",
+  "dependency:webserver:tika",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:webserver:PAPERLESS_DBHOST",
+  "environment:webserver:PAPERLESS_DBNAME",
+  "environment:webserver:PAPERLESS_DBPASS",
+  "environment:webserver:PAPERLESS_DBUSER",
+  "environment:webserver:USERMAP_GID",
+  "environment:webserver:PAPERLESS_OCR_LANGUAGE",
+  "environment:webserver:PAPERLESS_REDIS",
+  "environment:webserver:PAPERLESS_SECRET_KEY",
+  "environment:webserver:PAPERLESS_TASK_WORKERS",
+  "environment:webserver:PAPERLESS_THREADS_PER_WORKER",
+  "environment:webserver:PAPERLESS_TIKA_ENABLED",
+  "environment:webserver:PAPERLESS_TIKA_ENDPOINT",
+  "environment:webserver:PAPERLESS_TIKA_GOTENBERG_ENDPOINT",
+  "environment:webserver:PAPERLESS_TIME_ZONE",
+  "environment:webserver:USERMAP_UID",
+  "environment:webserver:PAPERLESS_WEBSERVER_WORKERS",
+  "network-internal:backend",
+  "port:webserver:8000:Some(18000)",
+  "publication:webserver:18000:8000/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:broker", "container:db", "container:gotenberg", "container:tika", "container:webserver", "network:backend", "volume:consume", "volume:data", "volume:export", "volume:media", "volume:pgdata", "volume:redisdata"], external-preconditions = [], image-operations = [
+  { resource = "broker-image", reference = "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b", policy = "missing" },
+  { resource = "db-image", reference = "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2", policy = "missing" },
+  { resource = "gotenberg-image", reference = "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923", policy = "missing" },
+  { resource = "tika-image", reference = "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973", policy = "missing" },
+  { resource = "webserver-image", reference = "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a", policy = "missing" },
+], start-order = ["broker", "db", "gotenberg", "tika", "webserver"] }
+
+[[evidence]]
+input = "podman"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.podman-compose.diagnostics"
+allowed-losses-file = "expected.podman-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "dependency:webserver:gotenberg", "dependency:webserver:tika"]
+reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "dependency:webserver:gotenberg", "dependency:webserver:tika"]
+
+[[evidence]]
+input = "podman"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "broker.container", "consume.volume", "data.volume", "db.container", "export.volume", "gotenberg.container", "media.volume", "pgdata.volume", "redisdata.volume", "tika.container", "webserver.container"]
+diagnostics-file = "expected.podman-import.diagnostics"
+allowed-losses-file = "expected.podman-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+semantic-gaps = []
+reimport-semantic-gaps = []
+
+[[evidence]]
+input = "podman"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain reviewed environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.podman-podman.diagnostics"
+allowed-losses-file = "expected.podman-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:webserver:broker",
+  "dependency:webserver:db",
+  "dependency:webserver:gotenberg",
+  "dependency:webserver:tika",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:webserver:PAPERLESS_DBHOST",
+  "environment:webserver:PAPERLESS_DBNAME",
+  "environment:webserver:PAPERLESS_DBPASS",
+  "environment:webserver:PAPERLESS_DBUSER",
+  "environment:webserver:USERMAP_GID",
+  "environment:webserver:PAPERLESS_OCR_LANGUAGE",
+  "environment:webserver:PAPERLESS_REDIS",
+  "environment:webserver:PAPERLESS_SECRET_KEY",
+  "environment:webserver:PAPERLESS_TASK_WORKERS",
+  "environment:webserver:PAPERLESS_THREADS_PER_WORKER",
+  "environment:webserver:PAPERLESS_TIKA_ENABLED",
+  "environment:webserver:PAPERLESS_TIKA_ENDPOINT",
+  "environment:webserver:PAPERLESS_TIKA_GOTENBERG_ENDPOINT",
+  "environment:webserver:PAPERLESS_TIME_ZONE",
+  "environment:webserver:USERMAP_UID",
+  "environment:webserver:PAPERLESS_WEBSERVER_WORKERS",
+  "network-internal:backend",
+  "port:webserver:8000:Some(18000)",
+  "publication:webserver:18000:8000/tcp",
+]
+reimport-semantic-gaps = []
+podman-plan = { creatable-resources = ["container:broker", "container:db", "container:gotenberg", "container:tika", "container:webserver", "network:backend", "volume:consume", "volume:data", "volume:export", "volume:media", "volume:pgdata", "volume:redisdata"], external-preconditions = [], image-operations = [
+  { resource = "broker-image", reference = "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b", policy = "missing" },
+  { resource = "db-image", reference = "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2", policy = "missing" },
+  { resource = "gotenberg-image", reference = "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923", policy = "missing" },
+  { resource = "tika-image", reference = "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973", policy = "missing" },
+  { resource = "webserver-image", reference = "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a", policy = "missing" },
+], start-order = ["broker", "db", "gotenberg", "tika", "webserver"] }

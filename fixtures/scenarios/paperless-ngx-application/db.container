@@ -1,0 +1,8 @@
+[Container]
+Image=docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+Environment=POSTGRES_DB=paperless
+Environment=POSTGRES_USER=paperless
+Environment=POSTGRES_PASSWORD=boxferry-public-paperless-db-password-canary
+Volume=pgdata.volume:/var/lib/postgresql
+Network=backend.network
+ContainerName=db

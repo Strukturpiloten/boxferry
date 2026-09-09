@@ -17,6 +17,8 @@ source "${script_directory}/lib/scenario-validators.sh"
 source "${script_directory}/lib/nextcloud-application.sh"
 # shellcheck source=scripts/lib/forgejo-application.sh
 source "${script_directory}/lib/forgejo-application.sh"
+# shellcheck source=scripts/lib/paperless-application.sh
+source "${script_directory}/lib/paperless-application.sh"
 
 profile=""
 matrix_cell=""
@@ -32,7 +34,7 @@ workload_local_tag="localhost/boxferry-live/alpine:634a8f35b5f16dcf4aaa0822adc0b
 
 usage() {
   cat << 'EOF'
-Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application|forgejo-application> [OPTIONS]
+Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application|forgejo-application|paperless-application> [OPTIONS]
 
 Options:
   --engine <PATH>       Outer Podman executable (default: podman).
@@ -87,9 +89,9 @@ while (($# > 0)); do
 done
 
 case "${profile}" in
-  smoke | full-container | application | forgejo-application) ;;
+  smoke | full-container | application | forgejo-application | paperless-application) ;;
   *)
-    printf '%s\n' '--profile must be smoke, full-container, application, or forgejo-application.' >&2
+    printf '%s\n' '--profile must be smoke, full-container, application, forgejo-application, or paperless-application.' >&2
     usage >&2
     exit 2
     ;;
@@ -478,6 +480,10 @@ selected() {
     application) [[ "${id}" == podman-6.1-rootless && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] ;;
     forgejo-application)
       [[ ("${id}" == podman-arch-rootful || "${id}" == podman-6.1-rootless) &&
+        (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
+      ;;
+    paperless-application)
+      [[ "${id}" == podman-6.1-rootless &&
         (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
       ;;
   esac
@@ -1449,6 +1455,10 @@ run_cell() {
   fi
   if [[ "${profile}" == forgejo-application ]]; then
     run_forgejo_application_cell "$@"
+    return
+  fi
+  if [[ "${profile}" == paperless-application ]]; then
+    run_paperless_application_cell "$@"
     return
   fi
 

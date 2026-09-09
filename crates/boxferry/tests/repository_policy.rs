@@ -73,6 +73,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         "scenario-validators.sh",
         "nextcloud-application.sh",
         "forgejo-application.sh",
+        "paperless-application.sh",
     ] {
         let source = format!("source \"${{script_directory}}/lib/{module}\"");
         if !runner.contains(&source) {
@@ -112,6 +113,34 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
             &fs::read_to_string(root.join("fixtures/conformance/forgejo-application").join(fixture))
                 .map_err(|error| format!("failed to read Forgejo application fixture: {error}"))?,
         );
+    }
+    for fixture in [
+        "compose.yaml",
+        "document-probe.py",
+        "images.tsv",
+        "providers.tsv",
+        "README.md",
+    ] {
+        runner_contract.push_str(
+            &fs::read_to_string(
+                root.join("fixtures/conformance/paperless-ngx-application")
+                    .join(fixture),
+            )
+            .map_err(|error| format!("failed to read Paperless application fixture: {error}"))?,
+        );
+    }
+    let capture_tool = root.join("fixtures/conformance/podman-live/capture_proxy.py");
+    runner_contract.push_str(
+        &fs::read_to_string(&capture_tool)
+            .map_err(|error| format!("failed to read Paperless capture proxy: {error}"))?,
+    );
+    let capture_self_test = Command::new("python3")
+        .arg(&capture_tool)
+        .arg("--self-test")
+        .status()
+        .map_err(|error| format!("failed to run Paperless capture self-test: {error}"))?;
+    if !capture_self_test.success() {
+        return Err("Paperless capture proxy self-test failed".to_owned());
     }
     validate_live_runner(&runner_contract)?;
     validate_live_workflow(&hosted)
@@ -200,9 +229,9 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.split('\t').collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    if scenario_rows.len() != 29 {
+    if scenario_rows.len() != 30 {
         return Err(format!(
-            "live Podman scenario catalogue must contain twenty-nine cases, found {}",
+            "live Podman scenario catalogue must contain thirty cases, found {}",
             scenario_rows.len()
         ));
     }
@@ -246,6 +275,7 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         "external-apply-reacquire",
         "nextcloud-application-runtime",
         "forgejo-application-runtime",
+        "paperless-application-runtime",
     ] {
         if !scenario_ids.contains(required) {
             return Err(format!("live Podman scenario catalogue is missing {required}"));
@@ -255,7 +285,24 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_paperless_live_runner(runner: &str) -> Result<(), String> {
+    for required in [
+        "paperless-ngx/paperless-ngx:3.1.3@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+        "valkey/valkey:9.1.2-alpine@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
+        "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+        "gotenberg/gotenberg:8.34.0@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
+        "apache/tika:3.3.1.0@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
+        "transient-test-pull",
+    ] {
+        if !runner.contains(required) {
+            return Err(format!("Paperless live runner is missing `{required}`"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_live_runner(runner: &str) -> Result<(), String> {
+    validate_paperless_live_runner(runner)?;
     for required in [
         "--podman-resource-prefix",
         "--podman-label",
@@ -314,7 +361,6 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
         "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
         "downloaded-test-tool",
-        "transient-test-pull",
         ".versionstring == \"32.0.10\"",
     ] {
         if !runner.contains(required) {
@@ -332,6 +378,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
     }
     validate_live_application_cell(runner)?;
     validate_live_forgejo_application_cells(runner)?;
+    validate_live_paperless_application_cell(runner)?;
     for apply_target_contract in [
         "'$1 == \"podman-6.1-rootful\" { print; exit }'",
         "\"${id}\" == podman-6.1-rootful",
@@ -377,7 +424,7 @@ fn validate_live_application_cell(runner: &str) -> Result<(), String> {
 
 fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
     for contract in [
-        "--profile <smoke|full-container|application|forgejo-application>",
+        "--profile <smoke|full-container|application|forgejo-application|paperless-application>",
         "run_forgejo_application_cell()",
         "forgejo_assert_clean_prefix",
         "forgejo_git_probe",
@@ -397,6 +444,403 @@ fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
         if !runner.contains(contract) {
             return Err(format!(
                 "live Podman runner must pin both Forgejo application cells: `{contract}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn paperless_probe_cleanup_uses_one_exact_network_isolated_container() -> Result<(), String> {
+    let root = repository_root();
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            r#"
+set -euo pipefail
+source "$1"
+paperless_remote() {
+  printf '%s\0' "$@"
+}
+paperless_clear_probe_state fixture.sock safe-prefix
+"#,
+            "paperless-cleanup-contract",
+        ])
+        .arg(root.join("scripts/lib/paperless-application.sh"))
+        .current_dir(&root)
+        .output()
+        .map_err(|error| format!("failed to exercise Paperless cleanup helper: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Paperless cleanup helper failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let mut expected = [
+        "fixture.sock",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "none",
+        "--user",
+        "0:0",
+        "--volume",
+        "/tmp/boxferry-fixture/safe-prefix:/fixture:rw",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.invalid/boxferry-test/paperless-application:paperless",
+        "-ceu",
+        "rm -rf -- /fixture/probe-state.json /fixture/generated-baseline /fixture/generated-second",
+    ]
+    .join("\0")
+    .into_bytes();
+    expected.push(0);
+    if output.stdout != expected {
+        return Err("Paperless cleanup must pass only the reviewed cleanup-container argv".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn paperless_compose_startup_and_recreation_are_staged_around_readiness() -> Result<(), String> {
+    let root = repository_root();
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            r#"
+set -euo pipefail
+source "$1"
+current_case="$(mktemp -d "${TMPDIR:-/tmp}/boxferry-paperless-compose-contract.XXXXXX")"
+trap 'rm -rf -- "${current_case}"' EXIT
+exec 3>&1
+paperless_assert_clean_prefix() {
+  printf 'clean\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_compose_project() {
+  printf 'compose\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_wait_for() {
+  printf 'wait\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_wait_application() {
+  printf 'ready\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_provision_compose fixture.sock safe-prefix run-id
+paperless_recreate_application compose fixture.sock safe-prefix run-id
+"#,
+            "paperless-compose-startup-contract",
+        ])
+        .arg(root.join("scripts/lib/paperless-application.sh"))
+        .current_dir(&root)
+        .output()
+        .map_err(|error| format!("failed to exercise Paperless Compose startup: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Paperless Compose startup helper failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let expected = concat!(
+        "clean\0fixture.sock\0safe-prefix\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0",
+        "--remove-orphans\0db\0broker\0gotenberg\0tika\0",
+        "wait\0240\0Docker Compose PostgreSQL readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-db\0pg_isready\0-U\0paperless\0-d\0paperless\0",
+        "wait\0240\0Docker Compose Valkey readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-broker\0valkey-cli\0--no-auth-warning\0-a\0",
+        "boxferry-public-broker-canary\0ping\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0webserver\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0stop\0--timeout\030\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0rm\0--force\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0",
+        "--remove-orphans\0db\0broker\0gotenberg\0tika\0",
+        "wait\0240\0Docker Compose PostgreSQL readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-db\0pg_isready\0-U\0paperless\0-d\0paperless\0",
+        "wait\0240\0Docker Compose Valkey readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-broker\0valkey-cli\0--no-auth-warning\0-a\0",
+        "boxferry-public-broker-canary\0ping\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0webserver\0",
+        "ready\0fixture.sock\0safe-prefix\0",
+    )
+    .as_bytes();
+    if output.stdout != expected {
+        return Err("Paperless Compose startup did not preserve reviewed call order/argv".to_owned());
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    let output = Command::new("shasum").args(["-a", "256"]).arg(path).output();
+    #[cfg(not(target_os = "macos"))]
+    let output = Command::new("sha256sum").arg(path).output();
+    let output = output.map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!("failed to hash {}", path.display()));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|error| format!("digest for {} was not UTF-8: {error}", path.display()))?
+        .split_whitespace()
+        .next()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("digest command returned no digest for {}", path.display()))
+}
+
+fn verify_paperless_capture_privacy(root: &Path, capture_path: &Path) -> Result<(), String> {
+    let verifier = Command::new("python3")
+        .arg(root.join("fixtures/conformance/podman-live/capture_proxy.py"))
+        .arg("--repository")
+        .arg(root)
+        .arg("--verify-cassette")
+        .arg(capture_path)
+        .output()
+        .map_err(|error| format!("failed to run captured Paperless privacy verifier: {error}"))?;
+    if verifier.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "captured Paperless privacy verification failed: {}",
+        String::from_utf8_lossy(&verifier.stderr).trim()
+    ))
+}
+
+fn inspect_redacted_paperless_capture(value: &serde_json::Value, environment_count: &mut usize) -> Result<(), String> {
+    match value {
+        serde_json::Value::Object(values) => {
+            for (key, value) in values {
+                if matches!(
+                    key.to_ascii_lowercase().as_str(),
+                    "authorization" | "cookie" | "set-cookie" | "secretdata"
+                ) {
+                    return Err(format!("captured Paperless evidence contains forbidden key {key}"));
+                }
+                inspect_redacted_paperless_capture(value, environment_count)?;
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                inspect_redacted_paperless_capture(value, environment_count)?;
+            }
+        }
+        serde_json::Value::String(text) => {
+            let lowered = text.to_ascii_lowercase();
+            for marker in [
+                "boxferry-public-admin-canary",
+                "boxferry-public-database-canary",
+                "boxferry-public-broker-canary",
+                "boxferry-public-paperless-secret-canary",
+                "bearer ",
+                "basic ",
+                "unix://",
+                "tcp://",
+                "ssh://",
+                "/home/",
+                "/root/",
+                "/run/user/",
+                "/tmp/",
+                "/var/lib/containers",
+                "/run/containers",
+                "/capture-input",
+                "/capture-socket",
+                "podman.sock",
+                "sentinel_private",
+            ] {
+                if lowered.contains(marker) {
+                    return Err(format!("captured Paperless evidence retained private marker {marker}"));
+                }
+            }
+            if matches!(lowered.as_str(), "authorization" | "cookie" | "set-cookie") {
+                return Err("captured Paperless evidence contains a forbidden header name".to_owned());
+            }
+            if let Some((name, environment_value)) = text.split_once('=') {
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                {
+                    *environment_count += 1;
+                    if environment_value != "redacted" {
+                        return Err(format!("captured Paperless environment value was not redacted: {name}"));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+#[test]
+fn paperless_captured_native_evidence_is_supplementary_and_redacted() -> Result<(), String> {
+    let root = repository_root();
+    let scenario_path = root.join("fixtures/scenarios/paperless-ngx-application/scenario.toml");
+    let scenario_text = fs::read_to_string(&scenario_path)
+        .map_err(|error| format!("failed to read {}: {error}", scenario_path.display()))?;
+    let scenario = toml::from_str::<toml::Value>(&scenario_text)
+        .map_err(|error| format!("invalid Paperless scenario manifest: {error}"))?;
+    let podman_input = scenario
+        .get("native-inputs")
+        .and_then(toml::Value::as_array)
+        .and_then(|inputs| {
+            inputs
+                .iter()
+                .find(|input| input.get("id").and_then(toml::Value::as_str) == Some("podman"))
+        })
+        .ok_or("Paperless scenario must retain one Podman semantic input")?;
+    let semantic_files = podman_input
+        .get("files")
+        .and_then(toml::Value::as_array)
+        .ok_or("Paperless Podman semantic input must list its authored cassette")?
+        .iter()
+        .map(|value| value.as_str().ok_or("Paperless Podman input file must be a string"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if semantic_files != ["input-podman.cassette.json"] {
+        return Err("captured redacted evidence must not replace the authored Paperless semantic cassette".to_owned());
+    }
+    if podman_input
+        .get("podman")
+        .and_then(|podman| podman.get("include-environment-values"))
+        .and_then(toml::Value::as_bool)
+        != Some(true)
+    {
+        return Err("authored Paperless input must retain semantic environment values".to_owned());
+    }
+
+    let capture_path =
+        root.join("fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json");
+    let capture_bytes =
+        fs::read(&capture_path).map_err(|error| format!("failed to read {}: {error}", capture_path.display()))?;
+    let observed_digest = sha256_file(&capture_path)?;
+    if observed_digest != "0c56e684908b673344e0beda4f7609da0fd6a351c314b97e339e13f90f595d14" {
+        return Err(format!("captured Paperless evidence digest drifted: {observed_digest}"));
+    }
+    verify_paperless_capture_privacy(&root, &capture_path)?;
+
+    let capture = serde_json::from_slice::<serde_json::Value>(&capture_bytes)
+        .map_err(|error| format!("invalid captured Paperless evidence: {error}"))?;
+    for (pointer, expected) in [
+        (
+            "/scenario_id",
+            "paperless-ngx-application-podman-6.1.0-rootless-captured",
+        ),
+        ("/engine_version", "6.1.0"),
+        ("/api_version", "6.1.0"),
+        ("/execution_context", "rootless"),
+        (
+            "/provenance/evidence_kind",
+            "privacy-review-required-one-off-native-capture",
+        ),
+        (
+            "/provenance/capture/runtime_revision",
+            "1aaafaab5fb60b55ac300e77531a958bb3a3f4b2",
+        ),
+        ("/provenance/capture/runtime_matrix_cell", "podman-6.1-rootless"),
+        (
+            "/provenance/capture/runtime_matrix_sha256",
+            "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25",
+        ),
+        (
+            "/provenance/capture/capture_manifest_sha256",
+            "10dbd1cfcf32e74a5cb0b62ffa52ae9dc8ecf05961b302a14345c84a752d0fad",
+        ),
+    ] {
+        if capture.pointer(pointer).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(format!("captured Paperless provenance drifted at {pointer}"));
+        }
+    }
+    if capture.get("synthetic").and_then(serde_json::Value::as_bool) != Some(false) {
+        return Err("captured Paperless evidence must remain explicitly non-synthetic".to_owned());
+    }
+    if capture
+        .get("interactions")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        != Some(27)
+    {
+        return Err("captured Paperless evidence must retain all 27 interactions".to_owned());
+    }
+
+    let mut environment_count = 0;
+    inspect_redacted_paperless_capture(&capture, &mut environment_count)?;
+    if environment_count != 143 {
+        return Err(format!(
+            "captured Paperless evidence must retain 143 redacted environment assignments, found {environment_count}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> {
+    const PORTABLE_AF_UNIX_PATH_BYTES: usize = 104;
+    const CAPTURE_RUNTIME_ROOT_TEMPLATE: &str = "/tmp/boxferry-podman-live.XXXXXX";
+    const CAPTURE_SOCKET_SUFFIX: &str = "/paperless-capture.sock";
+
+    let capture_socket_template = format!("{CAPTURE_RUNTIME_ROOT_TEMPLATE}{CAPTURE_SOCKET_SUFFIX}");
+    if capture_socket_template.len() >= PORTABLE_AF_UNIX_PATH_BYTES {
+        return Err(format!(
+            "Paperless capture proxy socket template is {} bytes; it must leave room for the AF_UNIX terminator within {PORTABLE_AF_UNIX_PATH_BYTES} bytes",
+            capture_socket_template.len()
+        ));
+    }
+    if runner.contains("${current_case}/paperless-capture-proxy.sock") {
+        return Err("Paperless capture proxy socket must not inherit the unbounded artifact path".to_owned());
+    }
+
+    for contract in [
+        "--profile <smoke|full-container|application|forgejo-application|paperless-application>",
+        "paperless-application)",
+        "run_paperless_application_cell()",
+        "run_paperless_application_cell \"$@\"",
+        "[[ \"${id}-${mode}\" == podman-6.1-rootless-rootless ]]",
+        "paperless_validate_resource_budget",
+        "PAPERLESS_MIN_MEMORY_KIB=\"6291456\"",
+        "PAPERLESS_MIN_DISK_KIB=\"12582912\"",
+        "PAPERLESS_ARCHIVE_MAX_BYTES=\"2684354560\"",
+        "paperless_expect_collision",
+        "--detach --no-deps --remove-orphans db broker gotenberg tika",
+        "Docker Compose PostgreSQL readiness",
+        "Docker Compose Valkey readiness",
+        "--detach --no-deps webserver",
+        "paperless_ingest_phase",
+        "paperless_assert_database",
+        "paperless_assert_storage_permissions",
+        "BF_PAPERLESS_URL=http://127.0.0.1:${PAPERLESS_HTTP_PORT}",
+        "run --rm --pull=never --network host",
+        "paperless_verify_documents",
+        "paperless_run_exports",
+        "BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY",
+        "paperless_capture_candidate",
+        "runtime_root=\"$(mktemp -d /tmp/boxferry-podman-live.XXXXXX)\"",
+        "local proxy_socket=\"${runtime_root}/paperless-capture.sock\"",
+        "rm -rf -- \"${runtime_root}\"",
+        "trap cleanup EXIT",
+        "capture sanitized Podman CLI Paperless evidence candidate",
+        "TemporaryDirectory(prefix=\"bfcap-\", dir=\"/tmp\")",
+        "listener.settimeout(2)",
+        "captured-native-sanitized-candidate",
+        "Raw requests and responses were never written",
+        "paperless_cleanup_mode",
+        "PAPERLESS_TASK_WORKERS: \"1\"",
+        "PAPERLESS_THREADS_PER_WORKER: \"1\"",
+        "PAPERLESS_WEBSERVER_WORKERS: \"1\"",
+        "PAPERLESS_TIKA_ENDPOINT: http://${BF_PREFIX}-paper-tika:9998",
+        "PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://${BF_PREFIX}-paper-gotenberg:3000",
+        "127.0.0.1:18000:8000",
+        "document generation is not deterministic",
+        "converter archive for document",
+        "--pull=never",
+        "does not execute any BoxFerry-generated artifact",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!(
+                "live Podman runner must retain Paperless application contract: `{contract}`"
             ));
         }
     }
@@ -436,6 +880,16 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
         "timeout-minutes: 30",
         "Run checked-in Forgejo application profile",
         "--profile forgejo-application --engine podman",
+        "paperless-application:",
+        "name: Paperless-ngx application / podman-6.1-rootless",
+        "Run checked-in Paperless-ngx application profile",
+        "--profile paperless-application",
+        "- paperless-capture",
+        "needs.matrix.outputs.profile != 'paperless-capture'",
+        "github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture'",
+        "BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture'",
+        "paperless-native-capture-candidate",
+        "path: ${{ runner.temp }}/paperless-capture",
         "github.event_name == 'pull_request' &&",
         "sha256sum --check --strict",
     ] {
@@ -446,7 +900,7 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     if hosted.contains("--profile forgejo-application --matrix-cell") {
         return Err("Forgejo application workflow must run both reviewed cells".to_owned());
     }
-    if hosted.matches("github.event_name == 'pull_request' &&").count() < 2 {
+    if hosted.matches("github.event_name == 'pull_request' &&").count() < 3 {
         return Err("each privileged application job must reject fork-authored code".to_owned());
     }
 
@@ -736,10 +1190,11 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
             "fixtures/**/expected-*-podman.json",
             "fixtures/differential/podman-lens-complex-corpus/*.cassette.json",
             "fixtures/scenarios/real-world-compose-*/input.compose.yaml",
+            "fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json",
         ]
     {
         return Err(
-            "Prettier exclusions must remain limited to reviewed generated or immutable third-party inputs".to_owned(),
+            "Prettier exclusions must remain limited to reviewed generated or immutable evidence inputs".to_owned(),
         );
     }
     let markdown_format = script
