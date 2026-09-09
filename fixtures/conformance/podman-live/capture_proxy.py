@@ -1542,6 +1542,7 @@ def self_test() -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--self-test", action="store_true")
+    result.add_argument("--verify-cassette", type=Path)
     result.add_argument("--repository", type=Path)
     result.add_argument("--output-directory", type=Path)
     result.add_argument("--upstream-socket", type=Path)
@@ -1556,6 +1557,16 @@ def main() -> int:
     try:
         if arguments.self_test:
             self_test()
+        elif arguments.verify_cassette is not None:
+            if arguments.repository is None:
+                raise CaptureError("cassette verification requires --repository")
+            cassette = json.loads(arguments.verify_cassette.read_bytes())
+            Sanitizer(
+                prefix="paperless-captured",
+                repository=arguments.repository,
+                upstream_socket=Path("/podman-socket"),
+                image_digests=set(),
+            ).verify(cassette)
         else:
             required = (
                 arguments.repository,

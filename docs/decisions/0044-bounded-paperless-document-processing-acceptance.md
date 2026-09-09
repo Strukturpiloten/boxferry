@@ -51,7 +51,36 @@ fixed BoxFerry validation command. Raw traffic is never written; only a sanitize
 manifest, and `SHA256SUMS` may be emitted. Pull-request CI leaves capture disabled; an explicit
 `paperless-capture` workflow dispatch may upload the sanitized candidate for one day. Candidates require
 independent privacy review before admission, and this test-only hook does not extend BoxFerry's production read-only
-acquisition authority. No Paperless captured-native cassette is admitted by this decision.
+acquisition authority. At initial acceptance, no Paperless captured-native cassette was admitted.
+
+### Captured-evidence amendment (2026-09-09)
+
+After independent privacy, provenance, checksum, and request-coverage review, the sanitized cassette
+from workflow-dispatch run
+[`34343718035`](https://github.com/Strukturpiloten/boxferry/actions/runs/34343718035) at revision
+`1aaafaab5fb60b55ac300e77531a958bb3a3f4b2` is admitted under
+`fixtures/conformance/paperless-ngx-application/` as supplementary, non-synthetic acquisition
+evidence. Its SHA-256 is
+`0c56e684908b673344e0beda4f7609da0fd6a351c314b97e339e13f90f595d14`; its embedded provenance
+retains the capture-manifest SHA-256
+`10dbd1cfcf32e74a5cb0b62ffa52ae9dc8ecf05961b302a14345c84a752d0fad`. The reviewed candidate
+`SHA256SUMS` SHA-256 was
+`61d0d23995b0b95c73bc4fd129228cb580370223137f637175054104f809dba5`; those two admission files
+remain outside the repository.
+
+The cassette binds Podman/API 6.1.0 rootless, Podman revision
+`cade97a52ebdf9dbf9e81de8009015776837a074`, the reviewed `podman-6.1-rootless` runtime image and
+matrix hash, all five reviewed application images, and exact hashes for the setup, runner, Compose,
+image inventory, matrix, and capture proxy sources. Review found all 27 requests to be bounded,
+bodyless `GET` operations and found no native identifiers, private host paths or addresses,
+noncanonical timestamps or request IDs, protected values, authorization/cookie headers, or
+unreviewed URLs. Production-acquisition replay must consume all 27 requests exactly once; independent
+resource inspections may arrive in a different order when the acquisition future schedules them concurrently.
+
+All 143 captured environment assignments are intentionally redacted. Therefore the admitted
+cassette cannot establish semantic environment intent and must never replace the repository-authored
+`fixtures/scenarios/paperless-ngx-application/input-podman.cassette.json`. The authored cassette
+remains the only Podman scenario input; executable repository policy enforces that separation.
 
 This evidence does not claim Quadlet generator execution, ComposeLens provider conformance, other
 Podman versions, rootful operation, non-amd64 architectures, arbitrary documents, production-secret

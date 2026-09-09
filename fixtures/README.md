@@ -77,15 +77,13 @@ live output.
 
 `conformance/paperless-ngx-application/` is a live fixture bounded to Podman 6.1 rootless. Five
 immutable images provide Paperless-ngx, PostgreSQL, Valkey, Gotenberg, and Tika; Docker Compose
-5.5.0 is a pinned tool. The standard-
-library probe generates deterministic PDF, DOCX, and ODT documents and proves asynchronous API
-ingestion, search, original retrieval, office-to-PDF conversion, database and broker activity,
-private networking, storage access, and persistence after recreation. Exact, label, and all-source
-exports are inspected but never executed. Public test canaries are allowed in native definitions and
-generated artifacts but forbidden from BoxFerry reports. The runner enforces CPU, memory, disk,
-archive-size, deadline, collision, prefix-cleanup, and same-repository trust boundaries.
-Capture is local-only, sanitized, outside-repository, CI-disabled, and privacy-reviewed; no cassette
-is admitted.
+5.5.0 is pinned. Generated PDF, DOCX, and ODT documents prove ingestion, search, retrieval,
+office-to-PDF conversion, database/cache use, private networking, storage, and persistence. Exports
+are inspected but never executed. Public canaries are forbidden from BoxFerry reports. The bounded
+runner enforces resources, collision refusal, cleanup, and same-repository trust.
+Capture is local-only, sanitized, CI-disabled, and privacy-reviewed. One reviewed Podman 6.1
+rootless cassette is supplementary acquisition replay evidence only; policy prevents its 143
+redacted environment assignments from replacing authored semantic input.
 
 ## Migration scenario contracts
 

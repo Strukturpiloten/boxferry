@@ -8,3 +8,6 @@ fixtures/**/expected-*-podman.json
 # Immutable third-party inputs retain their reviewed upstream hashes.
 fixtures/differential/podman-lens-complex-corpus/*.cassette.json
 fixtures/scenarios/real-world-compose-*/input.compose.yaml
+
+# Admitted captured-native evidence retains its independently reviewed digest.
+fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json
