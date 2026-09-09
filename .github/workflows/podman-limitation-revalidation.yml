@@ -140,6 +140,9 @@ jobs:
                 --candidate-cell "${CANDIDATE_CELL}" \
                 --engine podman
           status=$?
+          if [[ -e target/podman-revalidation ]]; then
+            sudo chown --recursive "$(id -u):$(id -g)" target/podman-revalidation
+          fi
           set -e
           printf 'status=%s\n' "${status}" >> "${GITHUB_OUTPUT}"
           test -f target/podman-revalidation/evidence-v1.json
