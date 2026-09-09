@@ -31,7 +31,8 @@ semantic operation equivalence instead.
 
 The opt-in live runner uses all 48 digest-pinned rootful/rootless images as container cells. Forty-three
 currently exercise complete live resources; five published UBI/openSUSE rootless images have an
-explicit helper-privilege limitation and must not be counted as resource coverage. The runner is
-manual or pull-request evidence and has no nightly schedule.
+explicit helper-privilege limitation and must not be counted as resource coverage. A default-branch
+manual workflow revalidates their pending immutable replacements serially and uploads only bounded,
+privacy-checked JSON evidence. It has no nightly schedule and does not expand platform support.
 
 Coverage is a regression ratchet, not evidence that semantics are correct.

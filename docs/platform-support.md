@@ -8,3 +8,8 @@
 
 Component crates may compile elsewhere.
 Such compilation is incidental unless that platform appears in the supported CI matrix.
+
+Podman limitation revalidation runs nested distribution userspace on an Ubuntu GitHub-hosted amd64
+runner. It establishes exact Podman/API/package behavior for the candidate image, not an independent
+kernel or cgroup-delegation environment. Evidence records those as shared-host boundaries;
+SELinux-enforcing behavior and systemd/Quadlet generator execution are explicitly unperformed.

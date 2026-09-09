@@ -9,6 +9,10 @@ test_root="$(mktemp -d)"
 trap 'rm -r -- "${test_root}"' EXIT
 mkdir -p "${test_root}/repository/scripts" "${test_root}/repository/site" "${test_root}/bin"
 cp -- "${script_directory}/check-all.sh" "${test_root}/repository/scripts/check-all.sh"
+cp -- "${script_directory}/podman-live-conformance.sh" \
+  "${test_root}/repository/scripts/podman-live-conformance.sh"
+cp -- "${script_directory}/test-podman-live-cleanup.sh" \
+  "${test_root}/repository/scripts/test-podman-live-cleanup.sh"
 cp -- "${script_directory}/../README.md" "${test_root}/repository/README.md"
 
 # These mock commands record exactly what the unmodified gate requests.

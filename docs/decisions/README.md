@@ -41,6 +41,7 @@ active table; superseded records are history and are read only when that history
 | [0044](0044-bounded-paperless-document-processing-acceptance.md)      | Bounded Paperless document-processing live acceptance                        |
 
 | [0045](0045-bounded-immich-media-processing-acceptance.md) | Bounded Immich CPU-only media-processing live acceptance |
+| [0046](0046-bounded-podman-limitation-revalidation.md) | Same-run immutable Podman limitation revalidation and separate admission |
 
 ## Superseded history
 

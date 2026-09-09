@@ -1,0 +1,178 @@
+---
+name: Podman limitation revalidation
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Immutable candidate cell to revalidate serially.
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - podman-opensuse-leap-16.0-rootless
+          - podman-opensuse-tumbleweed-rootless
+          - podman-ubi-10-rootless
+          - podman-ubi-8-rootless
+          - podman-ubi-9-rootless
+
+permissions:
+  contents: read
+
+concurrency:
+  group: podman-limitation-revalidation
+  cancel-in-progress: false
+
+jobs:
+  candidates:
+    name: Select immutable candidates
+    runs-on: ubuntu-24.04
+    outputs:
+      cells: ${{ steps.select.outputs.cells }}
+    steps:
+      - name: Refuse non-default-branch dispatch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${GITHUB_REPOSITORY}" == "Strukturpiloten/boxferry" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/${DEFAULT_BRANCH}" ]]
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Select catalogue-bound candidates
+        id: select
+        env:
+          REQUESTED_CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          set -Eeuo pipefail
+          mapfile -t catalogue < <(
+            python3 scripts/lib/podman-revalidation.py list-candidates \
+              --catalogue fixtures/conformance/podman-live/candidates.toml \
+              --matrix fixtures/conformance/podman-live/matrix.tsv \
+              --limitations fixtures/conformance/podman-live/limitations.tsv
+          )
+          if [[ "${REQUESTED_CANDIDATE}" == all ]]; then
+            selected=("${catalogue[@]}")
+          else
+            selected=()
+            for candidate in "${catalogue[@]}"; do
+              if [[ "${candidate}" == "${REQUESTED_CANDIDATE}" ]]; then
+                selected+=("${candidate}")
+              fi
+            done
+          fi
+          [[ "${#selected[@]}" -gt 0 ]]
+          cells="$(printf '%s\n' "${selected[@]}" | jq --raw-input --slurp --compact-output 'split("\n")[:-1]')"
+          printf 'cells=%s\n' "${cells}" >> "${GITHUB_OUTPUT}"
+
+  build-boxferry:
+    name: Build BoxFerry once
+    needs: candidates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Build BoxFerry
+        run: cargo build --locked --package boxferry --bin boxferry --features podman
+
+      - name: Upload BoxFerry binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: boxferry-revalidation-binary
+          path: target/debug/boxferry
+          if-no-files-found: error
+          retention-days: 1
+
+  revalidate:
+    name: Revalidate / ${{ matrix.candidate }}
+    needs: [candidates, build-boxferry]
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        candidate: ${{ fromJSON(needs.candidates.outputs.cells) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 140
+    steps:
+      - name: Check out exact default-branch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Install outer Podman requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcap2-bin podman
+
+      - name: Download BoxFerry binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: boxferry-revalidation-binary
+          path: target/debug
+
+      - name: Run baseline and candidate on one runner
+        id: execute
+        env:
+          BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
+          CANDIDATE_CELL: ${{ matrix.candidate }}
+        run: |
+          set -Eeuo pipefail
+          chmod +x "${BOXFERRY_BIN}"
+          sudo git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          set +e
+          timeout --signal=TERM --kill-after=30s 120m \
+            sudo env GITHUB_ACTIONS=true BOXFERRY_BIN="${BOXFERRY_BIN}" \
+              bash scripts/podman-live-conformance.sh \
+                --profile limitation-revalidation \
+                --candidate-cell "${CANDIDATE_CELL}" \
+                --engine podman
+          status=$?
+          set -e
+          printf 'status=%s\n' "${status}" >> "${GITHUB_OUTPUT}"
+          test -f target/podman-revalidation/evidence-v1.json
+
+      - name: Validate bounded evidence against this run
+        if: ${{ always() }}
+        env:
+          CANDIDATE_CELL: ${{ matrix.candidate }}
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/lib/podman-revalidation.py validate-evidence \
+            --evidence target/podman-revalidation/evidence-v1.json \
+            --catalogue fixtures/conformance/podman-live/candidates.toml \
+            --matrix fixtures/conformance/podman-live/matrix.tsv \
+            --limitations fixtures/conformance/podman-live/limitations.tsv \
+            --schema docs/schemas/podman-limitation-revalidation-v1.schema.json \
+            --candidate-cell "${CANDIDATE_CELL}" \
+            --expected-repository-commit "${GITHUB_SHA}"
+
+      - name: Upload bounded revalidation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: podman-revalidation-${{ matrix.candidate }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/podman-revalidation/evidence-v1.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Restore revalidation status
+        if: ${{ always() }}
+        env:
+          REVALIDATION_STATUS: ${{ steps.execute.outputs.status }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${REVALIDATION_STATUS}" =~ ^[0-9]+$ ]]
+          exit "${REVALIDATION_STATUS}"
