@@ -762,6 +762,13 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         "revalidation_failure_code=interrupted",
         "record-observation",
         "mark-result",
+        "local cleanup_role=${6:-}",
+        "replacement) revalidation_candidate_outer=\"${outer}\" ;;",
+        "apply-target) revalidation_apply_target_outer=\"${outer}\" ;;",
+        "cleanup_role=replacement",
+        "cleanup_role=apply-target",
+        "\"${workload_archive}\" \"${cleanup_role}\"",
+        "record_revalidation_candidate_runtime_observations",
         "ensure-failure-evidence",
         "finalize-evidence",
         "assert_revalidation_required_checks",
@@ -815,6 +822,25 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
             "if [[ \"${resolved_digest}\" != \"${expected_digest}\" ]]; then",
             "revalidation_failure_code=\"digest-mismatch\"",
             "Resolved matrix image digest mismatch for %s",
+        ],
+    )?;
+    let outer_start = runner
+        .find("start_outer_runtime() {")
+        .ok_or("Podman live runner is missing outer runtime entry point")?;
+    let outer_end = runner[outer_start..]
+        .find("\nstart_outer() {")
+        .ok_or("Podman live runner is missing outer runtime boundary")?
+        + outer_start;
+    require_ordered_contracts(
+        &runner[outer_start..outer_end],
+        "Podman limitation-revalidation cleanup-role registration",
+        &[
+            "\"${engine}\" run --detach --rm",
+            "replacement) revalidation_candidate_outer=\"${outer}\" ;;",
+            "apply-target) revalidation_apply_target_outer=\"${outer}\" ;;",
+            "wait for nested runtime evidence",
+            "record_revalidation_candidate_runtime_observations \"${id}\" \"${outer}\"",
+            "Matrix rootless cell did not report rootless Podman",
         ],
     )?;
 
@@ -927,9 +953,7 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
             "prepare_matrix_image \"${candidate_cell}\" \"${candidate_replacement_image}\" true",
             "verify_revalidation_candidate_provenance",
             "run_cell \"${candidate_cell}\" \"${candidate_replacement_image}\"",
-            "mark_revalidation_result cleanup.replacement_removed",
             "assert_revalidation_required_checks",
-            "mark_revalidation_result cleanup.apply_target_removed",
             "revalidation_ready_to_finalize=true",
         ],
     )?;
@@ -940,6 +964,10 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         &runner[cleanup..],
         "Podman limitation-revalidation EXIT cleanup",
         &[
+            "container exists \"${outer}\"",
+            "mark_revalidation_result cleanup.baseline_removed",
+            "mark_revalidation_result cleanup.replacement_removed",
+            "mark_revalidation_result cleanup.apply_target_removed",
             "\"${revalidation_helper}\" finalize-evidence",
             "\"${revalidation_helper}\" validate-evidence",
             "revalidation_complete=true",
@@ -1977,6 +2005,18 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
         ("missing re-import", "reimports.quadlet"),
         ("missing apply result", "external_apply.reacquired"),
         ("missing cleanup result", "cleanup.apply_target_removed"),
+        (
+            "missing replacement cleanup registration",
+            "replacement) revalidation_candidate_outer=\"${outer}\" ;;",
+        ),
+        (
+            "missing apply-target cleanup registration",
+            "apply-target) revalidation_apply_target_outer=\"${outer}\" ;;",
+        ),
+        (
+            "missing failed root-mode observation",
+            "record_revalidation_candidate_runtime_observations",
+        ),
         ("missing failure evidence", "ensure-failure-evidence"),
         (
             "mismatched baseline digest representation",
