@@ -2355,6 +2355,7 @@ run_revalidation_baseline_collision() {
   local id=$1 image=$2
   local baseline_case="${artifact_root}/revalidation-baseline/${id}"
   local baseline_socket_namespace="${runtime_root}/revalidation-baseline/${id}"
+  local expected_digest="${image##*@}"
   local outer_digest outer status mounted_image_root uid_helper gid_helper
   local uid_capability gid_capability observed_version observed_distribution
   mkdir -p -- "${baseline_case}"
@@ -2364,7 +2365,7 @@ run_revalidation_baseline_collision() {
   revalidation_failure_code="pull-failed"
   prepare_matrix_image "${id}" "${image}"
   revalidation_failure_code="digest-mismatch"
-  [[ "$(< "${artifact_root}/${id}.digest")" == "${image##*@sha256:}" ]]
+  [[ "$(< "${artifact_root}/${id}.digest")" == "${expected_digest}" ]]
   record_revalidation_observation baseline.observed_digest "${image##*@sha256:}"
 
   revalidation_phase="baseline-collision"

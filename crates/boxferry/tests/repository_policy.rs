@@ -751,6 +751,25 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         }
     }
 
+    let baseline_start = runner
+        .find("run_revalidation_baseline_collision() {")
+        .ok_or("Podman limitation-revalidation runner is missing its baseline entry point")?;
+    let baseline_end = runner[baseline_start..]
+        .find("\nconfigure_revalidation_required_checks() {")
+        .ok_or("Podman limitation-revalidation runner is missing its baseline boundary")?
+        + baseline_start;
+    let baseline = &runner[baseline_start..baseline_end];
+    for required in [
+        "local expected_digest=\"${image##*@}\"",
+        "[[ \"$(< \"${artifact_root}/${id}.digest\")\" == \"${expected_digest}\" ]]",
+    ] {
+        if !baseline.contains(required) {
+            return Err(format!(
+                "Podman limitation-revalidation baseline is missing `{required}`"
+            ));
+        }
+    }
+
     for result in [
         "baseline.historical_collision.podman_info_failed",
         "baseline.historical_collision.newuidmap_reported",
@@ -1861,6 +1880,10 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
         ("missing cleanup result", "cleanup.apply_target_removed"),
         ("missing failure evidence", "ensure-failure-evidence"),
         (
+            "mismatched baseline digest representation",
+            "[[ \"$(< \"${artifact_root}/${id}.digest\")\" == \"${expected_digest}\" ]]",
+        ),
+        (
             "weakened full-resource admission",
             " || \"${profile}\" == limitation-revalidation",
         ),
@@ -1871,6 +1894,15 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
             return Err(format!("Podman revalidation runner policy accepted {description}"));
         }
     }
+    let changed = replace_first(
+        &runner,
+        "local baseline_socket_namespace=\"${runtime_root}/revalidation-baseline/${id}\"\n  local expected_digest=\"${image##*@}\"",
+        "local baseline_socket_namespace=\"${runtime_root}/revalidation-baseline/${id}\"\n  local expected_digest=\"${image##*@sha256:}\"",
+    )?;
+    if validate_limitation_revalidation_runner(&changed).is_ok() {
+        return Err("Podman revalidation runner policy accepted a prefix-stripped baseline digest".to_owned());
+    }
+
     let changed = remove_first(&runner, "\"${revalidation_helper}\" validate-evidence")?;
     if validate_limitation_revalidation_runner(&changed).is_ok() {
         return Err("Podman revalidation runner policy accepted missing final validation".to_owned());
