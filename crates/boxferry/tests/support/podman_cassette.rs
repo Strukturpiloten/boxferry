@@ -1,8 +1,4 @@
-//! Bounded Unix HTTP replay for the checked-in Podman cassette corpus.
-//!
-//! Authored fixtures use exact order by default. Captured production acquisition
-//! may schedule independent resource inspections concurrently, so those fixtures
-//! can opt into method/path matching while retaining complete consumption.
+//! Exact-order Unix HTTP replay for the checked-in Podman cassette corpus.
 
 use std::{
     error::Error,
@@ -124,15 +120,6 @@ pub(crate) struct PodmanCassetteServer {
 
 impl PodmanCassetteServer {
     pub(crate) fn start(cassette: PodmanCassette) -> Result<Self, Box<dyn Error>> {
-        Self::start_with_order(cassette, true)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn start_unordered(cassette: PodmanCassette) -> Result<Self, Box<dyn Error>> {
-        Self::start_with_order(cassette, false)
-    }
-
-    fn start_with_order(cassette: PodmanCassette, exact_order: bool) -> Result<Self, Box<dyn Error>> {
         let id = SOCKET_ID.fetch_add(1, Ordering::Relaxed);
         let socket = std::env::temp_dir().join(format!("bfc-{}-{id}.sock", std::process::id()));
         if socket.exists() {
@@ -143,13 +130,7 @@ impl PodmanCassetteServer {
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
         let scenario = cassette.scenario_id.clone();
-        let thread = thread::spawn(move || {
-            if exact_order {
-                replay(&listener, &scenario, cassette.interactions, &thread_shutdown)
-            } else {
-                replay_unordered(&listener, &scenario, cassette.interactions, &thread_shutdown)
-            }
-        });
+        let thread = thread::spawn(move || replay(&listener, &scenario, cassette.interactions, &thread_shutdown));
         Ok(Self {
             socket,
             shutdown,
@@ -172,45 +153,6 @@ impl PodmanCassetteServer {
         let _ = fs::remove_file(&self.socket);
         result.map_err(Into::into)
     }
-}
-
-fn replay_unordered(
-    listener: &UnixListener,
-    scenario: &str,
-    mut interactions: Vec<Interaction>,
-    shutdown: &AtomicBool,
-) -> Result<(), String> {
-    let total = interactions.len();
-    while !interactions.is_empty() {
-        let consumed = total - interactions.len();
-        let mut stream = accept(listener, shutdown).map_err(|error| {
-            format!("{scenario}: consumed {consumed}/{total} interactions before replay stopped: {error}")
-        })?;
-        let (method, path) = read_request(&mut stream).map_err(|error| {
-            format!(
-                "{scenario}: interaction {} request could not be read: {error}",
-                consumed + 1
-            )
-        })?;
-        let Some(index) = interactions
-            .iter()
-            .position(|interaction| interaction.request.method == method && interaction.request.path == path)
-        else {
-            let _ = write_error(&mut stream);
-            return Err(format!(
-                "{scenario}: interaction {} received unexpected {method} {path}",
-                consumed + 1
-            ));
-        };
-        let interaction = interactions.remove(index);
-        write_response(&mut stream, &interaction.response).map_err(|error| {
-            format!(
-                "{scenario}: interaction {} response could not be written: {error}",
-                consumed + 1
-            )
-        })?;
-    }
-    Ok(())
 }
 
 impl Drop for PodmanCassetteServer {

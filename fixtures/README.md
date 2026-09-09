@@ -75,15 +75,13 @@ no-firewall drop-in; Arch retains stock Netavark with `nft`. Generated SSH keys 
 Retained live logs and artifacts require human privacy review before sharing. Never commit raw
 live output.
 
-`conformance/paperless-ngx-application/` is a live fixture bounded to Podman 6.1 rootless. Five
-immutable images provide Paperless-ngx, PostgreSQL, Valkey, Gotenberg, and Tika; Docker Compose
-5.5.0 is pinned. Generated PDF, DOCX, and ODT documents prove ingestion, search, retrieval,
-office-to-PDF conversion, database/cache use, private networking, storage, and persistence. Exports
-are inspected but never executed. Public canaries are forbidden from BoxFerry reports. The bounded
-runner enforces resources, collision refusal, cleanup, and same-repository trust.
-Capture is local-only, sanitized, CI-disabled, and privacy-reviewed. One reviewed Podman 6.1
-rootless cassette is supplementary acquisition replay evidence only; policy prevents its 143
-redacted environment assignments from replacing authored semantic input.
+`conformance/paperless-ngx-application/` is bounded to Podman 6.1 rootless. Five immutable images
+provide Paperless-ngx, PostgreSQL, Valkey, Gotenberg, and Tika; Docker Compose 5.5.0 is pinned.
+Generated PDF, DOCX, and ODT documents prove ingestion, search, retrieval, office-to-PDF conversion,
+database/cache use, private networking, storage, and recreation persistence. Exports are inspected
+but never executed. Public canaries are forbidden from BoxFerry reports. The runner bounds resources,
+collision refusal, cleanup, and repository trust. Capture is local-only, sanitized, CI-disabled, and
+privacy-reviewed; no cassette is admitted.
 
 `conformance/immich-application/` proves bounded CPU-only Immich 3.1.0 media processing and
 persistence on Podman 6.1 rootless. Its manual sanitized capture is never automatically admitted.
