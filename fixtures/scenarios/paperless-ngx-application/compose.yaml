@@ -1,0 +1,64 @@
+---
+name: paperless-ngx-application
+
+services:
+  broker:
+    container_name: broker
+    image: docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b
+    volumes:
+      - redisdata:/data
+    networks:
+      - backend
+
+  db:
+    container_name: db
+    image: docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: paperless
+      POSTGRES_PASSWORD: "${PAPERLESS_DB_PASSWORD:?set PAPERLESS_DB_PASSWORD}"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks:
+      - backend
+
+  webserver:
+    image: ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a
+    depends_on:
+      - broker
+      - db
+    environment:
+      PAPERLESS_REDIS: redis://broker:6379
+      PAPERLESS_DBHOST: db
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: paperless
+      PAPERLESS_DBPASS: "${PAPERLESS_DB_PASSWORD:?set PAPERLESS_DB_PASSWORD}"
+      PAPERLESS_SECRET_KEY: "${PAPERLESS_SECRET_KEY:?set PAPERLESS_SECRET_KEY}"
+      USERMAP_UID: "${USERMAP_UID:?set USERMAP_UID}"
+      USERMAP_GID: "${USERMAP_GID:?set USERMAP_GID}"
+      PAPERLESS_TIME_ZONE: "${PAPERLESS_TIME_ZONE:?set PAPERLESS_TIME_ZONE}"
+      PAPERLESS_OCR_LANGUAGE: "${PAPERLESS_OCR_LANGUAGE:?set PAPERLESS_OCR_LANGUAGE}"
+      PAPERLESS_TASK_WORKERS: "${PAPERLESS_TASK_WORKERS:?set PAPERLESS_TASK_WORKERS}"
+      PAPERLESS_THREADS_PER_WORKER: "${PAPERLESS_THREADS_PER_WORKER:?set PAPERLESS_THREADS_PER_WORKER}"
+      PAPERLESS_WEBSERVER_WORKERS: "${PAPERLESS_WEBSERVER_WORKERS:?set PAPERLESS_WEBSERVER_WORKERS}"
+    ports:
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - data:/usr/src/paperless/data
+      - media:/usr/src/paperless/media
+      - consume:/usr/src/paperless/consume
+      - export:/usr/src/paperless/export
+    networks:
+      - backend
+
+networks:
+  backend:
+    internal: true
+
+volumes:
+  data:
+  media:
+  consume:
+  export:
+  pgdata:
+  redisdata:

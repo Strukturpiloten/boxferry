@@ -1,0 +1,751 @@
+{
+  "scenario_id": "paperless-ngx-document-converters-podman-6.1.0",
+  "engine_version": "6.1.0",
+  "execution_context": "rootless",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/libpod/_ping"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ]
+        ],
+        "body": null
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v4.0.0/libpod/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Components": [
+            {
+              "Name": "Podman Engine",
+              "Version": "6.1.0"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/json?all=true&sync=true"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": [
+          {
+            "Id": "c-broker",
+            "Names": [
+              "broker"
+            ]
+          },
+          {
+            "Id": "c-db",
+            "Names": [
+              "db"
+            ]
+          },
+          {
+            "Id": "c-gotenberg",
+            "Names": [
+              "gotenberg"
+            ]
+          },
+          {
+            "Id": "c-tika",
+            "Names": [
+              "tika"
+            ]
+          },
+          {
+            "Id": "c-webserver",
+            "Names": [
+              "webserver"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/pods/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/networks/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": [
+          {
+            "id": "n-backend",
+            "name": "backend"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Volumes": [
+            {
+              "Name": "consume"
+            },
+            {
+              "Name": "data"
+            },
+            {
+              "Name": "export"
+            },
+            {
+              "Name": "media"
+            },
+            {
+              "Name": "pgdata"
+            },
+            {
+              "Name": "redisdata"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/json?all=true"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": [
+          {
+            "Id": "sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
+            "Names": [
+              "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b"
+            ]
+          },
+          {
+            "Id": "sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+            "Names": [
+              "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
+            ]
+          },
+          {
+            "Id": "sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
+            "Names": [
+              "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923"
+            ]
+          },
+          {
+            "Id": "sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
+            "Names": [
+              "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973"
+            ]
+          },
+          {
+            "Id": "sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+            "Names": [
+              "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/secrets/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/c-broker/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "c-broker",
+          "Name": "broker",
+          "Image": "sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
+          "ImageName": "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": ""
+          },
+          "HostConfig": {},
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "n-backend"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "redisdata",
+              "Source": "/home/test/.local/share/containers/storage/volumes/redisdata/_data",
+              "Destination": "/data",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/c-db/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "c-db",
+          "Name": "db",
+          "Image": "sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+          "ImageName": "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "POSTGRES_DB=paperless",
+              "POSTGRES_USER=paperless",
+              "POSTGRES_PASSWORD=boxferry-public-paperless-db-password-canary"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "n-backend"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "pgdata",
+              "Source": "/home/test/.local/share/containers/storage/volumes/pgdata/_data",
+              "Destination": "/var/lib/postgresql",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/c-gotenberg/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "c-gotenberg",
+          "Name": "gotenberg",
+          "Image": "sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
+          "ImageName": "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Cmd": [
+              "gotenberg",
+              "--chromium-disable-javascript=true",
+              "--chromium-allow-list=file:///tmp/.*"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "n-backend"
+              }
+            }
+          },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/c-tika/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "c-tika",
+          "Name": "tika",
+          "Image": "sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
+          "ImageName": "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": ""
+          },
+          "HostConfig": {},
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "n-backend"
+              }
+            }
+          },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/c-webserver/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "c-webserver",
+          "Name": "webserver",
+          "Image": "sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+          "ImageName": "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+          "Pod": "",
+          "Dependencies": [
+            "c-broker",
+            "c-db",
+            "c-gotenberg",
+            "c-tika"
+          ],
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "PAPERLESS_REDIS=redis://broker:6379",
+              "PAPERLESS_DBHOST=db",
+              "PAPERLESS_DBNAME=paperless",
+              "PAPERLESS_DBUSER=paperless",
+              "PAPERLESS_DBPASS=boxferry-public-paperless-db-password-canary",
+              "PAPERLESS_SECRET_KEY=boxferry-public-paperless-secret-key-canary",
+              "USERMAP_UID=1000",
+              "USERMAP_GID=1000",
+              "PAPERLESS_TIME_ZONE=Europe/Berlin",
+              "PAPERLESS_OCR_LANGUAGE=eng",
+              "PAPERLESS_TASK_WORKERS=1",
+              "PAPERLESS_THREADS_PER_WORKER=1",
+              "PAPERLESS_WEBSERVER_WORKERS=1",
+              "PAPERLESS_TIKA_ENABLED=1",
+              "PAPERLESS_TIKA_GOTENBERG_ENDPOINT=http://gotenberg:3000",
+              "PAPERLESS_TIKA_ENDPOINT=http://tika:9998"
+            ]
+          },
+          "HostConfig": {
+            "PortBindings": {
+              "8000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18000"
+                }
+              ]
+            }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": {
+                "NetworkID": "n-backend"
+              }
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "data",
+              "Source": "/home/test/.local/share/containers/storage/volumes/data/_data",
+              "Destination": "/usr/src/paperless/data",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "media",
+              "Source": "/home/test/.local/share/containers/storage/volumes/media/_data",
+              "Destination": "/usr/src/paperless/media",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "consume",
+              "Source": "/home/test/.local/share/containers/storage/volumes/consume/_data",
+              "Destination": "/usr/src/paperless/consume",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "export",
+              "Source": "/home/test/.local/share/containers/storage/volumes/export/_data",
+              "Destination": "/usr/src/paperless/export",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/networks/n-backend/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "id": "n-backend",
+          "name": "backend",
+          "internal": true,
+          "subnets": [],
+          "containers": {
+            "c-broker": {
+              "name": "broker"
+            },
+            "c-db": {
+              "name": "db"
+            },
+            "c-webserver": {
+              "name": "webserver"
+            },
+            "c-gotenberg": {
+              "name": "gotenberg"
+            },
+            "c-tika": {
+              "name": "tika"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/consume/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Name": "consume",
+          "Driver": "local",
+          "Anonymous": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/data/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Name": "data",
+          "Driver": "local",
+          "Anonymous": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/export/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Name": "export",
+          "Driver": "local",
+          "Anonymous": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/media/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Name": "media",
+          "Driver": "local",
+          "Anonymous": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/pgdata/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Name": "pgdata",
+          "Driver": "local",
+          "Anonymous": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/redisdata/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Name": "redisdata",
+          "Driver": "local",
+          "Anonymous": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
+          "RepoDigests": [
+            "docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
+          "RepoDigests": [
+            "docker.io/apache/tika@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Aa0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
+          "RepoDigests": [
+            "docker.io/valkey/valkey@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Aaa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+          "RepoDigests": [
+            "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Ad3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": {
+          "Id": "sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+          "RepoDigests": [
+            "docker.io/library/postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
+          ]
+        }
+      }
+    }
+  ]
+}

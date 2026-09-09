@@ -207,7 +207,7 @@ fn scenario_catalogue_is_explicit_bounded_and_sidecar_ready() -> Result<(), Box<
     let root = repository_root();
     let catalogue: ScenarioCatalogue = toml::from_str(&fs::read_to_string(root.join(SCENARIO_CATALOGUE))?)?;
     let registered = validate_scenario_catalogue(&root, &catalogue)?;
-    assert_eq!(registered.len(), 28);
+    assert_eq!(registered.len(), 30);
     assert!(is_scenario_manifest_name(
         Path::new("fixtures/conversion/document-route-matrix/document-route-normal.scenario.toml"),
         "document-route-normal"
@@ -1953,6 +1953,180 @@ fn six_independent_mutations_fail_for_their_own_reason() -> Result<(), Box<dyn E
         .err()
         .ok_or("missing exporter must fail")?;
     Ok(())
+}
+
+#[test]
+fn paperless_required_environment_overrides_and_omissions_fail_closed() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let base_fixture = root.join("fixtures/scenarios/paperless-ngx-application");
+    let base_manifest = read_manifest(&base_fixture)?;
+    let base_source = fs::read_to_string(base_fixture.join("compose.yaml"))?;
+
+    let missing_environment = TemporaryDirectory::new("paperless-missing-environment")?;
+    fs::write(missing_environment.path().join("compose.yaml"), &base_source)?;
+    let input = compose_mutation_input(Vec::new(), Vec::new());
+    match import_compose_files(&input, missing_environment.path(), &base_manifest.application.name) {
+        Err(error) => assert!(
+            error.to_string().contains("required") || error.to_string().contains("interpol"),
+            "unexpected missing-environment importer failure: {error}"
+        ),
+        Ok(missing) => {
+            let error = validate_neutral_application(
+                &base_manifest,
+                missing.application().ok_or("Paperless missing-environment import")?,
+                &base_manifest.semantics.required_environment_order,
+                &[],
+            )
+            .err()
+            .ok_or("required Paperless interpolation values must fail closed")?;
+            assert!(
+                error.contains("required environment"),
+                "unexpected missing-environment failure: {error}"
+            );
+        }
+    }
+
+    let override_fixture = TemporaryDirectory::new("paperless-environment-override")?;
+    fs::write(override_fixture.path().join("compose.yaml"), &base_source)?;
+    let mut defaults = parse_scenario_environment_file(&base_fixture.join("paperless.env.example"))?;
+    let task_workers = defaults
+        .iter_mut()
+        .find(|assignment| assignment.starts_with("PAPERLESS_TASK_WORKERS="))
+        .ok_or("Paperless task-worker default")?;
+    *task_workers = "PAPERLESS_TASK_WORKERS=2".into();
+    fs::write(
+        override_fixture.path().join("defaults.env"),
+        format!("{}\n", defaults.join("\n")),
+    )?;
+    let input = compose_mutation_input(vec!["defaults.env".into()], vec!["PAPERLESS_TASK_WORKERS=1".into()]);
+    let imported = import_compose_files(&input, override_fixture.path(), &base_manifest.application.name)?;
+    validate_neutral_application(
+        &base_manifest,
+        imported.application().ok_or("Paperless override import")?,
+        &base_manifest.semantics.required_environment_order,
+        &[],
+    )?;
+
+    for (scenario, name, needle, expected) in [
+        (
+            "paperless-ngx-application",
+            "storage",
+            "      - data:/usr/src/paperless/data\n",
+            "volume data shared consumer boundary changed",
+        ),
+        (
+            "paperless-ngx-application",
+            "database",
+            "      PAPERLESS_DBHOST: db\n",
+            "required environment webserver:PAPERLESS_DBHOST changed",
+        ),
+        (
+            "paperless-ngx-application",
+            "broker",
+            "      PAPERLESS_REDIS: redis://broker:6379\n",
+            "required environment webserver:PAPERLESS_REDIS changed",
+        ),
+        (
+            "paperless-ngx-application",
+            "worker",
+            "      PAPERLESS_TASK_WORKERS: \"${PAPERLESS_TASK_WORKERS:?set PAPERLESS_TASK_WORKERS}\"\n",
+            "required environment webserver:PAPERLESS_TASK_WORKERS changed",
+        ),
+        (
+            "paperless-ngx-application",
+            "storage-identity",
+            "      USERMAP_UID: \"${USERMAP_UID:?set USERMAP_UID}\"\n",
+            "required environment webserver:USERMAP_UID changed",
+        ),
+        (
+            "paperless-ngx-application",
+            "publication",
+            "      - \"127.0.0.1:18000:8000\"\n",
+            "publication:webserver:18000:8000/tcp",
+        ),
+        (
+            "paperless-ngx-document-converters",
+            "converter-enable",
+            "      PAPERLESS_TIKA_ENABLED: \"${PAPERLESS_TIKA_ENABLED:?set PAPERLESS_TIKA_ENABLED}\"\n",
+            "required environment webserver:PAPERLESS_TIKA_ENABLED changed",
+        ),
+        (
+            "paperless-ngx-document-converters",
+            "converter-endpoint",
+            "      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: \"${PAPERLESS_TIKA_GOTENBERG_ENDPOINT:?set PAPERLESS_TIKA_GOTENBERG_ENDPOINT}\"\n",
+            "required environment webserver:PAPERLESS_TIKA_GOTENBERG_ENDPOINT changed",
+        ),
+    ] {
+        let fixture = root.join("fixtures/scenarios").join(scenario);
+        let manifest = read_manifest(&fixture)?;
+        let source = fs::read_to_string(fixture.join("compose.yaml"))?;
+        let mutation = source.replacen(needle, "", 1);
+        assert_ne!(source, mutation, "{name} must actually mutate Paperless input");
+
+        let directory = TemporaryDirectory::new(&format!("paperless-{name}-mutation"))?;
+        fs::write(directory.path().join("compose.yaml"), mutation)?;
+        let environment = parse_scenario_environment_file(&fixture.join("paperless.env.example"))?;
+        let input = compose_mutation_input(Vec::new(), environment);
+        let imported = import_compose_files(&input, directory.path(), &manifest.application.name)?;
+        let error = validate_neutral_application(
+            &manifest,
+            imported.application().ok_or("mutated Paperless import")?,
+            &manifest.semantics.required_environment_order,
+            &[],
+        )
+        .err()
+        .ok_or("Paperless semantic mutation must fail")?;
+        assert!(error.contains(expected), "{name} failed for wrong reason: {error}");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn paperless_private_services_have_explicit_reachable_runtime_names() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    for (scenario, services) in [
+        ("paperless-ngx-application", &["broker", "db"][..]),
+        (
+            "paperless-ngx-document-converters",
+            &["broker", "db", "gotenberg", "tika"][..],
+        ),
+    ] {
+        let fixture = root.join("fixtures/scenarios").join(scenario);
+        let compose = fs::read_to_string(fixture.join("compose.yaml"))?;
+        for service in services {
+            let quadlet = fs::read_to_string(fixture.join(format!("{service}.container")))?;
+            assert!(
+                quadlet.lines().any(|line| line == format!("ContainerName={service}")),
+                "{scenario} Quadlet service {service} must preserve its DNS runtime name"
+            );
+            assert!(
+                compose
+                    .lines()
+                    .any(|line| line == format!("    container_name: {service}")),
+                "{scenario} Compose service {service} must independently preserve its DNS runtime name"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn compose_mutation_input(environment_files: Vec<String>, environment: Vec<String>) -> NativeInput {
+    NativeInput {
+        id: "compose-mutation".into(),
+        importer: "compose".into(),
+        files: vec!["compose.yaml".into()],
+        format_version: "compose-specification".into(),
+        outcome: Outcome::MigrationSuccess,
+        reason: None,
+        interpolate: true,
+        environment,
+        environment_files,
+        all_profiles: false,
+        import_diagnostics: None,
+        import_diagnostics_file: None,
+        podman: None,
+    }
 }
 
 #[test]

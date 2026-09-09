@@ -1,0 +1,141 @@
+---
+services:
+  db:
+    image: ${BF_POSTGRES_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-paper-db
+    labels: &application-labels
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-paperless
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: paperless
+      POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperless -d paperless"]
+      interval: 2s
+      timeout: 2s
+      retries: 90
+    networks:
+      backend:
+        aliases: [db]
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+  broker:
+    image: ${BF_VALKEY_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-paper-broker
+    labels: *application-labels
+    command: ["valkey-server", "--requirepass", "${BF_REDIS_PASSWORD:?required}"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${BF_REDIS_PASSWORD}", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 90
+    networks:
+      backend:
+        aliases: [broker]
+    volumes:
+      - redisdata:/data
+
+  gotenberg:
+    image: ${BF_GOTENBERG_IMAGE:?required}
+    pull_policy: never
+    command:
+      - gotenberg
+      - --chromium-disable-javascript=true
+      - --chromium-allow-list=file:///tmp/.*
+    container_name: ${BF_PREFIX}-paper-gotenberg
+    labels: *application-labels
+    networks:
+      backend:
+        aliases: [gotenberg]
+
+  tika:
+    image: ${BF_TIKA_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-paper-tika
+    labels: *application-labels
+    networks:
+      backend:
+        aliases: [tika]
+
+  webserver:
+    image: ${BF_PAPERLESS_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-paper-web
+    labels: *application-labels
+    depends_on:
+      db:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      gotenberg:
+        condition: service_started
+      tika:
+        condition: service_started
+    environment: &paperless-environment
+      PAPERLESS_REDIS: redis://:${BF_REDIS_PASSWORD:?required}@${BF_PREFIX}-paper-broker:6379
+      PAPERLESS_DBHOST: ${BF_PREFIX}-paper-db
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: paperless
+      PAPERLESS_DBPASS: ${BF_DB_PASSWORD:?required}
+      PAPERLESS_SECRET_KEY: ${BF_SECRET_KEY:?required}
+      PAPERLESS_ADMIN_USER: boxferry-admin
+      PAPERLESS_ADMIN_PASSWORD: ${BF_ADMIN_PASSWORD:?required}
+      PAPERLESS_ADMIN_MAIL: boxferry@example.invalid
+      PAPERLESS_URL: http://127.0.0.1:18000
+      PAPERLESS_TIME_ZONE: Etc/UTC
+      PAPERLESS_OCR_LANGUAGE: eng
+      PAPERLESS_TASK_WORKERS: "1"
+      PAPERLESS_THREADS_PER_WORKER: "1"
+      PAPERLESS_WEBSERVER_WORKERS: "1"
+      PAPERLESS_TIKA_ENABLED: "1"
+      PAPERLESS_TIKA_ENDPOINT: http://${BF_PREFIX}-paper-tika:9998
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://${BF_PREFIX}-paper-gotenberg:3000
+      PAPERLESS_CONSUMER_POLLING: "2"
+      USERMAP_UID: "1000"
+      USERMAP_GID: "1000"
+    ports:
+      - "127.0.0.1:18000:8000"
+    networks:
+      backend:
+        aliases: [webserver]
+      edge:
+        aliases: [paperless]
+    volumes:
+      - data:/usr/src/paperless/data
+      - media:/usr/src/paperless/media
+      - consume:/usr/src/paperless/consume
+      - export:/usr/src/paperless/export
+      - ${BF_FIXTURE_ROOT:?required}:/fixture:rw
+
+networks:
+  backend:
+    name: ${BF_PREFIX}-paper-backend
+    internal: true
+    labels: *application-labels
+  edge:
+    name: ${BF_PREFIX}-paper-edge
+    labels: *application-labels
+
+volumes:
+  data:
+    name: ${BF_PREFIX}-paper-data
+    labels: *application-labels
+  media:
+    name: ${BF_PREFIX}-paper-media
+    labels: *application-labels
+  consume:
+    name: ${BF_PREFIX}-paper-consume
+    labels: *application-labels
+  export:
+    name: ${BF_PREFIX}-paper-export
+    labels: *application-labels
+  pgdata:
+    name: ${BF_PREFIX}-paper-pgdata
+    labels: *application-labels
+  redisdata:
+    name: ${BF_PREFIX}-paper-redisdata
+    labels: *application-labels

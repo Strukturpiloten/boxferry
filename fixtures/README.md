@@ -63,23 +63,29 @@ The external apply/reacquire case executes generated commands only inside a fres
 proves planning, isolated network membership, and reacquisition rather than host NAT.
 BoxFerry remains read-only and non-executing.
 
-`conformance/nextcloud-application/` is a harness-owned live fixture, not an authored
-scenario contract. Four application images and the standalone Docker Compose provider have
-immutable reviewed metadata. The host verifies every digest and provider checksum, loads an
-archive into the isolated rootless 6.1 target, and gives Compose only that disposable socket.
-Direct CLI and Compose provisioning share a reviewed topology but remain independent. Redis
-uses a named `/data` volume so selector and cleanup assertions cover every resource.
+`conformance/nextcloud-application/` independently provisions its reviewed four-image topology by
+native CLI and Compose through an isolated rootless 6.1 socket. Named Redis data is included in
+selector, persistence, and cleanup checks.
 
-`conformance/forgejo-application/` is a separate harness-owned live fixture. Three immutable
-images cover Forgejo 16.0.3-rootless, PostgreSQL, and the Git client/boundary peer. The same archive
-is loaded into reviewed `podman-arch-rootful` and `podman-6.1-rootless` targets before API activation. Native CLI and Docker Compose provisioning independently prove real HTTP and SSH Git operations, private database networking; Compose keeps the peer in a separate project so shared-edge exclusion, collision refusal, and volume persistence after
-container recreation. Only public test canaries are used; the generated SSH private key remains in
-the disposable outer fixture directory and scoped cleanup removes it. Rootless receives the
-no-firewall drop-in while the reviewed Arch rootful target retains stock Netavark publication with
-its included `nft`; the upstream-source rootful target is excluded because it lacks `nft`.
+`conformance/forgejo-application/` loads reviewed Forgejo, PostgreSQL, and Git-client images into
+Arch rootful and 6.1 rootless targets. Native CLI and Compose prove HTTP/SSH Git operations, private
+database networking, peer exclusion, collision refusal, and persistent volumes. Rootless uses the
+no-firewall drop-in; Arch retains stock Netavark with `nft`. Generated SSH keys remain prefix-scoped.
 
 Retained live logs and artifacts require human privacy review before sharing. Never commit raw
 live output.
+
+`conformance/paperless-ngx-application/` is a live fixture bounded to Podman 6.1 rootless. Five
+immutable images provide Paperless-ngx, PostgreSQL, Valkey, Gotenberg, and Tika; Docker Compose
+5.5.0 is a pinned tool. The standard-
+library probe generates deterministic PDF, DOCX, and ODT documents and proves asynchronous API
+ingestion, search, original retrieval, office-to-PDF conversion, database and broker activity,
+private networking, storage access, and persistence after recreation. Exact, label, and all-source
+exports are inspected but never executed. Public test canaries are allowed in native definitions and
+generated artifacts but forbidden from BoxFerry reports. The runner enforces CPU, memory, disk,
+archive-size, deadline, collision, prefix-cleanup, and same-repository trust boundaries.
+Capture is local-only, sanitized, outside-repository, CI-disabled, and privacy-reviewed; no cassette
+is admitted.
 
 ## Migration scenario contracts
 

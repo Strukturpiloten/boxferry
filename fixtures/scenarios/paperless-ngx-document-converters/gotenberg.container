@@ -1,0 +1,5 @@
+[Container]
+Image=docker.io/gotenberg/gotenberg@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923
+Exec=gotenberg --chromium-disable-javascript=true --chromium-allow-list=file:///tmp/.*
+Network=backend.network
+ContainerName=gotenberg

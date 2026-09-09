@@ -13,6 +13,14 @@ id = "forgejo-application"
 manifest = "fixtures/scenarios/forgejo-application/scenario.toml"
 
 [[scenarios]]
+id = "paperless-ngx-application"
+manifest = "fixtures/scenarios/paperless-ngx-application/scenario.toml"
+
+[[scenarios]]
+id = "paperless-ngx-document-converters"
+manifest = "fixtures/scenarios/paperless-ngx-document-converters/scenario.toml"
+
+[[scenarios]]
 id = "podman-portable-intent"
 manifest = "fixtures/scenarios/podman-portable-intent/scenario.toml"
 

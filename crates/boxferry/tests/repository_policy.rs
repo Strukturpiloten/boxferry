@@ -73,6 +73,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         "scenario-validators.sh",
         "nextcloud-application.sh",
         "forgejo-application.sh",
+        "paperless-application.sh",
     ] {
         let source = format!("source \"${{script_directory}}/lib/{module}\"");
         if !runner.contains(&source) {
@@ -112,6 +113,34 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
             &fs::read_to_string(root.join("fixtures/conformance/forgejo-application").join(fixture))
                 .map_err(|error| format!("failed to read Forgejo application fixture: {error}"))?,
         );
+    }
+    for fixture in [
+        "compose.yaml",
+        "document-probe.py",
+        "images.tsv",
+        "providers.tsv",
+        "README.md",
+    ] {
+        runner_contract.push_str(
+            &fs::read_to_string(
+                root.join("fixtures/conformance/paperless-ngx-application")
+                    .join(fixture),
+            )
+            .map_err(|error| format!("failed to read Paperless application fixture: {error}"))?,
+        );
+    }
+    let capture_tool = root.join("fixtures/conformance/podman-live/capture_proxy.py");
+    runner_contract.push_str(
+        &fs::read_to_string(&capture_tool)
+            .map_err(|error| format!("failed to read Paperless capture proxy: {error}"))?,
+    );
+    let capture_self_test = Command::new("python3")
+        .arg(&capture_tool)
+        .arg("--self-test")
+        .status()
+        .map_err(|error| format!("failed to run Paperless capture self-test: {error}"))?;
+    if !capture_self_test.success() {
+        return Err("Paperless capture proxy self-test failed".to_owned());
     }
     validate_live_runner(&runner_contract)?;
     validate_live_workflow(&hosted)
@@ -200,9 +229,9 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(|line| line.split('\t').collect::<Vec<_>>())
         .collect::<Vec<_>>();
-    if scenario_rows.len() != 29 {
+    if scenario_rows.len() != 30 {
         return Err(format!(
-            "live Podman scenario catalogue must contain twenty-nine cases, found {}",
+            "live Podman scenario catalogue must contain thirty cases, found {}",
             scenario_rows.len()
         ));
     }
@@ -246,6 +275,7 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
         "external-apply-reacquire",
         "nextcloud-application-runtime",
         "forgejo-application-runtime",
+        "paperless-application-runtime",
     ] {
         if !scenario_ids.contains(required) {
             return Err(format!("live Podman scenario catalogue is missing {required}"));
@@ -307,6 +337,11 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "pull_policy: never",
         "forgejo/forgejo:16.0.3-rootless@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685",
         "alpine/git:v2.54.0@sha256:6f3b5029566da8e90b24945933dcd806be866b64b1e706f51828bf84faccf21b",
+        "paperless-ngx/paperless-ngx:3.1.3@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+        "valkey/valkey:9.1.2-alpine@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
+        "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+        "gotenberg/gotenberg:8.34.0@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
+        "apache/tika:3.3.1.0@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
         "php -r '$$s=json_decode",
         "nextcloud:32.0.10-apache@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
         "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
@@ -332,6 +367,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
     }
     validate_live_application_cell(runner)?;
     validate_live_forgejo_application_cells(runner)?;
+    validate_live_paperless_application_cell(runner)?;
     for apply_target_contract in [
         "'$1 == \"podman-6.1-rootful\" { print; exit }'",
         "\"${id}\" == podman-6.1-rootful",
@@ -377,7 +413,7 @@ fn validate_live_application_cell(runner: &str) -> Result<(), String> {
 
 fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
     for contract in [
-        "--profile <smoke|full-container|application|forgejo-application>",
+        "--profile <smoke|full-container|application|forgejo-application|paperless-application>",
         "run_forgejo_application_cell()",
         "forgejo_assert_clean_prefix",
         "forgejo_git_probe",
@@ -397,6 +433,51 @@ fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
         if !runner.contains(contract) {
             return Err(format!(
                 "live Podman runner must pin both Forgejo application cells: `{contract}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> {
+    for contract in [
+        "--profile <smoke|full-container|application|forgejo-application|paperless-application>",
+        "paperless-application)",
+        "run_paperless_application_cell()",
+        "run_paperless_application_cell \"$@\"",
+        "[[ \"${id}-${mode}\" == podman-6.1-rootless-rootless ]]",
+        "paperless_validate_resource_budget",
+        "PAPERLESS_MIN_MEMORY_KIB=\"6291456\"",
+        "PAPERLESS_MIN_DISK_KIB=\"12582912\"",
+        "PAPERLESS_ARCHIVE_MAX_BYTES=\"2684354560\"",
+        "paperless_expect_collision",
+        "paperless_ingest_phase",
+        "paperless_assert_database",
+        "paperless_assert_storage_permissions",
+        "BF_PAPERLESS_URL=http://127.0.0.1:${PAPERLESS_HTTP_PORT}",
+        "run --rm --pull=never --network host",
+        "paperless_verify_documents",
+        "paperless_run_exports",
+        "BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY",
+        "paperless_capture_candidate",
+        "capture sanitized Podman CLI Paperless evidence candidate",
+        "captured-native-sanitized-candidate",
+        "Raw requests and responses were never written",
+        "paperless_cleanup_mode",
+        "PAPERLESS_TASK_WORKERS: \"1\"",
+        "PAPERLESS_THREADS_PER_WORKER: \"1\"",
+        "PAPERLESS_WEBSERVER_WORKERS: \"1\"",
+        "PAPERLESS_TIKA_ENDPOINT: http://${BF_PREFIX}-paper-tika:9998",
+        "PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://${BF_PREFIX}-paper-gotenberg:3000",
+        "127.0.0.1:18000:8000",
+        "document generation is not deterministic",
+        "converter archive for document",
+        "--pull=never",
+        "does not execute any BoxFerry-generated artifact",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!(
+                "live Podman runner must retain Paperless application contract: `{contract}`"
             ));
         }
     }
@@ -436,6 +517,16 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
         "timeout-minutes: 30",
         "Run checked-in Forgejo application profile",
         "--profile forgejo-application --engine podman",
+        "paperless-application:",
+        "name: Paperless-ngx application / podman-6.1-rootless",
+        "Run checked-in Paperless-ngx application profile",
+        "--profile paperless-application",
+        "- paperless-capture",
+        "needs.matrix.outputs.profile != 'paperless-capture'",
+        "github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture'",
+        "BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture'",
+        "paperless-native-capture-candidate",
+        "path: ${{ runner.temp }}/paperless-capture",
         "github.event_name == 'pull_request' &&",
         "sha256sum --check --strict",
     ] {
@@ -446,7 +537,7 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     if hosted.contains("--profile forgejo-application --matrix-cell") {
         return Err("Forgejo application workflow must run both reviewed cells".to_owned());
     }
-    if hosted.matches("github.event_name == 'pull_request' &&").count() < 2 {
+    if hosted.matches("github.event_name == 'pull_request' &&").count() < 3 {
         return Err("each privileged application job must reject fork-authored code".to_owned());
     }
 

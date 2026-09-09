@@ -38,6 +38,7 @@ active table; superseded records are history and are read only when that history
 | [0041](0041-portable-intent-and-retained-native-evidence.md)          | Portable intent and provenance-bearing opaque native evidence                |
 | [0042](0042-bounded-podman-creation-evidence-and-intent-promotion.md) | Bounded Podman creation evidence and explicit intent promotion               |
 | [0043](0043-bounded-forgejo-live-application-acceptance.md)           | Bounded Forgejo rootful and rootless live application acceptance             |
+| [0044](0044-bounded-paperless-document-processing-acceptance.md)      | Bounded Paperless document-processing live acceptance                        |
 
 ## Superseded history
 
