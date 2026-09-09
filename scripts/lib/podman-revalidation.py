@@ -39,6 +39,8 @@ EXPECTED_CANDIDATE_KEYS = {
     "candidate-image",
     "expected-podman-version",
     "expected-distribution",
+    "expected-baseline-observed-distribution",
+    "expected-replacement-observed-distribution",
     "expected-mode",
     "expected-lane",
     "expected-architecture",
@@ -89,6 +91,7 @@ FAILURE_PHASES = {
     "preflight",
     "catalogue",
     "baseline-pull",
+    "baseline-metadata",
     "baseline-collision",
     "baseline-cleanup",
     "replacement-pull",
@@ -105,6 +108,7 @@ FAILURE_CODES = {
     "invalid-catalogue",
     "pull-failed",
     "digest-mismatch",
+    "baseline-metadata-mismatch",
     "historical-collision-not-reproduced",
     "cleanup-failed",
     "source-proof-mismatch",
@@ -118,6 +122,7 @@ FAILURE_CODES_BY_PHASE = {
     "preflight": {"invalid-invocation", "prerequisite-unavailable", "interrupted"},
     "catalogue": {"invalid-catalogue", "interrupted"},
     "baseline-pull": {"pull-failed", "digest-mismatch", "interrupted"},
+    "baseline-metadata": {"baseline-metadata-mismatch", "interrupted"},
     "baseline-collision": {"historical-collision-not-reproduced", "interrupted"},
     "baseline-cleanup": {"cleanup-failed", "interrupted"},
     "replacement-pull": {"pull-failed", "digest-mismatch", "interrupted"},
@@ -450,6 +455,28 @@ def load_catalogue(
                 and actual != matrix_row.get(key.removeprefix("expected-").replace("podman-", ""), actual)
             ):
                 raise ContractError(f"{context}.{key} must be {expected!r}")
+        for key in (
+            "expected-baseline-observed-distribution",
+            "expected-replacement-observed-distribution",
+        ):
+            observed_distribution = require_string(
+                candidate[key], f"{context}.{key}", pattern=OBSERVED_DISTRIBUTION_RE
+            )
+            if not observed_distribution_matches(
+                candidate["expected-distribution"], observed_distribution
+            ):
+                raise ContractError(
+                    f"{context}.{key} does not belong to expected distribution family "
+                    f"{candidate['expected-distribution']!r}"
+                )
+        if (
+            candidate["expected-distribution"] == "opensuse-tumbleweed"
+            and candidate["expected-baseline-observed-distribution"]
+            == candidate["expected-replacement-observed-distribution"]
+        ):
+            raise ContractError(
+                f"{context} must distinguish baseline and replacement Tumbleweed snapshots"
+            )
         require_timestamp(candidate["published-at"], f"{context}.published-at")
         require_string(candidate["source-revision"], f"{context}.source-revision", pattern=GIT_SHA_RE)
 
@@ -513,6 +540,8 @@ def candidate_tsv(candidate: dict[str, Any]) -> str:
         candidate["candidate-image"],
         candidate["expected-podman-version"],
         candidate["expected-distribution"],
+        candidate["expected-baseline-observed-distribution"],
+        candidate["expected-replacement-observed-distribution"],
         candidate["expected-mode"],
         candidate["expected-lane"],
         candidate["expected-architecture"],
@@ -565,6 +594,9 @@ def initialize_document(
         "catalogues": catalogue_hashes(catalogue_path, matrix_path, limitations_path),
         "baseline": {
             "declared_image": candidate["baseline-image"],
+            "expected_observed_distribution": candidate[
+                "expected-baseline-observed-distribution"
+            ],
             "observed_digest": None,
             "observed": {
                 "podman_version": None,
@@ -591,6 +623,9 @@ def initialize_document(
             "observed_digest": None,
             "expected_podman_version": candidate["expected-podman-version"],
             "expected_distribution": candidate["expected-distribution"],
+            "expected_observed_distribution": candidate[
+                "expected-replacement-observed-distribution"
+            ],
             "expected_mode": candidate["expected-mode"],
             "expected_lane": candidate["expected-lane"],
             "expected_architecture": candidate["expected-architecture"],
@@ -1083,9 +1118,14 @@ def validate_boolean_map(value: Any, names: tuple[str, ...], context: str) -> di
 
 
 def observed_distribution_matches(expected: str, observed: str | None) -> bool:
+    if OBSERVED_DISTRIBUTION_RE.fullmatch(expected) is not None:
+        return observed == expected
+    if expected == "opensuse-tumbleweed":
+        return observed is not None and re.fullmatch(
+            r"opensuse-tumbleweed-[0-9]{8}", observed
+        ) is not None
     expected_values = {
         "opensuse-leap-16.0": {"opensuse-leap-16.0"},
-        "opensuse-tumbleweed": {"opensuse-tumbleweed-20260904"},
         "ubi-8": {"ubi-8.10"},
         "ubi-9": {"ubi-9.8"},
         "ubi-10": {"ubi-10.2"},
@@ -1177,11 +1217,23 @@ def validate_evidence(document: dict[str, Any]) -> None:
         raise ContractError("evidence.baseline must be an object")
     exact_keys(
         baseline,
-        {"declared_image", "observed_digest", "observed", "historical_collision"},
+        {
+            "declared_image",
+            "expected_observed_distribution",
+            "observed_digest",
+            "observed",
+            "historical_collision",
+        },
         "evidence.baseline",
     )
     if IMAGE_RE.fullmatch(require_string(baseline["declared_image"], "evidence.baseline.declared_image")) is None:
         raise ContractError("evidence baseline image is not immutable")
+    require_string(
+        baseline["expected_observed_distribution"],
+        "evidence.baseline.expected_observed_distribution",
+        pattern=OBSERVED_DISTRIBUTION_RE,
+        limit=80,
+    )
     require_optional_string(baseline["observed_digest"], "evidence.baseline.observed_digest", pattern=SHA256_RE)
     baseline_observed = baseline["observed"]
     if not isinstance(baseline_observed, dict):
@@ -1256,6 +1308,7 @@ def validate_evidence(document: dict[str, Any]) -> None:
             "observed_digest",
             "expected_podman_version",
             "expected_distribution",
+            "expected_observed_distribution",
             "expected_mode",
             "expected_lane",
             "expected_architecture",
@@ -1271,19 +1324,31 @@ def validate_evidence(document: dict[str, Any]) -> None:
     require_optional_string(replacement["observed_digest"], "evidence.replacement.observed_digest", pattern=SHA256_RE)
     require_string(replacement["expected_podman_version"], "evidence.replacement.expected_podman_version", limit=80)
     require_string(replacement["expected_distribution"], "evidence.replacement.expected_distribution", limit=80)
+    require_string(
+        replacement["expected_observed_distribution"],
+        "evidence.replacement.expected_observed_distribution",
+        pattern=OBSERVED_DISTRIBUTION_RE,
+        limit=80,
+    )
     if (
         replacement["expected_mode"] != "rootless"
         or replacement["expected_lane"] != "container"
         or replacement["expected_architecture"] != "amd64"
     ):
         raise ContractError("evidence replacement expected boundary is invalid")
+    if not observed_distribution_matches(
+        replacement["expected_distribution"], baseline["expected_observed_distribution"]
+    ) or not observed_distribution_matches(
+        replacement["expected_distribution"], replacement["expected_observed_distribution"]
+    ):
+        raise ContractError("evidence observed-distribution expectations are outside the family")
     baseline_observed = document["baseline"]["observed"]
     if baseline_observed["podman_version"] is not None and (
         baseline_observed["podman_version"] != replacement["expected_podman_version"]
     ):
         raise ContractError("baseline Podman version differs from the candidate contract")
     if baseline_observed["distribution"] is not None and not observed_distribution_matches(
-        replacement["expected_distribution"], baseline_observed["distribution"]
+        baseline["expected_observed_distribution"], baseline_observed["distribution"]
     ):
         raise ContractError("baseline distribution differs from the candidate contract")
 
@@ -1433,7 +1498,7 @@ def validate_evidence(document: dict[str, Any]) -> None:
         baseline["observed_digest"] == baseline_match.group("digest"),  # type: ignore[union-attr]
         baseline_observed["podman_version"] == replacement["expected_podman_version"],
         observed_distribution_matches(
-            replacement["expected_distribution"], baseline_observed["distribution"]
+            baseline["expected_observed_distribution"], baseline_observed["distribution"]
         ),
         baseline_observed["architecture"] in {"amd64", "x86_64"},
         baseline_observed["uid"] == 1000,
@@ -1444,7 +1509,7 @@ def validate_evidence(document: dict[str, Any]) -> None:
         replacement["observed_digest"] == replacement_match.group("digest"),
         observed["podman_version"] == replacement["expected_podman_version"],
         observed_distribution_matches(
-            replacement["expected_distribution"], observed["distribution"]
+            replacement["expected_observed_distribution"], observed["distribution"]
         ),
         observed["architecture"] in {"amd64", "x86_64"},
         observed["rootless"] is True,
@@ -1503,11 +1568,20 @@ def validate_evidence_binding(
         raise ContractError("evidence catalogue hashes differ from the current inputs")
     if document["baseline"]["declared_image"] != candidate["baseline-image"]:
         raise ContractError("evidence baseline reference differs from the current catalogue")
+    if document["baseline"]["expected_observed_distribution"] != candidate[
+        "expected-baseline-observed-distribution"
+    ]:
+        raise ContractError(
+            "evidence baseline observed-distribution expectation differs from the current catalogue"
+        )
     replacement = document["replacement"]
     expected_replacement = {
         "declared_image": candidate["candidate-image"],
         "expected_podman_version": candidate["expected-podman-version"],
         "expected_distribution": candidate["expected-distribution"],
+        "expected_observed_distribution": candidate[
+            "expected-replacement-observed-distribution"
+        ],
         "expected_mode": candidate["expected-mode"],
         "expected_lane": candidate["expected-lane"],
         "expected_architecture": candidate["expected-architecture"],
@@ -1538,7 +1612,7 @@ def validate_evidence_binding(
     ):
         raise ContractError("observed Podman version differs from the candidate contract")
     if observed["distribution"] is not None and not observed_distribution_matches(
-        candidate["expected-distribution"], observed["distribution"]
+        candidate["expected-replacement-observed-distribution"], observed["distribution"]
     ):
         raise ContractError("observed distribution differs from the candidate contract")
     if observed["source_revision"] is not None and (
@@ -1622,7 +1696,12 @@ def record_observation_document(
         "baseline.observed.distribution",
         "replacement.observed.distribution",
     } and not observed_distribution_matches(
-        candidate["expected-distribution"], value
+        candidate[
+            "expected-baseline-observed-distribution"
+            if field.startswith("baseline.")
+            else "expected-replacement-observed-distribution"
+        ],
+        value,
     ):
         raise ContractError("observed distribution differs from the current candidate contract")
     parts = field.split(".")
@@ -2006,6 +2085,41 @@ def self_test() -> None:
             candidate_cell=candidate["id"],
             expected_repository_commit="1" * 40,
         )
+        tumbleweed = candidates[1]
+        tumbleweed_document = initialize_document(
+            tumbleweed,
+            catalogue_path=catalogue,
+            matrix_path=matrix,
+            limitations_path=limitations,
+            repository_commit="1" * 40,
+            clean_tree=True,
+            provider="local",
+            started_at="2026-09-09T00:00:00Z",
+        )
+        expect_contract_error(
+            lambda: record_observation_document(
+                tumbleweed_document,
+                "baseline.observed.distribution",
+                tumbleweed["expected-replacement-observed-distribution"],
+                tumbleweed,
+            ),
+            "replacement snapshot recorded as Tumbleweed baseline",
+        )
+        record_observation_document(
+            tumbleweed_document,
+            "baseline.observed.distribution",
+            tumbleweed["expected-baseline-observed-distribution"],
+            tumbleweed,
+        )
+        expect_contract_error(
+            lambda: record_observation_document(
+                tumbleweed_document,
+                "replacement.observed.distribution",
+                tumbleweed["expected-baseline-observed-distribution"],
+                tumbleweed,
+            ),
+            "baseline snapshot recorded as Tumbleweed replacement",
+        )
         unreviewed_full_evidence = copy.deepcopy(document)
         unreviewed_full_evidence["candidate"]["id"] = "podman-private-rootless"
         expect_contract_error(
@@ -2064,7 +2178,9 @@ def self_test() -> None:
             "baseline.observed_digest": baseline_digest,
             "baseline.observed.podman_version": candidate["expected-podman-version"],
             "baseline.observed.package_revision": "5.4.2-160000.5.1.x86_64",
-            "baseline.observed.distribution": candidate["expected-distribution"],
+            "baseline.observed.distribution": candidate[
+                "expected-baseline-observed-distribution"
+            ],
             "baseline.observed.architecture": "x86_64",
             "baseline.observed.uid": "1000",
             "baseline.observed.rootless": "true",
@@ -2072,7 +2188,9 @@ def self_test() -> None:
             "replacement.observed.podman_version": candidate["expected-podman-version"],
             "replacement.observed.api_version": "5.4.0",
             "replacement.observed.package_revision": "5.4.2-160000.5.1.x86_64",
-            "replacement.observed.distribution": "opensuse-leap-16.0",
+            "replacement.observed.distribution": candidate[
+                "expected-replacement-observed-distribution"
+            ],
             "replacement.observed.architecture": "x86_64",
             "replacement.observed.rootless": "true",
             "replacement.observed.source_revision": candidate["source-revision"],
@@ -2177,6 +2295,22 @@ def self_test() -> None:
             finished_at="2026-09-09T00:02:00Z",
         )
         assert early_failure["baseline"]["historical_collision"]["podman_info_failed"] is True
+        metadata_failure = copy.deepcopy(document)
+        ensure_failure_document(
+            metadata_failure,
+            phase="baseline-metadata",
+            code="baseline-metadata-mismatch",
+            finished_at="2026-09-09T00:02:00Z",
+        )
+        expect_contract_error(
+            lambda: ensure_failure_document(
+                copy.deepcopy(document),
+                phase="baseline-metadata",
+                code="historical-collision-not-reproduced",
+                finished_at="2026-09-09T00:02:00Z",
+            ),
+            "baseline metadata failure misclassified as historical collision",
+        )
         expect_contract_error(
             lambda: ensure_failure_document(
                 copy.deepcopy(document),

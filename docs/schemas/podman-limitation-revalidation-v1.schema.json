@@ -250,9 +250,20 @@
     "baseline": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["declared_image", "observed_digest", "observed", "historical_collision"],
+      "required": [
+        "declared_image",
+        "expected_observed_distribution",
+        "observed_digest",
+        "observed",
+        "historical_collision"
+      ],
       "properties": {
         "declared_image": { "$ref": "#/$defs/image" },
+        "expected_observed_distribution": {
+          "type": "string",
+          "pattern": "^(opensuse-leap-16\\.0|opensuse-tumbleweed-[0-9]{8}|ubi-(8\\.10|9\\.8|10\\.2))$",
+          "maxLength": 80
+        },
         "observed_digest": {
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
         },
@@ -340,6 +351,7 @@
         "observed_digest",
         "expected_podman_version",
         "expected_distribution",
+        "expected_observed_distribution",
         "expected_mode",
         "expected_lane",
         "expected_architecture",
@@ -352,6 +364,11 @@
         },
         "expected_podman_version": { "type": "string", "minLength": 1, "maxLength": 80 },
         "expected_distribution": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "expected_observed_distribution": {
+          "type": "string",
+          "pattern": "^(opensuse-leap-16\\.0|opensuse-tumbleweed-[0-9]{8}|ubi-(8\\.10|9\\.8|10\\.2))$",
+          "maxLength": 80
+        },
         "expected_mode": { "const": "rootless" },
         "expected_lane": { "const": "container" },
         "expected_architecture": { "const": "amd64" },
@@ -776,6 +793,7 @@
             "preflight",
             "catalogue",
             "baseline-pull",
+            "baseline-metadata",
             "baseline-collision",
             "baseline-cleanup",
             "replacement-pull",
@@ -794,6 +812,7 @@
             "invalid-catalogue",
             "pull-failed",
             "digest-mismatch",
+            "baseline-metadata-mismatch",
             "historical-collision-not-reproduced",
             "cleanup-failed",
             "source-proof-mismatch",
@@ -822,6 +841,14 @@
           "if": { "properties": { "phase": { "const": "baseline-pull" } } },
           "then": {
             "properties": { "code": { "enum": ["pull-failed", "digest-mismatch", "interrupted"] } }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "baseline-metadata" } } },
+          "then": {
+            "properties": {
+              "code": { "enum": ["baseline-metadata-mismatch", "interrupted"] }
+            }
           }
         },
         {
