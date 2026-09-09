@@ -1030,7 +1030,10 @@ paperless_capture_candidate() {
   local socket=$1 prefix=$2
   local output=${BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY:?capture candidate path must be explicit}
   local capture_tool="${repository_root}/fixtures/conformance/podman-live/capture_proxy.py"
-  local proxy_socket="${current_case}/paperless-capture-proxy.sock"
+  # AF_UNIX pathname limits are as small as 104 bytes on supported hosts. The
+  # process-unique runtime root is deliberately short and removed by the live
+  # runner's EXIT trap, while artifact paths may include a long checkout root.
+  local proxy_socket="${runtime_root}/paperless-capture.sock"
 
   python3 "${capture_tool}" \
     --repository "${repository_root}" \

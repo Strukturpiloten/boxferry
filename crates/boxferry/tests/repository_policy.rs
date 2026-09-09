@@ -577,6 +577,21 @@ paperless_recreate_application compose fixture.sock safe-prefix run-id
 }
 
 fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> {
+    const PORTABLE_AF_UNIX_PATH_BYTES: usize = 104;
+    const CAPTURE_RUNTIME_ROOT_TEMPLATE: &str = "/tmp/boxferry-podman-live.XXXXXX";
+    const CAPTURE_SOCKET_SUFFIX: &str = "/paperless-capture.sock";
+
+    let capture_socket_template = format!("{CAPTURE_RUNTIME_ROOT_TEMPLATE}{CAPTURE_SOCKET_SUFFIX}");
+    if capture_socket_template.len() >= PORTABLE_AF_UNIX_PATH_BYTES {
+        return Err(format!(
+            "Paperless capture proxy socket template is {} bytes; it must leave room for the AF_UNIX terminator within {PORTABLE_AF_UNIX_PATH_BYTES} bytes",
+            capture_socket_template.len()
+        ));
+    }
+    if runner.contains("${current_case}/paperless-capture-proxy.sock") {
+        return Err("Paperless capture proxy socket must not inherit the unbounded artifact path".to_owned());
+    }
+
     for contract in [
         "--profile <smoke|full-container|application|forgejo-application|paperless-application>",
         "paperless-application)",
@@ -601,6 +616,10 @@ fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> 
         "paperless_run_exports",
         "BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY",
         "paperless_capture_candidate",
+        "runtime_root=\"$(mktemp -d /tmp/boxferry-podman-live.XXXXXX)\"",
+        "local proxy_socket=\"${runtime_root}/paperless-capture.sock\"",
+        "rm -rf -- \"${runtime_root}\"",
+        "trap cleanup EXIT",
         "capture sanitized Podman CLI Paperless evidence candidate",
         "TemporaryDirectory(prefix=\"bfcap-\", dir=\"/tmp\")",
         "listener.settimeout(2)",
