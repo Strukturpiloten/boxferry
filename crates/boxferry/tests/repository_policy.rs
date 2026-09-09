@@ -451,7 +451,7 @@ fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
 }
 
 #[test]
-fn paperless_probe_cleanup_enters_the_exact_rootless_user_namespace() -> Result<(), String> {
+fn paperless_probe_cleanup_uses_one_exact_network_isolated_container() -> Result<(), String> {
     let root = repository_root();
     let output = Command::new("bash")
         .args([
@@ -459,10 +459,10 @@ fn paperless_probe_cleanup_enters_the_exact_rootless_user_namespace() -> Result<
             r#"
 set -euo pipefail
 source "$1"
-engine_operation() {
+paperless_remote() {
   printf '%s\0' "$@"
 }
-paperless_clear_probe_state outer safe-prefix
+paperless_clear_probe_state fixture.sock safe-prefix
 "#,
             "paperless-cleanup-contract",
         ])
@@ -478,23 +478,27 @@ paperless_clear_probe_state outer safe-prefix
     }
 
     let mut expected = [
-        "remove disposable Paperless document probe state",
-        "exec",
-        "outer",
-        "podman",
-        "unshare",
-        "rm",
-        "-rf",
-        "--",
-        "/tmp/boxferry-fixture/safe-prefix/probe-state.json",
-        "/tmp/boxferry-fixture/safe-prefix/generated-baseline",
-        "/tmp/boxferry-fixture/safe-prefix/generated-second",
+        "fixture.sock",
+        "run",
+        "--rm",
+        "--pull=never",
+        "--network",
+        "none",
+        "--user",
+        "0:0",
+        "--volume",
+        "/tmp/boxferry-fixture/safe-prefix:/fixture:rw",
+        "--entrypoint",
+        "/bin/sh",
+        "registry.invalid/boxferry-test/paperless-application:paperless",
+        "-ceu",
+        "rm -rf -- /fixture/probe-state.json /fixture/generated-baseline /fixture/generated-second",
     ]
     .join("\0")
     .into_bytes();
     expected.push(0);
     if output.stdout != expected {
-        return Err("Paperless cleanup must pass only the reviewed rootless namespace argv".to_owned());
+        return Err("Paperless cleanup must pass only the reviewed cleanup-container argv".to_owned());
     }
     Ok(())
 }

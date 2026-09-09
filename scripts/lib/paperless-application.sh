@@ -1021,15 +1021,16 @@ paperless_capture_candidate() {
 }
 
 paperless_clear_probe_state() {
-  local outer=$1 prefix=$2
-  engine_operation 'remove disposable Paperless document probe state' \
-    exec "${outer}" podman unshare rm -rf -- "/tmp/boxferry-fixture/${prefix}/probe-state.json" \
-    "/tmp/boxferry-fixture/${prefix}/generated-baseline" \
-    "/tmp/boxferry-fixture/${prefix}/generated-second"
+  local socket=$1 prefix=$2
+  local fixture_root="/tmp/boxferry-fixture/${prefix}"
+  paperless_remote "${socket}" run --rm --pull=never --network none --user 0:0 \
+    --volume "${fixture_root}:/fixture:rw" --entrypoint /bin/sh \
+    "$(paperless_image_reference paperless)" -ceu \
+    'rm -rf -- /fixture/probe-state.json /fixture/generated-baseline /fixture/generated-second'
 }
 
 paperless_cleanup_mode() {
-  local mode=$1 socket=$2 prefix=$3 run=$4 outer=$5
+  local mode=$1 socket=$2 prefix=$3 run=$4
   if [[ "${mode}" == compose ]]; then
     paperless_compose_project "${socket}" "${prefix}" "${run}" \
       down --volumes --remove-orphans > "${current_case}/paperless-compose-down.log" 2>&1 || true
@@ -1046,7 +1047,7 @@ paperless_cleanup_mode() {
     "${prefix}-paper-redisdata" > /dev/null 2>&1 || true
   paperless_remote "${socket}" network rm \
     "${prefix}-paper-backend" "${prefix}-paper-edge" > /dev/null 2>&1 || true
-  paperless_clear_probe_state "${outer}" "${prefix}"
+  paperless_clear_probe_state "${socket}" "${prefix}"
   paperless_assert_clean_prefix "${socket}" "${prefix}"
 }
 
@@ -1133,7 +1134,7 @@ run_paperless_application_cell() {
   progress_run 'prove six persistent Podman CLI PostgreSQL document rows' \
     paperless_assert_database "${socket}" "${current_prefix}" 6
   progress_run 'clean prefix-scoped Podman CLI Paperless resources' \
-    paperless_cleanup_mode cli "${socket}" "${current_prefix}" "${run_id}" "${outer}"
+    paperless_cleanup_mode cli "${socket}" "${current_prefix}" "${run_id}"
 
   progress_run 'provision independent Docker Compose Paperless application' \
     paperless_provision_compose "${socket}" "${current_prefix}" "${run_id}"
@@ -1159,7 +1160,7 @@ run_paperless_application_cell() {
     paperless_ingest_phase "${socket}" "${current_prefix}" second
   paperless_assert_database "${socket}" "${current_prefix}" 6
   progress_run 'clean prefix-scoped Docker Compose Paperless resources' \
-    paperless_cleanup_mode compose "${socket}" "${current_prefix}" "${run_id}" "${outer}"
+    paperless_cleanup_mode compose "${socket}" "${current_prefix}" "${run_id}"
   progress_run 'remove disposable Paperless outer container' remove_outer "${outer}"
   printf '%s CELL PASS %s paperless-application (%d/%d tests)\n' \
     "$(timestamp)" "${id}" "${progress_index}" "${progress_total}"
