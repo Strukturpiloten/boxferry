@@ -410,11 +410,32 @@ paperless_compose_project() {
     "${provider}" --project-name "${prefix}-paperless" --file "${compose_file}" "$@"
 }
 
+paperless_start_compose_services() {
+  local socket=$1 prefix=$2 run=$3 log=$4
+  # Docker Compose waits for service_healthy dependencies before returning from
+  # `up --detach`.  Keep that portable intent in compose.yaml, but do not let the
+  # provider's Podman-API polling race the same bounded health window.  Start the
+  # dependency layer explicitly, prove it is ready through the target API, and
+  # only then start Paperless itself.
+  paperless_compose_project "${socket}" "${prefix}" "${run}" \
+    up --detach --no-deps --remove-orphans db broker gotenberg tika \
+    >> "${log}" 2>&1
+  paperless_wait_for 240 'Docker Compose PostgreSQL readiness' \
+    paperless_remote "${socket}" exec "${prefix}-paper-db" \
+    pg_isready -U paperless -d paperless
+  paperless_wait_for 240 'Docker Compose Valkey readiness' \
+    paperless_remote "${socket}" exec "${prefix}-paper-broker" \
+    valkey-cli --no-auth-warning -a "${PAPERLESS_REDIS_PASSWORD}" ping
+  paperless_compose_project "${socket}" "${prefix}" "${run}" \
+    up --detach --no-deps webserver >> "${log}" 2>&1
+}
+
 paperless_provision_compose() {
   local socket=$1 prefix=$2 run=$3
+  local log="${current_case}/paperless-compose.log"
   paperless_assert_clean_prefix "${socket}" "${prefix}"
-  paperless_compose_project "${socket}" "${prefix}" "${run}" \
-    up --detach --remove-orphans > "${current_case}/paperless-compose.log" 2>&1
+  : > "${log}"
+  paperless_start_compose_services "${socket}" "${prefix}" "${run}" "${log}"
 }
 
 paperless_wait_application() {
@@ -580,8 +601,8 @@ paperless_recreate_application() {
       stop --timeout 30 > "${current_case}/paperless-compose-recreate.log" 2>&1
     paperless_compose_project "${socket}" "${prefix}" "${run}" \
       rm --force >> "${current_case}/paperless-compose-recreate.log" 2>&1
-    paperless_compose_project "${socket}" "${prefix}" "${run}" \
-      up --detach >> "${current_case}/paperless-compose-recreate.log" 2>&1
+    paperless_start_compose_services "${socket}" "${prefix}" "${run}" \
+      "${current_case}/paperless-compose-recreate.log"
   fi
   paperless_wait_application "${socket}" "${prefix}"
 }

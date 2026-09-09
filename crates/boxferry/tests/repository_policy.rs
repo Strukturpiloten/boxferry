@@ -503,6 +503,79 @@ paperless_clear_probe_state fixture.sock safe-prefix
     Ok(())
 }
 
+#[test]
+fn paperless_compose_startup_and_recreation_are_staged_around_readiness() -> Result<(), String> {
+    let root = repository_root();
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            r#"
+set -euo pipefail
+source "$1"
+current_case="$(mktemp -d "${TMPDIR:-/tmp}/boxferry-paperless-compose-contract.XXXXXX")"
+trap 'rm -rf -- "${current_case}"' EXIT
+exec 3>&1
+paperless_assert_clean_prefix() {
+  printf 'clean\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_compose_project() {
+  printf 'compose\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_wait_for() {
+  printf 'wait\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_wait_application() {
+  printf 'ready\0' >&3
+  printf '%s\0' "$@" >&3
+}
+paperless_provision_compose fixture.sock safe-prefix run-id
+paperless_recreate_application compose fixture.sock safe-prefix run-id
+"#,
+            "paperless-compose-startup-contract",
+        ])
+        .arg(root.join("scripts/lib/paperless-application.sh"))
+        .current_dir(&root)
+        .output()
+        .map_err(|error| format!("failed to exercise Paperless Compose startup: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Paperless Compose startup helper failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let expected = concat!(
+        "clean\0fixture.sock\0safe-prefix\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0",
+        "--remove-orphans\0db\0broker\0gotenberg\0tika\0",
+        "wait\0240\0Docker Compose PostgreSQL readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-db\0pg_isready\0-U\0paperless\0-d\0paperless\0",
+        "wait\0240\0Docker Compose Valkey readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-broker\0valkey-cli\0--no-auth-warning\0-a\0",
+        "boxferry-public-broker-canary\0ping\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0webserver\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0stop\0--timeout\030\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0rm\0--force\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0",
+        "--remove-orphans\0db\0broker\0gotenberg\0tika\0",
+        "wait\0240\0Docker Compose PostgreSQL readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-db\0pg_isready\0-U\0paperless\0-d\0paperless\0",
+        "wait\0240\0Docker Compose Valkey readiness\0paperless_remote\0fixture.sock\0",
+        "exec\0safe-prefix-paper-broker\0valkey-cli\0--no-auth-warning\0-a\0",
+        "boxferry-public-broker-canary\0ping\0",
+        "compose\0fixture.sock\0safe-prefix\0run-id\0up\0--detach\0--no-deps\0webserver\0",
+        "ready\0fixture.sock\0safe-prefix\0",
+    )
+    .as_bytes();
+    if output.stdout != expected {
+        return Err("Paperless Compose startup did not preserve reviewed call order/argv".to_owned());
+    }
+    Ok(())
+}
+
 fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> {
     for contract in [
         "--profile <smoke|full-container|application|forgejo-application|paperless-application>",
@@ -515,6 +588,10 @@ fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> 
         "PAPERLESS_MIN_DISK_KIB=\"12582912\"",
         "PAPERLESS_ARCHIVE_MAX_BYTES=\"2684354560\"",
         "paperless_expect_collision",
+        "--detach --no-deps --remove-orphans db broker gotenberg tika",
+        "Docker Compose PostgreSQL readiness",
+        "Docker Compose Valkey readiness",
+        "--detach --no-deps webserver",
         "paperless_ingest_phase",
         "paperless_assert_database",
         "paperless_assert_storage_permissions",
