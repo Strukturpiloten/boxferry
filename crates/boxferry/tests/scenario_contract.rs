@@ -21,7 +21,7 @@ use boxferry::compose::compose_lens::{
     source::SourceId as ComposeSourceId,
 };
 use boxferry::podman::podman_lens::{
-    AcquisitionOptions, DiscoveryRequest, ReadOnlyUnixTransport, ReadOnlyUnixTransportTimeouts,
+    AcquisitionOptions, DiscoveryRequest, LabelSelector, ReadOnlyUnixTransport, ReadOnlyUnixTransportTimeouts,
     ResourceKind as PodmanResourceKind, ResourceSelector, TransportLimits, UnixConnection,
 };
 use boxferry::{
@@ -2113,6 +2113,110 @@ fn paperless_private_services_have_explicit_reachable_runtime_names() -> Result<
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn paperless_captured_native_evidence_replays_through_production_acquisition() -> Result<(), Box<dyn Error>> {
+    let cassette = PodmanCassette::load(
+        &repository_root()
+            .join("fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json"),
+    )?;
+    assert_eq!(
+        cassette.scenario_id(),
+        "paperless-ngx-application-podman-6.1.0-rootless-captured"
+    );
+    assert_eq!(cassette.engine_version(), "6.1.0");
+    assert_eq!(cassette.execution_context(), "rootless");
+    assert_eq!(cassette.interaction_count(), 27);
+
+    // Production acquisition may inspect independently discovered resources
+    // concurrently; match by method/path while still requiring full coverage.
+    let server = PodmanCassetteServer::start_unordered(cassette)?;
+    let transport = ReadOnlyUnixTransport::new(
+        UnixConnection::new(server.socket())?,
+        TransportLimits::default(),
+        ReadOnlyUnixTransportTimeouts::default(),
+    )?;
+    let mut request = DiscoveryRequest::new();
+    request.add_label_root(LabelSelector::exact(
+        "io.boxferry.application",
+        "paperless-captured-paperless",
+    )?);
+    let policy = PodmanPromotionPolicy::conservative()
+        .with_effective_named_volume_mounts(true)
+        .with_effective_named_networks(true)
+        .with_portable_effective_settings(true);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    let source = runtime.block_on(acquire_podman_source(
+        Identifier::new("paperless-captured-paperless")?,
+        &transport,
+        AcquisitionOptions::redacted(),
+        &request,
+        policy,
+    ))?;
+
+    // This is the request-coverage assertion: finish fails unless production
+    // acquisition consumed every recorded interaction.
+    server.finish()?;
+    let imported = PodmanImporter::new()?.import(&source);
+    let application = imported.application().ok_or("captured Paperless application")?;
+    assert_eq!(application.services().len(), 5);
+    assert_eq!(application.volumes().len(), 6);
+    assert_eq!(application.networks().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn immich_captured_native_evidence_replays_through_production_acquisition() -> Result<(), Box<dyn Error>> {
+    let cassette = PodmanCassette::load(
+        &repository_root()
+            .join("fixtures/conformance/immich-application/immich-application-6.1.0-rootless.cassette.json"),
+    )?;
+    assert_eq!(
+        cassette.scenario_id(),
+        "immich-application-podman-6.1.0-rootless-captured"
+    );
+    assert_eq!(cassette.engine_version(), "6.1.0");
+    assert_eq!(cassette.execution_context(), "rootless");
+    assert_eq!(cassette.interaction_count(), 23);
+
+    let server = PodmanCassetteServer::start_unordered(cassette)?;
+    let transport = ReadOnlyUnixTransport::new(
+        UnixConnection::new(server.socket())?,
+        TransportLimits::default(),
+        ReadOnlyUnixTransportTimeouts::default(),
+    )?;
+    let mut request = DiscoveryRequest::new();
+    request.add_label_root(LabelSelector::exact(
+        "io.boxferry.application",
+        "immich-captured-immich",
+    )?);
+    let policy = PodmanPromotionPolicy::conservative()
+        .with_effective_named_volume_mounts(true)
+        .with_effective_named_networks(true)
+        .with_portable_effective_settings(true);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    let source = runtime.block_on(acquire_podman_source(
+        Identifier::new("immich-captured-immich")?,
+        &transport,
+        AcquisitionOptions::redacted(),
+        &request,
+        policy,
+    ))?;
+
+    server.finish()?;
+    let imported = PodmanImporter::new()?.import(&source);
+    let application = imported.application().ok_or("captured Immich application")?;
+    assert_eq!(application.services().len(), 4);
+    assert_eq!(application.volumes().len(), 4);
+    assert_eq!(application.networks().len(), 2);
     Ok(())
 }
 

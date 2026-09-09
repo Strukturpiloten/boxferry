@@ -27,6 +27,8 @@ Forgejo, Paperless, and Immich live application profiles. The Immich checks keep
 offline replay distinct from runtime evidence, pin the sole rootless cell and every external digest,
 and protect CPU-only upload/derivative/persistence, capture privacy, selector, redaction, resource,
 and cleanup boundaries without executing the live profile during the deterministic test suite.
+Reviewed Paperless and Immich sanitizer-v3 cassettes additionally replay complete production
+acquisition while repository policy keeps their redacted evidence separate from authored semantics.
 
 ## Scenario acceptance ownership
 

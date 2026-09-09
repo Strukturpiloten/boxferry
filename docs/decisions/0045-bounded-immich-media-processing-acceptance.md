@@ -57,6 +57,32 @@ automatically admitted or described as captured-native evidence; independent pri
 provenance review remains mandatory. No Immich captured-native cassette is admitted by this
 decision.
 
+### Captured-evidence amendment (2026-09-09)
+
+After independent privacy, provenance, checksum, and request-coverage review, the sanitized
+cassette from workflow-dispatch run
+[`34369395375`](https://github.com/Strukturpiloten/boxferry/actions/runs/34369395375) at revision
+`6ef0b9d6c4c8c2bc5708b7be9de19215d151721c` is admitted under
+`fixtures/conformance/immich-application/` as supplementary, non-synthetic acquisition evidence.
+Its SHA-256 is `743f7983e64578e6c82068307e1dcbeb7ab64ee3ba0baf7b82aa89d789673a78`;
+its embedded provenance retains capture-manifest SHA-256
+`f04e364c5417fad7f024e9261ca2df110066dd1f094856b350dadc0c975ee6ae`. The reviewed candidate
+`SHA256SUMS` SHA-256 was
+`bdeed597b3dbb54e7533558ad35467e3acedc6acbdee1f7de42256b151ca9274`; those two admission files
+remain outside the repository.
+
+The evidence binds sanitizer version 3, Podman/API 6.1.0 rootless, Podman revision
+`cade97a52ebdf9dbf9e81de8009015776837a074`, the reviewed runtime and application image digests,
+and exact source hashes. All 23 interactions are bounded bodyless `GET` requests. Review found no
+native identifiers in values or object keys, compact run IDs, private paths or addresses,
+noncanonical timestamps or request IDs, protected values, authorization/cookie headers, or
+unreviewed URLs. Production-acquisition replay consumes every interaction exactly once.
+
+All 149 captured environment assignments are intentionally redacted, so this evidence cannot
+establish semantic environment intent. The repository-authored
+`fixtures/scenarios/immich-application/input-podman.cassette.json` remains the sole Podman scenario
+input; executable repository policy enforces that separation.
+
 ## Consequences
 
 - Immich migration readiness gains bounded upload, processing, retrieval, and persistence evidence.

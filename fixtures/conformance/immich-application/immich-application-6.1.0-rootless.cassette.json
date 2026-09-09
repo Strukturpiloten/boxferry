@@ -1,0 +1,4410 @@
+{
+  "schema_version": 1,
+  "fixture_kind": "libpod-cassette",
+  "scenario_id": "immich-application-podman-6.1.0-rootless-captured",
+  "scenario_revision": 1,
+  "engine_version": "6.1.0",
+  "api_version": "6.1.0",
+  "execution_context": "rootless",
+  "synthetic": false,
+  "provenance": {
+    "evidence_kind": "privacy-review-required-one-off-native-capture",
+    "release_tag": "v6.1.0",
+    "revision": "cade97a52ebdf9dbf9e81de8009015776837a074",
+    "source_urls": [
+      "https://github.com/containers/podman/tree/cade97a52ebdf9dbf9e81de8009015776837a074/pkg/api/handlers/libpod",
+      "https://github.com/Strukturpiloten/boxferry/blob/6ef0b9d6c4c8c2bc5708b7be9de19215d151721c/fixtures/conformance/podman-live/matrix.tsv"
+    ],
+    "capture": {
+      "engine_build": {
+        "kind": "source-build",
+        "source_revision": "cade97a52ebdf9dbf9e81de8009015776837a074"
+      },
+      "runtime_image": "ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e",
+      "capture_manifest_sha256": "f04e364c5417fad7f024e9261ca2df110066dd1f094856b350dadc0c975ee6ae",
+      "runtime_repository": "https://github.com/Strukturpiloten/boxferry",
+      "runtime_revision": "6ef0b9d6c4c8c2bc5708b7be9de19215d151721c",
+      "runtime_matrix_cell": "podman-6.1-rootless",
+      "runtime_matrix_sha256": "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25",
+      "setup_script_sha256": "53688d266de9e6c0e763dad5c9971a2ab126b788b24ab56fc0bf886d768809cb",
+      "request_recorder_source_sha256": "dc65572fcd81d5b617b094b07ca5adbefed7a52944718a7a1c9cffbed3d58a3a"
+    }
+  },
+  "sanitization": "Captured through a bodyless-GET-only Unix proxy; identifiers, paths, addresses, timestamps, request IDs, and protected values are normalized. Raw bytes were retained only in memory. Human privacy review is required.",
+  "interactions": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/libpod/_ping"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "builder-version",
+            "1"
+          ],
+          [
+            "buildkit-version",
+            ""
+          ],
+          [
+            "cache-control",
+            "no-cache"
+          ],
+          [
+            "docker-experimental",
+            "true"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "libpod-buildah-version",
+            "1.45.0"
+          ],
+          [
+            "ostype",
+            "linux"
+          ],
+          [
+            "pragma",
+            "no-cache"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-01"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-type",
+            "text/plain; charset=utf-8"
+          ],
+          [
+            "content-length",
+            "0"
+          ]
+        ],
+        "body": null
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v4.0.0/libpod/version"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-02"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "919"
+          ]
+        ],
+        "body": {
+          "Platform": {
+            "Name": "linux/amd64/fedora-44"
+          },
+          "Components": [
+            {
+              "Name": "Podman Engine",
+              "Version": "6.1.0",
+              "Details": {
+                "APIVersion": "6.1.0",
+                "Arch": "amd64",
+                "BuildTime": "2000-01-01T00:00:00Z",
+                "Experimental": "false",
+                "GitCommit": "cade97a52ebdf9dbf9e81de8009015776837a074",
+                "GoVersion": "go1.26.6-X:nodwarf5",
+                "KernelVersion": "6.17.0-1022-azure",
+                "MinAPIVersion": "4.0.0",
+                "Os": "linux"
+              }
+            },
+            {
+              "Name": "Conmon",
+              "Version": "conmon version 2.2.1, commit: ",
+              "Details": {
+                "Package": "conmon-2.2.1-2.fc44.x86_64"
+              }
+            },
+            {
+              "Name": "OCI Runtime (crun)",
+              "Version": "crun version 1.28\ncommit: 54f16ffbefcd022bf032af768b5c5ce075c18bfc\nrundir: /sanitized/path-001",
+              "Details": {
+                "Package": "crun-1.28-1.fc44.x86_64"
+              }
+            }
+          ],
+          "Version": "6.1.0",
+          "ApiVersion": "1.44",
+          "MinAPIVersion": "1.24",
+          "GitCommit": "cade97a52ebdf9dbf9e81de8009015776837a074",
+          "GoVersion": "go1.26.6-X:nodwarf5",
+          "Os": "linux",
+          "Arch": "amd64",
+          "KernelVersion": "6.17.0-1022-azure",
+          "BuildTime": "2000-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/json?all=true&sync=true"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-03"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "5166"
+          ]
+        ],
+        "body": [
+          {
+            "AutoRemove": false,
+            "Command": [
+              "postgres",
+              "-c",
+              "shared_preload_libraries=redacted",
+              "-c",
+              "search_path=redacted",
+              "-c",
+              "shared_buffers=redacted",
+              "-c",
+              "wal_compression=redacted"
+            ],
+            "Created": "2000-01-01T00:00:00Z",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "CIDFile": "",
+            "Exited": false,
+            "ExitedAt": -62135596800,
+            "ExitCode": 0,
+            "ExposedPorts": {
+              "5432": [
+                "tcp"
+              ]
+            },
+            "Id": "d94bc8955ab8f2b947fc1f3ec2f5409a8aba177d9bff9b8b3d4784e74845b4e5",
+            "Image": "registry.invalid/boxferry-test/immich-application:postgres",
+            "ImageID": "a9ffa986f6101ccaa0647efb54efe70f45cfa085a6d20e86aac9f3b8e7d9dc79",
+            "IsInfra": false,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "Base images for Immich containers",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "c5095615488fa07469b5df48a3c3e5cebeed7296",
+              "org.opencontainers.image.source": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.title": "base-images",
+              "org.opencontainers.image.url": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.version": "14-vectorchord0.4.3-pgvector0.8.1-pgvectors0.2.0"
+            },
+            "Mounts": [
+              "/var/lib/postgresql/data"
+            ],
+            "Names": [
+              "immich-captured-immich-database"
+            ],
+            "Namespaces": {},
+            "Networks": [
+              "immich-captured-immich-backend"
+            ],
+            "Pid": 773,
+            "Pod": "",
+            "PodName": "",
+            "Ports": null,
+            "Restarts": 0,
+            "Size": null,
+            "StartedAt": 946684800,
+            "State": "running",
+            "Status": "starting"
+          },
+          {
+            "AutoRemove": false,
+            "Command": [
+              "valkey-server"
+            ],
+            "Created": "2000-01-01T00:00:00Z",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "CIDFile": "",
+            "Exited": false,
+            "ExitedAt": -62135596800,
+            "ExitCode": 0,
+            "ExposedPorts": {
+              "6379": [
+                "tcp"
+              ]
+            },
+            "Id": "3f6715ce03d9ac402d7d551b19ea6eb5321799bc53409396fbba96a3ddcc9e5c",
+            "Image": "registry.invalid/boxferry-test/immich-application:valkey",
+            "ImageID": "5067c989f286856eec8d1a15e78bbb1b373da506e47260f82d200ec9b1b4518b",
+            "IsInfra": false,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
+            },
+            "Mounts": [
+              "/data"
+            ],
+            "Names": [
+              "immich-captured-immich-redis"
+            ],
+            "Namespaces": {},
+            "Networks": [
+              "immich-captured-immich-backend"
+            ],
+            "Pid": 813,
+            "Pod": "",
+            "PodName": "",
+            "Ports": null,
+            "Restarts": 0,
+            "Size": null,
+            "StartedAt": 946684800,
+            "State": "running",
+            "Status": "starting"
+          },
+          {
+            "AutoRemove": false,
+            "Command": [
+              "python",
+              "-m",
+              "immich_ml"
+            ],
+            "Created": "2000-01-01T00:00:00Z",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "CIDFile": "",
+            "Exited": false,
+            "ExitedAt": -62135596800,
+            "ExitCode": 0,
+            "ExposedPorts": null,
+            "Id": "dea3d06e2ae14bcc30990cfd4e50615124e4f72b67b15838e3a1875d660a9ae4",
+            "Image": "registry.invalid/boxferry-test/immich-application:machine-learning",
+            "ImageID": "5d78e725b5dc00f3804ecb5a2e145ff02cc0bea99308d23b09e502ecf59edec9",
+            "IsInfra": false,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "Mounts": [
+              "/fixture",
+              "/cache"
+            ],
+            "Names": [
+              "immich-captured-immich-machine-learning"
+            ],
+            "Namespaces": {},
+            "Networks": [
+              "immich-captured-immich-backend"
+            ],
+            "Pid": 840,
+            "Pod": "",
+            "PodName": "",
+            "Ports": null,
+            "Restarts": 0,
+            "Size": null,
+            "StartedAt": 946684800,
+            "State": "running",
+            "Status": "starting"
+          },
+          {
+            "AutoRemove": false,
+            "Command": [
+              "start.sh"
+            ],
+            "Created": "2000-01-01T00:00:00Z",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "CIDFile": "",
+            "Exited": false,
+            "ExitedAt": -62135596800,
+            "ExitCode": 0,
+            "ExposedPorts": {
+              "2283": [
+                "tcp"
+              ]
+            },
+            "Id": "ac4845960b2ff85d609f118cebd4379c1c9a21419546ed91bab6217dd224599f",
+            "Image": "registry.invalid/boxferry-test/immich-application:server",
+            "ImageID": "dbc370fa10a6dfe3e404c443080bff6b39f39d4d4804bb89b32e927fa9de4a3f",
+            "IsInfra": false,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "Mounts": [
+              "/data"
+            ],
+            "Names": [
+              "immich-captured-immich-server"
+            ],
+            "Namespaces": {},
+            "Networks": [
+              "immich-captured-immich-backend",
+              "immich-captured-immich-edge"
+            ],
+            "Pid": 941,
+            "Pod": "",
+            "PodName": "",
+            "Ports": [
+              {
+                "host_ip": "127.0.0.1",
+                "container_port": 2283,
+                "host_port": 18283,
+                "range": 1,
+                "protocol": "tcp"
+              }
+            ],
+            "Restarts": 0,
+            "Size": null,
+            "StartedAt": 946684800,
+            "State": "running",
+            "Status": ""
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/pods/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-04"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "2"
+          ]
+        ],
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/networks/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-05"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "1241"
+          ]
+        ],
+        "body": [
+          {
+            "name": "immich-captured-immich-edge",
+            "id": "3264d9a29c6c6c3043cfe9f6a5a194028649eaa8a22492f5aea522d07e442a1c",
+            "driver": "bridge",
+            "network_interface": "podman2",
+            "created": "2000-01-01T00:00:00Z",
+            "subnets": [
+              {
+                "subnet": "192.0.2.1/24",
+                "gateway": "192.0.2.2"
+              }
+            ],
+            "ipv6_enabled": false,
+            "internal": false,
+            "dns_enabled": true,
+            "labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run"
+            },
+            "ipam_options": {
+              "driver": "host-local"
+            }
+          },
+          {
+            "name": "podman",
+            "id": "de1d675b375822f5353661e755946398dfcbbddec031c29b88061ac9dad8ee61",
+            "driver": "bridge",
+            "network_interface": "podman0",
+            "created": "2000-01-01T00:00:00Z",
+            "subnets": [
+              {
+                "subnet": "192.0.2.3/16",
+                "gateway": "192.0.2.4"
+              }
+            ],
+            "ipv6_enabled": false,
+            "internal": false,
+            "dns_enabled": false,
+            "ipam_options": {
+              "driver": "host-local"
+            }
+          },
+          {
+            "name": "immich-captured-immich-backend",
+            "id": "998dc75acc11fa70f4eb22e26239093556ce2647da1a15e73f1909646a99f662",
+            "driver": "bridge",
+            "network_interface": "podman1",
+            "created": "2000-01-01T00:00:00Z",
+            "subnets": [
+              {
+                "subnet": "192.0.2.5/24",
+                "gateway": "192.0.2.6"
+              }
+            ],
+            "ipv6_enabled": false,
+            "internal": true,
+            "dns_enabled": true,
+            "labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run"
+            },
+            "ipam_options": {
+              "driver": "host-local"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-06"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "1334"
+          ]
+        ],
+        "body": [
+          {
+            "Name": "immich-captured-immich-library",
+            "Driver": "local",
+            "Mountpoint": "/sanitized/path-002",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run"
+            },
+            "Scope": "local",
+            "Options": {},
+            "MountCount": 0,
+            "NeedsCopyUp": true,
+            "NeedsChown": true,
+            "LockNumber": 0
+          },
+          {
+            "Name": "immich-captured-immich-model-cache",
+            "Driver": "local",
+            "Mountpoint": "/sanitized/path-003",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run"
+            },
+            "Scope": "local",
+            "Options": {},
+            "MountCount": 0,
+            "NeedsCopyUp": true,
+            "NeedsChown": true,
+            "LockNumber": 1
+          },
+          {
+            "Name": "immich-captured-immich-pgdata",
+            "Driver": "local",
+            "Mountpoint": "/sanitized/path-004",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run"
+            },
+            "Scope": "local",
+            "Options": {},
+            "MountCount": 0,
+            "NeedsCopyUp": true,
+            "NeedsChown": true,
+            "LockNumber": 2
+          },
+          {
+            "Name": "immich-captured-immich-redisdata",
+            "Driver": "local",
+            "Mountpoint": "/sanitized/path-005",
+            "CreatedAt": "2000-01-01T00:00:00Z",
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run"
+            },
+            "Scope": "local",
+            "Options": {},
+            "MountCount": 0,
+            "NeedsCopyUp": true,
+            "NeedsChown": true,
+            "LockNumber": 3
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/json?all=true"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-07"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "4402"
+          ]
+        ],
+        "body": [
+          {
+            "Id": "5d78e725b5dc00f3804ecb5a2e145ff02cc0bea99308d23b09e502ecf59edec9",
+            "ParentId": "",
+            "RepoTags": [
+              "registry.invalid/boxferry-test/immich-application:machine-learning"
+            ],
+            "RepoDigests": [
+              "registry.invalid/boxferry-test/immich-application@sha256:c8a380c1af2c0590d6e0884ab3c377a8d328a3b1a99659819e6a2dae9363e150"
+            ],
+            "Created": 946684800,
+            "Size": 1318005782,
+            "SharedSize": 0,
+            "VirtualSize": 1318005782,
+            "Labels": {
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "Containers": 1,
+            "Arch": "amd64",
+            "Digest": "sha256:c8a380c1af2c0590d6e0884ab3c377a8d328a3b1a99659819e6a2dae9363e150",
+            "History": [
+              "registry.invalid/boxferry-test/immich-application:machine-learning"
+            ],
+            "IsManifestList": false,
+            "Names": [
+              "registry.invalid/boxferry-test/immich-application:machine-learning"
+            ],
+            "Os": "linux"
+          },
+          {
+            "Id": "a9ffa986f6101ccaa0647efb54efe70f45cfa085a6d20e86aac9f3b8e7d9dc79",
+            "ParentId": "",
+            "RepoTags": [
+              "registry.invalid/boxferry-test/immich-application:postgres"
+            ],
+            "RepoDigests": [
+              "registry.invalid/boxferry-test/immich-application@sha256:fd17a048ecadf6c7dff3270fa033849e07ba4411273cde19d70445074e92402f"
+            ],
+            "Created": 946684800,
+            "Size": 763898578,
+            "SharedSize": 0,
+            "VirtualSize": 763898578,
+            "Labels": {
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "Base images for Immich containers",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "c5095615488fa07469b5df48a3c3e5cebeed7296",
+              "org.opencontainers.image.source": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.title": "base-images",
+              "org.opencontainers.image.url": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.version": "14-vectorchord0.4.3-pgvector0.8.1-pgvectors0.2.0"
+            },
+            "Containers": 1,
+            "Arch": "amd64",
+            "Digest": "sha256:fd17a048ecadf6c7dff3270fa033849e07ba4411273cde19d70445074e92402f",
+            "History": [
+              "registry.invalid/boxferry-test/immich-application:postgres"
+            ],
+            "IsManifestList": false,
+            "Names": [
+              "registry.invalid/boxferry-test/immich-application:postgres"
+            ],
+            "Os": "linux"
+          },
+          {
+            "Id": "dbc370fa10a6dfe3e404c443080bff6b39f39d4d4804bb89b32e927fa9de4a3f",
+            "ParentId": "",
+            "RepoTags": [
+              "registry.invalid/boxferry-test/immich-application:server"
+            ],
+            "RepoDigests": [
+              "registry.invalid/boxferry-test/immich-application@sha256:45e8aabef90423ed62e83bd11d1cb6bca542babd8d1e52320ec175a912cbae87"
+            ],
+            "Created": 946684800,
+            "Size": 2212845320,
+            "SharedSize": 0,
+            "VirtualSize": 2212845320,
+            "Labels": {
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "Containers": 1,
+            "Arch": "amd64",
+            "Digest": "sha256:45e8aabef90423ed62e83bd11d1cb6bca542babd8d1e52320ec175a912cbae87",
+            "History": [
+              "registry.invalid/boxferry-test/immich-application:server"
+            ],
+            "IsManifestList": false,
+            "Names": [
+              "registry.invalid/boxferry-test/immich-application:server"
+            ],
+            "Os": "linux"
+          },
+          {
+            "Id": "5067c989f286856eec8d1a15e78bbb1b373da506e47260f82d200ec9b1b4518b",
+            "ParentId": "",
+            "RepoTags": [
+              "registry.invalid/boxferry-test/immich-application:valkey"
+            ],
+            "RepoDigests": [
+              "registry.invalid/boxferry-test/immich-application@sha256:48f9c0a9d1b2886c4db6cc9327a5555120d6b762c104bb5446dd7838f5cefcdc"
+            ],
+            "Created": 946684800,
+            "Size": 116572812,
+            "SharedSize": 0,
+            "VirtualSize": 116572812,
+            "Labels": {
+              "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
+            },
+            "Containers": 1,
+            "Arch": "amd64",
+            "Digest": "sha256:48f9c0a9d1b2886c4db6cc9327a5555120d6b762c104bb5446dd7838f5cefcdc",
+            "History": [
+              "registry.invalid/boxferry-test/immich-application:valkey"
+            ],
+            "IsManifestList": false,
+            "Names": [
+              "registry.invalid/boxferry-test/immich-application:valkey"
+            ],
+            "Os": "linux"
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/secrets/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-08"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "2"
+          ]
+        ],
+        "body": []
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/3f6715ce03d9ac402d7d551b19ea6eb5321799bc53409396fbba96a3ddcc9e5c/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-09"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "6250"
+          ]
+        ],
+        "body": {
+          "Id": "3f6715ce03d9ac402d7d551b19ea6eb5321799bc53409396fbba96a3ddcc9e5c",
+          "Created": "2000-01-01T00:00:00Z",
+          "Path": "docker-entrypoint.sh",
+          "Args": [
+            "valkey-server"
+          ],
+          "State": {
+            "OciVersion": "1.3.0",
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 813,
+            "ConmonPid": 811,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2000-01-01T00:00:00Z",
+            "FinishedAt": "2000-01-01T00:00:00Z",
+            "Health": {
+              "Status": "starting",
+              "FailingStreak": 0,
+              "Log": null
+            },
+            "CgroupPath": "/",
+            "CheckpointedAt": "2000-01-01T00:00:00Z",
+            "RestoredAt": "2000-01-01T00:00:00Z"
+          },
+          "Image": "5067c989f286856eec8d1a15e78bbb1b373da506e47260f82d200ec9b1b4518b",
+          "ImageDigest": "sha256:48f9c0a9d1b2886c4db6cc9327a5555120d6b762c104bb5446dd7838f5cefcdc",
+          "ImageName": "registry.invalid/boxferry-test/immich-application:valkey",
+          "Rootfs": "",
+          "Pod": "",
+          "ResolvConfPath": "/sanitized/path-006",
+          "HostnamePath": "/sanitized/path-007",
+          "HostsPath": "/sanitized/path-008",
+          "StaticDir": "/sanitized/path-009",
+          "OCIConfigPath": "/sanitized/path-010",
+          "OCIRuntime": "crun",
+          "ConmonPidFile": "/sanitized/path-011",
+          "PidFile": "/sanitized/path-012",
+          "Name": "immich-captured-immich-redis",
+          "RestartCount": 0,
+          "Driver": "overlay",
+          "MountLabel": "",
+          "ProcessLabel": "",
+          "AppArmorProfile": "",
+          "EffectiveCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "BoundingCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "ExecIDs": [],
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-013",
+              "MergedDir": "/sanitized/path-014",
+              "UpperDir": "/sanitized/path-015",
+              "WorkDir": "/sanitized/path-016"
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "immich-captured-immich-redisdata",
+              "Source": "/sanitized/path-005",
+              "Destination": "/data",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            }
+          ],
+          "Dependencies": [],
+          "NetworkSettings": {
+            "EndpointID": "",
+            "Gateway": "",
+            "IPAddress": "",
+            "IPPrefixLen": 0,
+            "IPv6Gateway": "",
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "MacAddress": "",
+            "Bridge": "",
+            "SandboxID": "",
+            "HairpinMode": false,
+            "LinkLocalIPv6Address": "",
+            "LinkLocalIPv6PrefixLen": 0,
+            "Ports": {
+              "6379/tcp": null
+            },
+            "SandboxKey": "/sanitized/path-017",
+            "Networks": {
+              "immich-captured-immich-backend": {
+                "EndpointID": "",
+                "Gateway": "192.0.2.6",
+                "IPAddress": "192.0.2.7",
+                "IPPrefixLen": 24,
+                "IPv6Gateway": "",
+                "GlobalIPv6Address": "",
+                "GlobalIPv6PrefixLen": 0,
+                "MacAddress": "02:00:00:00:00:01",
+                "NetworkID": "998dc75acc11fa70f4eb22e26239093556ce2647da1a15e73f1909646a99f662",
+                "DriverOpts": null,
+                "IPAMConfig": null,
+                "Links": null,
+                "Aliases": [
+                  "redis",
+                  "5c09b21c698d"
+                ]
+              }
+            }
+          },
+          "Namespace": "",
+          "IsInfra": false,
+          "IsService": false,
+          "KubeExitCodePropagation": "invalid",
+          "lockNumber": 5,
+          "Config": {
+            "Hostname": "fixture-host-001",
+            "Domainname": "",
+            "User": "",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+              "VALKEY_VERSION=redacted",
+              "PATH=redacted",
+              "container=redacted",
+              "HOME=redacted",
+              "HOSTNAME=redacted"
+            ],
+            "Cmd": [
+              "valkey-server"
+            ],
+            "Image": "registry.invalid/boxferry-test/immich-application:valkey",
+            "Volumes": null,
+            "WorkingDir": "/data",
+            "Entrypoint": [
+              "docker-entrypoint.sh"
+            ],
+            "OnBuild": null,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
+            },
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "15",
+              "org.systemd.property.KillSignal": "15",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "StopSignal": "SIGTERM",
+            "Healthcheck": {
+              "Test": [
+                "CMD-SHELL",
+                "valkey-cli ping"
+              ],
+              "Interval": 2000000000,
+              "Timeout": 30000000000,
+              "Retries": 120
+            },
+            "HealthcheckOnFailureAction": "none",
+            "HealthLogDestination": "local",
+            "HealthcheckMaxLogCount": 5,
+            "HealthcheckMaxLogSize": 500,
+            "CreateCommand": [
+              "podman",
+              "--url",
+              "<redacted-endpoint>",
+              "run",
+              "--pull=never",
+              "--detach",
+              "--name",
+              "immich-captured-immich-redis",
+              "--label",
+              "io.boxferry.live-run=immich-captured-run",
+              "--label",
+              "io.boxferry.application=immich-captured-immich",
+              "--network",
+              "immich-captured-immich-backend:alias=redis",
+              "--volume",
+              "immich-captured-immich-redisdata:/data",
+              "--health-cmd",
+              "valkey-cli ping",
+              "--health-interval",
+              "2s",
+              "--health-retries",
+              "120",
+              "registry.invalid/boxferry-test/immich-application:valkey"
+            ],
+            "Umask": "0022",
+            "Timeout": 0,
+            "StopTimeout": 10,
+            "Passwd": true,
+            "sdNotifyMode": "container",
+            "ExposedPorts": {
+              "6379/tcp": {}
+            }
+          },
+          "HostConfig": {
+            "Binds": [
+              "immich-captured-immich-redisdata:/data:rprivate,nosuid,nodev,rbind"
+            ],
+            "CgroupManager": "cgroupfs",
+            "CgroupMode": "host",
+            "ContainerIDFile": "",
+            "LogConfig": {
+              "Type": "k8s-file",
+              "Config": null,
+              "Path": "/sanitized/path-018",
+              "Tag": "",
+              "Size": "-1B"
+            },
+            "NetworkMode": "bridge",
+            "PortBindings": {},
+            "RestartPolicy": {
+              "Name": "no",
+              "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "AutoRemoveImage": false,
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "15",
+              "org.systemd.property.KillSignal": "15",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "CapAdd": [],
+            "CapDrop": [],
+            "Dns": [],
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": null,
+            "HostsFile": "",
+            "GroupAdd": null,
+            "IpcMode": "host",
+            "Cgroup": "",
+            "Cgroups": "default",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "private",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": [],
+            "Tmpfs": {},
+            "UTSMode": "host",
+            "UsernsMode": "",
+            "ShmSize": 65536000,
+            "Runtime": "oci",
+            "ConsoleSize": [
+              0,
+              0
+            ],
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [],
+            "DiskQuota": 0,
+            "KernelMemory": 0,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": false,
+            "PidsLimit": 0,
+            "Ulimits": [
+              {
+                "Name": "RLIMIT_NOFILE",
+                "Soft": 1048576,
+                "Hard": 1048576
+              },
+              {
+                "Name": "RLIMIT_NPROC",
+                "Soft": 1048576,
+                "Hard": 1048576
+              }
+            ],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "CgroupConf": null
+          },
+          "UseImageHosts": false,
+          "UseImageHostname": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/d94bc8955ab8f2b947fc1f3ec2f5409a8aba177d9bff9b8b3d4784e74845b4e5/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-10"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "7602"
+          ]
+        ],
+        "body": {
+          "Id": "d94bc8955ab8f2b947fc1f3ec2f5409a8aba177d9bff9b8b3d4784e74845b4e5",
+          "Created": "2000-01-01T00:00:00Z",
+          "Path": "/usr/local/bin/immich-docker-entrypoint.sh",
+          "Args": [
+            "postgres",
+            "-c",
+            "shared_preload_libraries=redacted",
+            "-c",
+            "search_path=redacted",
+            "-c",
+            "shared_buffers=redacted",
+            "-c",
+            "wal_compression=redacted"
+          ],
+          "State": {
+            "OciVersion": "1.3.0",
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 773,
+            "ConmonPid": 770,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2000-01-01T00:00:00Z",
+            "FinishedAt": "2000-01-01T00:00:00Z",
+            "Health": {
+              "Status": "starting",
+              "FailingStreak": 0,
+              "Log": null
+            },
+            "CgroupPath": "/",
+            "CheckpointedAt": "2000-01-01T00:00:00Z",
+            "RestoredAt": "2000-01-01T00:00:00Z"
+          },
+          "Image": "a9ffa986f6101ccaa0647efb54efe70f45cfa085a6d20e86aac9f3b8e7d9dc79",
+          "ImageDigest": "sha256:fd17a048ecadf6c7dff3270fa033849e07ba4411273cde19d70445074e92402f",
+          "ImageName": "registry.invalid/boxferry-test/immich-application:postgres",
+          "Rootfs": "",
+          "Pod": "",
+          "ResolvConfPath": "/sanitized/path-019",
+          "HostnamePath": "/sanitized/path-020",
+          "HostsPath": "/sanitized/path-021",
+          "StaticDir": "/sanitized/path-022",
+          "OCIConfigPath": "/sanitized/path-023",
+          "OCIRuntime": "crun",
+          "ConmonPidFile": "/sanitized/path-024",
+          "PidFile": "/sanitized/path-025",
+          "Name": "immich-captured-immich-database",
+          "RestartCount": 0,
+          "Driver": "overlay",
+          "MountLabel": "",
+          "ProcessLabel": "",
+          "AppArmorProfile": "",
+          "EffectiveCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "BoundingCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "ExecIDs": [],
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-026",
+              "MergedDir": "/sanitized/path-027",
+              "UpperDir": "/sanitized/path-028",
+              "WorkDir": "/sanitized/path-029"
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "immich-captured-immich-pgdata",
+              "Source": "/sanitized/path-004",
+              "Destination": "/var/lib/postgresql/data",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            }
+          ],
+          "Dependencies": [],
+          "NetworkSettings": {
+            "EndpointID": "",
+            "Gateway": "",
+            "IPAddress": "",
+            "IPPrefixLen": 0,
+            "IPv6Gateway": "",
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "MacAddress": "",
+            "Bridge": "",
+            "SandboxID": "",
+            "HairpinMode": false,
+            "LinkLocalIPv6Address": "",
+            "LinkLocalIPv6PrefixLen": 0,
+            "Ports": {
+              "5432/tcp": null
+            },
+            "SandboxKey": "/sanitized/path-030",
+            "Networks": {
+              "immich-captured-immich-backend": {
+                "EndpointID": "",
+                "Gateway": "192.0.2.6",
+                "IPAddress": "192.0.2.8",
+                "IPPrefixLen": 24,
+                "IPv6Gateway": "",
+                "GlobalIPv6Address": "",
+                "GlobalIPv6PrefixLen": 0,
+                "MacAddress": "02:00:00:00:00:02",
+                "NetworkID": "998dc75acc11fa70f4eb22e26239093556ce2647da1a15e73f1909646a99f662",
+                "DriverOpts": null,
+                "IPAMConfig": null,
+                "Links": null,
+                "Aliases": [
+                  "database",
+                  "728d106cbe74"
+                ]
+              }
+            }
+          },
+          "Namespace": "",
+          "IsInfra": false,
+          "IsService": false,
+          "KubeExitCodePropagation": "invalid",
+          "lockNumber": 4,
+          "Config": {
+            "Hostname": "fixture-host-001",
+            "Domainname": "",
+            "User": "",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+              "PATH=redacted",
+              "container=redacted",
+              "GOSU_VERSION=redacted",
+              "LANG=redacted",
+              "PG_VERSION=redacted",
+              "POSTGRES_PASSWORD=redacted",
+              "POSTGRES_USER=redacted",
+              "PG_MAJOR=redacted",
+              "PGDATA=redacted",
+              "DB_STORAGE_TYPE=redacted",
+              "POSTGRES_DB=redacted",
+              "POSTGRES_INITDB_ARGS=redacted",
+              "HOME=redacted",
+              "HOSTNAME=redacted"
+            ],
+            "Cmd": [
+              "postgres",
+              "-c",
+              "shared_preload_libraries=redacted",
+              "-c",
+              "search_path=redacted",
+              "-c",
+              "shared_buffers=redacted",
+              "-c",
+              "wal_compression=redacted"
+            ],
+            "Image": "registry.invalid/boxferry-test/immich-application:postgres",
+            "Volumes": null,
+            "WorkingDir": "/",
+            "Entrypoint": [
+              "/usr/local/bin/immich-docker-entrypoint.sh"
+            ],
+            "OnBuild": null,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "Base images for Immich containers",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "c5095615488fa07469b5df48a3c3e5cebeed7296",
+              "org.opencontainers.image.source": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.title": "base-images",
+              "org.opencontainers.image.url": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.version": "14-vectorchord0.4.3-pgvector0.8.1-pgvectors0.2.0"
+            },
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "2",
+              "org.systemd.property.KillSignal": "2",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "StopSignal": "SIGINT",
+            "Healthcheck": {
+              "Test": [
+                "CMD-SHELL",
+                "pg_isready -U immich -d immich"
+              ],
+              "Interval": 2000000000,
+              "Timeout": 30000000000,
+              "Retries": 120
+            },
+            "HealthcheckOnFailureAction": "none",
+            "HealthLogDestination": "local",
+            "HealthcheckMaxLogCount": 5,
+            "HealthcheckMaxLogSize": 500,
+            "CreateCommand": [
+              "podman",
+              "--url",
+              "<redacted-endpoint>",
+              "run",
+              "--pull=never",
+              "--detach",
+              "--name",
+              "immich-captured-immich-database",
+              "--label",
+              "io.boxferry.live-run=immich-captured-run",
+              "--label",
+              "io.boxferry.application=immich-captured-immich",
+              "--network",
+              "immich-captured-immich-backend:alias=database",
+              "--volume",
+              "immich-captured-immich-pgdata:/var/lib/postgresql/data",
+              "--env",
+              "POSTGRES_DB=redacted",
+              "--env",
+              "POSTGRES_INITDB_ARGS=redacted",
+              "--env",
+              "POSTGRES_USER=redacted",
+              "--env",
+              "POSTGRES_PASSWORD=redacted",
+              "--health-cmd",
+              "pg_isready -U immich -d immich",
+              "--health-interval",
+              "2s",
+              "--health-retries",
+              "120",
+              "registry.invalid/boxferry-test/immich-application:postgres",
+              "postgres",
+              "-c",
+              "shared_preload_libraries=redacted",
+              "-c",
+              "search_path=redacted",
+              "-c",
+              "shared_buffers=redacted",
+              "-c",
+              "wal_compression=redacted"
+            ],
+            "Umask": "0022",
+            "Timeout": 0,
+            "StopTimeout": 10,
+            "Passwd": true,
+            "sdNotifyMode": "container",
+            "ExposedPorts": {
+              "5432/tcp": {}
+            }
+          },
+          "HostConfig": {
+            "Binds": [
+              "immich-captured-immich-pgdata:/var/lib/postgresql/data:rprivate,nosuid,nodev,rbind"
+            ],
+            "CgroupManager": "cgroupfs",
+            "CgroupMode": "host",
+            "ContainerIDFile": "",
+            "LogConfig": {
+              "Type": "k8s-file",
+              "Config": null,
+              "Path": "/sanitized/path-031",
+              "Tag": "",
+              "Size": "-1B"
+            },
+            "NetworkMode": "bridge",
+            "PortBindings": {},
+            "RestartPolicy": {
+              "Name": "no",
+              "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "AutoRemoveImage": false,
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "2",
+              "org.systemd.property.KillSignal": "2",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "CapAdd": [],
+            "CapDrop": [],
+            "Dns": [],
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": null,
+            "HostsFile": "",
+            "GroupAdd": null,
+            "IpcMode": "host",
+            "Cgroup": "",
+            "Cgroups": "default",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "private",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": [],
+            "Tmpfs": {},
+            "UTSMode": "host",
+            "UsernsMode": "",
+            "ShmSize": 65536000,
+            "Runtime": "oci",
+            "ConsoleSize": [
+              0,
+              0
+            ],
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [],
+            "DiskQuota": 0,
+            "KernelMemory": 0,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": false,
+            "PidsLimit": 0,
+            "Ulimits": [
+              {
+                "Name": "RLIMIT_NOFILE",
+                "Soft": 1048576,
+                "Hard": 1048576
+              },
+              {
+                "Name": "RLIMIT_NPROC",
+                "Soft": 1048576,
+                "Hard": 1048576
+              }
+            ],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "CgroupConf": null
+          },
+          "UseImageHosts": false,
+          "UseImageHostname": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/ac4845960b2ff85d609f118cebd4379c1c9a21419546ed91bab6217dd224599f/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-11"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "8192"
+          ]
+        ],
+        "body": {
+          "Id": "ac4845960b2ff85d609f118cebd4379c1c9a21419546ed91bab6217dd224599f",
+          "Created": "2000-01-01T00:00:00Z",
+          "Path": "tini",
+          "Args": [
+            "--",
+            "/bin/bash",
+            "-c",
+            "start.sh"
+          ],
+          "State": {
+            "OciVersion": "1.3.0",
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 941,
+            "ConmonPid": 939,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2000-01-01T00:00:00Z",
+            "FinishedAt": "2000-01-01T00:00:00Z",
+            "CgroupPath": "/",
+            "CheckpointedAt": "2000-01-01T00:00:00Z",
+            "RestoredAt": "2000-01-01T00:00:00Z"
+          },
+          "Image": "dbc370fa10a6dfe3e404c443080bff6b39f39d4d4804bb89b32e927fa9de4a3f",
+          "ImageDigest": "sha256:45e8aabef90423ed62e83bd11d1cb6bca542babd8d1e52320ec175a912cbae87",
+          "ImageName": "registry.invalid/boxferry-test/immich-application:server",
+          "Rootfs": "",
+          "Pod": "",
+          "ResolvConfPath": "/sanitized/path-032",
+          "HostnamePath": "/sanitized/path-033",
+          "HostsPath": "/sanitized/path-034",
+          "StaticDir": "/sanitized/path-035",
+          "OCIConfigPath": "/sanitized/path-036",
+          "OCIRuntime": "crun",
+          "ConmonPidFile": "/sanitized/path-037",
+          "PidFile": "/sanitized/path-038",
+          "Name": "immich-captured-immich-server",
+          "RestartCount": 0,
+          "Driver": "overlay",
+          "MountLabel": "",
+          "ProcessLabel": "",
+          "AppArmorProfile": "",
+          "EffectiveCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "BoundingCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "ExecIDs": [],
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-039",
+              "MergedDir": "/sanitized/path-040",
+              "UpperDir": "/sanitized/path-041",
+              "WorkDir": "/sanitized/path-042"
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "immich-captured-immich-library",
+              "Source": "/sanitized/path-002",
+              "Destination": "/data",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            }
+          ],
+          "Dependencies": [
+            "d94bc8955ab8f2b947fc1f3ec2f5409a8aba177d9bff9b8b3d4784e74845b4e5",
+            "3f6715ce03d9ac402d7d551b19ea6eb5321799bc53409396fbba96a3ddcc9e5c",
+            "dea3d06e2ae14bcc30990cfd4e50615124e4f72b67b15838e3a1875d660a9ae4"
+          ],
+          "NetworkSettings": {
+            "EndpointID": "",
+            "Gateway": "",
+            "IPAddress": "",
+            "IPPrefixLen": 0,
+            "IPv6Gateway": "",
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "MacAddress": "",
+            "Bridge": "",
+            "SandboxID": "",
+            "HairpinMode": false,
+            "LinkLocalIPv6Address": "",
+            "LinkLocalIPv6PrefixLen": 0,
+            "Ports": {
+              "2283/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18283"
+                }
+              ]
+            },
+            "SandboxKey": "/sanitized/path-043",
+            "Networks": {
+              "immich-captured-immich-backend": {
+                "EndpointID": "",
+                "Gateway": "192.0.2.6",
+                "IPAddress": "192.0.2.9",
+                "IPPrefixLen": 24,
+                "IPv6Gateway": "",
+                "GlobalIPv6Address": "",
+                "GlobalIPv6PrefixLen": 0,
+                "MacAddress": "02:00:00:00:00:03",
+                "NetworkID": "998dc75acc11fa70f4eb22e26239093556ce2647da1a15e73f1909646a99f662",
+                "DriverOpts": null,
+                "IPAMConfig": null,
+                "Links": null,
+                "Aliases": [
+                  "immich-server",
+                  "cc74d9b82070"
+                ]
+              },
+              "immich-captured-immich-edge": {
+                "EndpointID": "",
+                "Gateway": "192.0.2.2",
+                "IPAddress": "192.0.2.10",
+                "IPPrefixLen": 24,
+                "IPv6Gateway": "",
+                "GlobalIPv6Address": "",
+                "GlobalIPv6PrefixLen": 0,
+                "MacAddress": "02:00:00:00:00:04",
+                "NetworkID": "3264d9a29c6c6c3043cfe9f6a5a194028649eaa8a22492f5aea522d07e442a1c",
+                "DriverOpts": null,
+                "IPAMConfig": null,
+                "Links": null,
+                "Aliases": [
+                  "immich-server",
+                  "cc74d9b82070"
+                ]
+              }
+            }
+          },
+          "Namespace": "",
+          "IsInfra": false,
+          "IsService": false,
+          "KubeExitCodePropagation": "invalid",
+          "lockNumber": 7,
+          "Config": {
+            "Hostname": "fixture-host-001",
+            "Domainname": "",
+            "User": "",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+              "DB_DATABASE_NAME=redacted",
+              "container=redacted",
+              "NODE_ENV=redacted",
+              "NODE_VERSION=redacted",
+              "LD_LIBRARY_PATH=redacted",
+              "IMMICH_BUILD_IMAGE=redacted",
+              "NVIDIA_DRIVER_CAPABILITIES=redacted",
+              "IMMICH_SOURCE_URL=redacted",
+              "DB_PASSWORD=redacted",
+              "IMMICH_BUILD_IMAGE_URL=redacted",
+              "IMMICH_REPOSITORY=redacted",
+              "NVIDIA_VISIBLE_DEVICES=redacted",
+              "IMMICH_MACHINE_LEARNING_URL=redacted",
+              "REDIS_HOSTNAME=redacted",
+              "TZ=redacted",
+              "PATH=redacted",
+              "YARN_VERSION=redacted",
+              "IMMICH_SOURCE_REF=redacted",
+              "IMMICH_BUILD=redacted",
+              "DB_HOSTNAME=redacted",
+              "DEBIAN_RELEASE=redacted",
+              "IMMICH_SOURCE_COMMIT=redacted",
+              "IMMICH_BUILD_URL=redacted",
+              "IMMICH_REPOSITORY_URL=redacted",
+              "DB_USERNAME=redacted",
+              "HOME=redacted",
+              "HOSTNAME=redacted"
+            ],
+            "Cmd": [
+              "start.sh"
+            ],
+            "Image": "registry.invalid/boxferry-test/immich-application:server",
+            "Volumes": null,
+            "WorkingDir": "/usr/src/app",
+            "Entrypoint": [
+              "tini",
+              "--",
+              "/bin/bash",
+              "-c"
+            ],
+            "OnBuild": null,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "15",
+              "org.systemd.property.KillSignal": "15",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "StopSignal": "SIGTERM",
+            "HealthcheckOnFailureAction": "none",
+            "HealthLogDestination": "local",
+            "HealthcheckMaxLogCount": 5,
+            "HealthcheckMaxLogSize": 500,
+            "CreateCommand": [
+              "podman",
+              "--url",
+              "<redacted-endpoint>",
+              "run",
+              "--pull=never",
+              "--detach",
+              "--name",
+              "immich-captured-immich-server",
+              "--label",
+              "io.boxferry.live-run=immich-captured-run",
+              "--label",
+              "io.boxferry.application=immich-captured-immich",
+              "--requires",
+              "immich-captured-immich-database,immich-captured-immich-redis,immich-captured-immich-machine-learning",
+              "--network",
+              "immich-captured-immich-backend:alias=immich-server",
+              "--network",
+              "immich-captured-immich-edge:alias=immich-server",
+              "--volume",
+              "immich-captured-immich-library:/data",
+              "--publish",
+              "127.0.0.1:18283:2283",
+              "--env",
+              "DB_DATABASE_NAME=redacted",
+              "--env",
+              "DB_HOSTNAME=redacted",
+              "--env",
+              "DB_PASSWORD=redacted",
+              "--env",
+              "DB_USERNAME=redacted",
+              "--env",
+              "IMMICH_MACHINE_LEARNING_URL=redacted",
+              "--env",
+              "REDIS_HOSTNAME=redacted",
+              "--env",
+              "TZ=redacted",
+              "registry.invalid/boxferry-test/immich-application:server"
+            ],
+            "Umask": "0022",
+            "Timeout": 0,
+            "StopTimeout": 10,
+            "Passwd": true,
+            "sdNotifyMode": "container",
+            "ExposedPorts": {
+              "2283/tcp": {}
+            }
+          },
+          "HostConfig": {
+            "Binds": [
+              "immich-captured-immich-library:/data:rprivate,nosuid,nodev,rbind"
+            ],
+            "CgroupManager": "cgroupfs",
+            "CgroupMode": "host",
+            "ContainerIDFile": "",
+            "LogConfig": {
+              "Type": "k8s-file",
+              "Config": null,
+              "Path": "/sanitized/path-044",
+              "Tag": "",
+              "Size": "-1B"
+            },
+            "NetworkMode": "bridge",
+            "PortBindings": {
+              "2283/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18283"
+                }
+              ]
+            },
+            "RestartPolicy": {
+              "Name": "no",
+              "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "AutoRemoveImage": false,
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "15",
+              "org.systemd.property.KillSignal": "15",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "CapAdd": [],
+            "CapDrop": [],
+            "Dns": [],
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": null,
+            "HostsFile": "",
+            "GroupAdd": null,
+            "IpcMode": "host",
+            "Cgroup": "",
+            "Cgroups": "default",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "private",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": [],
+            "Tmpfs": {},
+            "UTSMode": "host",
+            "UsernsMode": "",
+            "ShmSize": 65536000,
+            "Runtime": "oci",
+            "ConsoleSize": [
+              0,
+              0
+            ],
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [],
+            "DiskQuota": 0,
+            "KernelMemory": 0,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": false,
+            "PidsLimit": 0,
+            "Ulimits": [
+              {
+                "Name": "RLIMIT_NOFILE",
+                "Soft": 1048576,
+                "Hard": 1048576
+              },
+              {
+                "Name": "RLIMIT_NPROC",
+                "Soft": 1048576,
+                "Hard": 1048576
+              }
+            ],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "CgroupConf": null
+          },
+          "UseImageHosts": false,
+          "UseImageHostname": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/containers/dea3d06e2ae14bcc30990cfd4e50615124e4f72b67b15838e3a1875d660a9ae4/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-12"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "7734"
+          ]
+        ],
+        "body": {
+          "Id": "dea3d06e2ae14bcc30990cfd4e50615124e4f72b67b15838e3a1875d660a9ae4",
+          "Created": "2000-01-01T00:00:00Z",
+          "Path": "tini",
+          "Args": [
+            "--",
+            "python",
+            "-m",
+            "immich_ml"
+          ],
+          "State": {
+            "OciVersion": "1.3.0",
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 840,
+            "ConmonPid": 837,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2000-01-01T00:00:00Z",
+            "FinishedAt": "2000-01-01T00:00:00Z",
+            "Health": {
+              "Status": "starting",
+              "FailingStreak": 0,
+              "Log": null
+            },
+            "CgroupPath": "/",
+            "CheckpointedAt": "2000-01-01T00:00:00Z",
+            "RestoredAt": "2000-01-01T00:00:00Z"
+          },
+          "Image": "5d78e725b5dc00f3804ecb5a2e145ff02cc0bea99308d23b09e502ecf59edec9",
+          "ImageDigest": "sha256:c8a380c1af2c0590d6e0884ab3c377a8d328a3b1a99659819e6a2dae9363e150",
+          "ImageName": "registry.invalid/boxferry-test/immich-application:machine-learning",
+          "Rootfs": "",
+          "Pod": "",
+          "ResolvConfPath": "/sanitized/path-045",
+          "HostnamePath": "/sanitized/path-046",
+          "HostsPath": "/sanitized/path-047",
+          "StaticDir": "/sanitized/path-048",
+          "OCIConfigPath": "/sanitized/path-049",
+          "OCIRuntime": "crun",
+          "ConmonPidFile": "/sanitized/path-050",
+          "PidFile": "/sanitized/path-051",
+          "Name": "immich-captured-immich-machine-learning",
+          "RestartCount": 0,
+          "Driver": "overlay",
+          "MountLabel": "",
+          "ProcessLabel": "",
+          "AppArmorProfile": "",
+          "EffectiveCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "BoundingCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
+          "ExecIDs": [],
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-052",
+              "MergedDir": "/sanitized/path-053",
+              "UpperDir": "/sanitized/path-054",
+              "WorkDir": "/sanitized/path-055"
+            }
+          },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "immich-captured-immich-model-cache",
+              "Source": "/sanitized/path-003",
+              "Destination": "/cache",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            },
+            {
+              "Type": "bind",
+              "Source": "/sanitized/fixture-root",
+              "Destination": "/fixture",
+              "Driver": "",
+              "Mode": "",
+              "Options": [
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            }
+          ],
+          "Dependencies": [],
+          "NetworkSettings": {
+            "EndpointID": "",
+            "Gateway": "",
+            "IPAddress": "",
+            "IPPrefixLen": 0,
+            "IPv6Gateway": "",
+            "GlobalIPv6Address": "",
+            "GlobalIPv6PrefixLen": 0,
+            "MacAddress": "",
+            "Bridge": "",
+            "SandboxID": "",
+            "HairpinMode": false,
+            "LinkLocalIPv6Address": "",
+            "LinkLocalIPv6PrefixLen": 0,
+            "Ports": {},
+            "SandboxKey": "/sanitized/path-056",
+            "Networks": {
+              "immich-captured-immich-backend": {
+                "EndpointID": "",
+                "Gateway": "192.0.2.6",
+                "IPAddress": "192.0.2.11",
+                "IPPrefixLen": 24,
+                "IPv6Gateway": "",
+                "GlobalIPv6Address": "",
+                "GlobalIPv6PrefixLen": 0,
+                "MacAddress": "02:00:00:00:00:05",
+                "NetworkID": "998dc75acc11fa70f4eb22e26239093556ce2647da1a15e73f1909646a99f662",
+                "DriverOpts": null,
+                "IPAMConfig": null,
+                "Links": null,
+                "Aliases": [
+                  "immich-machine-learning",
+                  "dc5efd091168"
+                ]
+              }
+            }
+          },
+          "Namespace": "",
+          "IsInfra": false,
+          "IsService": false,
+          "KubeExitCodePropagation": "invalid",
+          "lockNumber": 6,
+          "Config": {
+            "Hostname": "fixture-host-001",
+            "Domainname": "",
+            "User": "",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+              "IMMICH_BUILD=redacted",
+              "IMMICH_BUILD_URL=redacted",
+              "PYTHONUNBUFFERED=redacted",
+              "LANG=redacted",
+              "PYTHON_SHA256=redacted",
+              "VIRTUAL_ENV=redacted",
+              "IMMICH_SOURCE_URL=redacted",
+              "MACHINE_LEARNING_MODEL_ARENA=redacted",
+              "PATH=redacted",
+              "MACHINE_LEARNING_CACHE_FOLDER=redacted",
+              "PYTHON_VERSION=redacted",
+              "PYTHONDONTWRITEBYTECODE=redacted",
+              "DEVICE=redacted",
+              "container=redacted",
+              "IMMICH_REPOSITORY_URL=redacted",
+              "GPG_KEY=redacted",
+              "IMMICH_BUILD_IMAGE=redacted",
+              "IMMICH_SOURCE_COMMIT=redacted",
+              "IMMICH_SOURCE_REF=redacted",
+              "IMMICH_REPOSITORY=redacted",
+              "IMMICH_BUILD_IMAGE_URL=redacted",
+              "LD_PRELOAD=redacted",
+              "TRANSFORMERS_CACHE=redacted",
+              "PYTHONPATH=redacted",
+              "HOME=redacted",
+              "HOSTNAME=redacted"
+            ],
+            "Cmd": [
+              "python",
+              "-m",
+              "immich_ml"
+            ],
+            "Image": "registry.invalid/boxferry-test/immich-application:machine-learning",
+            "Volumes": null,
+            "WorkingDir": "/usr/src",
+            "Entrypoint": [
+              "tini",
+              "--"
+            ],
+            "OnBuild": null,
+            "Labels": {
+              "io.boxferry.application": "immich-captured-immich",
+              "io.boxferry.live-run": "immich-captured-run",
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "15",
+              "org.systemd.property.KillSignal": "15",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "StopSignal": "SIGTERM",
+            "Healthcheck": {
+              "Test": [
+                "CMD-SHELL",
+                "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:3003/ping', timeout=5)\""
+              ],
+              "Interval": 2000000000,
+              "Timeout": 30000000000,
+              "Retries": 120
+            },
+            "HealthcheckOnFailureAction": "none",
+            "HealthLogDestination": "local",
+            "HealthcheckMaxLogCount": 5,
+            "HealthcheckMaxLogSize": 500,
+            "CreateCommand": [
+              "podman",
+              "--url",
+              "<redacted-endpoint>",
+              "run",
+              "--pull=never",
+              "--detach",
+              "--name",
+              "immich-captured-immich-machine-learning",
+              "--label",
+              "io.boxferry.live-run=immich-captured-run",
+              "--label",
+              "io.boxferry.application=immich-captured-immich",
+              "--network",
+              "immich-captured-immich-backend:alias=immich-machine-learning",
+              "--volume",
+              "immich-captured-immich-model-cache:/cache",
+              "--volume",
+              "/sanitized/fixture-root:/fixture:rw",
+              "--health-cmd",
+              "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:3003/ping', timeout=5)\"",
+              "--health-interval",
+              "2s",
+              "--health-retries",
+              "120",
+              "registry.invalid/boxferry-test/immich-application:machine-learning"
+            ],
+            "Umask": "0022",
+            "Timeout": 0,
+            "StopTimeout": 10,
+            "Passwd": true,
+            "sdNotifyMode": "container"
+          },
+          "HostConfig": {
+            "Binds": [
+              "immich-captured-immich-model-cache:/cache:rprivate,nosuid,nodev,rbind",
+              "/sanitized/path-057"
+            ],
+            "CgroupManager": "cgroupfs",
+            "CgroupMode": "host",
+            "ContainerIDFile": "",
+            "LogConfig": {
+              "Type": "k8s-file",
+              "Config": null,
+              "Path": "/sanitized/path-058",
+              "Tag": "",
+              "Size": "-1B"
+            },
+            "NetworkMode": "bridge",
+            "PortBindings": {},
+            "RestartPolicy": {
+              "Name": "no",
+              "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "AutoRemoveImage": false,
+            "Annotations": {
+              "io.container.manager": "libpod",
+              "org.opencontainers.image.stopSignal": "15",
+              "org.systemd.property.KillSignal": "15",
+              "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
+            },
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "CapAdd": [],
+            "CapDrop": [],
+            "Dns": [],
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": null,
+            "HostsFile": "",
+            "GroupAdd": null,
+            "IpcMode": "host",
+            "Cgroup": "",
+            "Cgroups": "default",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "private",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": [],
+            "Tmpfs": {},
+            "UTSMode": "host",
+            "UsernsMode": "",
+            "ShmSize": 65536000,
+            "Runtime": "oci",
+            "ConsoleSize": [
+              0,
+              0
+            ],
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [],
+            "DiskQuota": 0,
+            "KernelMemory": 0,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": false,
+            "PidsLimit": 0,
+            "Ulimits": [
+              {
+                "Name": "RLIMIT_NOFILE",
+                "Soft": 1048576,
+                "Hard": 1048576
+              },
+              {
+                "Name": "RLIMIT_NPROC",
+                "Soft": 1048576,
+                "Hard": 1048576
+              }
+            ],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "CgroupConf": null
+          },
+          "UseImageHosts": false,
+          "UseImageHostname": false
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/networks/de1d675b375822f5353661e755946398dfcbbddec031c29b88061ac9dad8ee61/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-13"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "343"
+          ]
+        ],
+        "body": {
+          "name": "podman",
+          "id": "de1d675b375822f5353661e755946398dfcbbddec031c29b88061ac9dad8ee61",
+          "driver": "bridge",
+          "network_interface": "podman0",
+          "created": "2000-01-01T00:00:00Z",
+          "subnets": [
+            {
+              "subnet": "192.0.2.3/16",
+              "gateway": "192.0.2.4"
+            }
+          ],
+          "ipv6_enabled": false,
+          "internal": false,
+          "dns_enabled": false,
+          "ipam_options": {
+            "driver": "host-local"
+          },
+          "containers": {}
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/networks/998dc75acc11fa70f4eb22e26239093556ce2647da1a15e73f1909646a99f662/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-14"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "1383"
+          ]
+        ],
+        "body": {
+          "name": "immich-captured-immich-backend",
+          "id": "998dc75acc11fa70f4eb22e26239093556ce2647da1a15e73f1909646a99f662",
+          "driver": "bridge",
+          "network_interface": "podman1",
+          "created": "2000-01-01T00:00:00Z",
+          "subnets": [
+            {
+              "subnet": "192.0.2.5/24",
+              "gateway": "192.0.2.6"
+            }
+          ],
+          "ipv6_enabled": false,
+          "internal": true,
+          "dns_enabled": true,
+          "labels": {
+            "io.boxferry.application": "immich-captured-immich",
+            "io.boxferry.live-run": "immich-captured-run"
+          },
+          "ipam_options": {
+            "driver": "host-local"
+          },
+          "containers": {
+            "3f6715ce03d9ac402d7d551b19ea6eb5321799bc53409396fbba96a3ddcc9e5c": {
+              "name": "immich-captured-immich-redis",
+              "interfaces": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.7/24",
+                      "gateway": "192.0.2.6"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:01"
+                }
+              }
+            },
+            "d94bc8955ab8f2b947fc1f3ec2f5409a8aba177d9bff9b8b3d4784e74845b4e5": {
+              "name": "immich-captured-immich-database",
+              "interfaces": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.8/24",
+                      "gateway": "192.0.2.6"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:02"
+                }
+              }
+            },
+            "ac4845960b2ff85d609f118cebd4379c1c9a21419546ed91bab6217dd224599f": {
+              "name": "immich-captured-immich-server",
+              "interfaces": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.9/24",
+                      "gateway": "192.0.2.6"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:03"
+                }
+              }
+            },
+            "dea3d06e2ae14bcc30990cfd4e50615124e4f72b67b15838e3a1875d660a9ae4": {
+              "name": "immich-captured-immich-machine-learning",
+              "interfaces": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.11/24",
+                      "gateway": "192.0.2.6"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:05"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/networks/3264d9a29c6c6c3043cfe9f6a5a194028649eaa8a22492f5aea522d07e442a1c/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-15"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "695"
+          ]
+        ],
+        "body": {
+          "name": "immich-captured-immich-edge",
+          "id": "3264d9a29c6c6c3043cfe9f6a5a194028649eaa8a22492f5aea522d07e442a1c",
+          "driver": "bridge",
+          "network_interface": "podman2",
+          "created": "2000-01-01T00:00:00Z",
+          "subnets": [
+            {
+              "subnet": "192.0.2.1/24",
+              "gateway": "192.0.2.2"
+            }
+          ],
+          "ipv6_enabled": false,
+          "internal": false,
+          "dns_enabled": true,
+          "labels": {
+            "io.boxferry.application": "immich-captured-immich",
+            "io.boxferry.live-run": "immich-captured-run"
+          },
+          "ipam_options": {
+            "driver": "host-local"
+          },
+          "containers": {
+            "ac4845960b2ff85d609f118cebd4379c1c9a21419546ed91bab6217dd224599f": {
+              "name": "immich-captured-immich-server",
+              "interfaces": {
+                "eth1": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.10/24",
+                      "gateway": "192.0.2.2"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:04"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/immich-captured-immich-library/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-16"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "331"
+          ]
+        ],
+        "body": {
+          "Name": "immich-captured-immich-library",
+          "Driver": "local",
+          "Mountpoint": "/sanitized/path-002",
+          "CreatedAt": "2000-01-01T00:00:00Z",
+          "Labels": {
+            "io.boxferry.application": "immich-captured-immich",
+            "io.boxferry.live-run": "immich-captured-run"
+          },
+          "Scope": "local",
+          "Options": {},
+          "MountCount": 0,
+          "NeedsCopyUp": true,
+          "NeedsChown": true,
+          "LockNumber": 0
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/immich-captured-immich-model-cache/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-17"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "335"
+          ]
+        ],
+        "body": {
+          "Name": "immich-captured-immich-model-cache",
+          "Driver": "local",
+          "Mountpoint": "/sanitized/path-003",
+          "CreatedAt": "2000-01-01T00:00:00Z",
+          "Labels": {
+            "io.boxferry.application": "immich-captured-immich",
+            "io.boxferry.live-run": "immich-captured-run"
+          },
+          "Scope": "local",
+          "Options": {},
+          "MountCount": 0,
+          "NeedsCopyUp": true,
+          "NeedsChown": true,
+          "LockNumber": 1
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/immich-captured-immich-pgdata/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-18"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "330"
+          ]
+        ],
+        "body": {
+          "Name": "immich-captured-immich-pgdata",
+          "Driver": "local",
+          "Mountpoint": "/sanitized/path-004",
+          "CreatedAt": "2000-01-01T00:00:00Z",
+          "Labels": {
+            "io.boxferry.application": "immich-captured-immich",
+            "io.boxferry.live-run": "immich-captured-run"
+          },
+          "Scope": "local",
+          "Options": {},
+          "MountCount": 0,
+          "NeedsCopyUp": true,
+          "NeedsChown": true,
+          "LockNumber": 2
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/volumes/immich-captured-immich-redisdata/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-19"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "333"
+          ]
+        ],
+        "body": {
+          "Name": "immich-captured-immich-redisdata",
+          "Driver": "local",
+          "Mountpoint": "/sanitized/path-005",
+          "CreatedAt": "2000-01-01T00:00:00Z",
+          "Labels": {
+            "io.boxferry.application": "immich-captured-immich",
+            "io.boxferry.live-run": "immich-captured-run"
+          },
+          "Scope": "local",
+          "Options": {},
+          "MountCount": 0,
+          "NeedsCopyUp": true,
+          "NeedsChown": true,
+          "LockNumber": 3
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/5d78e725b5dc00f3804ecb5a2e145ff02cc0bea99308d23b09e502ecf59edec9/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-20"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "12516"
+          ]
+        ],
+        "body": {
+          "Id": "5d78e725b5dc00f3804ecb5a2e145ff02cc0bea99308d23b09e502ecf59edec9",
+          "Digest": "sha256:c8a380c1af2c0590d6e0884ab3c377a8d328a3b1a99659819e6a2dae9363e150",
+          "RepoTags": [
+            "registry.invalid/boxferry-test/immich-application:machine-learning"
+          ],
+          "RepoDigests": [
+            "registry.invalid/boxferry-test/immich-application@sha256:c8a380c1af2c0590d6e0884ab3c377a8d328a3b1a99659819e6a2dae9363e150"
+          ],
+          "Parent": "",
+          "Comment": "debuerreotype 0.17",
+          "Created": "2000-01-01T00:00:00Z",
+          "Config": {
+            "Env": [
+              "PATH=redacted",
+              "LANG=redacted",
+              "GPG_KEY=redacted",
+              "PYTHON_VERSION=redacted",
+              "PYTHON_SHA256=redacted",
+              "LD_PRELOAD=redacted",
+              "MACHINE_LEARNING_MODEL_ARENA=redacted",
+              "TRANSFORMERS_CACHE=redacted",
+              "PYTHONDONTWRITEBYTECODE=redacted",
+              "PYTHONUNBUFFERED=redacted",
+              "PYTHONPATH=redacted",
+              "DEVICE=redacted",
+              "VIRTUAL_ENV=redacted",
+              "MACHINE_LEARNING_CACHE_FOLDER=redacted",
+              "IMMICH_BUILD=redacted",
+              "IMMICH_BUILD_URL=redacted",
+              "IMMICH_BUILD_IMAGE=redacted",
+              "IMMICH_BUILD_IMAGE_URL=redacted",
+              "IMMICH_REPOSITORY=redacted",
+              "IMMICH_REPOSITORY_URL=redacted",
+              "IMMICH_SOURCE_REF=redacted",
+              "IMMICH_SOURCE_COMMIT=redacted",
+              "IMMICH_SOURCE_URL=redacted"
+            ],
+            "Entrypoint": [
+              "tini",
+              "--"
+            ],
+            "Cmd": [
+              "python",
+              "-m",
+              "immich_ml"
+            ],
+            "WorkingDir": "/usr/src",
+            "Labels": {
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "ArgsEscaped": true
+          },
+          "Version": "",
+          "Author": "",
+          "Architecture": "amd64",
+          "Os": "linux",
+          "Size": 1318005782,
+          "VirtualSize": 1318005782,
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-059",
+              "UpperDir": "/sanitized/path-060",
+              "WorkDir": "/sanitized/path-061"
+            }
+          },
+          "RootFS": {
+            "Type": "layers",
+            "Layers": [
+              "sha256:d59ef83968344a1c38dfd44a79c02dbd91950e893006a9ac37375ea6a4440375",
+              "sha256:5b6ddb7db0106dd779f061822c49d20ec060c3d9f98d86240b0720cf8a778d25",
+              "sha256:0cccda6b82e19c58824c0f8ce8f87d8d6cfc40a22a8a39952e314a3ddf067018",
+              "sha256:0c4e6993ad9a8190788cca3943e14ada4a414e4a537c40436a8ff1596dd06396",
+              "sha256:477d9af314540b536684302870cd3f392cd34e30eab87695957b9dce7694e642",
+              "sha256:4aa92fee143cc0944a5a4a22f2c982c65bf208f3d67393d76f1aa6c65158fc24",
+              "sha256:3c19809774908f502483120c9f603469724417356759f3351d3a253dac63fe33",
+              "sha256:c7d312126da55ba7c7a145c263631424271f23d5e872fb9bb00fb2bdb9c400e5",
+              "sha256:d2b5a06191739677a7d539bc0a78fa543b53df324e656122d826e3b4856e59cf",
+              "sha256:38e4f29da5f9bfb295a87b880decd9f0ac43b71332d44c873f6211f1b0137214",
+              "sha256:5d4a0dd3ba0d2a068b903335f430d92ac57b011bd08722883e7a5d9e7cd34d4d"
+            ]
+          },
+          "Labels": {
+            "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+            "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+            "org.opencontainers.image.licenses": "AGPL-3.0",
+            "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+            "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+            "org.opencontainers.image.title": "immich",
+            "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+            "org.opencontainers.image.version": "v3.1.0"
+          },
+          "Annotations": {},
+          "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+          "User": "",
+          "History": [
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "# debian.sh --arch 'amd64' out/ 'bookworm' '@1781049600'",
+              "comment": "debuerreotype 0.17"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV LANG=C.UTF-8",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tapt-get update; \tapt-get install -y --no-install-recommends \t\tca-certificates \t\tnetbase \t\ttzdata \t; \trm -rf /var/lib/apt/lists/* # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV GPG_KEY=A035C8C19219BA821ECEA86B64E628F8D684696D",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PYTHON_VERSION=3.11.15",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PYTHON_SHA256=bf810641a8bb396b357a56bb5dfb5829f3aaacbae42321c957ce533a03c967f7",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \t\tsavedAptMark=\"$(apt-mark showmanual)\"; \tapt-get update; \tapt-get install -y --no-install-recommends \t\tdpkg-dev \t\tgcc \t\tgnupg \t\tlibbluetooth-dev \t\tlibbz2-dev \t\tlibc6-dev \t\tlibdb-dev \t\tlibffi-dev \t\tlibgdbm-dev \t\tliblzma-dev \t\tlibncursesw5-dev \t\tlibreadline-dev \t\tlibsqlite3-dev \t\tlibssl-dev \t\tmake \t\ttk-dev \t\tuuid-dev \t\twget \t\txz-utils \t\tzlib1g-dev \t; \t\twget -O python.tar.xz \"<redacted-endpoint>\"; \techo \"$PYTHON_SHA256 *python.tar.xz\" | sha256sum -c -; \twget -O python.tar.xz.asc \"<redacted-endpoint>\"; \tGNUPGHOME=\"$(mktemp -d)\"; export GNUPGHOME; \tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \"$GPG_KEY\"; \tgpg --batch --verify python.tar.xz.asc python.tar.xz; \tgpgconf --kill all; \trm -rf \"$GNUPGHOME\" python.tar.xz.asc; \tmkdir -p /usr/src/python; \ttar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz; \trm python.tar.xz; \t\tcd /usr/src/python; \tgnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"; \t./configure \t\t--build=\"$gnuArch\" \t\t--enable-loadable-sqlite-extensions \t\t--enable-optimizations \t\t--enable-option-checking=fatal \t\t--enable-shared \t\t$(test \"${gnuArch%%-*}\" != 'riscv64' && echo '--with-lto') \t\t--with-ensurepip \t; \tnproc=\"$(nproc)\"; \tEXTRA_CFLAGS=\"$(dpkg-buildflags --get CFLAGS)\"; \tLDFLAGS=\"$(dpkg-buildflags --get LDFLAGS)\"; \tLDFLAGS=\"${LDFLAGS:-} -Wl,--strip-all\"; \tmake -j \"$nproc\" \t\t\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\" \t\t\"LDFLAGS=${LDFLAGS:-}\" \t; \trm python; \tmake -j \"$nproc\" \t\t\"EXTRA_CFLAGS=${EXTRA_CFLAGS:-}\" \t\t\"LDFLAGS=${LDFLAGS:-} -Wl,-rpath='\\$\\$ORIGIN/../lib'\" \t\tpython \t; \tmake install; \t\tcd /; \trm -rf /usr/src/python; \t\tfind /usr/local -depth \t\t\\( \t\t\t\\( -type d -a \\( -name test -o -name tests -o -name idle_test \\) \\) \t\t\t-o \\( -type f -a \\( -name '*.pyc' -o -name '*.pyo' -o -name 'libpython*.a' \\) \\) \t\t\\) -exec rm -rf '{}' + \t; \t\tldconfig; \t\tapt-mark auto '.*' > /dev/null; \tapt-mark manual $savedAptMark; \tfind /usr/local -type f -executable -not \\( -name '*tkinter*' \\) -exec ldd '{}' ';' \t\t| awk '/=>/ { so = $(NF-1); if (index(so, \"/usr/local/\") == 1) { next }; gsub(\"^/(usr/)?\", \"\", so); printf \"*%s\\n\", so }' \t\t| sort -u \t\t| xargs -rt dpkg-query --search \t\t| awk 'sub(\":$\", \"\", $1) { print $1 }' \t\t| sort -u \t\t| xargs -r apt-mark manual \t; \tapt-get purge -y --auto-remove -o APT2001:db8::1utoRemov2001:db8::2RecommendsImportant=false; \trm -rf /var/lib/apt/lists/*; \t\texport PYTHONDONTWRITEBYTECODE=1; \tpython3 --version; \t\tpip3 install \t\t--disable-pip-version-check \t\t--no-cache-dir \t\t--no-compile \t\t'setuptools==79.0.1' \t\t'wheel<0.46' \t; \tpip3 --version # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tfor src in idle3 pip3 pydoc3 python3 python3-config; do \t\tdst=\"$(echo \"$src\" | tr -d 3)\"; \t\t[ -s \"/usr/local/bin/$src\" ]; \t\t[ ! -e \"/usr/local/bin/$dst\" ]; \t\tln -svT \"$src\" \"/usr/local/bin/$dst\"; \tdone # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "CMD [\"python3\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV LD_PRELOAD=/usr/lib/libmimalloc.so.2 MACHINE_LEARNING_MODEL_ARENA=false",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG DEVICE=cpu",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |1 DEVICE=cpu /bin/sh -c apt-get update &&     apt-get install -y --no-install-recommends tini ccache libgl1 libglib2.0-0 libgomp1 $(if ! [ \"$DEVICE\" = \"openvino\" ] && ! [ \"$DEVICE\" = \"rocm\" ]; then echo \"libmimalloc2.0\"; fi) &&     apt-get autoremove -yqq &&     apt-get clean &&     rm -rf /var/lib/apt/lists/* # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |1 DEVICE=cpu /bin/sh -c ln -s \"/usr/lib/$(arch)-linux-gnu/libmimalloc.so.2\" /usr/lib/libmimalloc.so.2 # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "WORKDIR /usr/src",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV TRANSFORMERS_CACHE=/cache PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH=/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin PYTHONPATH=/usr/src DEVICE=cpu VIRTUAL_ENV=/opt/venv MACHINE_LEARNING_CACHE_FOLDER=/cache",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |1 DEVICE=cpu /bin/sh -c echo \"hard core 0\" >> /etc/security/limits.conf &&     echo \"fs.suid_dumpable 0\" >> /etc/sysctl.conf &&     echo 'ulimit -S -c 0 > /dev/null 2>&1' >> /etc/profile # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /opt/venv /opt/venv # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY scripts/healthcheck.py . # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY immich_ml immich_ml # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_ID=30460361152",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_IMAGE=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_SOURCE_REF=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_SOURCE_COMMIT=8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD=30460361152",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD_URL=<redacted-endpoint>",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD_IMAGE=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD_IMAGE_URL=<redacted-endpoint>",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_REPOSITORY=immich-app/immich",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_REPOSITORY_URL=https://github.com/immich-app/immich",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_SOURCE_REF=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_SOURCE_COMMIT=8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_SOURCE_URL=<redacted-endpoint>",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENTRYPOINT [\"tini\" \"--\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "CMD [\"python\" \"-m\" \"immich_ml\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "HEALTHCHECK {Test:[CMD-SHELL python3 healthcheck.py] Interval:0s Timeout:0s StartPeriod:0s StartInterval:0s Retries:0}",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            }
+          ],
+          "NamesHistory": [
+            "registry.invalid/boxferry-test/immich-application:machine-learning"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/a9ffa986f6101ccaa0647efb54efe70f45cfa085a6d20e86aac9f3b8e7d9dc79/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-21"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "15072"
+          ]
+        ],
+        "body": {
+          "Id": "a9ffa986f6101ccaa0647efb54efe70f45cfa085a6d20e86aac9f3b8e7d9dc79",
+          "Digest": "sha256:fd17a048ecadf6c7dff3270fa033849e07ba4411273cde19d70445074e92402f",
+          "RepoTags": [
+            "registry.invalid/boxferry-test/immich-application:postgres"
+          ],
+          "RepoDigests": [
+            "registry.invalid/boxferry-test/immich-application@sha256:fd17a048ecadf6c7dff3270fa033849e07ba4411273cde19d70445074e92402f"
+          ],
+          "Parent": "",
+          "Comment": "debuerreotype 0.15",
+          "Created": "2000-01-01T00:00:00Z",
+          "Config": {
+            "ExposedPorts": {
+              "5432/tcp": {}
+            },
+            "Env": [
+              "PATH=redacted",
+              "GOSU_VERSION=redacted",
+              "LANG=redacted",
+              "PG_MAJOR=redacted",
+              "PG_VERSION=redacted",
+              "PGDATA=redacted",
+              "DB_STORAGE_TYPE=redacted"
+            ],
+            "Entrypoint": [
+              "/usr/local/bin/immich-docker-entrypoint.sh"
+            ],
+            "Cmd": [
+              "postgres",
+              "-c",
+              "config_file=redacted"
+            ],
+            "Volumes": {
+              "/var/lib/postgresql/data": {}
+            },
+            "Labels": {
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "Base images for Immich containers",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "c5095615488fa07469b5df48a3c3e5cebeed7296",
+              "org.opencontainers.image.source": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.title": "base-images",
+              "org.opencontainers.image.url": "https://github.com/immich-app/base-images",
+              "org.opencontainers.image.version": "14-vectorchord0.4.3-pgvector0.8.1-pgvectors0.2.0"
+            },
+            "StopSignal": "SIGINT",
+            "ArgsEscaped": true
+          },
+          "Version": "",
+          "Author": "",
+          "Architecture": "amd64",
+          "Os": "linux",
+          "Size": 763898578,
+          "VirtualSize": 763898578,
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-062",
+              "UpperDir": "/sanitized/path-063",
+              "WorkDir": "/sanitized/path-064"
+            }
+          },
+          "RootFS": {
+            "Type": "layers",
+            "Layers": [
+              "sha256:c173d366d57941d598d9a95ed5c47223847574b4c3d212be20313dc3f3b4e03a",
+              "sha256:ede5776b1bda1f094176b005ddf9f81b669446e0069fe4abf74f8fc77bf905e8",
+              "sha256:476b0cab134bc47946d326cf039c237cbb30d1bb2bb1097472e6ac81e1c0807e",
+              "sha256:27e91e6cb616dd01c80241e67b8ef03ecbc444aa12cad2e31ccf37920494713c",
+              "sha256:8f1589e746227015f491349404952bf638528965790a3cbf33298cb187fa7203",
+              "sha256:d1ea4dec6108a3fb4bed8ecbfc65071f0f8970eaec65df6342491536e5b11f3c",
+              "sha256:50c328a9d72297546895f47950f7ff1afd1d55541a6e38c447ceca2b71aac3b9",
+              "sha256:0fa2422441992b4cdbba757fef2f06d4f02b2955448b544bc4bb6c2e39d2e1b3",
+              "sha256:5be3f3b0ba20c0c3bc31eb619eda5f38c0937ee16fb40b865e1321e9633b5a27",
+              "sha256:007b099c4f310ad4c3759dfd0a153e2b7896699eb4fc6c0aaf38ba0a88a55fa5",
+              "sha256:f340fb8f1be794882048d3c8e14085834fffaf7540888901c4a60c6d86970610",
+              "sha256:b0a46a066f60e5b3c782ae76576eedcc8ced37eb79d8d3c2c4825c2d43b3fbed",
+              "sha256:fb5248f3a20ea20f8397f8c459da1300058cbafb01d9375677e1f1866d224157",
+              "sha256:dce86fb6877ef3a73e3d06eea70395283387e2e0e58efc61e22a3f5fa4fe841a",
+              "sha256:5f649c086a8724f05f3c3b12e9eca7c0ac5644877fbf0d9d54b14858e1b6b0c9",
+              "sha256:2f95d0807bb60c9b5b39e624576019141e72b65aca39a5212142159c86e7074c",
+              "sha256:89b89ffe5a9f20d9c942a4cdbede67f0b5820bd5d83aae9070d3676f73b13880",
+              "sha256:d1d9ea64b9058b97cce9343cb41f1cc52142ad5dd91827193c972ebd5903643b",
+              "sha256:271a74dae39dfc04e8f85ea14fe9ec645d380d7d9ee92dd62f19e7a55a37bea9",
+              "sha256:275d7912693acb1c0cfe1ed34d63888ce13e3a7833bc3a23d98a39113f5b9c81",
+              "sha256:eed13cb3d9b7052dfc7aeb33051b2e63950e71e857b318fe010665ef8922173e"
+            ]
+          },
+          "Labels": {
+            "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+            "org.opencontainers.image.description": "Base images for Immich containers",
+            "org.opencontainers.image.licenses": "AGPL-3.0",
+            "org.opencontainers.image.revision": "c5095615488fa07469b5df48a3c3e5cebeed7296",
+            "org.opencontainers.image.source": "https://github.com/immich-app/base-images",
+            "org.opencontainers.image.title": "base-images",
+            "org.opencontainers.image.url": "https://github.com/immich-app/base-images",
+            "org.opencontainers.image.version": "14-vectorchord0.4.3-pgvector0.8.1-pgvectors0.2.0"
+          },
+          "Annotations": {},
+          "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+          "User": "",
+          "History": [
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "# debian.sh --arch 'amd64' out/ 'bookworm' '@1754870400'",
+              "comment": "debuerreotype 0.15"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tgroupadd -r postgres --gid=999; \tuseradd -r -g postgres --uid=999 --home-dir=/var/lib/postgresql --shell=/bin/bash postgres; \tinstall --verbose --directory --owner postgres --group postgres --mode 1777 /var/lib/postgresql # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -ex; \tapt-get update; \tapt-get install -y --no-install-recommends \t\tgnupg \t\tless \t; \trm -rf /var/lib/apt/lists/* # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV GOSU_VERSION=1.17",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tsavedAptMark=\"$(apt-mark showmanual)\"; \tapt-get update; \tapt-get install -y --no-install-recommends ca-certificates wget; \trm -rf /var/lib/apt/lists/*; \tdpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \twget -O /usr/local/bin/gosu \"<redacted-endpoint>\"; \twget -O /usr/local/bin/gosu.asc \"<redacted-endpoint>\"; \texport GNUPGHOME=\"$(mktemp -d)\"; \tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \tgpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \tgpgconf --kill all; \trm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \tapt-mark auto '.*' > /dev/null; \t[ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark > /dev/null; \tapt-get purge -y --auto-remove -o APT2001:db8::1utoRemov2001:db8::2RecommendsImportant=false; \tchmod +x /usr/local/bin/gosu; \tgosu --version; \tgosu nobody true # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tif [ -f /etc/dpkg/dpkg.cfg.d/docker ]; then \t\tgrep -q '/usr/share/locale' /etc/dpkg/dpkg.cfg.d/docker; \t\tsed -ri '/\\/usr\\/share\\/locale/d' /etc/dpkg/dpkg.cfg.d/docker; \t\t! grep -q '/usr/share/locale' /etc/dpkg/dpkg.cfg.d/docker; \tfi; \tapt-get update; apt-get install -y --no-install-recommends locales; rm -rf /var/lib/apt/lists/*; \techo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen; \tlocale-gen; \tlocale -a | grep 'en_US.utf8' # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV LANG=en_US.utf8",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tapt-get update; \tapt-get install -y --no-install-recommends \t\tlibnss-wrapper \t\txz-utils \t\tzstd \t; \trm -rf /var/lib/apt/lists/* # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c mkdir /docker-entrypoint-initdb.d # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -ex; \tkey='B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8'; \texport GNUPGHOME=\"$(mktemp -d)\"; \tmkdir -p /usr/local/share/keyrings/; \tgpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$key\"; \tgpg --batch --export --armor \"$key\" > /usr/local/share/keyrings/postgres.gpg.asc; \tgpgconf --kill all; \trm -rf \"$GNUPGHOME\" # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PG_MAJOR=14",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/14/bin",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PG_VERSION=14.19-1.pgdg12+1",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -ex; \t\texport PYTHONDONTWRITEBYTECODE=1; \t\tdpkgArch=\"$(dpkg --print-architecture)\"; \taptRepo=\"[ signed-by=/usr/local/share/keyrings/postgres.gpg.asc ] <redacted-endpoint> bookworm-pgdg main $PG_MAJOR\"; \tcase \"$dpkgArch\" in \t\tamd64 | arm64 | ppc64el) \t\t\techo \"deb $aptRepo\" > /etc/apt/sources.list.d/pgdg.list; \t\t\tapt-get update; \t\t\t;; \t\t*) \t\t\techo \"deb-src $aptRepo\" > /etc/apt/sources.list.d/pgdg.list; \t\t\t\t\t\tsavedAptMark=\"$(apt-mark showmanual)\"; \t\t\t\t\t\ttempDir=\"$(mktemp -d)\"; \t\t\tcd \"$tempDir\"; \t\t\t\t\t\tapt-get update; \t\t\tapt-get install -y --no-install-recommends dpkg-dev; \t\t\techo \"deb [ trusted=yes ] file://$tempDir ./\" > /etc/apt/sources.list.d/temp.list; \t\t\t_update_repo() { \t\t\t\tdpkg-scanpackages . > Packages; \t\t\t\tapt-get -o Acquir2001:db8::2GzipIndexes=false update; \t\t\t}; \t\t\t_update_repo; \t\t\t\t\t\tnproc=\"$(nproc)\"; \t\t\texport DEB_BUILD_OPTIONS=\"nocheck parallel=$nproc\"; \t\t\tapt-get build-dep -y postgresql-common-dev; \t\t\tapt-get source --compile postgresql-common-dev; \t\t\t_update_repo; \t\t\tapt-get build-dep -y \"postgresql-$PG_MAJOR=$PG_VERSION\"; \t\t\tapt-get source --compile \"postgresql-$PG_MAJOR=$PG_VERSION\"; \t\t\t\t\t\t\t\t\tapt-mark showmanual | xargs apt-mark auto > /dev/null; \t\t\tapt-mark manual $savedAptMark; \t\t\t\t\t\tls -lAFh; \t\t\t_update_repo; \t\t\tgrep '^Package: ' Packages; \t\t\tcd /; \t\t\t;; \tesac; \t\tapt-get install -y --no-install-recommends postgresql-common; \tsed -ri 's/#(create_main_cluster) .*$/\\1 = false/' /etc/postgresql-common/createcluster.conf; \tapt-get install -y --no-install-recommends \t\t\"postgresql-$PG_MAJOR=$PG_VERSION\" \t; \t\trm -rf /var/lib/apt/lists/*; \t\tif [ -n \"$tempDir\" ]; then \t\tapt-get purge -y --auto-remove; \t\trm -rf \"$tempDir\" /etc/apt/sources.list.d/temp.list; \tfi; \t\tfind /usr -name '*.pyc' -type f -exec bash -c 'for pyc; do dpkg -S \"$pyc\" &> /dev/null || rm -vf \"$pyc\"; done' -- '{}' +; \t\tpostgres --version # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tdpkg-divert --add --rename --divert \"/usr/share/postgresql/postgresql.conf.sample.dpkg\" \"/usr/share/postgresql/$PG_MAJOR/postgresql.conf.sample\"; \tcp -v /usr/share/postgresql/postgresql.conf.sample.dpkg /usr/share/postgresql/postgresql.conf.sample; \tln -sv ../postgresql.conf.sample \"/usr/share/postgresql/$PG_MAJOR/\"; \tsed -ri \"s!^#?(listen_addresses)\\s*=\\s*\\S+.*!\\1 = '*'!\" /usr/share/postgresql/postgresql.conf.sample; \tgrep -F \"listen_addresses = '*'\" /usr/share/postgresql/postgresql.conf.sample # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c install --verbose --directory --owner postgres --group postgres --mode 3777 /var/run/postgresql # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PGDATA=/var/lib/postgresql/data",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c install --verbose --directory --owner postgres --group postgres --mode 1777 \"$PGDATA\" # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "VOLUME [/var/lib/postgresql/data]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY docker-entrypoint.sh docker-ensure-initdb.sh /usr/local/bin/ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c ln -sT docker-ensure-initdb.sh /usr/local/bin/docker-enforce-initdb.sh # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENTRYPOINT [\"docker-entrypoint.sh\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "STOPSIGNAL SIGINT",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "EXPOSE map[5432/tcp:{}]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "CMD [\"postgres\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG PG_MAJOR=14",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ADD <redacted-endpoint> /sanitized/path-065",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |1 PG_MAJOR=14 /bin/sh -c apt-get update && \t\tapt-mark hold locales && \t\tapt-get install -y --no-install-recommends build-essential postgresql-server-dev-$PG_MAJOR && \t\tcd /sanitized/path-066",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG PG_MAJOR=14",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG VECTORCHORD_TAG=0.4.3",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG PGVECTORS_TAG=0.2.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG TARGETARCH=amd64",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV DB_STORAGE_TYPE=SSD",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |4 PG_MAJOR=14 VECTORCHORD_TAG=0.4.3 PGVECTORS_TAG=0.2.0 TARGETARCH=amd64 /bin/sh -c apt-get update &&     apt-get install -y wget &&     wget -nv -O /sanitized/path-067",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |4 PG_MAJOR=14 VECTORCHORD_TAG=0.4.3 PGVECTORS_TAG=0.2.0 TARGETARCH=amd64 /bin/sh -c chmod 1777 /etc/postgresql # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY postgresql.hdd.conf postgresql.ssd.conf /var/postgresql-conf-tpl/ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY immich-docker-entrypoint.sh healthcheck.sh set-env.sh /usr/local/bin/ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "HEALTHCHECK &{[\"CMD-SHELL\" \"/usr/local/bin/healthcheck.sh\"] \"5m0s\" \"0s\" \"5m0s\" \"5s\" '\\x00'}",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |4 PG_MAJOR=14 VECTORCHORD_TAG=0.4.3 PGVECTORS_TAG=0.2.0 TARGETARCH=amd64 /bin/sh -c if [ -n \"$PGVECTORS_TAG\" ]; then         sed -i \"s/vchord.so/vchord.so, vectors.so/\" /var/postgresql-conf-tpl/postgresql.*.conf;         sed -i \"s/, public/, public, vectors/\" /var/postgresql-conf-tpl/postgresql.*.conf;     fi # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENTRYPOINT [\"/usr/local/bin/immich-docker-entrypoint.sh\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "CMD [\"postgres\" \"-c\" \"config_file=/etc/postgresql/postgresql.conf\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            }
+          ],
+          "NamesHistory": [
+            "registry.invalid/boxferry-test/immich-application:postgres"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/5067c989f286856eec8d1a15e78bbb1b373da506e47260f82d200ec9b1b4518b/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-22"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "3725"
+          ]
+        ],
+        "body": {
+          "Id": "5067c989f286856eec8d1a15e78bbb1b373da506e47260f82d200ec9b1b4518b",
+          "Digest": "sha256:48f9c0a9d1b2886c4db6cc9327a5555120d6b762c104bb5446dd7838f5cefcdc",
+          "RepoTags": [
+            "registry.invalid/boxferry-test/immich-application:valkey"
+          ],
+          "RepoDigests": [
+            "registry.invalid/boxferry-test/immich-application@sha256:48f9c0a9d1b2886c4db6cc9327a5555120d6b762c104bb5446dd7838f5cefcdc"
+          ],
+          "Parent": "",
+          "Comment": "debuerreotype 0.17",
+          "Created": "2000-01-01T00:00:00Z",
+          "Config": {
+            "ExposedPorts": {
+              "6379/tcp": {}
+            },
+            "Env": [
+              "PATH=redacted",
+              "VALKEY_VERSION=redacted"
+            ],
+            "Entrypoint": [
+              "docker-entrypoint.sh"
+            ],
+            "Cmd": [
+              "valkey-server"
+            ],
+            "WorkingDir": "/data",
+            "Labels": {
+              "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
+            },
+            "ArgsEscaped": true
+          },
+          "Version": "",
+          "Author": "",
+          "Architecture": "amd64",
+          "Os": "linux",
+          "Size": 116572812,
+          "VirtualSize": 116572812,
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-068",
+              "UpperDir": "/sanitized/path-069",
+              "WorkDir": "/sanitized/path-070"
+            }
+          },
+          "RootFS": {
+            "Type": "layers",
+            "Layers": [
+              "sha256:fade2420bb72c7bf7e76feca3ad337f3d6af49d782a182ab71e6eba509c090d0",
+              "sha256:449b0d6f78373c9f096fdc9e3343b7b87a6ad35c004b02dc6b2a13d6ab2ed672",
+              "sha256:7a5f1380ee4abfeece34b525390abee344a88d082f01a74bfa8a2e7933a18ce7",
+              "sha256:9f60aabd21f4240da179a4576fed2cf5a9b6a05d7320d89c29b10edf53410bd6",
+              "sha256:f24e38e96fbdac0828ffb606b0706ee6645e85becc195906c9de2be653670d1e",
+              "sha256:3c19809774908f502483120c9f603469724417356759f3351d3a253dac63fe33",
+              "sha256:8d6501300cfe955ae8330b246c14dbd9708de5bd738604a818313288eda8b0ec"
+            ]
+          },
+          "Labels": {
+            "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
+          },
+          "Annotations": {},
+          "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+          "User": "",
+          "History": [
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "# debian.sh --arch 'amd64' out/ 'trixie' '@1783900800'",
+              "comment": "debuerreotype 0.17"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV VALKEY_VERSION=9.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "LABEL org.opencontainers.image.source=https://github.com/valkey-io/valkey",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tgroupadd -r -g 999 valkey; \tuseradd -r -g valkey -u 999 valkey # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -eux; \tapt-get update; \tapt-get install -y --no-install-recommends \t\ttzdata \t\tlibssl3t64 \t; \trm -rf /var/lib/apt/lists/* # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /usr/local /usr/local # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c mkdir /data && \tchown valkey:valkey /data && \tchmod 1777 /data && \tmkdir -p /run/valkey && \tchown valkey:valkey /run/valkey && \tchmod 1777 /run/valkey && \tvalkey-cli --version && \tvalkey-server --version # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "WORKDIR /data",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY docker-entrypoint.sh /usr/local/bin/ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENTRYPOINT [\"docker-entrypoint.sh\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "EXPOSE [6379/tcp]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "CMD [\"valkey-server\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            }
+          ],
+          "NamesHistory": [
+            "registry.invalid/boxferry-test/immich-application:valkey"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/dbc370fa10a6dfe3e404c443080bff6b39f39d4d4804bb89b32e927fa9de4a3f/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "api-version",
+            "1.44"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "libpod-api-version",
+            "6.1.0"
+          ],
+          [
+            "server",
+            "Libpod/6.1.0 (linux)"
+          ],
+          [
+            "x-reference-id",
+            "fixture-reference-immich-10"
+          ],
+          [
+            "date",
+            "Sat, 01 Jan 2000 00:00:00 GMT"
+          ],
+          [
+            "content-length",
+            "18223"
+          ]
+        ],
+        "body": {
+          "Id": "dbc370fa10a6dfe3e404c443080bff6b39f39d4d4804bb89b32e927fa9de4a3f",
+          "Digest": "sha256:45e8aabef90423ed62e83bd11d1cb6bca542babd8d1e52320ec175a912cbae87",
+          "RepoTags": [
+            "registry.invalid/boxferry-test/immich-application:server"
+          ],
+          "RepoDigests": [
+            "registry.invalid/boxferry-test/immich-application@sha256:45e8aabef90423ed62e83bd11d1cb6bca542babd8d1e52320ec175a912cbae87"
+          ],
+          "Parent": "",
+          "Comment": "debuerreotype 0.17",
+          "Created": "2000-01-01T00:00:00Z",
+          "Config": {
+            "ExposedPorts": {
+              "2283/tcp": {}
+            },
+            "Env": [
+              "PATH=redacted",
+              "NODE_VERSION=redacted",
+              "YARN_VERSION=redacted",
+              "DEBIAN_RELEASE=redacted",
+              "LD_LIBRARY_PATH=redacted",
+              "NODE_ENV=redacted",
+              "NVIDIA_DRIVER_CAPABILITIES=redacted",
+              "NVIDIA_VISIBLE_DEVICES=redacted",
+              "IMMICH_BUILD=redacted",
+              "IMMICH_BUILD_URL=redacted",
+              "IMMICH_BUILD_IMAGE=redacted",
+              "IMMICH_BUILD_IMAGE_URL=redacted",
+              "IMMICH_REPOSITORY=redacted",
+              "IMMICH_REPOSITORY_URL=redacted",
+              "IMMICH_SOURCE_REF=redacted",
+              "IMMICH_SOURCE_COMMIT=redacted",
+              "IMMICH_SOURCE_URL=redacted"
+            ],
+            "Entrypoint": [
+              "tini",
+              "--",
+              "/bin/bash",
+              "-c"
+            ],
+            "Cmd": [
+              "start.sh"
+            ],
+            "Volumes": {
+              "/data": {}
+            },
+            "WorkingDir": "/usr/src/app",
+            "Labels": {
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+              "org.opencontainers.image.licenses": "AGPL-3.0",
+              "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.title": "immich",
+              "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+              "org.opencontainers.image.version": "v3.1.0"
+            },
+            "ArgsEscaped": true
+          },
+          "Version": "",
+          "Author": "",
+          "Architecture": "amd64",
+          "Os": "linux",
+          "Size": 2212845320,
+          "VirtualSize": 2212845320,
+          "GraphDriver": {
+            "Name": "overlay",
+            "Data": {
+              "LowerDir": "/sanitized/path-071",
+              "UpperDir": "/sanitized/path-072",
+              "WorkDir": "/sanitized/path-073"
+            }
+          },
+          "RootFS": {
+            "Type": "layers",
+            "Layers": [
+              "sha256:67f626c405e0a5edabcfcee8054035f7aad72921e0223659fa03dd59373b7029",
+              "sha256:94736c89368325bda9ea551d3f7a04a57f18af6e8d6fc1e1d134baa74fd03383",
+              "sha256:6e2bcb590c8778b70de21c607face04671f8beb07fb8d55d0a2c712194337f89",
+              "sha256:d717425df13bd793afdc695542d950fb632e9d3c79563c91434f377b3df557c2",
+              "sha256:73113f4e098ca9e41738401a88ac6ad0f322ad5050933e9fdfe9d072d94ed3fe",
+              "sha256:169b03a3def3fdbfd3e27407128d56b49943f86deb1029ed166a486321a5a94f",
+              "sha256:e728709f1fb3c891d6d29fdc9d972539bda891b62cc981c5a4e9cf67931d39fb",
+              "sha256:3d5731a96a99c9622ba8f9c319a08ea3c0680ce9ee3a594f8990421618e7e032",
+              "sha256:b5d100c8aafd999d9152923b45a8e783554cbe735fafa71725f5a157e557d89f",
+              "sha256:6509fa41e94c1b5b92b531a64de8f93094f660bdaf0013bdcf6cb5d3010443fa",
+              "sha256:9e9db862cc2ecea4b2d10c26964e9196a09527adb07d06269668fabb7f75ae8a",
+              "sha256:0224a945b74ada4d604b8a429b7942dd5548b6a81cd01f73e6484280a84048cf",
+              "sha256:f21a9d33d4ff4c378ac2e24b3644ae82e3b75458015dac8e383bbb19d1211458",
+              "sha256:90a34511806480a4d928b84e091a839906cceab536f3dd9a280f6a9e7e77d276",
+              "sha256:3c19809774908f502483120c9f603469724417356759f3351d3a253dac63fe33",
+              "sha256:64240a5fe22e4c13e88f92a0459108700799b622f457f17171b6fe994cab398f",
+              "sha256:c77daa5d82c7edc4baf111355bc93a44c0fb00dd3a3857a7270717d88c3aeb6d",
+              "sha256:b4ea912c23583b7cdde86c6187c38d1913371ff1e507ed6c2743088c008256ef",
+              "sha256:051ed43488122de17b0093b016af9727a3d9abf12388b686f47d23e9470e2de0",
+              "sha256:9f322c7b5da0c6c0954d1682998bdbc05d2c5458c3af54c297ecf8ec2ad27e1e",
+              "sha256:7d383595d7b02430c242d5b6695d347f718ce3916bad9e726ba392ee07e5adb5",
+              "sha256:84476b072642d6052ed89a76c9991b8083d3b76522d385176ac3713bae9bb2a0",
+              "sha256:1317575485386c4e88bcb7f01647ff0f1df4695aeb4660a82633090e68fa413d"
+            ]
+          },
+          "Labels": {
+            "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+            "org.opencontainers.image.description": "High performance self-hosted photo and video management solution.",
+            "org.opencontainers.image.licenses": "AGPL-3.0",
+            "org.opencontainers.image.revision": "8aa95c67470a02a8ddedf03c2e52963af33065ff",
+            "org.opencontainers.image.source": "https://github.com/immich-app/immich",
+            "org.opencontainers.image.title": "immich",
+            "org.opencontainers.image.url": "https://github.com/immich-app/immich",
+            "org.opencontainers.image.version": "v3.1.0"
+          },
+          "Annotations": {},
+          "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+          "User": "",
+          "History": [
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "# debian.sh --arch 'amd64' out/ 'trixie' '@1775433600'",
+              "comment": "debuerreotype 0.17"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c groupadd --gid 1000 node   && useradd --uid 1000 --gid node --shell /bin/bash --create-home node # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV NODE_VERSION=24.14.1",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c ARCH= OPENSSL_ARCH= && dpkgArch=\"$(dpkg --print-architecture)\"     && case \"${dpkgArch##*-}\" in       amd64) ARCH='x64' OPENSSL_ARCH='linux-x86_64';;       ppc64el) ARCH='ppc64le' OPENSSL_ARCH='linux-ppc64le';;       s390x) ARCH='s390x' OPENSSL_ARCH='linux*-s390x';;       arm64) ARCH='arm64' OPENSSL_ARCH='linux-aarch64';;       armhf) ARCH='armv7l' OPENSSL_ARCH='linux-armv4';;       i386) ARCH='x86' OPENSSL_ARCH='linux-elf';;       *) echo \"unsupported architecture\"; exit 1 ;;     esac     && set -ex     && apt-get update && apt-get install -y ca-certificates curl wget gnupg dirmngr xz-utils libatomic1 --no-install-recommends     && rm -rf /var/lib/apt/lists/*     && export GNUPGHOME=\"$(mktemp -d)\"     && for key in       5BE8A3F6C8A5C01D106C0AD820B1A390B168D356       DD792F5973C6DE52C432CBDAC77ABFA00DDBF2B7       CC68F5A3106FF448322E48ED27F5E38D5B0A215F       8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600       890C08DB8579162FEE0DF9DB8BEAB4DFCF555EF4       C82FA3AE1CBEDC6BE46B9360C43CEC45C17AB93C       108F52B48DB57BB0CC439B2997B01419BD92F80A       A363A499291CBBC940DD62E41F10027AF002F8B0     ; do       { gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \"$key\" && gpg --batch --fingerprint \"$key\"; } ||       { gpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$key\" && gpg --batch --fingerprint \"$key\"; } ;     done     && curl -fsSLO --compressed \"<redacted-endpoint>\"     && curl -fsSLO --compressed \"<redacted-endpoint>\"     && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc     && gpgconf --kill all     && rm -rf \"$GNUPGHOME\"     && grep \" node-v$NODE_VERSION-linux-$ARCH.tar.xz\\$\" SHASUMS256.txt | sha256sum -c -     && tar -xJf \"node-v$NODE_VERSION-linux-$ARCH.tar.xz\" -C /usr/local --strip-components=1 --no-same-owner     && rm \"node-v$NODE_VERSION-linux-$ARCH.tar.xz\" SHASUMS256.txt.asc SHASUMS256.txt     && find /usr/local/include/node/openssl/archs -mindepth 1 -maxdepth 1 ! -name \"$OPENSSL_ARCH\" -exec rm -rf {} \\;     && apt-mark auto '.*' > /dev/null     && find /usr/local -type f -executable -exec ldd '{}' ';'       | awk '/=>/ { so = $(NF-1); if (index(so, \"/usr/local/\") == 1) { next }; gsub(\"^/(usr/)?\", \"\", so); print so }'       | sort -u       | xargs -r dpkg-query --search       | cut -d: -f1       | sort -u       | xargs -r apt-mark manual     && apt-get purge -y --auto-remove -o APT2001:db8::1utoRemov2001:db8::2RecommendsImportant=false     && ln -s /usr/local/bin/node /usr/local/bin/nodejs     && node --version     && npm --version     && rm -rf /sanitized/path-074",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV YARN_VERSION=1.22.22",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c set -ex   && savedAptMark=\"$(apt-mark showmanual)\"   && apt-get update && apt-get install -y ca-certificates curl wget gnupg dirmngr --no-install-recommends   && rm -rf /var/lib/apt/lists/*   && export GNUPGHOME=\"$(mktemp -d)\"   && for key in     6A010C5166006599AA17F08146C2130DFD2497F5   ; do     { gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys \"$key\" && gpg --batch --fingerprint \"$key\"; } ||     { gpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$key\" && gpg --batch --fingerprint \"$key\"; } ;   done   && curl -fsSLO --compressed \"<redacted-endpoint>\"   && curl -fsSLO --compressed \"<redacted-endpoint>\"   && gpg --batch --verify yarn-v$YARN_VERSION.tar.gz.asc yarn-v$YARN_VERSION.tar.gz   && gpgconf --kill all   && rm -rf \"$GNUPGHOME\"   && mkdir -p /opt   && tar -xzf yarn-v$YARN_VERSION.tar.gz -C /opt/   && ln -s /opt/yarn-v$YARN_VERSION/bin/yarn /usr/local/bin/yarn   && ln -s /opt/yarn-v$YARN_VERSION/bin/yarnpkg /usr/local/bin/yarnpkg   && rm yarn-v$YARN_VERSION.tar.gz.asc yarn-v$YARN_VERSION.tar.gz   && apt-mark auto '.*' > /dev/null   && { [ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark > /dev/null; }   && find /usr/local -type f -executable -exec ldd '{}' ';'     | awk '/=>/ { so = $(NF-1); if (index(so, \"/usr/local/\") == 1) { next }; gsub(\"^/(usr/)?\", \"\", so); print so }'     | sort -u     | xargs -r dpkg-query --search     | cut -d: -f1     | sort -u     | xargs -r apt-mark manual   && apt-get purge -y --auto-remove -o APT2001:db8::1utoRemov2001:db8::2RecommendsImportant=false   && yarn --version   && rm -rf /sanitized/path-074",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY docker-entrypoint.sh /usr/local/bin/ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENTRYPOINT [\"docker-entrypoint.sh\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "CMD [\"node\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG DEBIAN_FRONTEND=noninteractive",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG DEBIAN_RELEASE=trixie",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV DEBIAN_RELEASE=trixie",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG IGC_VERSION=2.34.4+21428",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG COMPUTE_RUNTIME_VERSION=26.18.38308.1-0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG GMMLIB_VERSION=22.10.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "WORKDIR /build",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY configure-apt.sh packages/ffmpeg.json packages/ffmpeg.sh ./ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |5 DEBIAN_FRONTEND=noninteractive DEBIAN_RELEASE=trixie IGC_VERSION=2.34.4+21428 COMPUTE_RUNTIME_VERSION=26.18.38308.1-0 GMMLIB_VERSION=22.10.0 /bin/sh -c ./configure-apt.sh &&   apt-get update &&   apt-get install curl ca-certificates --no-install-recommends -yqq &&   mkdir -p /usr/share/postgresql-common/pgdg # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ADD --chmod=644 <redacted-endpoint> /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |5 DEBIAN_FRONTEND=noninteractive DEBIAN_RELEASE=trixie IGC_VERSION=2.34.4+21428 COMPUTE_RUNTIME_VERSION=26.18.38308.1-0 GMMLIB_VERSION=22.10.0 /bin/sh -c echo \"deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] <redacted-endpoint> ${DEBIAN_RELEASE}-pgdg main\" > /etc/apt/sources.list.d/pgdg.list &&   apt-get update &&   apt-get install --no-install-recommends -yqq   jq   libde265-0/testing   libexif12   libexpat1   libgcc-s1   libglib2.0-0   libgomp1   libgsf-1-114   liblcms2-2   liblqr-1-0   libltdl7   libopenexr-3-1-30   libopenjp2-7   librsvg2-2   libspng0   mesa-utils   mesa-va-drivers   mesa-vulkan-drivers   tini   wget   zlib1g   ocl-icd-libopencl1   postgresql-client-14   postgresql-client-15   postgresql-client-16   postgresql-client-17   postgresql-client-18   libio-compress-brotli-perl   libwebp7   libwebpdemux2   libwebpmux3   libhwy1t64   libaom3 &&   ./ffmpeg.sh &&   if [ $(arch) = \"x86_64\" ]; then   wget <redacted-endpoint> &&   wget <redacted-endpoint> &&   wget <redacted-endpoint> &&   IGC_TAG=\"${IGC_VERSION%%+*}\" &&   CR_TAG=\"${COMPUTE_RUNTIME_VERSION%-*}\" &&   wget \"<redacted-endpoint>\" &&   wget \"<redacted-endpoint>\" &&   wget \"<redacted-endpoint>\" &&    wget -nv \"<redacted-endpoint>\" &&   dpkg -i *.deb;   fi &&   apt-get install -t testing --no-install-recommends -yqq libmimalloc3 &&   apt-get remove -yqq jq wget ca-certificates &&   apt-get autoremove -yqq &&   apt-get clean &&   rm -rf   configure-apt.sh   ffmpeg*   *.deb   /var/lib/apt/lists   /usr/lib/$(arch)-linux-gnu/libjpeg.so*   /usr/share/doc/libjpeg62-turbo   /usr/share/lintian/overrides/libjpeg62-turbo # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /usr/local/lib/ /usr/local/lib/ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /build/ /build/ # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "WORKDIR /usr/src/app",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV LD_LIBRARY_PATH=/usr/lib/jellyfin-ffmpeg/lib:/usr/lib/wsl/lib",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN |5 DEBIAN_FRONTEND=noninteractive DEBIAN_RELEASE=trixie IGC_VERSION=2.34.4+21428 COMPUTE_RUNTIME_VERSION=26.18.38308.1-0 GMMLIB_VERSION=22.10.0 /bin/sh -c ldconfig /usr/local/lib # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "WORKDIR /usr/src/app",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV NODE_ENV=production NVIDIA_DRIVER_CAPABILITIES=all NVIDIA_VISIBLE_DEVICES=all",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /output/server-pruned ./server # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /usr/src/app/web/build /build/www # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /output/cli-pruned ./cli # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /app/packages/plugin-core/dist /build/plugins/immich-plugin-core/dist # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY /app/packages/plugin-core/manifest.json /build/plugins/immich-plugin-core/manifest.json # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "RUN /bin/sh -c ln -s ../../cli/bin/immich server/bin/immich # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY LICENSE /licenses/LICENSE.txt # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "COPY LICENSE /LICENSE # buildkit",
+              "comment": "buildkit.dockerfile.v0"
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/src/app/server/bin",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_ID=30460361152",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_IMAGE=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_SOURCE_REF=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ARG BUILD_SOURCE_COMMIT=8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD=30460361152",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD_URL=<redacted-endpoint>",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD_IMAGE=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_BUILD_IMAGE_URL=<redacted-endpoint>",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_REPOSITORY=immich-app/immich",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_REPOSITORY_URL=https://github.com/immich-app/immich",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_SOURCE_REF=v3.1.0",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_SOURCE_COMMIT=8aa95c67470a02a8ddedf03c2e52963af33065ff",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENV IMMICH_SOURCE_URL=<redacted-endpoint>",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "VOLUME [/data]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "EXPOSE [2283/tcp]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "ENTRYPOINT [\"tini\" \"--\" \"/bin/bash\" \"-c\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "CMD [\"start.sh\"]",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            },
+            {
+              "created": "2000-01-01T00:00:00Z",
+              "created_by": "HEALTHCHECK {Test:[CMD-SHELL immich-healthcheck] Interval:0s Timeout:0s StartPeriod:0s StartInterval:0s Retries:0}",
+              "comment": "buildkit.dockerfile.v0",
+              "empty_layer": true
+            }
+          ],
+          "NamesHistory": [
+            "registry.invalid/boxferry-test/immich-application:server"
+          ]
+        }
+      }
+    }
+  ]
+}

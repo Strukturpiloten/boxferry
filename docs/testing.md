@@ -139,12 +139,11 @@ BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
 sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" bash scripts/podman-live-conformance.sh --profile paperless-application --matrix-cell podman-6.1-rootless --engine podman
 ```
 
-Paperless capture is manual and privacy-reviewed. Sanitizer-v2 evidence was withdrawn for leaked
-object-key IDs and a live-run ID; version 3 covers both.
+Paperless capture is manual. Sanitizer-v2 evidence is revoked; reviewed v3 replay consumes 27 GETs.
 
 The 60-minute `immich-application` profile runs CPU-only Immich 3.1.0 on 6.1 rootless with two CPUs,
-8 GiB RAM, 12 GiB disk, and a 2.5 GiB archive cap. Manual `immich-capture` artifacts require review
-before admission.
+8 GiB RAM, 12 GiB disk, and a 2.5 GiB archive cap. Its reviewed v3 replay consumes 23 GETs. Both
+captured fixtures remain supplementary to authored semantics.
 
 The complete profile runs all reviewed rootful and rootless cells:
 

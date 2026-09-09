@@ -80,11 +80,12 @@ provide Paperless-ngx, PostgreSQL, Valkey, Gotenberg, and Tika; Docker Compose 5
 Generated PDF, DOCX, and ODT documents prove ingestion, search, retrieval, office-to-PDF conversion,
 database/cache use, private networking, storage, and recreation persistence. Exports are inspected
 but never executed. Public canaries are forbidden from BoxFerry reports. The runner bounds resources,
-collision refusal, cleanup, and repository trust. Capture is local-only, sanitized, CI-disabled, and
-privacy-reviewed; no cassette is admitted.
+collision refusal, cleanup, and repository trust. One reviewed sanitizer-v3 cassette supplements,
+but cannot replace, authored semantics.
 
 `conformance/immich-application/` proves bounded CPU-only Immich 3.1.0 media processing and
-persistence on Podman 6.1 rootless. Its manual sanitized capture is never automatically admitted.
+persistence on Podman 6.1 rootless. Its reviewed sanitizer-v3 capture is supplementary acquisition
+replay evidence only; the authored cassette remains authoritative.
 
 ## Migration scenario contracts
 

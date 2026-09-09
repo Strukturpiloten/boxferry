@@ -93,8 +93,8 @@ promotion-policy = { effective-bind-mounts = false, effective-named-volume-mount
 source = "authored"
 license = "MPL-2.0"
 privacy-reviewed = true
-test-data = "Repository-authored offline Immich definitions and deterministic Libpod replay with a conspicuously public canary; this is not captured-native evidence."
-image-evidence = "Reviewed Immich 3.1.0 CPU-only, Valkey 9.1.0, and PostgreSQL 14.19 VectorChord image identities; offline tests never pull images or claim media processing."
+test-data = "Repository-authored offline Immich definitions and deterministic Libpod replay with a conspicuously public canary remain the sole semantic input. The separately admitted, fully redacted captured-native cassette under fixtures/conformance is supplementary production-acquisition evidence and must not replace this input."
+image-evidence = "Reviewed Immich 3.1.0 CPU-only, Valkey 9, and PostgreSQL 14 VectorChord image identities; offline semantic tests never pull images or claim media processing. Supplementary captured evidence binds all four reviewed live images to Podman 6.1 rootless."
 
 [deployment]
 origin = "authored"

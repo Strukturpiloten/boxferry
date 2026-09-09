@@ -356,7 +356,7 @@ fn validate_immich_live_runner(runner: &str) -> Result<(), String> {
         "BOXFERRY_IMMICH_CAPTURE_DIRECTORY",
         "immich_capture_candidate",
         "--application immich",
-        "captured-native Immich fixture is admitted",
+        "immich-application-6.1.0-rootless.cassette.json",
         "BoxFerry-generated artifacts",
     ] {
         if !runner.contains(required) {
@@ -728,6 +728,322 @@ paperless_recreate_application compose fixture.sock safe-prefix run-id
     .as_bytes();
     if output.stdout != expected {
         return Err("Paperless Compose startup did not preserve reviewed call order/argv".to_owned());
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    let output = Command::new("shasum").args(["-a", "256"]).arg(path).output();
+    #[cfg(not(target_os = "macos"))]
+    let output = Command::new("sha256sum").arg(path).output();
+    let output = output.map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!("failed to hash {}", path.display()));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|error| format!("digest for {} was not UTF-8: {error}", path.display()))?
+        .split_whitespace()
+        .next()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("digest command returned no digest for {}", path.display()))
+}
+
+fn verify_capture_privacy(
+    root: &Path,
+    capture_path: &Path,
+    application: &str,
+    display_name: &str,
+) -> Result<(), String> {
+    let verifier = Command::new("python3")
+        .arg(root.join("fixtures/conformance/podman-live/capture_proxy.py"))
+        .arg("--application")
+        .arg(application)
+        .arg("--repository")
+        .arg(root)
+        .arg("--verify-cassette")
+        .arg(capture_path)
+        .output()
+        .map_err(|error| format!("failed to run captured {display_name} privacy verifier: {error}"))?;
+    if verifier.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "captured {display_name} privacy verification failed: {}",
+        String::from_utf8_lossy(&verifier.stderr).trim()
+    ))
+}
+
+fn inspect_redacted_capture(
+    value: &serde_json::Value,
+    environment_count: &mut usize,
+    display_name: &str,
+) -> Result<(), String> {
+    match value {
+        serde_json::Value::Object(values) => {
+            for (key, value) in values {
+                if matches!(
+                    key.to_ascii_lowercase().as_str(),
+                    "authorization" | "cookie" | "set-cookie" | "secretdata"
+                ) {
+                    return Err(format!("captured {display_name} evidence contains forbidden key {key}"));
+                }
+                inspect_redacted_capture(value, environment_count, display_name)?;
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                inspect_redacted_capture(value, environment_count, display_name)?;
+            }
+        }
+        serde_json::Value::String(text) => {
+            let lowered = text.to_ascii_lowercase();
+            for marker in [
+                "boxferry-public-admin-canary",
+                "boxferry-public-database-canary",
+                "boxferry-public-broker-canary",
+                "boxferry-public-paperless-secret-canary",
+                "boxferry-public-immich-db-password-canary",
+                "bearer ",
+                "basic ",
+                "unix://",
+                "tcp://",
+                "ssh://",
+                "/home/",
+                "/root/",
+                "/run/user/",
+                "/tmp/",
+                "/var/lib/containers",
+                "/run/containers",
+                "/capture-input",
+                "/capture-socket",
+                "podman.sock",
+                "sentinel_private",
+            ] {
+                if lowered.contains(marker) {
+                    return Err(format!(
+                        "captured {display_name} evidence retained private marker {marker}"
+                    ));
+                }
+            }
+            if matches!(lowered.as_str(), "authorization" | "cookie" | "set-cookie") {
+                return Err(format!(
+                    "captured {display_name} evidence contains a forbidden header name"
+                ));
+            }
+            if let Some((name, environment_value)) = text.split_once('=') {
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                {
+                    *environment_count += 1;
+                    if environment_value != "redacted" {
+                        return Err(format!(
+                            "captured {display_name} environment value was not redacted: {name}"
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+#[test]
+fn paperless_captured_native_evidence_is_supplementary_and_redacted() -> Result<(), String> {
+    let root = repository_root();
+    let scenario_path = root.join("fixtures/scenarios/paperless-ngx-application/scenario.toml");
+    let scenario_text = fs::read_to_string(&scenario_path)
+        .map_err(|error| format!("failed to read {}: {error}", scenario_path.display()))?;
+    let scenario = toml::from_str::<toml::Value>(&scenario_text)
+        .map_err(|error| format!("invalid Paperless scenario manifest: {error}"))?;
+    let podman_input = scenario
+        .get("native-inputs")
+        .and_then(toml::Value::as_array)
+        .and_then(|inputs| {
+            inputs
+                .iter()
+                .find(|input| input.get("id").and_then(toml::Value::as_str) == Some("podman"))
+        })
+        .ok_or("Paperless scenario must retain one Podman semantic input")?;
+    let semantic_files = podman_input
+        .get("files")
+        .and_then(toml::Value::as_array)
+        .ok_or("Paperless Podman semantic input must list its authored cassette")?
+        .iter()
+        .map(|value| value.as_str().ok_or("Paperless Podman input file must be a string"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if semantic_files != ["input-podman.cassette.json"] {
+        return Err("captured redacted evidence must not replace the authored Paperless semantic cassette".to_owned());
+    }
+    if podman_input
+        .get("podman")
+        .and_then(|podman| podman.get("include-environment-values"))
+        .and_then(toml::Value::as_bool)
+        != Some(true)
+    {
+        return Err("authored Paperless input must retain semantic environment values".to_owned());
+    }
+
+    let capture_path =
+        root.join("fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json");
+    let capture_bytes =
+        fs::read(&capture_path).map_err(|error| format!("failed to read {}: {error}", capture_path.display()))?;
+    let observed_digest = sha256_file(&capture_path)?;
+    if observed_digest != "427a86d9e8d798ae8a99e8aeeffb5bfc0ef7c94ce366fd268fbe30eb4a4acaea" {
+        return Err(format!("captured Paperless evidence digest drifted: {observed_digest}"));
+    }
+    verify_capture_privacy(&root, &capture_path, "paperless", "Paperless")?;
+
+    let capture = serde_json::from_slice::<serde_json::Value>(&capture_bytes)
+        .map_err(|error| format!("invalid captured Paperless evidence: {error}"))?;
+    for (pointer, expected) in [
+        (
+            "/scenario_id",
+            "paperless-ngx-application-podman-6.1.0-rootless-captured",
+        ),
+        ("/engine_version", "6.1.0"),
+        ("/api_version", "6.1.0"),
+        ("/execution_context", "rootless"),
+        (
+            "/provenance/evidence_kind",
+            "privacy-review-required-one-off-native-capture",
+        ),
+        (
+            "/provenance/capture/runtime_revision",
+            "6ef0b9d6c4c8c2bc5708b7be9de19215d151721c",
+        ),
+        ("/provenance/capture/runtime_matrix_cell", "podman-6.1-rootless"),
+        (
+            "/provenance/capture/runtime_matrix_sha256",
+            "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25",
+        ),
+        (
+            "/provenance/capture/capture_manifest_sha256",
+            "4a135307f745905f50de1522ecf4d971b78456b30f88adbd0a5f65f710dc01ea",
+        ),
+    ] {
+        if capture.pointer(pointer).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(format!("captured Paperless provenance drifted at {pointer}"));
+        }
+    }
+    if capture.get("synthetic").and_then(serde_json::Value::as_bool) != Some(false) {
+        return Err("captured Paperless evidence must remain explicitly non-synthetic".to_owned());
+    }
+    if capture
+        .get("interactions")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        != Some(27)
+    {
+        return Err("captured Paperless evidence must retain all 27 interactions".to_owned());
+    }
+
+    let mut environment_count = 0;
+    inspect_redacted_capture(&capture, &mut environment_count, "Paperless")?;
+    if environment_count != 143 {
+        return Err(format!(
+            "captured Paperless evidence must retain 143 redacted environment assignments, found {environment_count}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn immich_captured_native_evidence_is_supplementary_and_redacted() -> Result<(), String> {
+    let root = repository_root();
+    let scenario_path = root.join("fixtures/scenarios/immich-application/scenario.toml");
+    let scenario_text = fs::read_to_string(&scenario_path)
+        .map_err(|error| format!("failed to read {}: {error}", scenario_path.display()))?;
+    let scenario = toml::from_str::<toml::Value>(&scenario_text)
+        .map_err(|error| format!("invalid Immich scenario manifest: {error}"))?;
+    let podman_input = scenario
+        .get("native-inputs")
+        .and_then(toml::Value::as_array)
+        .and_then(|inputs| {
+            inputs
+                .iter()
+                .find(|input| input.get("id").and_then(toml::Value::as_str) == Some("podman"))
+        })
+        .ok_or("Immich scenario must retain one Podman semantic input")?;
+    let semantic_files = podman_input
+        .get("files")
+        .and_then(toml::Value::as_array)
+        .ok_or("Immich Podman semantic input must list its authored cassette")?
+        .iter()
+        .map(|value| value.as_str().ok_or("Immich Podman input file must be a string"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if semantic_files != ["input-podman.cassette.json"] {
+        return Err("captured redacted evidence must not replace the authored Immich semantic cassette".to_owned());
+    }
+    if podman_input
+        .get("podman")
+        .and_then(|podman| podman.get("include-environment-values"))
+        .and_then(toml::Value::as_bool)
+        != Some(true)
+    {
+        return Err("authored Immich input must retain semantic environment values".to_owned());
+    }
+
+    let capture_path =
+        root.join("fixtures/conformance/immich-application/immich-application-6.1.0-rootless.cassette.json");
+    let capture_bytes =
+        fs::read(&capture_path).map_err(|error| format!("failed to read {}: {error}", capture_path.display()))?;
+    let observed_digest = sha256_file(&capture_path)?;
+    if observed_digest != "743f7983e64578e6c82068307e1dcbeb7ab64ee3ba0baf7b82aa89d789673a78" {
+        return Err(format!("captured Immich evidence digest drifted: {observed_digest}"));
+    }
+    verify_capture_privacy(&root, &capture_path, "immich", "Immich")?;
+
+    let capture = serde_json::from_slice::<serde_json::Value>(&capture_bytes)
+        .map_err(|error| format!("invalid captured Immich evidence: {error}"))?;
+    for (pointer, expected) in [
+        ("/scenario_id", "immich-application-podman-6.1.0-rootless-captured"),
+        ("/engine_version", "6.1.0"),
+        ("/api_version", "6.1.0"),
+        ("/execution_context", "rootless"),
+        (
+            "/provenance/evidence_kind",
+            "privacy-review-required-one-off-native-capture",
+        ),
+        (
+            "/provenance/capture/runtime_revision",
+            "6ef0b9d6c4c8c2bc5708b7be9de19215d151721c",
+        ),
+        ("/provenance/capture/runtime_matrix_cell", "podman-6.1-rootless"),
+        (
+            "/provenance/capture/runtime_matrix_sha256",
+            "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25",
+        ),
+        (
+            "/provenance/capture/capture_manifest_sha256",
+            "f04e364c5417fad7f024e9261ca2df110066dd1f094856b350dadc0c975ee6ae",
+        ),
+    ] {
+        if capture.pointer(pointer).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(format!("captured Immich provenance drifted at {pointer}"));
+        }
+    }
+    if capture.get("synthetic").and_then(serde_json::Value::as_bool) != Some(false) {
+        return Err("captured Immich evidence must remain explicitly non-synthetic".to_owned());
+    }
+    if capture
+        .get("interactions")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        != Some(23)
+    {
+        return Err("captured Immich evidence must retain all 23 interactions".to_owned());
+    }
+
+    let mut environment_count = 0;
+    inspect_redacted_capture(&capture, &mut environment_count, "Immich")?;
+    if environment_count != 149 {
+        return Err(format!(
+            "captured Immich evidence must retain 149 redacted environment assignments, found {environment_count}"
+        ));
     }
     Ok(())
 }
@@ -1157,6 +1473,16 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
     Ok(())
 }
 
+const REVIEWED_PRETTIER_EXCLUSIONS: &[&str] = &[
+    "/CHANGELOG.md",
+    "fixtures/**/expected-podman.json",
+    "fixtures/**/expected-*-podman.json",
+    "fixtures/differential/podman-lens-complex-corpus/*.cassette.json",
+    "fixtures/scenarios/real-world-compose-*/input.compose.yaml",
+    "fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json",
+    "fixtures/conformance/immich-application/immich-application-6.1.0-rootless.cassette.json",
+];
+
 #[test]
 fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs() -> Result<(), String> {
     let root = repository_root();
@@ -1216,16 +1542,10 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
         .lines()
         .filter(|line| !line.starts_with('#') && !line.is_empty())
         .collect::<Vec<_>>()
-        != [
-            "/CHANGELOG.md",
-            "fixtures/**/expected-podman.json",
-            "fixtures/**/expected-*-podman.json",
-            "fixtures/differential/podman-lens-complex-corpus/*.cassette.json",
-            "fixtures/scenarios/real-world-compose-*/input.compose.yaml",
-        ]
+        != REVIEWED_PRETTIER_EXCLUSIONS
     {
         return Err(
-            "Prettier exclusions must remain limited to reviewed generated or immutable third-party inputs".to_owned(),
+            "Prettier exclusions must remain limited to reviewed generated or immutable evidence inputs".to_owned(),
         );
     }
     let markdown_format = script
