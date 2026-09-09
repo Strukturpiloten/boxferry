@@ -1,0 +1,10 @@
+[Container]
+
+Image=ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+Environment=POSTGRES_DB=immich
+Environment=POSTGRES_USER=immich
+Environment=POSTGRES_PASSWORD=boxferry-public-immich-db-password-canary
+Environment=POSTGRES_INITDB_ARGS=--data-checksums
+Volume=pgdata.volume:/var/lib/postgresql/data
+Network=backend.network
+ContainerName=database

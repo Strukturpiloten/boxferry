@@ -1,0 +1,20 @@
+[Unit]
+
+Requires=redis.service database.service immich-machine-learning.service
+After=redis.service database.service immich-machine-learning.service
+
+[Container]
+
+Image=ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+Environment=DB_HOSTNAME=database
+Environment=DB_DATABASE_NAME=immich
+Environment=DB_USERNAME=immich
+Environment=DB_PASSWORD=boxferry-public-immich-db-password-canary
+Environment=REDIS_HOSTNAME=redis
+Environment=IMMICH_MACHINE_LEARNING_URL=http://immich-machine-learning:3003
+Environment=TZ=Etc/UTC
+PublishPort=127.0.0.1:18283:2283/tcp
+Volume=library.volume:/data
+Network=backend.network
+Network=edge.network
+ContainerName=immich-server

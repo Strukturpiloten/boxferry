@@ -13,7 +13,7 @@
     "revision": "cade97a52ebdf9dbf9e81de8009015776837a074",
     "source_urls": [
       "https://github.com/containers/podman/tree/cade97a52ebdf9dbf9e81de8009015776837a074/pkg/api/handlers/libpod",
-      "https://github.com/Strukturpiloten/boxferry/blob/1aaafaab5fb60b55ac300e77531a958bb3a3f4b2/fixtures/conformance/podman-live/matrix.tsv"
+      "https://github.com/Strukturpiloten/boxferry/blob/6ef0b9d6c4c8c2bc5708b7be9de19215d151721c/fixtures/conformance/podman-live/matrix.tsv"
     ],
     "capture": {
       "engine_build": {
@@ -21,13 +21,13 @@
         "source_revision": "cade97a52ebdf9dbf9e81de8009015776837a074"
       },
       "runtime_image": "ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e",
-      "capture_manifest_sha256": "10dbd1cfcf32e74a5cb0b62ffa52ae9dc8ecf05961b302a14345c84a752d0fad",
+      "capture_manifest_sha256": "4a135307f745905f50de1522ecf4d971b78456b30f88adbd0a5f65f710dc01ea",
       "runtime_repository": "https://github.com/Strukturpiloten/boxferry",
-      "runtime_revision": "1aaafaab5fb60b55ac300e77531a958bb3a3f4b2",
+      "runtime_revision": "6ef0b9d6c4c8c2bc5708b7be9de19215d151721c",
       "runtime_matrix_cell": "podman-6.1-rootless",
       "runtime_matrix_sha256": "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25",
       "setup_script_sha256": "ee53d51a32aaab5573f289e2ae52fe6be6c9bcf263e19aff890078f0410a9df1",
-      "request_recorder_source_sha256": "f5a0afc2f910cf9f5135b1aabb0e914150478abce9472a8ea2842b6a0b3cfc50"
+      "request_recorder_source_sha256": "dc65572fcd81d5b617b094b07ca5adbefed7a52944718a7a1c9cffbed3d58a3a"
     }
   },
   "sanitization": "Captured through a bodyless-GET-only Unix proxy; identifiers, paths, addresses, timestamps, request IDs, and protected values are normalized. Raw bytes were retained only in memory. Human privacy review is required.",
@@ -218,7 +218,7 @@
           ],
           [
             "content-length",
-            "6390"
+            "6345"
           ]
         ],
         "body": [
@@ -244,7 +244,7 @@
             "IsInfra": false,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Mounts": [
               "/var/lib/postgresql"
@@ -256,7 +256,7 @@
             "Networks": [
               "paperless-captured-paper-backend"
             ],
-            "Pid": 723,
+            "Pid": 729,
             "Pod": "",
             "PodName": "",
             "Ports": null,
@@ -290,7 +290,7 @@
             "IsInfra": false,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run": "paperless-captured-run",
               "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
             },
             "Mounts": [
@@ -303,7 +303,7 @@
             "Networks": [
               "paperless-captured-paper-backend"
             ],
-            "Pid": 763,
+            "Pid": 773,
             "Pod": "",
             "PodName": "",
             "Ports": null,
@@ -337,7 +337,7 @@
             "IsInfra": false,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run": "paperless-captured-run",
               "org.opencontainers.image.authors": "Julien Neuhart <neuhart.julien@gmail.com>",
               "org.opencontainers.image.description": "A Docker-based API for converting documents to PDF.",
               "org.opencontainers.image.documentation": "https://gotenberg.dev",
@@ -353,7 +353,7 @@
             "Networks": [
               "paperless-captured-paper-backend"
             ],
-            "Pid": 786,
+            "Pid": 796,
             "Pod": "",
             "PodName": "",
             "Ports": null,
@@ -383,7 +383,7 @@
             "IsInfra": false,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run": "paperless-captured-run",
               "maintainer": "Apache Tika Developers dev@tika.apache.org",
               "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
               "org.opencontainers.image.description": "The Ubuntu container image maintained by Canonical\n\nUbuntu is a Debian-based Linux operating system that runs from the desktop to the cloud, to all your internet connected things.\nIt is the world's most popular operating system across public clouds and OpenStack clouds.\nIt is the number one platform for containers; from Docker to Kubernetes to LXD, Ubuntu can run your containers at scale.\nFast, secure and simple, Ubuntu powers millions of PCs worldwide.\n",
@@ -398,7 +398,7 @@
             "Networks": [
               "paperless-captured-paper-backend"
             ],
-            "Pid": 797,
+            "Pid": 815,
             "Pod": "",
             "PodName": "",
             "Ports": null,
@@ -428,7 +428,7 @@
             "IsInfra": false,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run": "paperless-captured-run",
               "org.opencontainers.image.authors": "paperless-ngx team <hello@paperless-ngx.com>",
               "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
               "org.opencontainers.image.description": "A community-supported supercharged document management system: scan, index and archive all your documents",
@@ -442,10 +442,10 @@
             },
             "Mounts": [
               "/fixture",
+              "/usr/src/paperless/consume",
               "/usr/src/paperless/data",
               "/usr/src/paperless/export",
-              "/usr/src/paperless/media",
-              "/usr/src/paperless/consume"
+              "/usr/src/paperless/media"
             ],
             "Names": [
               "paperless-captured-paper-web"
@@ -455,7 +455,7 @@
               "paperless-captured-paper-backend",
               "paperless-captured-paper-edge"
             ],
-            "Pid": 965,
+            "Pid": 945,
             "Pod": "",
             "PodName": "",
             "Ports": [
@@ -550,7 +550,7 @@
           ],
           [
             "content-length",
-            "1281"
+            "1263"
           ]
         ],
         "body": [
@@ -571,7 +571,7 @@
             "dns_enabled": true,
             "labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "ipam_options": {
               "driver": "host-local"
@@ -594,7 +594,7 @@
             "dns_enabled": true,
             "labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "ipam_options": {
               "driver": "host-local"
@@ -656,7 +656,7 @@
           ],
           [
             "content-length",
-            "2071"
+            "2017"
           ]
         ],
         "body": [
@@ -667,7 +667,7 @@
             "CreatedAt": "2000-01-01T00:00:00Z",
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Scope": "local",
             "Options": {},
@@ -681,7 +681,7 @@
             "CreatedAt": "2000-01-01T00:00:00Z",
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Scope": "local",
             "Options": {},
@@ -697,7 +697,7 @@
             "CreatedAt": "2000-01-01T00:00:00Z",
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Scope": "local",
             "Options": {},
@@ -713,7 +713,7 @@
             "CreatedAt": "2000-01-01T00:00:00Z",
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Scope": "local",
             "Options": {},
@@ -729,7 +729,7 @@
             "CreatedAt": "2000-01-01T00:00:00Z",
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Scope": "local",
             "Options": {},
@@ -745,7 +745,7 @@
             "CreatedAt": "2000-01-01T00:00:00Z",
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Scope": "local",
             "Options": {},
@@ -1028,7 +1028,7 @@
           ],
           [
             "content-length",
-            "6608"
+            "6571"
           ]
         ],
         "body": {
@@ -1046,8 +1046,8 @@
             "Restarting": false,
             "OOMKilled": false,
             "Dead": false,
-            "Pid": 723,
-            "ConmonPid": 721,
+            "Pid": 729,
+            "ConmonPid": 726,
             "ExitCode": 0,
             "Error": "",
             "StartedAt": "2000-01-01T00:00:00Z",
@@ -1153,7 +1153,7 @@
             },
             "SandboxKey": "/sanitized/path-019",
             "Networks": {
-              "bf65-20260909t110652z-2728-4524-paper-paper-backend": {
+              "paperless-captured-paper-backend": {
                 "EndpointID": "",
                 "Gateway": "192.0.2.2",
                 "IPAddress": "192.0.2.7",
@@ -1168,7 +1168,7 @@
                 "Links": null,
                 "Aliases": [
                   "db",
-                  "27d24033d537"
+                  "188bd53be3b9"
                 ]
               }
             }
@@ -1189,18 +1189,18 @@
             "OpenStdin": false,
             "StdinOnce": false,
             "Env": [
+              "GOSU_VERSION=redacted",
+              "POSTGRES_DB=redacted",
+              "PATH=redacted",
               "PG_MAJOR=redacted",
-              "PG_VERSION=redacted",
-              "PG_SHA256=redacted",
+              "DOCKER_PG_LLVM_DEPS=redacted",
+              "PGDATA=redacted",
+              "LANG=redacted",
               "POSTGRES_USER=redacted",
               "POSTGRES_PASSWORD=redacted",
               "container=redacted",
-              "DOCKER_PG_LLVM_DEPS=redacted",
-              "PGDATA=redacted",
-              "GOSU_VERSION=redacted",
-              "LANG=redacted",
-              "POSTGRES_DB=redacted",
-              "PATH=redacted",
+              "PG_VERSION=redacted",
+              "PG_SHA256=redacted",
               "HOME=redacted",
               "HOSTNAME=redacted"
             ],
@@ -1216,7 +1216,7 @@
             "OnBuild": null,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+              "io.boxferry.live-run": "paperless-captured-run"
             },
             "Annotations": {
               "io.container.manager": "libpod",
@@ -1248,7 +1248,7 @@
               "--name",
               "paperless-captured-paper-db",
               "--label",
-              "io.boxferry.live-run=bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run=paperless-captured-run",
               "--label",
               "io.boxferry.application=paperless-captured-paperless",
               "--network",
@@ -1386,7 +1386,7 @@
     {
       "request": {
         "method": "GET",
-        "path": "/v6.1.0/libpod/containers/823a2786fca1469775309586aa0d78309d031ef8ba472ce488224245b89978a0/json"
+        "path": "/v6.1.0/libpod/containers/b9160e35163c7f5330bb5876d7704f4ab837c1a04ba227c985d485962aa057ce/json"
       },
       "response": {
         "status": 200,
@@ -1417,19 +1417,14 @@
           ],
           [
             "content-length",
-            "6603"
+            "10899"
           ]
         ],
         "body": {
-          "Id": "823a2786fca1469775309586aa0d78309d031ef8ba472ce488224245b89978a0",
+          "Id": "b9160e35163c7f5330bb5876d7704f4ab837c1a04ba227c985d485962aa057ce",
           "Created": "2000-01-01T00:00:00Z",
-          "Path": "/usr/bin/tini",
-          "Args": [
-            "--",
-            "gotenberg",
-            "--chromium-disable-javascript=true",
-            "--chromium-allow-list=file:///fixture-tmp/.*"
-          ],
+          "Path": "/init",
+          "Args": [],
           "State": {
             "OciVersion": "1.3.0",
             "Status": "running",
@@ -1438,8 +1433,8 @@
             "Restarting": false,
             "OOMKilled": false,
             "Dead": false,
-            "Pid": 786,
-            "ConmonPid": 784,
+            "Pid": 945,
+            "ConmonPid": 942,
             "ExitCode": 0,
             "Error": "",
             "StartedAt": "2000-01-01T00:00:00Z",
@@ -1448,9 +1443,9 @@
             "CheckpointedAt": "2000-01-01T00:00:00Z",
             "RestoredAt": "2000-01-01T00:00:00Z"
           },
-          "Image": "f1ebc0678809083182968aa76d6beb7519c14fa8486e108e0ecb40bc38735e62",
-          "ImageDigest": "sha256:44bcc6362cdc200e800ce3e5d621363a97eccf5c5f09e34fa527164b0854e680",
-          "ImageName": "registry.invalid/boxferry-test/paperless-application:gotenberg",
+          "Image": "ac8c3f1a18c1e2c4473aa6f3243cd6316ee2b53ea6f07e39331c9f4aec1f70a7",
+          "ImageDigest": "sha256:ca4a98a46216a23dfa724d91cd1bb50c37b44370f2045df0e954590c9081735b",
+          "ImageName": "registry.invalid/boxferry-test/paperless-application:paperless",
           "Rootfs": "",
           "Pod": "",
           "ResolvConfPath": "/sanitized/path-021",
@@ -1461,13 +1456,25 @@
           "OCIRuntime": "crun",
           "ConmonPidFile": "/sanitized/path-026",
           "PidFile": "/sanitized/path-027",
-          "Name": "paperless-captured-paper-gotenberg",
+          "Name": "paperless-captured-paper-web",
           "RestartCount": 0,
           "Driver": "overlay",
           "MountLabel": "",
           "ProcessLabel": "",
           "AppArmorProfile": "",
-          "EffectiveCaps": null,
+          "EffectiveCaps": [
+            "CAP_CHOWN",
+            "CAP_DAC_OVERRIDE",
+            "CAP_FOWNER",
+            "CAP_FSETID",
+            "CAP_KILL",
+            "CAP_NET_BIND_SERVICE",
+            "CAP_SETFCAP",
+            "CAP_SETGID",
+            "CAP_SETPCAP",
+            "CAP_SETUID",
+            "CAP_SYS_CHROOT"
+          ],
           "BoundingCaps": [
             "CAP_CHOWN",
             "CAP_DAC_OVERRIDE",
@@ -1491,8 +1498,86 @@
               "WorkDir": "/sanitized/path-031"
             }
           },
-          "Mounts": [],
-          "Dependencies": [],
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "paperless-captured-paper-consume",
+              "Source": "/sanitized/path-004",
+              "Destination": "/usr/src/paperless/consume",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            },
+            {
+              "Type": "volume",
+              "Name": "paperless-captured-paper-data",
+              "Source": "/sanitized/path-002",
+              "Destination": "/usr/src/paperless/data",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            },
+            {
+              "Type": "volume",
+              "Name": "paperless-captured-paper-export",
+              "Source": "/sanitized/path-005",
+              "Destination": "/usr/src/paperless/export",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            },
+            {
+              "Type": "volume",
+              "Name": "paperless-captured-paper-media",
+              "Source": "/sanitized/path-003",
+              "Destination": "/usr/src/paperless/media",
+              "Driver": "local",
+              "Mode": "",
+              "Options": [
+                "nosuid",
+                "nodev",
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            },
+            {
+              "Type": "bind",
+              "Source": "/sanitized/fixture-root",
+              "Destination": "/fixture",
+              "Driver": "",
+              "Mode": "",
+              "Options": [
+                "rbind"
+              ],
+              "RW": true,
+              "Propagation": "rprivate"
+            }
+          ],
+          "Dependencies": [
+            "e5347a22841306cbf84d599125431bb0d4e620738bad786368795af62f0d3d51",
+            "823a2786fca1469775309586aa0d78309d031ef8ba472ce488224245b89978a0",
+            "64c46faace629619bac4f1874fb1365a0bd8f9d5ff70d6daea98acf6ea24a24e",
+            "596be250003e097d5ad7513953d81de2301ff5f0f2206fc9f4bcf4b2b4d1a059"
+          ],
           "NetworkSettings": {
             "EndpointID": "",
             "Gateway": "",
@@ -1508,11 +1593,16 @@
             "LinkLocalIPv6Address": "",
             "LinkLocalIPv6PrefixLen": 0,
             "Ports": {
-              "3000/tcp": null
+              "8000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18000"
+                }
+              ]
             },
             "SandboxKey": "/sanitized/path-032",
             "Networks": {
-              "bf65-20260909t110652z-2728-4524-paper-paper-backend": {
+              "paperless-captured-paper-backend": {
                 "EndpointID": "",
                 "Gateway": "192.0.2.2",
                 "IPAddress": "192.0.2.8",
@@ -1526,8 +1616,26 @@
                 "IPAMConfig": null,
                 "Links": null,
                 "Aliases": [
-                  "gotenberg",
-                  "733c3f3a0fe9"
+                  "webserver",
+                  "32ebe61a7bca"
+                ]
+              },
+              "paperless-captured-paper-edge": {
+                "EndpointID": "",
+                "Gateway": "192.0.2.4",
+                "IPAddress": "192.0.2.9",
+                "IPPrefixLen": 24,
+                "IPv6Gateway": "",
+                "GlobalIPv6Address": "",
+                "GlobalIPv6PrefixLen": 0,
+                "MacAddress": "02:00:00:00:00:03",
+                "NetworkID": "44b077a9a4579314092b60b77da0cbc7158b5d54c574c65be0c303869416347d",
+                "DriverOpts": null,
+                "IPAMConfig": null,
+                "Links": null,
+                "Aliases": [
+                  "paperless",
+                  "32ebe61a7bca"
                 ]
               }
             }
@@ -1536,11 +1644,11 @@
           "IsInfra": false,
           "IsService": false,
           "KubeExitCodePropagation": "invalid",
-          "lockNumber": 8,
+          "lockNumber": 10,
           "Config": {
             "Hostname": "fixture-host-001",
             "Domainname": "",
-            "User": "gotenberg",
+            "User": "",
             "AttachStdin": false,
             "AttachStdout": false,
             "AttachStderr": false,
@@ -1548,48 +1656,64 @@
             "OpenStdin": false,
             "StdinOnce": false,
             "Env": [
-              "TZ=redacted",
-              "EXIFTOOL_BIN_PATH=redacted",
-              "OTEL_LOGS_EXPORTER=redacted",
-              "CHROMIUM_BIN_PATH=redacted",
-              "QPDF_BIN_PATH=redacted",
-              "GOTENBERG_VERSIONS_DIR_PATH=redacted",
-              "CHROMIUM_HYPHEN_DATA_DIR_PATH=redacted",
+              "PAPERLESS_TASK_WORKERS=redacted",
+              "PAPERLESS_THREADS_PER_WORKER=redacted",
+              "PAPERLESS_DBPASS=redacted",
+              "PYTHON_SHA256=redacted",
+              "S6_CMD_WAIT_FOR_SERVICES_MAXTIME=redacted",
+              "S6_VERBOSITY=redacted",
+              "PYTHONDONTWRITEBYTECODE=redacted",
+              "PYTHON_VERSION=redacted",
+              "PAPERLESS_ADMIN_PASSWORD=redacted",
+              "PAPERLESS_SECRET_KEY=redacted",
+              "PAPERLESS_TIME_ZONE=redacted",
               "PATH=redacted",
-              "PDFCPU_BIN_PATH=redacted",
-              "PDFTK_BIN_PATH=redacted",
-              "OTEL_TRACES_EXPORTER=redacted",
-              "UNOCONVERTER_BIN_PATH=redacted",
-              "OTEL_METRICS_EXPORTER=redacted",
-              "LIBREOFFICE_BIN_PATH=redacted",
+              "S6_BEHAVIOUR_IF_STAGE2_FAILS=redacted",
+              "PYTHONWARNINGS=redacted",
+              "UV_LINK_MODE=redacted",
+              "PAPERLESS_ADMIN_MAIL=redacted",
+              "USERMAP_GID=redacted",
+              "PAPERLESS_REDIS=redacted",
+              "UV_TOOL_BIN_DIR=redacted",
+              "PNGX_CONTAINERIZED=redacted",
+              "PAPERLESS_DBHOST=redacted",
+              "PAPERLESS_DBUSER=redacted",
+              "PAPERLESS_TIKA_ENABLED=redacted",
+              "PAPERLESS_TIKA_ENDPOINT=redacted",
+              "PAPERLESS_URL=redacted",
+              "PAPERLESS_TIKA_GOTENBERG_ENDPOINT=redacted",
               "container=redacted",
-              "LANG=redacted",
-              "LC_ALL=redacted",
+              "PYTHONUNBUFFERED=redacted",
+              "USERMAP_UID=redacted",
+              "PAPERLESS_ADMIN_USER=redacted",
+              "PAPERLESS_WEBSERVER_WORKERS=redacted",
+              "PAPERLESS_DBNAME=redacted",
+              "PAPERLESS_OCR_LANGUAGE=redacted",
+              "PAPERLESS_CONSUMER_POLLING=redacted",
               "HOME=redacted",
               "HOSTNAME=redacted"
             ],
-            "Cmd": [
-              "gotenberg",
-              "--chromium-disable-javascript=true",
-              "--chromium-allow-list=file:///fixture-tmp/.*"
-            ],
-            "Image": "registry.invalid/boxferry-test/paperless-application:gotenberg",
+            "Cmd": null,
+            "Image": "registry.invalid/boxferry-test/paperless-application:paperless",
             "Volumes": null,
-            "WorkingDir": "/sanitized/path-033",
+            "WorkingDir": "/usr/src/paperless/src/",
             "Entrypoint": [
-              "/usr/bin/tini",
-              "--"
+              "/init"
             ],
             "OnBuild": null,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
-              "org.opencontainers.image.authors": "Julien Neuhart <neuhart.julien@gmail.com>",
-              "org.opencontainers.image.description": "A Docker-based API for converting documents to PDF.",
-              "org.opencontainers.image.documentation": "https://gotenberg.dev",
-              "org.opencontainers.image.source": "https://github.com/gotenberg/gotenberg",
-              "org.opencontainers.image.title": "Gotenberg",
-              "org.opencontainers.image.version": "8.34.0"
+              "io.boxferry.live-run": "paperless-captured-run",
+              "org.opencontainers.image.authors": "paperless-ngx team <hello@paperless-ngx.com>",
+              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
+              "org.opencontainers.image.description": "A community-supported supercharged document management system: scan, index and archive all your documents",
+              "org.opencontainers.image.documentation": "https://docs.paperless-ngx.com/",
+              "org.opencontainers.image.licenses": "GPL-3.0",
+              "org.opencontainers.image.revision": "d48663e9ebaadc4b413a6ca3bc88cb5fbc4e468e",
+              "org.opencontainers.image.source": "https://github.com/paperless-ngx/paperless-ngx",
+              "org.opencontainers.image.title": "paperless-ngx",
+              "org.opencontainers.image.url": "https://github.com/paperless-ngx/paperless-ngx",
+              "org.opencontainers.image.version": "3.1.3"
             },
             "Annotations": {
               "io.container.manager": "libpod",
@@ -1610,17 +1734,72 @@
               "--pull=never",
               "--detach",
               "--name",
-              "paperless-captured-paper-gotenberg",
+              "paperless-captured-paper-web",
               "--label",
-              "io.boxferry.live-run=bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run=paperless-captured-run",
               "--label",
               "io.boxferry.application=paperless-captured-paperless",
+              "--requires",
+              "paperless-captured-paper-db,paperless-captured-paper-broker,paperless-captured-paper-gotenberg,paperless-captured-paper-tika",
               "--network",
-              "paperless-captured-paper-backend:alias=gotenberg",
-              "registry.invalid/boxferry-test/paperless-application:gotenberg",
-              "gotenberg",
-              "--chromium-disable-javascript=true",
-              "--chromium-allow-list=file:///fixture-tmp/.*"
+              "paperless-captured-paper-backend:alias=webserver",
+              "--network",
+              "paperless-captured-paper-edge:alias=paperless",
+              "--volume",
+              "paperless-captured-paper-data:/usr/src/paperless/data",
+              "--volume",
+              "paperless-captured-paper-media:/usr/src/paperless/media",
+              "--volume",
+              "paperless-captured-paper-consume:/usr/src/paperless/consume",
+              "--volume",
+              "paperless-captured-paper-export:/usr/src/paperless/export",
+              "--volume",
+              "/sanitized/fixture-root:/fixture:rw",
+              "--publish",
+              "127.0.0.1:18000:8000",
+              "--env",
+              "PAPERLESS_REDIS=redacted",
+              "--env",
+              "PAPERLESS_DBHOST=redacted",
+              "--env",
+              "PAPERLESS_DBNAME=redacted",
+              "--env",
+              "PAPERLESS_DBUSER=redacted",
+              "--env",
+              "PAPERLESS_DBPASS=redacted",
+              "--env",
+              "PAPERLESS_SECRET_KEY=redacted",
+              "--env",
+              "PAPERLESS_ADMIN_USER=redacted",
+              "--env",
+              "PAPERLESS_ADMIN_PASSWORD=redacted",
+              "--env",
+              "PAPERLESS_ADMIN_MAIL=redacted",
+              "--env",
+              "PAPERLESS_URL=redacted",
+              "--env",
+              "PAPERLESS_TIME_ZONE=redacted",
+              "--env",
+              "PAPERLESS_OCR_LANGUAGE=redacted",
+              "--env",
+              "PAPERLESS_TASK_WORKERS=redacted",
+              "--env",
+              "PAPERLESS_THREADS_PER_WORKER=redacted",
+              "--env",
+              "PAPERLESS_WEBSERVER_WORKERS=redacted",
+              "--env",
+              "PAPERLESS_TIKA_ENABLED=redacted",
+              "--env",
+              "PAPERLESS_TIKA_ENDPOINT=redacted",
+              "--env",
+              "PAPERLESS_TIKA_GOTENBERG_ENDPOINT=redacted",
+              "--env",
+              "PAPERLESS_CONSUMER_POLLING=redacted",
+              "--env",
+              "USERMAP_UID=redacted",
+              "--env",
+              "USERMAP_GID=redacted",
+              "registry.invalid/boxferry-test/paperless-application:paperless"
             ],
             "Umask": "0022",
             "Timeout": 0,
@@ -1628,11 +1807,17 @@
             "Passwd": true,
             "sdNotifyMode": "container",
             "ExposedPorts": {
-              "3000/tcp": {}
+              "8000/tcp": {}
             }
           },
           "HostConfig": {
-            "Binds": [],
+            "Binds": [
+              "paperless-captured-paper-consume:/usr/src/paperless/consume:rprivate,nosuid,nodev,rbind",
+              "paperless-captured-paper-data:/usr/src/paperless/data:rprivate,nosuid,nodev,rbind",
+              "paperless-captured-paper-export:/usr/src/paperless/export:rprivate,nosuid,nodev,rbind",
+              "paperless-captured-paper-media:/usr/src/paperless/media:rprivate,nosuid,nodev,rbind",
+              "/sanitized/path-033"
+            ],
             "CgroupManager": "cgroupfs",
             "CgroupMode": "host",
             "ContainerIDFile": "",
@@ -1644,7 +1829,14 @@
               "Size": "-1B"
             },
             "NetworkMode": "bridge",
-            "PortBindings": {},
+            "PortBindings": {
+              "8000/tcp": [
+                {
+                  "HostIp": "127.0.0.1",
+                  "HostPort": "18000"
+                }
+              ]
+            },
             "RestartPolicy": {
               "Name": "no",
               "MaximumRetryCount": 0
@@ -1768,7 +1960,7 @@
           ],
           [
             "content-length",
-            "6433"
+            "6397"
           ]
         ],
         "body": {
@@ -1787,8 +1979,8 @@
             "Restarting": false,
             "OOMKilled": false,
             "Dead": false,
-            "Pid": 797,
-            "ConmonPid": 794,
+            "Pid": 815,
+            "ConmonPid": 812,
             "ExitCode": 0,
             "Error": "",
             "StartedAt": "2000-01-01T00:00:00Z",
@@ -1861,22 +2053,22 @@
             },
             "SandboxKey": "/sanitized/path-046",
             "Networks": {
-              "bf65-20260909t110652z-2728-4524-paper-paper-backend": {
+              "paperless-captured-paper-backend": {
                 "EndpointID": "",
                 "Gateway": "192.0.2.2",
-                "IPAddress": "192.0.2.9",
+                "IPAddress": "192.0.2.10",
                 "IPPrefixLen": 24,
                 "IPv6Gateway": "",
                 "GlobalIPv6Address": "",
                 "GlobalIPv6PrefixLen": 0,
-                "MacAddress": "02:00:00:00:00:03",
+                "MacAddress": "02:00:00:00:00:04",
                 "NetworkID": "22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64",
                 "DriverOpts": null,
                 "IPAMConfig": null,
                 "Links": null,
                 "Aliases": [
                   "tika",
-                  "7d098f77a049"
+                  "e07f0a14dcb8"
                 ]
               }
             }
@@ -1915,7 +2107,7 @@
             "OnBuild": null,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run": "paperless-captured-run",
               "maintainer": "Apache Tika Developers dev@tika.apache.org",
               "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
               "org.opencontainers.image.description": "The Ubuntu container image maintained by Canonical\n\nUbuntu is a Debian-based Linux operating system that runs from the desktop to the cloud, to all your internet connected things.\nIt is the world's most popular operating system across public clouds and OpenStack clouds.\nIt is the number one platform for containers; from Docker to Kubernetes to LXD, Ubuntu can run your containers at scale.\nFast, secure and simple, Ubuntu powers millions of PCs worldwide.\n",
@@ -1943,7 +2135,7 @@
               "--name",
               "paperless-captured-paper-tika",
               "--label",
-              "io.boxferry.live-run=bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run=paperless-captured-run",
               "--label",
               "io.boxferry.application=paperless-captured-paperless",
               "--network",
@@ -2065,7 +2257,7 @@
     {
       "request": {
         "method": "GET",
-        "path": "/v6.1.0/libpod/containers/e5347a22841306cbf84d599125431bb0d4e620738bad786368795af62f0d3d51/json"
+        "path": "/v6.1.0/libpod/containers/823a2786fca1469775309586aa0d78309d031ef8ba472ce488224245b89978a0/json"
       },
       "response": {
         "status": 200,
@@ -2096,19 +2288,18 @@
           ],
           [
             "content-length",
-            "6611"
+            "6567"
           ]
         ],
         "body": {
-          "Id": "e5347a22841306cbf84d599125431bb0d4e620738bad786368795af62f0d3d51",
+          "Id": "823a2786fca1469775309586aa0d78309d031ef8ba472ce488224245b89978a0",
           "Created": "2000-01-01T00:00:00Z",
-          "Path": "tini",
+          "Path": "/usr/bin/tini",
           "Args": [
             "--",
-            "docker-entrypoint.sh",
-            "valkey-server",
-            "--requirepass",
-            "<redacted:PAPERLESS_REDIS_PASSWORD>"
+            "gotenberg",
+            "--chromium-disable-javascript=true",
+            "--chromium-allow-list=file:///fixture-tmp/.*"
           ],
           "State": {
             "OciVersion": "1.3.0",
@@ -2118,24 +2309,19 @@
             "Restarting": false,
             "OOMKilled": false,
             "Dead": false,
-            "Pid": 763,
-            "ConmonPid": 761,
+            "Pid": 796,
+            "ConmonPid": 793,
             "ExitCode": 0,
             "Error": "",
             "StartedAt": "2000-01-01T00:00:00Z",
             "FinishedAt": "2000-01-01T00:00:00Z",
-            "Health": {
-              "Status": "starting",
-              "FailingStreak": 0,
-              "Log": null
-            },
             "CgroupPath": "/",
             "CheckpointedAt": "2000-01-01T00:00:00Z",
             "RestoredAt": "2000-01-01T00:00:00Z"
           },
-          "Image": "af378e1112380a551464f7d3fa14d71f9afdc83b9c004184fd7bd1eec37f445f",
-          "ImageDigest": "sha256:bcc0fb50ae3edc3b50dff862784637f96a3b035e819a00e80715a0000266f1a4",
-          "ImageName": "registry.invalid/boxferry-test/paperless-application:valkey",
+          "Image": "f1ebc0678809083182968aa76d6beb7519c14fa8486e108e0ecb40bc38735e62",
+          "ImageDigest": "sha256:44bcc6362cdc200e800ce3e5d621363a97eccf5c5f09e34fa527164b0854e680",
+          "ImageName": "registry.invalid/boxferry-test/paperless-application:gotenberg",
           "Rootfs": "",
           "Pod": "",
           "ResolvConfPath": "/sanitized/path-048",
@@ -2146,25 +2332,13 @@
           "OCIRuntime": "crun",
           "ConmonPidFile": "/sanitized/path-053",
           "PidFile": "/sanitized/path-054",
-          "Name": "paperless-captured-paper-broker",
+          "Name": "paperless-captured-paper-gotenberg",
           "RestartCount": 0,
           "Driver": "overlay",
           "MountLabel": "",
           "ProcessLabel": "",
           "AppArmorProfile": "",
-          "EffectiveCaps": [
-            "CAP_CHOWN",
-            "CAP_DAC_OVERRIDE",
-            "CAP_FOWNER",
-            "CAP_FSETID",
-            "CAP_KILL",
-            "CAP_NET_BIND_SERVICE",
-            "CAP_SETFCAP",
-            "CAP_SETGID",
-            "CAP_SETPCAP",
-            "CAP_SETUID",
-            "CAP_SYS_CHROOT"
-          ],
+          "EffectiveCaps": null,
           "BoundingCaps": [
             "CAP_CHOWN",
             "CAP_DAC_OVERRIDE",
@@ -2188,23 +2362,7 @@
               "WorkDir": "/sanitized/path-058"
             }
           },
-          "Mounts": [
-            {
-              "Type": "volume",
-              "Name": "paperless-captured-paper-redisdata",
-              "Source": "/sanitized/path-007",
-              "Destination": "/data",
-              "Driver": "local",
-              "Mode": "",
-              "Options": [
-                "nosuid",
-                "nodev",
-                "rbind"
-              ],
-              "RW": true,
-              "Propagation": "rprivate"
-            }
-          ],
+          "Mounts": [],
           "Dependencies": [],
           "NetworkSettings": {
             "EndpointID": "",
@@ -2221,26 +2379,26 @@
             "LinkLocalIPv6Address": "",
             "LinkLocalIPv6PrefixLen": 0,
             "Ports": {
-              "6379/tcp": null
+              "3000/tcp": null
             },
             "SandboxKey": "/sanitized/path-059",
             "Networks": {
-              "bf65-20260909t110652z-2728-4524-paper-paper-backend": {
+              "paperless-captured-paper-backend": {
                 "EndpointID": "",
                 "Gateway": "192.0.2.2",
-                "IPAddress": "192.0.2.10",
+                "IPAddress": "192.0.2.11",
                 "IPPrefixLen": 24,
                 "IPv6Gateway": "",
                 "GlobalIPv6Address": "",
                 "GlobalIPv6PrefixLen": 0,
-                "MacAddress": "02:00:00:00:00:04",
+                "MacAddress": "02:00:00:00:00:05",
                 "NetworkID": "22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64",
                 "DriverOpts": null,
                 "IPAMConfig": null,
                 "Links": null,
                 "Aliases": [
-                  "broker",
-                  "aed10f64adfb"
+                  "gotenberg",
+                  "fe152ae1c766"
                 ]
               }
             }
@@ -2249,11 +2407,11 @@
           "IsInfra": false,
           "IsService": false,
           "KubeExitCodePropagation": "invalid",
-          "lockNumber": 7,
+          "lockNumber": 8,
           "Config": {
             "Hostname": "fixture-host-001",
             "Domainname": "",
-            "User": "",
+            "User": "gotenberg",
             "AttachStdin": false,
             "AttachStdout": false,
             "AttachStderr": false,
@@ -2261,30 +2419,48 @@
             "OpenStdin": false,
             "StdinOnce": false,
             "Env": [
-              "VALKEY_VERSION=redacted",
-              "PATH=redacted",
+              "OTEL_LOGS_EXPORTER=redacted",
+              "UNOCONVERTER_BIN_PATH=redacted",
               "container=redacted",
+              "TZ=redacted",
+              "OTEL_METRICS_EXPORTER=redacted",
+              "LANG=redacted",
+              "PDFTK_BIN_PATH=redacted",
+              "LIBREOFFICE_BIN_PATH=redacted",
+              "CHROMIUM_HYPHEN_DATA_DIR_PATH=redacted",
+              "LC_ALL=redacted",
+              "PDFCPU_BIN_PATH=redacted",
+              "OTEL_TRACES_EXPORTER=redacted",
+              "CHROMIUM_BIN_PATH=redacted",
+              "PATH=redacted",
+              "EXIFTOOL_BIN_PATH=redacted",
+              "QPDF_BIN_PATH=redacted",
+              "GOTENBERG_VERSIONS_DIR_PATH=redacted",
               "HOME=redacted",
               "HOSTNAME=redacted"
             ],
             "Cmd": [
-              "valkey-server",
-              "--requirepass",
-              "<redacted:PAPERLESS_REDIS_PASSWORD>"
+              "gotenberg",
+              "--chromium-disable-javascript=true",
+              "--chromium-allow-list=file:///fixture-tmp/.*"
             ],
-            "Image": "registry.invalid/boxferry-test/paperless-application:valkey",
+            "Image": "registry.invalid/boxferry-test/paperless-application:gotenberg",
             "Volumes": null,
-            "WorkingDir": "/data",
+            "WorkingDir": "/sanitized/path-060",
             "Entrypoint": [
-              "tini",
-              "--",
-              "docker-entrypoint.sh"
+              "/usr/bin/tini",
+              "--"
             ],
             "OnBuild": null,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
-              "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
+              "io.boxferry.live-run": "paperless-captured-run",
+              "org.opencontainers.image.authors": "Julien Neuhart <neuhart.julien@gmail.com>",
+              "org.opencontainers.image.description": "A Docker-based API for converting documents to PDF.",
+              "org.opencontainers.image.documentation": "https://gotenberg.dev",
+              "org.opencontainers.image.source": "https://github.com/gotenberg/gotenberg",
+              "org.opencontainers.image.title": "Gotenberg",
+              "org.opencontainers.image.version": "8.34.0"
             },
             "Annotations": {
               "io.container.manager": "libpod",
@@ -2293,15 +2469,6 @@
               "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
             },
             "StopSignal": "SIGTERM",
-            "Healthcheck": {
-              "Test": [
-                "CMD-SHELL",
-                "valkey-cli -a <redacted:PAPERLESS_REDIS_PASSWORD> ping"
-              ],
-              "Interval": 2000000000,
-              "Timeout": 30000000000,
-              "Retries": 90
-            },
             "HealthcheckOnFailureAction": "none",
             "HealthLogDestination": "local",
             "HealthcheckMaxLogCount": 5,
@@ -2314,25 +2481,17 @@
               "--pull=never",
               "--detach",
               "--name",
-              "paperless-captured-paper-broker",
+              "paperless-captured-paper-gotenberg",
               "--label",
-              "io.boxferry.live-run=bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run=paperless-captured-run",
               "--label",
               "io.boxferry.application=paperless-captured-paperless",
               "--network",
-              "paperless-captured-paper-backend:alias=broker",
-              "--volume",
-              "paperless-captured-paper-redisdata:/data",
-              "--health-cmd",
-              "valkey-cli -a <redacted:PAPERLESS_REDIS_PASSWORD> ping",
-              "--health-interval",
-              "2s",
-              "--health-retries",
-              "90",
-              "registry.invalid/boxferry-test/paperless-application:valkey",
-              "valkey-server",
-              "--requirepass",
-              "<redacted:PAPERLESS_REDIS_PASSWORD>"
+              "paperless-captured-paper-backend:alias=gotenberg",
+              "registry.invalid/boxferry-test/paperless-application:gotenberg",
+              "gotenberg",
+              "--chromium-disable-javascript=true",
+              "--chromium-allow-list=file:///fixture-tmp/.*"
             ],
             "Umask": "0022",
             "Timeout": 0,
@@ -2340,20 +2499,18 @@
             "Passwd": true,
             "sdNotifyMode": "container",
             "ExposedPorts": {
-              "6379/tcp": {}
+              "3000/tcp": {}
             }
           },
           "HostConfig": {
-            "Binds": [
-              "paperless-captured-paper-redisdata:/data:rprivate,nosuid,nodev,rbind"
-            ],
+            "Binds": [],
             "CgroupManager": "cgroupfs",
             "CgroupMode": "host",
             "ContainerIDFile": "",
             "LogConfig": {
               "Type": "k8s-file",
               "Config": null,
-              "Path": "/sanitized/path-060",
+              "Path": "/sanitized/path-061",
               "Tag": "",
               "Size": "-1B"
             },
@@ -2451,7 +2608,7 @@
     {
       "request": {
         "method": "GET",
-        "path": "/v6.1.0/libpod/containers/b9160e35163c7f5330bb5876d7704f4ab837c1a04ba227c985d485962aa057ce/json"
+        "path": "/v6.1.0/libpod/containers/e5347a22841306cbf84d599125431bb0d4e620738bad786368795af62f0d3d51/json"
       },
       "response": {
         "status": 200,
@@ -2482,14 +2639,20 @@
           ],
           [
             "content-length",
-            "10957"
+            "6574"
           ]
         ],
         "body": {
-          "Id": "b9160e35163c7f5330bb5876d7704f4ab837c1a04ba227c985d485962aa057ce",
+          "Id": "e5347a22841306cbf84d599125431bb0d4e620738bad786368795af62f0d3d51",
           "Created": "2000-01-01T00:00:00Z",
-          "Path": "/init",
-          "Args": [],
+          "Path": "tini",
+          "Args": [
+            "--",
+            "docker-entrypoint.sh",
+            "valkey-server",
+            "--requirepass",
+            "<redacted:PAPERLESS_REDIS_PASSWORD>"
+          ],
           "State": {
             "OciVersion": "1.3.0",
             "Status": "running",
@@ -2498,30 +2661,35 @@
             "Restarting": false,
             "OOMKilled": false,
             "Dead": false,
-            "Pid": 965,
-            "ConmonPid": 963,
+            "Pid": 773,
+            "ConmonPid": 771,
             "ExitCode": 0,
             "Error": "",
             "StartedAt": "2000-01-01T00:00:00Z",
             "FinishedAt": "2000-01-01T00:00:00Z",
+            "Health": {
+              "Status": "starting",
+              "FailingStreak": 0,
+              "Log": null
+            },
             "CgroupPath": "/",
             "CheckpointedAt": "2000-01-01T00:00:00Z",
             "RestoredAt": "2000-01-01T00:00:00Z"
           },
-          "Image": "ac8c3f1a18c1e2c4473aa6f3243cd6316ee2b53ea6f07e39331c9f4aec1f70a7",
-          "ImageDigest": "sha256:ca4a98a46216a23dfa724d91cd1bb50c37b44370f2045df0e954590c9081735b",
-          "ImageName": "registry.invalid/boxferry-test/paperless-application:paperless",
+          "Image": "af378e1112380a551464f7d3fa14d71f9afdc83b9c004184fd7bd1eec37f445f",
+          "ImageDigest": "sha256:bcc0fb50ae3edc3b50dff862784637f96a3b035e819a00e80715a0000266f1a4",
+          "ImageName": "registry.invalid/boxferry-test/paperless-application:valkey",
           "Rootfs": "",
           "Pod": "",
-          "ResolvConfPath": "/sanitized/path-061",
-          "HostnamePath": "/sanitized/path-062",
-          "HostsPath": "/sanitized/path-063",
-          "StaticDir": "/sanitized/path-064",
-          "OCIConfigPath": "/sanitized/path-065",
+          "ResolvConfPath": "/sanitized/path-062",
+          "HostnamePath": "/sanitized/path-063",
+          "HostsPath": "/sanitized/path-064",
+          "StaticDir": "/sanitized/path-065",
+          "OCIConfigPath": "/sanitized/path-066",
           "OCIRuntime": "crun",
-          "ConmonPidFile": "/sanitized/path-066",
-          "PidFile": "/sanitized/path-067",
-          "Name": "paperless-captured-paper-web",
+          "ConmonPidFile": "/sanitized/path-067",
+          "PidFile": "/sanitized/path-068",
+          "Name": "paperless-captured-paper-broker",
           "RestartCount": 0,
           "Driver": "overlay",
           "MountLabel": "",
@@ -2557,92 +2725,30 @@
           "GraphDriver": {
             "Name": "overlay",
             "Data": {
-              "LowerDir": "/sanitized/path-068",
-              "MergedDir": "/sanitized/path-069",
-              "UpperDir": "/sanitized/path-070",
-              "WorkDir": "/sanitized/path-071"
+              "LowerDir": "/sanitized/path-069",
+              "MergedDir": "/sanitized/path-070",
+              "UpperDir": "/sanitized/path-071",
+              "WorkDir": "/sanitized/path-072"
             }
           },
           "Mounts": [
             {
               "Type": "volume",
-              "Name": "paperless-captured-paper-data",
-              "Source": "/sanitized/path-002",
-              "Destination": "/usr/src/paperless/data",
+              "Name": "paperless-captured-paper-redisdata",
+              "Source": "/sanitized/path-007",
+              "Destination": "/data",
               "Driver": "local",
               "Mode": "",
               "Options": [
                 "nosuid",
                 "nodev",
-                "rbind"
-              ],
-              "RW": true,
-              "Propagation": "rprivate"
-            },
-            {
-              "Type": "volume",
-              "Name": "paperless-captured-paper-export",
-              "Source": "/sanitized/path-005",
-              "Destination": "/usr/src/paperless/export",
-              "Driver": "local",
-              "Mode": "",
-              "Options": [
-                "nosuid",
-                "nodev",
-                "rbind"
-              ],
-              "RW": true,
-              "Propagation": "rprivate"
-            },
-            {
-              "Type": "volume",
-              "Name": "paperless-captured-paper-media",
-              "Source": "/sanitized/path-003",
-              "Destination": "/usr/src/paperless/media",
-              "Driver": "local",
-              "Mode": "",
-              "Options": [
-                "nosuid",
-                "nodev",
-                "rbind"
-              ],
-              "RW": true,
-              "Propagation": "rprivate"
-            },
-            {
-              "Type": "volume",
-              "Name": "paperless-captured-paper-consume",
-              "Source": "/sanitized/path-004",
-              "Destination": "/usr/src/paperless/consume",
-              "Driver": "local",
-              "Mode": "",
-              "Options": [
-                "nosuid",
-                "nodev",
-                "rbind"
-              ],
-              "RW": true,
-              "Propagation": "rprivate"
-            },
-            {
-              "Type": "bind",
-              "Source": "/sanitized/fixture-root",
-              "Destination": "/fixture",
-              "Driver": "",
-              "Mode": "",
-              "Options": [
                 "rbind"
               ],
               "RW": true,
               "Propagation": "rprivate"
             }
           ],
-          "Dependencies": [
-            "596be250003e097d5ad7513953d81de2301ff5f0f2206fc9f4bcf4b2b4d1a059",
-            "e5347a22841306cbf84d599125431bb0d4e620738bad786368795af62f0d3d51",
-            "823a2786fca1469775309586aa0d78309d031ef8ba472ce488224245b89978a0",
-            "64c46faace629619bac4f1874fb1365a0bd8f9d5ff70d6daea98acf6ea24a24e"
-          ],
+          "Dependencies": [],
           "NetworkSettings": {
             "EndpointID": "",
             "Gateway": "",
@@ -2658,49 +2764,26 @@
             "LinkLocalIPv6Address": "",
             "LinkLocalIPv6PrefixLen": 0,
             "Ports": {
-              "8000/tcp": [
-                {
-                  "HostIp": "127.0.0.1",
-                  "HostPort": "18000"
-                }
-              ]
+              "6379/tcp": null
             },
-            "SandboxKey": "/sanitized/path-072",
+            "SandboxKey": "/sanitized/path-073",
             "Networks": {
-              "bf65-20260909t110652z-2728-4524-paper-paper-backend": {
+              "paperless-captured-paper-backend": {
                 "EndpointID": "",
                 "Gateway": "192.0.2.2",
-                "IPAddress": "192.0.2.11",
-                "IPPrefixLen": 24,
-                "IPv6Gateway": "",
-                "GlobalIPv6Address": "",
-                "GlobalIPv6PrefixLen": 0,
-                "MacAddress": "02:00:00:00:00:05",
-                "NetworkID": "22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64",
-                "DriverOpts": null,
-                "IPAMConfig": null,
-                "Links": null,
-                "Aliases": [
-                  "webserver",
-                  "cd2ca3885e4b"
-                ]
-              },
-              "bf65-20260909t110652z-2728-4524-paper-paper-edge": {
-                "EndpointID": "",
-                "Gateway": "192.0.2.4",
                 "IPAddress": "192.0.2.12",
                 "IPPrefixLen": 24,
                 "IPv6Gateway": "",
                 "GlobalIPv6Address": "",
                 "GlobalIPv6PrefixLen": 0,
                 "MacAddress": "02:00:00:00:00:06",
-                "NetworkID": "44b077a9a4579314092b60b77da0cbc7158b5d54c574c65be0c303869416347d",
+                "NetworkID": "22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64",
                 "DriverOpts": null,
                 "IPAMConfig": null,
                 "Links": null,
                 "Aliases": [
-                  "paperless",
-                  "cd2ca3885e4b"
+                  "broker",
+                  "fe3e4564018c"
                 ]
               }
             }
@@ -2709,7 +2792,7 @@
           "IsInfra": false,
           "IsService": false,
           "KubeExitCodePropagation": "invalid",
-          "lockNumber": 10,
+          "lockNumber": 7,
           "Config": {
             "Hostname": "fixture-host-001",
             "Domainname": "",
@@ -2721,64 +2804,30 @@
             "OpenStdin": false,
             "StdinOnce": false,
             "Env": [
-              "UV_TOOL_BIN_DIR=redacted",
-              "PAPERLESS_THREADS_PER_WORKER=redacted",
-              "PAPERLESS_REDIS=redacted",
-              "PAPERLESS_DBHOST=redacted",
-              "PAPERLESS_ADMIN_MAIL=redacted",
-              "PAPERLESS_TIKA_GOTENBERG_ENDPOINT=redacted",
-              "PYTHON_SHA256=redacted",
-              "PAPERLESS_DBNAME=redacted",
-              "PAPERLESS_ADMIN_PASSWORD=redacted",
-              "PYTHONUNBUFFERED=redacted",
-              "PYTHONDONTWRITEBYTECODE=redacted",
-              "PAPERLESS_TIME_ZONE=redacted",
-              "PAPERLESS_DBUSER=redacted",
-              "S6_BEHAVIOUR_IF_STAGE2_FAILS=redacted",
-              "PAPERLESS_SECRET_KEY=redacted",
+              "VALKEY_VERSION=redacted",
               "PATH=redacted",
-              "PAPERLESS_OCR_LANGUAGE=redacted",
-              "USERMAP_UID=redacted",
-              "PAPERLESS_DBPASS=redacted",
-              "PAPERLESS_WEBSERVER_WORKERS=redacted",
-              "PAPERLESS_TIKA_ENDPOINT=redacted",
               "container=redacted",
-              "PYTHON_VERSION=redacted",
-              "PYTHONWARNINGS=redacted",
-              "PAPERLESS_CONSUMER_POLLING=redacted",
-              "S6_CMD_WAIT_FOR_SERVICES_MAXTIME=redacted",
-              "UV_LINK_MODE=redacted",
-              "PNGX_CONTAINERIZED=redacted",
-              "S6_VERBOSITY=redacted",
-              "PAPERLESS_URL=redacted",
-              "PAPERLESS_TIKA_ENABLED=redacted",
-              "PAPERLESS_ADMIN_USER=redacted",
-              "PAPERLESS_TASK_WORKERS=redacted",
-              "USERMAP_GID=redacted",
               "HOME=redacted",
               "HOSTNAME=redacted"
             ],
-            "Cmd": null,
-            "Image": "registry.invalid/boxferry-test/paperless-application:paperless",
+            "Cmd": [
+              "valkey-server",
+              "--requirepass",
+              "<redacted:PAPERLESS_REDIS_PASSWORD>"
+            ],
+            "Image": "registry.invalid/boxferry-test/paperless-application:valkey",
             "Volumes": null,
-            "WorkingDir": "/usr/src/paperless/src/",
+            "WorkingDir": "/data",
             "Entrypoint": [
-              "/init"
+              "tini",
+              "--",
+              "docker-entrypoint.sh"
             ],
             "OnBuild": null,
             "Labels": {
               "io.boxferry.application": "paperless-captured-paperless",
-              "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524",
-              "org.opencontainers.image.authors": "paperless-ngx team <hello@paperless-ngx.com>",
-              "org.opencontainers.image.created": "2000-01-01T00:00:00Z",
-              "org.opencontainers.image.description": "A community-supported supercharged document management system: scan, index and archive all your documents",
-              "org.opencontainers.image.documentation": "https://docs.paperless-ngx.com/",
-              "org.opencontainers.image.licenses": "GPL-3.0",
-              "org.opencontainers.image.revision": "d48663e9ebaadc4b413a6ca3bc88cb5fbc4e468e",
-              "org.opencontainers.image.source": "https://github.com/paperless-ngx/paperless-ngx",
-              "org.opencontainers.image.title": "paperless-ngx",
-              "org.opencontainers.image.url": "https://github.com/paperless-ngx/paperless-ngx",
-              "org.opencontainers.image.version": "3.1.3"
+              "io.boxferry.live-run": "paperless-captured-run",
+              "org.opencontainers.image.source": "https://github.com/valkey-io/valkey"
             },
             "Annotations": {
               "io.container.manager": "libpod",
@@ -2787,6 +2836,15 @@
               "org.systemd.property.TimeoutStopUSec": "uint64 10000000"
             },
             "StopSignal": "SIGTERM",
+            "Healthcheck": {
+              "Test": [
+                "CMD-SHELL",
+                "valkey-cli -a <redacted:PAPERLESS_REDIS_PASSWORD> ping"
+              ],
+              "Interval": 2000000000,
+              "Timeout": 30000000000,
+              "Retries": 90
+            },
             "HealthcheckOnFailureAction": "none",
             "HealthLogDestination": "local",
             "HealthcheckMaxLogCount": 5,
@@ -2799,72 +2857,25 @@
               "--pull=never",
               "--detach",
               "--name",
-              "paperless-captured-paper-web",
+              "paperless-captured-paper-broker",
               "--label",
-              "io.boxferry.live-run=bf65-20260909t110652z-2728-4524",
+              "io.boxferry.live-run=paperless-captured-run",
               "--label",
               "io.boxferry.application=paperless-captured-paperless",
-              "--requires",
-              "paperless-captured-paper-db,paperless-captured-paper-broker,paperless-captured-paper-gotenberg,paperless-captured-paper-tika",
               "--network",
-              "paperless-captured-paper-backend:alias=webserver",
-              "--network",
-              "paperless-captured-paper-edge:alias=paperless",
+              "paperless-captured-paper-backend:alias=broker",
               "--volume",
-              "paperless-captured-paper-data:/usr/src/paperless/data",
-              "--volume",
-              "paperless-captured-paper-media:/usr/src/paperless/media",
-              "--volume",
-              "paperless-captured-paper-consume:/usr/src/paperless/consume",
-              "--volume",
-              "paperless-captured-paper-export:/usr/src/paperless/export",
-              "--volume",
-              "/sanitized/fixture-root:/fixture:rw",
-              "--publish",
-              "127.0.0.1:18000:8000",
-              "--env",
-              "PAPERLESS_REDIS=redacted",
-              "--env",
-              "PAPERLESS_DBHOST=redacted",
-              "--env",
-              "PAPERLESS_DBNAME=redacted",
-              "--env",
-              "PAPERLESS_DBUSER=redacted",
-              "--env",
-              "PAPERLESS_DBPASS=redacted",
-              "--env",
-              "PAPERLESS_SECRET_KEY=redacted",
-              "--env",
-              "PAPERLESS_ADMIN_USER=redacted",
-              "--env",
-              "PAPERLESS_ADMIN_PASSWORD=redacted",
-              "--env",
-              "PAPERLESS_ADMIN_MAIL=redacted",
-              "--env",
-              "PAPERLESS_URL=redacted",
-              "--env",
-              "PAPERLESS_TIME_ZONE=redacted",
-              "--env",
-              "PAPERLESS_OCR_LANGUAGE=redacted",
-              "--env",
-              "PAPERLESS_TASK_WORKERS=redacted",
-              "--env",
-              "PAPERLESS_THREADS_PER_WORKER=redacted",
-              "--env",
-              "PAPERLESS_WEBSERVER_WORKERS=redacted",
-              "--env",
-              "PAPERLESS_TIKA_ENABLED=redacted",
-              "--env",
-              "PAPERLESS_TIKA_ENDPOINT=redacted",
-              "--env",
-              "PAPERLESS_TIKA_GOTENBERG_ENDPOINT=redacted",
-              "--env",
-              "PAPERLESS_CONSUMER_POLLING=redacted",
-              "--env",
-              "USERMAP_UID=redacted",
-              "--env",
-              "USERMAP_GID=redacted",
-              "registry.invalid/boxferry-test/paperless-application:paperless"
+              "paperless-captured-paper-redisdata:/data",
+              "--health-cmd",
+              "valkey-cli -a <redacted:PAPERLESS_REDIS_PASSWORD> ping",
+              "--health-interval",
+              "2s",
+              "--health-retries",
+              "90",
+              "registry.invalid/boxferry-test/paperless-application:valkey",
+              "valkey-server",
+              "--requirepass",
+              "<redacted:PAPERLESS_REDIS_PASSWORD>"
             ],
             "Umask": "0022",
             "Timeout": 0,
@@ -2872,16 +2883,12 @@
             "Passwd": true,
             "sdNotifyMode": "container",
             "ExposedPorts": {
-              "8000/tcp": {}
+              "6379/tcp": {}
             }
           },
           "HostConfig": {
             "Binds": [
-              "paperless-captured-paper-data:/usr/src/paperless/data:rprivate,nosuid,nodev,rbind",
-              "paperless-captured-paper-export:/usr/src/paperless/export:rprivate,nosuid,nodev,rbind",
-              "paperless-captured-paper-media:/usr/src/paperless/media:rprivate,nosuid,nodev,rbind",
-              "paperless-captured-paper-consume:/usr/src/paperless/consume:rprivate,nosuid,nodev,rbind",
-              "/sanitized/path-073"
+              "paperless-captured-paper-redisdata:/data:rprivate,nosuid,nodev,rbind"
             ],
             "CgroupManager": "cgroupfs",
             "CgroupMode": "host",
@@ -2894,14 +2901,7 @@
               "Size": "-1B"
             },
             "NetworkMode": "bridge",
-            "PortBindings": {
-              "8000/tcp": [
-                {
-                  "HostIp": "127.0.0.1",
-                  "HostPort": "18000"
-                }
-              ]
-            },
+            "PortBindings": {},
             "RestartPolicy": {
               "Name": "no",
               "MaximumRetryCount": 0
@@ -3053,7 +3053,7 @@
     {
       "request": {
         "method": "GET",
-        "path": "/v6.1.0/libpod/networks/22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64/json"
+        "path": "/v6.1.0/libpod/networks/44b077a9a4579314092b60b77da0cbc7158b5d54c574c65be0c303869416347d/json"
       },
       "response": {
         "status": 200,
@@ -3084,99 +3084,43 @@
           ],
           [
             "content-length",
-            "1622"
+            "704"
           ]
         ],
         "body": {
-          "name": "paperless-captured-paper-backend",
-          "id": "22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64",
+          "name": "paperless-captured-paper-edge",
+          "id": "44b077a9a4579314092b60b77da0cbc7158b5d54c574c65be0c303869416347d",
           "driver": "bridge",
-          "network_interface": "podman1",
+          "network_interface": "podman2",
           "created": "2000-01-01T00:00:00Z",
           "subnets": [
             {
-              "subnet": "192.0.2.1/24",
-              "gateway": "192.0.2.2"
+              "subnet": "192.0.2.3/24",
+              "gateway": "192.0.2.4"
             }
           ],
           "ipv6_enabled": false,
-          "internal": true,
+          "internal": false,
           "dns_enabled": true,
           "labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "ipam_options": {
             "driver": "host-local"
           },
           "containers": {
-            "27d24033d537f6ab843a2c080925aa996e6122dd43104258ba978ceb730b2072": {
-              "name": "paperless-captured-paper-db",
+            "b9160e35163c7f5330bb5876d7704f4ab837c1a04ba227c985d485962aa057ce": {
+              "name": "paperless-captured-paper-web",
               "interfaces": {
-                "eth0": {
-                  "subnets": [
-                    {
-                      "ipnet": "192.0.2.7/24",
-                      "gateway": "192.0.2.2"
-                    }
-                  ],
-                  "mac_address": "02:00:00:00:00:01"
-                }
-              }
-            },
-            "733c3f3a0fe9d4a0e0b96fffbbd2ca42123e9743d6abba3b71a5fd78181c26d9": {
-              "name": "paperless-captured-paper-gotenberg",
-              "interfaces": {
-                "eth0": {
-                  "subnets": [
-                    {
-                      "ipnet": "192.0.2.8/24",
-                      "gateway": "192.0.2.2"
-                    }
-                  ],
-                  "mac_address": "02:00:00:00:00:02"
-                }
-              }
-            },
-            "7d098f77a04946940af3abb39e40edab506c3e928e940046d40af4491d415ee7": {
-              "name": "paperless-captured-paper-tika",
-              "interfaces": {
-                "eth0": {
+                "eth1": {
                   "subnets": [
                     {
                       "ipnet": "192.0.2.9/24",
-                      "gateway": "192.0.2.2"
+                      "gateway": "192.0.2.4"
                     }
                   ],
                   "mac_address": "02:00:00:00:00:03"
-                }
-              }
-            },
-            "aed10f64adfb7db4780980f9ef2493ccddce11a392511f686a957965262dbc9d": {
-              "name": "paperless-captured-paper-broker",
-              "interfaces": {
-                "eth0": {
-                  "subnets": [
-                    {
-                      "ipnet": "192.0.2.10/24",
-                      "gateway": "192.0.2.2"
-                    }
-                  ],
-                  "mac_address": "02:00:00:00:00:04"
-                }
-              }
-            },
-            "cd2ca3885e4b425d561848c963d12d00f6996dfc798c9342e82142c776b26b3c": {
-              "name": "paperless-captured-paper-web",
-              "interfaces": {
-                "eth0": {
-                  "subnets": [
-                    {
-                      "ipnet": "192.0.2.11/24",
-                      "gateway": "192.0.2.2"
-                    }
-                  ],
-                  "mac_address": "02:00:00:00:00:05"
                 }
               }
             }
@@ -3187,7 +3131,7 @@
     {
       "request": {
         "method": "GET",
-        "path": "/v6.1.0/libpod/networks/44b077a9a4579314092b60b77da0cbc7158b5d54c574c65be0c303869416347d/json"
+        "path": "/v6.1.0/libpod/networks/22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64/json"
       },
       "response": {
         "status": 200,
@@ -3218,40 +3162,96 @@
           ],
           [
             "content-length",
-            "714"
+            "1614"
           ]
         ],
         "body": {
-          "name": "paperless-captured-paper-edge",
-          "id": "44b077a9a4579314092b60b77da0cbc7158b5d54c574c65be0c303869416347d",
+          "name": "paperless-captured-paper-backend",
+          "id": "22d2cff515e040277e9cba03b52e6bc244b08a08639e6cfb3525787e52d07e64",
           "driver": "bridge",
-          "network_interface": "podman2",
+          "network_interface": "podman1",
           "created": "2000-01-01T00:00:00Z",
           "subnets": [
             {
-              "subnet": "192.0.2.3/24",
-              "gateway": "192.0.2.4"
+              "subnet": "192.0.2.1/24",
+              "gateway": "192.0.2.2"
             }
           ],
           "ipv6_enabled": false,
-          "internal": false,
+          "internal": true,
           "dns_enabled": true,
           "labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "ipam_options": {
             "driver": "host-local"
           },
           "containers": {
-            "cd2ca3885e4b425d561848c963d12d00f6996dfc798c9342e82142c776b26b3c": {
+            "596be250003e097d5ad7513953d81de2301ff5f0f2206fc9f4bcf4b2b4d1a059": {
+              "name": "paperless-captured-paper-db",
+              "interfaces": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.7/24",
+                      "gateway": "192.0.2.2"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:01"
+                }
+              }
+            },
+            "b9160e35163c7f5330bb5876d7704f4ab837c1a04ba227c985d485962aa057ce": {
               "name": "paperless-captured-paper-web",
               "interfaces": {
-                "eth1": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.8/24",
+                      "gateway": "192.0.2.2"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:02"
+                }
+              }
+            },
+            "64c46faace629619bac4f1874fb1365a0bd8f9d5ff70d6daea98acf6ea24a24e": {
+              "name": "paperless-captured-paper-tika",
+              "interfaces": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.10/24",
+                      "gateway": "192.0.2.2"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:04"
+                }
+              }
+            },
+            "823a2786fca1469775309586aa0d78309d031ef8ba472ce488224245b89978a0": {
+              "name": "paperless-captured-paper-gotenberg",
+              "interfaces": {
+                "eth0": {
+                  "subnets": [
+                    {
+                      "ipnet": "192.0.2.11/24",
+                      "gateway": "192.0.2.2"
+                    }
+                  ],
+                  "mac_address": "02:00:00:00:00:05"
+                }
+              }
+            },
+            "e5347a22841306cbf84d599125431bb0d4e620738bad786368795af62f0d3d51": {
+              "name": "paperless-captured-paper-broker",
+              "interfaces": {
+                "eth0": {
                   "subnets": [
                     {
                       "ipnet": "192.0.2.12/24",
-                      "gateway": "192.0.2.4"
+                      "gateway": "192.0.2.2"
                     }
                   ],
                   "mac_address": "02:00:00:00:00:06"
@@ -3296,7 +3296,7 @@
           ],
           [
             "content-length",
-            "351"
+            "342"
           ]
         ],
         "body": {
@@ -3306,7 +3306,7 @@
           "CreatedAt": "2000-01-01T00:00:00Z",
           "Labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "Scope": "local",
           "Options": {},
@@ -3343,7 +3343,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-18"
+            "fixture-reference-paperless-09"
           ],
           [
             "date",
@@ -3351,7 +3351,7 @@
           ],
           [
             "content-length",
-            "311"
+            "302"
           ]
         ],
         "body": {
@@ -3361,7 +3361,7 @@
           "CreatedAt": "2000-01-01T00:00:00Z",
           "Labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "Scope": "local",
           "Options": {},
@@ -3396,7 +3396,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-19"
+            "fixture-reference-paperless-18"
           ],
           [
             "date",
@@ -3404,7 +3404,7 @@
           ],
           [
             "content-length",
-            "350"
+            "341"
           ]
         ],
         "body": {
@@ -3414,7 +3414,7 @@
           "CreatedAt": "2000-01-01T00:00:00Z",
           "Labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "Scope": "local",
           "Options": {},
@@ -3451,7 +3451,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-20"
+            "fixture-reference-paperless-19"
           ],
           [
             "date",
@@ -3459,7 +3459,7 @@
           ],
           [
             "content-length",
-            "349"
+            "340"
           ]
         ],
         "body": {
@@ -3469,7 +3469,7 @@
           "CreatedAt": "2000-01-01T00:00:00Z",
           "Labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "Scope": "local",
           "Options": {},
@@ -3506,7 +3506,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-21"
+            "fixture-reference-paperless-20"
           ],
           [
             "date",
@@ -3514,7 +3514,7 @@
           ],
           [
             "content-length",
-            "350"
+            "341"
           ]
         ],
         "body": {
@@ -3524,7 +3524,7 @@
           "CreatedAt": "2000-01-01T00:00:00Z",
           "Labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "Scope": "local",
           "Options": {},
@@ -3561,7 +3561,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-22"
+            "fixture-reference-paperless-21"
           ],
           [
             "date",
@@ -3569,7 +3569,7 @@
           ],
           [
             "content-length",
-            "353"
+            "344"
           ]
         ],
         "body": {
@@ -3579,7 +3579,7 @@
           "CreatedAt": "2000-01-01T00:00:00Z",
           "Labels": {
             "io.boxferry.application": "paperless-captured-paperless",
-            "io.boxferry.live-run": "bf65-20260909t110652z-2728-4524"
+            "io.boxferry.live-run": "paperless-captured-run"
           },
           "Scope": "local",
           "Options": {},
@@ -3616,7 +3616,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-23"
+            "fixture-reference-paperless-22"
           ],
           [
             "date",
@@ -4001,7 +4001,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-24"
+            "fixture-reference-paperless-23"
           ],
           [
             "date",
@@ -4054,7 +4054,7 @@
             "Cmd": [
               "gotenberg"
             ],
-            "WorkingDir": "/sanitized/path-033",
+            "WorkingDir": "/sanitized/path-060",
             "Labels": {
               "org.opencontainers.image.authors": "Julien Neuhart <neuhart.julien@gmail.com>",
               "org.opencontainers.image.description": "A Docker-based API for converting documents to PDF.",
@@ -4351,7 +4351,7 @@
             },
             {
               "created": "2000-01-01T00:00:00Z",
-              "created_by": "WORKDIR /sanitized/path-033",
+              "created_by": "WORKDIR /sanitized/path-060",
               "comment": "buildkit.dockerfile.v0"
             },
             {
@@ -4405,7 +4405,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-25"
+            "fixture-reference-paperless-24"
           ],
           [
             "date",
@@ -4587,7 +4587,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-26"
+            "fixture-reference-paperless-25"
           ],
           [
             "date",
@@ -4796,7 +4796,7 @@
           ],
           [
             "x-reference-id",
-            "fixture-reference-paperless-27"
+            "fixture-reference-paperless-26"
           ],
           [
             "date",

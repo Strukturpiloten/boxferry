@@ -57,22 +57,24 @@ acquisition authority. At initial acceptance, no Paperless captured-native casse
 
 After independent privacy, provenance, checksum, and request-coverage review, the sanitized cassette
 from workflow-dispatch run
-[`34343718035`](https://github.com/Strukturpiloten/boxferry/actions/runs/34343718035) at revision
-`1aaafaab5fb60b55ac300e77531a958bb3a3f4b2` is admitted under
+[`34368397233`](https://github.com/Strukturpiloten/boxferry/actions/runs/34368397233) at revision
+`6ef0b9d6c4c8c2bc5708b7be9de19215d151721c` is admitted under
 `fixtures/conformance/paperless-ngx-application/` as supplementary, non-synthetic acquisition
 evidence. Its SHA-256 is
-`0c56e684908b673344e0beda4f7609da0fd6a351c314b97e339e13f90f595d14`; its embedded provenance
+`427a86d9e8d798ae8a99e8aeeffb5bfc0ef7c94ce366fd268fbe30eb4a4acaea`; its embedded provenance
 retains the capture-manifest SHA-256
-`10dbd1cfcf32e74a5cb0b62ffa52ae9dc8ecf05961b302a14345c84a752d0fad`. The reviewed candidate
+`4a135307f745905f50de1522ecf4d971b78456b30f88adbd0a5f65f710dc01ea`. The reviewed candidate
 `SHA256SUMS` SHA-256 was
-`61d0d23995b0b95c73bc4fd129228cb580370223137f637175054104f809dba5`; those two admission files
+`0f130cde39bf9952a97906a9f36d78146016e5ddca99bba201fddef9663a33c9`; those two admission files
 remain outside the repository.
 
 The cassette binds Podman/API 6.1.0 rootless, Podman revision
-`cade97a52ebdf9dbf9e81de8009015776837a074`, the reviewed `podman-6.1-rootless` runtime image and
+`cade97a52ebdf9dbf9e81de8009015776837a074`, sanitizer version 3, the reviewed
+`podman-6.1-rootless` runtime image and
 matrix hash, all five reviewed application images, and exact hashes for the setup, runner, Compose,
 image inventory, matrix, and capture proxy sources. Review found all 27 requests to be bounded,
-bodyless `GET` operations and found no native identifiers, private host paths or addresses,
+bodyless `GET` operations and found no native identifiers in values or object keys, compact run IDs,
+private paths or addresses,
 noncanonical timestamps or request IDs, protected values, authorization/cookie headers, or
 unreviewed URLs. Production-acquisition replay must consume all 27 requests exactly once; independent
 resource inspections may arrive in a different order when the acquisition future schedules them concurrently.
@@ -81,6 +83,17 @@ All 143 captured environment assignments are intentionally redacted. Therefore t
 cassette cannot establish semantic environment intent and must never replace the repository-authored
 `fixtures/scenarios/paperless-ngx-application/input-podman.cassette.json`. The authored cassette
 remains the only Podman scenario input; executable repository policy enforces that separation.
+
+### Privacy correction (2026-09-09)
+
+The cassette from workflow run `34343718035`, SHA-256
+`0c56e684908b673344e0beda4f7609da0fd6a351c314b97e339e13f90f595d14`, was briefly admitted and
+is now revoked. Independent follow-up review found that sanitizer version 2 did not transform JSON
+object keys and did not recognize the compact live-run identifier. Native container identifiers and
+the timestamped run ID therefore remained in that candidate. Sanitizer version 3 transforms and
+verifies object keys, normalizes live-run identifiers, and has counterfactual regression tests for
+both paths. The revoked digest must not be re-admitted; any replacement requires a fresh capture and
+independent privacy, provenance, checksum, and request-coverage review.
 
 This evidence does not claim Quadlet generator execution, ComposeLens provider conformance, other
 Podman versions, rootful operation, non-amd64 architectures, arbitrary documents, production-secret

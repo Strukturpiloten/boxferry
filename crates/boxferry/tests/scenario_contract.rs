@@ -207,7 +207,7 @@ fn scenario_catalogue_is_explicit_bounded_and_sidecar_ready() -> Result<(), Box<
     let root = repository_root();
     let catalogue: ScenarioCatalogue = toml::from_str(&fs::read_to_string(root.join(SCENARIO_CATALOGUE))?)?;
     let registered = validate_scenario_catalogue(&root, &catalogue)?;
-    assert_eq!(registered.len(), 30);
+    assert_eq!(registered.len(), 31);
     assert!(is_scenario_manifest_name(
         Path::new("fixtures/conversion/document-route-matrix/document-route-normal.scenario.toml"),
         "document-route-normal"
@@ -2166,6 +2166,56 @@ fn paperless_captured_native_evidence_replays_through_production_acquisition() -
     let application = imported.application().ok_or("captured Paperless application")?;
     assert_eq!(application.services().len(), 5);
     assert_eq!(application.volumes().len(), 6);
+    assert_eq!(application.networks().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn immich_captured_native_evidence_replays_through_production_acquisition() -> Result<(), Box<dyn Error>> {
+    let cassette = PodmanCassette::load(
+        &repository_root()
+            .join("fixtures/conformance/immich-application/immich-application-6.1.0-rootless.cassette.json"),
+    )?;
+    assert_eq!(
+        cassette.scenario_id(),
+        "immich-application-podman-6.1.0-rootless-captured"
+    );
+    assert_eq!(cassette.engine_version(), "6.1.0");
+    assert_eq!(cassette.execution_context(), "rootless");
+    assert_eq!(cassette.interaction_count(), 23);
+
+    let server = PodmanCassetteServer::start_unordered(cassette)?;
+    let transport = ReadOnlyUnixTransport::new(
+        UnixConnection::new(server.socket())?,
+        TransportLimits::default(),
+        ReadOnlyUnixTransportTimeouts::default(),
+    )?;
+    let mut request = DiscoveryRequest::new();
+    request.add_label_root(LabelSelector::exact(
+        "io.boxferry.application",
+        "immich-captured-immich",
+    )?);
+    let policy = PodmanPromotionPolicy::conservative()
+        .with_effective_named_volume_mounts(true)
+        .with_effective_named_networks(true)
+        .with_portable_effective_settings(true);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()?;
+    let source = runtime.block_on(acquire_podman_source(
+        Identifier::new("immich-captured-immich")?,
+        &transport,
+        AcquisitionOptions::redacted(),
+        &request,
+        policy,
+    ))?;
+
+    server.finish()?;
+    let imported = PodmanImporter::new()?.import(&source);
+    let application = imported.application().ok_or("captured Immich application")?;
+    assert_eq!(application.services().len(), 4);
+    assert_eq!(application.volumes().len(), 4);
     assert_eq!(application.networks().len(), 2);
     Ok(())
 }

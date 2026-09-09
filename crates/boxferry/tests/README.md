@@ -22,6 +22,14 @@ generated result to a same-format fixed point. The remaining route, CLI, report,
 repository-policy tests exercise focused Compose/Quadlet behaviors and their public orchestration
 boundary.
 
+`repository_policy.rs` also owns static and focused helper contracts for the bounded Nextcloud,
+Forgejo, Paperless, and Immich live application profiles. The Immich checks keep the authored
+offline replay distinct from runtime evidence, pin the sole rootless cell and every external digest,
+and protect CPU-only upload/derivative/persistence, capture privacy, selector, redaction, resource,
+and cleanup boundaries without executing the live profile during the deterministic test suite.
+Reviewed Paperless and Immich sanitizer-v3 cassettes additionally replay complete production
+acquisition while repository policy keeps their redacted evidence separate from authored semantics.
+
 ## Scenario acceptance ownership
 
 `scenario_contract.rs` owns catalogue-only application acceptance. It validates both supported manifest spellings, all exporters for every input, independent neutral intent, exact artifact/diagnostic/loss sidecars, protected-value counterfactuals, and applicable reimports. Real-world Compose blobs are vendored with pinned Git provenance and reviewed legal files so this suite remains offline. Remote corpus fetching is a refresh check, not a test dependency.

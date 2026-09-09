@@ -1,0 +1,17 @@
+BFP0007|networks.backend.internal
+BFP0007|services.redis.runtime_name
+BFP0007|services.database.environment.POSTGRES_DB
+BFP0007|services.database.environment.POSTGRES_INITDB_ARGS
+BFP0007|services.database.environment.POSTGRES_PASSWORD
+BFP0007|services.database.environment.POSTGRES_USER
+BFP0007|services.database.runtime_name
+BFP0007|services.immich-machine-learning.runtime_name
+BFP0007|services.immich-server.environment.DB_DATABASE_NAME
+BFP0007|services.immich-server.environment.DB_HOSTNAME
+BFP0007|services.immich-server.environment.DB_PASSWORD
+BFP0007|services.immich-server.environment.DB_USERNAME
+BFP0007|services.immich-server.environment.IMMICH_MACHINE_LEARNING_URL
+BFP0007|services.immich-server.environment.REDIS_HOSTNAME
+BFP0007|services.immich-server.environment.TZ
+BFP0007|services.immich-server.runtime_name
+BFP0007|services.immich-server.ports

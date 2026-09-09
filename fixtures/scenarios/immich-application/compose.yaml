@@ -1,0 +1,66 @@
+---
+name: immich-application
+
+services:
+  redis:
+    container_name: redis
+    image: docker.io/valkey/valkey@sha256:8e8d64b405ce18f41b8e5ee20aa4687a8ed0022d1298f2ce31cdcf3a76e09411
+    volumes:
+      - redisdata:/data
+    networks:
+      - backend
+
+  database:
+    container_name: database
+    image: ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      POSTGRES_DB: immich
+      POSTGRES_USER: immich
+      POSTGRES_PASSWORD: "${IMMICH_DB_PASSWORD:?set IMMICH_DB_PASSWORD}"
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  immich-machine-learning:
+    container_name: immich-machine-learning
+    image: ghcr.io/immich-app/immich-machine-learning@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e
+    volumes:
+      - model-cache:/cache
+    networks:
+      - backend
+
+  immich-server:
+    container_name: immich-server
+    image: ghcr.io/immich-app/immich-server@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+    depends_on:
+      - redis
+      - database
+      - immich-machine-learning
+    environment:
+      DB_HOSTNAME: database
+      DB_DATABASE_NAME: immich
+      DB_USERNAME: immich
+      DB_PASSWORD: "${IMMICH_DB_PASSWORD:?set IMMICH_DB_PASSWORD}"
+      REDIS_HOSTNAME: redis
+      IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+      TZ: Etc/UTC
+    ports:
+      - "127.0.0.1:18283:2283"
+    volumes:
+      - library:/data
+    networks:
+      - backend
+      - edge
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+
+volumes:
+  library: {}
+  model-cache: {}
+  pgdata: {}
+  redisdata: {}

@@ -7,6 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Add bounded Immich 3.1.0 CPU-only migration acceptance with deterministic PNG upload,
+  metadata and derivative processing, persistence, privacy, resource-budget evidence, and an
+  independently reviewed sanitizer-v3 native acquisition replay
+  ([#136](https://github.com/Strukturpiloten/boxferry/issues/136)).
 - Add bounded Paperless-ngx live migration acceptance with real PDF, DOCX, and ODT processing,
   search, converter, persistence, privacy, and resource-budget evidence ([#135](https://github.com/Strukturpiloten/boxferry/issues/135)).
 

@@ -11,3 +11,4 @@ fixtures/scenarios/real-world-compose-*/input.compose.yaml
 
 # Admitted captured-native evidence retains its independently reviewed digest.
 fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json
+fixtures/conformance/immich-application/immich-application-6.1.0-rootless.cassette.json

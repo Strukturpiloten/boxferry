@@ -56,6 +56,12 @@ sanitized cassette candidate, capture manifest, and `SHA256SUMS`; it refuses ove
 not broaden BoxFerry's production read-only boundary. Every candidate requires independent privacy and
 provenance review before admission.
 
+The former candidate from workflow run `34343718035` (SHA-256
+`0c56e684908b673344e0beda4f7609da0fd6a351c314b97e339e13f90f595d14`) is revoked. Follow-up
+review found native identifiers in JSON object keys and a timestamped live-run identifier that
+sanitizer version 2 had not transformed. Version 3 covers both paths with fail-closed verification
+and regression tests; only a newly captured and independently reviewed candidate may replace it.
+
 The manual `paperless-capture` workflow-dispatch profile runs that same bounded command and uploads
 the three sanitized candidate files for one day; ordinary pull requests never enable capture.
 
@@ -63,17 +69,17 @@ the three sanitized candidate files for one day; ordinary pull requests never en
 
 [`paperless-ngx-6.1.0-rootless.cassette.json`](paperless-ngx-6.1.0-rootless.cassette.json) is
 supplementary, non-synthetic production-acquisition evidence. It was captured by workflow-dispatch
-run [`34343718035`](https://github.com/Strukturpiloten/boxferry/actions/runs/34343718035) from BoxFerry
-revision `1aaafaab5fb60b55ac300e77531a958bb3a3f4b2`. The candidate artifact was
-`paperless-native-capture-candidate` (`10101095627`), with archive digest
-`sha256:ec4331655b8b4360432117b68cce621f81f485dbdb8184330963f25221b6c239`.
+run [`34368397233`](https://github.com/Strukturpiloten/boxferry/actions/runs/34368397233) from BoxFerry
+revision `6ef0b9d6c4c8c2bc5708b7be9de19215d151721c`. The candidate artifact was
+`paperless-native-capture-candidate` (`10111213823`), with archive digest
+`sha256:fcaeac331015778df5617106c13af0627f092bcc01552a27403d754dda52090c`.
 
 The admitted cassette SHA-256 is
-`0c56e684908b673344e0beda4f7609da0fd6a351c314b97e339e13f90f595d14`. Its embedded provenance
+`427a86d9e8d798ae8a99e8aeeffb5bfc0ef7c94ce366fd268fbe30eb4a4acaea`. Its embedded provenance
 links the candidate manifest SHA-256
-`10dbd1cfcf32e74a5cb0b62ffa52ae9dc8ecf05961b302a14345c84a752d0fad`; the reviewed candidate
+`4a135307f745905f50de1522ecf4d971b78456b30f88adbd0a5f65f710dc01ea`; the reviewed candidate
 `SHA256SUMS` file had SHA-256
-`61d0d23995b0b95c73bc4fd129228cb580370223137f637175054104f809dba5`. The manifest and checksum
+`0f130cde39bf9952a97906a9f36d78146016e5ddca99bba201fddef9663a33c9`. The manifest and checksum
 file remain outside the repository because the cassette preserves the required manifest linkage
 without making capture-admission metadata a semantic scenario input.
 
@@ -81,13 +87,14 @@ The evidence binds Podman/API `6.1.0`, rootless execution, Podman source revisio
 `cade97a52ebdf9dbf9e81de8009015776837a074`, matrix cell `podman-6.1-rootless`, matrix SHA-256
 `1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25`, and runtime image
 `ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e`.
-The five source images are the exact digest-pinned references in `images.tsv`.
+The five source images are the exact digest-pinned references in `images.tsv`; sanitizer version 3
+transformed and verified values and object keys.
 
 The independently verified source SHA-256 values at the capture revision are:
 
 - `ee53d51a32aaab5573f289e2ae52fe6be6c9bcf263e19aff890078f0410a9df1` —
   `scripts/lib/paperless-application.sh`
-- `f4ea33cb16ec041bfaa1210041cee32c0091b2343393db6f5f970de4b400fa0c` —
+- `37335416bca14d60e713e247844e765dce3ea0f96c7a0d1cd1c0909feccd8f16` —
   `scripts/podman-live-conformance.sh`
 - `f22f0e4194db3b907cdb0845045339f8561ad830407acf66f6f1063fcca6f762` —
   `fixtures/conformance/paperless-ngx-application/compose.yaml`
@@ -95,15 +102,16 @@ The independently verified source SHA-256 values at the capture revision are:
   `fixtures/conformance/paperless-ngx-application/images.tsv`
 - `1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25` —
   `fixtures/conformance/podman-live/matrix.tsv`
-- `f5a0afc2f910cf9f5135b1aabb0e914150478abce9472a8ea2842b6a0b3cfc50` —
+- `dc65572fcd81d5b617b094b07ca5adbefed7a52944718a7a1c9cffbed3d58a3a` —
   `fixtures/conformance/podman-live/capture_proxy.py`
 
 Independent review verified all 27 interactions as bounded bodyless `GET` requests, strict
 candidate checksums, source and image provenance, and complete request consumption through the
 production acquisition path. All 2,489 cassette strings and 2,763 key occurrences were inspected:
-143 environment assignments are intentionally `NAME=redacted`; native identifiers, host paths,
-addresses, timestamps, request identifiers, and hostnames are normalized; protected values,
-authorization/cookie headers, private markers, and unreviewed URLs are absent.
+143 environment assignments are intentionally `NAME=redacted`; native identifiers in values and
+object keys, compact run IDs, host paths, addresses, timestamps, request identifiers, and hostnames
+are normalized; protected values, authorization/cookie headers, private markers, and unreviewed URLs
+are absent.
 
 Because the capture cannot carry semantic environment values, it must never replace
 `fixtures/scenarios/paperless-ngx-application/input-podman.cassette.json`. The authored cassette
