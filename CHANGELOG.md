@@ -5,12 +5,14 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
-## [0.9.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.3...boxferry-v0.9.0) - 2026-09-08
-
 ### Changed
 
 - Add bounded Paperless-ngx live migration acceptance with real PDF, DOCX, and ODT processing,
   search, converter, persistence, privacy, and resource-budget evidence ([#135](https://github.com/Strukturpiloten/boxferry/issues/135)).
+
+## [0.9.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.8.3...boxferry-v0.9.0) - 2026-09-08
+
+### Changed
 
 - [**breaking**] Separate portable neutral intent from provenance-bearing retained
   native evidence. Remove raw Quadlet `PodmanArgs`, `GlobalArgs`, and
