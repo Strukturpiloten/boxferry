@@ -53,6 +53,10 @@ fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), Strin
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps the one live-conformance repository contract reviewable in one place"
+)]
 fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> Result<(), String> {
     let root = repository_root();
     let runner = fs::read_to_string(root.join("scripts/podman-live-conformance.sh"))
@@ -144,7 +148,29 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
     if !capture_self_test.success() {
         return Err("Paperless capture proxy self-test failed".to_owned());
     }
+    let revalidation_tool = root.join("scripts/lib/podman-revalidation.py");
+    let revalidation_self_test = Command::new("python3")
+        .arg(&revalidation_tool)
+        .arg("--self-test")
+        .output()
+        .map_err(|error| format!("failed to run Podman revalidation self-test: {error}"))?;
+    if !revalidation_self_test.status.success()
+        || String::from_utf8_lossy(&revalidation_self_test.stdout).trim()
+            != "podman-revalidation hardened self-test: PASS"
+    {
+        return Err(format!(
+            "Podman revalidation self-test failed: {}",
+            String::from_utf8_lossy(&revalidation_self_test.stderr).trim()
+        ));
+    }
+    let candidates = fs::read_to_string(root.join("fixtures/conformance/podman-live/candidates.toml"))
+        .map_err(|error| format!("failed to read Podman revalidation candidates: {error}"))?;
+    let candidate_ids = validate_podman_revalidation_candidates(&candidates, &matrix, &limitations)?;
+    let revalidation_workflow = fs::read_to_string(root.join(".github/workflows/podman-limitation-revalidation.yml"))
+        .map_err(|error| format!("failed to read Podman revalidation workflow: {error}"))?;
     validate_live_runner(&runner_contract)?;
+    validate_limitation_revalidation_runner(&runner)?;
+    validate_podman_revalidation_workflow(&revalidation_workflow, &candidate_ids)?;
     validate_live_workflow(&hosted)
 }
 
@@ -239,6 +265,233 @@ fn validate_live_matrix(matrix: &str, limitations: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "validates the bounded candidate catalogue as one cross-field transaction"
+)]
+fn validate_podman_revalidation_candidates(
+    catalogue: &str,
+    matrix: &str,
+    limitations: &str,
+) -> Result<Vec<String>, String> {
+    let document = toml::from_str::<toml::Value>(catalogue)
+        .map_err(|error| format!("failed to parse Podman revalidation catalogue: {error}"))?;
+    let root = document
+        .as_table()
+        .ok_or("Podman revalidation catalogue must be a TOML table")?;
+    let root_keys = root.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    if root_keys != BTreeSet::from(["schema", "candidates"])
+        || root.get("schema").and_then(toml::Value::as_integer) != Some(1)
+    {
+        return Err("Podman revalidation catalogue must have only schema 1 and candidates".to_owned());
+    }
+
+    let matrix_rows = matrix
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let matrix_by_id = matrix_rows
+        .iter()
+        .map(|row| {
+            row.first()
+                .map(|id| (*id, row.as_slice()))
+                .ok_or("Podman revalidation matrix contains an empty row")
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let mut limitation_ids = limitations
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.as_slice().get(1) != Some(&"helper-privilege-collision") {
+                return Err(format!("unexpected Podman limitation row: {line}"));
+            }
+            Ok(fields[0].to_owned())
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    limitation_ids.sort();
+
+    let candidates = root
+        .get("candidates")
+        .and_then(toml::Value::as_array)
+        .ok_or("Podman revalidation candidates must be an array")?;
+    if candidates.len() != 5 {
+        return Err(format!(
+            "Podman revalidation catalogue must contain five candidates, found {}",
+            candidates.len()
+        ));
+    }
+    let candidate_keys = BTreeSet::from([
+        "id",
+        "baseline-image",
+        "candidate-image",
+        "expected-podman-version",
+        "expected-distribution",
+        "expected-mode",
+        "expected-lane",
+        "expected-architecture",
+        "expected-limitation",
+        "published-at",
+        "source-repository",
+        "source-revision",
+        "source-license",
+        "redistribution",
+        "source-files",
+    ]);
+    let source_file_keys = BTreeSet::from(["role", "path", "sha256"]);
+    let mut candidate_ids = Vec::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        let candidate = candidate
+            .as_table()
+            .ok_or_else(|| format!("Podman revalidation candidate {index} must be a table"))?;
+        if candidate.keys().map(String::as_str).collect::<BTreeSet<_>>() != candidate_keys {
+            return Err(format!(
+                "Podman revalidation candidate {index} has an inexact field set"
+            ));
+        }
+        let field = |name: &str| {
+            candidate
+                .get(name)
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| format!("Podman revalidation candidate {index}.{name} must be a string"))
+        };
+        let id = field("id")?;
+        let matrix_row = matrix_by_id
+            .get(id)
+            .ok_or_else(|| format!("Podman revalidation candidate {id} is absent from the matrix"))?;
+        if matrix_row.len() != 7 {
+            return Err(format!("Podman revalidation matrix row {id} is malformed"));
+        }
+        let baseline = field("baseline-image")?;
+        let replacement = field("candidate-image")?;
+        if baseline != matrix_row[1]
+            || field("expected-podman-version")? != matrix_row[2]
+            || field("expected-distribution")? != matrix_row[3]
+            || field("expected-mode")? != matrix_row[4]
+            || field("expected-lane")? != matrix_row[5]
+            || field("expected-architecture")? != matrix_row[6]
+        {
+            return Err(format!(
+                "Podman revalidation candidate {id} differs from its reviewed matrix row"
+            ));
+        }
+        for (name, expected) in [
+            ("expected-mode", "rootless"),
+            ("expected-lane", "container"),
+            ("expected-architecture", "amd64"),
+            ("expected-limitation", "helper-privilege-collision"),
+            ("source-repository", "https://github.com/Strukturpiloten/containers"),
+            ("source-license", "AGPL-3.0-only"),
+            ("redistribution", "transient-test-pull"),
+        ] {
+            if field(name)? != expected {
+                return Err(format!("Podman revalidation candidate {id}.{name} must be {expected}"));
+            }
+        }
+        let (baseline_name, baseline_digest) = baseline
+            .rsplit_once("@sha256:")
+            .ok_or_else(|| format!("Podman revalidation baseline {id} is not immutable"))?;
+        let (replacement_name, replacement_digest) = replacement
+            .rsplit_once("@sha256:")
+            .ok_or_else(|| format!("Podman revalidation replacement {id} is not immutable"))?;
+        if baseline_name != replacement_name
+            || baseline_digest == replacement_digest
+            || !is_lower_sha256(baseline_digest)
+            || !is_lower_sha256(replacement_digest)
+        {
+            return Err(format!(
+                "Podman revalidation candidate {id} must change only its immutable digest"
+            ));
+        }
+        let source_revision = field("source-revision")?;
+        if source_revision.len() != 40 || !is_lower_hex(source_revision) {
+            return Err(format!(
+                "Podman revalidation candidate {id} has an invalid source revision"
+            ));
+        }
+        let published_at = field("published-at")?;
+        if published_at.len() != 20 || !published_at.ends_with('Z') {
+            return Err(format!(
+                "Podman revalidation candidate {id} has an invalid publication timestamp"
+            ));
+        }
+
+        let distribution = field("expected-distribution")?;
+        let expected_source_paths = BTreeMap::from([
+            ("image-definition", format!("images/podman/{id}/container.yaml")),
+            (
+                "platform-recipe",
+                format!("images/podman/platforms/{distribution}/Containerfile"),
+            ),
+            (
+                "runtime-config",
+                format!("images/podman/platforms/{distribution}/containers.conf"),
+            ),
+        ]);
+        let source_files = candidate
+            .get("source-files")
+            .and_then(toml::Value::as_array)
+            .ok_or_else(|| format!("Podman revalidation candidate {id} source-files must be an array"))?;
+        if source_files.len() != 3 {
+            return Err(format!(
+                "Podman revalidation candidate {id} must have three source files"
+            ));
+        }
+        let mut roles = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        for source_file in source_files {
+            let source_file = source_file
+                .as_table()
+                .ok_or_else(|| format!("Podman revalidation candidate {id} source file must be a table"))?;
+            if source_file.keys().map(String::as_str).collect::<BTreeSet<_>>() != source_file_keys {
+                return Err(format!(
+                    "Podman revalidation candidate {id} source file has an inexact field set"
+                ));
+            }
+            let role = source_file
+                .get("role")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| format!("Podman revalidation candidate {id} source role is invalid"))?;
+            let path = source_file
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| format!("Podman revalidation candidate {id} source path is invalid"))?;
+            let digest = source_file
+                .get("sha256")
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| format!("Podman revalidation candidate {id} source digest is invalid"))?;
+            if expected_source_paths.get(role).map(String::as_str) != Some(path)
+                || !roles.insert(role)
+                || !paths.insert(path)
+                || !is_lower_sha256(digest)
+            {
+                return Err(format!(
+                    "Podman revalidation candidate {id} has invalid or cross-wired source proof"
+                ));
+            }
+        }
+        candidate_ids.push(id.to_owned());
+    }
+
+    let mut sorted_ids = candidate_ids.clone();
+    sorted_ids.sort();
+    if candidate_ids != sorted_ids || candidate_ids != limitation_ids {
+        return Err("Podman revalidation candidates must exactly and deterministically cover limitations".to_owned());
+    }
+    Ok(candidate_ids)
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_lower_sha256(value: &str) -> bool {
+    value.len() == 64 && is_lower_hex(value)
 }
 
 fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
@@ -451,6 +704,170 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps the complete failure and result contract auditable as one table"
+)]
+fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
+    for required in [
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application>",
+        "--candidate-cell is required with --profile limitation-revalidation.",
+        "--candidate-cell is valid only with --profile limitation-revalidation.",
+        "initialize-evidence",
+        "binding_arguments=(",
+        "--candidate-cell \"${candidate_cell}\"",
+        "--repository-commit \"${repository_commit}\"",
+        "\"catalogues\": null",
+        "write_revalidation_initialization_failure preflight invalid-invocation",
+        "write_revalidation_initialization_failure preflight prerequisite-unavailable",
+        "write_revalidation_initialization_failure catalogue invalid-catalogue",
+        "trap 'handle_revalidation_signal INT 130' INT",
+        "trap 'handle_revalidation_signal TERM 143' TERM",
+        "revalidation_failure_code=interrupted",
+        "record-observation",
+        "mark-result",
+        "ensure-failure-evidence",
+        "finalize-evidence",
+        "assert_revalidation_required_checks",
+        "Duplicate required limitation-revalidation check",
+        "Missing mandatory limitation-revalidation check",
+        "Unexpected limitation-revalidation check",
+        "[[ \"${#revalidation_checks[@]}\" == \"${#revalidation_required_checks[@]}\" ]]",
+        "[[ \"${progress_total}\" == \"${#revalidation_required_checks[@]}\" ]]",
+        "[[ \"${profile}\" == full-container || \"${profile}\" == limitation-revalidation ]]",
+        "for selection in 'exact container' 'prefix selection' 'label selection' 'all resources' 'network boundary'; do",
+        "for exporter in compose quadlet podman; do",
+        "mark_revalidation_result \"selector_exporters.${selection}.${exporter}\"",
+        "Historical limitation %s is stale: rootless Podman initialized.",
+        "Candidate reused the historical outer runtime identity.",
+        "Candidate reused the historical socket namespace.",
+        "Candidate reused the historical graph-root identity.",
+        "Candidate reused the historical application-name prefix.",
+        "Candidate outer runtime survived limitation-revalidation cleanup.",
+        "External-apply target survived limitation-revalidation cleanup.",
+    ] {
+        if !runner.contains(required) {
+            return Err(format!("Podman limitation-revalidation runner is missing `{required}`"));
+        }
+    }
+
+    for result in [
+        "baseline.historical_collision.podman_info_failed",
+        "baseline.historical_collision.newuidmap_reported",
+        "baseline.historical_collision.permission_denied_reported",
+        "baseline.historical_collision.newuidmap_setuid",
+        "baseline.historical_collision.newgidmap_setuid",
+        "baseline.historical_collision.newuidmap_capability",
+        "baseline.historical_collision.newgidmap_capability",
+        "fresh_store.distinct_runtime",
+        "fresh_store.distinct_socket",
+        "fresh_store.distinct_graph_root",
+        "fresh_store.distinct_name_prefix",
+        "runtime_results.resource_creation",
+        "runtime_results.runtime_semantics",
+        "runtime_results.deterministic_export",
+        "runtime_results.strict_policy",
+        "runtime_results.literal_glob_rejection",
+        "runtime_results.support_bundle",
+        "runtime_results.malformed_response",
+        "runtime_results.disappeared_resource",
+        "runtime_results.partial_inventory",
+        "runtime_results.selinux_intent",
+        "reimports.compose",
+        "reimports.quadlet",
+        "external_apply.performed",
+        "external_apply.plan_applied",
+        "external_apply.reacquired",
+        "diagnostic_privacy.redaction_passed",
+        "diagnostic_privacy.raw_outputs_absent",
+        "diagnostic_privacy.environment_values_absent",
+        "diagnostic_privacy.host_paths_absent",
+        "diagnostic_privacy.runtime_identifiers_absent",
+        "cleanup.baseline_removed",
+        "cleanup.replacement_removed",
+        "cleanup.apply_target_removed",
+    ] {
+        if !runner.contains(result) {
+            return Err(format!(
+                "Podman limitation-revalidation runner is missing result `{result}`"
+            ));
+        }
+    }
+
+    for (phase, code) in [
+        ("catalogue", "invalid-catalogue"),
+        ("baseline-pull", "pull-failed"),
+        ("baseline-collision", "historical-collision-not-reproduced"),
+        ("baseline-cleanup", "cleanup-failed"),
+        ("replacement-pull", "pull-failed"),
+        ("replacement-provenance", "source-proof-mismatch"),
+        ("replacement-runtime", "runtime-metadata-mismatch"),
+        ("resource-suite", "resource-contract-failed"),
+        ("external-apply", "external-apply-failed"),
+        ("cleanup", "cleanup-failed"),
+        ("evidence", "evidence-invalid"),
+    ] {
+        if !has_failure_classification(runner, phase, code) {
+            return Err(format!(
+                "Podman limitation-revalidation runner is missing failure classification {phase}/{code}"
+            ));
+        }
+    }
+
+    let start = runner
+        .find("run_limitation_revalidation() {")
+        .ok_or("Podman limitation-revalidation runner is missing its entry point")?;
+    require_ordered_contracts(
+        &runner[start..],
+        "Podman limitation-revalidation runner",
+        &[
+            "run_revalidation_baseline_collision \"${candidate_cell}\"",
+            "prepare_matrix_image \"${candidate_cell}\" \"${candidate_replacement_image}\"",
+            "verify_revalidation_candidate_provenance",
+            "run_cell \"${candidate_cell}\" \"${candidate_replacement_image}\"",
+            "mark_revalidation_result cleanup.replacement_removed",
+            "assert_revalidation_required_checks",
+            "mark_revalidation_result cleanup.apply_target_removed",
+            "revalidation_ready_to_finalize=true",
+        ],
+    )?;
+    let cleanup = runner
+        .find("cleanup() {")
+        .ok_or("Podman limitation-revalidation runner is missing its EXIT cleanup")?;
+    require_ordered_contracts(
+        &runner[cleanup..],
+        "Podman limitation-revalidation EXIT cleanup",
+        &[
+            "\"${revalidation_helper}\" finalize-evidence",
+            "\"${revalidation_helper}\" validate-evidence",
+            "revalidation_complete=true",
+            "\"${revalidation_helper}\" ensure-failure-evidence",
+            "trap cleanup EXIT",
+        ],
+    )?;
+    Ok(())
+}
+
+fn has_failure_classification(runner: &str, phase: &str, code: &str) -> bool {
+    let phase_assignment = format!("revalidation_phase=\"{phase}\"");
+    let code_assignment = format!("revalidation_failure_code=\"{code}\"");
+    runner.match_indices(&phase_assignment).any(|(offset, _)| {
+        let following = &runner[offset + phase_assignment.len()..];
+        let boundary = following.find("revalidation_phase=").unwrap_or(following.len());
+        following[..boundary].contains(&code_assignment)
+    })
+}
+
+fn require_ordered_contracts(mut contents: &str, context: &str, contracts: &[&str]) -> Result<(), String> {
+    for contract in contracts {
+        let offset = contents
+            .find(contract)
+            .ok_or_else(|| format!("{context} is missing or misorders `{contract}`"))?;
+        contents = &contents[offset + contract.len()..];
+    }
+    Ok(())
+}
+
 fn validate_live_target_contracts(runner: &str) -> Result<(), String> {
     for apply_target_contract in [
         "'$1 == \"podman-6.1-rootful\" { print; exit }'",
@@ -497,7 +914,7 @@ fn validate_live_application_cell(runner: &str) -> Result<(), String> {
 
 fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
     for contract in [
-        "--profile <smoke|full-container|application|forgejo-application|paperless-application|immich-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application>",
         "run_forgejo_application_cell()",
         "forgejo_assert_clean_prefix",
         "forgejo_git_probe",
@@ -1065,7 +1482,7 @@ fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> 
     }
 
     for contract in [
-        "--profile <smoke|full-container|application|forgejo-application|paperless-application|immich-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application>",
         "paperless-application)",
         "run_paperless_application_cell()",
         "run_paperless_application_cell \"$@\"",
@@ -1276,6 +1693,265 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
         return Err("hosted Podman workflow must install the capability inspection tool".to_owned());
     }
     Ok(())
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps the manual workflow security contract auditable as one policy"
+)]
+fn validate_podman_revalidation_workflow(workflow: &str, candidate_ids: &[String]) -> Result<(), String> {
+    for forbidden in [
+        "\n  push:",
+        "\n  pull_request:",
+        "\n  pull_request_target:",
+        "\n  schedule:",
+        "\n  repository_dispatch:",
+        "continue-on-error:",
+        "contents: write",
+        "actions: write",
+        "id-token:",
+        "packages:",
+        "actions/cache@",
+    ] {
+        if workflow.contains(forbidden) {
+            return Err(format!("Podman revalidation workflow must not contain `{forbidden}`"));
+        }
+    }
+    for required in [
+        "on:\n  workflow_dispatch:\n    inputs:\n      candidate:",
+        "required: true",
+        "default: all",
+        "type: choice",
+        "permissions:\n  contents: read",
+        "group: podman-limitation-revalidation",
+        "cancel-in-progress: false",
+        "[[ \"${GITHUB_REPOSITORY}\" == \"Strukturpiloten/boxferry\" ]]",
+        "[[ \"${GITHUB_REF}\" == \"refs/heads/main\" ]]",
+        "[[ \"${GITHUB_REF}\" == \"refs/heads/${DEFAULT_BRANCH}\" ]]",
+        "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
+        "python3 scripts/lib/podman-revalidation.py list-candidates",
+        "candidate: ${{ fromJSON(needs.candidates.outputs.cells) }}",
+        "fail-fast: false",
+        "max-parallel: 1",
+        "timeout-minutes: 140",
+        "--profile limitation-revalidation",
+        "--candidate-cell \"${CANDIDATE_CELL}\"",
+        "--expected-repository-commit \"${GITHUB_SHA}\"",
+        "test -f target/podman-revalidation/evidence-v1.json",
+        "name: podman-revalidation-${{ matrix.candidate }}-${{ github.run_id }}-${{ github.run_attempt }}",
+        "path: target/podman-revalidation/evidence-v1.json",
+        "if-no-files-found: error",
+        "REVALIDATION_STATUS: ${{ steps.execute.outputs.status }}",
+        "exit \"${REVALIDATION_STATUS}\"",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("Podman revalidation workflow is missing `{required}`"));
+        }
+    }
+    if workflow.matches("persist-credentials: false").count() != 3
+        || workflow.matches("ref: ${{ github.sha }}").count() != 3
+    {
+        return Err("every Podman revalidation checkout must be credential-free and exact-SHA".to_owned());
+    }
+
+    let options_start = workflow
+        .find("      options:\n")
+        .ok_or("Podman revalidation workflow is missing candidate options")?
+        + "      options:\n".len();
+    let options_end = workflow[options_start..]
+        .find("\n\npermissions:")
+        .ok_or("Podman revalidation candidate options are not bounded")?
+        + options_start;
+    let actual_options = workflow[options_start..options_end]
+        .lines()
+        .map(|line| {
+            line.strip_prefix("          - ")
+                .ok_or_else(|| format!("invalid Podman revalidation option line `{line}`"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let expected_options = std::iter::once("all")
+        .chain(candidate_ids.iter().map(String::as_str))
+        .collect::<Vec<_>>();
+    if actual_options != expected_options {
+        return Err(format!(
+            "Podman revalidation workflow options differ from catalogue: {actual_options:?}"
+        ));
+    }
+
+    let validate_start = workflow
+        .find("- name: Validate bounded evidence against this run")
+        .ok_or("Podman revalidation workflow is missing its evidence-validation step")?;
+    let upload_start = workflow[validate_start..]
+        .find("- name: Upload bounded revalidation evidence")
+        .ok_or("Podman revalidation workflow is missing its evidence-upload step")?
+        + validate_start;
+    let restore_start = workflow[upload_start..]
+        .find("- name: Restore revalidation status")
+        .ok_or("Podman revalidation workflow is missing status restoration")?
+        + upload_start;
+    let validation = &workflow[validate_start..upload_start];
+    if !validation.contains("if: ${{ always() }}")
+        || !validation.contains("scripts/lib/podman-revalidation.py validate-evidence")
+        || !validation.contains("--expected-repository-commit \"${GITHUB_SHA}\"")
+    {
+        return Err("Podman revalidation evidence must always be validated against the exact run SHA".to_owned());
+    }
+    let upload = &workflow[upload_start..restore_start];
+    if !upload.contains("if: ${{ always() }}")
+        || upload.matches("path:").count() != 1
+        || !upload.contains("path: target/podman-revalidation/evidence-v1.json")
+        || !upload.contains("if-no-files-found: error")
+        || !upload.contains("retention-days: 1")
+    {
+        return Err("Podman revalidation must always upload exactly one bounded evidence document".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps all mutation cases adjacent to the contract they challenge"
+)]
+fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(), String> {
+    let root = repository_root();
+    let runner = fs::read_to_string(root.join("scripts/podman-live-conformance.sh"))
+        .map_err(|error| format!("failed to read live Podman runner: {error}"))?;
+    let workflow = fs::read_to_string(root.join(".github/workflows/podman-limitation-revalidation.yml"))
+        .map_err(|error| format!("failed to read Podman revalidation workflow: {error}"))?;
+    let catalogue = fs::read_to_string(root.join("fixtures/conformance/podman-live/candidates.toml"))
+        .map_err(|error| format!("failed to read Podman revalidation candidates: {error}"))?;
+    let matrix = fs::read_to_string(root.join("fixtures/conformance/podman-live/matrix.tsv"))
+        .map_err(|error| format!("failed to read live Podman matrix: {error}"))?;
+    let limitations = fs::read_to_string(root.join("fixtures/conformance/podman-live/limitations.tsv"))
+        .map_err(|error| format!("failed to read live Podman limitations: {error}"))?;
+    let candidate_ids = validate_podman_revalidation_candidates(&catalogue, &matrix, &limitations)?;
+    validate_limitation_revalidation_runner(&runner)?;
+    validate_podman_revalidation_workflow(&workflow, &candidate_ids)?;
+
+    let last_candidate = catalogue
+        .rfind("\n[[candidates]]")
+        .ok_or("Podman revalidation catalogue lacks a removable candidate")?;
+    for (description, changed) in [
+        (
+            "boolean catalogue schema",
+            catalogue.replacen("schema = 1", "schema = true", 1),
+        ),
+        ("missing candidate", catalogue[..last_candidate].to_owned()),
+        (
+            "cross-wired source path",
+            catalogue.replacen(
+                "images/podman/platforms/opensuse-leap-16.0/Containerfile",
+                "images/podman/platforms/ubi-8/Containerfile",
+                1,
+            ),
+        ),
+    ] {
+        if validate_podman_revalidation_candidates(&changed, &matrix, &limitations).is_ok() {
+            return Err(format!("Podman revalidation candidate policy accepted {description}"));
+        }
+    }
+
+    let runner_mutations = [
+        ("missing runtime result", "runtime_results.resource_creation"),
+        ("missing selector", " 'network boundary'"),
+        ("missing re-import", "reimports.quadlet"),
+        ("missing apply result", "external_apply.reacquired"),
+        ("missing cleanup result", "cleanup.apply_target_removed"),
+        ("missing failure evidence", "ensure-failure-evidence"),
+        (
+            "weakened full-resource admission",
+            " || \"${profile}\" == limitation-revalidation",
+        ),
+    ];
+    for (description, needle) in runner_mutations {
+        let changed = remove_first(&runner, needle)?;
+        if validate_limitation_revalidation_runner(&changed).is_ok() {
+            return Err(format!("Podman revalidation runner policy accepted {description}"));
+        }
+    }
+    let changed = remove_first(&runner, "\"${revalidation_helper}\" validate-evidence")?;
+    if validate_limitation_revalidation_runner(&changed).is_ok() {
+        return Err("Podman revalidation runner policy accepted missing final validation".to_owned());
+    }
+    let changed = swap_once(
+        &runner,
+        "run_revalidation_baseline_collision \"${candidate_cell}\"",
+        "run_cell \"${candidate_cell}\" \"${candidate_replacement_image}\"",
+    )?;
+    if validate_limitation_revalidation_runner(&changed).is_ok() {
+        return Err("Podman revalidation runner policy accepted reversed baseline order".to_owned());
+    }
+
+    let workflow_mutations = [
+        (
+            "scheduled execution",
+            "workflow_dispatch:",
+            "workflow_dispatch:\n  schedule:",
+        ),
+        ("parallel candidates", "max-parallel: 1", "max-parallel: 2"),
+        ("string input", "type: choice", "type: string"),
+        ("wrong repository", "Strukturpiloten/boxferry", "attacker/boxferry"),
+        ("writable token", "contents: read", "contents: write"),
+        (
+            "masked run failure",
+            "id: execute",
+            "id: execute\n      continue-on-error: true",
+        ),
+        ("non-exact checkout", "ref: ${{ github.sha }}", "ref: main"),
+        (
+            "broad evidence upload",
+            "path: target/podman-revalidation/evidence-v1.json",
+            "path: target/",
+        ),
+        (
+            "missing always validation",
+            "if: ${{ always() }}",
+            "if: ${{ success() }}",
+        ),
+    ];
+    for (description, from, to) in workflow_mutations {
+        let changed = replace_first(&workflow, from, to)?;
+        if validate_podman_revalidation_workflow(&changed, &candidate_ids).is_ok() {
+            return Err(format!("Podman revalidation workflow policy accepted {description}"));
+        }
+    }
+    let missing_option = format!("          - {}\n", candidate_ids[0]);
+    let changed = remove_first(&workflow, &missing_option)?;
+    if validate_podman_revalidation_workflow(&changed, &candidate_ids).is_ok() {
+        return Err("Podman revalidation workflow policy accepted a missing candidate".to_owned());
+    }
+    Ok(())
+}
+
+fn replace_first(contents: &str, from: &str, to: &str) -> Result<String, String> {
+    if !contents.contains(from) {
+        return Err(format!("counterfactual source is missing `{from}`"));
+    }
+    Ok(contents.replacen(from, to, 1))
+}
+
+fn remove_first(contents: &str, needle: &str) -> Result<String, String> {
+    replace_first(contents, needle, "")
+}
+
+fn swap_once(contents: &str, first: &str, second: &str) -> Result<String, String> {
+    let first_offset = contents
+        .find(first)
+        .ok_or_else(|| format!("counterfactual source is missing `{first}`"))?;
+    let second_offset = contents
+        .find(second)
+        .ok_or_else(|| format!("counterfactual source is missing `{second}`"))?;
+    if first_offset >= second_offset {
+        return Err("counterfactual source already has reversed ordering".to_owned());
+    }
+    let mut changed = String::with_capacity(contents.len());
+    changed.push_str(&contents[..first_offset]);
+    changed.push_str(second);
+    changed.push_str(&contents[first_offset + first.len()..second_offset]);
+    changed.push_str(first);
+    changed.push_str(&contents[second_offset + second.len()..]);
+    Ok(changed)
 }
 
 #[test]

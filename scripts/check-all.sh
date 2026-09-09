@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=24
+readonly total_steps=25
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -163,6 +163,7 @@ else
   run_step "Format and lint non-Rust files" bash scripts/check-files.sh --fix
 fi
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
+run_step "Test Podman live cleanup collections" bash scripts/test-podman-live-cleanup.sh
 run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh
 run_step "Check whitespace errors" git --no-pager diff --check
 run_step "Lint GitHub Actions syntax" actionlint

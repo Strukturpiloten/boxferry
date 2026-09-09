@@ -25,23 +25,159 @@ source "${script_directory}/lib/immich-application.sh"
 profile=""
 matrix_cell=""
 matrix_start_at=""
+candidate_cell=""
 matrix_start_reached=false
 engine="podman"
 retain_artifacts=false
 matrix_path="${repository_root}/fixtures/conformance/podman-live/matrix.tsv"
 scenario_path="${repository_root}/fixtures/conformance/podman-live/scenarios.tsv"
 limitation_path="${repository_root}/fixtures/conformance/podman-live/limitations.tsv"
+candidate_path="${repository_root}/fixtures/conformance/podman-live/candidates.toml"
+revalidation_schema_path="${repository_root}/docs/schemas/podman-limitation-revalidation-v1.schema.json"
+revalidation_helper="${script_directory}/lib/podman-revalidation.py"
 workload_image="quay.io/libpod/alpine@sha256:634a8f35b5f16dcf4aaa0822adc0b1964bb786fca12f6831de8ddc45e5986a00"
 workload_local_tag="localhost/boxferry-live/alpine:634a8f35b5f16dcf4aaa0822adc0b1964bb786fca12f6831de8ddc45e5986a00"
 
+revalidation_requested=false
+declare -a original_arguments=("$@")
+expected_option_value=""
+first_parse_terminal=""
+profile_option_count=0
+for original_argument in "${original_arguments[@]}"; do
+  if [[ -n "${expected_option_value}" ]]; then
+    if [[ "${expected_option_value}" == --profile ]]; then
+      profile_option_count=$((profile_option_count + 1))
+      if [[ "${original_argument}" == limitation-revalidation ]]; then
+        revalidation_requested=true
+      fi
+      if ((profile_option_count > 1)) && [[ -z "${first_parse_terminal}" ]]; then
+        first_parse_terminal=error
+      fi
+    fi
+    expected_option_value=""
+    continue
+  fi
+  case "${original_argument}" in
+    --profile | --engine | --matrix | --matrix-cell | --candidate-cell | --matrix-start-at)
+      expected_option_value="${original_argument}"
+      ;;
+    --retain-artifacts) ;;
+    -h | --help)
+      if [[ -z "${first_parse_terminal}" ]]; then
+        first_parse_terminal=help
+      fi
+      ;;
+    *)
+      if [[ -z "${first_parse_terminal}" ]]; then
+        first_parse_terminal=error
+      fi
+      ;;
+  esac
+done
+if [[ -n "${expected_option_value}" && -z "${first_parse_terminal}" ]]; then
+  first_parse_terminal=error
+fi
+if [[ "${first_parse_terminal}" == help ]]; then
+  revalidation_requested=false
+fi
+
+revalidation_evidence="${repository_root}/target/podman-revalidation/evidence-v1.json"
+revalidation_preflight_started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+revalidation_preflight_phase="preflight"
+revalidation_initialized=false
+revalidation_complete=false
+revalidation_phase="preflight"
+revalidation_failure_code="invalid-invocation"
+
+write_revalidation_initialization_failure() {
+  local phase=$1 code=$2 finished_at temporary repository_commit=""
+  local -a binding_arguments=(
+    --candidate-cell "${candidate_cell}"
+    --catalogue "${candidate_path}"
+    --matrix "${matrix_path}"
+    --limitations "${limitation_path}"
+  )
+  [[ "${revalidation_requested}" == true ]] || return 0
+  case "${phase}:${code}" in
+    preflight:invalid-invocation | preflight:prerequisite-unavailable | preflight:interrupted | \
+      catalogue:invalid-catalogue | catalogue:interrupted | \
+      evidence:evidence-invalid | evidence:interrupted) ;;
+    *)
+      printf 'Invalid limitation-revalidation initialization failure: %s/%s\n' \
+        "${phase}" "${code}" >&2
+      return 2
+      ;;
+  esac
+  finished_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  if command -v git > /dev/null 2>&1; then
+    repository_commit="$(git -C "${repository_root}" rev-parse --verify HEAD 2> /dev/null || true)"
+  fi
+  if [[ "${repository_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+    binding_arguments+=(--repository-commit "${repository_commit}")
+  fi
+  if [[ -x "${revalidation_helper}" ]] && command -v python3 > /dev/null 2>&1; then
+    if "${revalidation_helper}" initialize-failure-evidence \
+      --output "${revalidation_evidence}" \
+      --phase "${phase}" \
+      --code "${code}" \
+      --started-at "${revalidation_preflight_started_at}" \
+      --finished-at "${finished_at}" \
+      "${binding_arguments[@]}"; then
+      return
+    fi
+  fi
+  [[ ! -L "${revalidation_evidence}" ]] || return 2
+  mkdir -p -- "$(dirname -- "${revalidation_evidence}")"
+  chmod 0700 "$(dirname -- "${revalidation_evidence}")"
+  temporary="$(mktemp "$(dirname -- "${revalidation_evidence}")/.evidence-v1.json.XXXXXX")"
+  chmod 0600 "${temporary}"
+  printf '%s\n' \
+    '{' \
+    '  "schema_version": 1,' \
+    '  "evidence_kind": "podman-limitation-revalidation-initialization-failure",' \
+    '  "status": "failed",' \
+    '  "eligibility": false,' \
+    '  "invocation": {"candidate_cell": null, "repository_commit": null, "catalogues": null},' \
+    "  \"timestamps\": {\"started_at\": \"${revalidation_preflight_started_at}\", \"finished_at\": \"${finished_at}\"}," \
+    "  \"failure\": {\"phase\": \"${phase}\", \"code\": \"${code}\"}," \
+    '  "initialization_failure": true' \
+    '}' > "${temporary}"
+  mv -f -- "${temporary}" "${revalidation_evidence}"
+}
+
+handle_revalidation_signal() {
+  local signal=$1 status=$2
+  trap - INT TERM
+  if [[ "${revalidation_requested}" == true ]]; then
+    if [[ "${revalidation_initialized:-false}" == true ]]; then
+      revalidation_failure_code=interrupted
+    else
+      write_revalidation_initialization_failure \
+        "${revalidation_preflight_phase}" interrupted || true
+      revalidation_complete=true
+    fi
+  fi
+  printf 'Limitation-revalidation interrupted by %s.\n' "${signal}" >&2
+  exit "${status}"
+}
+
+if [[ "${revalidation_requested}" == true ]]; then
+  write_revalidation_initialization_failure preflight prerequisite-unavailable
+  trap 'handle_revalidation_signal INT 130' INT
+  trap 'handle_revalidation_signal TERM 143' TERM
+fi
+
+profile_seen=false
+
 usage() {
   cat << 'EOF'
-Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|application|forgejo-application|paperless-application|immich-application> [OPTIONS]
+Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application> [OPTIONS]
 
 Options:
   --engine <PATH>       Outer Podman executable (default: podman).
   --matrix <PATH>       Reviewed tab-separated image matrix.
   --matrix-cell <ID>    Run one exact reviewed container cell.
+  --candidate-cell <ID> Run one exact reviewed limitation candidate.
   --matrix-start-at <ID>
                         Resume full-container at one exact reviewed container cell.
   --retain-artifacts    Keep target/podman-live/<run-id> after success.
@@ -55,22 +191,62 @@ EOF
 while (($# > 0)); do
   case "$1" in
     --profile)
+      if (($# < 2)); then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--profile requires a value.' >&2
+        exit 2
+      fi
+      if [[ "${profile_seen}" == true ]]; then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--profile may be supplied only once.' >&2
+        exit 2
+      fi
+      profile_seen=true
       profile="${2:-}"
       shift 2
       ;;
     --engine)
+      if (($# < 2)); then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--engine requires a value.' >&2
+        exit 2
+      fi
       engine="${2:-}"
       shift 2
       ;;
     --matrix)
+      if (($# < 2)); then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--matrix requires a value.' >&2
+        exit 2
+      fi
       matrix_path="${2:-}"
       shift 2
       ;;
     --matrix-cell)
+      if (($# < 2)); then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--matrix-cell requires a value.' >&2
+        exit 2
+      fi
       matrix_cell="${2:-}"
       shift 2
       ;;
+    --candidate-cell)
+      if (($# < 2)); then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--candidate-cell requires a value.' >&2
+        exit 2
+      fi
+      candidate_cell="${2:-}"
+      shift 2
+      ;;
     --matrix-start-at)
+      if (($# < 2)); then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--matrix-start-at requires a value.' >&2
+        exit 2
+      fi
       matrix_start_at="${2:-}"
       shift 2
       ;;
@@ -83,6 +259,7 @@ while (($# > 0)); do
       exit 0
       ;;
     *)
+      write_revalidation_initialization_failure preflight invalid-invocation
       printf 'Unknown argument: %s\n' "$1" >&2
       usage >&2
       exit 2
@@ -91,28 +268,61 @@ while (($# > 0)); do
 done
 
 case "${profile}" in
-  smoke | full-container | application | forgejo-application | paperless-application | immich-application) ;;
+  smoke | full-container | limitation-revalidation | application | forgejo-application | paperless-application | immich-application) ;;
   *)
-    printf '%s\n' '--profile must be smoke, full-container, application, forgejo-application, paperless-application, or immich-application.' >&2
+    write_revalidation_initialization_failure preflight invalid-invocation
+    printf '%s\n' '--profile must be smoke, full-container, limitation-revalidation, application, forgejo-application, paperless-application, or immich-application.' >&2
     usage >&2
     exit 2
     ;;
 esac
 
+if [[ "${profile}" == limitation-revalidation ]]; then
+  if [[ -z "${candidate_cell}" ]]; then
+    write_revalidation_initialization_failure preflight invalid-invocation
+    printf '%s\n' '--candidate-cell is required with --profile limitation-revalidation.' >&2
+    exit 2
+  fi
+  if [[ -n "${matrix_cell}" || -n "${matrix_start_at}" ]]; then
+    write_revalidation_initialization_failure preflight invalid-invocation
+    printf '%s\n' '--matrix-cell and --matrix-start-at are invalid with --profile limitation-revalidation.' >&2
+    exit 2
+  fi
+elif [[ -n "${candidate_cell}" ]]; then
+  printf '%s\n' '--candidate-cell is valid only with --profile limitation-revalidation.' >&2
+  exit 2
+fi
+
 if ((EUID != 0)); then
+  write_revalidation_initialization_failure preflight prerequisite-unavailable
   printf '%s\n' 'Run this isolated nested-runtime harness as root, for example with sudo.' >&2
   exit 2
 fi
 if [[ ! -x "${engine}" ]] && ! command -v "${engine}" > /dev/null 2>&1; then
+  write_revalidation_initialization_failure preflight prerequisite-unavailable
   printf 'Outer Podman executable is unavailable: %s\n' "${engine}" >&2
   exit 2
 fi
 for command in getcap jq timeout unzip python3; do
   if ! command -v "${command}" > /dev/null 2>&1; then
+    write_revalidation_initialization_failure preflight prerequisite-unavailable
     printf 'Required live-conformance command is unavailable: %s\n' "${command}" >&2
     exit 2
   fi
 done
+if [[ "${profile}" == limitation-revalidation ]]; then
+  for command in git mountpoint; do
+    if ! command -v "${command}" > /dev/null 2>&1; then
+      write_revalidation_initialization_failure preflight prerequisite-unavailable
+      printf 'Required limitation-revalidation command is unavailable: %s\n' "${command}" >&2
+      exit 2
+    fi
+  done
+fi
+if [[ "${profile}" == limitation-revalidation ]]; then
+  revalidation_preflight_phase=catalogue
+  write_revalidation_initialization_failure catalogue invalid-catalogue
+fi
 if [[ ! -f "${matrix_path}" ]]; then
   printf 'Matrix is unavailable: %s\n' "${matrix_path}" >&2
   exit 2
@@ -126,13 +336,26 @@ if [[ ! -f "${limitation_path}" ]]; then
   exit 2
 fi
 
+if [[ "${profile}" == limitation-revalidation ]]; then
+  for required_path in "${candidate_path}" "${revalidation_schema_path}" "${revalidation_helper}"; do
+    if [[ ! -f "${required_path}" ]]; then
+      if [[ "${required_path}" != "${candidate_path}" ]]; then
+        revalidation_preflight_phase=evidence
+        write_revalidation_initialization_failure evidence evidence-invalid
+      fi
+      printf 'Limitation-revalidation input unavailable: %s\n' "${required_path}" >&2
+      exit 2
+    fi
+  done
+fi
+
 validate_catalogues() {
   local cells container_cells limitations scenarios
   cells="$(awk -F '\t' 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }' "${matrix_path}")"
   container_cells="$(awk -F '\t' 'NF && $1 !~ /^#/ && $6 == "container" { count++ } END { print count + 0 }' "${matrix_path}")"
   limitations="$(awk -F '\t' 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }' "${limitation_path}")"
   scenarios="$(awk -F '\t' 'NF && $1 !~ /^#/ { count++ } END { print count + 0 }' "${scenario_path}")"
-  [[ "${cells}" == 48 && "${container_cells}" == 48 && "${limitations}" == 5 && "${scenarios}" -ge 16 ]] || {
+  [[ "${cells}" == 48 && "${container_cells}" == 48 && "${scenarios}" -ge 16 ]] || {
     printf 'Unexpected live-conformance catalogue shape: cells=%s containers=%s limitations=%s scenarios=%s\n' \
       "${cells}" "${container_cells}" "${limitations}" "${scenarios}" >&2
     exit 2
@@ -148,7 +371,7 @@ validate_catalogues() {
   awk -F '\t' '
     NR == FNR && NF && $1 !~ /^#/ { matrix[$1] = 1; next }
     NF && $1 !~ /^#/ {
-      if (NF != 2 || !($1 in matrix) || seen[$1]++) {
+      if (NF != 2 || !($1 in matrix) || seen[$1]++ || $2 != "helper-privilege-collision") {
         printf "Invalid limited matrix cell at line %d: %s\\n", FNR, $0 > "/dev/stderr"; bad = 1
       }
     }
@@ -204,6 +427,35 @@ selection_scenario() {
   esac
 }
 
+revalidation_phase="catalogue"
+revalidation_failure_code="invalid-catalogue"
+revalidation_complete=false
+revalidation_ready_to_finalize=false
+revalidation_capture_checks=false
+declare -A revalidation_checks=()
+declare -a revalidation_required_checks=()
+declare -a revalidation_contract_arguments=()
+revalidation_baseline_runtime_identity=""
+revalidation_baseline_socket_namespace=""
+revalidation_baseline_graph_root_identity=""
+revalidation_baseline_name_prefix=""
+revalidation_candidate_outer=""
+revalidation_mounted_image_active=""
+revalidation_mounted_image_root=""
+candidate_baseline_image=""
+candidate_replacement_image=""
+candidate_version=""
+candidate_distribution=""
+candidate_mode=""
+candidate_lane=""
+candidate_architecture=""
+candidate_limitation=""
+candidate_published_at=""
+candidate_source_repository=""
+candidate_source_revision=""
+candidate_source_license=""
+candidate_redistribution=""
+
 run_id="bf65-$(date -u +%Y%m%dt%H%M%Sz)-$$-${RANDOM}"
 artifact_root="${repository_root}/target/podman-live/${run_id}"
 runtime_root="$(mktemp -d /tmp/boxferry-podman-live.XXXXXX)"
@@ -244,8 +496,96 @@ format_duration() {
   printf '%dm %02ds' "$((seconds / 60))" "$((seconds % 60))"
 }
 
+mark_revalidation_result() {
+  local result=$1
+  "${revalidation_helper}" mark-result \
+    --evidence "${revalidation_evidence}" \
+    "${revalidation_contract_arguments[@]}" \
+    --result "${result}"
+}
+
+record_revalidation_observation() {
+  local field=$1 value=$2
+  "${revalidation_helper}" record-observation \
+    --evidence "${revalidation_evidence}" \
+    "${revalidation_contract_arguments[@]}" \
+    --field "${field}" \
+    --value "${value}"
+}
+
+persist_revalidation_progress_result() {
+  local name=$1 exporter selection
+  case "${name}" in
+    'create full resources before acquisition starts')
+      mark_revalidation_result runtime_results.resource_creation
+      ;;
+    'verify live runtime semantics (9 scenario groups) and start acquisition socket')
+      mark_revalidation_result runtime_results.runtime_semantics
+      ;;
+    'reject literal glob selector')
+      mark_revalidation_result runtime_results.literal_glob_rejection
+      ;;
+    'verify deterministic Compose export')
+      mark_revalidation_result runtime_results.deterministic_export
+      ;;
+    'block lossy import under strict policy')
+      mark_revalidation_result runtime_results.strict_policy
+      ;;
+    'write redacted support bundle')
+      mark_revalidation_result runtime_results.support_bundle
+      ;;
+    'diagnose malformed selected container')
+      mark_revalidation_result runtime_results.malformed_response
+      ;;
+    'diagnose disappeared selected container')
+      mark_revalidation_result runtime_results.disappeared_resource
+      ;;
+    'diagnose partial inventory section')
+      mark_revalidation_result runtime_results.partial_inventory
+      ;;
+    're-import generated Compose and Quadlet outputs')
+      mark_revalidation_result reimports.compose
+      mark_revalidation_result reimports.quadlet
+      ;;
+    'externally apply and reacquire Podman plan')
+      mark_revalidation_result external_apply.performed
+      mark_revalidation_result external_apply.plan_applied
+      mark_revalidation_result external_apply.reacquired
+      ;;
+    'verify SELinux relabel omission and promotion')
+      mark_revalidation_result runtime_results.selinux_intent
+      ;;
+    convert\ exact\ container\ to\ *) selection=exact ;;
+    convert\ prefix\ selection\ to\ *) selection=prefix ;;
+    convert\ label\ selection\ to\ *) selection=label ;;
+    convert\ all\ resources\ to\ *) selection=all ;;
+    convert\ network\ boundary\ to\ *) selection=network ;;
+    *) return 0 ;;
+  esac
+  if [[ -n "${selection:-}" ]]; then
+    exporter="${name##* }"
+    mark_revalidation_result "selector_exporters.${selection}.${exporter}"
+  fi
+}
+
 progress_begin() {
   progress_test_name=$1
+  if [[ "${revalidation_capture_checks}" == true ]]; then
+    case "${progress_test_name}" in
+      'externally apply and reacquire Podman plan')
+        revalidation_phase="external-apply"
+        revalidation_failure_code="external-apply-failed"
+        ;;
+      'remove disposable outer container')
+        revalidation_phase="cleanup"
+        revalidation_failure_code="cleanup-failed"
+        ;;
+      *)
+        revalidation_phase="resource-suite"
+        revalidation_failure_code="resource-contract-failed"
+        ;;
+    esac
+  fi
   progress_index=$((progress_index + 1))
   progress_started_at="$(date +%s)"
   progress_active=true
@@ -260,6 +600,14 @@ progress_pass() {
     "$(timestamp)" "${progress_index}" "${progress_total}" "${progress_test_name}" \
     "$(format_duration "${elapsed}")"
   progress_active=false
+  if [[ "${revalidation_capture_checks}" == true ]]; then
+    if [[ -n "${revalidation_checks[${progress_test_name}]:-}" ]]; then
+      printf 'Limitation revalidation repeated mandatory check: %s\n' "${progress_test_name}" >&2
+      return 2
+    fi
+    revalidation_checks["${progress_test_name}"]=true
+    persist_revalidation_progress_result "${progress_test_name}"
+  fi
 }
 
 progress_fail() {
@@ -385,23 +733,53 @@ trap progress_fail ERR
 
 cleanup() {
   local status=$?
-  local outer directory image pid socket
-  for outer in "${outer_containers[@]:-}"; do
-    timeout --signal=TERM --kill-after=10s 30s \
-      "${engine}" rm --force --ignore -- "${outer}" > /dev/null 2>&1 || true
+  local outer directory image pid socket existence_status
+  local cleanup_failed=false
+  for outer in "${outer_containers[@]}"; do
+    if ! timeout --signal=TERM --kill-after=10s 30s \
+      "${engine}" rm --force --ignore -- "${outer}" > /dev/null 2>&1; then
+      [[ "${profile}" == limitation-revalidation ]] && cleanup_failed=true
+    fi
+    if [[ "${profile}" == limitation-revalidation ]]; then
+      if timeout --signal=TERM --kill-after=10s 30s \
+        "${engine}" container exists "${outer}" > /dev/null 2>&1; then
+        cleanup_failed=true
+      else
+        existence_status=$?
+        ((existence_status == 1)) || cleanup_failed=true
+      fi
+    fi
   done
-  for image in "${mounted_images[@]:-}"; do
-    timeout --signal=TERM --kill-after=10s 30s \
-      "${engine}" image unmount -- "${image}" > /dev/null 2>&1 || true
-  done
-  for pid in "${fault_proxy_pids[@]:-}"; do
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    if [[ -n "${revalidation_mounted_image_active}" ]] &&
+      ! timeout --signal=TERM --kill-after=10s 30s \
+        "${engine}" image unmount -- "${revalidation_mounted_image_active}" > /dev/null 2>&1; then
+      if [[ -z "${revalidation_mounted_image_root}" ]] ||
+        mountpoint --quiet -- "${revalidation_mounted_image_root}"; then
+        cleanup_failed=true
+      fi
+    fi
+  else
+    for image in "${mounted_images[@]}"; do
+      timeout --signal=TERM --kill-after=10s 30s \
+        "${engine}" image unmount -- "${image}" > /dev/null 2>&1 || true
+    done
+  fi
+  for pid in "${fault_proxy_pids[@]}"; do
     kill "${pid}" > /dev/null 2>&1 || true
     wait "${pid}" > /dev/null 2>&1 || true
+    if [[ "${profile}" == limitation-revalidation ]] && kill -0 "${pid}" > /dev/null 2>&1; then
+      cleanup_failed=true
+    fi
   done
-  for socket in "${fault_proxy_sockets[@]:-}"; do
-    rm -f -- "${socket}"
+  for socket in "${fault_proxy_sockets[@]}"; do
+    if ! rm -f -- "${socket}"; then
+      [[ "${profile}" == limitation-revalidation ]] && cleanup_failed=true
+    elif [[ "${profile}" == limitation-revalidation && -e "${socket}" ]]; then
+      cleanup_failed=true
+    fi
   done
-  for directory in "${discovery_directories[@]:-}"; do
+  for directory in "${discovery_directories[@]}"; do
     rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
       "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
       "${directory}/runtime-canaries.log" "${directory}/selected-container-id" \
@@ -412,7 +790,56 @@ cleanup() {
   if [[ "${discovery_parent_created}" == true ]]; then
     rmdir -- /run/user/0 2> /dev/null || true
   fi
-  rm -rf -- "${runtime_root}"
+  if ! rm -rf -- "${runtime_root}"; then
+    [[ "${profile}" == limitation-revalidation ]] && cleanup_failed=true
+  fi
+  if [[ "${profile}" == limitation-revalidation && "${cleanup_failed}" == true ]]; then
+    revalidation_phase="cleanup"
+    revalidation_failure_code="cleanup-failed"
+    status=1
+  fi
+  if [[ "${profile}" == limitation-revalidation && ! -f "${revalidation_evidence}" ]]; then
+    if write_revalidation_initialization_failure evidence evidence-invalid; then
+      revalidation_complete=true
+    fi
+    status=1
+  fi
+  if [[ "${profile}" == limitation-revalidation && -f "${revalidation_evidence}" &&
+    "${status}" == 0 && "${revalidation_ready_to_finalize}" == true ]]; then
+    revalidation_phase="evidence"
+    revalidation_failure_code="evidence-invalid"
+    if "${revalidation_helper}" finalize-evidence \
+      --evidence "${revalidation_evidence}" \
+      "${revalidation_contract_arguments[@]}" &&
+      "${revalidation_helper}" validate-evidence \
+        --evidence "${revalidation_evidence}" \
+        "${revalidation_contract_arguments[@]}"; then
+      revalidation_complete=true
+      printf '%s LIMITATION REVALIDATION PASS candidate=%s evidence=%s\n' \
+        "$(timestamp)" "${candidate_cell}" "${revalidation_evidence}"
+      printf '%s SUITE PASS profile=%s cells=1 limitations=1 duration=%s\n' \
+        "$(timestamp)" "${profile}" "$(format_duration "$(($(date +%s) - suite_started_at))")"
+    else
+      status=1
+    fi
+  fi
+  if [[ "${profile}" == limitation-revalidation && -f "${revalidation_evidence}" &&
+    "${revalidation_complete}" != true ]]; then
+    if ! "${revalidation_helper}" ensure-failure-evidence \
+      --evidence "${revalidation_evidence}" \
+      "${revalidation_contract_arguments[@]}" \
+      --phase "${revalidation_phase}" \
+      --code "${revalidation_failure_code}"; then
+      printf '%s\n' 'Unable to finalize failed limitation-revalidation evidence.' >&2
+      if write_revalidation_initialization_failure evidence evidence-invalid; then
+        revalidation_complete=true
+      fi
+      status=1
+    fi
+    if ((status == 0)); then
+      status=1
+    fi
+  fi
   if [[ -f "${artifact_root}/evidence.tsv" ]] && [[ "$(wc -l < "${artifact_root}/evidence.tsv")" -gt 1 ]]; then
     printf 'Live-conformance verified evidence:\n'
     cat -- "${artifact_root}/evidence.tsv"
@@ -425,6 +852,63 @@ cleanup() {
   exit "${status}"
 }
 trap cleanup EXIT
+
+if [[ "${profile}" == limitation-revalidation ]]; then
+  repository_commit="$(git -C "${repository_root}" rev-parse --verify HEAD)"
+  repository_clean_tree=true
+  if [[ -n "$(git -C "${repository_root}" status --porcelain --untracked-files=all)" ]]; then
+    repository_clean_tree=false
+  fi
+  evidence_provider=local
+  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    evidence_provider=github-actions
+  fi
+  if ! "${revalidation_helper}" initialize-evidence \
+    --catalogue "${candidate_path}" \
+    --matrix "${matrix_path}" \
+    --limitations "${limitation_path}" \
+    --schema "${revalidation_schema_path}" \
+    --candidate-cell "${candidate_cell}" \
+    --output "${revalidation_evidence}" \
+    --repository-commit "${repository_commit}" \
+    --repository-clean-tree "${repository_clean_tree}" \
+    --provider "${evidence_provider}"; then
+    revalidation_complete=true
+    exit 2
+  fi
+  revalidation_contract_arguments=(
+    --catalogue "${candidate_path}"
+    --matrix "${matrix_path}"
+    --limitations "${limitation_path}"
+    --schema "${revalidation_schema_path}"
+    --candidate-cell "${candidate_cell}"
+    --expected-repository-commit "${repository_commit}"
+  )
+  "${revalidation_helper}" validate-evidence \
+    --evidence "${revalidation_evidence}" \
+    "${revalidation_contract_arguments[@]}"
+  revalidation_initialized=true
+  candidate_record="$(
+    "${revalidation_helper}" resolve-candidate \
+      --catalogue "${candidate_path}" \
+      --matrix "${matrix_path}" \
+      --limitations "${limitation_path}" \
+      --candidate-cell "${candidate_cell}" \
+      --format tsv
+  )"
+  IFS=$'\t' read -r candidate_cell candidate_baseline_image candidate_replacement_image \
+    candidate_version candidate_distribution candidate_mode candidate_lane candidate_architecture \
+    candidate_limitation candidate_published_at candidate_source_repository candidate_source_revision \
+    candidate_source_license candidate_redistribution <<< "${candidate_record}"
+  [[ -n "${candidate_redistribution}" ]] || {
+    printf '%s\n' 'Candidate resolution returned an incomplete record.' >&2
+    exit 2
+  }
+  [[ "${candidate_limitation}" == helper-privilege-collision ]] || {
+    printf '%s\n' 'Candidate resolution returned an unexpected limitation.' >&2
+    exit 2
+  }
+fi
 
 require_binary() {
   local candidate="${BOXFERRY_BIN:-${repository_root}/target/debug/boxferry}"
@@ -466,6 +950,10 @@ contains_smoke_cell() {
       ;;
     *) return 1 ;;
   esac
+}
+
+is_complete_resource_profile() {
+  [[ "${profile}" == full-container || "${profile}" == limitation-revalidation ]]
 }
 
 selected() {
@@ -863,7 +1351,8 @@ start_outer_runtime() {
         if test -s /usr/share/strukturpiloten/podman-package-version; then
           cat /usr/share/strukturpiloten/podman-package-version
         else
-          printf "upstream-source-build:%s\n" "$(podman --version)"
+          podman_version="$(podman --version)"
+          printf "upstream-source-build:%s\n" "${podman_version#podman version }"
         fi
         printf "api-version\t%s\n" "$(podman info --format "{{.Version.APIVersion}}")"
         printf "rootless\t%s\n" "$(podman info --format "{{.Host.Security.Rootless}}")"
@@ -910,6 +1399,9 @@ start_outer_runtime() {
     return 1
   fi
   started_outer="${outer}"
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    collect_revalidation_runtime_identity "${outer}" "${artifact_root}/${id}.distribution"
+  fi
 }
 
 start_outer() {
@@ -991,6 +1483,9 @@ run_convert() {
 }
 
 should_run_external_apply() {
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    return 0
+  fi
   case "$1" in
     podman-6.1-rootful | podman-6.1-rootless | podman-debian-11-rootful | podman-debian-11-rootless | \
       podman-debian-12-rootful | podman-debian-12-rootless | podman-ubuntu-22.04-rootful | \
@@ -1117,6 +1612,25 @@ assert_redacted_support_bundle() {
   local socket=$1
   local reports="${current_case}/support-bundle"
   local report="${current_case}/support-bundle.report.json"
+  local outer_runtime_identity nested_runtime_identifiers private_path runtime_identifier
+  local -a runtime_identifiers=()
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    outer_runtime_identity="$(engine_operation 'read outer runtime identity for privacy review' \
+      container inspect --format '{{.Id}}' "${started_outer}")"
+    nested_runtime_identifiers="$(podman_socket "${socket}" \
+      'read nested runtime identities for privacy review' \
+      ps --all --no-trunc --format '{{.ID}}')"
+    runtime_identifiers+=("${started_outer}" "${outer_runtime_identity}" "${current_selected_container_id}")
+    while IFS= read -r runtime_identifier; do
+      [[ -z "${runtime_identifier}" ]] || runtime_identifiers+=("${runtime_identifier}")
+    done <<< "${nested_runtime_identifiers}"
+    for runtime_identifier in "${runtime_identifiers[@]}"; do
+      [[ -n "${runtime_identifier}" ]] || {
+        printf '%s\n' 'Runtime privacy review received an empty identity.' >&2
+        return 1
+      }
+    done
+  fi
   mkdir -p -- "${reports}"
   boxferry_operation 'BoxFerry redacted support-bundle validation' \
     validate podman compose --podman-socket "${socket}" \
@@ -1128,6 +1642,9 @@ assert_redacted_support_bundle() {
     .status == "success" and .exit_category == "success" and
     (.redaction.count > 0) and (.redaction.classes | index("podman-support-snapshot") != null)
   ' "${report}" > /dev/null
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    mark_revalidation_result diagnostic_privacy.redaction_passed
+  fi
   if grep --fixed-strings --quiet 'not-a-secret-test-value' "${report}"; then
     printf 'Standalone support report retained the protected environment canary.\n' >&2
     return 1
@@ -1143,14 +1660,47 @@ assert_redacted_support_bundle() {
     grep --fixed-strings --line-regexp --quiet "${entry}" <<< "${entries}"
   done
   [[ "$(wc -l <<< "${entries}")" == 5 ]]
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    mark_revalidation_result diagnostic_privacy.raw_outputs_absent
+  fi
   contents="$(unzip -p "${archives[0]}")"
   if grep --fixed-strings --quiet 'not-a-secret-test-value' <<< "${contents}"; then
     printf 'Podman support archive retained the protected environment canary.\n' >&2
     return 1
   fi
-  if grep --fixed-strings --quiet "${socket}" <<< "${contents}"; then
-    printf 'Podman support archive retained its connection endpoint.\n' >&2
-    return 1
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    mark_revalidation_result diagnostic_privacy.environment_values_absent
+  fi
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    for private_path in "${socket}" "${runtime_root}" "${repository_root}" "${current_case}"; do
+      [[ -n "${private_path}" ]] || {
+        printf '%s\n' 'Host-path privacy review received an empty path.' >&2
+        return 1
+      }
+      if grep --fixed-strings --quiet "${private_path}" "${report}" ||
+        grep --fixed-strings --quiet "${private_path}" <<< "${contents}"; then
+        printf 'Podman support material retained private host path: %s\n' "${private_path}" >&2
+        return 1
+      fi
+    done
+    if [[ "${profile}" == limitation-revalidation ]]; then
+      mark_revalidation_result diagnostic_privacy.host_paths_absent
+    fi
+    for runtime_identifier in "${runtime_identifiers[@]}"; do
+      if grep --fixed-strings --quiet "${runtime_identifier}" "${report}" ||
+        grep --fixed-strings --quiet "${runtime_identifier}" <<< "${contents}"; then
+        printf '%s\n' 'Podman support material retained a private runtime identity.' >&2
+        return 1
+      fi
+    done
+    if [[ "${profile}" == limitation-revalidation ]]; then
+      mark_revalidation_result diagnostic_privacy.runtime_identifiers_absent
+    fi
+  else
+    if grep --fixed-strings --quiet "${socket}" <<< "${contents}"; then
+      printf 'Podman support archive retained its connection endpoint.\n' >&2
+      return 1
+    fi
   fi
   # The snapshot deliberately retains field names but serializes every protected
   # value as a state marker, never as a replacement string containing the value.
@@ -1429,10 +1979,106 @@ remove_outer() {
     "${engine}" rm --force --ignore -- "${outer}" > /dev/null
 }
 
+verify_revalidation_candidate_provenance() {
+  local image=$1 expected_source=$2 expected_revision=$3 expected_license=$4 expected_timestamp=$5
+  local labels observed_source observed_revision observed_license observed_timestamp
+  labels="$(engine_operation 'inspect replacement image provenance labels' \
+    image inspect --format '{{json .Labels}}' "${image}")"
+  observed_source="$(jq -er '.["org.opencontainers.image.source"]' <<< "${labels}")"
+  observed_revision="$(jq -er '.["org.opencontainers.image.revision"]' <<< "${labels}")"
+  observed_license="$(jq -er '.["org.opencontainers.image.licenses"]' <<< "${labels}")"
+  observed_timestamp="$(engine_operation 'inspect replacement image creation timestamp' \
+    image inspect --format '{{.Created}}' "${image}")"
+  observed_timestamp="$(date -u -d "${observed_timestamp}" '+%Y-%m-%dT%H:%M:%SZ')"
+  [[ "${observed_source}" == "${expected_source}" &&
+    "${observed_revision}" == "${expected_revision}" &&
+    "${observed_license}" == "${expected_license}" &&
+    "${observed_timestamp}" == "${expected_timestamp}" ]] || {
+    printf '%s\n' 'Replacement image provenance does not match the reviewed candidate catalogue.' >&2
+    return 1
+  }
+  printf '%s\n' "${observed_revision}" > "${artifact_root}/${candidate_cell}.source-revision"
+}
+
+collect_revalidation_runtime_identity() {
+  local outer=$1 evidence_file=$2
+  # shellcheck disable=SC2016 # Runtime identity expansion occurs inside the candidate image.
+  engine_operation 'collect replacement distribution identity' exec "${outer}" \
+    /bin/sh -ceu \
+    '. /etc/os-release; printf "%s\t%s\n" "${ID:?}" "${VERSION_ID:?}"' \
+    > "${evidence_file}"
+}
+
+revalidation_observed_distribution() {
+  local expected=$1 evidence_file=$2 os_id os_version
+  IFS=$'\t' read -r os_id os_version < "${evidence_file}"
+  case "${expected}" in
+    opensuse-leap-16.0)
+      [[ "${os_id}" == opensuse-leap && "${os_version}" == 16.0 ]] || return 1
+      printf '%s\n' "opensuse-leap-${os_version}"
+      ;;
+    opensuse-tumbleweed)
+      [[ "${os_id}" == opensuse-tumbleweed && "${os_version}" =~ ^[0-9]{8}$ ]] || return 1
+      printf '%s\n' "opensuse-tumbleweed-${os_version}"
+      ;;
+    ubi-8)
+      [[ "${os_id}" == rhel && "${os_version}" == 8.10 ]] || return 1
+      printf '%s\n' "ubi-${os_version}"
+      ;;
+    ubi-9)
+      [[ "${os_id}" == rhel && "${os_version}" == 9.8 ]] || return 1
+      printf '%s\n' "ubi-${os_version}"
+      ;;
+    ubi-10)
+      [[ "${os_id}" == rhel && "${os_version}" == 10.2 ]] || return 1
+      printf '%s\n' "ubi-${os_version}"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+assert_revalidation_fresh_store() {
+  local outer=$1 socket_namespace=$2 name_prefix=$3
+  local runtime_identity graph_root_identity
+  revalidation_phase="replacement-runtime"
+  revalidation_failure_code="runtime-metadata-mismatch"
+  runtime_identity="$(engine_operation 'read candidate outer runtime identity' \
+    container inspect --format '{{.Id}}' "${outer}")"
+  graph_root_identity="$(engine_operation 'read candidate outer graph root identity' \
+    container inspect --format '{{.GraphDriver.Data.MergedDir}}' "${outer}")"
+  [[ -n "${runtime_identity}" && -n "${socket_namespace}" &&
+    -n "${graph_root_identity}" && -n "${name_prefix}" ]] || {
+    printf '%s\n' 'Candidate fresh-store proof contained an empty private identity.' >&2
+    return 1
+  }
+  [[ "${runtime_identity}" != "${revalidation_baseline_runtime_identity}" ]] || {
+    printf '%s\n' 'Candidate reused the historical outer runtime identity.' >&2
+    return 1
+  }
+  mark_revalidation_result fresh_store.distinct_runtime
+  [[ "${socket_namespace}" != "${revalidation_baseline_socket_namespace}" ]] || {
+    printf '%s\n' 'Candidate reused the historical socket namespace.' >&2
+    return 1
+  }
+  mark_revalidation_result fresh_store.distinct_socket
+  [[ "${graph_root_identity}" != "${revalidation_baseline_graph_root_identity}" ]] || {
+    printf '%s\n' 'Candidate reused the historical graph-root identity.' >&2
+    return 1
+  }
+  mark_revalidation_result fresh_store.distinct_graph_root
+  [[ "${name_prefix}" != "${revalidation_baseline_name_prefix}" ]] || {
+    printf '%s\n' 'Candidate reused the historical application-name prefix.' >&2
+    return 1
+  }
+  mark_revalidation_result fresh_store.distinct_name_prefix
+}
+
 configure_cell_progress() {
   local id=$1
   progress_index=0
-  if [[ "${profile}" == smoke ]]; then
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    progress_total=${#revalidation_required_checks[@]}
+  elif [[ "${profile}" == smoke ]]; then
     progress_total=10
     if is_smoke_diagnostics_cell "${id}"; then
       progress_total=15
@@ -1443,10 +2089,10 @@ configure_cell_progress() {
       progress_total=31
     fi
   fi
-  if is_smoke_diagnostics_cell "${id}"; then
+  if [[ "${profile}" != limitation-revalidation ]] && is_smoke_diagnostics_cell "${id}"; then
     ((progress_total += 1))
   fi
-  if should_run_discovery "${id}"; then
+  if [[ "${profile}" != limitation-revalidation ]] && should_run_discovery "${id}"; then
     ((progress_total += 1))
   fi
   printf '%s PLAN cell=%s profile=%s tests=%d\n' \
@@ -1473,6 +2119,9 @@ run_cell() {
   fi
 
   current_case="${artifact_root}/${id}"
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    current_case="${artifact_root}/revalidation-candidate/${id}"
+  fi
   current_prefix="${run_id}-${id}"
   # Keep generated container names valid as single DNS-label network aliases.
   current_prefix="${current_prefix:0:48}"
@@ -1481,6 +2130,9 @@ run_cell() {
   fi
   mkdir -p -- "${current_case}"
   local socket_directory="${runtime_root}/${id}"
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    socket_directory="${runtime_root}/revalidation-candidate/${id}"
+  fi
   local outer socket coverage_level workload_scope=full runtime_test_name
   if [[ "${profile}" == smoke ]]; then
     workload_scope=minimal
@@ -1491,6 +2143,11 @@ run_cell() {
   progress_run 'pull and verify reviewed Podman image' prepare_matrix_image "${id}" "${image}"
   progress_run 'start isolated Podman container and collect runtime evidence' \
     start_outer_runtime "${id}" "${image}" "${mode}" "${socket_directory}"
+  if [[ "${profile}" == limitation-revalidation ]]; then
+    revalidation_candidate_outer="${started_outer}"
+    assert_revalidation_fresh_store \
+      "${revalidation_candidate_outer}" "${socket_directory}" "${current_prefix}"
+  fi
   progress_run "create ${workload_scope} resources before acquisition starts" \
     create_workloads "${started_outer}" "${current_prefix}" "${workload_scope}" "${socket_directory}"
   outer="${started_outer}"
@@ -1533,7 +2190,7 @@ run_cell() {
 
   local selection output
   local -a selections=(exact)
-  if [[ "${profile}" == full-container ]]; then
+  if is_complete_resource_profile; then
     selections=(exact prefix label all network-boundary)
   fi
   for selection in "${selections[@]}"; do
@@ -1563,7 +2220,7 @@ run_cell() {
       esac
     done
   done
-  if [[ "${profile}" == full-container ]] || is_smoke_diagnostics_cell "${id}"; then
+  if is_complete_resource_profile || is_smoke_diagnostics_cell "${id}"; then
     require_scenario invalid-literal-glob
     progress_run 'reject literal glob selector' run_invalid_glob "${socket}"
     require_scenario deterministic-exact-compose
@@ -1575,7 +2232,7 @@ run_cell() {
     require_scenario malformed-selected-container
     progress_run 'diagnose malformed selected container' run_fault_proxy_case "${socket}" malformed
   fi
-  if [[ "${profile}" == full-container ]]; then
+  if is_complete_resource_profile; then
     require_scenario disappeared-selected-container
     progress_run 'diagnose disappeared selected container' run_fault_proxy_case "${socket}" gone
     require_scenario partial-inventory-section
@@ -1586,7 +2243,7 @@ run_cell() {
         run_external_apply_reacquire "${socket}"
     fi
   fi
-  if is_smoke_diagnostics_cell "${id}"; then
+  if [[ "${profile}" == limitation-revalidation ]] || is_smoke_diagnostics_cell "${id}"; then
     require_scenario selinux-relabel-promotion
     progress_run 'verify SELinux relabel omission and promotion' \
       assert_selinux_relabel_promotion "${socket}"
@@ -1643,7 +2300,8 @@ run_limited_cell() {
     if test -s /usr/share/strukturpiloten/podman-package-version; then
       cat /usr/share/strukturpiloten/podman-package-version
     else
-      printf "upstream-source-build:%s\n" "$(podman --version)"
+      podman_version="$(podman --version)"
+      printf "upstream-source-build:%s\n" "${podman_version#podman version }"
     fi
   ' > "${current_case}/package-version"
   if timeout --signal=TERM --kill-after=10s 30s "${engine}" exec "${outer}" podman info \
@@ -1692,6 +2350,263 @@ run_limited_cell() {
   printf '%s CELL PASS  %s (%d/%d tests, reviewed limitation)\n' \
     "$(timestamp)" "${id}" "${progress_index}" "${progress_total}"
 }
+
+run_revalidation_baseline_collision() {
+  local id=$1 image=$2
+  local baseline_case="${artifact_root}/revalidation-baseline/${id}"
+  local baseline_socket_namespace="${runtime_root}/revalidation-baseline/${id}"
+  local outer_digest outer status mounted_image_root uid_helper gid_helper
+  local uid_capability gid_capability observed_version observed_distribution
+  mkdir -p -- "${baseline_case}"
+  mkdir -p -- "${baseline_socket_namespace}"
+  chmod 0777 "${baseline_socket_namespace}"
+  revalidation_phase="baseline-pull"
+  revalidation_failure_code="pull-failed"
+  prepare_matrix_image "${id}" "${image}"
+  revalidation_failure_code="digest-mismatch"
+  [[ "$(< "${artifact_root}/${id}.digest")" == "${image##*@sha256:}" ]]
+  record_revalidation_observation baseline.observed_digest "${image##*@sha256:}"
+
+  revalidation_phase="baseline-collision"
+  revalidation_failure_code="historical-collision-not-reproduced"
+  outer_digest="$(printf '%s' "revalidation-baseline-${id}" | sha256sum)"
+  outer="${run_id:0:32}-baseline-${outer_digest:0:12}"
+  outer_containers+=("${outer}")
+  timed_operation 90s 'start historical limitation container' \
+    "${engine}" run --detach --rm --name "${outer}" --stop-timeout 1 \
+    --privileged --device /dev/fuse --security-opt label=disable \
+    --volume "${baseline_socket_namespace}:/boxferry-socket:Z" \
+    "${image}" /bin/sh -ceu 'trap "exit 0" INT TERM; sleep 3600' \
+    > "${baseline_case}/outer.id"
+  revalidation_baseline_runtime_identity="$(engine_operation \
+    'read historical outer runtime identity' container inspect --format '{{.Id}}' "${outer}")"
+  revalidation_baseline_socket_namespace="${baseline_socket_namespace}"
+  revalidation_baseline_graph_root_identity="$(engine_operation \
+    'read historical outer graph root identity' container inspect \
+    --format '{{.GraphDriver.Data.MergedDir}}' "${outer}")"
+  revalidation_baseline_name_prefix="${run_id:0:32}-baseline-app-${outer_digest:0:8}"
+  [[ -n "${revalidation_baseline_runtime_identity}" &&
+    -n "${revalidation_baseline_socket_namespace}" &&
+    -n "${revalidation_baseline_graph_root_identity}" &&
+    -n "${revalidation_baseline_name_prefix}" ]] || {
+    printf '%s\n' 'Historical fresh-store reference contained an empty private identity.' >&2
+    return 1
+  }
+  engine_operation 'read historical limitation UID' exec "${outer}" id -u \
+    > "${baseline_case}/uid"
+  [[ "$(< "${baseline_case}/uid")" == 1000 ]] || {
+    printf 'Historical limitation image %s no longer runs as UID 1000.\n' "${id}" >&2
+    return 1
+  }
+  engine_operation 'read historical limitation Podman version' exec "${outer}" podman --version \
+    > "${baseline_case}/podman-version"
+  engine_operation 'read historical limitation architecture' exec "${outer}" uname -m \
+    > "${baseline_case}/architecture"
+  # shellcheck disable=SC2016 # Package query expansion occurs inside the baseline image.
+  engine_operation 'read historical limitation package version' exec "${outer}" sh -ceu '
+    if test -s /usr/share/strukturpiloten/podman-package-version; then
+      cat /usr/share/strukturpiloten/podman-package-version
+    else
+      podman_version="$(podman --version)"
+      printf "upstream-source-build:%s\n" "${podman_version#podman version }"
+    fi
+  ' > "${baseline_case}/package-version"
+  collect_revalidation_runtime_identity "${outer}" "${baseline_case}/distribution"
+  verify_observed_version "${id}-baseline" "${candidate_version}" \
+    "${baseline_case}/podman-version"
+  [[ "$(< "${baseline_case}/architecture")" =~ ^(x86_64|amd64)$ ]] || {
+    printf 'Historical limitation image %s has unexpected architecture.\n' "${id}" >&2
+    return 1
+  }
+  observed_distribution="$(revalidation_observed_distribution \
+    "${candidate_distribution}" "${baseline_case}/distribution")"
+  observed_version="$(awk '{ print $3 }' "${baseline_case}/podman-version")"
+  observed_version="${observed_version%-rhel}"
+  record_revalidation_observation baseline.observed.podman_version "${observed_version}"
+  record_revalidation_observation baseline.observed.package_revision \
+    "$(< "${baseline_case}/package-version")"
+  record_revalidation_observation baseline.observed.distribution "${observed_distribution}"
+  record_revalidation_observation baseline.observed.architecture \
+    "$(< "${baseline_case}/architecture")"
+  record_revalidation_observation baseline.observed.uid "$(< "${baseline_case}/uid")"
+  record_revalidation_observation baseline.observed.rootless true
+  if timeout --signal=TERM --kill-after=10s 90s \
+    "${engine}" exec "${outer}" podman info \
+    > "${baseline_case}/podman-info.stdout" 2> "${baseline_case}/podman-info.stderr"; then
+    printf 'Historical limitation %s is stale: rootless Podman initialized.\n' "${id}" >&2
+    return 1
+  else
+    status=$?
+  fi
+  if [[ "${status}" == 124 || "${status}" == 137 ]]; then
+    printf 'Historical limitation %s timed out instead of reproducing the collision.\n' "${id}" >&2
+    return 1
+  fi
+  mark_revalidation_result baseline.historical_collision.podman_info_failed
+  grep --fixed-strings --quiet newuidmap "${baseline_case}/podman-info.stderr"
+  mark_revalidation_result baseline.historical_collision.newuidmap_reported
+  grep --fixed-strings --quiet 'Permission denied' "${baseline_case}/podman-info.stderr"
+  mark_revalidation_result baseline.historical_collision.permission_denied_reported
+
+  mounted_image_root="$(engine_operation 'mount historical image for helper review' image mount "${image}")"
+  mounted_images+=("${image}")
+  revalidation_mounted_image_active="${image}"
+  revalidation_mounted_image_root="${mounted_image_root}"
+  uid_helper="${mounted_image_root}/usr/bin/newuidmap"
+  gid_helper="${mounted_image_root}/usr/bin/newgidmap"
+  [[ -u "${uid_helper}" ]]
+  mark_revalidation_result baseline.historical_collision.newuidmap_setuid
+  [[ -u "${gid_helper}" ]]
+  mark_revalidation_result baseline.historical_collision.newgidmap_setuid
+  uid_capability="$(getcap "${uid_helper}")"
+  gid_capability="$(getcap "${gid_helper}")"
+  [[ "${uid_capability}" == *cap_setuid=ep* ]]
+  mark_revalidation_result baseline.historical_collision.newuidmap_capability
+  [[ "${gid_capability}" == *cap_setgid=ep* ]]
+  mark_revalidation_result baseline.historical_collision.newgidmap_capability
+  engine_operation 'unmount historical image helper review' image unmount -- "${image}" > /dev/null
+  revalidation_mounted_image_active=""
+  revalidation_mounted_image_root=""
+
+  revalidation_phase="baseline-cleanup"
+  revalidation_failure_code="cleanup-failed"
+  remove_outer "${outer}"
+  if "${engine}" container exists "${outer}"; then
+    printf 'Historical limitation container survived cleanup: %s\n' "${id}" >&2
+    return 1
+  fi
+  mark_revalidation_result cleanup.baseline_removed
+}
+
+configure_revalidation_required_checks() {
+  revalidation_required_checks=(
+    'prepare digest-pinned workload archive'
+    'pull and verify reviewed Podman image'
+    'start isolated Podman container and collect runtime evidence'
+    'create full resources before acquisition starts'
+    'verify image, version, architecture, and runtime evidence'
+    'verify live runtime semantics (9 scenario groups) and start acquisition socket'
+    'reject literal glob selector'
+    'verify deterministic Compose export'
+    'block lossy import under strict policy'
+    'write redacted support bundle'
+    'diagnose malformed selected container'
+    'diagnose disappeared selected container'
+    'diagnose partial inventory section'
+    're-import generated Compose and Quadlet outputs'
+    'externally apply and reacquire Podman plan'
+    'verify SELinux relabel omission and promotion'
+    'remove disposable outer container'
+  )
+  local selection exporter
+  for selection in 'exact container' 'prefix selection' 'label selection' 'all resources' 'network boundary'; do
+    for exporter in compose quadlet podman; do
+      revalidation_required_checks+=("convert ${selection} to ${exporter}")
+    done
+  done
+}
+
+assert_revalidation_required_checks() {
+  local expected actual
+  declare -A expected_checks=()
+  for expected in "${revalidation_required_checks[@]}"; do
+    if [[ -n "${expected_checks[${expected}]:-}" ]]; then
+      printf 'Duplicate required limitation-revalidation check: %s\n' "${expected}" >&2
+      return 2
+    fi
+    expected_checks["${expected}"]=true
+    [[ "${revalidation_checks[${expected}]:-}" == true ]] || {
+      printf 'Missing mandatory limitation-revalidation check: %s\n' "${expected}" >&2
+      return 1
+    }
+  done
+  for actual in "${!revalidation_checks[@]}"; do
+    [[ "${expected_checks[${actual}]:-}" == true ]] || {
+      printf 'Unexpected limitation-revalidation check: %s\n' "${actual}" >&2
+      return 1
+    }
+  done
+  [[ "${#revalidation_checks[@]}" == "${#revalidation_required_checks[@]}" ]]
+  [[ "${progress_index}" == "${progress_total}" ]]
+  [[ "${progress_total}" == "${#revalidation_required_checks[@]}" ]]
+}
+
+run_limitation_revalidation() {
+  local observed_version observed_distribution
+  configure_revalidation_required_checks
+  run_revalidation_baseline_collision "${candidate_cell}" "${candidate_baseline_image}"
+
+  revalidation_phase="replacement-pull"
+  revalidation_failure_code="pull-failed"
+  prepare_matrix_image "${candidate_cell}" "${candidate_replacement_image}"
+  record_revalidation_observation replacement.observed_digest \
+    "${candidate_replacement_image##*@sha256:}"
+  revalidation_phase="replacement-provenance"
+  revalidation_failure_code="source-proof-mismatch"
+  verify_revalidation_candidate_provenance \
+    "${candidate_replacement_image}" "${candidate_source_repository}" \
+    "${candidate_source_revision}" "${candidate_source_license}" "${candidate_published_at}"
+
+  revalidation_checks=()
+  revalidation_capture_checks=true
+  revalidation_phase="replacement-runtime"
+  revalidation_failure_code="runtime-metadata-mismatch"
+  run_cell "${candidate_cell}" "${candidate_replacement_image}" "${candidate_version}" \
+    "${candidate_distribution}" "${candidate_mode}" "${candidate_lane}" "${candidate_architecture}"
+  revalidation_capture_checks=false
+  revalidation_phase="cleanup"
+  revalidation_failure_code="cleanup-failed"
+  [[ -n "${revalidation_candidate_outer}" ]] || {
+    printf '%s\n' 'Candidate cleanup review lost its private outer runtime identity.' >&2
+    return 1
+  }
+  if "${engine}" container exists "${revalidation_candidate_outer}"; then
+    printf '%s\n' 'Candidate outer runtime survived limitation-revalidation cleanup.' >&2
+    return 1
+  fi
+  mark_revalidation_result cleanup.replacement_removed
+
+  revalidation_phase="replacement-runtime"
+  revalidation_failure_code="runtime-metadata-mismatch"
+  observed_version="$(awk '{ print $3 }' "${artifact_root}/${candidate_cell}.podman-version")"
+  observed_version="${observed_version%-rhel}"
+  observed_distribution="$(revalidation_observed_distribution \
+    "${candidate_distribution}" "${artifact_root}/${candidate_cell}.distribution")"
+  [[ "${observed_version}" == "${candidate_version}" ]]
+  [[ "$(< "${artifact_root}/${candidate_cell}.rootless")" == true ]]
+  [[ "$(< "${artifact_root}/${candidate_cell}.source-revision")" == "${candidate_source_revision}" ]]
+  record_revalidation_observation replacement.observed.podman_version "${observed_version}"
+  record_revalidation_observation replacement.observed.api_version \
+    "$(< "${artifact_root}/${candidate_cell}.api-version")"
+  record_revalidation_observation replacement.observed.package_revision \
+    "$(< "${artifact_root}/${candidate_cell}.package-version")"
+  record_revalidation_observation replacement.observed.distribution "${observed_distribution}"
+  record_revalidation_observation replacement.observed.architecture \
+    "$(< "${artifact_root}/${candidate_cell}.architecture")"
+  record_revalidation_observation replacement.observed.rootless \
+    "$(< "${artifact_root}/${candidate_cell}.rootless")"
+  record_revalidation_observation replacement.observed.source_revision \
+    "$(< "${artifact_root}/${candidate_cell}.source-revision")"
+  assert_revalidation_required_checks
+
+  revalidation_phase="cleanup"
+  revalidation_failure_code="cleanup-failed"
+  if [[ -n "${apply_target_outer}" ]]; then
+    remove_outer "${apply_target_outer}"
+    if "${engine}" container exists "${apply_target_outer}"; then
+      printf '%s\n' 'External-apply target survived limitation-revalidation cleanup.' >&2
+      return 1
+    fi
+  fi
+  mark_revalidation_result cleanup.apply_target_removed
+
+  revalidation_ready_to_finalize=true
+}
+
+if [[ "${profile}" == limitation-revalidation ]]; then
+  run_limitation_revalidation
+  exit 0
+fi
 
 printf 'id\treviewed_image\tdeclared_podman_version\tobserved_podman_version\tpackage_revision\tapi_version\tdistribution\tdeclared_mode\tobserved_rootless\tlane\tdeclared_architecture\tobserved_architecture\ttransport\tresource_coverage\n' \
   > "${artifact_root}/evidence.tsv"

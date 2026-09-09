@@ -84,7 +84,8 @@ run only in the disposable apply/reacquire target; BoxFerry itself remains non-e
 The 48-cell complete matrix currently has 43 full cells and five reviewed UBI/openSUSE
 rootless limitations. Those five images combine file capabilities and setuid bits on
 `newuidmap` and `newgidmap`, causing second-namespace `uid_map` setup to fail. The runner
-verifies `helper-privilege-collision` and claims no resource coverage for those cells. Remove
+verifies `helper-privilege-collision` and claims no resource coverage for those cells. The
+[live-catalogue contract](../fixtures/conformance/podman-live/) keeps revalidation separate. Remove
 the limitation rows after corrected images and digests are published.
 
 Run the nine-cell smoke profile:

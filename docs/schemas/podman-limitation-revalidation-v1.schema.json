@@ -1,0 +1,876 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boxferry.dev/schemas/podman-limitation-revalidation-v1.schema.json",
+  "title": "BoxFerry Podman limitation revalidation evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "evidence_kind", "status", "eligibility", "timestamps", "failure"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "evidence_kind": {
+      "enum": [
+        "podman-limitation-revalidation",
+        "podman-limitation-revalidation-initialization-failure"
+      ]
+    },
+    "status": { "enum": ["running", "passed", "failed"] },
+    "eligibility": { "type": "boolean" },
+    "candidate": { "$ref": "#/$defs/candidateIdentity" },
+    "repository": { "$ref": "#/$defs/repository" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "timestamps": { "$ref": "#/$defs/timestamps" },
+    "catalogues": { "$ref": "#/$defs/catalogues" },
+    "baseline": { "$ref": "#/$defs/baseline" },
+    "replacement": { "$ref": "#/$defs/replacement" },
+    "source_proof": { "$ref": "#/$defs/sourceProof" },
+    "fresh_store": { "$ref": "#/$defs/freshStore" },
+    "runtime_results": { "$ref": "#/$defs/runtimeResults" },
+    "selector_exporters": { "$ref": "#/$defs/selectorExporters" },
+    "diagnostic_privacy": { "$ref": "#/$defs/diagnosticPrivacy" },
+    "reimports": { "$ref": "#/$defs/reimports" },
+    "external_apply": { "$ref": "#/$defs/externalApply" },
+    "cleanup": { "$ref": "#/$defs/cleanup" },
+    "environment_boundary": { "$ref": "#/$defs/environmentBoundary" },
+    "invocation": { "$ref": "#/$defs/initializationInvocation" },
+    "initialization_failure": { "const": true },
+    "failure": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/failure" }]
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "candidate",
+        "repository",
+        "execution",
+        "catalogues",
+        "baseline",
+        "replacement",
+        "source_proof",
+        "fresh_store",
+        "runtime_results",
+        "selector_exporters",
+        "diagnostic_privacy",
+        "reimports",
+        "external_apply",
+        "cleanup",
+        "environment_boundary"
+      ],
+      "properties": {
+        "evidence_kind": { "const": "podman-limitation-revalidation" }
+      },
+      "not": {
+        "anyOf": [{ "required": ["invocation"] }, { "required": ["initialization_failure"] }]
+      }
+    },
+    {
+      "required": ["invocation", "initialization_failure"],
+      "properties": {
+        "evidence_kind": {
+          "const": "podman-limitation-revalidation-initialization-failure"
+        },
+        "status": { "const": "failed" },
+        "eligibility": { "const": false },
+        "failure": { "$ref": "#/$defs/initializationFailure" }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["candidate"] },
+          { "required": ["repository"] },
+          { "required": ["execution"] },
+          { "required": ["catalogues"] },
+          { "required": ["baseline"] },
+          { "required": ["replacement"] },
+          { "required": ["source_proof"] },
+          { "required": ["fresh_store"] },
+          { "required": ["runtime_results"] },
+          { "required": ["selector_exporters"] },
+          { "required": ["diagnostic_privacy"] },
+          { "required": ["reimports"] },
+          { "required": ["external_apply"] },
+          { "required": ["cleanup"] },
+          { "required": ["environment_boundary"] }
+        ]
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "running" } } },
+      "then": {
+        "properties": {
+          "eligibility": { "const": false },
+          "timestamps": {
+            "properties": { "finished_at": { "type": "null" } }
+          },
+          "failure": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "failed" } } },
+      "then": {
+        "properties": {
+          "eligibility": { "const": false },
+          "timestamps": {
+            "properties": { "finished_at": { "$ref": "#/$defs/timestamp" } }
+          },
+          "failure": { "$ref": "#/$defs/failure" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "passed" } } },
+      "then": {
+        "properties": {
+          "eligibility": { "const": true },
+          "timestamps": {
+            "properties": { "finished_at": { "$ref": "#/$defs/timestamp" } }
+          },
+          "failure": { "type": "null" },
+          "baseline": {
+            "properties": {
+              "observed_digest": { "$ref": "#/$defs/sha256" },
+              "observed": { "$ref": "#/$defs/passedBaselineObserved" },
+              "historical_collision": { "$ref": "#/$defs/passedHistoricalCollision" }
+            }
+          },
+          "replacement": {
+            "properties": {
+              "observed_digest": { "$ref": "#/$defs/sha256" },
+              "observed": { "$ref": "#/$defs/passedObservedRuntime" }
+            }
+          },
+          "fresh_store": { "$ref": "#/$defs/passedFreshStore" },
+          "runtime_results": { "$ref": "#/$defs/passedRuntimeResults" },
+          "selector_exporters": { "$ref": "#/$defs/passedSelectorExporters" },
+          "diagnostic_privacy": { "$ref": "#/$defs/passedDiagnosticPrivacy" },
+          "reimports": { "$ref": "#/$defs/passedReimports" },
+          "external_apply": { "$ref": "#/$defs/passedExternalApply" },
+          "cleanup": { "$ref": "#/$defs/passedCleanup" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "image": {
+      "type": "string",
+      "pattern": "^ghcr\\.io/strukturpiloten/[a-z0-9.-]+:v[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}$",
+      "maxLength": 220
+    },
+    "candidateIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source_repository", "source_revision"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^podman-(opensuse-(leap-16\\.0|tumbleweed)|ubi-(8|9|10))-rootless$"
+        },
+        "source_repository": {
+          "const": "https://github.com/Strukturpiloten/containers"
+        },
+        "source_revision": { "$ref": "#/$defs/gitSha" }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "clean_tree"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/gitSha" },
+        "clean_tree": { "type": "boolean" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "architecture", "outer_root_mode"],
+      "properties": {
+        "provider": { "enum": ["github-actions", "local"] },
+        "architecture": { "const": "amd64" },
+        "outer_root_mode": { "const": "root" }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "finished_at"],
+      "properties": {
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "finished_at": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/timestamp" }]
+        }
+      }
+    },
+    "catalogues": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidates_sha256", "matrix_sha256", "limitations_sha256"],
+      "properties": {
+        "candidates_sha256": { "$ref": "#/$defs/sha256" },
+        "matrix_sha256": { "$ref": "#/$defs/sha256" },
+        "limitations_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "historicalCollision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "podman_info_failed",
+        "newuidmap_reported",
+        "permission_denied_reported",
+        "newuidmap_setuid",
+        "newgidmap_setuid",
+        "newuidmap_capability",
+        "newgidmap_capability"
+      ],
+      "properties": {
+        "podman_info_failed": { "type": "boolean" },
+        "newuidmap_reported": { "type": "boolean" },
+        "permission_denied_reported": { "type": "boolean" },
+        "newuidmap_setuid": { "type": "boolean" },
+        "newgidmap_setuid": { "type": "boolean" },
+        "newuidmap_capability": { "type": "boolean" },
+        "newgidmap_capability": { "type": "boolean" }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["declared_image", "observed_digest", "observed", "historical_collision"],
+      "properties": {
+        "declared_image": { "$ref": "#/$defs/image" },
+        "observed_digest": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
+        "observed": { "$ref": "#/$defs/baselineObserved" },
+        "historical_collision": { "$ref": "#/$defs/historicalCollision" }
+      }
+    },
+    "baselineObserved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "podman_version",
+        "package_revision",
+        "distribution",
+        "architecture",
+        "uid",
+        "rootless"
+      ],
+      "properties": {
+        "podman_version": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 80
+        },
+        "package_revision": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9A-Za-z][0-9A-Za-z.+:~_-]{0,159}$",
+          "maxLength": 160
+        },
+        "distribution": {
+          "type": ["string", "null"],
+          "pattern": "^(opensuse-leap-16\\.0|opensuse-tumbleweed-[0-9]{8}|ubi-(8\\.10|9\\.8|10\\.2))$",
+          "maxLength": 80
+        },
+        "architecture": { "type": ["string", "null"], "enum": ["amd64", "x86_64", null] },
+        "uid": { "type": ["integer", "null"], "enum": [1000, null] },
+        "rootless": { "type": ["boolean", "null"] }
+      }
+    },
+    "observedRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "podman_version",
+        "api_version",
+        "package_revision",
+        "distribution",
+        "architecture",
+        "rootless",
+        "source_revision"
+      ],
+      "properties": {
+        "podman_version": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 80
+        },
+        "api_version": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 80
+        },
+        "package_revision": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9A-Za-z][0-9A-Za-z.+:~_-]{0,159}$",
+          "maxLength": 160
+        },
+        "distribution": {
+          "type": ["string", "null"],
+          "pattern": "^(opensuse-leap-16\\.0|opensuse-tumbleweed-[0-9]{8}|ubi-(8\\.10|9\\.8|10\\.2))$",
+          "maxLength": 80
+        },
+        "architecture": { "type": ["string", "null"], "enum": ["amd64", "x86_64", null] },
+        "rootless": { "type": ["boolean", "null"] },
+        "source_revision": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/gitSha" }]
+        }
+      }
+    },
+    "replacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declared_image",
+        "observed_digest",
+        "expected_podman_version",
+        "expected_distribution",
+        "expected_mode",
+        "expected_lane",
+        "expected_architecture",
+        "observed"
+      ],
+      "properties": {
+        "declared_image": { "$ref": "#/$defs/image" },
+        "observed_digest": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+        },
+        "expected_podman_version": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "expected_distribution": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "expected_mode": { "const": "rootless" },
+        "expected_lane": { "const": "container" },
+        "expected_architecture": { "const": "amd64" },
+        "observed": { "$ref": "#/$defs/observedRuntime" }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "sha256"],
+      "properties": {
+        "role": { "enum": ["image-definition", "platform-recipe", "runtime-config"] },
+        "path": {
+          "type": "string",
+          "pattern": "^images/podman/[A-Za-z0-9._/-]+$",
+          "maxLength": 180
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["published_at", "source_license", "redistribution", "files"],
+      "properties": {
+        "published_at": { "$ref": "#/$defs/timestamp" },
+        "source_license": { "const": "AGPL-3.0-only" },
+        "redistribution": { "const": "transient-test-pull" },
+        "files": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/sourceFile" }
+        }
+      }
+    },
+    "freshStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distinct_runtime",
+        "distinct_socket",
+        "distinct_graph_root",
+        "distinct_name_prefix"
+      ],
+      "properties": {
+        "distinct_runtime": { "type": "boolean" },
+        "distinct_socket": { "type": "boolean" },
+        "distinct_graph_root": { "type": "boolean" },
+        "distinct_name_prefix": { "type": "boolean" }
+      }
+    },
+    "runtimeResults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource_creation",
+        "runtime_semantics",
+        "deterministic_export",
+        "strict_policy",
+        "literal_glob_rejection",
+        "support_bundle",
+        "malformed_response",
+        "disappeared_resource",
+        "partial_inventory",
+        "selinux_intent"
+      ],
+      "properties": {
+        "resource_creation": { "type": "boolean" },
+        "runtime_semantics": { "type": "boolean" },
+        "deterministic_export": { "type": "boolean" },
+        "strict_policy": { "type": "boolean" },
+        "literal_glob_rejection": { "type": "boolean" },
+        "support_bundle": { "type": "boolean" },
+        "malformed_response": { "type": "boolean" },
+        "disappeared_resource": { "type": "boolean" },
+        "partial_inventory": { "type": "boolean" },
+        "selinux_intent": { "type": "boolean" }
+      }
+    },
+    "exporterSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compose", "quadlet", "podman"],
+      "properties": {
+        "compose": { "type": "boolean" },
+        "quadlet": { "type": "boolean" },
+        "podman": { "type": "boolean" }
+      }
+    },
+    "selectorExporters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exact", "prefix", "label", "all", "network"],
+      "properties": {
+        "exact": { "$ref": "#/$defs/exporterSet" },
+        "prefix": { "$ref": "#/$defs/exporterSet" },
+        "label": { "$ref": "#/$defs/exporterSet" },
+        "all": { "$ref": "#/$defs/exporterSet" },
+        "network": { "$ref": "#/$defs/exporterSet" }
+      }
+    },
+    "diagnosticPrivacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "redaction_passed",
+        "raw_outputs_absent",
+        "environment_values_absent",
+        "host_paths_absent",
+        "runtime_identifiers_absent"
+      ],
+      "properties": {
+        "redaction_passed": { "type": "boolean" },
+        "raw_outputs_absent": { "type": "boolean" },
+        "environment_values_absent": { "type": "boolean" },
+        "host_paths_absent": { "type": "boolean" },
+        "runtime_identifiers_absent": { "type": "boolean" }
+      }
+    },
+    "reimports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compose", "quadlet"],
+      "properties": {
+        "compose": { "type": "boolean" },
+        "quadlet": { "type": "boolean" }
+      }
+    },
+    "externalApply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["performed", "plan_applied", "reacquired"],
+      "properties": {
+        "performed": { "type": "boolean" },
+        "plan_applied": { "type": "boolean" },
+        "reacquired": { "type": "boolean" }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_removed", "replacement_removed", "apply_target_removed"],
+      "properties": {
+        "baseline_removed": { "type": "boolean" },
+        "replacement_removed": { "type": "boolean" },
+        "apply_target_removed": { "type": "boolean" }
+      }
+    },
+    "environmentBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kernel_capabilities",
+        "cgroup_delegation",
+        "selinux_enforcing",
+        "systemd_execution"
+      ],
+      "properties": {
+        "kernel_capabilities": { "const": "shared-host" },
+        "cgroup_delegation": { "const": "shared-host" },
+        "selinux_enforcing": { "const": "unperformed" },
+        "systemd_execution": { "const": "unperformed" }
+      }
+    },
+    "passedBaselineObserved": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "podman_version",
+        "package_revision",
+        "distribution",
+        "architecture",
+        "uid",
+        "rootless"
+      ],
+      "properties": {
+        "podman_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "package_revision": {
+          "type": "string",
+          "pattern": "^[0-9A-Za-z][0-9A-Za-z.+:~_-]{0,159}$"
+        },
+        "distribution": {
+          "type": "string",
+          "pattern": "^(opensuse-leap-16\\.0|opensuse-tumbleweed-[0-9]{8}|ubi-(8\\.10|9\\.8|10\\.2))$"
+        },
+        "architecture": { "enum": ["amd64", "x86_64"] },
+        "uid": { "const": 1000 },
+        "rootless": { "const": true }
+      }
+    },
+    "passedHistoricalCollision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "podman_info_failed",
+        "newuidmap_reported",
+        "permission_denied_reported",
+        "newuidmap_setuid",
+        "newgidmap_setuid",
+        "newuidmap_capability",
+        "newgidmap_capability"
+      ],
+      "properties": {
+        "podman_info_failed": { "const": true },
+        "newuidmap_reported": { "const": true },
+        "permission_denied_reported": { "const": true },
+        "newuidmap_setuid": { "const": true },
+        "newgidmap_setuid": { "const": true },
+        "newuidmap_capability": { "const": true },
+        "newgidmap_capability": { "const": true }
+      }
+    },
+    "passedObservedRuntime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "podman_version",
+        "api_version",
+        "package_revision",
+        "distribution",
+        "architecture",
+        "rootless",
+        "source_revision"
+      ],
+      "properties": {
+        "podman_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "api_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "package_revision": {
+          "type": "string",
+          "pattern": "^[0-9A-Za-z][0-9A-Za-z.+:~_-]{0,159}$"
+        },
+        "distribution": {
+          "type": "string",
+          "pattern": "^(opensuse-leap-16\\.0|opensuse-tumbleweed-[0-9]{8}|ubi-(8\\.10|9\\.8|10\\.2))$"
+        },
+        "architecture": { "enum": ["amd64", "x86_64"] },
+        "rootless": { "const": true },
+        "source_revision": { "$ref": "#/$defs/gitSha" }
+      }
+    },
+    "passedFreshStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distinct_runtime",
+        "distinct_socket",
+        "distinct_graph_root",
+        "distinct_name_prefix"
+      ],
+      "properties": {
+        "distinct_runtime": { "const": true },
+        "distinct_socket": { "const": true },
+        "distinct_graph_root": { "const": true },
+        "distinct_name_prefix": { "const": true }
+      }
+    },
+    "passedRuntimeResults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "resource_creation",
+        "runtime_semantics",
+        "deterministic_export",
+        "strict_policy",
+        "literal_glob_rejection",
+        "support_bundle",
+        "malformed_response",
+        "disappeared_resource",
+        "partial_inventory",
+        "selinux_intent"
+      ],
+      "properties": {
+        "resource_creation": { "const": true },
+        "runtime_semantics": { "const": true },
+        "deterministic_export": { "const": true },
+        "strict_policy": { "const": true },
+        "literal_glob_rejection": { "const": true },
+        "support_bundle": { "const": true },
+        "malformed_response": { "const": true },
+        "disappeared_resource": { "const": true },
+        "partial_inventory": { "const": true },
+        "selinux_intent": { "const": true }
+      }
+    },
+    "passedExporterSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compose", "quadlet", "podman"],
+      "properties": {
+        "compose": { "const": true },
+        "quadlet": { "const": true },
+        "podman": { "const": true }
+      }
+    },
+    "passedSelectorExporters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exact", "prefix", "label", "all", "network"],
+      "properties": {
+        "exact": { "$ref": "#/$defs/passedExporterSet" },
+        "prefix": { "$ref": "#/$defs/passedExporterSet" },
+        "label": { "$ref": "#/$defs/passedExporterSet" },
+        "all": { "$ref": "#/$defs/passedExporterSet" },
+        "network": { "$ref": "#/$defs/passedExporterSet" }
+      }
+    },
+    "passedDiagnosticPrivacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "redaction_passed",
+        "raw_outputs_absent",
+        "environment_values_absent",
+        "host_paths_absent",
+        "runtime_identifiers_absent"
+      ],
+      "properties": {
+        "redaction_passed": { "const": true },
+        "raw_outputs_absent": { "const": true },
+        "environment_values_absent": { "const": true },
+        "host_paths_absent": { "const": true },
+        "runtime_identifiers_absent": { "const": true }
+      }
+    },
+    "passedReimports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compose", "quadlet"],
+      "properties": { "compose": { "const": true }, "quadlet": { "const": true } }
+    },
+    "passedExternalApply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["performed", "plan_applied", "reacquired"],
+      "properties": {
+        "performed": { "const": true },
+        "plan_applied": { "const": true },
+        "reacquired": { "const": true }
+      }
+    },
+    "passedCleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_removed", "replacement_removed", "apply_target_removed"],
+      "properties": {
+        "baseline_removed": { "const": true },
+        "replacement_removed": { "const": true },
+        "apply_target_removed": { "const": true }
+      }
+    },
+    "initializationInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_cell", "repository_commit", "catalogues"],
+      "properties": {
+        "candidate_cell": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^podman-(opensuse-(leap-16\\.0|tumbleweed)|ubi-(8|9|10))-rootless$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "repository_commit": {
+          "oneOf": [{ "$ref": "#/$defs/gitSha" }, { "type": "null" }]
+        },
+        "catalogues": {
+          "oneOf": [{ "$ref": "#/$defs/catalogues" }, { "type": "null" }]
+        }
+      }
+    },
+    "initializationFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "code"],
+      "properties": {
+        "phase": { "enum": ["preflight", "catalogue", "evidence"] },
+        "code": {
+          "enum": [
+            "invalid-invocation",
+            "prerequisite-unavailable",
+            "invalid-catalogue",
+            "evidence-invalid",
+            "interrupted"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "phase": { "const": "preflight" } } },
+          "then": {
+            "properties": {
+              "code": {
+                "enum": ["invalid-invocation", "prerequisite-unavailable", "interrupted"]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "catalogue" } } },
+          "then": {
+            "properties": { "code": { "enum": ["invalid-catalogue", "interrupted"] } }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "evidence" } } },
+          "then": {
+            "properties": { "code": { "enum": ["evidence-invalid", "interrupted"] } }
+          }
+        }
+      ]
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "code"],
+      "properties": {
+        "phase": {
+          "enum": [
+            "preflight",
+            "catalogue",
+            "baseline-pull",
+            "baseline-collision",
+            "baseline-cleanup",
+            "replacement-pull",
+            "replacement-provenance",
+            "replacement-runtime",
+            "resource-suite",
+            "external-apply",
+            "cleanup",
+            "evidence"
+          ]
+        },
+        "code": {
+          "enum": [
+            "invalid-invocation",
+            "prerequisite-unavailable",
+            "invalid-catalogue",
+            "pull-failed",
+            "digest-mismatch",
+            "historical-collision-not-reproduced",
+            "cleanup-failed",
+            "source-proof-mismatch",
+            "runtime-metadata-mismatch",
+            "resource-contract-failed",
+            "external-apply-failed",
+            "evidence-invalid",
+            "interrupted"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "phase": { "const": "preflight" } } },
+          "then": {
+            "properties": {
+              "code": { "enum": ["invalid-invocation", "prerequisite-unavailable", "interrupted"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "catalogue" } } },
+          "then": { "properties": { "code": { "enum": ["invalid-catalogue", "interrupted"] } } }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "baseline-pull" } } },
+          "then": {
+            "properties": { "code": { "enum": ["pull-failed", "digest-mismatch", "interrupted"] } }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "baseline-collision" } } },
+          "then": {
+            "properties": {
+              "code": { "enum": ["historical-collision-not-reproduced", "interrupted"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "baseline-cleanup" } } },
+          "then": { "properties": { "code": { "enum": ["cleanup-failed", "interrupted"] } } }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "replacement-pull" } } },
+          "then": {
+            "properties": { "code": { "enum": ["pull-failed", "digest-mismatch", "interrupted"] } }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "replacement-provenance" } } },
+          "then": { "properties": { "code": { "enum": ["source-proof-mismatch", "interrupted"] } } }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "replacement-runtime" } } },
+          "then": {
+            "properties": { "code": { "enum": ["runtime-metadata-mismatch", "interrupted"] } }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "resource-suite" } } },
+          "then": {
+            "properties": { "code": { "enum": ["resource-contract-failed", "interrupted"] } }
+          }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "external-apply" } } },
+          "then": { "properties": { "code": { "enum": ["external-apply-failed", "interrupted"] } } }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "cleanup" } } },
+          "then": { "properties": { "code": { "enum": ["cleanup-failed", "interrupted"] } } }
+        },
+        {
+          "if": { "properties": { "phase": { "const": "evidence" } } },
+          "then": { "properties": { "code": { "enum": ["evidence-invalid", "interrupted"] } } }
+        }
+      ]
+    }
+  }
+}

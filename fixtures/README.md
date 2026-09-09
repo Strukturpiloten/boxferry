@@ -54,7 +54,8 @@ validates all three catalogues before pulling anything.
 All 48 installed-build cells are digest-pinned. Forty-three execute the complete live-resource
 suite. Five UBI/openSUSE rootless images prove a specific `newuidmap` helper failure and make
 no resource-coverage claim. Delete those limitation rows when corrected images initialize
-nested rootless Podman. The nine-cell smoke profile spans the finite 3.0.1 through 6.1 parser
+nested rootless Podman. The [live-catalogue guide](conformance/podman-live/) defines replacement
+revalidation and admission. The nine-cell smoke profile spans the finite 3.0.1 through 6.1 parser
 boundaries and both root modes; version-independent policy checks run once on 6.1 rootful.
 Evidence is labelled `smoke` or `full`.
 
