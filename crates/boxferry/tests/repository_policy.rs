@@ -602,6 +602,8 @@ fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> 
         "BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY",
         "paperless_capture_candidate",
         "capture sanitized Podman CLI Paperless evidence candidate",
+        "TemporaryDirectory(prefix=\"bfcap-\", dir=\"/tmp\")",
+        "listener.settimeout(2)",
         "captured-native-sanitized-candidate",
         "Raw requests and responses were never written",
         "paperless_cleanup_mode",

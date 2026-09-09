@@ -1274,8 +1274,12 @@ def self_test() -> None:
     else:
         raise AssertionError("oversized request was accepted")
 
-    with tempfile.TemporaryDirectory(prefix="boxferry-capture-self-test-") as root_text:
+    # Darwin limits AF_UNIX paths to 104 bytes and its default temporary root is
+    # already long. Keep the self-test root explicit and short on both supported
+    # Unix families so the two bounded proxy sockets exercise the same contract.
+    with tempfile.TemporaryDirectory(prefix="bfcap-", dir="/tmp") as root_text:
         root = Path(root_text)
+        assert len(os.fsencode(root / "record-proxy.sock")) < 104
         repository = root / "repository"
         repository.mkdir(mode=0o700)
         (repository / "fixtures/conformance/paperless-ngx-application").mkdir(
@@ -1404,6 +1408,7 @@ def self_test() -> None:
                 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
                     listener.bind(str(upstream_socket))
                     listener.listen(1)
+                    listener.settimeout(2)
                     upstream_ready.set()
                     connection, _ = listener.accept()
                     with connection:
