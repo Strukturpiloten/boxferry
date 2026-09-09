@@ -1023,7 +1023,7 @@ paperless_capture_candidate() {
 paperless_clear_probe_state() {
   local outer=$1 prefix=$2
   engine_operation 'remove disposable Paperless document probe state' \
-    exec "${outer}" rm -rf -- "/tmp/boxferry-fixture/${prefix}/probe-state.json" \
+    exec "${outer}" podman unshare rm -rf -- "/tmp/boxferry-fixture/${prefix}/probe-state.json" \
     "/tmp/boxferry-fixture/${prefix}/generated-baseline" \
     "/tmp/boxferry-fixture/${prefix}/generated-second"
 }

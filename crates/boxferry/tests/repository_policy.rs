@@ -450,6 +450,55 @@ fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn paperless_probe_cleanup_enters_the_exact_rootless_user_namespace() -> Result<(), String> {
+    let root = repository_root();
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            r#"
+set -euo pipefail
+source "$1"
+engine_operation() {
+  printf '%s\0' "$@"
+}
+paperless_clear_probe_state outer safe-prefix
+"#,
+            "paperless-cleanup-contract",
+        ])
+        .arg(root.join("scripts/lib/paperless-application.sh"))
+        .current_dir(&root)
+        .output()
+        .map_err(|error| format!("failed to exercise Paperless cleanup helper: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Paperless cleanup helper failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let mut expected = [
+        "remove disposable Paperless document probe state",
+        "exec",
+        "outer",
+        "podman",
+        "unshare",
+        "rm",
+        "-rf",
+        "--",
+        "/tmp/boxferry-fixture/safe-prefix/probe-state.json",
+        "/tmp/boxferry-fixture/safe-prefix/generated-baseline",
+        "/tmp/boxferry-fixture/safe-prefix/generated-second",
+    ]
+    .join("\0")
+    .into_bytes();
+    expected.push(0);
+    if output.stdout != expected {
+        return Err("Paperless cleanup must pass only the reviewed rootless namespace argv".to_owned());
+    }
+    Ok(())
+}
+
 fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> {
     for contract in [
         "--profile <smoke|full-container|application|forgejo-application|paperless-application>",
