@@ -563,8 +563,21 @@ impl<'a> Mapping<'a> {
             );
         }
         if let Some(workdir) = service.working_directory() {
-            let path = AbsoluteContainerPath::new(workdir.value().expose())?;
-            container.settings_mut().set_workdir(ContainerWorkdir::new(path))?;
+            let spelling = workdir.value().expose();
+            let normalized = if spelling.len() > 1 {
+                spelling.trim_end_matches('/')
+            } else {
+                spelling
+            };
+            match AbsoluteContainerPath::new(normalized)
+                .and_then(|path| container.settings_mut().set_workdir(ContainerWorkdir::new(path)))
+            {
+                Ok(()) => {}
+                Err(_) => self.unsupported(
+                    format!("services.{}.working_directory", service.name().as_str()),
+                    "PodmanLens requires a normalized absolute container working directory",
+                ),
+            }
         }
         if let Some(hostname) = service.hostname() {
             container
@@ -572,10 +585,15 @@ impl<'a> Mapping<'a> {
                 .set_hostname(ContainerHostname::new(hostname.value().expose())?)?;
         }
         for label in service.labels() {
-            container.settings_mut().add_label(Label::new(
-                LabelKey::new(label.value().name().as_str())?,
-                PublicLabelValue::new(label.value().value().expose())?,
-            ))?;
+            let label = label.value();
+            let key = LabelKey::new(label.name().as_str())?;
+            match PublicLabelValue::new(label.value().expose()) {
+                Ok(value) => container.settings_mut().add_label(Label::new(key, value))?,
+                Err(_) => self.unsupported(
+                    format!("services.{}.labels.{}", service.name().as_str(), label.name().as_str()),
+                    "PodmanLens cannot render this label value within its bounded public-value contract",
+                ),
+            }
         }
         let mut environments = service.environment().iter().collect::<Vec<_>>();
         environments.sort_by(|left, right| left.value().name().as_str().cmp(right.value().name().as_str()));

@@ -4,10 +4,10 @@ use std::{collections::BTreeSet, error::Error};
 
 use boxferry_engine::{ConversionKind, ExportAdapter, LossPolicy, PlatformVersion, Severity, TargetProfile};
 use boxferry_model::{
-    Application, EnvironmentValue, EnvironmentVariable, Identifier, ImageReference, Mount, MountSource, Network,
-    NetworkAttachment, NetworkIpamConfig, ProtectedString, Provenance, ResourceOwnership, RetainedNativeEvidence,
-    RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, SelinuxRelabel, Service, ServiceGroup, SourceId,
-    SourceSpan, Sourced,
+    Application, EnvironmentValue, EnvironmentVariable, Identifier, ImageReference, MetadataLabel, Mount, MountSource,
+    Network, NetworkAttachment, NetworkIpamConfig, ProtectedString, Provenance, ResourceOwnership,
+    RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, SelinuxRelabel, Service,
+    ServiceGroup, SourceId, SourceSpan, Sourced,
 };
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanTargetError, resolve_podman_target, reviewed_podman_versions,
@@ -520,6 +520,70 @@ fn generated_podman_environment_is_key_sorted() -> Result<(), Box<dyn Error>> {
         .collect::<Vec<_>>();
 
     assert_eq!(assignments, ["ALPHA=a", "MIDDLE=m", "ZETA=z"]);
+    Ok(())
+}
+
+#[test]
+fn image_defaults_are_normalized_or_reported_as_partial_losses() -> Result<(), Box<dyn Error>> {
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.set_working_directory(Sourced::generated(ProtectedString::plain("/srv/app/")));
+    service.add_label(Sourced::generated(MetadataLabel::new(
+        Identifier::new("org.opencontainers.image.description")?,
+        ProtectedString::sensitive("private-multiline-label-canary\nsecond line"),
+    )));
+    service.add_label(Sourced::generated(MetadataLabel::new(
+        Identifier::new("org.opencontainers.image.title")?,
+        ProtectedString::plain("web"),
+    )));
+
+    let mut application = Application::new(Identifier::new("image-defaults")?);
+    application.add_service(Sourced::generated(service))?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let exporter = PodmanExporter::new()?.with_execution_context(TargetExecutionContext::Rootless);
+    assert!(
+        exporter
+            .plan(&application, &target)?
+            .authorize(LossPolicy::ExactOnly)
+            .output()
+            .is_none()
+    );
+    let plan = exporter.plan(&application, &target)?;
+
+    assert!(plan.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0007"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "subject"
+                    && field.value().redacted() == "services.web.labels.org.opencontainers.image.description"
+            })
+    }));
+    assert!(!format!("{plan:?}").contains("private-multiline-label-canary"));
+
+    let authorized = plan.authorize(LossPolicy::AllowPartial);
+    let output = authorized.output().ok_or("partial Podman output expected")?;
+    let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+    let argv = deployment["operations"]
+        .as_array()
+        .and_then(|operations| {
+            operations.iter().find_map(|operation| {
+                (operation["action"] == "create" && operation["resource"]["kind"] == "container")
+                    .then(|| operation["cli"]["argv"].as_array())
+                    .flatten()
+            })
+        })
+        .ok_or("container create argv")?;
+
+    assert!(
+        argv.windows(2)
+            .any(|arguments| { arguments[0] == "--workdir" && arguments[1].as_str() == Some("/srv/app") })
+    );
+    for rendered in [output.deployment_json(), output.commands_shell()] {
+        assert!(!rendered.contains("/srv/app/"));
+        assert!(!rendered.contains("org.opencontainers.image.description"));
+        assert!(!rendered.contains("private-multiline-label-canary"));
+        assert!(!rendered.contains("second line"));
+        assert!(rendered.contains("org.opencontainers.image.title"));
+    }
     Ok(())
 }
 
