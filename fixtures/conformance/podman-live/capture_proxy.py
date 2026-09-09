@@ -30,7 +30,7 @@ SOCKET_TIMEOUT_SECONDS = 30
 CASSETTE_NAME = "paperless-ngx-6.1.0-rootless.cassette.json"
 MANIFEST_NAME = "capture-manifest-6.1.0-rootless.json"
 CHECKSUM_NAME = "SHA256SUMS"
-SANITIZER_VERSION = 1
+SANITIZER_VERSION = 2
 PODMAN_REVISION = "cade97a52ebdf9dbf9e81de8009015776837a074"
 MATRIX_SHA256 = "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25"
 RUNTIME_IMAGE = (
@@ -315,6 +315,28 @@ class Sanitizer:
             self.references[value] = f"fixture-reference-paperless-{ordinal:02d}"
         return self.references[value]
 
+    @staticmethod
+    def _redact_unreviewed_url(match: re.Match[str]) -> str:
+        candidate = match.group(0)
+        if candidate in REVIEWED_IMAGE_METADATA_URLS:
+            return candidate
+        try:
+            parsed = urlsplit(candidate)
+        except ValueError:
+            return "<redacted-endpoint>"
+        if parsed.username or parsed.password:
+            return "<redacted-endpoint>"
+        if parsed.hostname in {
+            "127.0.0.1",
+            "localhost",
+            "broker",
+            "db",
+            "gotenberg",
+            "tika",
+        }:
+            return candidate
+        return "<redacted-endpoint>"
+
     def _replace_private_paths(self, value: str) -> str:
         while True:
             lowered = value.casefold()
@@ -365,6 +387,10 @@ class Sanitizer:
             "<redacted-endpoint>",
             value,
         )
+        # Image inspection can expose inherited Dockerfile history, including
+        # build-time download endpoints that are irrelevant to replay. Preserve
+        # only reviewed image metadata and fixed application-local endpoints.
+        value = URL.sub(self._redact_unreviewed_url, value)
         value = re.sub(
             r"(?i)\b(?:bearer|basic)\s+[^\s\"']+",
             "<redacted-authorization>",
@@ -1055,6 +1081,9 @@ def sanitizer_policy_self_test() -> None:
                 "--chromium-allow-list=file:///tmp/.*",
                 "/tmp/boxferry-fixture/run-123-paper:/fixture:rw",
             ],
+            "BuildHistory": (
+                'RUN wget "https://www.python.org/ftp/python/${PYTHON_VERSION}/source.tar.xz"'
+            ),
         },
         "Addresses": ["10.88.0.2", "fd00::2", "aa:bb:cc:dd:ee:ff"],
     }
@@ -1075,6 +1104,7 @@ def sanitizer_policy_self_test() -> None:
         "--chromium-allow-list=file:///fixture-tmp/.*",
         "/sanitized/fixture-root:/fixture:rw",
     ]
+    assert sanitized["Config"]["BuildHistory"] == 'RUN wget "<redacted-endpoint>"'
     assert sanitized["Addresses"][0].startswith("192.0.2.")
     assert sanitized["Addresses"][1].startswith("2001:db8::")
     assert sanitized["Addresses"][2].startswith("02:00:00:00:00:")
@@ -1464,6 +1494,7 @@ def self_test() -> None:
         }
         cassette = json.loads((record_output / CASSETTE_NAME).read_text())
         manifest_bytes = (record_output / MANIFEST_NAME).read_bytes()
+        assert json.loads(manifest_bytes)["sanitizer_version"] == SANITIZER_VERSION
         provenance = cassette["provenance"]
         assert cassette["synthetic"] is False
         assert "sanitizer_version" not in cassette
