@@ -127,14 +127,12 @@ BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
 sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" scripts/podman-live-conformance.sh --profile forgejo-application --engine podman
 ```
 
-The `paperless-application` profile is bounded to `podman-6.1-rootless` and a 60-minute job.
-It independently provisions the five-service converter-enabled topology with native Podman and
-Docker Compose 5.5.0. Deterministic PDF, DOCX, and ODT inputs must complete asynchronous ingestion,
-search, original retrieval, and office-to-PDF conversion. PostgreSQL rows, Valkey activity, private
-service networking, storage permissions, collision refusal, and volume-preserving recreation are
-checked resources: at least two CPUs, 6 GiB available memory, and 12 GiB free space on both the
-temporary archive and Podman graph-root filesystems. Five compressed OCI archives are bundled under
-a reviewed 2.5 GiB cap.
+The `paperless-application` profile is bounded to `podman-6.1-rootless` and 60 minutes. It provisions
+the five-service converter topology with native Podman and Docker Compose 5.5.0. Deterministic PDF,
+DOCX, and ODT inputs must complete ingestion, search, retrieval, and office-to-PDF conversion.
+Checks cover PostgreSQL, Valkey, private networking, storage permissions, collision refusal, and
+volume-preserving recreation. The runner requires two CPUs, 6 GiB memory, and 12 GiB free space;
+five compressed OCI archives remain below 2.5 GiB.
 
 ```console
 cargo build --locked --package boxferry --bin boxferry --features podman
@@ -142,11 +140,10 @@ BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose"
 sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$BOXFERRY_COMPOSE_BIN" bash scripts/podman-live-conformance.sh --profile paperless-application --matrix-cell podman-6.1-rootless --engine podman
 ```
 
-Set `BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY` only for a local, one-off native-evidence candidate. The
-hook accepts a nonexistent candidate below a caller-owned private outside-repository parent, creates
-and holds it through no-follow directory descriptors, writes only sanitized candidates, and
-requires privacy review. Pull requests leave it unset; the manual `paperless-capture` dispatch emits a
-one-day sanitized candidate artifact. No captured Paperless fixture is checked in.
+Set `BOXFERRY_PAPERLESS_CAPTURE_DIRECTORY` only for a local, one-off native-evidence candidate below
+a caller-owned private parent outside the repository. The no-follow hook writes only sanitized
+candidates requiring privacy review. Pull requests leave it unset; manual `paperless-capture`
+dispatch retains its artifact for one day. No captured Paperless fixture is checked in.
 
 The complete profile runs all reviewed rootful and rootless cells:
 

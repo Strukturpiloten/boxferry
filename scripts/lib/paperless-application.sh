@@ -187,6 +187,7 @@ paperless_prepare_application_target() {
   engine_operation 'prepare rootless Paperless network configuration' \
     exec "${outer}" /bin/sh -ceu \
     'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"'
+  # shellcheck disable=SC2016 # $HOME expands inside the nested target.
   timed_operation 15m 'load digest-pinned Paperless application archives' \
     "${engine}" exec "${outer}" /bin/sh -ceu '
       directory=/tmp/boxferry-paperless-images
@@ -480,8 +481,7 @@ paperless_assert_application_boundaries() {
   local db_host="${prefix}-paper-db"
   local gotenberg_host="${prefix}-paper-gotenberg"
   local tika_host="${prefix}-paper-tika"
-  [[ "$(paperless_remote "${socket}" port "${prefix}-paper-web" 8000/tcp)" == \
-    "127.0.0.1:${PAPERLESS_HTTP_PORT}" ]]
+  [[ "$(paperless_remote "${socket}" port "${prefix}-paper-web" 8000/tcp)" == "127.0.0.1:${PAPERLESS_HTTP_PORT}" ]]
   local private
   for private in db broker gotenberg tika; do
     [[ -z "$(paperless_remote "${socket}" port "${prefix}-paper-${private}")" ]]
@@ -548,12 +548,14 @@ paperless_assert_application_boundaries() {
 
 paperless_assert_storage_permissions() {
   local socket=$1 prefix=$2
+  # shellcheck disable=SC2016 # $path expands inside the application container.
   paperless_remote "${socket}" exec "${prefix}-paper-web" /bin/sh -ceu '
     for path in /usr/src/paperless/data /usr/src/paperless/media /usr/src/paperless/consume /usr/src/paperless/export; do
       test "$(stat -c "%u:%g" "$path")" = 1000:1000
       test -z "$(find "$path" -maxdepth 0 -perm -0002 -print -quit)"
     done
   '
+  # shellcheck disable=SC2016 # $path expands inside the application container.
   paperless_remote "${socket}" exec --user 1000:1000 "${prefix}-paper-web" /bin/sh -ceu '
     for path in /usr/src/paperless/data /usr/src/paperless/media /usr/src/paperless/consume /usr/src/paperless/export; do
       test -r "$path" && test -w "$path"
@@ -586,29 +588,20 @@ paperless_recreate_application() {
 
 paperless_assert_output_membership() {
   local selection=$1 output=$2 directory=$3 prefix=$4
-    assert_named_member "${output}" "${directory}" webserver "${prefix}-paper-web"
-    assert_resource_member "${output}" "${directory}" network "${prefix}-paper-backend"
-    assert_resource_member "${output}" "${directory}" network "${prefix}-paper-edge"
+  assert_named_member "${output}" "${directory}" webserver "${prefix}-paper-web"
+  assert_resource_member "${output}" "${directory}" network "${prefix}-paper-backend"
+  assert_resource_member "${output}" "${directory}" network "${prefix}-paper-edge"
   local volume
   for volume in data media consume export; do
     assert_resource_member "${output}" "${directory}" volume "${prefix}-paper-${volume}"
   done
-  if [[ "${selection}" == exact ]]; then
-    local private
-    for private in db broker gotenberg tika; do
-      assert_named_absent "${output}" "${directory}" "${private}" "${prefix}-paper-${private}"
-    done
-    assert_resource_absent "${output}" "${directory}" volume "${prefix}-paper-pgdata"
-    assert_resource_absent "${output}" "${directory}" volume "${prefix}-paper-redisdata"
-  else
-    assert_named_member "${output}" "${directory}" db "${prefix}-paper-db"
-    assert_named_member "${output}" "${directory}" broker "${prefix}-paper-broker"
-    assert_named_member "${output}" "${directory}" gotenberg "${prefix}-paper-gotenberg"
-    assert_named_member "${output}" "${directory}" tika "${prefix}-paper-tika"
-    for volume in pgdata redisdata; do
-      assert_resource_member "${output}" "${directory}" volume "${prefix}-paper-${volume}"
-    done
-  fi
+  assert_named_member "${output}" "${directory}" db "${prefix}-paper-db"
+  assert_named_member "${output}" "${directory}" broker "${prefix}-paper-broker"
+  assert_named_member "${output}" "${directory}" gotenberg "${prefix}-paper-gotenberg"
+  assert_named_member "${output}" "${directory}" tika "${prefix}-paper-tika"
+  for volume in pgdata redisdata; do
+    assert_resource_member "${output}" "${directory}" volume "${prefix}-paper-${volume}"
+  done
 }
 
 paperless_assert_export_publication() {
@@ -801,11 +794,9 @@ paperless_assert_podman_omissions() {
     PAPERLESS_TIME_ZONE PAPERLESS_OCR_LANGUAGE USERMAP_UID USERMAP_GID; do
     subjects+=("services.${prefix}-paper-web.environment.${key}")
   done
-  if [[ "${selection}" != exact ]]; then
-    for key in POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD; do
-      subjects+=("services.${prefix}-paper-db.environment.${key}")
-    done
-  fi
+  for key in POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD; do
+    subjects+=("services.${prefix}-paper-db.environment.${key}")
+  done
 
   for subject in "${subjects[@]}"; do
     jq --exit-status --arg subject "${subject}" '
@@ -929,24 +920,22 @@ paperless_assert_output_semantics() {
   done
   paperless_assert_export_publication "${output}" "${directory}" "${prefix}"
   paperless_assert_export_networks "${output}" "${directory}" "${prefix}"
-  if [[ "${selection}" != exact ]]; then
-    for literal in \
-      "$(paperless_image_reference postgres)" \
-      "$(paperless_image_reference valkey)" \
-      "$(paperless_image_reference gotenberg)" \
-      "$(paperless_image_reference tika)"; do
-      grep --recursive --fixed-strings --quiet -- "${literal}" "${directory}"
-    done
-    for volume in pgdata redisdata; do
-      grep --recursive --fixed-strings --quiet -- "${prefix}-paper-${volume}" "${directory}"
-    done
-    grep --recursive --fixed-strings --quiet -- '/var/lib/postgresql' "${directory}"
-    grep --recursive --fixed-strings --quiet -- '/data' "${directory}"
-    grep --recursive --fixed-strings --quiet -- 'POSTGRES_PASSWORD=' "${directory}"
-    grep --recursive --fixed-strings --quiet -- '--requirepass' "${directory}"
-    grep --recursive --fixed-strings --quiet -- '--chromium-disable-javascript=true' "${directory}"
-    grep --recursive --fixed-strings --quiet -- '--chromium-allow-list=file:///tmp/.*' "${directory}"
-  fi
+  for literal in \
+    "$(paperless_image_reference postgres)" \
+    "$(paperless_image_reference valkey)" \
+    "$(paperless_image_reference gotenberg)" \
+    "$(paperless_image_reference tika)"; do
+    grep --recursive --fixed-strings --quiet -- "${literal}" "${directory}"
+  done
+  for volume in pgdata redisdata; do
+    grep --recursive --fixed-strings --quiet -- "${prefix}-paper-${volume}" "${directory}"
+  done
+  grep --recursive --fixed-strings --quiet -- '/var/lib/postgresql' "${directory}"
+  grep --recursive --fixed-strings --quiet -- '/data' "${directory}"
+  grep --recursive --fixed-strings --quiet -- 'POSTGRES_PASSWORD=' "${directory}"
+  grep --recursive --fixed-strings --quiet -- '--requirepass' "${directory}"
+  grep --recursive --fixed-strings --quiet -- '--chromium-disable-javascript=true' "${directory}"
+  grep --recursive --fixed-strings --quiet -- '--chromium-allow-list=file:///tmp/.*' "${directory}"
 }
 
 paperless_run_exports() {
@@ -1044,7 +1033,7 @@ paperless_verify_target() {
     printf 'Pulled image digest does not match reviewed Paperless target %s.\n' "${id}" >&2
     return 1
   }
-  [[ "${architecture}" == amd64 && \
+  [[ "${architecture}" == amd64 &&
     "$(< "${artifact_root}/${id}.architecture")" =~ ^(x86_64|amd64)$ ]] || {
     printf 'Observed architecture does not match Paperless target %s.\n' "${id}" >&2
     return 1

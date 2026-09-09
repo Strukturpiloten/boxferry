@@ -1955,58 +1955,7 @@ fn six_independent_mutations_fail_for_their_own_reason() -> Result<(), Box<dyn E
     Ok(())
 }
 
-#[test]
-fn paperless_required_environment_overrides_and_omissions_fail_closed() -> Result<(), Box<dyn Error>> {
-    let root = repository_root();
-    let base_fixture = root.join("fixtures/scenarios/paperless-ngx-application");
-    let base_manifest = read_manifest(&base_fixture)?;
-    let base_source = fs::read_to_string(base_fixture.join("compose.yaml"))?;
-
-    let missing_environment = TemporaryDirectory::new("paperless-missing-environment")?;
-    fs::write(missing_environment.path().join("compose.yaml"), &base_source)?;
-    let input = compose_mutation_input(Vec::new(), Vec::new());
-    match import_compose_files(&input, missing_environment.path(), &base_manifest.application.name) {
-        Err(error) => assert!(
-            error.to_string().contains("required") || error.to_string().contains("interpol"),
-            "unexpected missing-environment importer failure: {error}"
-        ),
-        Ok(missing) => {
-            let error = validate_neutral_application(
-                &base_manifest,
-                missing.application().ok_or("Paperless missing-environment import")?,
-                &base_manifest.semantics.required_environment_order,
-                &[],
-            )
-            .err()
-            .ok_or("required Paperless interpolation values must fail closed")?;
-            assert!(
-                error.contains("required environment"),
-                "unexpected missing-environment failure: {error}"
-            );
-        }
-    }
-
-    let override_fixture = TemporaryDirectory::new("paperless-environment-override")?;
-    fs::write(override_fixture.path().join("compose.yaml"), &base_source)?;
-    let mut defaults = parse_scenario_environment_file(&base_fixture.join("paperless.env.example"))?;
-    let task_workers = defaults
-        .iter_mut()
-        .find(|assignment| assignment.starts_with("PAPERLESS_TASK_WORKERS="))
-        .ok_or("Paperless task-worker default")?;
-    *task_workers = "PAPERLESS_TASK_WORKERS=2".into();
-    fs::write(
-        override_fixture.path().join("defaults.env"),
-        format!("{}\n", defaults.join("\n")),
-    )?;
-    let input = compose_mutation_input(vec!["defaults.env".into()], vec!["PAPERLESS_TASK_WORKERS=1".into()]);
-    let imported = import_compose_files(&input, override_fixture.path(), &base_manifest.application.name)?;
-    validate_neutral_application(
-        &base_manifest,
-        imported.application().ok_or("Paperless override import")?,
-        &base_manifest.semantics.required_environment_order,
-        &[],
-    )?;
-
+fn assert_paperless_semantic_omissions(root: &Path) -> Result<(), Box<dyn Error>> {
     for (scenario, name, needle, expected) in [
         (
             "paperless-ngx-application",
@@ -2078,6 +2027,62 @@ fn paperless_required_environment_overrides_and_omissions_fail_closed() -> Resul
         .ok_or("Paperless semantic mutation must fail")?;
         assert!(error.contains(expected), "{name} failed for wrong reason: {error}");
     }
+    Ok(())
+}
+
+#[test]
+fn paperless_required_environment_overrides_and_omissions_fail_closed() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let base_fixture = root.join("fixtures/scenarios/paperless-ngx-application");
+    let base_manifest = read_manifest(&base_fixture)?;
+    let base_source = fs::read_to_string(base_fixture.join("compose.yaml"))?;
+
+    let missing_environment = TemporaryDirectory::new("paperless-missing-environment")?;
+    fs::write(missing_environment.path().join("compose.yaml"), &base_source)?;
+    let input = compose_mutation_input(Vec::new(), Vec::new());
+    match import_compose_files(&input, missing_environment.path(), &base_manifest.application.name) {
+        Err(error) => assert!(
+            error.to_string().contains("required") || error.to_string().contains("interpol"),
+            "unexpected missing-environment importer failure: {error}"
+        ),
+        Ok(missing) => {
+            let error = validate_neutral_application(
+                &base_manifest,
+                missing.application().ok_or("Paperless missing-environment import")?,
+                &base_manifest.semantics.required_environment_order,
+                &[],
+            )
+            .err()
+            .ok_or("required Paperless interpolation values must fail closed")?;
+            assert!(
+                error.contains("required environment"),
+                "unexpected missing-environment failure: {error}"
+            );
+        }
+    }
+
+    let override_fixture = TemporaryDirectory::new("paperless-environment-override")?;
+    fs::write(override_fixture.path().join("compose.yaml"), &base_source)?;
+    let mut defaults = parse_scenario_environment_file(&base_fixture.join("paperless.env.example"))?;
+    let task_workers = defaults
+        .iter_mut()
+        .find(|assignment| assignment.starts_with("PAPERLESS_TASK_WORKERS="))
+        .ok_or("Paperless task-worker default")?;
+    *task_workers = "PAPERLESS_TASK_WORKERS=2".into();
+    fs::write(
+        override_fixture.path().join("defaults.env"),
+        format!("{}\n", defaults.join("\n")),
+    )?;
+    let input = compose_mutation_input(vec!["defaults.env".into()], vec!["PAPERLESS_TASK_WORKERS=1".into()]);
+    let imported = import_compose_files(&input, override_fixture.path(), &base_manifest.application.name)?;
+    validate_neutral_application(
+        &base_manifest,
+        imported.application().ok_or("Paperless override import")?,
+        &base_manifest.semantics.required_environment_order,
+        &[],
+    )?;
+
+    assert_paperless_semantic_omissions(&root)?;
 
     Ok(())
 }

@@ -303,7 +303,21 @@ class Sanitizer:
             if secret in rendered:
                 raise CaptureError("sanitized output retains a protected canary")
         for candidate in URL.findall(rendered):
-            parsed = urlsplit(candidate.rstrip(",.;)]}"))
+            candidate = candidate.rstrip(",.;)]}")
+            reviewed_source = candidate in {
+                (
+                    "https://github.com/containers/podman/tree/"
+                    f"{PODMAN_REVISION}/pkg/api/handlers/libpod"
+                ),
+                "https://github.com/Strukturpiloten/boxferry",
+            } or re.fullmatch(
+                r"https://github\.com/Strukturpiloten/boxferry/blob/"
+                r"[0-9a-f]{40}/fixtures/conformance/podman-live/matrix\.tsv",
+                candidate,
+            )
+            if reviewed_source:
+                continue
+            parsed = urlsplit(candidate)
             if parsed.username or parsed.password:
                 raise CaptureError("sanitized output retains URL credentials")
             if parsed.hostname not in {
@@ -540,7 +554,6 @@ def build_artifacts(
             "addresses, timestamps, request IDs, and protected values are normalized. "
             "Raw bytes were retained only in memory. Human privacy review is required."
         ),
-        "sanitizer_version": SANITIZER_VERSION,
         "interactions": sanitized,
     }
     sanitizer.verify(cassette)
@@ -571,7 +584,43 @@ def build_artifacts(
             "must not enter the repository before independent privacy and provenance review."
         ),
     }
-    return json_bytes(cassette), json_bytes(manifest)
+    manifest_bytes = json_bytes(manifest)
+    source_sha256 = manifest["source_sha256"]
+    cassette["provenance"] = {
+        "evidence_kind": "privacy-review-required-one-off-native-capture",
+        "release_tag": "v6.1.0",
+        "revision": PODMAN_REVISION,
+        "source_urls": [
+            (
+                "https://github.com/containers/podman/tree/"
+                f"{PODMAN_REVISION}/pkg/api/handlers/libpod"
+            ),
+            (
+                "https://github.com/Strukturpiloten/boxferry/blob/"
+                f"{revision}/fixtures/conformance/podman-live/matrix.tsv"
+            ),
+        ],
+        "capture": {
+            "engine_build": {
+                "kind": "source-build",
+                "source_revision": PODMAN_REVISION,
+            },
+            "runtime_image": runtime_image,
+            "capture_manifest_sha256": sha256_bytes(manifest_bytes),
+            "runtime_repository": "https://github.com/Strukturpiloten/boxferry",
+            "runtime_revision": revision,
+            "runtime_matrix_cell": "podman-6.1-rootless",
+            "runtime_matrix_sha256": MATRIX_SHA256,
+            "setup_script_sha256": source_sha256[
+                "scripts/lib/paperless-application.sh"
+            ],
+            "request_recorder_source_sha256": source_sha256[
+                "fixtures/conformance/podman-live/capture_proxy.py"
+            ],
+        },
+    }
+    sanitizer.verify(cassette)
+    return json_bytes(cassette), manifest_bytes
 
 
 def emit_artifacts(output: OutputDirectory, cassette: bytes, manifest: bytes) -> None:
@@ -832,6 +881,12 @@ def self_test() -> None:
                 pass
             else:
                 raise AssertionError("recursive forbidden field was accepted")
+        try:
+            sanitizer.verify({"url": "https://github.com/private/repository"})
+        except CaptureError:
+            pass
+        else:
+            raise AssertionError("unreviewed GitHub source URL was accepted")
 
         interaction, _ = sanitize_interaction(
             sanitizer,
@@ -935,6 +990,34 @@ def self_test() -> None:
             MANIFEST_NAME,
             CHECKSUM_NAME,
         }
+        cassette = json.loads((record_output / CASSETTE_NAME).read_text())
+        manifest_bytes = (record_output / MANIFEST_NAME).read_bytes()
+        provenance = cassette["provenance"]
+        assert cassette["synthetic"] is False
+        assert "sanitizer_version" not in cassette
+        assert provenance["evidence_kind"] == (
+            "privacy-review-required-one-off-native-capture"
+        )
+        assert provenance["source_urls"] == [
+            (
+                "https://github.com/containers/podman/tree/"
+                f"{PODMAN_REVISION}/pkg/api/handlers/libpod"
+            ),
+            (
+                "https://github.com/Strukturpiloten/boxferry/blob/"
+                f"{provenance['capture']['runtime_revision']}"
+                "/fixtures/conformance/podman-live/matrix.tsv"
+            ),
+        ]
+        assert provenance["capture"]["capture_manifest_sha256"] == (
+            sha256_bytes(manifest_bytes)
+        )
+        expected_checksums = (
+            f"{sha256_bytes((record_output / CASSETTE_NAME).read_bytes())}  "
+            f"{CASSETTE_NAME}\n"
+            f"{sha256_bytes(manifest_bytes)}  {MANIFEST_NAME}\n"
+        )
+        assert (record_output / CHECKSUM_NAME).read_text() == expected_checksums
 
         rejected_proxy_path = root / "rejected-proxy.sock"
         rejected_proxy = Proxy(rejected_proxy_path, root / "unused-upstream.sock")

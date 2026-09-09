@@ -285,7 +285,24 @@ fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_paperless_live_runner(runner: &str) -> Result<(), String> {
+    for required in [
+        "paperless-ngx/paperless-ngx:3.1.3@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
+        "valkey/valkey:9.1.2-alpine@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
+        "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
+        "gotenberg/gotenberg:8.34.0@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
+        "apache/tika:3.3.1.0@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
+        "transient-test-pull",
+    ] {
+        if !runner.contains(required) {
+            return Err(format!("Paperless live runner is missing `{required}`"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_live_runner(runner: &str) -> Result<(), String> {
+    validate_paperless_live_runner(runner)?;
     for required in [
         "--podman-resource-prefix",
         "--podman-label",
@@ -337,11 +354,6 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "pull_policy: never",
         "forgejo/forgejo:16.0.3-rootless@sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685",
         "alpine/git:v2.54.0@sha256:6f3b5029566da8e90b24945933dcd806be866b64b1e706f51828bf84faccf21b",
-        "paperless-ngx/paperless-ngx:3.1.3@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
-        "valkey/valkey:9.1.2-alpine@sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
-        "postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
-        "gotenberg/gotenberg:8.34.0@sha256:67097317623a503ba2a6a7e9ae8db6929a1f7e1bbd88077bacf2d325fbdab923",
-        "apache/tika:3.3.1.0@sha256:90b7fa1dc018434075fce9e1d9b88b1e3d0ea6979d0cf86e116c79a8073ae973",
         "php -r '$$s=json_decode",
         "nextcloud:32.0.10-apache@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
         "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
@@ -349,7 +361,6 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
         "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
         "downloaded-test-tool",
-        "transient-test-pull",
         ".versionstring == \"32.0.10\"",
     ] {
         if !runner.contains(required) {

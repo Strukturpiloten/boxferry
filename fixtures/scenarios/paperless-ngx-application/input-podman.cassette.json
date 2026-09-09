@@ -10,12 +10,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "libpod-api-version",
-            "6.1.0"
-          ]
-        ],
+        "headers": [["libpod-api-version", "6.1.0"]],
         "body": null
       }
     },
@@ -26,12 +21,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Components": [
             {
@@ -49,30 +39,19 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": [
           {
             "Id": "c-broker",
-            "Names": [
-              "broker"
-            ]
+            "Names": ["broker"]
           },
           {
             "Id": "c-db",
-            "Names": [
-              "db"
-            ]
+            "Names": ["db"]
           },
           {
             "Id": "c-webserver",
-            "Names": [
-              "webserver"
-            ]
+            "Names": ["webserver"]
           }
         ]
       }
@@ -84,12 +63,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": []
       }
     },
@@ -100,12 +74,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": [
           {
             "id": "n-backend",
@@ -121,12 +90,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Volumes": [
             {
@@ -158,12 +122,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": [
           {
             "Id": "sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
@@ -193,12 +152,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": []
       }
     },
@@ -209,12 +163,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Id": "c-broker",
           "Name": "broker",
@@ -251,12 +200,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Id": "c-db",
           "Name": "db",
@@ -298,22 +242,14 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Id": "c-webserver",
           "Name": "webserver",
           "Image": "sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
           "ImageName": "ghcr.io/paperless-ngx/paperless-ngx@sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
           "Pod": "",
-          "Dependencies": [
-            "c-broker",
-            "c-db"
-          ],
+          "Dependencies": ["c-broker", "c-db"],
           "Config": {
             "Entrypoint": "",
             "Env": [
@@ -389,12 +325,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "id": "n-backend",
           "name": "backend",
@@ -421,12 +352,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Name": "consume",
           "Driver": "local",
@@ -441,12 +367,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Name": "data",
           "Driver": "local",
@@ -461,12 +382,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Name": "export",
           "Driver": "local",
@@ -481,12 +397,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Name": "media",
           "Driver": "local",
@@ -501,12 +412,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Name": "pgdata",
           "Driver": "local",
@@ -521,12 +427,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Name": "redisdata",
           "Driver": "local",
@@ -541,12 +442,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Id": "sha256:a0dbf4c1d5708782907c10e2c72deff317518518b5288a58416981d9db95d30b",
           "RepoDigests": [
@@ -562,12 +458,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Id": "sha256:aa810a36942c63d4ee70d00eda7236cd3d6acfb7eb3f7987fb568ed14df8817a",
           "RepoDigests": [
@@ -583,12 +474,7 @@
       },
       "response": {
         "status": 200,
-        "headers": [
-          [
-            "content-type",
-            "application/json"
-          ]
-        ],
+        "headers": [["content-type", "application/json"]],
         "body": {
           "Id": "sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2",
           "RepoDigests": [
