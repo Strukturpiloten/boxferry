@@ -330,6 +330,8 @@ fn validate_podman_revalidation_candidates(
         "candidate-image",
         "expected-podman-version",
         "expected-distribution",
+        "expected-baseline-observed-distribution",
+        "expected-replacement-observed-distribution",
         "expected-mode",
         "expected-lane",
         "expected-architecture",
@@ -420,6 +422,24 @@ fn validate_podman_revalidation_candidates(
         }
 
         let distribution = field("expected-distribution")?;
+        for name in [
+            "expected-baseline-observed-distribution",
+            "expected-replacement-observed-distribution",
+        ] {
+            let observed = field(name)?;
+            if !observed_distribution_matches(distribution, observed) {
+                return Err(format!(
+                    "Podman revalidation candidate {id}.{name} is outside {distribution}"
+                ));
+            }
+        }
+        if distribution == "opensuse-tumbleweed"
+            && field("expected-baseline-observed-distribution")? == field("expected-replacement-observed-distribution")?
+        {
+            return Err(format!(
+                "Podman revalidation candidate {id} must distinguish Tumbleweed snapshots"
+            ));
+        }
         let expected_source_paths = BTreeMap::from([
             ("image-definition", format!("images/podman/{id}/container.yaml")),
             (
@@ -492,6 +512,22 @@ fn is_lower_hex(value: &str) -> bool {
 
 fn is_lower_sha256(value: &str) -> bool {
     value.len() == 64 && is_lower_hex(value)
+}
+
+fn observed_distribution_matches(expected: &str, observed: &str) -> bool {
+    match expected {
+        "opensuse-leap-16.0" => observed == "opensuse-leap-16.0",
+        "opensuse-tumbleweed" => {
+            let Some(snapshot) = observed.strip_prefix("opensuse-tumbleweed-") else {
+                return false;
+            };
+            snapshot.len() == 8 && snapshot.bytes().all(|byte| byte.is_ascii_digit())
+        }
+        "ubi-8" => observed == "ubi-8.10",
+        "ubi-9" => observed == "ubi-9.8",
+        "ubi-10" => observed == "ubi-10.2",
+        _ => false,
+    }
 }
 
 fn validate_live_scenarios(scenarios: &str) -> Result<(), String> {
@@ -739,6 +775,9 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         "for exporter in compose quadlet podman; do",
         "mark_revalidation_result \"selector_exporters.${selection}.${exporter}\"",
         "Historical limitation %s is stale: rootless Podman initialized.",
+        "'.[\"org.opencontainers.image.created\"]'",
+        "\"${observed_distribution}\" == \"${candidate_baseline_observed_distribution}\"",
+        "\"${observed_distribution}\" == \"${candidate_replacement_observed_distribution}\"",
         "Candidate reused the historical outer runtime identity.",
         "Candidate reused the historical socket namespace.",
         "Candidate reused the historical graph-root identity.",
@@ -750,6 +789,34 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
             return Err(format!("Podman limitation-revalidation runner is missing `{required}`"));
         }
     }
+    for forbidden in [
+        "image inspect --format '{{.Created}}'",
+        "date -u -d \"${observed_timestamp}\"",
+    ] {
+        if runner.contains(forbidden) {
+            return Err(format!(
+                "Podman limitation-revalidation runner retains ambiguous timestamp parsing `{forbidden}`"
+            ));
+        }
+    }
+
+    let prepare_start = runner
+        .find("prepare_matrix_image() {")
+        .ok_or("Podman live runner is missing matrix image preparation")?;
+    let prepare_end = runner[prepare_start..]
+        .find("\nstart_outer_runtime() {")
+        .ok_or("Podman live runner is missing matrix image preparation boundary")?
+        + prepare_start;
+    require_ordered_contracts(
+        &runner[prepare_start..prepare_end],
+        "Podman limitation-revalidation digest classification",
+        &[
+            "local classify_revalidation_digest=${3:-false}",
+            "if [[ \"${resolved_digest}\" != \"${expected_digest}\" ]]; then",
+            "revalidation_failure_code=\"digest-mismatch\"",
+            "Resolved matrix image digest mismatch for %s",
+        ],
+    )?;
 
     let baseline_start = runner
         .find("run_revalidation_baseline_collision() {")
@@ -769,6 +836,19 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
             ));
         }
     }
+    require_ordered_contracts(
+        baseline,
+        "Podman limitation-revalidation baseline classification",
+        &[
+            "revalidation_phase=\"baseline-pull\"",
+            "revalidation_failure_code=\"pull-failed\"",
+            "prepare_matrix_image \"${id}\" \"${image}\" true",
+            "revalidation_phase=\"baseline-metadata\"",
+            "record_revalidation_observation baseline.observed.distribution",
+            "revalidation_phase=\"baseline-collision\"",
+            "exec \"${outer}\" podman info",
+        ],
+    )?;
 
     for result in [
         "baseline.historical_collision.podman_info_failed",
@@ -816,6 +896,7 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
     for (phase, code) in [
         ("catalogue", "invalid-catalogue"),
         ("baseline-pull", "pull-failed"),
+        ("baseline-metadata", "baseline-metadata-mismatch"),
         ("baseline-collision", "historical-collision-not-reproduced"),
         ("baseline-cleanup", "cleanup-failed"),
         ("replacement-pull", "pull-failed"),
@@ -841,7 +922,9 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         "Podman limitation-revalidation runner",
         &[
             "run_revalidation_baseline_collision \"${candidate_cell}\"",
-            "prepare_matrix_image \"${candidate_cell}\" \"${candidate_replacement_image}\"",
+            "revalidation_phase=\"replacement-pull\"",
+            "revalidation_failure_code=\"pull-failed\"",
+            "prepare_matrix_image \"${candidate_cell}\" \"${candidate_replacement_image}\" true",
             "verify_revalidation_candidate_provenance",
             "run_cell \"${candidate_cell}\" \"${candidate_replacement_image}\"",
             "mark_revalidation_result cleanup.replacement_removed",
@@ -1858,6 +1941,22 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
             catalogue.replacen("schema = 1", "schema = true", 1),
         ),
         ("missing candidate", catalogue[..last_candidate].to_owned()),
+        (
+            "cross-wired Tumbleweed baseline snapshot",
+            catalogue.replacen(
+                "expected-baseline-observed-distribution = \"opensuse-tumbleweed-20260821\"",
+                "expected-baseline-observed-distribution = \"opensuse-tumbleweed-20260904\"",
+                1,
+            ),
+        ),
+        (
+            "observed distribution outside declared family",
+            catalogue.replacen(
+                "expected-baseline-observed-distribution = \"ubi-8.10\"",
+                "expected-baseline-observed-distribution = \"ubi-9.8\"",
+                1,
+            ),
+        ),
         (
             "cross-wired source path",
             catalogue.replacen(

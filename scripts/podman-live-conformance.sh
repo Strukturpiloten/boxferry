@@ -446,6 +446,8 @@ candidate_baseline_image=""
 candidate_replacement_image=""
 candidate_version=""
 candidate_distribution=""
+candidate_baseline_observed_distribution=""
+candidate_replacement_observed_distribution=""
 candidate_mode=""
 candidate_lane=""
 candidate_architecture=""
@@ -897,7 +899,8 @@ if [[ "${profile}" == limitation-revalidation ]]; then
       --format tsv
   )"
   IFS=$'\t' read -r candidate_cell candidate_baseline_image candidate_replacement_image \
-    candidate_version candidate_distribution candidate_mode candidate_lane candidate_architecture \
+    candidate_version candidate_distribution candidate_baseline_observed_distribution \
+    candidate_replacement_observed_distribution candidate_mode candidate_lane candidate_architecture \
     candidate_limitation candidate_published_at candidate_source_repository candidate_source_revision \
     candidate_source_license candidate_redistribution <<< "${candidate_record}"
   [[ -n "${candidate_redistribution}" ]] || {
@@ -1290,6 +1293,7 @@ prepare_workload_archive() {
 
 prepare_matrix_image() {
   local id=$1 image=$2
+  local classify_revalidation_digest=${3:-false}
   local expected_digest="${image##*@}"
   local resolved_digest cache_status=0
   engine_image_available "probe ${id} image cache" "${image}" || cache_status=$?
@@ -1309,6 +1313,9 @@ prepare_matrix_image() {
     return "${cache_status}"
   fi
   if [[ "${resolved_digest}" != "${expected_digest}" ]]; then
+    if [[ "${classify_revalidation_digest}" == true ]]; then
+      revalidation_failure_code="digest-mismatch"
+    fi
     printf 'Resolved matrix image digest mismatch for %s: expected %s, observed %s\n' \
       "${id}" "${expected_digest}" "${resolved_digest}" >&2
     return 1
@@ -1983,13 +1990,11 @@ verify_revalidation_candidate_provenance() {
   local image=$1 expected_source=$2 expected_revision=$3 expected_license=$4 expected_timestamp=$5
   local labels observed_source observed_revision observed_license observed_timestamp
   labels="$(engine_operation 'inspect replacement image provenance labels' \
-    image inspect --format '{{json .Labels}}' "${image}")"
-  observed_source="$(jq -er '.["org.opencontainers.image.source"]' <<< "${labels}")"
-  observed_revision="$(jq -er '.["org.opencontainers.image.revision"]' <<< "${labels}")"
-  observed_license="$(jq -er '.["org.opencontainers.image.licenses"]' <<< "${labels}")"
-  observed_timestamp="$(engine_operation 'inspect replacement image creation timestamp' \
-    image inspect --format '{{.Created}}' "${image}")"
-  observed_timestamp="$(date -u -d "${observed_timestamp}" '+%Y-%m-%dT%H:%M:%SZ')"
+    image inspect --format '{{json .Labels}}' "${image}")" || return 1
+  observed_source="$(jq -er '.["org.opencontainers.image.source"]' <<< "${labels}")" || return 1
+  observed_revision="$(jq -er '.["org.opencontainers.image.revision"]' <<< "${labels}")" || return 1
+  observed_license="$(jq -er '.["org.opencontainers.image.licenses"]' <<< "${labels}")" || return 1
+  observed_timestamp="$(jq -er '.["org.opencontainers.image.created"]' <<< "${labels}")" || return 1
   [[ "${observed_source}" == "${expected_source}" &&
     "${observed_revision}" == "${expected_revision}" &&
     "${observed_license}" == "${expected_license}" &&
@@ -2363,13 +2368,12 @@ run_revalidation_baseline_collision() {
   chmod 0777 "${baseline_socket_namespace}"
   revalidation_phase="baseline-pull"
   revalidation_failure_code="pull-failed"
-  prepare_matrix_image "${id}" "${image}"
-  revalidation_failure_code="digest-mismatch"
+  prepare_matrix_image "${id}" "${image}" true
   [[ "$(< "${artifact_root}/${id}.digest")" == "${expected_digest}" ]]
   record_revalidation_observation baseline.observed_digest "${image##*@sha256:}"
 
-  revalidation_phase="baseline-collision"
-  revalidation_failure_code="historical-collision-not-reproduced"
+  revalidation_phase="baseline-metadata"
+  revalidation_failure_code="baseline-metadata-mismatch"
   outer_digest="$(printf '%s' "revalidation-baseline-${id}" | sha256sum)"
   outer="${run_id:0:32}-baseline-${outer_digest:0:12}"
   outer_containers+=("${outer}")
@@ -2420,7 +2424,12 @@ run_revalidation_baseline_collision() {
     return 1
   }
   observed_distribution="$(revalidation_observed_distribution \
-    "${candidate_distribution}" "${baseline_case}/distribution")"
+    "${candidate_distribution}" "${baseline_case}/distribution")" || return 1
+  [[ "${observed_distribution}" == "${candidate_baseline_observed_distribution}" ]] || {
+    printf 'Historical limitation image %s distribution mismatch: expected %s, observed %s.\n' \
+      "${id}" "${candidate_baseline_observed_distribution}" "${observed_distribution}" >&2
+    return 1
+  }
   observed_version="$(awk '{ print $3 }' "${baseline_case}/podman-version")"
   observed_version="${observed_version%-rhel}"
   record_revalidation_observation baseline.observed.podman_version "${observed_version}"
@@ -2431,6 +2440,9 @@ run_revalidation_baseline_collision() {
     "$(< "${baseline_case}/architecture")"
   record_revalidation_observation baseline.observed.uid "$(< "${baseline_case}/uid")"
   record_revalidation_observation baseline.observed.rootless true
+
+  revalidation_phase="baseline-collision"
+  revalidation_failure_code="historical-collision-not-reproduced"
   if timeout --signal=TERM --kill-after=10s 90s \
     "${engine}" exec "${outer}" podman info \
     > "${baseline_case}/podman-info.stdout" 2> "${baseline_case}/podman-info.stderr"; then
@@ -2539,7 +2551,7 @@ run_limitation_revalidation() {
 
   revalidation_phase="replacement-pull"
   revalidation_failure_code="pull-failed"
-  prepare_matrix_image "${candidate_cell}" "${candidate_replacement_image}"
+  prepare_matrix_image "${candidate_cell}" "${candidate_replacement_image}" true
   record_revalidation_observation replacement.observed_digest \
     "${candidate_replacement_image##*@sha256:}"
   revalidation_phase="replacement-provenance"
@@ -2572,7 +2584,13 @@ run_limitation_revalidation() {
   observed_version="$(awk '{ print $3 }' "${artifact_root}/${candidate_cell}.podman-version")"
   observed_version="${observed_version%-rhel}"
   observed_distribution="$(revalidation_observed_distribution \
-    "${candidate_distribution}" "${artifact_root}/${candidate_cell}.distribution")"
+    "${candidate_distribution}" "${artifact_root}/${candidate_cell}.distribution")" || return 1
+  [[ "${observed_distribution}" == "${candidate_replacement_observed_distribution}" ]] || {
+    printf 'Replacement image %s distribution mismatch: expected %s, observed %s.\n' \
+      "${candidate_cell}" "${candidate_replacement_observed_distribution}" \
+      "${observed_distribution}" >&2
+    return 1
+  }
   [[ "${observed_version}" == "${candidate_version}" ]]
   [[ "$(< "${artifact_root}/${candidate_cell}.rootless")" == true ]]
   [[ "$(< "${artifact_root}/${candidate_cell}.source-revision")" == "${candidate_source_revision}" ]]
