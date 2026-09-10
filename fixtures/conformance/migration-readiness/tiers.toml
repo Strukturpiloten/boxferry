@@ -1,0 +1,298 @@
+schema = 1
+evidence-schema = "docs/schemas/migration-readiness-evidence-v1.schema.json"
+
+[[gaps]]
+id = "observability-stack"
+state = "planned"
+reason = "Prometheus, Grafana, and Loki application behavior is tracked by BoxFerry issue #139 and is not current migration evidence."
+
+[[gaps]]
+id = "supabase-runtime"
+state = "planned"
+reason = "Supabase runtime behavior is tracked by BoxFerry issue #140; its offline source fixture is not a successful runtime migration."
+
+[[gaps]]
+id = "gpu"
+state = "not-executed"
+reason = "GPU acceleration and Immich machine-learning inference are outside the CPU-only reviewed application contract."
+
+[[gaps]]
+id = "virtual-machine"
+state = "not-executed"
+reason = "No virtual-machine lane is admitted; all live evidence comes from bounded disposable containers on one Linux host."
+
+[[gaps]]
+id = "selinux-enforcing-runtime"
+state = "not-executed"
+reason = "SELinux mount intent is checked, but no enforcing-host runtime effect is claimed."
+
+[[gaps]]
+id = "booted-systemd"
+state = "not-executed"
+reason = "Pinned Quadlet generators are exercised without booting systemd or starting generated units."
+
+[[tiers]]
+id = "offline"
+description = "Deterministic authored applications and captured Podman inventories through every importer and exporter contract."
+max-concurrency = 1
+tier-deadline-seconds = 1200
+manual-prerequisites = []
+tasks = ["offline-application-contracts"]
+
+[[tiers]]
+id = "trusted-live"
+description = "Small trusted rootful/rootless Podman API boundary and genuine Forgejo migration set."
+max-concurrency = 1
+tier-deadline-seconds = 2700
+manual-prerequisites = [
+  "Linux amd64",
+  "root privileges",
+  "Podman",
+  "network access for digest-pinned reviewed images",
+  "BOXFERRY_BIN naming a freshly built binary",
+  "BOXFERRY_COMPOSE_BIN naming Docker Compose 5.5.0 with the reviewed SHA-256",
+]
+tasks = [
+  "podman-api-5.4-rootless",
+  "podman-api-6.1-rootful",
+  "podman-api-6.1-rootless",
+  "forgejo-root-modes",
+]
+
+[[tiers]]
+id = "pre-release"
+description = "Exact-revision release evidence: offline contracts, complete reviewed Podman matrix, expensive applications, and candidate Lens consumers."
+max-concurrency = 1
+tier-deadline-seconds = 19800
+manual-prerequisites = [
+  "all trusted-live prerequisites",
+  "at least 8 GiB available RAM",
+  "at least 12 GiB free temporary and Podman graph-root space",
+  "Git network access to the exact reviewed Lens revisions",
+]
+tasks = [
+  "offline-application-contracts",
+  "podman-complete-matrix",
+  "nextcloud-application",
+  "forgejo-root-modes",
+  "paperless-application",
+  "immich-application",
+  "compose-lens-candidate",
+  "quadlet-lens-candidate",
+]
+
+[[tasks]]
+id = "offline-application-contracts"
+kind = "command"
+privileged = false
+workload = "reviewed-scenario-catalogue"
+sources = ["compose", "podman-cassette", "quadlet"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "Each scenario.toml evidence row and its exact expected.*.losses.tsv file."
+runtime-claim = "not-applicable"
+deadline-seconds = 900
+minimum-memory-mib = 2048
+minimum-disk-mib = 4096
+maximum-rss-mib = 4096
+maximum-disk-growth-mib = 4096
+required-tools = ["cargo", "git"]
+command = [
+  "cargo",
+  "test",
+  "--locked",
+  "--package",
+  "boxferry",
+  "--test",
+  "scenario_contract",
+  "authored_scenarios_execute_every_exporter_and_record_independent_evidence",
+  "--",
+  "--exact",
+  "--nocapture",
+]
+
+[[tasks]]
+id = "podman-api-5.4-rootless"
+kind = "command"
+privileged = true
+workload = "podman-live-core"
+sources = ["podman-api-5.4.2-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
+runtime-claim = "read-only acquisition and exporter contracts"
+deadline-seconds = 600
+minimum-memory-mib = 2048
+minimum-disk-mib = 8192
+maximum-rss-mib = 4096
+maximum-disk-growth-mib = 6144
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "smoke", "--matrix-cell", "podman-5.4-rootless", "--engine", "podman"]
+
+[[tasks]]
+id = "podman-api-6.1-rootful"
+kind = "command"
+privileged = true
+workload = "podman-live-core"
+sources = ["podman-api-6.1.0-rootful"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
+runtime-claim = "read-only acquisition, exporter, and disposable apply/reacquire contracts"
+deadline-seconds = 900
+minimum-memory-mib = 2048
+minimum-disk-mib = 8192
+maximum-rss-mib = 4096
+maximum-disk-growth-mib = 6144
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "smoke", "--matrix-cell", "podman-6.1-rootful", "--engine", "podman"]
+
+[[tasks]]
+id = "podman-api-6.1-rootless"
+kind = "command"
+privileged = true
+workload = "podman-live-core"
+sources = ["podman-api-6.1.0-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
+runtime-claim = "read-only acquisition and exporter contracts"
+deadline-seconds = 600
+minimum-memory-mib = 2048
+minimum-disk-mib = 8192
+maximum-rss-mib = 4096
+maximum-disk-growth-mib = 6144
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "smoke", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
+
+[[tasks]]
+id = "podman-complete-matrix"
+kind = "command"
+privileged = true
+workload = "podman-live-core"
+sources = ["all digest-pinned container cells in fixtures/conformance/podman-live/matrix.tsv"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
+runtime-claim = "complete reviewed container distribution and root-mode matrix"
+deadline-seconds = 10800
+minimum-memory-mib = 4096
+minimum-disk-mib = 12288
+maximum-rss-mib = 8192
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "full-container", "--engine", "podman"]
+
+[[tasks]]
+id = "nextcloud-application"
+kind = "command"
+privileged = true
+workload = "nextcloud"
+sources = ["native-podman", "docker-compose-5.5.0", "podman-api-6.1.0-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "reviewed application assertions in scripts/lib/nextcloud-application.sh"
+runtime-claim = "WebDAV, database/cache use, HTTP publication, selection, persistence, and cleanup"
+deadline-seconds = 3600
+minimum-memory-mib = 6144
+minimum-disk-mib = 12288
+maximum-rss-mib = 8192
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
+
+[[tasks]]
+id = "forgejo-root-modes"
+kind = "command"
+privileged = true
+workload = "forgejo"
+sources = ["native-podman", "docker-compose-5.5.0", "podman-6.1.0-rootful", "podman-6.1.0-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "reviewed application assertions in scripts/lib/forgejo-application.sh"
+runtime-claim = "HTTP and SSH Git operations, private database, selectors, persistence, and cleanup"
+deadline-seconds = 1800
+minimum-memory-mib = 4096
+minimum-disk-mib = 12288
+maximum-rss-mib = 6144
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "forgejo-application", "--engine", "podman"]
+
+[[tasks]]
+id = "paperless-application"
+kind = "command"
+privileged = true
+workload = "paperless-ngx"
+sources = ["native-podman", "docker-compose-5.5.0", "podman-api-6.1.0-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "reviewed application assertions in scripts/lib/paperless-application.sh"
+runtime-claim = "PDF/DOCX/ODT processing, search, retrieval, persistence, boundaries, and cleanup"
+deadline-seconds = 3600
+minimum-memory-mib = 6144
+minimum-disk-mib = 12288
+maximum-rss-mib = 8192
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "paperless-application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
+
+[[tasks]]
+id = "immich-application"
+kind = "command"
+privileged = true
+workload = "immich-cpu-only"
+sources = ["native-podman", "docker-compose-5.5.0", "podman-api-6.1.0-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "reviewed application assertions in scripts/lib/immich-application.sh"
+runtime-claim = "PNG upload, metadata/derivatives, retrieval, persistence, boundaries, and cleanup; no ML inference"
+deadline-seconds = 3600
+minimum-memory-mib = 8192
+minimum-disk-mib = 12288
+maximum-rss-mib = 10240
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "immich-application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
+
+[[tasks]]
+id = "compose-lens-candidate"
+kind = "lens-consumer"
+privileged = false
+workload = "compose-lens-native-application-contracts"
+sources = ["BoxFerry-reviewed Nextcloud and Forgejo definitions"]
+targets = ["compose-lens candidate native processing API"]
+approved-losses = "not-applicable; native contracts fail on semantic drift"
+runtime-claim = "not-applicable; provider runtime behavior remains in the live application tasks"
+deadline-seconds = 1200
+minimum-memory-mib = 2048
+minimum-disk-mib = 4096
+maximum-rss-mib = 4096
+maximum-disk-growth-mib = 4096
+required-tools = ["cargo", "git"]
+lens = "compose-lens"
+repository = "https://github.com/Strukturpiloten/compose-lens.git"
+revision = "44c9b6a4c72e8ea0db2cd2d2c73f2bf4d07b6a0e"
+commands = [["cargo", "ci-application"]]
+
+[[tasks]]
+id = "quadlet-lens-candidate"
+kind = "lens-consumer"
+privileged = true
+workload = "quadlet-lens-native-application-contracts"
+sources = ["BoxFerry-reviewed Nextcloud and Forgejo unit sets"]
+targets = ["quadlet-lens candidate parser", "podman-6.1.0 pinned Quadlet generator"]
+approved-losses = "not-applicable; native and generator contracts fail on semantic drift"
+runtime-claim = "generator dry-run only; booted systemd and generated-unit execution remain gaps"
+deadline-seconds = 3600
+minimum-memory-mib = 4096
+minimum-disk-mib = 8192
+maximum-rss-mib = 6144
+maximum-disk-growth-mib = 6144
+required-tools = ["cargo", "git", "podman"]
+lens = "quadlet-lens"
+repository = "https://github.com/Strukturpiloten/quadlet-lens.git"
+revision = "3a8c8b42a0187fe4000b8553ffc78b701d7290f6"
+commands = [
+  ["cargo", "ci-application"],
+  ["cargo", "ci-application-generators"],
+]

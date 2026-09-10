@@ -1745,8 +1745,8 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     if hosted.contains("schedule:") {
         return Err("live Podman workflow must not schedule nightly runs".to_owned());
     }
-    if !hosted.contains("pull_request:") || !hosted.contains("workflow_dispatch:") {
-        return Err("hosted live Podman workflow must provide PR smoke and manual execution".to_owned());
+    if hosted.contains("\n  pull_request:") || !hosted.contains("workflow_dispatch:") {
+        return Err("hosted live Podman workflow must be manual-only after tier orchestration".to_owned());
     }
     for required in [
         "build-boxferry:",
@@ -2833,7 +2833,7 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: PR gate\n    if: always()",
-        "needs:\n      [\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        portability,\n      ]",
+        "needs:\n      [\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        portability,\n        migration-readiness,\n      ]",
     ] {
         if !workflow.contains(required) {
             return Err(format!("CI workflow is missing contract `{required}`"));
@@ -2858,6 +2858,11 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         ("SemVer", "SEMVER_RESULT", "semver"),
         ("Coverage ratchet", "COVERAGE_RESULT", "coverage"),
         ("macOS portability", "PORTABILITY_RESULT", "portability"),
+        (
+            "Offline migration readiness",
+            "MIGRATION_READINESS_RESULT",
+            "migration-readiness",
+        ),
     ] {
         let (job_name, result_variable, needs_job) = job;
         let required = format!("{result_variable}: ${{{{ needs.{needs_job}.result }}}}");
@@ -3794,7 +3799,7 @@ fn maintainer_documentation_is_small_and_has_one_current_inventory() -> Result<(
         ("docs/development-environment.md", 800),
         ("docs/platform-support.md", 400),
         ("docs/releasing.md", 700),
-        ("docs/testing.md", 1_200),
+        ("docs/testing.md", 1_300),
         ("fixtures/README.md", 1_000),
     ] {
         let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;

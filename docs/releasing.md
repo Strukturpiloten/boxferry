@@ -15,8 +15,12 @@ Breaking pre-1.0 changes use `!`, a minor version, and concise migration notes.
 1. Merge release-worthy code after local and hosted gates pass.
 2. Review the release-plz PR, lockstep versions, internal requirements, and changelog.
 3. Merge the release PR.
-4. Run the protected release workflow for its version.
-5. Verify crates.io packages, checksums, tag, GitHub release, and installation.
+4. Run `migration-readiness.yml` with `pre-release` on that exact default-branch SHA and retain its
+   successful evidence artifact. The catalogue tier deadline leaves a margin before the workflow
+   job timeout so failed or unfinished tasks can still be recorded and uploaded.
+5. Run the protected release workflow for that same SHA. Publication is blocked unless the shared
+   helper validates successful pre-release evidence whose embedded revision matches exactly.
+6. Verify crates.io packages, checksums, tag, GitHub release, and installation.
 
 Release notes come only from `CHANGELOG.md`. The PR gate runs its validator as a dedicated job
 required by the aggregate gate. Yank a version only when it is unsafe or unusable.

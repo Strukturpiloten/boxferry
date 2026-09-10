@@ -42,6 +42,7 @@ active table; superseded records are history and are read only when that history
 
 | [0045](0045-bounded-immich-media-processing-acceptance.md) | Bounded Immich CPU-only media-processing live acceptance |
 | [0046](0046-bounded-podman-limitation-revalidation.md) | Same-run immutable Podman limitation revalidation and separate admission |
+| [0047](0047-bounded-migration-readiness-tiers.md) | Offline, trusted-live, and exact-revision pre-release evidence gates |
 
 ## Superseded history
 
