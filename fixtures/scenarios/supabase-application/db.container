@@ -1,0 +1,8 @@
+[Container]
+
+Image=docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+Environment=POSTGRES_DB=postgres
+Environment=POSTGRES_USER=postgres
+Environment=POSTGRES_PASSWORD=boxferry-public-supabase-db-password
+Volume=pgdata.volume:/var/lib/postgresql/data
+Network=backend.network

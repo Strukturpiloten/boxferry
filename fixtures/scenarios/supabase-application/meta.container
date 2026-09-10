@@ -1,0 +1,11 @@
+[Unit]
+
+Requires=db.service
+After=db.service
+
+[Container]
+
+Image=docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300
+Environment=PG_META_DB_HOST=db
+Environment=PG_META_DB_NAME=postgres
+Network=backend.network

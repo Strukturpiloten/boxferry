@@ -1,0 +1,13 @@
+[Unit]
+
+Requires=db.service
+After=db.service
+
+[Container]
+
+Image=docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120
+Environment=SUPABASE_DB_URL=postgresql://postgres:boxferry-public-supabase-db-password@db:5432/postgres
+Environment=SUPABASE_URL=http://kong:8000
+Environment=VERIFY_JWT=false
+Volume=deno-cache.volume:/root/.cache/deno
+Network=backend.network

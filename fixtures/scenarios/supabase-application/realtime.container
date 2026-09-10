@@ -1,0 +1,12 @@
+[Unit]
+
+Requires=db.service
+After=db.service
+
+[Container]
+
+Image=docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471
+Environment=DB_HOST=db
+Environment=DB_NAME=postgres
+Environment=DB_PASSWORD=boxferry-public-supabase-db-password
+Network=backend.network

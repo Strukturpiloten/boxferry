@@ -1,0 +1,14 @@
+[Unit]
+
+Requires=db.service rest.service imgproxy.service
+After=db.service rest.service imgproxy.service
+
+[Container]
+
+Image=docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf
+Environment=DATABASE_URL=postgres://supabase_storage_admin:boxferry-public-supabase-db-password@db:5432/postgres
+Environment=POSTGREST_URL=http://rest:3000
+Environment=IMGPROXY_URL=http://imgproxy:5001
+Environment=STORAGE_BACKEND=file
+Volume=storage.volume:/var/lib/storage
+Network=backend.network

@@ -1,0 +1,7 @@
+[Container]
+
+Image=docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d
+Environment=IMGPROXY_BIND=:5001
+Environment=IMGPROXY_LOCAL_FILESYSTEM_ROOT=/
+Volume=storage.volume:/var/lib/storage:ro
+Network=backend.network

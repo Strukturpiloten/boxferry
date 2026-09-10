@@ -34,7 +34,6 @@ SAMPLE_INTERVAL_SECONDS = 0.25
 SAMPLE_INTERVAL_MILLISECONDS = 250
 CATALOGUE_KEYS = {"schema", "evidence-schema", "gaps", "tiers", "tasks"}
 GAP_IDS = {
-    "supabase-runtime",
     "gpu",
     "virtual-machine",
     "selinux-enforcing-runtime",
@@ -52,6 +51,7 @@ TASK_IDS = {
     "paperless-application",
     "immich-application",
     "observability-application",
+    "supabase-application",
     "compose-lens-candidate",
     "quadlet-lens-candidate",
 }
@@ -486,7 +486,6 @@ def load_catalogue(path: pathlib.Path = CATALOGUE) -> dict[str, Any]:
     for task in tasks:
         validate_task(task)
     required_gaps = {
-        "supabase-runtime",
         "gpu",
         "virtual-machine",
         "selinux-enforcing-runtime",
@@ -1325,8 +1324,8 @@ def validate_evidence(
         if task["state"] != "passed" and not task.get("reason"):
             raise ContractError("non-success evidence task lacks a reason")
     gaps = value.get("gaps")
-    if not isinstance(gaps, list) or len(gaps) != 5:
-        raise ContractError("evidence must retain all five explicit gaps")
+    if not isinstance(gaps, list) or len(gaps) != 4:
+        raise ContractError("evidence must retain all four explicit gaps")
     if any(gap.get("state") not in {"planned", "not-executed"} for gap in gaps):
         raise ContractError("evidence converted an explicit gap into success")
     expected_success = (

@@ -207,7 +207,7 @@ fn scenario_catalogue_is_explicit_bounded_and_sidecar_ready() -> Result<(), Box<
     let root = repository_root();
     let catalogue: ScenarioCatalogue = toml::from_str(&fs::read_to_string(root.join(SCENARIO_CATALOGUE))?)?;
     let registered = validate_scenario_catalogue(&root, &catalogue)?;
-    assert_eq!(registered.len(), 32);
+    assert_eq!(registered.len(), 33);
     assert!(is_scenario_manifest_name(
         Path::new("fixtures/conversion/document-route-matrix/document-route-normal.scenario.toml"),
         "document-route-normal"
@@ -2623,6 +2623,34 @@ fn protected_values_are_explicit_and_required_environment_stays_observable() -> 
         .err()
         .ok_or("empty protected values must fail schema validation")?;
     assert!(error.contains("protected values must be non-empty"));
+    Ok(())
+}
+
+#[test]
+fn scenario_network_membership_counterfactual_detects_extra_attachment() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/supabase-application");
+    let manifest = read_manifest(&fixture)?;
+    let source = fs::read_to_string(fixture.join("compose.yaml"))?;
+    let mutation = source.replacen(
+        "      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres\n    networks: [backend]",
+        "      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres\n    networks: [backend, edge]",
+        1,
+    );
+    assert_ne!(source, mutation, "counterfactual must attach Auth to edge");
+    let imported = import_compose(&mutation, &manifest.application.name)?;
+
+    let error = validate_neutral_application(
+        &manifest,
+        imported.application().ok_or("Supabase application")?,
+        &[],
+        &[],
+    )
+    .err()
+    .ok_or("counterfactual extra network attachment must fail")?;
+    assert!(
+        error.contains("network-memberships:auth:expected=backend:actual=backend,edge"),
+        "extra network attachment failed for wrong reason: {error}"
+    );
     Ok(())
 }
 

@@ -151,6 +151,7 @@ class MigrationReadinessTests(unittest.TestCase):
                 "paperless-application",
                 "immich-application",
                 "observability-application",
+                "supabase-application",
                 "compose-lens-candidate",
                 "quadlet-lens-candidate",
             ],
@@ -172,12 +173,50 @@ class MigrationReadinessTests(unittest.TestCase):
             self.assertEqual([task["id"] for task in plan["tasks"]], tasks)
             self.assertEqual(plan["max_concurrency"], 1)
             self.assertEqual(plan["tier_deadline_seconds"], tier_deadlines[tier])
-            self.assertEqual(len(plan["gaps"]), 5)
+            self.assertEqual(len(plan["gaps"]), 4)
             self.assertFalse(any(gap["state"] == "passed" for gap in plan["gaps"]))
+
+    def test_supabase_task_retains_reviewed_bounds_and_runner_command(self) -> None:
+        catalogue = MODULE.load_catalogue()
+        task = MODULE.by_id(catalogue["tasks"], "supabase-application", "task")
+        tier = MODULE.by_id(catalogue["tiers"], "pre-release", "tier")
+
+        self.assertTrue(task["privileged"])
+        self.assertIn("at least 4 CPUs", tier["manual-prerequisites"])
+        self.assertEqual(
+            task["sources"],
+            [
+                "native-podman",
+                "docker-compose-5.5.0",
+                "podman-api-6.1.0-rootless",
+            ],
+        )
+        self.assertEqual(task["deadline-seconds"], 5400)
+        self.assertEqual(task["minimum-memory-mib"], 12288)
+        self.assertEqual(task["minimum-disk-mib"], 24576)
+        self.assertEqual(task["maximum-rss-mib"], 14336)
+        self.assertEqual(task["maximum-disk-growth-mib"], 20480)
+        self.assertEqual(task["required-tools"], ["podman"])
+        self.assertEqual(
+            task["required-environment"], ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
+        )
+        self.assertEqual(
+            task["command"],
+            [
+                "bash",
+                "scripts/podman-live-conformance.sh",
+                "--profile",
+                "supabase-application",
+                "--matrix-cell",
+                "podman-6.1-rootless",
+                "--engine",
+                "podman",
+            ],
+        )
 
     def test_catalogue_rejects_a_successful_gap(self) -> None:
         source = MODULE.CATALOGUE.read_text(encoding="utf-8")
-        changed = source.replace('state = "planned"', 'state = "passed"', 1)
+        changed = source.replace('state = "not-executed"', 'state = "passed"', 1)
         self.assert_catalogue_rejected(changed, "successful state")
 
     def test_catalogue_shape_rejects_unknown_missing_and_mistyped_fields(self) -> None:
@@ -196,11 +235,11 @@ class MigrationReadinessTests(unittest.TestCase):
             "missing top-level": source.replace("schema = 1\n", "", 1),
             "mistyped top-level": source.replace("schema = 1", 'schema = "1"', 1),
             "unknown gap": source.replace(
-                'id = "supabase-runtime"',
-                'id = "supabase-runtime"\nunknown-gap = true',
+                'id = "gpu"',
+                'id = "gpu"\nunknown-gap = true',
                 1,
             ),
-            "mistyped gap": source.replace('state = "planned"', "state = 1", 1),
+            "mistyped gap": source.replace('state = "not-executed"', "state = 1", 1),
             "missing tier deadline": source.replace(
                 "tier-deadline-seconds = 1200\n", "", 1
             ),
@@ -711,9 +750,9 @@ class MigrationReadinessTests(unittest.TestCase):
             if call.args[2] in {"PASS", "FAIL", "GAP"}
         ]
         self.assertEqual(status, 1)
-        self.assertEqual([step for step, _state in terminal], list(range(1, 20)))
+        self.assertEqual([step for step, _state in terminal], list(range(1, 22)))
         self.assertTrue(all(state == "GAP" for _step, state in terminal[:-1]))
-        self.assertEqual(terminal[-1], (19, "PASS"))
+        self.assertEqual(terminal[-1], (21, "PASS"))
         self.assertEqual(evidence["tasks"][0]["state"], "unavailable")
         self.assertTrue(all(task["state"] == "not-run" for task in evidence["tasks"][1:]))
 

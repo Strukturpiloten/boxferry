@@ -88,6 +88,8 @@ but cannot replace, authored semantics.
 persistence on Podman 6.1 rootless. Its reviewed sanitizer-v3 capture is supplementary acquisition
 replay evidence only; the authored cassette remains authoritative.
 
+`conformance/supabase-application/` is the bounded eleven-service pre-release acceptance fixture.
+
 ## Migration scenario contracts
 
 `fixtures/scenarios/<id>/scenario.toml` is a versioned authored acceptance

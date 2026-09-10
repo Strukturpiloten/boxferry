@@ -1,0 +1,11 @@
+[Unit]
+
+Requires=db.service
+After=db.service
+
+[Container]
+
+Image=docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf
+Environment=GOTRUE_DB_DRIVER=postgres
+Environment=GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres
+Network=backend.network

@@ -25,6 +25,10 @@ id = "observability-application"
 manifest = "fixtures/scenarios/observability-application/scenario.toml"
 
 [[scenarios]]
+id = "supabase-application"
+manifest = "fixtures/scenarios/supabase-application/scenario.toml"
+
+[[scenarios]]
 id = "paperless-ngx-document-converters"
 manifest = "fixtures/scenarios/paperless-ngx-document-converters/scenario.toml"
 

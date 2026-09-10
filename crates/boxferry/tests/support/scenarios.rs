@@ -322,6 +322,8 @@ pub(crate) struct Semantics {
     #[serde(default)]
     pub required_networks: Vec<NetworkExpectation>,
     #[serde(default)]
+    pub exact_network_memberships: Vec<String>,
+    #[serde(default)]
     pub required_groups: Vec<GroupExpectation>,
     #[serde(default)]
     pub required_commands: Vec<ProcessExpectation>,
@@ -1522,6 +1524,24 @@ fn validate_service_settings(
             return Err(format!("service {name} must not publish a database/internal port"));
         }
     }
+    for requirement in &manifest.semantics.exact_network_memberships {
+        let (service_name, network_names) = requirement
+            .split_once(':')
+            .ok_or("invalid exact-network-memberships assertion")?;
+        let expected = network_names.split(',').collect::<BTreeSet<_>>();
+        let actual = service(application, service_name)?
+            .networks()
+            .iter()
+            .map(|network| network.value().network().as_str())
+            .collect::<BTreeSet<_>>();
+        if actual != expected {
+            semantic_gaps.push(format!(
+                "network-memberships:{service_name}:expected={}:actual={}",
+                expected.into_iter().collect::<Vec<_>>().join(","),
+                actual.into_iter().collect::<Vec<_>>().join(",")
+            ));
+        }
+    }
     semantic_gaps.extend(validate_process_settings(manifest, application)?);
     semantic_gaps.extend(validate_grants(manifest, application)?);
     semantic_gaps.extend(validate_port_bindings(manifest, application)?);
@@ -1781,6 +1801,7 @@ fn semantics_is_empty(semantics: &Semantics) -> bool {
         && semantics.external_prerequisites.is_empty()
         && semantics.expected_diagnostics.is_empty()
         && semantics.required_networks.is_empty()
+        && semantics.exact_network_memberships.is_empty()
         && semantics.required_groups.is_empty()
         && semantics.required_commands.is_empty()
         && semantics.required_entrypoints.is_empty()
@@ -1821,6 +1842,7 @@ fn validate_semantics(semantics: &Semantics) -> Result<(), String> {
         &semantics.required_runtime_names,
         &semantics.unpublished_services,
         &semantics.external_prerequisites,
+        &semantics.exact_network_memberships,
         &semantics.required_image_acquisitions,
         &semantics.required_image_builds,
     ] {
@@ -1902,6 +1924,30 @@ fn validate_typed_semantics(semantics: &Semantics) -> Result<(), String> {
         .iter()
         .filter_map(|resource| resource.strip_prefix("group:"))
         .collect::<BTreeSet<_>>();
+    let selected_networks = semantics
+        .selected_resources
+        .iter()
+        .filter_map(|resource| resource.strip_prefix("network:"))
+        .collect::<BTreeSet<_>>();
+    let mut exact_membership_services = BTreeSet::new();
+    for membership in &semantics.exact_network_memberships {
+        let (service, networks) = membership
+            .split_once(':')
+            .ok_or("exact network memberships require service:network[,network]")?;
+        if !exact_membership_services.insert(service) {
+            return Err("exact network memberships require one assertion per service".into());
+        }
+        let networks = networks.split(',').collect::<Vec<_>>();
+        if networks.is_empty()
+            || networks.iter().any(|network| network.is_empty())
+            || networks.iter().collect::<BTreeSet<_>>().len() != networks.len()
+        {
+            return Err("exact network memberships require distinct non-empty networks".into());
+        }
+        if !selected_services.contains(service) || networks.iter().any(|network| !selected_networks.contains(network)) {
+            return Err("exact network memberships must reference selected resources".into());
+        }
+    }
     let expected_groups = semantics
         .required_groups
         .iter()

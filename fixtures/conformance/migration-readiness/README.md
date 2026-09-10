@@ -41,6 +41,21 @@ Podman plans/scripts are structurally checked and executed only inside disposabl
 ComposeLens and QuadletLens candidates are fetched into temporary exact-revision checkouts and are
 never Cargo dependencies.
 
-The pre-release tier includes the bounded `observability-application` Podman 6.1 rootless task.
-Successful PromQL, LogQL, Grafana, retention, persistence, privacy, and ownership checks replace the
-former observability gap; five explicit non-success gaps remain in every evidence document.
+The pre-release tier includes bounded `observability-application` and `supabase-application` Podman
+6.1 rootless tasks. Supabase runs immediately after observability with a 5,400-second deadline and
+requires four CPUs, 12 GiB available memory, and 24 GiB free temporary and Podman graph-root space.
+Its 5 GiB cold-archive cap supports a reviewed 14,336 MiB RSS ceiling and 20,480 MiB disk-growth
+ceiling: 12 GiB application memory plus 2 GiB runner headroom, and four cap-sized transient disk
+representations while retaining 4 GiB of preflight space. Reproduce only that task with:
+
+```console
+sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$PWD/target/tools/docker-compose" PATH="$PATH" python3 scripts/migration-readiness.py run --tier pre-release --task supabase-application
+```
+
+Successful authentication, database/API, Storage, Realtime, Edge Runtime, persistence, privacy,
+selection, ownership, ingress, collision, recreation, and cleanup checks replace the former
+Supabase runtime gap. GPU behavior, virtual machines, SELinux-enforcing runtime effects, and booted
+systemd are the four explicit non-success gaps retained in every evidence document.
+
+See [ADR 0049](../../../docs/decisions/0049-bounded-supabase-application-acceptance.md) for the
+application, supply-chain, and resource-boundary decision.

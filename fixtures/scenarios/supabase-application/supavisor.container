@@ -1,0 +1,11 @@
+[Unit]
+
+Requires=db.service
+After=db.service
+
+[Container]
+
+Image=docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07
+Environment=POSTGRES_HOST=db
+Environment=POSTGRES_DB=postgres
+Network=backend.network
