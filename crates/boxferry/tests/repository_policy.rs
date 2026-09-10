@@ -37,6 +37,96 @@ fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
 }
 
 #[test]
+fn live_scenario_podman_adapter_preserves_the_action_argument() -> Result<(), String> {
+    let validators = fs::read_to_string(repository_root().join("scripts/lib/scenario-validators.sh"))
+        .map_err(|error| format!("failed to read live scenario validators: {error}"))?;
+    let required = concat!(
+        "scenario_podman_socket() {\n",
+        "  local socket=${1:?scenario validator must supply socket}\n",
+        "  local subcommand=${2:?scenario validator must supply Podman command}\n",
+        "  shift 2\n",
+        "  podman_socket \"${socket}\" \"validate runtime scenario via Podman ${subcommand}\" \\\n",
+        "    \"${subcommand}\" \"$@\"\n",
+        "}",
+    );
+    if !validators.contains(required) {
+        return Err(
+            "live scenario validators must adapt command-oriented calls to podman_socket's explicit action contract"
+                .to_owned(),
+        );
+    }
+    let action_contract_calls = validators.matches("podman_socket \"${socket}\"").count();
+    let adapted_calls = validators.matches("scenario_podman_socket \"${socket}\"").count();
+    if action_contract_calls != adapted_calls + 1 {
+        return Err(
+            "live scenario validators must call podman_socket only through their action-preserving adapter".to_owned(),
+        );
+    }
+    if adapted_calls != 23 {
+        return Err("every live runtime scenario query must use the action-preserving Podman adapter".to_owned());
+    }
+    for forbidden in [
+        " podman_socket \"${socket}\" info",
+        "$(podman_socket \"${socket}\" info",
+        " podman_socket \"${socket}\" inspect",
+        "$(podman_socket \"${socket}\" inspect",
+        " podman_socket \"${socket}\" network",
+        "$(podman_socket \"${socket}\" network",
+        " podman_socket \"${socket}\" secret",
+        "$(podman_socket \"${socket}\" secret",
+    ] {
+        if validators.contains(forbidden) {
+            return Err(format!(
+                "live scenario validators must not consume `{forbidden}` as a human action"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_readiness_restores_privileged_evidence_before_consumers() -> Result<(), String> {
+    let workflow = fs::read_to_string(repository_root().join(".github/workflows/migration-readiness.yml"))
+        .map_err(|error| format!("failed to read migration-readiness workflow: {error}"))?;
+    let trusted = workflow
+        .find("      - name: Run trusted tier through shared runner")
+        .ok_or("migration-readiness workflow must run its trusted tier")?;
+    let restore_contract = concat!(
+        "      - name: Restore bounded evidence ownership\n",
+        "        if: ${{ always() && env.TIER != 'offline' }}\n",
+        "        run: |\n",
+        "          if [[ -e target/migration-readiness ]]; then\n",
+        "            sudo chown --recursive \"$(id -u):$(id -g)\" target/migration-readiness\n",
+        "          fi\n",
+    );
+    let restore = workflow
+        .find(restore_contract)
+        .ok_or("migration-readiness workflow must restore only its bounded evidence tree to the runner")?;
+    let next_step = workflow[trusted + 1..]
+        .find("\n      - name:")
+        .map(|offset| trusted + 1 + offset + 1)
+        .ok_or("trusted migration-readiness execution must have a following step")?;
+    if restore != next_step {
+        return Err("evidence ownership restoration must immediately follow privileged execution".to_owned());
+    }
+    for consumer in [
+        "hashFiles('target/migration-readiness/evidence-v1.json')",
+        "scripts/migration-readiness.py validate-evidence",
+        "actions/upload-artifact@",
+    ] {
+        let position = workflow
+            .find(consumer)
+            .ok_or_else(|| format!("migration-readiness workflow must retain `{consumer}`"))?;
+        if position <= restore {
+            return Err(format!(
+                "migration-readiness evidence consumer `{consumer}` must run after ownership restoration"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), String> {
     let workflow_path = repository_root().join(".github/workflows/ci.yml");
     let workflow = fs::read_to_string(&workflow_path)
@@ -1038,7 +1128,7 @@ fn validate_live_target_contracts(runner: &str) -> Result<(), String> {
     }
     for default_network_contract in [
         "current_default_podman_network_present",
-        "podman_socket \"${socket}\" network ls --format json",
+        "scenario_podman_socket \"${socket}\" network ls --format json",
         "default Podman network absent from live inventory; default-network ownership diagnostic is inapplicable",
     ] {
         if !runner.contains(default_network_contract) {

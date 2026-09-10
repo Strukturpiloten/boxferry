@@ -91,6 +91,13 @@ jobs:
           --revision "${GITHUB_SHA}"
           --evidence target/migration-readiness/evidence-v1.json
 
+      - name: Restore bounded evidence ownership
+        if: ${{ always() && env.TIER != 'offline' }}
+        run: |
+          if [[ -e target/migration-readiness ]]; then
+            sudo chown --recursive "$(id -u):$(id -g)" target/migration-readiness
+          fi
+
       - name: Validate evidence against exact run
         if: always() && hashFiles('target/migration-readiness/evidence-v1.json') != ''
         run: >-

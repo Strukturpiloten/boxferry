@@ -361,59 +361,67 @@ run_reimports() {
   done
 }
 
+scenario_podman_socket() {
+  local socket=${1:?scenario validator must supply socket}
+  local subcommand=${2:?scenario validator must supply Podman command}
+  shift 2
+  podman_socket "${socket}" "validate runtime scenario via Podman ${subcommand}" \
+    "${subcommand}" "$@"
+}
+
 assert_runtime_scenarios() {
   local socket=$1 version=$2 major
   major="${version%%.*}"
   current_podman_major="${major}"
-  current_podman_rootless="$(podman_socket "${socket}" info --format '{{.Host.Security.Rootless}}')"
+  current_podman_rootless="$(scenario_podman_socket "${socket}" info --format '{{.Host.Security.Rootless}}')"
   current_default_podman_network_present="$(
-    podman_socket "${socket}" network ls --format json | jq --raw-output \
+    scenario_podman_socket "${socket}" network ls --format json | jq --raw-output \
       'any(.[]?; .Name == "podman")'
   )"
   [[ "${current_default_podman_network_present}" == true || "${current_default_podman_network_present}" == false ]]
   printf 'Live scenario: stopped-and-running\n'
   require_scenario stopped-and-running
-  [[ "$(podman_socket "${socket}" inspect --format '{{.State.Status}}' "${current_prefix:?caller must supply current_prefix}-running")" == running ]]
+  [[ "$(scenario_podman_socket "${socket}" inspect --format '{{.State.Status}}' "${current_prefix:?caller must supply current_prefix}-running")" == running ]]
   local stopped_status
-  stopped_status="$(podman_socket "${socket}" inspect --format '{{.State.Status}}' "${current_prefix:?caller must supply current_prefix}-stopped")"
+  stopped_status="$(scenario_podman_socket "${socket}" inspect --format '{{.State.Status}}' "${current_prefix:?caller must supply current_prefix}-stopped")"
   [[ "${stopped_status}" == created || "${stopped_status}" == configured ]]
   printf 'Live scenario: pod-members-and-standalone\n'
   require_scenario pod-members-and-standalone
   if ((major >= 4)); then
-    [[ -n "$(podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-member")" ]]
-    [[ -n "$(podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-secondary-member")" ]]
-    [[ "$(podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-member")" != "$(podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-secondary-member")" ]]
-    [[ -z "$(podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-small-web")" ]]
+    [[ -n "$(scenario_podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-member")" ]]
+    [[ -n "$(scenario_podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-secondary-member")" ]]
+    [[ "$(scenario_podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-member")" != "$(scenario_podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-pod-secondary-member")" ]]
+    [[ -z "$(scenario_podman_socket "${socket}" inspect --format '{{.Pod}}' "${current_prefix:?caller must supply current_prefix}-small-web")" ]]
   else
     printf 'pod membership skipped by explicit Podman %s nested-runtime feature gate\n' "${version}" >> "${current_case:?caller must supply current_case}/feature-gates.txt"
   fi
   printf 'Live scenario: image-identities\n'
   require_scenario image-identities
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-small-web" | jq --exit-status '
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-small-web" | jq --exit-status '
     (((.[0].Config.Image // "") | startswith("registry.example.invalid/boxferry/")) or
       ((.[0].ImageName // "") | startswith("registry.example.invalid/boxferry/"))) and
     (.[0].Image | type == "string" and length > 0)
   ' > /dev/null
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-db" | jq --exit-status '
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-db" | jq --exit-status '
     ((((.[0].Config.Image // "") | startswith("registry.example.invalid/boxferry/")) or
       ((.[0].ImageName // "") | startswith("registry.example.invalid/boxferry/"))) and
     (.[0].Image | type == "string" and length > 0))
   ' > /dev/null
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-stopped" | jq --exit-status '
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-stopped" | jq --exit-status '
     (((.[0].Config.Image // "") | startswith("registry.example.invalid/boxferry/")) or
       ((.[0].ImageName // "") | startswith("registry.example.invalid/boxferry/"))) and
     (.[0].Image | type == "string" and length > 0)
   ' > /dev/null
   printf 'Live scenario: network-boundaries\n'
   require_scenario network-boundaries
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-api" > "${current_case:?caller must supply current_case}/network-boundaries.inspect.json"
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-api" > "${current_case:?caller must supply current_case}/network-boundaries.inspect.json"
   if ((major >= 4)); then
     jq --exit-status --arg private "${current_prefix:?caller must supply current_prefix}-large-private" --arg edge "${current_prefix:?caller must supply current_prefix}-large-edge" '
       (.[0].NetworkSettings.Networks[$private].Aliases | index("api")) and
       (.[0].NetworkSettings.Networks[$edge].Aliases | index("public-api"))
     ' "${current_case:?caller must supply current_case}/network-boundaries.inspect.json" > /dev/null
   elif [[ "${current_podman_rootless}" == true ]]; then
-    podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-proxy" > "${current_case:?caller must supply current_case}/network-boundaries-proxy.inspect.json"
+    scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-proxy" > "${current_case:?caller must supply current_case}/network-boundaries-proxy.inspect.json"
     jq --exit-status --arg private "${current_prefix:?caller must supply current_prefix}-large-private" '
       .[0].NetworkSettings.Networks | has($private)
     ' "${current_case:?caller must supply current_case}/network-boundaries.inspect.json" > /dev/null
@@ -432,26 +440,26 @@ assert_runtime_scenarios() {
   fi
   printf 'Live scenario: mount-matrix\n'
   require_scenario mount-matrix
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-db" | jq --exit-status '
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-db" | jq --exit-status '
     [.[0].Mounts[]? | select(.Type == "volume" and .RW == true)] | length == 1
   ' > /dev/null
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-api" | jq --exit-status '
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-large-api" | jq --exit-status '
     [.[0].Mounts[]? | select(.Type == "volume" and .RW == false and .Destination == "/cache")] | length == 1
   ' > /dev/null
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-options" | jq --exit-status '
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-options" | jq --exit-status '
     ([.[0].Mounts[]? | select(.Type == "bind" and .RW == false and .Propagation == "rprivate")] | length == 1) and
     (([.[0].Mounts[]? | select(.Type == "tmpfs")] | length == 1) or
       (.[0].HostConfig.Tmpfs["/scratch"] != null))
   ' > /dev/null
   printf 'Live scenario: environment-matrix\n'
   require_scenario environment-matrix
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-options" | jq --exit-status '
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-options" | jq --exit-status '
     ([.[0].Config.Env[]? | select(. == "BOXFERRY_ENV_FILE=present" or . == "BOXFERRY_ENV=inline")] | length == 2) and
     ([.[0].Config.Env[]? | select(. == "BOXFERRY_PROTECTED_TOKEN=not-a-secret-test-value")] | length == 1)
   ' > /dev/null
   printf 'Live scenario: runtime-policy-matrix\n'
   require_scenario runtime-policy-matrix
-  podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-options" > "${current_case:?caller must supply current_case}/options.inspect.json"
+  scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-options" > "${current_case:?caller must supply current_case}/options.inspect.json"
   if ((major >= 4)); then
     jq --exit-status '
       .[0].HostConfig.Memory > 0 and .[0].HostConfig.PidsLimit == 64 and
@@ -476,8 +484,8 @@ assert_runtime_scenarios() {
   if ((major >= 4)); then
     local healthy_status=starting unhealthy_status=starting
     for _ in {1..30}; do
-      healthy_status="$(podman_socket "${socket}" inspect --format '{{.State.Health.Status}}' "${current_prefix:?caller must supply current_prefix}-healthy")"
-      unhealthy_status="$(podman_socket "${socket}" inspect --format '{{.State.Health.Status}}' "${current_prefix:?caller must supply current_prefix}-unhealthy")"
+      healthy_status="$(scenario_podman_socket "${socket}" inspect --format '{{.State.Health.Status}}' "${current_prefix:?caller must supply current_prefix}-healthy")"
+      unhealthy_status="$(scenario_podman_socket "${socket}" inspect --format '{{.State.Health.Status}}' "${current_prefix:?caller must supply current_prefix}-unhealthy")"
       [[ "${healthy_status}" == healthy && "${unhealthy_status}" == unhealthy ]] && break
       sleep 1
     done
@@ -492,8 +500,8 @@ assert_runtime_scenarios() {
   printf 'Live scenario: secret-conditional\n'
   require_scenario secret-conditional
   if ((major >= 4)) &&
-    podman_socket "${socket}" secret inspect "${current_prefix:?caller must supply current_prefix}-conditional" > /dev/null 2>&1; then
-    podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-secret" | jq --exit-status \
+    scenario_podman_socket "${socket}" secret inspect "${current_prefix:?caller must supply current_prefix}-conditional" > /dev/null 2>&1; then
+    scenario_podman_socket "${socket}" inspect "${current_prefix:?caller must supply current_prefix}-secret" | jq --exit-status \
       '[.. | strings | select(contains("conditional"))] | length > 0' > /dev/null
     printf 'secret endpoint supported\n' >> "${current_case:?caller must supply current_case}/feature-gates.txt"
   else
