@@ -1,0 +1,8 @@
+---
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+# Metrics arrive through Alloy's reviewed remote-write path. Prometheus is not
+# allowed to discover or scrape any host/container runtime endpoint.
+scrape_configs: []

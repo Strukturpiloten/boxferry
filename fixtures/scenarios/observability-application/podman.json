@@ -1,0 +1,700 @@
+{
+  "schema_version": 1,
+  "status": "exact",
+  "connection": null,
+  "external_preconditions": [],
+  "operations": [
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "network",
+        "name": "backend"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["network", "create", "backend"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/networks/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "name": "backend"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "volume",
+        "name": "alloy-data"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["volume", "create", "alloy-data"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/volumes/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Name": "alloy-data"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "volume",
+        "name": "grafana-data"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["volume", "create", "grafana-data"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/volumes/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Name": "grafana-data"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "volume",
+        "name": "loki-data"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["volume", "create", "loki-data"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/volumes/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Name": "loki-data"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "volume",
+        "name": "prometheus-data"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["volume", "create", "prometheus-data"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/volumes/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Name": "prometheus-data"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "volume",
+        "name": "telemetry-logs"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["volume", "create", "telemetry-logs"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/volumes/create",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Name": "telemetry-logs"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "alloy-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=docker.io%2Fgrafana%2Falloy%40sha256%3Ab8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "grafana-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=docker.io%2Fgrafana%2Fgrafana%40sha256%3Af772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "log-producer-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=docker.io%2Flibrary%2Fnginx%40sha256%3A42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "loki-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=docker.io%2Fgrafana%2Floki%40sha256%3Ad70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "metrics-producer-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=docker.io%2Flibrary%2Fnginx%40sha256%3A42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "ensure_image",
+      "resource": {
+        "kind": "image",
+        "name": "prometheus-image"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "image",
+          "pull",
+          "--policy=missing",
+          "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/images/pull?reference=docker.io%2Fprom%2Fprometheus%40sha256%3A5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0&policy=missing",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "alloy"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "alloy",
+          "--pull=never",
+          "--network",
+          "backend",
+          "--volume",
+          "alloy-data:/var/lib/alloy/data:rw,copy",
+          "--volume",
+          "telemetry-logs:/var/log/boxferry:ro,copy",
+          "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+          "run",
+          "--storage.path=/var/lib/alloy/data",
+          "/etc/alloy/config.alloy"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=alloy",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {
+              "backend": {}
+            },
+            "command": ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"],
+            "image": "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+            "volumes": [
+              {
+                "Dest": "/var/lib/alloy/data",
+                "Name": "alloy-data",
+                "Options": ["rw", "copy"]
+              },
+              {
+                "Dest": "/var/log/boxferry",
+                "Name": "telemetry-logs",
+                "Options": ["ro", "copy"]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "grafana"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "grafana",
+          "--pull=never",
+          "--network",
+          "backend",
+          "--volume",
+          "grafana-data:/var/lib/grafana:rw,copy",
+          "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=grafana",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {
+              "backend": {}
+            },
+            "image": "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+            "volumes": [
+              {
+                "Dest": "/var/lib/grafana",
+                "Name": "grafana-data",
+                "Options": ["rw", "copy"]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "log-producer"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "log-producer",
+          "--pull=never",
+          "--network",
+          "backend",
+          "--volume",
+          "telemetry-logs:/var/log/boxferry:rw,copy",
+          "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+          "sleep",
+          "86400"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=log-producer",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {
+              "backend": {}
+            },
+            "command": ["sleep", "86400"],
+            "image": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+            "volumes": [
+              {
+                "Dest": "/var/log/boxferry",
+                "Name": "telemetry-logs",
+                "Options": ["rw", "copy"]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "loki"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "loki",
+          "--pull=never",
+          "--network",
+          "backend",
+          "--volume",
+          "loki-data:/loki:rw,copy",
+          "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+          "-config.file=/etc/loki/local-config.yaml"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=loki",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {
+              "backend": {}
+            },
+            "command": ["-config.file=/etc/loki/local-config.yaml"],
+            "image": "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+            "volumes": [
+              {
+                "Dest": "/loki",
+                "Name": "loki-data",
+                "Options": ["rw", "copy"]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "metrics-producer"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "metrics-producer",
+          "--pull=never",
+          "--network",
+          "backend",
+          "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+          "sleep",
+          "86400"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=metrics-producer",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {
+              "backend": {}
+            },
+            "command": ["sleep", "86400"],
+            "image": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "create",
+      "resource": {
+        "kind": "container",
+        "name": "prometheus"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": [
+          "container",
+          "create",
+          "--name",
+          "prometheus",
+          "--pull=never",
+          "--network",
+          "backend",
+          "--volume",
+          "prometheus-data:/prometheus:rw,copy",
+          "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+          "--config.file=/etc/prometheus/prometheus.yml",
+          "--storage.tsdb.path=/prometheus",
+          "--storage.tsdb.retention.time=24h",
+          "--web.enable-remote-write-receiver"
+        ],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=prometheus",
+        "body": {
+          "kind": "json",
+          "json": {
+            "Networks": {
+              "backend": {}
+            },
+            "command": [
+              "--config.file=/etc/prometheus/prometheus.yml",
+              "--storage.tsdb.path=/prometheus",
+              "--storage.tsdb.retention.time=24h",
+              "--web.enable-remote-write-receiver"
+            ],
+            "image": "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+            "volumes": [
+              {
+                "Dest": "/prometheus",
+                "Name": "prometheus-data",
+                "Options": ["rw", "copy"]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "alloy"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["container", "start", "alloy"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/alloy/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "grafana"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["container", "start", "grafana"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/grafana/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "log-producer"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["container", "start", "log-producer"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/log-producer/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "loki"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["container", "start", "loki"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/loki/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "metrics-producer"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["container", "start", "metrics-producer"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/metrics-producer/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    },
+    {
+      "status": "exact",
+      "action": "start_container",
+      "resource": {
+        "kind": "container",
+        "name": "prometheus"
+      },
+      "cli": {
+        "program": "podman",
+        "argv": ["container", "start", "prometheus"],
+        "external_sensitive_input_required": false
+      },
+      "libpod": {
+        "method": "POST",
+        "path_and_query": "/v6.1.0/libpod/containers/prometheus/start",
+        "body": {
+          "kind": "empty"
+        }
+      }
+    }
+  ]
+}

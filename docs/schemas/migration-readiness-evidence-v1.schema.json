@@ -74,8 +74,8 @@
     },
     "gaps": {
       "type": "array",
-      "minItems": 6,
-      "maxItems": 6,
+      "minItems": 5,
+      "maxItems": 5,
       "items": { "$ref": "#/$defs/gap" }
     }
   },
@@ -97,7 +97,6 @@
       "properties": {
         "id": {
           "enum": [
-            "observability-stack",
             "supabase-runtime",
             "gpu",
             "virtual-machine",

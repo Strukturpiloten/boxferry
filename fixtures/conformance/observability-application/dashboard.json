@@ -1,0 +1,69 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "boxferry-prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "boxferry-prometheus" },
+          "editorMode": "code",
+          "expr": "boxferry_fixture_temperature_celsius{source=\"controlled\"}",
+          "legendFormat": "controlled fixture",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Controlled fixture metric",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "boxferry-loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "boxferry-loki" },
+          "editorMode": "code",
+          "expr": "{job=\"boxferry_fixture\"} |= \"boxferry-observability-known-log\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Controlled fixture logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 41,
+  "tags": ["boxferry", "acceptance"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "BoxFerry Observability Acceptance",
+  "uid": "boxferry-observability",
+  "version": 1,
+  "weekStart": ""
+}

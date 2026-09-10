@@ -2,11 +2,6 @@ schema = 1
 evidence-schema = "docs/schemas/migration-readiness-evidence-v1.schema.json"
 
 [[gaps]]
-id = "observability-stack"
-state = "planned"
-reason = "Prometheus, Grafana, and Loki application behavior is tracked by BoxFerry issue #139 and is not current migration evidence."
-
-[[gaps]]
 id = "supabase-runtime"
 state = "planned"
 reason = "Supabase runtime behavior is tracked by BoxFerry issue #140; its offline source fixture is not a successful runtime migration."
@@ -77,6 +72,7 @@ tasks = [
   "forgejo-root-modes",
   "paperless-application",
   "immich-application",
+  "observability-application",
   "compose-lens-candidate",
   "quadlet-lens-candidate",
 ]
@@ -253,6 +249,24 @@ maximum-disk-growth-mib = 10240
 required-tools = ["podman"]
 required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
 command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "immich-application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
+
+[[tasks]]
+id = "observability-application"
+kind = "command"
+privileged = true
+workload = "prometheus-loki-grafana-alloy"
+sources = ["native-podman", "docker-compose-5.5.0", "podman-api-6.1.0-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "reviewed application assertions in scripts/lib/observability-application.sh"
+runtime-claim = "PromQL, LogQL, Grafana provisioning, retention, persistence, privacy, selectors, shared edge, ingress, collision, recreation, cleanup"
+deadline-seconds = 3600
+minimum-memory-mib = 4096
+minimum-disk-mib = 8192
+maximum-rss-mib = 4096
+maximum-disk-growth-mib = 6144
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "observability-application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
 
 [[tasks]]
 id = "compose-lens-candidate"

@@ -40,3 +40,7 @@ reviewed standalone provider, Quadlet output is checked by the pinned candidate 
 Podman plans/scripts are structurally checked and executed only inside disposable test targets.
 ComposeLens and QuadletLens candidates are fetched into temporary exact-revision checkouts and are
 never Cargo dependencies.
+
+The pre-release tier includes the bounded `observability-application` Podman 6.1 rootless task.
+Successful PromQL, LogQL, Grafana, retention, persistence, privacy, and ownership checks replace the
+former observability gap; five explicit non-success gaps remain in every evidence document.

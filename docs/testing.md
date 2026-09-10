@@ -158,6 +158,9 @@ The 60-minute `immich-application` profile runs CPU-only Immich 3.1.0 on 6.1 roo
 8 GiB RAM, 12 GiB disk, and a 2.5 GiB archive cap. Its reviewed v3 replay consumes 23 GETs. Both
 captured fixtures remain supplementary to authored semantics.
 
+`observability-application` adds pre-release query, persistence, privacy and ownership
+evidence.
+
 The complete profile runs all reviewed rootful and rootless cells:
 
 ```console

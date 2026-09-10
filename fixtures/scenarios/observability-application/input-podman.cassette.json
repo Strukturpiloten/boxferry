@@ -1,0 +1,420 @@
+{
+  "scenario_id": "observability-application-authored-podman-6.1.0",
+  "engine_version": "6.1.0",
+  "execution_context": "rootless",
+  "interactions": [
+    {
+      "request": { "method": "GET", "path": "/libpod/_ping" },
+      "response": { "status": 200, "headers": [["libpod-api-version", "6.1.0"]], "body": null }
+    },
+    {
+      "request": { "method": "GET", "path": "/v4.0.0/libpod/version" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Components": [{ "Name": "Podman Engine", "Version": "6.1.0" }] }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/json?all=true&sync=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          { "Id": "c-alloy", "Names": ["alloy"] },
+          { "Id": "c-grafana", "Names": ["grafana"] },
+          { "Id": "c-log-producer", "Names": ["log-producer"] },
+          { "Id": "c-loki", "Names": ["loki"] },
+          { "Id": "c-metrics-producer", "Names": ["metrics-producer"] },
+          { "Id": "c-prometheus", "Names": ["prometheus"] }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/pods/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [{ "id": "n-backend", "name": "backend" }]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Volumes": [
+            { "Name": "alloy-data" },
+            { "Name": "grafana-data" },
+            { "Name": "loki-data" },
+            { "Name": "prometheus-data" },
+            { "Name": "telemetry-logs" }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/images/json?all=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "Id": "sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+            "Names": [
+              "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839"
+            ]
+          },
+          {
+            "Id": "sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+            "Names": [
+              "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283"
+            ]
+          },
+          {
+            "Id": "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+            "Names": [
+              "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500"
+            ]
+          },
+          {
+            "Id": "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+            "Names": [
+              "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+            ]
+          },
+          {
+            "Id": "sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+            "Names": [
+              "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/secrets/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-alloy/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-alloy",
+          "Name": "alloy",
+          "Image": "sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+          "ImageName": "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Cmd": ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "alloy-data",
+              "Source": "/home/test/.local/share/containers/storage/volumes/alloy-data/_data",
+              "Destination": "/var/lib/alloy/data",
+              "RW": true
+            },
+            {
+              "Type": "volume",
+              "Name": "telemetry-logs",
+              "Source": "/home/test/.local/share/containers/storage/volumes/telemetry-logs/_data",
+              "Destination": "/var/log/boxferry",
+              "RW": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-grafana/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-grafana",
+          "Name": "grafana",
+          "Image": "sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+          "ImageName": "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Env": ["GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary"]
+          },
+          "HostConfig": {
+            "PortBindings": { "3000/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "13000" }] }
+          },
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "grafana-data",
+              "Source": "/home/test/.local/share/containers/storage/volumes/grafana-data/_data",
+              "Destination": "/var/lib/grafana",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-log-producer/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-log-producer",
+          "Name": "log-producer",
+          "Image": "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+          "ImageName": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+          "Pod": "",
+          "Config": { "Entrypoint": "", "Cmd": ["sleep", "86400"] },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "telemetry-logs",
+              "Source": "/home/test/.local/share/containers/storage/volumes/telemetry-logs/_data",
+              "Destination": "/var/log/boxferry",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-loki/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-loki",
+          "Name": "loki",
+          "Image": "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+          "ImageName": "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+          "Pod": "",
+          "Config": { "Entrypoint": "", "Cmd": ["-config.file=/etc/loki/local-config.yaml"] },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "loki-data",
+              "Source": "/home/test/.local/share/containers/storage/volumes/loki-data/_data",
+              "Destination": "/loki",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-metrics-producer/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-metrics-producer",
+          "Name": "metrics-producer",
+          "Image": "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+          "ImageName": "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+          "Pod": "",
+          "Config": { "Entrypoint": "", "Cmd": ["sleep", "86400"] },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-prometheus/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-prometheus",
+          "Name": "prometheus",
+          "Image": "sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+          "ImageName": "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Cmd": [
+              "--config.file=/etc/prometheus/prometheus.yml",
+              "--storage.tsdb.path=/prometheus",
+              "--storage.tsdb.retention.time=24h",
+              "--web.enable-remote-write-receiver"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "prometheus-data",
+              "Source": "/home/test/.local/share/containers/storage/volumes/prometheus-data/_data",
+              "Destination": "/prometheus",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/n-backend/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-backend",
+          "name": "backend",
+          "internal": true,
+          "subnets": [],
+          "containers": {
+            "c-alloy": { "name": "alloy" },
+            "c-grafana": { "name": "grafana" },
+            "c-log-producer": { "name": "log-producer" },
+            "c-loki": { "name": "loki" },
+            "c-metrics-producer": { "name": "metrics-producer" },
+            "c-prometheus": { "name": "prometheus" }
+          }
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/alloy-data/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "alloy-data", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/grafana-data/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "grafana-data", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/loki-data/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "loki-data", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/prometheus-data/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "prometheus-data", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/telemetry-logs/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "telemetry-logs", "Driver": "local", "Anonymous": false }
+      }
+    },
+
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+          "RepoDigests": [
+            "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+          "RepoDigests": [
+            "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Ab8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+          "RepoDigests": [
+            "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Ad70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+          "RepoDigests": [
+            "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Af772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+          "RepoDigests": [
+            "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283"
+          ]
+        }
+      }
+    }
+  ]
+}

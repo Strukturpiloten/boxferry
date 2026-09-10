@@ -207,7 +207,7 @@ fn scenario_catalogue_is_explicit_bounded_and_sidecar_ready() -> Result<(), Box<
     let root = repository_root();
     let catalogue: ScenarioCatalogue = toml::from_str(&fs::read_to_string(root.join(SCENARIO_CATALOGUE))?)?;
     let registered = validate_scenario_catalogue(&root, &catalogue)?;
-    assert_eq!(registered.len(), 31);
+    assert_eq!(registered.len(), 32);
     assert!(is_scenario_manifest_name(
         Path::new("fixtures/conversion/document-route-matrix/document-route-normal.scenario.toml"),
         "document-route-normal"
@@ -530,6 +530,262 @@ fn report_diagnostic_facts(report: &serde_json::Value) -> Result<Vec<String>, Bo
             ))
         })
         .collect()
+}
+
+#[test]
+fn observability_live_diagnostic_matcher_is_route_specific_and_exact() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let fixture = root.join("fixtures/scenarios/observability-application");
+    let manifest = read_manifest_file(&fixture.join("scenario.toml"))?;
+    let podman_sources = [fixture.join("input-podman.cassette.json")];
+
+    let podman_compose = TemporaryDirectory::new("observability-podman-compose")?;
+    let podman_compose_report = convert_cli(
+        &manifest,
+        &podman_sources,
+        observability_route(&manifest, "podman", "compose")?,
+        podman_compose.path(),
+    )?;
+    assert_observability_diagnostic_match("podman-compose", "podman", "compose", &podman_compose_report, true)?;
+
+    let podman_quadlet = TemporaryDirectory::new("observability-podman-quadlet")?;
+    let podman_quadlet_report = convert_cli(
+        &manifest,
+        &podman_sources,
+        observability_route(&manifest, "podman", "quadlet")?,
+        podman_quadlet.path(),
+    )?;
+    assert_observability_diagnostic_match("podman-quadlet", "podman", "quadlet", &podman_quadlet_report, true)?;
+
+    let compose_podman = TemporaryDirectory::new("observability-compose-podman")?;
+    let compose_podman_report = observability_file_conversion(
+        "compose",
+        "podman",
+        &[podman_compose.path().join("compose.yaml")],
+        compose_podman.path(),
+    )?;
+    assert_observability_diagnostic_match("compose-podman", "compose", "podman", &compose_podman_report, true)?;
+
+    let quadlet_sources = observability_output_files(podman_quadlet.path())?;
+    let quadlet_podman = TemporaryDirectory::new("observability-quadlet-podman")?;
+    let quadlet_podman_report =
+        observability_file_conversion("quadlet", "podman", &quadlet_sources, quadlet_podman.path())?;
+    assert_observability_diagnostic_match("quadlet-podman", "quadlet", "podman", &quadlet_podman_report, true)?;
+
+    let compose_quadlet = TemporaryDirectory::new("observability-compose-quadlet")?;
+    let compose_quadlet_report = observability_file_conversion(
+        "compose",
+        "quadlet",
+        &[podman_compose.path().join("compose.yaml")],
+        compose_quadlet.path(),
+    )?;
+    assert!(
+        compose_quadlet_report["diagnostics"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "the expected-empty reimport route unexpectedly emitted diagnostics"
+    );
+    assert_observability_diagnostic_match("compose-quadlet", "compose", "quadlet", &compose_quadlet_report, true)?;
+
+    let mut wrong_decision = podman_compose_report.clone();
+    assert!(mutate_observability_diagnostic_field(
+        &mut wrong_decision,
+        "decision",
+        "approximated",
+        "not-promoted",
+    ));
+    assert_observability_diagnostic_match("wrong-decision", "podman", "compose", &wrong_decision, false)?;
+
+    let mut wrong_volume_subject = podman_compose_report.clone();
+    assert!(mutate_observability_subject_prefix(
+        &mut wrong_volume_subject,
+        "volumes.",
+        "volume."
+    ));
+    assert_observability_diagnostic_match(
+        "wrong-volume-subject",
+        "podman",
+        "compose",
+        &wrong_volume_subject,
+        false,
+    )?;
+    assert_observability_diagnostic_match("wrong-source-route", "compose", "podman", &podman_compose_report, false)?;
+
+    let live_expected = observability_live_expected_diagnostics()?;
+    for expected in [
+        "BFP0003\tservices.live-observability-alloy.mounts[0]\twarning\tnot-promoted\tpartial",
+        "BFP0003\tservices.live-observability-alloy.mounts[1]\twarning\tapproximated\tapproximate",
+        "BFP0003\tservices.live-observability-grafana.mounts[3]\twarning\tapproximated\tapproximate",
+        "BFP0003\tvolumes.live-observability-alloy-data.driver\twarning\tnot-promoted\tpartial",
+    ] {
+        assert!(
+            live_expected.lines().any(|line| line == expected),
+            "live diagnostic derivation omitted `{expected}`"
+        );
+    }
+
+    Ok(())
+}
+
+fn observability_route<'a>(
+    manifest: &'a ScenarioManifest,
+    input: &str,
+    output: &str,
+) -> Result<&'a RouteExpectation, Box<dyn Error>> {
+    manifest
+        .evidence
+        .iter()
+        .find(|route| route.input == input && route.exporter == output)
+        .ok_or_else(|| format!("missing observability {input}-to-{output} route").into())
+}
+
+fn observability_file_conversion(
+    input: &str,
+    output: &str,
+    sources: &[PathBuf],
+    destination: &Path,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let report_directory =
+        TemporaryDirectory::new_in(&repository_root().join("target"), "observability-reimport-report")?;
+    let report = report_directory.path().join("report.json");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+    command.args(["convert", input, output]);
+    for source in sources {
+        command.arg("--input-file").arg(source);
+    }
+    if input == "compose" {
+        command.args(["--project-name", "observability-application"]);
+    } else {
+        command.args(["--application-name", "observability-application"]);
+    }
+    command.args(["--loss-policy", "partial"]);
+    if output == "podman" {
+        command.args(["--podman-target-context", "rootless", "--podman-max-version", "6.1.0"]);
+    }
+    command
+        .arg("--output-directory")
+        .arg(destination)
+        .args(["--console-format", "json", "--report-file"])
+        .arg(&report);
+    let result = command.output()?;
+    if !result.status.success() || !result.stderr.is_empty() {
+        return Err(format!(
+            "observability {input}-to-{output} reimport failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+    Ok(serde_json::from_slice(&fs::read(report)?)?)
+}
+
+fn observability_output_files(directory: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+    let mut files = fs::read_dir(directory)?
+        .map(|entry| Ok(entry?.path()))
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+    files.retain(|path| path.is_file());
+    files.sort();
+    Ok(files)
+}
+
+fn assert_observability_diagnostic_match(
+    label: &str,
+    source: &str,
+    output: &str,
+    report: &serde_json::Value,
+    expected_success: bool,
+) -> Result<(), Box<dyn Error>> {
+    let temporary = TemporaryDirectory::new("observability-diagnostic-match")?;
+    let report_path = temporary.path().join("report.json");
+    fs::write(&report_path, serde_json::to_vec_pretty(report)?)?;
+    let root = repository_root();
+    let helper = root.join("scripts/lib/observability-application.sh");
+    let result = Command::new("bash")
+        .args([
+            "-c",
+            "repository_root=$1; source \"$2\"; observability_assert_reviewed_diagnostics \"$3\" \"$4\" \"$5\" \"\" false \"$6\"",
+            "observability-diagnostic-match",
+        ])
+        .arg(&root)
+        .arg(&helper)
+        .arg(label)
+        .arg(source)
+        .arg(output)
+        .arg(&report_path)
+        .output()?;
+    if result.status.success() != expected_success {
+        return Err(format!(
+            "observability matcher result for {label} differed: stdout={} stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn mutate_observability_diagnostic_field(report: &mut serde_json::Value, name: &str, old: &str, new: &str) -> bool {
+    let Some(diagnostics) = report["diagnostics"].as_array_mut() else {
+        return false;
+    };
+    for diagnostic in diagnostics {
+        let Some(fields) = diagnostic["fields"].as_array_mut() else {
+            continue;
+        };
+        if let Some(field) = fields
+            .iter_mut()
+            .find(|field| field["name"] == name && field["value"] == old)
+        {
+            field["value"] = serde_json::Value::String(new.to_owned());
+            return true;
+        }
+    }
+    false
+}
+
+fn mutate_observability_subject_prefix(report: &mut serde_json::Value, old: &str, new: &str) -> bool {
+    let Some(diagnostics) = report["diagnostics"].as_array_mut() else {
+        return false;
+    };
+    for diagnostic in diagnostics {
+        let Some(fields) = diagnostic["fields"].as_array_mut() else {
+            continue;
+        };
+        if let Some(field) = fields.iter_mut().find(|field| {
+            field["name"] == "subject" && field["value"].as_str().is_some_and(|value| value.starts_with(old))
+        }) {
+            let Some(value) = field["value"].as_str() else {
+                continue;
+            };
+            field["value"] = serde_json::Value::String(value.replacen(old, new, 1));
+            return true;
+        }
+    }
+    false
+}
+
+fn observability_live_expected_diagnostics() -> Result<String, Box<dyn Error>> {
+    let temporary = TemporaryDirectory::new("observability-live-diagnostics")?;
+    let destination = temporary.path().join("expected.tsv");
+    let root = repository_root();
+    let helper = root.join("scripts/lib/observability-application.sh");
+    let result = Command::new("bash")
+        .args([
+            "-c",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics label podman compose live-observability- true \"$3\"",
+            "observability-live-diagnostics",
+        ])
+        .arg(&root)
+        .arg(&helper)
+        .arg(&destination)
+        .output()?;
+    if !result.status.success() {
+        return Err(format!(
+            "live diagnostic derivation failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+    Ok(fs::read_to_string(destination)?)
 }
 
 #[allow(

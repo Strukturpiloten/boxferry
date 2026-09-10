@@ -1,0 +1,26 @@
+---
+apiVersion: 1
+
+deleteDatasources:
+  - name: BoxFerry Prometheus
+    orgId: 1
+  - name: BoxFerry Loki
+    orgId: 1
+
+datasources:
+  - name: BoxFerry Prometheus
+    uid: boxferry-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 2s
+  - name: BoxFerry Loki
+    uid: boxferry-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false

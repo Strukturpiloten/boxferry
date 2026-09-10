@@ -1,0 +1,5 @@
+[Container]
+Image=docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
+Exec=-config.file=/etc/loki/local-config.yaml
+Volume=loki-data.volume:/loki
+Network=backend.network
