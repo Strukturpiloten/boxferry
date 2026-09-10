@@ -62,6 +62,17 @@ the workflow never mutates accepted support data.
 
 ## Consequences
 
+The reviewed run on 2026-09-09 (`34418537575`, exact main commit
+`0bf06e3a3b4f0b13b2fa7a876a1eedc6fb762c03`) reproduced all five accepted
+baseline collisions. Every replacement stopped during `replacement-runtime`
+because the complete runtime metadata contract was unavailable, so none was
+eligible for resource testing or promotion. All five baseline digests and
+limitations remain unchanged. The bounded evidence and artifact identities are
+preserved under `fixtures/conformance/podman-live/revalidation/34418537575/`;
+the active candidate catalogue is empty. A separate minimal reproducer is
+tracked in `Strukturpiloten/containers#179`. It is supporting follow-up context,
+not evidence that this workflow observed the same replacement collision.
+
 - A replacement cannot silently acquire resource coverage from a pull or version check.
 - Failures remain useful and privacy-safe without committing raw output or host identifiers.
 - Distro userspace and Podman/API/package evidence are explicit; shared-host kernel, SELinux,

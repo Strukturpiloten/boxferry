@@ -318,9 +318,9 @@ fn validate_podman_revalidation_candidates(
         .get("candidates")
         .and_then(toml::Value::as_array)
         .ok_or("Podman revalidation candidates must be an array")?;
-    if candidates.len() != 5 {
+    if candidates.len() > limitation_ids.len() {
         return Err(format!(
-            "Podman revalidation catalogue must contain five candidates, found {}",
+            "Podman revalidation catalogue has more candidates than limitations: {}",
             candidates.len()
         ));
     }
@@ -498,8 +498,11 @@ fn validate_podman_revalidation_candidates(
 
     let mut sorted_ids = candidate_ids.clone();
     sorted_ids.sort();
-    if candidate_ids != sorted_ids || candidate_ids != limitation_ids {
-        return Err("Podman revalidation candidates must exactly and deterministically cover limitations".to_owned());
+    if candidate_ids != sorted_ids
+        || candidate_ids.iter().collect::<BTreeSet<_>>().len() != candidate_ids.len()
+        || !candidate_ids.iter().all(|id| limitation_ids.contains(id))
+    {
+        return Err("Podman revalidation candidates must be unique, sorted active limitations".to_owned());
     }
     Ok(candidate_ids)
 }
@@ -1860,6 +1863,12 @@ fn validate_podman_revalidation_workflow(workflow: &str, candidate_ids: &[String
         "[[ \"${GITHUB_REF}\" == \"refs/heads/${DEFAULT_BRANCH}\" ]]",
         "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
         "python3 scripts/lib/podman-revalidation.py list-candidates",
+        "catalogue_output=\"$(",
+        "mapfile -t catalogue <<< \"${catalogue_output}\"",
+        "has-candidates: ${{ steps.select.outputs.has-candidates }}",
+        "cells='[]'",
+        "No active replacement candidates; all reviewed limitations remain retained.",
+        "printf 'has-candidates=%s\\n'",
         "candidate: ${{ fromJSON(needs.candidates.outputs.cells) }}",
         "fail-fast: false",
         "max-parallel: 1",
@@ -1883,6 +1892,16 @@ fn validate_podman_revalidation_workflow(workflow: &str, candidate_ids: &[String
         || workflow.matches("ref: ${{ github.sha }}").count() != 3
     {
         return Err("every Podman revalidation checkout must be credential-free and exact-SHA".to_owned());
+    }
+    if workflow
+        .matches("if: needs.candidates.outputs.has-candidates == 'true'")
+        .count()
+        != 2
+    {
+        return Err("Podman revalidation build and matrix jobs must skip an empty catalogue".to_owned());
+    }
+    if workflow.contains("mapfile -t catalogue < <(") {
+        return Err("Podman revalidation selection must propagate catalogue-helper failure".to_owned());
     }
 
     let options_start = workflow
@@ -1950,13 +1969,23 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
         .map_err(|error| format!("failed to read live Podman runner: {error}"))?;
     let workflow = fs::read_to_string(root.join(".github/workflows/podman-limitation-revalidation.yml"))
         .map_err(|error| format!("failed to read Podman revalidation workflow: {error}"))?;
-    let catalogue = fs::read_to_string(root.join("fixtures/conformance/podman-live/candidates.toml"))
+    let active_catalogue = fs::read_to_string(root.join("fixtures/conformance/podman-live/candidates.toml"))
         .map_err(|error| format!("failed to read Podman revalidation candidates: {error}"))?;
+    let catalogue =
+        fs::read_to_string(root.join("fixtures/conformance/podman-live/revalidation/34418537575/candidates.toml"))
+            .map_err(|error| format!("failed to read archived Podman revalidation candidates: {error}"))?;
     let matrix = fs::read_to_string(root.join("fixtures/conformance/podman-live/matrix.tsv"))
         .map_err(|error| format!("failed to read live Podman matrix: {error}"))?;
     let limitations = fs::read_to_string(root.join("fixtures/conformance/podman-live/limitations.tsv"))
         .map_err(|error| format!("failed to read live Podman limitations: {error}"))?;
-    let candidate_ids = validate_podman_revalidation_candidates(&catalogue, &matrix, &limitations)?;
+    let candidate_ids = validate_podman_revalidation_candidates(&active_catalogue, &matrix, &limitations)?;
+    if !candidate_ids.is_empty() {
+        return Err("reviewed Podman revalidation catalogue must have no active candidates".to_owned());
+    }
+    let archived_candidate_ids = validate_podman_revalidation_candidates(&catalogue, &matrix, &limitations)?;
+    if archived_candidate_ids.len() != 5 {
+        return Err("archived Podman revalidation decision must bind five candidates".to_owned());
+    }
     validate_limitation_revalidation_runner(&runner)?;
     validate_podman_revalidation_workflow(&workflow, &candidate_ids)?;
 
@@ -1968,7 +1997,7 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
             "boolean catalogue schema",
             catalogue.replacen("schema = 1", "schema = true", 1),
         ),
-        ("missing candidate", catalogue[..last_candidate].to_owned()),
+        ("missing schema", catalogue[last_candidate + 1..].to_owned()),
         (
             "cross-wired Tumbleweed baseline snapshot",
             catalogue.replacen(
@@ -2072,6 +2101,16 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
         ),
         ("non-exact checkout", "ref: ${{ github.sha }}", "ref: main"),
         (
+            "swallowed catalogue resolver failure",
+            "catalogue_output=\"$(",
+            "mapfile -t catalogue < <(",
+        ),
+        (
+            "missing zero-candidate build guard",
+            "if: needs.candidates.outputs.has-candidates == 'true'",
+            "if: ${{ always() }}",
+        ),
+        (
             "missing evidence ownership restoration",
             "sudo chown --recursive \"$(id -u):$(id -g)\" target/podman-revalidation",
             "true # evidence remains root-owned",
@@ -2093,10 +2132,12 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
             return Err(format!("Podman revalidation workflow policy accepted {description}"));
         }
     }
-    let missing_option = format!("          - {}\n", candidate_ids[0]);
-    let changed = remove_first(&workflow, &missing_option)?;
-    if validate_podman_revalidation_workflow(&changed, &candidate_ids).is_ok() {
-        return Err("Podman revalidation workflow policy accepted a missing candidate".to_owned());
+    if let Some(candidate_id) = candidate_ids.first() {
+        let missing_option = format!("          - {candidate_id}\n");
+        let changed = remove_first(&workflow, &missing_option)?;
+        if validate_podman_revalidation_workflow(&changed, &candidate_ids).is_ok() {
+            return Err("Podman revalidation workflow policy accepted a missing candidate".to_owned());
+        }
     }
     Ok(())
 }

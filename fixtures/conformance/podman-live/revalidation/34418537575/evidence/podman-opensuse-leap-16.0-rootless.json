@@ -1,0 +1,168 @@
+{
+  "baseline": {
+    "declared_image": "ghcr.io/strukturpiloten/podman-opensuse-leap-16.0-rootless:v1.0.0@sha256:821c1e2fb030374ef91823c5eb88ee9467de97d6ff2118f5b808a147ac69ed8b",
+    "expected_observed_distribution": "opensuse-leap-16.0",
+    "historical_collision": {
+      "newgidmap_capability": true,
+      "newgidmap_setuid": true,
+      "newuidmap_capability": true,
+      "newuidmap_reported": true,
+      "newuidmap_setuid": true,
+      "permission_denied_reported": true,
+      "podman_info_failed": true
+    },
+    "observed": {
+      "architecture": "x86_64",
+      "distribution": "opensuse-leap-16.0",
+      "package_revision": "5.4.2-160000.5.1.x86_64",
+      "podman_version": "5.4.2",
+      "rootless": true,
+      "uid": 1000
+    },
+    "observed_digest": "821c1e2fb030374ef91823c5eb88ee9467de97d6ff2118f5b808a147ac69ed8b"
+  },
+  "candidate": {
+    "id": "podman-opensuse-leap-16.0-rootless",
+    "source_repository": "https://github.com/Strukturpiloten/containers",
+    "source_revision": "699c4fd9be1a508c33387aa87e6211de92d6e480"
+  },
+  "catalogues": {
+    "candidates_sha256": "66641c17699fff528183df1617932d632fdc1db977be083a942b0cc9c3909234",
+    "limitations_sha256": "0c17df62ada4dc6f2bea28c68243e666db643a69398fe526ec975083d270d24f",
+    "matrix_sha256": "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25"
+  },
+  "cleanup": {
+    "apply_target_removed": false,
+    "baseline_removed": true,
+    "replacement_removed": true
+  },
+  "diagnostic_privacy": {
+    "environment_values_absent": false,
+    "host_paths_absent": false,
+    "raw_outputs_absent": false,
+    "redaction_passed": false,
+    "runtime_identifiers_absent": false
+  },
+  "eligibility": false,
+  "environment_boundary": {
+    "cgroup_delegation": "shared-host",
+    "kernel_capabilities": "shared-host",
+    "selinux_enforcing": "unperformed",
+    "systemd_execution": "unperformed"
+  },
+  "evidence_kind": "podman-limitation-revalidation",
+  "execution": {
+    "architecture": "amd64",
+    "outer_root_mode": "root",
+    "provider": "github-actions"
+  },
+  "external_apply": {
+    "performed": false,
+    "plan_applied": false,
+    "reacquired": false
+  },
+  "failure": {
+    "code": "runtime-metadata-mismatch",
+    "phase": "replacement-runtime"
+  },
+  "fresh_store": {
+    "distinct_graph_root": false,
+    "distinct_name_prefix": false,
+    "distinct_runtime": false,
+    "distinct_socket": false
+  },
+  "reimports": {
+    "compose": false,
+    "quadlet": false
+  },
+  "replacement": {
+    "declared_image": "ghcr.io/strukturpiloten/podman-opensuse-leap-16.0-rootless:v1.0.0@sha256:3d658df5bb45d90f7ca0adcdb422e71fd8eee73c7e31451e42b741ef045e8545",
+    "expected_architecture": "amd64",
+    "expected_distribution": "opensuse-leap-16.0",
+    "expected_lane": "container",
+    "expected_mode": "rootless",
+    "expected_observed_distribution": "opensuse-leap-16.0",
+    "expected_podman_version": "5.4.2",
+    "observed": {
+      "api_version": null,
+      "architecture": null,
+      "distribution": null,
+      "package_revision": null,
+      "podman_version": "5.4.2",
+      "rootless": null,
+      "source_revision": "699c4fd9be1a508c33387aa87e6211de92d6e480"
+    },
+    "observed_digest": "3d658df5bb45d90f7ca0adcdb422e71fd8eee73c7e31451e42b741ef045e8545"
+  },
+  "repository": {
+    "clean_tree": true,
+    "commit": "0bf06e3a3b4f0b13b2fa7a876a1eedc6fb762c03"
+  },
+  "runtime_results": {
+    "deterministic_export": false,
+    "disappeared_resource": false,
+    "literal_glob_rejection": false,
+    "malformed_response": false,
+    "partial_inventory": false,
+    "resource_creation": false,
+    "runtime_semantics": false,
+    "selinux_intent": false,
+    "strict_policy": false,
+    "support_bundle": false
+  },
+  "schema_version": 1,
+  "selector_exporters": {
+    "all": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "exact": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "label": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "network": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "prefix": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    }
+  },
+  "source_proof": {
+    "files": [
+      {
+        "path": "images/podman/podman-opensuse-leap-16.0-rootless/container.yaml",
+        "role": "image-definition",
+        "sha256": "ca9643f3eb8529a037c0e3d6a66c47ea0d5f24090629e7cbb8dd929026a7b727"
+      },
+      {
+        "path": "images/podman/platforms/opensuse-leap-16.0/Containerfile",
+        "role": "platform-recipe",
+        "sha256": "1ff00f2e20c99ea60d1f58643bd112f3ff3852331b6b8f5ff3c814e48506b5b5"
+      },
+      {
+        "path": "images/podman/platforms/opensuse-leap-16.0/containers.conf",
+        "role": "runtime-config",
+        "sha256": "480c1adea8e93bc95e5564393d8a13ff36cd96ed353bef2bce97b200f54b0d87"
+      }
+    ],
+    "published_at": "2026-08-31T07:55:00Z",
+    "redistribution": "transient-test-pull",
+    "source_license": "AGPL-3.0-only"
+  },
+  "status": "failed",
+  "timestamps": {
+    "finished_at": "2026-09-09T23:50:07Z",
+    "started_at": "2026-09-09T23:49:48Z"
+  }
+}

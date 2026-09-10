@@ -7,15 +7,17 @@ These files are executable compatibility evidence, not deployment input.
 - `scenarios.tsv` inventories assertions exercised by the shared runner.
 - `limitations.tsv` names accepted image-specific exceptions. A limited row claims no resource
   coverage.
-- `candidates.toml` binds each limited baseline to one replacement digest and immutable
-  container-repository source evidence. It is pending evidence, not accepted support data.
+- `candidates.toml` contains only active replacement proposals. It may be empty after
+  every proposal has a reviewed admission decision; archived proposal catalogues remain
+  with their bounded evidence under `revalidation/`.
 - `apply-target-containers.conf` configures the disposable nested apply target.
 - `capture_proxy.py` is the privacy boundary for explicitly authorized cassette capture.
 
 ## Revalidating a limitation
 
 The manual `Podman limitation revalidation` workflow runs only from the default branch. Select one
-candidate or `all`; candidates remain serial. Each job runs the accepted baseline and candidate on
+active candidate or `all`; candidates remain serial. When the active catalogue is empty, `all`
+succeeds as an explicit no-op and starts no build or privileged runner. Each job runs the accepted baseline and candidate on
 one disposable runner. The helper rejects catalogue drift before a pull, and the runner never edits
 the matrix or limitation ledger.
 
@@ -40,6 +42,8 @@ as evidence for a valid workflow candidate.
 
 Admission is a separate reviewed change. For a passing candidate, replace the exact baseline digest
 in `matrix.tsv`, delete only its matching limitation, record the reviewed workflow run and artifact,
-and remove the candidate entry. A failed candidate retains its baseline and limitation. Any shared
+and remove the candidate entry. A failed candidate retains its baseline and limitation. The five
+decisions from run `34418537575` are archived in `revalidation/34418537575/`; none changed
+accepted coverage. Any shared
 reproducer must be minimized and reviewed for private paths, addresses, environment values, and
 runtime identifiers.
