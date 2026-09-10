@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boxferry.dev/schemas/migration-readiness-evidence-v1.schema.json",
+  "title": "BoxFerry migration-readiness evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "outcome", "run", "manual_prerequisites", "tasks", "gaps"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "outcome": { "type": "string", "enum": ["passed", "failed"] },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "tier",
+        "revision",
+        "started_at",
+        "finished_at",
+        "runner",
+        "catalogue",
+        "maximum_concurrency",
+        "actual_concurrency",
+        "tier_deadline_seconds",
+        "wall_seconds",
+        "timed_out",
+        "fresh",
+        "selection",
+        "lens_revisions"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "tier": { "type": "string", "enum": ["offline", "trusted-live", "pre-release"] },
+        "revision": { "$ref": "#/$defs/revision" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "runner": { "const": "scripts/migration-readiness.py" },
+        "catalogue": { "const": "fixtures/conformance/migration-readiness/tiers.toml" },
+        "maximum_concurrency": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "actual_concurrency": { "type": "integer", "const": 1 },
+        "tier_deadline_seconds": { "type": "integer", "minimum": 1 },
+        "wall_seconds": { "type": "number", "minimum": 0 },
+        "timed_out": { "type": "boolean" },
+        "fresh": { "const": true },
+        "selection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "task"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["tier", "task"] },
+            "task": { "type": ["string", "null"], "minLength": 1 }
+          }
+        },
+        "lens_revisions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["compose-lens", "quadlet-lens"],
+          "properties": {
+            "compose-lens": { "$ref": "#/$defs/revision" },
+            "quadlet-lens": { "$ref": "#/$defs/revision" }
+          }
+        }
+      }
+    },
+    "manual_prerequisites": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/task" }
+    },
+    "gaps": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/gap" }
+    }
+  },
+  "$defs": {
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "stringArray": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "state", "reason"],
+      "properties": {
+        "id": {
+          "enum": [
+            "observability-stack",
+            "supabase-runtime",
+            "gpu",
+            "virtual-machine",
+            "selinux-enforcing-runtime",
+            "booted-systemd"
+          ]
+        },
+        "state": { "enum": ["planned", "not-executed"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deadline_seconds",
+        "minimum_memory_mib",
+        "minimum_disk_mib",
+        "maximum_rss_mib",
+        "maximum_disk_growth_mib",
+        "maximum_concurrency"
+      ],
+      "properties": {
+        "deadline_seconds": { "type": "integer", "minimum": 1 },
+        "minimum_memory_mib": { "type": "integer", "minimum": 1 },
+        "minimum_disk_mib": { "type": "integer", "minimum": 1 },
+        "maximum_rss_mib": { "type": "integer", "minimum": 1 },
+        "maximum_disk_growth_mib": { "type": "integer", "minimum": 1 },
+        "maximum_concurrency": { "type": "integer", "const": 1 }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device",
+        "roles",
+        "paths",
+        "baseline_free_mib",
+        "minimum_free_mib",
+        "peak_growth_mib"
+      ],
+      "properties": {
+        "device": { "type": "string", "minLength": 1 },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["checkout", "temporary-directory", "podman-graph-root"]
+          }
+        },
+        "paths": { "$ref": "#/$defs/stringArray" },
+        "baseline_free_mib": { "type": "integer", "minimum": 0 },
+        "minimum_free_mib": { "type": "integer", "minimum": 0 },
+        "peak_growth_mib": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wall_seconds",
+        "concurrency",
+        "available_memory_mib",
+        "available_disk_mib",
+        "peak_memory_delta_mib",
+        "peak_rss_kib",
+        "disk_growth_mib",
+        "exit_status",
+        "timed_out",
+        "sample_interval_milliseconds",
+        "memory_scope",
+        "rss_scope",
+        "disk_scope",
+        "filesystems",
+        "missing_tools",
+        "missing_environment",
+        "effective_uid"
+      ],
+      "properties": {
+        "wall_seconds": { "type": "number", "minimum": 0 },
+        "concurrency": { "type": "integer", "const": 1 },
+        "available_memory_mib": { "type": ["integer", "null"], "minimum": 0 },
+        "available_disk_mib": { "type": ["integer", "null"], "minimum": 0 },
+        "peak_memory_delta_mib": { "type": ["integer", "null"], "minimum": 0 },
+        "peak_rss_kib": { "type": "integer", "minimum": 0 },
+        "disk_growth_mib": { "type": "integer", "minimum": 0 },
+        "exit_status": { "type": ["integer", "null"], "minimum": 0 },
+        "timed_out": { "type": ["boolean", "null"] },
+        "sample_interval_milliseconds": { "type": "integer", "const": 250 },
+        "memory_scope": { "type": "string", "const": "system-available-memory" },
+        "rss_scope": { "type": "string", "const": "child-process-tree" },
+        "disk_scope": { "type": "string", "const": "deduplicated-filesystems" },
+        "filesystems": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/filesystem" }
+        },
+        "missing_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "missing_environment": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "effective_uid": { "type": "integer", "minimum": 0 },
+        "lens_revision": { "$ref": "#/$defs/revision" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "workload",
+        "sources",
+        "targets",
+        "approved_losses",
+        "runtime_claim",
+        "privileged",
+        "state",
+        "reason",
+        "started_at",
+        "finished_at",
+        "budgets",
+        "observed"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "workload": { "type": "string", "minLength": 1 },
+        "sources": { "$ref": "#/$defs/stringArray" },
+        "targets": { "$ref": "#/$defs/stringArray" },
+        "approved_losses": { "type": "string", "minLength": 1 },
+        "runtime_claim": { "type": "string", "minLength": 1 },
+        "privileged": { "type": "boolean" },
+        "state": { "enum": ["passed", "failed", "unavailable", "not-run"] },
+        "reason": { "type": ["string", "null"], "minLength": 1 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "budgets": { "$ref": "#/$defs/budgets" },
+        "observed": { "$ref": "#/$defs/observed" }
+      }
+    }
+  }
+}

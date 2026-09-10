@@ -31,7 +31,18 @@ boundaries and synthetic image identities.
 The [live entry point](../scripts/podman-live-conformance.sh) sources reusable
 [scenario](../scripts/lib/scenario-contract.sh) and
 [validator](../scripts/lib/scenario-validators.sh) modules; it retains ownership
-of deadlines, numbered progress, isolation and cleanup.
+of inner deadlines, numbered progress, isolation and cleanup. The shared
+[`migration-readiness.py`](../scripts/migration-readiness.py) tier helper owns outer selection,
+budgets, and evidence used both locally and by GitHub Actions.
+
+## Migration-readiness tiers
+
+The machine [tier catalogue and commands](../fixtures/conformance/migration-readiness/) define the
+ordinary `offline`, manual `trusted-live`, and exact-SHA `pre-release` gates. Evidence records
+measured wall/RSS/disk/concurrency budgets, sources, targets, approved losses, and explicit gaps.
+Each tier wall deadline is shorter than its enclosing workflow timeout and caps every task to its
+remaining time, leaving workflow setup and evidence handling outside the runner budget. Missing
+prerequisites, timeout, `not-run`, and gaps are never success.
 
 ## Fixture route corpus
 
@@ -67,7 +78,7 @@ The normal deterministic gate needs no live Podman service or historical Podman 
 ### Live Podman conformance
 
 [`scripts/podman-live-conformance.sh`](../scripts/podman-live-conformance.sh) is the
-single local and GitHub Actions runner. It starts only digest-pinned nested images from
+single inner live harness. It starts only digest-pinned nested images from
 [`fixtures/conformance/podman-live/matrix.tsv`](../fixtures/conformance/podman-live/matrix.tsv).
 It never mounts the host Podman socket or repository checkout into a target. Each verified
 cell reports reviewed and observed versions, API and package revisions, distribution,
@@ -99,8 +110,9 @@ Smoke covers Podman 3.0.1 through 6.1 across both root modes. GitHub runs the ce
 parallel with a 10-minute limit per cell. The matrix contains 97 numbered checks; checks that
 do not vary by Podman version run once on 6.1 rootful.
 
-Same-repository pull requests also run the 18-stage, 60-minute `application` profile on
-`podman-6.1-rootless`. It independently provisions the same digest-pinned Nextcloud,
+The manual pre-release tier runs the 18-stage, 60-minute `application` profile on
+`podman-6.1-rootless`; ordinary pull requests do not repeat the expensive live applications. It
+independently provisions the same digest-pinned Nextcloud,
 PostgreSQL, Redis, and Nginx topology with direct Podman commands and the verified
 standalone Docker Compose provider. It verifies WebDAV upload and retrieval, database and
 cache use, private and shared network boundaries, the published status and `/second/` routes,

@@ -38,7 +38,7 @@ esac
 MOCK
 chmod +x "${test_root}/bin/mock"
 for tool in actionlint bash cargo cargo-deny cargo-llvm-cov cargo-semver-checks cspell curl git \
-  hadolint jq lychee markdownlint-cli2 npm prettier rustup shellcheck shfmt tombi uv zizmor; do
+  hadolint jq lychee markdownlint-cli2 npm prettier python3 rustup shellcheck shfmt tombi uv zizmor; do
   ln -s mock "${test_root}/bin/${tool}"
 done
 

@@ -1,0 +1,110 @@
+---
+name: Migration readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Bounded catalogue tier to execute at the checked-out exact revision.
+        required: true
+        default: trusted-live
+        type: choice
+        options:
+          - offline
+          - trusted-live
+          - pre-release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migration-readiness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tier:
+    name: ${{ inputs.tier }}
+    # Privileged tiers run only from an explicitly selected revision in the primary repository.
+    if: >-
+      github.repository == 'Strukturpiloten/boxferry' &&
+      github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    # Catalogue deadlines leave 10/15/30 minutes for setup and evidence upload respectively.
+    timeout-minutes: ${{ inputs.tier == 'pre-release' && 360 || inputs.tier == 'trusted-live' && 60 || 30 }}
+    env:
+      TIER: ${{ inputs.tier }}
+    steps:
+      - name: Check out exact BoxFerry revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate exact catalogue selection
+        run: python3 scripts/migration-readiness.py plan --tier "${TIER}" --format json
+
+      - name: Install outer Podman for trusted live tiers
+        if: env.TIER != 'offline'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcap2-bin podman
+
+      - name: Build BoxFerry once for trusted live tiers
+        if: env.TIER != 'offline'
+        run: cargo build --locked --package boxferry --bin boxferry --features podman
+
+      - name: Download and verify Docker Compose provider
+        if: env.TIER != 'offline'
+        env:
+          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
+          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
+        run: |
+          mkdir -p target/tools
+          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
+          printf '%s  %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
+          chmod +x target/tools/docker-compose
+
+      - name: Run offline tier through shared runner
+        if: env.TIER == 'offline'
+        run: >-
+          python3 scripts/migration-readiness.py run
+          --tier "${TIER}"
+          --revision "${GITHUB_SHA}"
+          --evidence target/migration-readiness/evidence-v1.json
+
+      - name: Run trusted tier through shared runner
+        if: env.TIER != 'offline'
+        env:
+          BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
+          BOXFERRY_COMPOSE_BIN: ${{ github.workspace }}/target/tools/docker-compose
+          CARGO_HOME: /home/runner/.cargo
+          RUSTUP_HOME: /home/runner/.rustup
+        run: >-
+          sudo env
+          BOXFERRY_BIN="${BOXFERRY_BIN}"
+          BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}"
+          CARGO_HOME="${CARGO_HOME}"
+          RUSTUP_HOME="${RUSTUP_HOME}"
+          PATH="${PATH}"
+          python3 scripts/migration-readiness.py run
+          --tier "${TIER}"
+          --revision "${GITHUB_SHA}"
+          --evidence target/migration-readiness/evidence-v1.json
+
+      - name: Validate evidence against exact run
+        if: always() && hashFiles('target/migration-readiness/evidence-v1.json') != ''
+        run: >-
+          python3 scripts/migration-readiness.py validate-evidence
+          --evidence target/migration-readiness/evidence-v1.json
+          --tier "${TIER}"
+          --revision "${GITHUB_SHA}"
+          --require-success
+
+      - name: Upload bounded migration-readiness evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: migration-readiness-${{ env.TIER }}-${{ github.sha }}
+          path: target/migration-readiness/evidence-v1.json
+          if-no-files-found: error
+          retention-days: ${{ env.TIER == 'pre-release' && 30 || 7 }}

@@ -258,6 +258,40 @@ jobs:
           feature-group: all-features
           release-type: ${{ needs.semver-release-type.outputs.release_type }}
 
+  migration-readiness:
+    name: Offline migration readiness
+    runs-on: ubuntu-24.04
+    # The 20-minute catalogue deadline leaves ten minutes for checkout and evidence handling.
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run shared offline tier
+        run: >-
+          python3 scripts/migration-readiness.py run
+          --tier offline
+          --revision "${GITHUB_SHA}"
+          --evidence target/migration-readiness/evidence-v1.json
+      - name: Validate exact-revision evidence
+        if: always() && hashFiles('target/migration-readiness/evidence-v1.json') != ''
+        run: >-
+          python3 scripts/migration-readiness.py validate-evidence
+          --evidence target/migration-readiness/evidence-v1.json
+          --tier offline
+          --revision "${GITHUB_SHA}"
+          --require-success
+      - name: Upload bounded offline evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: migration-readiness-offline-${{ github.sha }}
+          path: target/migration-readiness/evidence-v1.json
+          if-no-files-found: error
+          retention-days: 7
+
   pr-gate:
     name: PR gate
     if: always()
@@ -272,6 +306,7 @@ jobs:
         semver,
         coverage,
         portability,
+        migration-readiness,
       ]
     runs-on: ubuntu-24.04
     steps:
@@ -287,6 +322,7 @@ jobs:
           SEMVER_RESULT: ${{ needs.semver.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           PORTABILITY_RESULT: ${{ needs.portability.result }}
+          MIGRATION_READINESS_RESULT: ${{ needs.migration-readiness.result }}
         run: |
           set -euo pipefail
           jobs=(
@@ -299,6 +335,7 @@ jobs:
             "SemVer|${SEMVER_RESULT}"
             "Coverage ratchet|${COVERAGE_RESULT}"
             "macOS portability|${PORTABILITY_RESULT}"
+            "Offline migration readiness|${MIGRATION_READINESS_RESULT}"
           )
 
           {

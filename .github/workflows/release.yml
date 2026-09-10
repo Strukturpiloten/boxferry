@@ -184,9 +184,66 @@ jobs:
           package: ${{ matrix.package }}
           feature-group: all-features
 
+  migration-readiness-evidence:
+    name: Exact-SHA migration-readiness evidence
+    needs: [validate, semver]
+    if: github.repository == 'Strukturpiloten/boxferry'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out exact release revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download successful pre-release evidence for exact SHA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_NAME: migration-readiness-pre-release-${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          evidence_directory="$(mktemp -d "${RUNNER_TEMP}/boxferry-migration-evidence.XXXXXX")"
+          trap 'find "${evidence_directory}" -mindepth 1 -delete; rmdir "${evidence_directory}"' EXIT
+          mapfile -t run_ids < <(
+            gh run list \
+              --workflow migration-readiness.yml \
+              --commit "${GITHUB_SHA}" \
+              --event workflow_dispatch \
+              --status success \
+              --limit 100 \
+              --json databaseId \
+              --jq '.[].databaseId'
+          )
+          for run_id in "${run_ids[@]}"; do
+            if gh run download "${run_id}" --name "${EVIDENCE_NAME}" --dir "${evidence_directory}"; then
+              python3 scripts/migration-readiness.py validate-evidence \
+                --evidence "${evidence_directory}/evidence-v1.json" \
+                --tier pre-release \
+                --revision "${GITHUB_SHA}" \
+                --require-success
+              install -D -m 0600 "${evidence_directory}/evidence-v1.json" \
+                target/release-evidence/evidence-v1.json
+              exit 0
+            fi
+          done
+          echo "No successful pre-release migration-readiness evidence exists for exact SHA ${GITHUB_SHA}." >&2
+          echo 'Run migration-readiness.yml with tier=pre-release on this default-branch revision first.' >&2
+          exit 1
+      - name: Upload release-gate evidence copy
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-migration-readiness-${{ github.sha }}
+          path: target/release-evidence/evidence-v1.json
+          if-no-files-found: error
+          retention-days: 90
+
   publish:
     name: Publish BoxFerry
-    needs: [validate, semver]
+    needs: [validate, semver, migration-readiness-evidence]
     if: github.repository == 'Strukturpiloten/boxferry'
     environment: release
     runs-on: ubuntu-24.04
