@@ -2687,6 +2687,34 @@ fn sourced_live_helpers_validate_catalogues_without_provisioning() -> Result<(),
         output.stdout.is_empty() && output.stderr.is_empty(),
         "sourcing validators must perform no checks"
     );
+
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            concat!(
+                "source \"$1\"\n",
+                "podman_socket() { printf '<%s>\\n' \"$@\"; }\n",
+                "scenario_podman_socket /run/podman/podman.sock inspect ",
+                "--format '{{.State.Status}}' demo\n",
+            ),
+            "validator-test",
+        ])
+        .arg(root.join("scripts/lib/scenario-validators.sh"))
+        .output()?;
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout)?,
+        concat!(
+            "</run/podman/podman.sock>\n",
+            "<validate runtime scenario via Podman inspect>\n",
+            "<inspect>\n",
+            "<--format>\n",
+            "<{{.State.Status}}>\n",
+            "<demo>\n",
+        ),
+        "scenario adapter must preserve the human action and complete Podman command",
+    );
+    assert!(output.stderr.is_empty());
     Ok(())
 }
 
