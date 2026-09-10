@@ -1,0 +1,150 @@
+schema = 1
+decision = "retain-limitations"
+reviewed-at = "2026-09-10"
+repository-commit = "0bf06e3a3b4f0b13b2fa7a876a1eedc6fb762c03"
+workflow-run-id = 34418537575
+workflow-run-attempt = 1
+workflow-run-url = "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575"
+workflow-run-conclusion = "failure"
+candidate-catalogue = "candidates.toml"
+candidate-catalogue-sha256 = "66641c17699fff528183df1617932d632fdc1db977be083a942b0cc9c3909234"
+matrix-sha256 = "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25"
+limitations-sha256 = "0c17df62ada4dc6f2bea28c68243e666db643a69398fe526ec975083d270d24f"
+runner = "github-hosted-ubuntu-24.04"
+follow-up = "https://github.com/Strukturpiloten/containers/issues/179"
+environment-boundary = { kernel-capabilities = "shared-host", cgroup-delegation = "shared-host", selinux-enforcing = "unperformed", systemd-execution = "unperformed" }
+
+[[outcomes]]
+id = "podman-opensuse-leap-16.0-rootless"
+decision = "retain-limitation"
+status = "failed"
+eligibility = false
+failure-phase = "replacement-runtime"
+failure-code = "runtime-metadata-mismatch"
+baseline-image = "ghcr.io/strukturpiloten/podman-opensuse-leap-16.0-rootless:v1.0.0@sha256:821c1e2fb030374ef91823c5eb88ee9467de97d6ff2118f5b808a147ac69ed8b"
+replacement-image = "ghcr.io/strukturpiloten/podman-opensuse-leap-16.0-rootless:v1.0.0@sha256:3d658df5bb45d90f7ca0adcdb422e71fd8eee73c7e31451e42b741ef045e8545"
+baseline-observed = { podman-version = "5.4.2", package-revision = "5.4.2-160000.5.1.x86_64", distribution = "opensuse-leap-16.0", architecture = "x86_64", uid = 1000, rootless = true }
+baseline-unrecorded = ["api-version"]
+replacement-observed = { digest = "3d658df5bb45d90f7ca0adcdb422e71fd8eee73c7e31451e42b741ef045e8545", podman-version = "5.4.2", source-revision = "699c4fd9be1a508c33387aa87e6211de92d6e480" }
+replacement-unobserved = ["api-version", "package-revision", "distribution", "architecture", "rootless"]
+baseline-removed = true
+replacement-removed = true
+apply-target-removed = false
+started-at = "2026-09-09T23:49:48Z"
+finished-at = "2026-09-09T23:50:07Z"
+job-id = 102688921481
+job-url = "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575/job/102688921481"
+job-conclusion = "failure"
+artifact-id = 10130051519
+artifact-name = "podman-revalidation-podman-opensuse-leap-16.0-rootless-34418537575-1"
+artifact-archive-sha256 = "d1515777b9a39157b0cd57155f31173ac508b0a13583ecb732ce41cdc24351cd"
+evidence = "evidence/podman-opensuse-leap-16.0-rootless.json"
+evidence-sha256 = "08494f378aee1db0e75b4930aaa09be1158c4dcb508092d020b89869a0fb855d"
+
+[[outcomes]]
+id = "podman-opensuse-tumbleweed-rootless"
+decision = "retain-limitation"
+status = "failed"
+eligibility = false
+failure-phase = "replacement-runtime"
+failure-code = "runtime-metadata-mismatch"
+baseline-image = "ghcr.io/strukturpiloten/podman-opensuse-tumbleweed-rootless:v1.0.0@sha256:212c013e05b7a8cc7785bf6f24bf255d630a3481b8f4a68339a71f784e31128b"
+replacement-image = "ghcr.io/strukturpiloten/podman-opensuse-tumbleweed-rootless:v1.0.0@sha256:a6ddb6013c11e6c2e3f9b6352641a9d089b953f40fb52d4c34fdf7c3be8cca73"
+baseline-observed = { podman-version = "6.0.2", package-revision = "6.0.2-1.1.x86_64", distribution = "opensuse-tumbleweed-20260821", architecture = "x86_64", uid = 1000, rootless = true }
+baseline-unrecorded = ["api-version"]
+replacement-observed = { digest = "a6ddb6013c11e6c2e3f9b6352641a9d089b953f40fb52d4c34fdf7c3be8cca73", podman-version = "6.0.2", source-revision = "68fbdec2ce5d88ea9d2960960814e7a5e3215f5b" }
+replacement-unobserved = ["api-version", "package-revision", "distribution", "architecture", "rootless"]
+baseline-removed = true
+replacement-removed = true
+apply-target-removed = false
+started-at = "2026-09-09T23:50:23Z"
+finished-at = "2026-09-09T23:50:44Z"
+job-id = 102688921316
+job-url = "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575/job/102688921316"
+job-conclusion = "failure"
+artifact-id = 10130067541
+artifact-name = "podman-revalidation-podman-opensuse-tumbleweed-rootless-34418537575-1"
+artifact-archive-sha256 = "5b5415902304a8aa6681d9e32564eae50925e4a8cee0b57bbfa7b8892097cc40"
+evidence = "evidence/podman-opensuse-tumbleweed-rootless.json"
+evidence-sha256 = "8cf14023d49fa8efa41eae737066a13b97624ddea6296c1102ec577e7b8a1b0e"
+
+[[outcomes]]
+id = "podman-ubi-10-rootless"
+decision = "retain-limitation"
+status = "failed"
+eligibility = false
+failure-phase = "replacement-runtime"
+failure-code = "runtime-metadata-mismatch"
+baseline-image = "ghcr.io/strukturpiloten/podman-ubi-10-rootless:v1.0.0@sha256:5aa8273cff369092b517a48beca108ecc76746fb43e7e42732c65ca2f1da2c04"
+replacement-image = "ghcr.io/strukturpiloten/podman-ubi-10-rootless:v1.0.0@sha256:231fcd3de8efb6c3c02a88cc53dd903cd42ad299c017bfc941662e534bd16a41"
+baseline-observed = { podman-version = "5.8.2", package-revision = "5.8.2-5.el10_2.x86_64", distribution = "ubi-10.2", architecture = "x86_64", uid = 1000, rootless = true }
+baseline-unrecorded = ["api-version"]
+replacement-observed = { digest = "231fcd3de8efb6c3c02a88cc53dd903cd42ad299c017bfc941662e534bd16a41", podman-version = "5.8.2", source-revision = "4ae4723c8005134ea9d082599ebe6df1a3985c4a" }
+replacement-unobserved = ["api-version", "package-revision", "distribution", "architecture", "rootless"]
+baseline-removed = true
+replacement-removed = true
+apply-target-removed = false
+started-at = "2026-09-09T23:51:01Z"
+finished-at = "2026-09-09T23:51:22Z"
+job-id = 102688921335
+job-url = "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575/job/102688921335"
+job-conclusion = "failure"
+artifact-id = 10130083969
+artifact-name = "podman-revalidation-podman-ubi-10-rootless-34418537575-1"
+artifact-archive-sha256 = "da060406df6939a400745cb3ae552b492138332cf4448fa295eeb7c4e2d157e0"
+evidence = "evidence/podman-ubi-10-rootless.json"
+evidence-sha256 = "ce963bca79f76dfb6be0fbdaa0722baf5ac5718aa95a6ab336bab30ea5045550"
+
+[[outcomes]]
+id = "podman-ubi-8-rootless"
+decision = "retain-limitation"
+status = "failed"
+eligibility = false
+failure-phase = "replacement-runtime"
+failure-code = "runtime-metadata-mismatch"
+baseline-image = "ghcr.io/strukturpiloten/podman-ubi-8-rootless:v1.0.0@sha256:32f1436e5be119798b3b5d101ec8c1422e2cecc8343df2160ef09421e077ece4"
+replacement-image = "ghcr.io/strukturpiloten/podman-ubi-8-rootless:v1.0.0@sha256:e842f599c7ffe5e783906e0d1c026e490cb8e0c014f6e202eff96547f3faa265"
+baseline-observed = { podman-version = "4.9.4", package-revision = "4.9.4-34.module+el8.10.0+24510+6ea3880e.x86_64", distribution = "ubi-8.10", architecture = "x86_64", uid = 1000, rootless = true }
+baseline-unrecorded = ["api-version"]
+replacement-observed = { digest = "e842f599c7ffe5e783906e0d1c026e490cb8e0c014f6e202eff96547f3faa265", podman-version = "4.9.4", source-revision = "6275b856f635195eb22237505144dd4cd80ac486" }
+replacement-unobserved = ["api-version", "package-revision", "distribution", "architecture", "rootless"]
+baseline-removed = true
+replacement-removed = true
+apply-target-removed = false
+started-at = "2026-09-09T23:51:39Z"
+finished-at = "2026-09-09T23:52:02Z"
+job-id = 102688921294
+job-url = "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575/job/102688921294"
+job-conclusion = "failure"
+artifact-id = 10130100301
+artifact-name = "podman-revalidation-podman-ubi-8-rootless-34418537575-1"
+artifact-archive-sha256 = "98b49d633d2f3dac443cc20d375ef14113d14a360bf90b4f20a2851d9d376cf7"
+evidence = "evidence/podman-ubi-8-rootless.json"
+evidence-sha256 = "15f5c3eb6e12808a7f87826b52d05188343d6dabfbfeaa3a0de1233ca1d5fe77"
+
+[[outcomes]]
+id = "podman-ubi-9-rootless"
+decision = "retain-limitation"
+status = "failed"
+eligibility = false
+failure-phase = "replacement-runtime"
+failure-code = "runtime-metadata-mismatch"
+baseline-image = "ghcr.io/strukturpiloten/podman-ubi-9-rootless:v1.0.0@sha256:a6e12fa88e84aafd06e1826cbe445377ed4758cc2b49c8e323d9a46f61cd8ae5"
+replacement-image = "ghcr.io/strukturpiloten/podman-ubi-9-rootless:v1.0.0@sha256:880e6e1e0d2923d9e4092b1d5ea81b8a184ba24a50bce98a21bd0513194b4bef"
+baseline-observed = { podman-version = "5.8.2", package-revision = "5.8.2-5.el9_8.x86_64", distribution = "ubi-9.8", architecture = "x86_64", uid = 1000, rootless = true }
+baseline-unrecorded = ["api-version"]
+replacement-observed = { digest = "880e6e1e0d2923d9e4092b1d5ea81b8a184ba24a50bce98a21bd0513194b4bef", podman-version = "5.8.2", source-revision = "34372bb39b2bc633ce194e28304eef808e1959ca" }
+replacement-unobserved = ["api-version", "package-revision", "distribution", "architecture", "rootless"]
+baseline-removed = true
+replacement-removed = true
+apply-target-removed = false
+started-at = "2026-09-09T23:52:21Z"
+finished-at = "2026-09-09T23:52:40Z"
+job-id = 102688921463
+job-url = "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575/job/102688921463"
+job-conclusion = "failure"
+artifact-id = 10130115924
+artifact-name = "podman-revalidation-podman-ubi-9-rootless-34418537575-1"
+artifact-archive-sha256 = "c7b8b17791bc5f157827983042b0c115dc48cb418d7eff24afb7d58cec0f0a85"
+evidence = "evidence/podman-ubi-9-rootless.json"
+evidence-sha256 = "ddccdf8a16a990f399ed55a1a5e009f204c74818f87fd5e8a8a8b4fd2a03fda1"

@@ -11,11 +11,6 @@ on:
         type: choice
         options:
           - all
-          - podman-opensuse-leap-16.0-rootless
-          - podman-opensuse-tumbleweed-rootless
-          - podman-ubi-10-rootless
-          - podman-ubi-8-rootless
-          - podman-ubi-9-rootless
 
 permissions:
   contents: read
@@ -30,6 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       cells: ${{ steps.select.outputs.cells }}
+      has-candidates: ${{ steps.select.outputs.has-candidates }}
     steps:
       - name: Refuse non-default-branch dispatch
         env:
@@ -52,12 +48,17 @@ jobs:
           REQUESTED_CANDIDATE: ${{ inputs.candidate }}
         run: |
           set -Eeuo pipefail
-          mapfile -t catalogue < <(
+          catalogue_output="$(
             python3 scripts/lib/podman-revalidation.py list-candidates \
               --catalogue fixtures/conformance/podman-live/candidates.toml \
               --matrix fixtures/conformance/podman-live/matrix.tsv \
               --limitations fixtures/conformance/podman-live/limitations.tsv
-          )
+          )"
+          if [[ -n "${catalogue_output}" ]]; then
+            mapfile -t catalogue <<< "${catalogue_output}"
+          else
+            catalogue=()
+          fi
           if [[ "${REQUESTED_CANDIDATE}" == all ]]; then
             selected=("${catalogue[@]}")
           else
@@ -68,13 +69,23 @@ jobs:
               fi
             done
           fi
-          [[ "${#selected[@]}" -gt 0 ]]
-          cells="$(printf '%s\n' "${selected[@]}" | jq --raw-input --slurp --compact-output 'split("\n")[:-1]')"
+          if [[ "${REQUESTED_CANDIDATE}" != all && "${#selected[@]}" -eq 0 ]]; then
+            printf 'unknown or inactive candidate: %s\n' "${REQUESTED_CANDIDATE}" >&2
+            exit 1
+          fi
+          if [[ "${#selected[@]}" -eq 0 ]]; then
+            cells='[]'
+            printf 'No active replacement candidates; all reviewed limitations remain retained.\n' >> "${GITHUB_STEP_SUMMARY}"
+          else
+            cells="$(printf '%s\n' "${selected[@]}" | jq --raw-input --slurp --compact-output 'split("\n")[:-1]')"
+          fi
           printf 'cells=%s\n' "${cells}" >> "${GITHUB_OUTPUT}"
+          printf 'has-candidates=%s\n' "$([[ "${#selected[@]}" -gt 0 ]] && printf true || printf false)" >> "${GITHUB_OUTPUT}"
 
   build-boxferry:
     name: Build BoxFerry once
     needs: candidates
+    if: needs.candidates.outputs.has-candidates == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -98,6 +109,7 @@ jobs:
   revalidate:
     name: Revalidate / ${{ matrix.candidate }}
     needs: [candidates, build-boxferry]
+    if: needs.candidates.outputs.has-candidates == 'true'
     strategy:
       fail-fast: false
       max-parallel: 1

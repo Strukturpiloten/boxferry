@@ -377,8 +377,8 @@ def load_catalogue(
     if isinstance(document["schema"], bool) or document["schema"] != SCHEMA_VERSION:
         raise ContractError(f"candidate catalogue schema must be {SCHEMA_VERSION}")
     candidates = document["candidates"]
-    if not isinstance(candidates, list) or not candidates:
-        raise ContractError("candidate catalogue must contain at least one candidate")
+    if not isinstance(candidates, list):
+        raise ContractError("candidate catalogue candidates must be an array")
 
     matrix = load_matrix(matrix_path)
     limitations = load_limitations(limitations_path)
@@ -519,9 +519,9 @@ def load_catalogue(
         for identifier, reason in limitations.items()
         if reason == EXPECTED_LIMITATION
     }
-    if seen_ids != expected_ids:
+    if not seen_ids.issubset(expected_ids):
         raise ContractError(
-            "candidate ids must exactly equal the helper-privilege-collision limitation ids"
+            "candidate ids must be active helper-privilege-collision limitation ids"
         )
     return normalized
 
@@ -1767,6 +1767,245 @@ def parse_bool(value: str) -> bool:
     raise argparse.ArgumentTypeError("expected true or false")
 
 
+def validate_reviewed_admission(repository_root: Path) -> None:
+    """Validate the immutable five-image non-admission decision and its evidence."""
+    decision = repository_root / (
+        "fixtures/conformance/podman-live/revalidation/34418537575"
+    )
+    admission_path = decision / "admission.toml"
+    archive_path = decision / "candidates.toml"
+    active_path = repository_root / "fixtures/conformance/podman-live/candidates.toml"
+    matrix_path = repository_root / "fixtures/conformance/podman-live/matrix.tsv"
+    limitations_path = repository_root / "fixtures/conformance/podman-live/limitations.tsv"
+    with admission_path.open("rb") as handle:
+        admission = tomllib.load(handle)
+    exact_keys(
+        admission,
+        {
+            "schema",
+            "decision",
+            "reviewed-at",
+            "repository-commit",
+            "workflow-run-id",
+            "workflow-run-attempt",
+            "workflow-run-url",
+            "workflow-run-conclusion",
+            "candidate-catalogue",
+            "candidate-catalogue-sha256",
+            "matrix-sha256",
+            "limitations-sha256",
+            "runner",
+            "follow-up",
+            "environment-boundary",
+            "outcomes",
+        },
+        "admission",
+    )
+    expected_commit = "0bf06e3a3b4f0b13b2fa7a876a1eedc6fb762c03"
+    if (
+        admission["schema"] != SCHEMA_VERSION
+        or admission["decision"] != "retain-limitations"
+        or admission["reviewed-at"] != "2026-09-10"
+        or admission["repository-commit"] != expected_commit
+        or admission["workflow-run-id"] != 34418537575
+        or admission["workflow-run-attempt"] != 1
+        or admission["workflow-run-url"]
+        != "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575"
+        or admission["workflow-run-conclusion"] != "failure"
+        or admission["candidate-catalogue"] != "candidates.toml"
+        or admission["runner"] != "github-hosted-ubuntu-24.04"
+        or admission["follow-up"]
+        != "https://github.com/Strukturpiloten/containers/issues/179"
+        or admission["environment-boundary"]
+        != {
+            "kernel-capabilities": "shared-host",
+            "cgroup-delegation": "shared-host",
+            "selinux-enforcing": "unperformed",
+            "systemd-execution": "unperformed",
+        }
+    ):
+        raise ContractError("reviewed Podman admission identity or decision differs")
+    hashes = {
+        "candidate-catalogue-sha256": sha256_file(archive_path),
+        "matrix-sha256": sha256_file(matrix_path),
+        "limitations-sha256": sha256_file(limitations_path),
+    }
+    if any(admission[key] != value for key, value in hashes.items()):
+        raise ContractError("reviewed Podman admission catalogue hash differs")
+
+    archived = load_catalogue(archive_path, matrix_path, limitations_path)
+    active = load_catalogue(active_path, matrix_path, limitations_path)
+    if active:
+        raise ContractError("reviewed Podman outcomes must be absent from active candidates")
+    archived_ids = [candidate["id"] for candidate in archived]
+    limitation_ids = sorted(load_limitations(limitations_path))
+    if len(archived_ids) != 5 or archived_ids != limitation_ids:
+        raise ContractError("reviewed Podman archive must exactly cover retained limitations")
+
+    artifact_bindings = {
+        "podman-opensuse-leap-16.0-rootless": (
+            102688921481,
+            10130051519,
+            "d1515777b9a39157b0cd57155f31173ac508b0a13583ecb732ce41cdc24351cd",
+        ),
+        "podman-opensuse-tumbleweed-rootless": (
+            102688921316,
+            10130067541,
+            "5b5415902304a8aa6681d9e32564eae50925e4a8cee0b57bbfa7b8892097cc40",
+        ),
+        "podman-ubi-10-rootless": (
+            102688921335,
+            10130083969,
+            "da060406df6939a400745cb3ae552b492138332cf4448fa295eeb7c4e2d157e0",
+        ),
+        "podman-ubi-8-rootless": (
+            102688921294,
+            10130100301,
+            "98b49d633d2f3dac443cc20d375ef14113d14a360bf90b4f20a2851d9d376cf7",
+        ),
+        "podman-ubi-9-rootless": (
+            102688921463,
+            10130115924,
+            "c7b8b17791bc5f157827983042b0c115dc48cb418d7eff24afb7d58cec0f0a85",
+        ),
+    }
+    outcome_keys = {
+        "id",
+        "decision",
+        "status",
+        "eligibility",
+        "failure-phase",
+        "failure-code",
+        "baseline-image",
+        "replacement-image",
+        "baseline-observed",
+        "baseline-unrecorded",
+        "replacement-observed",
+        "replacement-unobserved",
+        "baseline-removed",
+        "replacement-removed",
+        "apply-target-removed",
+        "started-at",
+        "finished-at",
+        "job-id",
+        "job-url",
+        "job-conclusion",
+        "artifact-id",
+        "artifact-name",
+        "artifact-archive-sha256",
+        "evidence",
+        "evidence-sha256",
+    }
+    outcomes = admission["outcomes"]
+    if not isinstance(outcomes, list) or len(outcomes) != len(archived):
+        raise ContractError("reviewed Podman admission outcomes must cover the archive")
+    if [outcome.get("id") for outcome in outcomes if isinstance(outcome, dict)] != archived_ids:
+        raise ContractError("reviewed Podman admission outcome order or ids differ")
+    expected_evidence_files: set[str] = set()
+    for outcome, candidate in zip(outcomes, archived, strict=True):
+        if not isinstance(outcome, dict):
+            raise ContractError("reviewed Podman admission outcome must be a table")
+        identifier = candidate["id"]
+        exact_keys(outcome, outcome_keys, f"admission.outcomes.{identifier}")
+        evidence_relative = f"evidence/{identifier}.json"
+        evidence_path = decision / evidence_relative
+        expected_evidence_files.add(f"{identifier}.json")
+        evidence = load_json_object(evidence_path)
+        validate_bound_evidence(
+            evidence,
+            schema_path=repository_root
+            / "docs/schemas/podman-limitation-revalidation-v1.schema.json",
+            catalogue_path=archive_path,
+            matrix_path=matrix_path,
+            limitations_path=limitations_path,
+            candidate_cell=identifier,
+            expected_repository_commit=expected_commit,
+        )
+        job_id, artifact_id, archive_sha256 = artifact_bindings[identifier]
+        expected_job_url = (
+            "https://github.com/Strukturpiloten/boxferry/actions/runs/34418537575/job/"
+            f"{job_id}"
+        )
+        if (
+            outcome["decision"] != "retain-limitation"
+            or outcome["status"] != "failed"
+            or outcome["eligibility"] is not False
+            or outcome["failure-phase"] != "replacement-runtime"
+            or outcome["failure-code"] != "runtime-metadata-mismatch"
+            or outcome["baseline-image"] != candidate["baseline-image"]
+            or outcome["replacement-image"] != candidate["candidate-image"]
+            or outcome["baseline-removed"] is not True
+            or outcome["replacement-removed"] is not True
+            or outcome["apply-target-removed"] is not False
+            or outcome["started-at"] != evidence["timestamps"]["started_at"]
+            or outcome["finished-at"] != evidence["timestamps"]["finished_at"]
+            or outcome["job-id"] != job_id
+            or outcome["job-url"] != expected_job_url
+            or outcome["job-conclusion"] != "failure"
+            or outcome["artifact-id"] != artifact_id
+            or outcome["artifact-name"]
+            != f"podman-revalidation-{identifier}-34418537575-1"
+            or outcome["artifact-archive-sha256"] != archive_sha256
+            or outcome["evidence"] != evidence_relative
+            or outcome["evidence-sha256"] != sha256_file(evidence_path)
+        ):
+            raise ContractError(f"reviewed Podman outcome binding differs for {identifier}")
+        baseline_observed = evidence["baseline"]["observed"]
+        expected_baseline_observed = {
+            "podman-version": baseline_observed["podman_version"],
+            "package-revision": baseline_observed["package_revision"],
+            "distribution": baseline_observed["distribution"],
+            "architecture": baseline_observed["architecture"],
+            "uid": baseline_observed["uid"],
+            "rootless": baseline_observed["rootless"],
+        }
+        replacement_observed = evidence["replacement"]["observed"]
+        expected_replacement_observed = {
+            "digest": evidence["replacement"]["observed_digest"],
+            "podman-version": replacement_observed["podman_version"],
+            "source-revision": replacement_observed["source_revision"],
+        }
+        unobserved = [
+            key.replace("_", "-")
+            for key in (
+                "api_version",
+                "package_revision",
+                "distribution",
+                "architecture",
+                "rootless",
+            )
+            if replacement_observed[key] is None
+        ]
+        if (
+            outcome["baseline-observed"] != expected_baseline_observed
+            or outcome["baseline-unrecorded"] != ["api-version"]
+            or outcome["replacement-observed"] != expected_replacement_observed
+            or outcome["replacement-unobserved"] != unobserved
+            or evidence["status"] != "failed"
+            or evidence["eligibility"] is not False
+            or evidence["failure"]
+            != {"phase": "replacement-runtime", "code": "runtime-metadata-mismatch"}
+            or evidence["cleanup"]
+            != {
+                "baseline_removed": True,
+                "replacement_removed": True,
+                "apply_target_removed": False,
+            }
+        ):
+            raise ContractError(f"reviewed Podman observations differ for {identifier}")
+    evidence_files = {
+        path.name for path in (decision / "evidence").iterdir() if path.is_file()
+    }
+    if evidence_files != expected_evidence_files:
+        raise ContractError("reviewed Podman evidence directory is incomplete or unbounded")
+    if {path.name for path in decision.iterdir()} != {
+        "admission.toml",
+        "candidates.toml",
+        "evidence",
+    }:
+        raise ContractError("reviewed Podman decision directory contains an unexpected file")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2001,11 +2240,16 @@ def expect_contract_error(operation: Any, description: str) -> None:
 
 def self_test() -> None:
     repository_root = Path(__file__).resolve().parents[2]
-    catalogue = repository_root / "fixtures/conformance/podman-live/candidates.toml"
+    validate_reviewed_admission(repository_root)
+    active_catalogue = repository_root / "fixtures/conformance/podman-live/candidates.toml"
+    catalogue = repository_root / (
+        "fixtures/conformance/podman-live/revalidation/34418537575/candidates.toml"
+    )
     matrix = repository_root / "fixtures/conformance/podman-live/matrix.tsv"
     limitations = repository_root / "fixtures/conformance/podman-live/limitations.tsv"
     schema = repository_root / "docs/schemas/podman-limitation-revalidation-v1.schema.json"
     validate_schema_document(schema)
+    assert load_catalogue(active_catalogue, matrix, limitations) == []
     candidates = load_catalogue(catalogue, matrix, limitations)
     assert len(candidates) == 5
     assert [candidate["id"] for candidate in candidates] == sorted(
@@ -2044,11 +2288,14 @@ def self_test() -> None:
             original_catalogue.replace("schema = 1", "schema = true", 1),
             "boolean catalogue schema",
         )
-        first_end = original_catalogue.find("\n[[candidates]]", original_catalogue.find("[[candidates]]") + 1)
-        rejected_catalogue(
-            original_catalogue[first_end + 1 :],
-            "deleted candidate",
+        first_end = original_catalogue.find(
+            "\n[[candidates]]", original_catalogue.find("[[candidates]]") + 1
         )
+        catalogue_copy.write_text(
+            "schema = 1\n\n" + original_catalogue[first_end + 1 :], encoding="utf-8"
+        )
+        assert len(load_catalogue(catalogue_copy, matrix_copy, limitations_copy)) == 4
+        catalogue_copy.write_text(original_catalogue, encoding="utf-8")
         candidate_path = f"images/podman/{candidate['id']}/container.yaml"
         wrong_path = f"images/podman/{candidates[1]['id']}/container.yaml"
         rejected_catalogue(

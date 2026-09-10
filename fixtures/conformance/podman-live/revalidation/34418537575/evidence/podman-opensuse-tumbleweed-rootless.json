@@ -1,0 +1,168 @@
+{
+  "baseline": {
+    "declared_image": "ghcr.io/strukturpiloten/podman-opensuse-tumbleweed-rootless:v1.0.0@sha256:212c013e05b7a8cc7785bf6f24bf255d630a3481b8f4a68339a71f784e31128b",
+    "expected_observed_distribution": "opensuse-tumbleweed-20260821",
+    "historical_collision": {
+      "newgidmap_capability": true,
+      "newgidmap_setuid": true,
+      "newuidmap_capability": true,
+      "newuidmap_reported": true,
+      "newuidmap_setuid": true,
+      "permission_denied_reported": true,
+      "podman_info_failed": true
+    },
+    "observed": {
+      "architecture": "x86_64",
+      "distribution": "opensuse-tumbleweed-20260821",
+      "package_revision": "6.0.2-1.1.x86_64",
+      "podman_version": "6.0.2",
+      "rootless": true,
+      "uid": 1000
+    },
+    "observed_digest": "212c013e05b7a8cc7785bf6f24bf255d630a3481b8f4a68339a71f784e31128b"
+  },
+  "candidate": {
+    "id": "podman-opensuse-tumbleweed-rootless",
+    "source_repository": "https://github.com/Strukturpiloten/containers",
+    "source_revision": "68fbdec2ce5d88ea9d2960960814e7a5e3215f5b"
+  },
+  "catalogues": {
+    "candidates_sha256": "66641c17699fff528183df1617932d632fdc1db977be083a942b0cc9c3909234",
+    "limitations_sha256": "0c17df62ada4dc6f2bea28c68243e666db643a69398fe526ec975083d270d24f",
+    "matrix_sha256": "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25"
+  },
+  "cleanup": {
+    "apply_target_removed": false,
+    "baseline_removed": true,
+    "replacement_removed": true
+  },
+  "diagnostic_privacy": {
+    "environment_values_absent": false,
+    "host_paths_absent": false,
+    "raw_outputs_absent": false,
+    "redaction_passed": false,
+    "runtime_identifiers_absent": false
+  },
+  "eligibility": false,
+  "environment_boundary": {
+    "cgroup_delegation": "shared-host",
+    "kernel_capabilities": "shared-host",
+    "selinux_enforcing": "unperformed",
+    "systemd_execution": "unperformed"
+  },
+  "evidence_kind": "podman-limitation-revalidation",
+  "execution": {
+    "architecture": "amd64",
+    "outer_root_mode": "root",
+    "provider": "github-actions"
+  },
+  "external_apply": {
+    "performed": false,
+    "plan_applied": false,
+    "reacquired": false
+  },
+  "failure": {
+    "code": "runtime-metadata-mismatch",
+    "phase": "replacement-runtime"
+  },
+  "fresh_store": {
+    "distinct_graph_root": false,
+    "distinct_name_prefix": false,
+    "distinct_runtime": false,
+    "distinct_socket": false
+  },
+  "reimports": {
+    "compose": false,
+    "quadlet": false
+  },
+  "replacement": {
+    "declared_image": "ghcr.io/strukturpiloten/podman-opensuse-tumbleweed-rootless:v1.0.0@sha256:a6ddb6013c11e6c2e3f9b6352641a9d089b953f40fb52d4c34fdf7c3be8cca73",
+    "expected_architecture": "amd64",
+    "expected_distribution": "opensuse-tumbleweed",
+    "expected_lane": "container",
+    "expected_mode": "rootless",
+    "expected_observed_distribution": "opensuse-tumbleweed-20260904",
+    "expected_podman_version": "6.0.2",
+    "observed": {
+      "api_version": null,
+      "architecture": null,
+      "distribution": null,
+      "package_revision": null,
+      "podman_version": "6.0.2",
+      "rootless": null,
+      "source_revision": "68fbdec2ce5d88ea9d2960960814e7a5e3215f5b"
+    },
+    "observed_digest": "a6ddb6013c11e6c2e3f9b6352641a9d089b953f40fb52d4c34fdf7c3be8cca73"
+  },
+  "repository": {
+    "clean_tree": true,
+    "commit": "0bf06e3a3b4f0b13b2fa7a876a1eedc6fb762c03"
+  },
+  "runtime_results": {
+    "deterministic_export": false,
+    "disappeared_resource": false,
+    "literal_glob_rejection": false,
+    "malformed_response": false,
+    "partial_inventory": false,
+    "resource_creation": false,
+    "runtime_semantics": false,
+    "selinux_intent": false,
+    "strict_policy": false,
+    "support_bundle": false
+  },
+  "schema_version": 1,
+  "selector_exporters": {
+    "all": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "exact": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "label": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "network": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    },
+    "prefix": {
+      "compose": false,
+      "podman": false,
+      "quadlet": false
+    }
+  },
+  "source_proof": {
+    "files": [
+      {
+        "path": "images/podman/podman-opensuse-tumbleweed-rootless/container.yaml",
+        "role": "image-definition",
+        "sha256": "63c9ad23eeafd4eeb1662f58c28f3b0552ef2ebeef6fa2009daac3a615345033"
+      },
+      {
+        "path": "images/podman/platforms/opensuse-tumbleweed/Containerfile",
+        "role": "platform-recipe",
+        "sha256": "e1894d0644eb45a3d9645d8b3eeeac96f59c7ccd07063605edb07d078a6c3416"
+      },
+      {
+        "path": "images/podman/platforms/opensuse-tumbleweed/containers.conf",
+        "role": "runtime-config",
+        "sha256": "cc2176ec814dd6960cad3d2a90812a745b95088b109c5fe491929fd4e595d43b"
+      }
+    ],
+    "published_at": "2026-09-08T06:58:16Z",
+    "redistribution": "transient-test-pull",
+    "source_license": "AGPL-3.0-only"
+  },
+  "status": "failed",
+  "timestamps": {
+    "finished_at": "2026-09-09T23:50:44Z",
+    "started_at": "2026-09-09T23:50:23Z"
+  }
+}
