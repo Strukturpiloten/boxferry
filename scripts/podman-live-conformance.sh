@@ -1601,7 +1601,6 @@ start_apply_target() {
   engine_operation 'tag apply-target workload with configured portable reference' \
     exec "${apply_target_outer}" podman tag "${workload_local_tag}" \
     "registry.example.invalid/boxferry/${current_prefix}:1"
-  activate_outer_runtime "${socket_directory}"
   verify_observed_version "${id}-apply-target" "${declared_version}" \
     "${artifact_root}/${id}-apply-target.podman-version"
   [[ "$(< "${artifact_root}/${id}-apply-target.architecture")" =~ ^(x86_64|amd64)$ ]]
@@ -1621,28 +1620,36 @@ run_external_apply_reacquire() {
   local expected_network="${current_prefix}-apply-net"
   local expected_volume="${current_prefix}-apply-data"
   local expected_container="${current_prefix}-apply-web"
-  jq --exit-status --arg network "${expected_network}" --arg volume "${expected_volume}" \
+  if ! jq --exit-status --arg network "${expected_network}" --arg volume "${expected_volume}" \
     --arg container "${expected_container}" '
-      (.external_preconditions | length == 2) and
-      any(.external_preconditions[]; .kind == "network" and .name == $network) and
-      any(.external_preconditions[]; .kind == "volume" and .name == $volume) and
-      all(.external_preconditions[];
-        (.kind == "network" and .name == $network) or (.kind == "volume" and .name == $volume)) and
-      any(.operations[]; .action == "create" and .resource.kind == "container" and .resource.name == $container) and
+      (.external_preconditions | length == 0) and
+      ([.operations[] |
+        select(.action == "create" and .resource.kind == "network" and .resource.name == $network)] |
+        length == 1) and
+      ([.operations[] |
+        select(.action == "create" and .resource.kind == "volume" and .resource.name == $volume)] |
+        length == 1) and
+      ([.operations[] |
+        select(.action == "create" and .resource.kind == "container" and .resource.name == $container)] |
+        length == 1) and
+      ([.operations[] |
+        select(.action == "create") |
+        [.resource.kind, .resource.name]] | sort) ==
+      ([["network", $network], ["volume", $volume], ["container", $container]] | sort) and
       all(.operations[]; .cli.external_sensitive_input_required == false)
-    ' "${source_plan}/podman.json" > /dev/null
+    ' "${source_plan}/podman.json" > /dev/null; then
+    printf 'Generated apply plan did not promote its named network and volume exactly once.\n' >&2
+    return 1
+  fi
 
   start_apply_target
-  engine_operation 'create apply-target network' \
-    exec "${apply_target_outer}" podman network create "${expected_network}" > /dev/null
-  engine_operation 'create apply-target volume' \
-    exec "${apply_target_outer}" podman volume create "${expected_volume}" > /dev/null
   timed_operation 3m 'execute generated plan inside apply target' \
     "${engine}" exec --interactive \
     "${apply_target_outer}" /bin/sh -seu \
     < "${source_plan}/podman-commands.sh"
   engine_operation 'inspect applied target container' \
     exec "${apply_target_outer}" podman inspect "${expected_container}" > /dev/null
+  activate_outer_runtime "${runtime_root}/apply-target"
 
   run_convert podman "${apply_target_socket}" apply-target \
     --podman-resource "container=${expected_container}"
@@ -1653,18 +1660,27 @@ run_external_apply_reacquire() {
   cmp --silent "${current_case}/outputs/apply-source-compose/compose.yaml" \
     "${current_case}/outputs/apply-target-compose/compose.yaml"
 
-  engine_operation 'remove applied target container' \
-    exec "${apply_target_outer}" podman rm --force --time 0 "${expected_container}" > /dev/null
-  engine_operation 'remove applied target network' \
-    exec "${apply_target_outer}" podman network rm "${expected_network}" > /dev/null
-  engine_operation 'remove applied target volume' \
-    exec "${apply_target_outer}" podman volume rm "${expected_volume}" > /dev/null
-  if ! expected_failure_operation 90s 'verify applied target cleanup' 125 \
-    "${engine}" exec "${apply_target_outer}" podman inspect \
-    "${expected_container}" > /dev/null 2>&1; then
-    printf 'Applied conformance container survived exact cleanup: %s\n' "${expected_container}" >&2
-    return 1
-  fi
+  engine_operation 'remove applied target container through API' \
+    --url "unix://${apply_target_socket}" \
+    rm --force --time 0 "${expected_container}" > /dev/null
+  engine_operation 'remove applied target network through API' \
+    --url "unix://${apply_target_socket}" network rm "${expected_network}" > /dev/null
+  engine_operation 'remove applied target volume through API' \
+    --url "unix://${apply_target_socket}" volume rm "${expected_volume}" > /dev/null
+  local kind name
+  for kind in container network volume; do
+    case "${kind}" in
+      container) name=${expected_container} ;;
+      network) name=${expected_network} ;;
+      volume) name=${expected_volume} ;;
+    esac
+    if ! expected_failure_operation 90s "verify applied target ${kind} cleanup" 1 \
+      "${engine}" --url "unix://${apply_target_socket}" "${kind}" exists "${name}" \
+      > /dev/null 2>&1; then
+      printf 'Applied conformance %s survived exact cleanup: %s\n' "${kind}" "${name}" >&2
+      return 1
+    fi
+  done
 }
 
 run_invalid_glob() {

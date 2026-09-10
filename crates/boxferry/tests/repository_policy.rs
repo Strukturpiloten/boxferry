@@ -770,9 +770,150 @@ fn validate_immich_live_runner(runner: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> {
+    let target_start = runner
+        .find("start_apply_target() {")
+        .ok_or("live Podman runner is missing apply-target startup")?;
+    let target_tail = &runner[target_start..];
+    let target_end = target_tail
+        .find("\n}\n\nrun_external_apply_reacquire()")
+        .ok_or("live Podman apply-target startup boundary is ambiguous")?;
+    if target_tail[..target_end].contains("activate_outer_runtime") {
+        return Err("live Podman apply target must not activate its API before direct CLI work finishes".to_owned());
+    }
+
+    let start = runner
+        .find("run_external_apply_reacquire() {")
+        .ok_or("live Podman runner is missing external apply/reacquire")?;
+    let tail = &runner[start..];
+    let end = tail
+        .find("\n}\n\nrun_invalid_glob()")
+        .ok_or("live Podman external apply/reacquire boundary is ambiguous")?;
+    let contract = &tail[..end];
+
+    for required in [
+        "(.external_preconditions | length == 0)",
+        "select(.action == \"create\" and .resource.kind == \"network\" and .resource.name == $network)] |\n        length == 1)",
+        "select(.action == \"create\" and .resource.kind == \"volume\" and .resource.name == $volume)] |\n        length == 1)",
+        "select(.action == \"create\" and .resource.kind == \"container\" and .resource.name == $container)] |\n        length == 1)",
+        "select(.action == \"create\") |\n        [.resource.kind, .resource.name]] | sort) ==",
+        "([[\"network\", $network], [\"volume\", $volume], [\"container\", $container]] | sort)",
+        "Generated apply plan did not promote its named network and volume exactly once.",
+        "timed_operation 3m 'execute generated plan inside apply target'",
+        "activate_outer_runtime \"${runtime_root}/apply-target\"",
+        "cmp --silent \"${current_case}/outputs/apply-source-podman/podman.json\"",
+        "cmp --silent \"${current_case}/outputs/apply-source-compose/compose.yaml\"",
+        "engine_operation 'remove applied target container through API' \\\n    --url \"unix://${apply_target_socket}\"",
+        "engine_operation 'remove applied target network through API' \\\n    --url \"unix://${apply_target_socket}\" network rm",
+        "engine_operation 'remove applied target volume through API' \\\n    --url \"unix://${apply_target_socket}\" volume rm",
+        "for kind in container network volume; do",
+        "\"${engine}\" --url \"unix://${apply_target_socket}\" \"${kind}\" exists \"${name}\"",
+    ] {
+        if !contract.contains(required) {
+            return Err(format!(
+                "live Podman external apply/reacquire lacks promoted-resource contract: {required}"
+            ));
+        }
+    }
+    for stale in [
+        "(.external_preconditions | length == 2)",
+        "engine_operation 'create apply-target network'",
+        "engine_operation 'create apply-target volume'",
+        "exec \"${apply_target_outer}\" podman rm",
+        "exec \"${apply_target_outer}\" podman network rm",
+        "exec \"${apply_target_outer}\" podman volume rm",
+    ] {
+        if contract.contains(stale) {
+            return Err(format!(
+                "live Podman external apply/reacquire retained stale prerequisite setup: {stale}"
+            ));
+        }
+    }
+    let execution = contract
+        .find("timed_operation 3m 'execute generated plan inside apply target'")
+        .ok_or("live Podman external apply/reacquire lacks plan execution")?;
+    let inspected = contract
+        .find("engine_operation 'inspect applied target container'")
+        .ok_or("live Podman external apply/reacquire lacks pre-API inspection")?;
+    let activation = contract
+        .find("activate_outer_runtime \"${runtime_root}/apply-target\"")
+        .ok_or("live Podman external apply/reacquire lacks API activation")?;
+    let reacquisition = contract
+        .find("run_convert podman \"${apply_target_socket}\" apply-target")
+        .ok_or("live Podman external apply/reacquire lacks target reacquisition")?;
+    if !(execution < inspected && inspected < activation && activation < reacquisition) {
+        return Err("live Podman external apply/reacquire must finish CLI work before API activation".to_owned());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn live_external_apply_reacquire_rejects_stale_prerequisite_contracts() -> Result<(), String> {
+    let runner = fs::read_to_string(repository_root().join("scripts/podman-live-conformance.sh"))
+        .map_err(|error| format!("failed to read live Podman runner: {error}"))?;
+    validate_external_apply_reacquire_runner(&runner)?;
+
+    let mutations = [
+        remove_first(
+            &runner,
+            "select(.action == \"create\" and .resource.kind == \"network\" and .resource.name == $network)",
+        )?,
+        runner.replacen(
+            "(.external_preconditions | length == 0)",
+            "(.external_preconditions | length == 2)",
+            1,
+        ),
+        runner.replacen(
+            "  start_apply_target\n",
+            "  start_apply_target\n  engine_operation 'create apply-target network'\n",
+            1,
+        ),
+        runner.replacen("length == 1)", "length >= 1)", 1),
+        runner.replacen(
+            "[.resource.kind, .resource.name]] | sort) ==",
+            "[.resource.kind, .resource.name]] | sort) !=",
+            1,
+        ),
+        remove_first(
+            &runner,
+            "cmp --silent \"${current_case}/outputs/apply-source-podman/podman.json\"",
+        )?,
+        remove_first(
+            &runner,
+            "cmp --silent \"${current_case}/outputs/apply-source-compose/compose.yaml\"",
+        )?,
+        remove_first(&runner, "for kind in container network volume; do")?,
+        runner
+            .replacen(
+                "  activate_outer_runtime \"${runtime_root}/apply-target\"\n",
+                "",
+                1,
+            )
+            .replacen(
+                "  timed_operation 3m 'execute generated plan inside apply target'",
+                "  activate_outer_runtime \"${runtime_root}/apply-target\"\n  timed_operation 3m 'execute generated plan inside apply target'",
+                1,
+            ),
+        runner.replacen(
+            "  verify_observed_version \"${id}-apply-target\"",
+            "  activate_outer_runtime \"${socket_directory}\"\n  verify_observed_version \"${id}-apply-target\"",
+            1,
+        ),
+    ];
+    for changed in mutations {
+        if validate_external_apply_reacquire_runner(&changed).is_ok() {
+            return Err("live Podman apply/reacquire policy accepted a stale prerequisite contract".to_owned());
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_live_runner(runner: &str) -> Result<(), String> {
     validate_paperless_live_runner(runner)?;
     validate_immich_live_runner(runner)?;
+    validate_external_apply_reacquire_runner(runner)?;
     for required in [
         "--podman-resource-prefix",
         "--podman-label",
