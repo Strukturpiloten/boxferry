@@ -1,0 +1,5 @@
+[Container]
+Image=docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+Exec=--config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=24h --web.enable-remote-write-receiver
+Volume=prometheus-data.volume:/prometheus
+Network=backend.network

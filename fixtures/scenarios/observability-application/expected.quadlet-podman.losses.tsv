@@ -1,0 +1,3 @@
+BFP0007	networks.backend.internal	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD	unsupported	podman@6.1.0..6.1.0	1
+BFP0007	services.grafana.ports	unsupported	podman@6.1.0..6.1.0	1

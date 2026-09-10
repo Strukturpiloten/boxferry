@@ -21,6 +21,10 @@ id = "immich-application"
 manifest = "fixtures/scenarios/immich-application/scenario.toml"
 
 [[scenarios]]
+id = "observability-application"
+manifest = "fixtures/scenarios/observability-application/scenario.toml"
+
+[[scenarios]]
 id = "paperless-ngx-document-converters"
 manifest = "fixtures/scenarios/paperless-ngx-document-converters/scenario.toml"
 

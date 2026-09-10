@@ -1,0 +1,120 @@
+---
+services:
+  metrics-producer:
+    image: ${BF_PRODUCER_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-observability-metrics-producer
+    labels: &application-labels
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-observability
+    command: ["/bin/sh", "/fixture/producer.sh", "metrics"]
+    networks:
+      backend:
+        aliases: [metrics-producer]
+    volumes:
+      - ${BF_FIXTURE_ROOT:?required}:/fixture:ro
+
+  log-producer:
+    image: ${BF_PRODUCER_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-observability-log-producer
+    labels: *application-labels
+    command: ["/bin/sh", "/fixture/producer.sh", "logs"]
+    networks: [backend]
+    volumes:
+      - ${BF_FIXTURE_ROOT:?required}:/fixture:ro
+      - telemetry-logs:/var/log/boxferry
+
+  prometheus:
+    image: ${BF_PROMETHEUS_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-observability-prometheus
+    labels: *application-labels
+    depends_on: [metrics-producer]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=24h
+      - --web.enable-remote-write-receiver
+    networks:
+      backend:
+        aliases: [prometheus]
+    volumes:
+      - ${BF_FIXTURE_ROOT:?required}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  loki:
+    image: ${BF_LOKI_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-observability-loki
+    labels: *application-labels
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    networks:
+      backend:
+        aliases: [loki]
+    volumes:
+      - ${BF_FIXTURE_ROOT:?required}/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+
+  alloy:
+    image: ${BF_ALLOY_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-observability-alloy
+    labels: *application-labels
+    depends_on: [prometheus, loki, log-producer]
+    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    networks: [backend]
+    volumes:
+      - ${BF_FIXTURE_ROOT:?required}/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - telemetry-logs:/var/log/boxferry:ro
+
+  grafana:
+    image: ${BF_GRAFANA_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-observability-grafana
+    labels: *application-labels
+    depends_on: [prometheus, loki, alloy]
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${BF_ADMIN_PASSWORD:?required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:13000:3000"
+    networks:
+      backend:
+      edge:
+        aliases: [grafana]
+    volumes:
+      - ${BF_FIXTURE_ROOT:?required}/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/boxferry.yaml:ro
+      - ${BF_FIXTURE_ROOT:?required}/grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/boxferry.yaml:ro
+      - ${BF_FIXTURE_ROOT:?required}/dashboard.json:/etc/grafana/provisioning/boxferry-dashboards/boxferry.json:ro
+      - grafana-data:/var/lib/grafana
+
+networks:
+  backend:
+    name: ${BF_PREFIX}-observability-backend
+    internal: true
+    labels: *application-labels
+  edge:
+    external: true
+    name: ${BF_PREFIX}-observability-edge
+
+volumes:
+  alloy-data:
+    name: ${BF_PREFIX}-observability-alloy-data
+    labels: *application-labels
+  grafana-data:
+    name: ${BF_PREFIX}-observability-grafana-data
+    labels: *application-labels
+  loki-data:
+    name: ${BF_PREFIX}-observability-loki-data
+    labels: *application-labels
+  prometheus-data:
+    name: ${BF_PREFIX}-observability-prometheus-data
+    labels: *application-labels
+  telemetry-logs:
+    name: ${BF_PREFIX}-observability-telemetry-logs
+    labels: *application-labels

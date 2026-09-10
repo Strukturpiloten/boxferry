@@ -1,0 +1,6 @@
+# schema=1; id reference version license provenance redistribution platform
+prometheus	docker.io/prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0	3.14.0	Apache-2.0	https://github.com/prometheus/prometheus	transient-test-pull	linux/amd64
+loki	docker.io/grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500	3.7.7	AGPL-3.0-only	https://github.com/grafana/loki	transient-test-pull	linux/amd64
+grafana	docker.io/grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283	13.2.1	AGPL-3.0-only	https://github.com/grafana/grafana	transient-test-pull	linux/amd64
+alloy	docker.io/grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839	1.19.2	Apache-2.0	https://github.com/grafana/alloy	transient-test-pull	linux/amd64
+producer	docker.io/library/nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8	1.29.1-alpine	BSD-2-Clause	https://github.com/nginx/docker-nginx	transient-test-pull	linux/amd64

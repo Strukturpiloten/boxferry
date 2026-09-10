@@ -79,6 +79,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         "forgejo-application.sh",
         "paperless-application.sh",
         "immich-application.sh",
+        "observability-application.sh",
     ] {
         let source = format!("source \"${{script_directory}}/lib/{module}\"");
         if !runner.contains(&source) {
@@ -135,6 +136,27 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         );
     }
     append_immich_fixture_contract(&root, &mut runner_contract)?;
+    for fixture in [
+        "compose.yaml",
+        "config.alloy",
+        "dashboard.json",
+        "grafana-dashboards.yaml",
+        "grafana-datasources.yaml",
+        "images.tsv",
+        "loki.yaml",
+        "producer.sh",
+        "prometheus.yml",
+        "providers.tsv",
+        "README.md",
+    ] {
+        runner_contract.push_str(
+            &fs::read_to_string(
+                root.join("fixtures/conformance/observability-application")
+                    .join(fixture),
+            )
+            .map_err(|error| format!("failed to read observability fixture: {error}"))?,
+        );
+    }
     let capture_tool = root.join("fixtures/conformance/podman-live/capture_proxy.py");
     runner_contract.push_str(
         &fs::read_to_string(&capture_tool)
@@ -716,7 +738,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
         "nextcloud:32.0.10-apache@sha256:611669115cccef3f96aa8eb47bd07c4d57452d894ebcfc1d81f5e8ce368e7d2d",
         "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
         "redis:8.2.1-alpine@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232",
-        "nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+        "library/nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
         "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
         "downloaded-test-tool",
         ".versionstring == \"32.0.10\"",
@@ -738,6 +760,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
     validate_live_forgejo_application_cells(runner)?;
     validate_live_paperless_application_cell(runner)?;
     validate_live_immich_application_cell(runner)?;
+    validate_live_observability_application_cell(runner)?;
     validate_live_target_contracts(runner)?;
 
     Ok(())
@@ -749,7 +772,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
 )]
 fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
     for required in [
-        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
         "--candidate-cell is required with --profile limitation-revalidation.",
         "--candidate-cell is valid only with --profile limitation-revalidation.",
         "initialize-evidence",
@@ -780,7 +803,7 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         "Unexpected limitation-revalidation check",
         "[[ \"${#revalidation_checks[@]}\" == \"${#revalidation_required_checks[@]}\" ]]",
         "[[ \"${progress_total}\" == \"${#revalidation_required_checks[@]}\" ]]",
-        "[[ \"${profile}\" == full-container || \"${profile}\" == limitation-revalidation ]]",
+        "[[ \"${profile}\" == full-container || \"${profile}\" == limitation-revalidation ||\n    \"${profile}\" == observability-application ]]",
         "for selection in 'exact container' 'prefix selection' 'label selection' 'all resources' 'network boundary'; do",
         "for exporter in compose quadlet podman; do",
         "mark_revalidation_result \"selector_exporters.${selection}.${exporter}\"",
@@ -1047,7 +1070,7 @@ fn validate_live_application_cell(runner: &str) -> Result<(), String> {
 
 fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
     for contract in [
-        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
         "run_forgejo_application_cell()",
         "forgejo_assert_clean_prefix",
         "forgejo_git_probe",
@@ -1598,6 +1621,84 @@ fn immich_captured_native_evidence_is_supplementary_and_redacted() -> Result<(),
     Ok(())
 }
 
+fn validate_live_observability_application_cell(runner: &str) -> Result<(), String> {
+    for required in [
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
+        "observability-application)",
+        "run_observability_application_cell \"$@\"",
+    ] {
+        if !runner.contains(required) {
+            return Err(format!(
+                "live Podman runner must retain observability entry-point contract: `{required}`"
+            ));
+        }
+    }
+
+    for required in [
+        "[[ \"${id}-${mode}\" == podman-6.1-rootless-rootless ]]",
+        "OBSERVABILITY_MIN_CPUS=\"2\"",
+        "OBSERVABILITY_MIN_MEMORY_KIB=\"4194304\"",
+        "OBSERVABILITY_MIN_DISK_KIB=\"8388608\"",
+        "OBSERVABILITY_ARCHIVE_MAX_BYTES=\"2147483648\"",
+        "OBSERVABILITY_PROVIDER_VERSION=\"5.5.0\"",
+        "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
+        "prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
+        "grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+        "grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
+        "grafana/alloy:v1.19.2@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+        "nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
+        "boxferry_fixture_temperature_celsius{source=\"controlled\"}",
+        "query_range?query=%7Bjob%3D%22boxferry_fixture%22%7D%20%7C%3D%20%22boxferry-observability-known-log%22",
+        "retention_period: 24h",
+        "--storage.tsdb.retention.time=24h",
+        "telemetry-logs:/var/log/boxferry:ro",
+        "observability_assert_queries_and_grafana",
+        "observability_assert_reviewed_diagnostics",
+        "observability_write_expected_diagnostics",
+        "route=\"${source_kind}-${output}\"",
+        "compose-podman | quadlet-podman",
+        "compose-compose | compose-quadlet | quadlet-compose | quadlet-quadlet",
+        "if (subject ~ /^volumes\\./)",
+        "decision = \"approximated\"",
+        "policy = \"approximate\"",
+        "services.%s%s.mounts[%d]",
+        "grafana 3",
+        "max_over_time%28boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D%5B30m%5D%29",
+        "--project-name \"${prefix}-observability\"",
+        "\"${selection}\" \"${input}\" \"${output}\" \"${result}\" \"${prefix}\" \"${report}\"",
+        "expected.${route}.diagnostics",
+        "diff --unified \"${expected}\" \"${observed}\"",
+        "field(\"required_loss_policy\")",
+        "observability_assert_application_boundaries",
+        "observability_assert_storage_ownership",
+        "observability_prepare_persistence_sentinels",
+        "observability_assert_persistence",
+        "observability_run_exports",
+        "observability_run_reimports",
+        "observability_expect_collision",
+        "observability_cleanup_mode",
+        "progress_total=35",
+    ] {
+        if !runner.contains(required) {
+            return Err(format!("observability helper and fixtures must retain `{required}`"));
+        }
+    }
+
+    for forbidden in [
+        "--volume /var/run/docker.sock",
+        "--volume /run/podman/podman.sock",
+        "--volume /var/log/journal",
+        "--volume /var/lib/docker/containers",
+    ] {
+        if runner.contains(forbidden) {
+            return Err(format!(
+                "observability acceptance must not expose production source `{forbidden}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> {
     const PORTABLE_AF_UNIX_PATH_BYTES: usize = 104;
     const CAPTURE_RUNTIME_ROOT_TEMPLATE: &str = "/tmp/boxferry-podman-live.XXXXXX";
@@ -1615,7 +1716,7 @@ fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> 
     }
 
     for contract in [
-        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
         "paperless-application)",
         "run_paperless_application_cell()",
         "run_paperless_application_cell \"$@\"",

@@ -1,0 +1,6 @@
+[Container]
+Image=docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+Environment=GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary
+PublishPort=127.0.0.1:13000:3000/tcp
+Volume=grafana-data.volume:/var/lib/grafana
+Network=backend.network

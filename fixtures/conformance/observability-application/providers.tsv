@@ -1,0 +1,2 @@
+# schema=1; id version asset sha256 license provenance redistribution platform
+docker-compose	5.5.0	https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64	c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b	Apache-2.0	https://github.com/docker/compose	downloaded-test-tool	linux/amd64

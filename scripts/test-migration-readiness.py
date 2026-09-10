@@ -150,6 +150,7 @@ class MigrationReadinessTests(unittest.TestCase):
                 "forgejo-root-modes",
                 "paperless-application",
                 "immich-application",
+                "observability-application",
                 "compose-lens-candidate",
                 "quadlet-lens-candidate",
             ],
@@ -171,7 +172,7 @@ class MigrationReadinessTests(unittest.TestCase):
             self.assertEqual([task["id"] for task in plan["tasks"]], tasks)
             self.assertEqual(plan["max_concurrency"], 1)
             self.assertEqual(plan["tier_deadline_seconds"], tier_deadlines[tier])
-            self.assertEqual(len(plan["gaps"]), 6)
+            self.assertEqual(len(plan["gaps"]), 5)
             self.assertFalse(any(gap["state"] == "passed" for gap in plan["gaps"]))
 
     def test_catalogue_rejects_a_successful_gap(self) -> None:
@@ -195,8 +196,8 @@ class MigrationReadinessTests(unittest.TestCase):
             "missing top-level": source.replace("schema = 1\n", "", 1),
             "mistyped top-level": source.replace("schema = 1", 'schema = "1"', 1),
             "unknown gap": source.replace(
-                'id = "observability-stack"',
-                'id = "observability-stack"\nunknown-gap = true',
+                'id = "supabase-runtime"',
+                'id = "supabase-runtime"\nunknown-gap = true',
                 1,
             ),
             "mistyped gap": source.replace('state = "planned"', "state = 1", 1),
@@ -710,9 +711,9 @@ class MigrationReadinessTests(unittest.TestCase):
             if call.args[2] in {"PASS", "FAIL", "GAP"}
         ]
         self.assertEqual(status, 1)
-        self.assertEqual([step for step, _state in terminal], list(range(1, 18)))
+        self.assertEqual([step for step, _state in terminal], list(range(1, 20)))
         self.assertTrue(all(state == "GAP" for _step, state in terminal[:-1]))
-        self.assertEqual(terminal[-1], (17, "PASS"))
+        self.assertEqual(terminal[-1], (19, "PASS"))
         self.assertEqual(evidence["tasks"][0]["state"], "unavailable")
         self.assertTrue(all(task["state"] == "not-run" for task in evidence["tasks"][1:]))
 

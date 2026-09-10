@@ -1,0 +1,353 @@
+schema = 1
+id = "observability-application"
+source-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = ["boxferry-public-observability-admin-canary"]
+
+[application]
+name = "observability-application"
+version = "1.0.0"
+
+[[components]]
+name = "prometheus"
+version = "3.14.0"
+image = "docker.io/prom/prometheus"
+digest = "sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
+configured-image = "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0"
+
+[[components]]
+name = "loki"
+version = "3.7.7"
+image = "docker.io/grafana/loki"
+digest = "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500"
+configured-image = "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500"
+
+[[components]]
+name = "grafana"
+version = "13.2.1"
+image = "docker.io/grafana/grafana"
+digest = "sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283"
+configured-image = "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283"
+
+[[components]]
+name = "alloy"
+version = "1.19.2"
+image = "docker.io/grafana/alloy"
+digest = "sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839"
+configured-image = "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839"
+
+[[components]]
+name = "log-producer"
+version = "1.29.1"
+image = "docker.io/library/nginx"
+digest = "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+configured-image = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+
+[[components]]
+name = "metrics-producer"
+version = "1.29.1"
+image = "docker.io/library/nginx"
+digest = "sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+configured-image = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+interpolate = true
+environment-files = ["observability.env.example"]
+import-diagnostics = []
+
+[[native-inputs]]
+id = "quadlet"
+importer = "quadlet"
+files = [
+  "backend.network",
+  "alloy-data.volume",
+  "grafana-data.volume",
+  "loki-data.volume",
+  "prometheus-data.volume",
+  "telemetry-logs.volume",
+  "alloy.container",
+  "grafana.container",
+  "log-producer.container",
+  "loki.container",
+  "metrics-producer.container",
+  "prometheus.container",
+]
+format-version = "0.2.3"
+import-diagnostics = []
+
+[[native-inputs]]
+id = "podman"
+importer = "podman"
+files = ["input-podman.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expected.podman-import.diagnostics"
+
+[native-inputs.podman]
+application = "observability-application"
+cassette-scenario-id = "observability-application-authored-podman-6.1.0"
+root-mode = "rootless"
+include-environment-values = true
+selectors = [
+  { kind = "container", exact = "alloy" },
+  { kind = "container", exact = "grafana" },
+  { kind = "container", exact = "log-producer" },
+  { kind = "container", exact = "loki" },
+  { kind = "container", exact = "metrics-producer" },
+  { kind = "container", exact = "prometheus" },
+  { kind = "network", exact = "backend" },
+  { kind = "volume", exact = "alloy-data" },
+  { kind = "volume", exact = "grafana-data" },
+  { kind = "volume", exact = "loki-data" },
+  { kind = "volume", exact = "prometheus-data" },
+  { kind = "volume", exact = "telemetry-logs" },
+]
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Deterministic metric value, log line, public invalid-domain password canary, digest-only native acquisition evidence, and no host or production telemetry."
+image-evidence = "Reviewed linux/amd64 tag and digest identities are recorded in fixtures/conformance/observability-application/images.tsv; offline importers never pull images and this fixture alone makes no runtime claim."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "network:backend",
+  "service:alloy",
+  "service:grafana",
+  "service:log-producer",
+  "service:loki",
+  "service:metrics-producer",
+  "service:prometheus",
+  "volume:alloy-data",
+  "volume:grafana-data",
+  "volume:loki-data",
+  "volume:prometheus-data",
+  "volume:telemetry-logs",
+]
+excluded-resources = []
+ownership-boundaries = [
+  "volume:alloy-data:application",
+  "volume:grafana-data:application",
+  "volume:loki-data:application",
+  "volume:prometheus-data:application",
+  "volume:telemetry-logs:application",
+]
+shared-boundaries = [
+  "volume:alloy-data:consumers=alloy",
+  "volume:grafana-data:consumers=grafana",
+  "volume:loki-data:consumers=loki",
+  "volume:prometheus-data:consumers=prometheus",
+  "volume:telemetry-logs:consumers=alloy,log-producer",
+]
+required-mounts = [
+  "alloy:alloy-data:/var/lib/alloy/data",
+  "grafana:grafana-data:/var/lib/grafana",
+  "log-producer:telemetry-logs:/var/log/boxferry",
+  "loki:loki-data:/loki",
+  "prometheus:prometheus-data:/prometheus",
+]
+required-environment = [
+  "grafana:GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary",
+]
+required-ports = ["grafana:13000:3000/tcp"]
+required-networks = [
+  { name = "backend", ownership = "application", internal = true },
+]
+required-commands = [
+  { service = "alloy", kind = "exec", values = ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"] },
+  { service = "grafana", kind = "absent" },
+  { service = "log-producer", kind = "exec", values = ["sleep", "86400"] },
+  { service = "loki", kind = "exec", values = ["-config.file=/etc/loki/local-config.yaml"] },
+  { service = "metrics-producer", kind = "exec", values = ["sleep", "86400"] },
+  { service = "prometheus", kind = "exec", values = ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=24h", "--web.enable-remote-write-receiver"] },
+]
+required-entrypoints = [
+  { service = "alloy", kind = "absent" },
+  { service = "grafana", kind = "absent" },
+  { service = "log-producer", kind = "absent" },
+  { service = "loki", kind = "absent" },
+  { service = "metrics-producer", kind = "absent" },
+  { service = "prometheus", kind = "absent" },
+]
+required-image-sources = [
+  { service = "alloy", kind = "literal", value = "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839" },
+  { service = "grafana", kind = "literal", value = "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283" },
+  { service = "log-producer", kind = "literal", value = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8" },
+  { service = "loki", kind = "literal", value = "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500" },
+  { service = "metrics-producer", kind = "literal", value = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8" },
+  { service = "prometheus", kind = "literal", value = "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0" },
+]
+required-port-bindings = [
+  { service = "grafana", container = 3000, published = 13000, host-address = "127.0.0.1", protocol = "tcp" },
+]
+required-volume-mounts = [
+  { service = "alloy", source = "alloy-data", target = "/var/lib/alloy/data", read-only = false },
+  { service = "alloy", source = "telemetry-logs", target = "/var/log/boxferry", read-only = true },
+  { service = "grafana", source = "grafana-data", target = "/var/lib/grafana", read-only = false },
+  { service = "log-producer", source = "telemetry-logs", target = "/var/log/boxferry", read-only = false },
+  { service = "loki", source = "loki-data", target = "/loki", read-only = false },
+  { service = "prometheus", source = "prometheus-data", target = "/prometheus", read-only = false },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "alloy-data.volume", "grafana-data.volume", "loki-data.volume", "prometheus-data.volume", "telemetry-logs.volume", "alloy.container", "grafana.container", "log-producer.container", "loki.container", "metrics-producer.container", "prometheus.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain Grafana environment, internal-network, or publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.compose-podman.diagnostics"
+allowed-losses-file = "expected.compose-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = ["environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
+
+[[evidence]]
+input = "quadlet"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "quadlet"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "alloy-data.volume", "grafana-data.volume", "loki-data.volume", "prometheus-data.volume", "telemetry-logs.volume", "alloy.container", "grafana.container", "log-producer.container", "loki.container", "metrics-producer.container", "prometheus.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "quadlet"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain Grafana environment, internal-network, or publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.quadlet-podman.diagnostics"
+allowed-losses-file = "expected.quadlet-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = ["environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
+
+[[evidence]]
+input = "podman"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.podman-compose.diagnostics"
+allowed-losses-file = "expected.podman-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "podman"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["backend.network", "alloy-data.volume", "grafana-data.volume", "loki-data.volume", "prometheus-data.volume", "telemetry-logs.volume", "alloy.container", "grafana.container", "log-producer.container", "loki.container", "metrics-producer.container", "prometheus.container"]
+diagnostics-file = "expected.podman-quadlet.diagnostics"
+allowed-losses-file = "expected.podman-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "podman"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain Grafana environment, internal-network, or publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.podman-podman.diagnostics"
+allowed-losses-file = "expected.podman-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = ["environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
+
+[evidence.podman-plan]
+creatable-resources = ["container:alloy", "container:grafana", "container:log-producer", "container:loki", "container:metrics-producer", "container:prometheus", "network:backend", "volume:alloy-data", "volume:grafana-data", "volume:loki-data", "volume:prometheus-data", "volume:telemetry-logs"]
+external-preconditions = []
+image-operations = [
+  { resource = "alloy-image", reference = "docker.io/grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839", policy = "missing" },
+  { resource = "grafana-image", reference = "docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283", policy = "missing" },
+  { resource = "log-producer-image", reference = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8", policy = "missing" },
+  { resource = "loki-image", reference = "docker.io/grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500", policy = "missing" },
+  { resource = "metrics-producer-image", reference = "docker.io/library/nginx@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8", policy = "missing" },
+  { resource = "prometheus-image", reference = "docker.io/prom/prometheus@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0", policy = "missing" },
+]
+start-order = ["alloy", "grafana", "log-producer", "loki", "metrics-producer", "prometheus"]
