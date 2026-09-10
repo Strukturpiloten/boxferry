@@ -3142,6 +3142,102 @@ fn read_manifest(fixture: &Path) -> Result<ScenarioManifest, Box<dyn Error>> {
 fn read_manifest_file(manifest: &Path) -> Result<ScenarioManifest, Box<dyn Error>> {
     Ok(toml::from_str(&fs::read_to_string(manifest)?)?)
 }
+#[test]
+fn live_resource_validators_accept_renderer_declaration_forms() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let output = TemporaryDirectory::new("compose-resource-validator")?;
+    let block = output.path().join("block");
+    let compact = output.path().join("compact");
+    let missing = output.path().join("missing");
+    let quadlet = output.path().join("quadlet");
+    let canonical_input = output.path().join("canonical-input.yaml");
+    let canonical_output = output.path().join("canonical-output.yaml");
+    fs::create_dir_all(&block)?;
+    fs::create_dir_all(&compact)?;
+    fs::create_dir_all(&missing)?;
+    fs::create_dir_all(&quadlet)?;
+
+    fs::write(
+        block.join("compose.yaml"),
+        "---\nnetworks:\n  backend:\n    name: external-backend\nvolumes:\n  data:\n    name: external-data\n",
+    )?;
+    fs::write(
+        compact.join("compose.yaml"),
+        "---\nnetworks:\n  backend: {}\nvolumes:\n  data: {}\n",
+    )?;
+    fs::write(
+        missing.join("compose.yaml"),
+        "---\nservices:\n  app:\n    image: example.invalid/app:1\n    networks:\n      backend: {}\n",
+    )?;
+    fs::write(
+        quadlet.join("live-large-api.container"),
+        "[Container]\nVolume=live-large-cache.volume:/cache:ro\nNetwork=live-large-private.network\nNetwork=live-large-edge.network\n",
+    )?;
+    fs::write(
+        &canonical_input,
+        "---\nservices:\n  app:\n    image: example.invalid/app:1\nnetworks:\n  z-edge: {}\n  a-backend: {}\nvolumes:\n  z-data: {}\n  a-cache: {}\n",
+    )?;
+
+    let result = Command::new("bash")
+        .args([
+            "-c",
+            r#"
+set -Eeuo pipefail
+source "$1"
+assert_resource_member compose "$2/block" network backend
+assert_resource_member compose "$2/block" volume data
+assert_resource_member compose "$2/compact" network backend
+assert_resource_member compose "$2/compact" volume data
+if assert_resource_member compose "$2/missing" network backend 2> "$2/missing.stderr"; then
+  printf 'Service attachment unexpectedly satisfied top-level membership.\n' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Expected network resource backend is absent from compose output' "$2/missing.stderr"
+if assert_resource_absent compose "$2/compact" volume data 2> "$2/present.stderr"; then
+  printf 'Compact resource unexpectedly satisfied absence.\n' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Selection unexpectedly retained volume data' "$2/present.stderr"
+current_prefix=live
+current_podman_major=5
+current_podman_rootless=false
+assert_network_boundary_semantics quadlet "$2/quadlet"
+"#,
+            "scenario-validator",
+        ])
+        .arg(root.join("scripts/lib/scenario-validators.sh"))
+        .arg(output.path())
+        .output()?;
+    assert!(
+        result.status.success(),
+        "scenario validator regression failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let canonical_result = Command::new("python3")
+        .arg(root.join("fixtures/conformance/podman-live/canonicalize_compose.py"))
+        .arg(&canonical_input)
+        .arg(&canonical_output)
+        .output()?;
+    assert!(
+        canonical_result.status.success(),
+        "compact Compose canonicalization failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&canonical_result.stdout),
+        String::from_utf8_lossy(&canonical_result.stderr)
+    );
+    let canonical = fs::read_to_string(canonical_output)?;
+    let a_backend = canonical.find("  a-backend:").ok_or("missing a-backend")?;
+    let z_edge = canonical.find("  z-edge:").ok_or("missing z-edge")?;
+    let a_cache = canonical.find("  a-cache:").ok_or("missing a-cache")?;
+    let z_data = canonical.find("  z-data:").ok_or("missing z-data")?;
+    assert!(a_backend < z_edge);
+    assert!(a_cache < z_data);
+    Ok(())
+}
+
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }

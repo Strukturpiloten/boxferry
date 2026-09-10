@@ -11,7 +11,7 @@ SORTED_RESOURCE_SECTIONS = {"services:", "networks:", "volumes:", "configs:", "s
 
 
 def entry_key(block: list[str]) -> str:
-    return block[0][2:-2]
+    return block[0][2:].split(":", maxsplit=1)[0]
 
 
 def normalize_entry(section: str, block: list[str]) -> list[str]:
@@ -22,6 +22,12 @@ def normalize_entry(section: str, block: list[str]) -> list[str]:
 
 
 def canonicalize_section(section: str, lines: list[str]) -> list[str]:
+    lines = [
+        f"{line.removesuffix(': {}\n')}:\n"
+        if line.startswith("  ") and not line.startswith("    ") and line.endswith(": {}\n")
+        else line
+        for line in lines
+    ]
     blocks: list[list[str]] = []
     current: list[str] = []
     for line in lines:

@@ -87,12 +87,12 @@ assert_named_absent() {
 
 assert_resource_member() {
   local output=$1 directory=$2 kind=$3 name=$4
-  case "${output}" in
+  if case "${output}" in
     compose)
       awk -v section="${kind}s" -v key="${name}" '
         $0 == section ":" { inside = 1; next }
         inside && /^[^ ]/ { inside = 0 }
-        inside && $0 == "  " key ":" { found = 1 }
+        inside && ($0 == "  " key ":" || $0 == "  " key ": {}") { found = 1 }
         END { exit !found }
       ' "${directory}/compose.yaml"
       ;;
@@ -106,14 +106,20 @@ assert_resource_member() {
     podman)
       jq --exit-status --arg kind "${kind}" --arg name "${name}" \
         '[.external_preconditions[]?, .operations[]?.resource] |
-          any(.kind == $kind and .name == $name)' "${directory}/podman.json" > /dev/null
+         any(.kind == $kind and .name == $name)' "${directory}/podman.json" > /dev/null
       ;;
-  esac
+  esac then
+    return 0
+  fi
+
+  printf 'Expected %s resource %s is absent from %s output in %s.\n' \
+    "${kind}" "${name}" "${output}" "${directory}" >&2
+  return 1
 }
 
 assert_resource_absent() {
   local output=$1 directory=$2 kind=$3 name=$4
-  if assert_resource_member "${output}" "${directory}" "${kind}" "${name}"; then
+  if assert_resource_member "${output}" "${directory}" "${kind}" "${name}" 2> /dev/null; then
     printf 'Selection unexpectedly retained %s %s in %s.\n' "${kind}" "${name}" "${directory}" >&2
     return 1
   fi
@@ -156,14 +162,31 @@ assert_network_boundary_semantics() {
     quadlet)
       local api_unit="${directory}/${api}.container"
       [[ -s "${api_unit}" ]]
-      grep --fixed-strings --line-regexp --quiet "Network=${private}" "${api_unit}"
+      grep --extended-regexp --quiet "^Network=${private}(\\.network)?$" "${api_unit}" || {
+        printf 'Quadlet API unit is missing private network %s: %s\n' \
+          "${private}" "${api_unit}" >&2
+        return 1
+      }
       if [[ "${dual_attachment}" == true ]]; then
-        grep --fixed-strings --line-regexp --quiet "Network=${edge}" "${api_unit}"
+        grep --extended-regexp --quiet "^Network=${edge}(\\.network)?$" "${api_unit}" || {
+          printf 'Quadlet API unit is missing edge network %s: %s\n' \
+            "${edge}" "${api_unit}" >&2
+          return 1
+        }
       else
-        grep --fixed-strings --line-regexp --quiet "Network=${edge}" \
-          "${directory}/${current_prefix:?caller must supply current_prefix}-large-proxy.container"
+        local proxy_unit="${directory}/${current_prefix:?caller must supply current_prefix}-large-proxy.container"
+        grep --extended-regexp --quiet "^Network=${edge}(\\.network)?$" "${proxy_unit}" || {
+          printf 'Quadlet proxy unit is missing edge network %s: %s\n' \
+            "${edge}" "${proxy_unit}" >&2
+          return 1
+        }
       fi
-      grep --extended-regexp --quiet "^Volume=${cache}:/cache:ro(,.*)?$" "${api_unit}"
+      grep --extended-regexp --quiet \
+        "^Volume=${cache}(\\.volume)?:/cache:ro(,.*)?$" "${api_unit}" || {
+        printf 'Quadlet API unit is missing read-only cache volume %s: %s\n' \
+          "${cache}" "${api_unit}" >&2
+        return 1
+      }
       ;;
     podman)
       if [[ "${dual_attachment}" == true ]]; then
