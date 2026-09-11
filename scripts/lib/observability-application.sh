@@ -808,8 +808,64 @@ observability_assert_external_edge() {
   local output=$1 directory=$2 edge=$3
   case "${output}" in
     compose)
-      grep --fixed-strings --quiet "name: ${edge}" "${directory}/compose.yaml"
-      grep --fixed-strings --quiet 'external: true' "${directory}/compose.yaml"
+      awk -v edge="${edge}" '
+        function indentation(line, spaces) {
+          spaces = line
+          sub(/[^ ].*$/, "", spaces)
+          return length(spaces)
+        }
+
+        /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+
+        !in_networks {
+          if ($0 ~ /^networks:[[:space:]]*$/) {
+            in_networks = 1
+          }
+          next
+        }
+
+        indentation($0) == 0 {
+          exit
+        }
+
+        indentation($0) == 2 {
+          key = substr($0, 3)
+          if (key !~ /:[[:space:]]*$/) {
+            current = ""
+            next
+          }
+          sub(/:[[:space:]]*$/, "", key)
+          current = key
+          mappings[current] = 1
+          next
+        }
+
+        indentation($0) == 4 && current != "" {
+          property = substr($0, 5)
+          if (property ~ /^external:[[:space:]]*true[[:space:]]*$/) {
+            external[current] = 1
+          }
+          if (property ~ /^name:/) {
+            name = property
+            sub(/^name:[[:space:]]*/, "", name)
+            names[current] = name
+            named[current] = 1
+          }
+        }
+
+        END {
+          for (key in mappings) {
+            if (!external[key]) {
+              continue
+            }
+            physical_name = named[key] ? names[key] : key
+            if (physical_name == edge) {
+              matching_external_mappings++
+            }
+          }
+          exit !(in_networks && matching_external_mappings == 1)
+        }
+      ' "${directory}/compose.yaml"
       ;;
     quadlet)
       [[ ! -e "${directory}/${edge}.network" ]]

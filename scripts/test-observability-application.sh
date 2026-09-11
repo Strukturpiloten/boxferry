@@ -51,6 +51,50 @@ error="$(observability_run_exports cli /tmp/observability.sock bf-private 2>&1)"
 [[ "${status}" == 1 ]]
 [[ "${error}" == "Observability export target must not exist before conversion: ${current_case}/outputs/cli-exact/compose" ]]
 
+assert_compose_external_edge() {
+  local name=$1 expected_status=$2 content=$3 directory
+  directory="${test_root}/compose-external-edge-${name}"
+  mkdir -p "${directory}"
+  printf '%s\n' "${content}" > "${directory}/compose.yaml"
+  status=0
+  observability_assert_external_edge compose "${directory}" bf-private-observability-edge || status=$?
+  [[ "${status}" == "${expected_status}" ]]
+}
+
+assert_compose_external_edge key-only-success 0 'services:
+  grafana:
+    image: example.invalid/grafana
+networks:
+  bf-private-observability-edge:
+    external: true
+  unrelated-external-network:
+    external: true
+volumes:
+  grafana-data: {}'
+assert_compose_external_edge matching-name-success 0 'networks:
+  backend:
+    name: bf-private-observability-backend
+    internal: true
+  edge:
+    name: bf-private-observability-edge
+    external: true
+services:
+  grafana:
+    image: example.invalid/grafana'
+assert_compose_external_edge unrelated-mapping-failure 1 'networks:
+  unrelated-external-network:
+    external: true'
+assert_compose_external_edge split-evidence-failure 1 'networks:
+  named-but-internal:
+    name: bf-private-observability-edge
+    internal: true
+  unrelated-external-network:
+    external: true'
+assert_compose_external_edge mismatched-name-failure 1 'networks:
+  bf-private-observability-edge:
+    name: wrong-network
+    external: true'
+
 export_mode=
 export_operation_count=0
 reimport_count=0
