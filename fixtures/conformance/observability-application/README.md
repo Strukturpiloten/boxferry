@@ -69,6 +69,16 @@ migration-readiness tier owns this live task; ordinary pull requests retain the 
 
 ## Live diagnostic contracts
 
+Expectation scope is explicit. `live-native-export` selects the native Podman importer/exporter
+contract; `live-reimport` selects independently authored Compose/Quadlet reimport contracts;
+`offline-scenario` selects the scenario fixture contract. Scope is never inferred from source
+kind. The eight `reimport-*.tsv` templates cover all 36 live reimport combinations: two
+provisioners, three selectors, two inputs, and three outputs. Compose-to-Compose/Quadlet and
+Quadlet-to-Quadlet have empty multisets; remaining routes retain exact duplicate-sensitive
+omissions. Their sole interpolation is `{{resource_prefix}}`; static reviewed templates never
+derive expectations from reports or artifacts. Exact and label selectors agree, while all uses
+separately reviewed boundary-peer deltas.
+
 [`diagnostics/`](diagnostics/) holds independently authored factored normalized multisets for the
 reviewed rootless Podman 6.1.0 nested image:
 `ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e`.

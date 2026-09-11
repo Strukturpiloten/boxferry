@@ -811,7 +811,88 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
     }
     observability_assert_template_selection_contract()?;
     observability_assert_template_files()?;
+    observability_assert_reimport_template_contracts()?;
     assert_observability_expected_generation_failure_rejected()
+}
+
+fn observability_assert_reimport_template_contracts() -> Result<(), Box<dyn Error>> {
+    let expectations = [
+        ("cli", "exact", "compose", "compose", 0),
+        ("cli", "exact", "compose", "quadlet", 0),
+        ("cli", "exact", "compose", "podman", 56),
+        ("cli", "exact", "quadlet", "compose", 8),
+        ("cli", "exact", "quadlet", "quadlet", 0),
+        ("cli", "exact", "quadlet", "podman", 63),
+        ("cli", "label", "compose", "compose", 0),
+        ("cli", "label", "compose", "quadlet", 0),
+        ("cli", "label", "compose", "podman", 56),
+        ("cli", "label", "quadlet", "compose", 8),
+        ("cli", "label", "quadlet", "quadlet", 0),
+        ("cli", "label", "quadlet", "podman", 63),
+        ("cli", "all", "compose", "compose", 0),
+        ("cli", "all", "compose", "quadlet", 0),
+        ("cli", "all", "compose", "podman", 66),
+        ("cli", "all", "quadlet", "compose", 9),
+        ("cli", "all", "quadlet", "quadlet", 0),
+        ("cli", "all", "quadlet", "podman", 74),
+        ("compose", "exact", "compose", "compose", 0),
+        ("compose", "exact", "compose", "quadlet", 0),
+        ("compose", "exact", "compose", "podman", 56),
+        ("compose", "exact", "quadlet", "compose", 1),
+        ("compose", "exact", "quadlet", "quadlet", 0),
+        ("compose", "exact", "quadlet", "podman", 56),
+        ("compose", "label", "compose", "compose", 0),
+        ("compose", "label", "compose", "quadlet", 0),
+        ("compose", "label", "compose", "podman", 56),
+        ("compose", "label", "quadlet", "compose", 1),
+        ("compose", "label", "quadlet", "quadlet", 0),
+        ("compose", "label", "quadlet", "podman", 56),
+        ("compose", "all", "compose", "compose", 0),
+        ("compose", "all", "compose", "quadlet", 0),
+        ("compose", "all", "compose", "podman", 66),
+        ("compose", "all", "quadlet", "compose", 2),
+        ("compose", "all", "quadlet", "quadlet", 0),
+        ("compose", "all", "quadlet", "podman", 67),
+    ];
+    for (mode, selection, input, output, expected_rows) in expectations {
+        let actual = observability_live_reimport_expected_diagnostics_for(
+            mode,
+            selection,
+            input,
+            output,
+            "live-observability-",
+        )?;
+        assert_eq!(
+            actual.lines().count(),
+            expected_rows,
+            "{mode}/{selection}/{input}-to-{output}"
+        );
+        assert!(!actual.contains("boxferry-public-observability-admin-canary"));
+    }
+    for mode in ["cli", "compose"] {
+        for input in ["compose", "quadlet"] {
+            for output in ["compose", "quadlet", "podman"] {
+                assert_eq!(
+                    observability_live_reimport_expected_diagnostics_for(
+                        mode,
+                        "exact",
+                        input,
+                        output,
+                        "live-observability-",
+                    )?,
+                    observability_live_reimport_expected_diagnostics_for(
+                        mode,
+                        "label",
+                        input,
+                        output,
+                        "live-observability-",
+                    )?,
+                    "{mode}/{input}-to-{output} exact and label contracts differ",
+                );
+            }
+        }
+    }
+    observability_reimport_template_dimensions_fail_closed()
 }
 
 fn observability_assert_template_contract(
@@ -847,7 +928,7 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
     let unsafe_prefix = Command::new("bash")
         .args([
             "-c",
-            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics cli exact podman compose \"$3\" true \"$4\"",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics live-native-export cli exact podman compose \"$3\" \"$4\"",
             "observability-unsafe-prefix",
         ])
         .arg(repository_root())
@@ -873,6 +954,14 @@ fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
         ("all-importer.tsv", 18),
         ("all-compose-export.tsv", 1),
         ("all-podman-export.tsv", 11),
+        ("reimport-compose-podman.tsv", 56),
+        ("reimport-compose-podman-all.tsv", 10),
+        ("reimport-quadlet-compose.tsv", 1),
+        ("reimport-quadlet-compose-cli.tsv", 7),
+        ("reimport-quadlet-compose-all.tsv", 1),
+        ("reimport-quadlet-podman.tsv", 56),
+        ("reimport-quadlet-podman-cli.tsv", 7),
+        ("reimport-quadlet-podman-all.tsv", 11),
     ] {
         let template = fs::read_to_string(template_root.join(name))?;
         assert_eq!(template.lines().count(), expected_rows, "{name} row count");
@@ -987,12 +1076,11 @@ fn assert_observability_diagnostic_match(
     let result = Command::new("bash")
         .args([
             "-c",
-            "repository_root=$1; source \"$2\"; observability_assert_reviewed_diagnostics cli \"$3\" \"$4\" \"$5\" \"\" false \"$6\"",
+            "repository_root=$1; source \"$2\"; observability_assert_reviewed_diagnostics offline-scenario cli exact \"$3\" \"$4\" \"\" \"$5\"",
             "observability-diagnostic-match",
         ])
         .arg(&root)
         .arg(&helper)
-        .arg(label)
         .arg(source)
         .arg(output)
         .arg(&report_path)
@@ -1078,7 +1166,7 @@ fn observability_live_expected_diagnostics_for(
     let result = Command::new("bash")
         .args([
             "-c",
-            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics \"$3\" \"$4\" podman \"$5\" \"$6\" true \"$7\"",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics live-native-export \"$3\" \"$4\" podman \"$5\" \"$6\" \"$7\"",
             "observability-live-diagnostics",
         ])
         .arg(&root)
@@ -1097,6 +1185,95 @@ fn observability_live_expected_diagnostics_for(
         .into());
     }
     Ok(fs::read_to_string(destination)?)
+}
+
+fn observability_live_reimport_expected_diagnostics_for(
+    mode: &str,
+    selection: &str,
+    input: &str,
+    output: &str,
+    prefix: &str,
+) -> Result<String, Box<dyn Error>> {
+    let temporary = TemporaryDirectory::new("observability-live-reimport-diagnostics")?;
+    let destination = temporary.path().join("expected.tsv");
+    let root = repository_root();
+    let helper = root.join("scripts/lib/observability-application.sh");
+    let result = Command::new("bash")
+        .args([
+            "-c",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics live-reimport \"$3\" \"$4\" \"$5\" \"$6\" \"$7\" \"$8\"",
+            "observability-live-reimport-diagnostics",
+        ])
+        .arg(&root)
+        .arg(&helper)
+        .arg(mode)
+        .arg(selection)
+        .arg(input)
+        .arg(output)
+        .arg(prefix)
+        .arg(&destination)
+        .output()?;
+    if !result.status.success() {
+        return Err(format!(
+            "live reimport diagnostic derivation failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        )
+        .into());
+    }
+    Ok(fs::read_to_string(destination)?)
+}
+
+fn observability_reimport_template_dimensions_fail_closed() -> Result<(), Box<dyn Error>> {
+    let temporary = TemporaryDirectory::new("observability-live-reimport-invalid-dimensions")?;
+    let destination = temporary.path().join("expected.tsv");
+    let root = repository_root();
+    let helper = root.join("scripts/lib/observability-application.sh");
+    for (scope, mode, selection, input, output) in [
+        ("unsupported", "cli", "exact", "compose", "podman"),
+        ("live-reimport", "invalid", "exact", "compose", "podman"),
+        ("live-reimport", "cli", "invalid", "compose", "podman"),
+        ("live-reimport", "cli", "exact", "podman", "podman"),
+        ("live-reimport", "cli", "exact", "compose", "invalid"),
+        ("live-native-export", "cli", "exact", "compose", "podman"),
+        ("offline-scenario", "invalid", "exact", "podman", "compose"),
+        ("offline-scenario", "cli", "invalid", "podman", "compose"),
+    ] {
+        let result = Command::new("bash")
+            .args([
+                "-c",
+                "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics \"$3\" \"$4\" \"$5\" \"$6\" \"$7\" live-observability- \"$8\"",
+                "observability-live-reimport-invalid-dimensions",
+            ])
+            .arg(&root)
+            .arg(&helper)
+            .arg(scope)
+            .arg(mode)
+            .arg(selection)
+            .arg(input)
+            .arg(output)
+            .arg(&destination)
+            .output()?;
+        assert!(
+            !result.status.success(),
+            "accepted {scope}/{mode}/{selection}/{input}-to-{output}"
+        );
+    }
+    let unwritable_destination = temporary.path().join("missing-parent/expected.tsv");
+    for output in ["compose", "podman"] {
+        let result = Command::new("bash")
+            .args([
+                "-c",
+                "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics live-reimport cli exact compose \"$3\" live-observability- \"$4\"",
+                "observability-live-reimport-unwritable-destination",
+            ])
+            .arg(&root)
+            .arg(&helper)
+            .arg(output)
+            .arg(&unwritable_destination)
+            .output()?;
+        assert!(!result.status.success(), "accepted an unwritable {output} destination");
+    }
+    Ok(())
 }
 
 fn assert_observability_template_rejected(label: &str, contents: &str) -> Result<(), Box<dyn Error>> {
@@ -1132,7 +1309,7 @@ fn assert_observability_expected_generation_failure_rejected() -> Result<(), Box
     let result = Command::new("bash")
         .args([
             "-c",
-            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics() { : > \"$7\"; return 2; }; observability_assert_reviewed_diagnostics cli exact podman compose \"\" false \"$3\"",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics() { : > \"$7\"; return 2; }; observability_assert_reviewed_diagnostics offline-scenario cli exact podman compose \"\" \"$3\"",
             "observability-expected-generation-failure",
         ])
         .arg(&root)
