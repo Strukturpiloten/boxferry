@@ -3303,6 +3303,34 @@ fn default_network_evidence_dispatches_all_inventory_paths_under_set_u() -> Resu
     Ok(())
 }
 
+#[test]
+fn malformed_rootless_344_default_network_evidence_names_rootless_mode() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let directory = TemporaryDirectory::new("legacy-default-network-rootless-stderr")?;
+    let report_path = directory.path().join("malformed-rootless-344.json");
+    let feature_gates = directory.path().join("malformed-rootless-344.feature-gates.txt");
+    fs::write(&report_path, r#"{"status":"success","diagnostics":[]}"#)?;
+
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            "set -u\nsource \"$1\"\nassert_default_podman_network_evidence \"$2\" \"$3\" 3.4.4 true true",
+            "legacy-default-network-rootless-stderr-test",
+        ])
+        .arg(root.join("scripts/lib/scenario-validators.sh"))
+        .arg(&report_path)
+        .arg(&feature_gates)
+        .output()?;
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Podman 3.4.4 rootless default CNI network"),
+        "malformed 3.4.4 rootless evidence must identify its mode: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
 type DefaultNetworkEvidenceCase = (
     &'static str,
     String,
@@ -3419,6 +3447,15 @@ fn additional_legacy_default_network_evidence_cases(legacy_301: &str) -> Vec<Def
             "Podman 3.4.4 rootful default CNI network remains omitted",
         ),
         (
+            "legacy-344-rootless",
+            legacy_344.clone(),
+            "3.4.4",
+            "true",
+            "true",
+            true,
+            "Podman 3.4.4 rootless default CNI network remains omitted",
+        ),
+        (
             "legacy-344-crossed-api",
             legacy_301.to_owned(),
             "3.4.4",
@@ -3441,6 +3478,15 @@ fn additional_legacy_default_network_evidence_cases(legacy_301: &str) -> Vec<Def
             legacy_301.to_owned(),
             "3.2.0",
             "false",
+            "true",
+            false,
+            "",
+        ),
+        (
+            "legacy-301-rootless-not-reviewed",
+            legacy_301.to_owned(),
+            "3.0.1",
+            "true",
             "true",
             false,
             "",
