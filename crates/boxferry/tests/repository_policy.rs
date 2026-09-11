@@ -2564,7 +2564,7 @@ fn validate_live_observability_application_cell(runner: &str) -> Result<(), Stri
         "\"${selection}\" \"${input}\" \"${output}\" \"${result}\" \"${prefix}\" \"${report}\"",
         "expected.${route}.diagnostics",
         "diff --unified \"${expected}\" \"${observed}\"",
-        "field(\"required_loss_policy\")",
+        "field(\"required_loss_policy\"; $diagnostic.code != \"BFC0007\")",
         "observability_assert_application_boundaries",
         "observability_assert_storage_ownership",
         "observability_prepare_persistence_sentinels",

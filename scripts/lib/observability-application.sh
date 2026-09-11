@@ -823,11 +823,106 @@ observability_assert_external_edge() {
   esac
 }
 
+observability_append_live_diagnostic_template() {
+  local template=$1 resource_prefix=$2 destination=$3
+  local line tabs code subject safe_subject severity decision policy extra rows=0
+
+  [[ -r "${template}" ]] || return 2
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    tabs="${line//[!$'\t']/}"
+    [[ "${#tabs}" == 4 ]] || return 2
+    IFS=$'\t' read -r code subject severity decision policy extra <<< "${line}"
+    [[ -z "${extra}" ]] || return 2
+    case "${code}|${severity}|${decision}|${policy}" in
+      'BFC0007|warning|-|-' | \
+        'BFP0002|warning|omitted|partial' | \
+        'BFP0003|warning|not-promoted|partial' | \
+        'BFP0003|warning|approximated|approximate' | \
+        'BFP0007|warning|omitted|partial') ;;
+      *) return 2 ;;
+    esac
+    safe_subject="${subject/\{\{resource_prefix\}\}/}"
+    [[ "${safe_subject}" != *'{'* && "${safe_subject}" != *'}'* ]] || return 2
+    subject="${subject/\{\{resource_prefix\}\}/${resource_prefix}}"
+    [[ "${subject}" =~ ^[[:alnum:]_.:/-]+(\[[0-9]+\][[:alnum:]_.:/-]*)*$ ]] || return 2
+    if [[ "${code}" == BFC0007 ]]; then
+      decision=
+      policy=
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "${code}" "${subject}" "${severity}" "${decision}" "${policy}" >> "${destination}"
+    rows=$((rows + 1))
+  done < "${template}"
+  ((rows > 0)) || return 2
+}
+
+observability_write_live_diagnostic_template() {
+  local mode=$1 selection=$2 source_kind=$3 output=$4 resource_prefix=$5 destination=$6
+  local fixture
+
+  [[ "${source_kind}" == podman ]] || return 2
+  case "${mode}" in
+    cli | compose) ;;
+    *) return 2 ;;
+  esac
+  case "${selection}" in
+    exact | label | all) ;;
+    *) return 2 ;;
+  esac
+  case "${output}" in
+    compose | quadlet | podman) ;;
+    *) return 2 ;;
+  esac
+  [[ "${resource_prefix}" =~ ^[[:alnum:]][[:alnum:].-]*-$ ]] || return 2
+
+  fixture="${repository_root}/fixtures/conformance/observability-application/diagnostics"
+  : > "${destination}"
+  observability_append_live_diagnostic_template \
+    "${fixture}/base-compose-provisioned.tsv" "${resource_prefix}" "${destination}" || return
+  if [[ "${mode}" == cli ]]; then
+    observability_append_live_diagnostic_template \
+      "${fixture}/cli-creation-evidence.tsv" "${resource_prefix}" "${destination}" || return
+  fi
+  case "${output}" in
+    compose)
+      observability_append_live_diagnostic_template \
+        "${fixture}/compose-export-network.tsv" "${resource_prefix}" "${destination}" || return
+      if [[ "${mode}" == cli ]]; then
+        observability_append_live_diagnostic_template \
+          "${fixture}/cli-compose-export-dependencies.tsv" "${resource_prefix}" "${destination}" || return
+      fi
+      ;;
+    podman)
+      observability_append_live_diagnostic_template \
+        "${fixture}/podman-export.tsv" "${resource_prefix}" "${destination}" || return
+      ;;
+  esac
+  if [[ "${selection}" == all ]]; then
+    observability_append_live_diagnostic_template \
+      "${fixture}/all-importer.tsv" "${resource_prefix}" "${destination}" || return
+    case "${output}" in
+      compose)
+        observability_append_live_diagnostic_template \
+          "${fixture}/all-compose-export.tsv" "${resource_prefix}" "${destination}" || return
+        ;;
+      podman)
+        observability_append_live_diagnostic_template \
+          "${fixture}/all-podman-export.tsv" "${resource_prefix}" "${destination}" || return
+        ;;
+    esac
+  fi
+}
+
 observability_write_expected_diagnostics() {
-  local selection=$1 source_kind=$2 output=$3 resource_prefix=$4 live_bindings=$5 destination=$6
+  local mode=$1 selection=$2 source_kind=$3 output=$4 resource_prefix=$5 live_bindings=$6 destination=$7
   local fixture diagnostics losses route service bind_count index
   fixture="${repository_root}/fixtures/scenarios/observability-application"
   route="${source_kind}-${output}"
+  if [[ "${live_bindings}" == true ]]; then
+    observability_write_live_diagnostic_template \
+      "${mode}" "${selection}" "${source_kind}" "${output}" "${resource_prefix}" "${destination}"
+    return
+  fi
   case "${route}" in
     podman-compose | podman-quadlet | podman-podman | compose-podman | quadlet-podman) ;;
     compose-compose | compose-quadlet | quadlet-compose | quadlet-quadlet)
@@ -956,25 +1051,40 @@ EOF
 }
 
 observability_assert_reviewed_diagnostics() {
-  local selection=$1 source_kind=$2 output=$3 resource_prefix=$4 live_bindings=$5 report=$6
+  local mode=$1 selection=$2 source_kind=$3 output=$4 resource_prefix=$5 live_bindings=$6 report=$7
   local expected="${report}.diagnostics.expected.tsv"
   local observed="${report}.diagnostics.observed.tsv"
   observability_write_expected_diagnostics \
-    "${selection}" "${source_kind}" "${output}" "${resource_prefix}" \
-    "${live_bindings}" "${expected}"
+    "${mode}" "${selection}" "${source_kind}" "${output}" "${resource_prefix}" \
+    "${live_bindings}" "${expected}" || return
   jq --raw-output '
-    def field($name): [.fields[]? | select(.name == $name) | .value] | first // "";
-    .diagnostics[]?
-    | [.code, field("subject"), .severity, field("decision"), field("required_loss_policy")]
+    def field($name; $required):
+      [.fields[] | select(type == "object" and .name == $name)] as $matches
+      | if ($matches | length) > 1 then error("duplicate diagnostic field: " + $name)
+        elif ($matches | length) == 0 and $required then error("missing diagnostic field: " + $name)
+        elif ($matches | length) == 0 then ""
+        elif $matches[0].value | type != "string" then error("non-string diagnostic field: " + $name)
+        else $matches[0].value
+        end;
+    if type != "object" or (.diagnostics | type) != "array" then error("diagnostics must be an array") else . end
+    | .diagnostics[]
+    | if type != "object" or (.code | type) != "string" or (.severity | type) != "string" or (.fields | type) != "array"
+      then error("malformed diagnostic") else . end
+    | . as $diagnostic
+    | [$diagnostic.code,
+       ($diagnostic | field("subject"; true)),
+       $diagnostic.severity,
+       ($diagnostic | field("decision"; $diagnostic.code != "BFC0007")),
+       ($diagnostic | field("required_loss_policy"; $diagnostic.code != "BFC0007"))]
     | @tsv
-  ' "${report}" > "${observed}"
-  sort --output="${expected}" "${expected}"
-  sort --output="${observed}" "${observed}"
+  ' "${report}" > "${observed}" || return
+  sort --output="${expected}" "${expected}" || return
+  sort --output="${observed}" "${observed}" || return
   diff --unified "${expected}" "${observed}"
 }
 
 observability_assert_output_semantics() {
-  local selection=$1 source_kind=$2 output=$3 directory=$4 prefix=$5 report=$6 id
+  local mode=$1 selection=$2 source_kind=$3 output=$4 directory=$5 prefix=$6 report=$7 id
   local live_bindings=false
   [[ "${source_kind}" == podman ]] && live_bindings=true
   for id in prometheus loki grafana alloy producer; do
@@ -1007,7 +1117,7 @@ observability_assert_output_semantics() {
     fi
   fi
   observability_assert_reviewed_diagnostics \
-    "${selection}" "${source_kind}" "${output}" "${prefix}-observability-" \
+    "${mode}" "${selection}" "${source_kind}" "${output}" "${prefix}-observability-" \
     "${live_bindings}" "${report}"
   grep --recursive --fixed-strings --quiet -- \
     '--storage.tsdb.retention.time=24h' "${directory}"
@@ -1066,7 +1176,7 @@ observability_run_reimports() {
       observability_assert_output_membership "${selection}" "${output}" \
         "${result}" "${prefix}"
       observability_assert_output_semantics \
-        "${selection}" "${input}" "${output}" "${result}" "${prefix}" "${report}"
+        "${mode}" "${selection}" "${input}" "${output}" "${result}" "${prefix}" "${report}"
       if [[ "${selection}" != all ]]; then
         observability_assert_external_edge "${output}" "${result}" \
           "${prefix}-observability-edge"
@@ -1120,7 +1230,7 @@ observability_run_exports() {
       observability_assert_output_membership "${selection}" "${output}" \
         "${directory}" "${prefix}"
       observability_assert_output_semantics \
-        "${selection}" podman "${output}" "${directory}" "${prefix}" "${report}"
+        "${mode}" "${selection}" podman "${output}" "${directory}" "${prefix}" "${report}"
       if [[ "${selection}" != all ]]; then
         observability_assert_external_edge "${output}" "${directory}" \
           "${prefix}-observability-edge"

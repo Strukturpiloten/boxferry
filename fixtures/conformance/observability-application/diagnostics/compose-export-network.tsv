@@ -1,0 +1,4 @@
+BFC0007	networks.{{resource_prefix}}backend.ipam.config	warning	-	-
+BFC0007	networks.{{resource_prefix}}edge.internal	warning	-	-
+BFC0007	networks.{{resource_prefix}}edge.ipam.config	warning	-	-
+BFC0007	networks.{{resource_prefix}}edge.labels	warning	-	-
