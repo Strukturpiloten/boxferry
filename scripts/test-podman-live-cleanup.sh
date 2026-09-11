@@ -10,7 +10,7 @@ runner="${script_directory}/podman-live-conformance.sh"
 collections=(
   outer_containers
   mounted_images
-  run_owned_matrix_images
+  run_owned_host_images
   fault_proxy_pids
   fault_proxy_sockets
   discovery_directories
@@ -26,10 +26,10 @@ for collection in "${collections[@]}"; do
     mounted_images)
       safe='for image in "${mounted_images[@]}"; do'
       ;;
-    run_owned_matrix_images)
+    run_owned_host_images)
       # EXIT release deliberately uses an index loop so reverse order is
       # explicit and remains correct if a future path creates sparse entries.
-      safe='local -a image_indexes=("${!run_owned_matrix_images[@]}")'
+      safe='local -a image_indexes=("${!run_owned_host_images[@]}")'
       ;;
     fault_proxy_pids)
       safe='for pid in "${fault_proxy_pids[@]}"; do'
@@ -56,10 +56,9 @@ for collection in "${collections[@]}"; do
   fi
 done
 
-grep --fixed-strings --quiet -- '[[ "${profile}" == full-container ]] || return 0' "${runner}"
-grep --fixed-strings --quiet -- 'record_run_owned_matrix_image "${image}"' "${runner}"
-grep --fixed-strings --quiet -- 'release_run_owned_matrix_image "${image}"' "${runner}"
-grep --fixed-strings --quiet -- 'release_remaining_run_owned_matrix_images' "${runner}"
+grep --fixed-strings --quiet -- 'record_run_owned_host_image "${image}"' "${runner}"
+grep --fixed-strings --quiet -- 'release_run_owned_host_image "${image}"' "${runner}"
+grep --fixed-strings --quiet -- 'release_remaining_run_owned_host_images' "${runner}"
 grep --fixed-strings --quiet -- '"${engine}" image rm --ignore --no-prune -- "${image}"' "${runner}"
 if grep --fixed-strings --quiet -- 'image rm --force' "${runner}"; then
   printf '%s\n' 'Run-owned matrix images must not be force-removed.' >&2
@@ -74,9 +73,9 @@ fi
 # after the exact non-pruning remove completes successfully.
 absent_branch_line="$(grep -n --fixed-strings -- 'elif ((cache_status == 1)); then' "${runner}" | tail -n 1 | cut -d: -f1)"
 pull_line="$(grep -n --fixed-strings -- '"${engine}" pull --quiet "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
-record_line="$(grep -n --fixed-strings -- 'record_run_owned_matrix_image "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
+record_line="$(grep -n --fixed-strings -- 'record_run_owned_host_image "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
 remove_line="$(grep -n --fixed-strings -- '"${engine}" image rm --ignore --no-prune -- "${image}"' "${runner}" | cut -d: -f1)"
-unset_line="$(grep -n --fixed-strings -- 'unset "run_owned_matrix_image_seen[${image}]"' "${runner}" | cut -d: -f1)"
+unset_line="$(grep -n --fixed-strings -- 'unset "run_owned_host_image_seen[${image}]"' "${runner}" | cut -d: -f1)"
 [[ "${absent_branch_line}" -lt "${pull_line}" && "${pull_line}" -lt "${record_line}" ]]
 [[ "${remove_line}" -lt "${unset_line}" ]]
 
@@ -145,30 +144,30 @@ if release_all_model; then
   exit 1
 fi
 [[ "${attempted_release_log[*]}" == 'first second' ]]
-grep --fixed-strings --quiet -- 'if ! release_run_owned_matrix_image "${image}"; then' "${runner}"
+grep --fixed-strings --quiet -- 'if ! release_run_owned_host_image "${image}"; then' "${runner}"
 grep --fixed-strings --quiet -- 'release_failed=true' "${runner}"
 grep --fixed-strings --quiet -- '[[ "${release_failed}" == false ]]' "${runner}"
 
 # Containers and mounts must be released before the reverse image pass.
 containers_line="$(grep -n --fixed-strings -- 'for outer in "${outer_containers[@]}"; do' "${runner}" | head -n 1 | cut -d: -f1)"
 mounts_line="$(grep -n --fixed-strings -- 'for image in "${mounted_images[@]}"; do' "${runner}" | head -n 1 | cut -d: -f1)"
-images_line="$(grep -n --fixed-strings -- 'release_remaining_run_owned_matrix_images' "${runner}" | tail -n 1 | cut -d: -f1)"
+images_line="$(grep -n --fixed-strings -- 'release_remaining_run_owned_host_images' "${runner}" | tail -n 1 | cut -d: -f1)"
 [[ "${containers_line}" -lt "${mounts_line}" && "${mounts_line}" -lt "${images_line}" ]]
 
 # Releases emit their own timed evidence and must not change a cell's declared
 # scenario-check count.
-if grep --fixed-strings --quiet -- "progress_run 'release run-owned matrix image" "${runner}"; then
+if grep --fixed-strings --quiet -- "progress_run 'release run-owned host image" "${runner}"; then
   printf '%s\n' 'Run-owned image release must not increment cell progress.' >&2
   exit 1
 fi
-[[ "$(grep --fixed-strings --count -- 'release_run_owned_matrix_image "${image}"' "${runner}")" -ge 2 ]]
-grep --fixed-strings --quiet -- '"${profile}" == full-container && "${cleanup_failed}" == true && "${status}" == 0' "${runner}"
+[[ "$(grep --fixed-strings --count -- 'release_run_owned_host_image "${image}"' "${runner}")" -ge 2 ]]
+grep --fixed-strings --quiet -- '"${profile}" != smoke && "${cleanup_failed}" == true && "${status}" == 0' "${runner}"
 
 # Limited rootless cells mount before their explicit outer removal. Their
 # release must remain after both operations.
 limited_unmount_line="$(grep -n --fixed-strings -- "engine_operation 'unmount limited-cell image'" "${runner}" | cut -d: -f1)"
 limited_remove_line="$(grep -n --fixed-strings -- "progress_run 'remove disposable limitation container'" "${runner}" | cut -d: -f1)"
-limited_release_line="$(grep -n --fixed-strings -- 'release_run_owned_matrix_image "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
+limited_release_line="$(grep -n --fixed-strings -- 'release_run_owned_host_image "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
 [[ "${limited_unmount_line}" -lt "${limited_remove_line}" && "${limited_remove_line}" -lt "${limited_release_line}" ]]
 
 # A clean acquisition replaces the first outer runtime. Refresh the local
@@ -177,8 +176,13 @@ limited_release_line="$(grep -n --fixed-strings -- 'release_run_owned_matrix_ima
 clean_restart_line="$(grep -n --fixed-strings -- 'start_clean_acquisition_outer "${id}" "${image}" "${mode}"' "${runner}" | tail -n 1 | cut -d: -f1)"
 outer_refresh_line="$(grep -n --fixed-strings -- 'outer="${started_outer}"' "${runner}" | tail -n 1 | cut -d: -f1)"
 normal_remove_line="$(grep -n --fixed-strings -- "progress_run 'remove disposable outer container'" "${runner}" | cut -d: -f1)"
-normal_release_line="$(grep -n --fixed-strings -- 'release_run_owned_matrix_image "${image}"' "${runner}" | sed -n '2p' | cut -d: -f1)"
+normal_release_line="$(grep -n --fixed-strings -- 'release_run_owned_host_image "${image}"' "${runner}" | sed -n '2p' | cut -d: -f1)"
 [[ "${clean_restart_line}" -lt "${outer_refresh_line}" && "${outer_refresh_line}" -lt "${normal_remove_line}" && "${normal_remove_line}" -lt "${normal_release_line}" ]]
+
+if grep --fixed-strings --quiet -- 'run_owned_matrix_image' "${runner}"; then
+  printf '%s\n' 'Obsolete matrix-only image ownership remains in the live runner.' >&2
+  exit 1
+fi
 
 declare -a empty_collection=()
 iterations=0
@@ -187,5 +191,37 @@ for unused in "${empty_collection[@]}"; do
   iterations=$((iterations + 1))
 done
 [[ "${iterations}" == 0 ]]
+
+applications=(nextcloud forgejo paperless immich observability supabase)
+for application in "${applications[@]}"; do
+  module="${script_directory}/lib/${application}-application.sh"
+  grep --fixed-strings --quiet -- 'record_run_owned_host_image "${reference}"' "${module}"
+  grep --fixed-strings --quiet -- 'release_run_owned_host_image "${reference}"' "${module}"
+done
+
+# Aliases are never overwritten: the helper probes first and records only after tag succeeds.
+grep --fixed-strings --quiet -- 'Refusing to overwrite existing %s archive alias %s.' "${runner}"
+alias_probe_line="$(grep -n --fixed-strings -- 'engine_image_available "probe ${description} archive alias"' "${runner}" | cut -d: -f1)"
+alias_tag_line="$(grep -n --fixed-strings -- 'engine_operation "tag ${description} image for nested archive"' "${runner}" | cut -d: -f1)"
+alias_record_line="$(grep -n --fixed-strings -- 'record_run_owned_host_image "${alias}"' "${runner}" | cut -d: -f1)"
+[[ "${alias_probe_line}" -lt "${alias_tag_line}" && "${alias_tag_line}" -lt "${alias_record_line}" ]]
+
+# Large OCI bundles never retain all source members alongside their completed tarball,
+# and the nested target drops each extracted member immediately after loading it.
+for application in paperless immich observability; do
+  module="${script_directory}/lib/${application}-application.sh"
+  grep --fixed-strings --quiet -- 'tar --create --remove-files' "${module}"
+  grep --fixed-strings --quiet -- 'trap "rm -rf -- \"$directory\"" EXIT' "${module}"
+  grep --fixed-strings --quiet -- 'rm -f -- "$archive"' "${module}"
+  grep --fixed-strings --quiet -- 'rmdir "$directory"' "${module}"
+done
+grep --fixed-strings --quiet -- 'tar --remove-files' "${script_directory}/lib/supabase-application.sh"
+grep --fixed-strings --quiet -- 'trap "rm -rf -- \"$directory\"" EXIT' "${script_directory}/lib/supabase-application.sh"
+grep --fixed-strings --quiet -- 'rm -f -- "$archive"' "${script_directory}/lib/supabase-application.sh"
+grep --fixed-strings --quiet -- 'rmdir "$directory"' "${script_directory}/lib/supabase-application.sh"
+grep --fixed-strings --quiet -- 'PAPERLESS_ARCHIVE_MAX_BYTES="2684354560"' "${script_directory}/lib/paperless-application.sh"
+grep --fixed-strings --quiet -- 'IMMICH_ARCHIVE_MAX_BYTES="2684354560"' "${script_directory}/lib/immich-application.sh"
+grep --fixed-strings --quiet -- 'OBSERVABILITY_ARCHIVE_MAX_BYTES="2147483648"' "${script_directory}/lib/observability-application.sh"
+grep --fixed-strings --quiet -- 'SUPABASE_ARCHIVE_MAX_BYTES="5368709120"' "${script_directory}/lib/supabase-application.sh"
 
 printf 'Podman live cleanup empty-array regression test passed.\n'

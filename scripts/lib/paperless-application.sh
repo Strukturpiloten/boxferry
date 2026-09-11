@@ -139,6 +139,7 @@ paperless_prepare_image_archive() {
       timed_operation 6m "pull digest-pinned Paperless ${id} image" \
         "${engine}" pull --quiet "${reference}" \
         > "${artifact_root}/paperless-${id}.pull.log"
+      record_run_owned_host_image "${reference}"
     elif ((cache_status != 0)); then
       return "${cache_status}"
     fi
@@ -150,14 +151,15 @@ paperless_prepare_image_archive() {
       return 1
     }
     runtime_reference="$(paperless_image_reference "${id}")"
-    engine_operation "tag reviewed Paperless ${id} image for nested archive" \
-      tag "${reference}" "${runtime_reference}"
+    record_run_owned_archive_alias "${reference}" "${runtime_reference}" "Paperless ${id}"
     timed_operation 10m "archive compressed Paperless ${id} image" \
       "${engine}" save --format oci-archive \
       --output "${archive_directory}/${id}.oci.tar" "${runtime_reference}"
+    release_run_owned_host_image "${runtime_reference}"
+    release_run_owned_host_image "${reference}"
   done < "${fixture}/images.tsv"
   timed_operation 10m 'bundle compressed digest-pinned Paperless image archives' \
-    tar --create --file "${archive}" --directory "${archive_directory}" .
+    tar --create --remove-files --file "${archive}" --directory "${archive_directory}" .
   rm -rf -- "${archive_directory}"
   chmod 0644 "${archive}"
   local archive_size
@@ -192,10 +194,13 @@ paperless_prepare_application_target() {
     "${engine}" exec "${outer}" /bin/sh -ceu '
       directory=/tmp/boxferry-paperless-images
       mkdir -p "$directory"
+      trap "rm -rf -- \"$directory\"" EXIT
       tar -xf /boxferry-workload.tar -C "$directory"
-      for archive in "$directory"/*.oci.tar; do
-        podman load --input "$archive"
-      done
+  for archive in "$directory"/*.oci.tar; do
+    podman load --input "$archive"
+    rm -f -- "$archive"
+  done
+  rmdir "$directory"
     ' > /dev/null
   paperless_assert_loaded_images "${outer}"
   local fixture destination
