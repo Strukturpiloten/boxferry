@@ -1872,6 +1872,23 @@ fn validate_live_target_contracts(runner: &str) -> Result<(), String> {
     for default_network_contract in [
         "current_default_podman_network_present",
         "scenario_podman_socket \"${socket}\" network ls --format json",
+        "run_reimports \"${declared_version%%+*}\"",
+        "assert_default_podman_network_evidence() {",
+        "local version=${3:?caller must supply declared Podman version}",
+        "[[ \"${present}\" == true && \"${version}\" == 3.0.1 && \"${rootless}\" == false ]]",
+        ".code == \"BFP0002\"",
+        ".source_code == \"PLN0023\"",
+        ".name == \"subject\" and .value == \"network:podman\"",
+        "PodmanLens found native response fields without typed portable mappings; path descriptors were retained without values",
+        ".name == \"decision\" and .value == \"omitted\"",
+        ".name == \"source_engine\" and .value == \"3.0.1\"",
+        ".name == \"source_api\" and .value == \"3.0.0\"",
+        ".name == \"native_path\" and .value == \"$.CniConfig\"",
+        ".name == \"native_value_policy\"",
+        "and (any(",
+        ".code == \"BFQ0007\"",
+        ".name == \"subject\" and .value == \"networks.podman\"",
+        ") | not)",
         "default Podman network absent from live inventory; default-network ownership diagnostic is inapplicable",
     ] {
         if !runner.contains(default_network_contract) {

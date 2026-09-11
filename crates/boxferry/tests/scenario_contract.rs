@@ -3266,6 +3266,134 @@ assert_network_boundary_semantics quadlet "$2/quadlet"
     Ok(())
 }
 
+#[test]
+fn default_network_evidence_dispatches_all_inventory_paths_under_set_u() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let directory = TemporaryDirectory::new("legacy-default-network")?;
+    for (name, report, version, rootless, present, succeeds, expected_gate) in default_network_evidence_cases() {
+        let report_path = directory.path().join(format!("{name}.json"));
+        let feature_gates = directory.path().join(format!("{name}.feature-gates.txt"));
+        fs::write(&report_path, report)?;
+        let output = Command::new("bash")
+            .args([
+                "-c",
+                "set -u\nsource \"$1\"\nassert_default_podman_network_evidence \"$2\" \"$3\" \"$4\" \"$5\" \"$6\"",
+                "legacy-default-network-test",
+            ])
+            .arg(root.join("scripts/lib/scenario-validators.sh"))
+            .arg(&report_path)
+            .arg(&feature_gates)
+            .arg(version)
+            .arg(rootless)
+            .arg(present)
+            .output()?;
+        assert_eq!(
+            output.status.success(),
+            succeeds,
+            "legacy default-network evidence {name}: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if succeeds {
+            assert!(
+                fs::read_to_string(feature_gates)?.contains(expected_gate),
+                "feature-gate evidence {name}"
+            );
+        }
+    }
+    Ok(())
+}
+
+type DefaultNetworkEvidenceCase = (
+    &'static str,
+    String,
+    &'static str,
+    &'static str,
+    &'static str,
+    bool,
+    &'static str,
+);
+
+fn default_network_evidence_cases() -> Vec<DefaultNetworkEvidenceCase> {
+    let legacy = r#"{
+  "status": "success",
+  "diagnostics": [{
+    "code": "BFP0002",
+    "source_code": "PLN0023",
+    "fields": [
+      {"name": "subject", "value": "network:podman"},
+      {"name": "reason", "value": "PodmanLens found native response fields without typed portable mappings; path descriptors were retained without values"},
+      {"name": "decision", "value": "omitted"},
+      {"name": "source_engine", "value": "3.0.1"},
+      {"name": "source_api", "value": "3.0.0"},
+      {"name": "native_path", "value": "$.CniConfig"},
+      {"name": "native_value_policy", "value": "field paths retained; native values not retained"}
+    ]
+  }]
+}"#;
+    let wrong_api = legacy.replacen(
+        "\"source_api\", \"value\": \"3.0.0\"",
+        "\"source_api\", \"value\": \"3.0.1\"",
+        1,
+    );
+    let wrong_source_code = legacy.replacen("\"PLN0023\"", "\"PLN0049\"", 1);
+    let quadlet_decision = legacy.replace(
+        "  }]\n}",
+        "  }, {\"code\": \"BFQ0007\", \"fields\": [{\"name\": \"subject\", \"value\": \"networks.podman\"}]}]\n}",
+    );
+    let typed = r#"{
+  "status": "success",
+  "diagnostics": [{"code":"BFQ0007","fields":[{"name":"subject","value":"networks.podman"},{"name":"reason","value":"network lifecycle ownership is uncertain; no managed .network unit was generated"}]}]
+}"#;
+    vec![
+        (
+            "legacy",
+            legacy.to_owned(),
+            "3.0.1",
+            "false",
+            "true",
+            true,
+            "Podman 3.0.1 rootful default CNI network remains omitted",
+        ),
+        ("wrong-api", wrong_api, "3.0.1", "false", "true", false, ""),
+        (
+            "wrong-source-code",
+            wrong_source_code,
+            "3.0.1",
+            "false",
+            "true",
+            false,
+            "",
+        ),
+        (
+            "quadlet-decision",
+            quadlet_decision,
+            "3.0.1",
+            "false",
+            "true",
+            false,
+            "",
+        ),
+        (
+            "typed",
+            typed.to_owned(),
+            "6.1.0",
+            "false",
+            "true",
+            true,
+            "all-resource Quadlet export diagnoses the uncertain default Podman network",
+        ),
+        (
+            "absent",
+            r#"{"status":"success","diagnostics":[]}"#.to_owned(),
+            "3.0.1",
+            "true",
+            "false",
+            true,
+            "default Podman network absent from live inventory",
+        ),
+    ]
+}
+
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }

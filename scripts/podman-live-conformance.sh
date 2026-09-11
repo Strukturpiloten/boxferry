@@ -2361,7 +2361,7 @@ run_cell() {
     progress_run 'diagnose disappeared selected container' run_fault_proxy_case "${socket}" gone
     require_scenario partial-inventory-section
     progress_run 'diagnose partial inventory section' run_partial_section_failure "${socket}"
-    progress_run 're-import generated Compose and Quadlet outputs' run_reimports
+    progress_run 're-import generated Compose and Quadlet outputs' run_reimports "${declared_version%%+*}"
     if should_run_external_apply "${id}"; then
       progress_run 'externally apply and reacquire Podman plan' \
         run_external_apply_reacquire "${socket}"
