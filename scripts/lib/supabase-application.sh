@@ -233,6 +233,7 @@ supabase_prepare_image_archive() {
       timed_operation 20m "pull digest-pinned Supabase ${id} image" \
         "${engine}" pull --quiet "${reference}" \
         > "${artifact_root}/supabase-${id}.pull.log" 2>&1
+      record_run_owned_host_image "${reference}"
     elif ((status != 0)); then
       return "${status}"
     fi
@@ -246,8 +247,9 @@ supabase_prepare_image_archive() {
     timed_operation 8m "save Supabase ${id} OCI archive" \
       "${engine}" save --format oci-archive \
       --output "${archive_directory}/${id}.oci.tar" "${reference}"
+    release_run_owned_host_image "${reference}"
   done < "${fixture}/images.tsv"
-  tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+  tar --remove-files --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
     --mode='u+rw,go+rX,go-w' -C "${archive_directory}" -cf "${archive}" .
   rm -rf -- "${archive_directory}"
   [[ "$(stat -c '%s' "${archive}")" -le "${SUPABASE_ARCHIVE_MAX_BYTES}" ]] || {
@@ -280,8 +282,13 @@ supabase_prepare_application_target() {
     "${engine}" exec "${outer}" /bin/sh -ceu '
       directory=/tmp/boxferry-supabase-images
       mkdir -p "$directory"
+      trap "rm -rf -- \"$directory\"" EXIT
       tar -xf /boxferry-workload.tar -C "$directory"
-      for archive in "$directory"/*.oci.tar; do podman load --input "$archive"; done
+ for archive in "$directory"/*.oci.tar; do
+   podman load --input "$archive"
+   rm -f -- "$archive"
+ done
+ rmdir "$directory"
     ' > /dev/null
   supabase_assert_loaded_images "${outer}"
   engine_operation 'create disposable Supabase fixture directory' \

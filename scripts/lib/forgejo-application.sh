@@ -93,6 +93,7 @@ forgejo_prepare_image_archive() {
       timed_operation 8m "pull digest-pinned Forgejo ${id} image" \
         "${engine}" pull --quiet "${reference}" \
         > "${artifact_root}/forgejo-${id}.pull.log"
+      record_run_owned_host_image "${reference}"
     elif ((cache_status != 0)); then
       return "${cache_status}"
     fi
@@ -104,14 +105,20 @@ forgejo_prepare_image_archive() {
       return 1
     }
     runtime_reference="$(forgejo_image_reference "${id}")"
-    engine_operation "tag reviewed Forgejo ${id} image for nested archive" \
-      tag "${reference}" "${runtime_reference}"
+    record_run_owned_archive_alias "${reference}" "${runtime_reference}" "Forgejo ${id}"
     references+=("${runtime_reference}")
   done < "${fixture}/images.tsv"
   timed_operation 8m 'archive digest-pinned Forgejo images' \
     "${engine}" save --multi-image-archive --format docker-archive \
     --output "${archive}" "${references[@]}"
   chmod 0644 "${archive}"
+  for runtime_reference in "${references[@]}"; do
+    release_run_owned_host_image "${runtime_reference}"
+  done
+  while IFS=$'\t' read -r id reference _ _ _ _; do
+    [[ -z "${id}" || "${id}" == \#* ]] && continue
+    release_run_owned_host_image "${reference}"
+  done < "${fixture}/images.tsv"
 }
 
 forgejo_assert_loaded_images() {

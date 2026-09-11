@@ -89,6 +89,7 @@ nextcloud_prepare_image_archive() {
       timed_operation 8m "pull digest-pinned Nextcloud ${id} image" \
         "${engine}" pull --quiet "${reference}" \
         > "${artifact_root}/nextcloud-${id}.pull.log"
+      record_run_owned_host_image "${reference}"
     elif ((cache_status != 0)); then
       return "${cache_status}"
     fi
@@ -100,8 +101,7 @@ nextcloud_prepare_image_archive() {
       return 1
     }
     runtime_reference="$(nextcloud_image_reference "${id}")"
-    engine_operation "tag reviewed Nextcloud ${id} image for nested archive" \
-      tag "${reference}" "${runtime_reference}"
+    record_run_owned_archive_alias "${reference}" "${runtime_reference}" "Nextcloud ${id}"
     references+=("${runtime_reference}")
   done < "${fixture}/images.tsv"
   timed_operation 10m 'archive digest-pinned Nextcloud images for nested loading' \
@@ -109,8 +109,12 @@ nextcloud_prepare_image_archive() {
     --output "${archive}" "${references[@]}"
   chmod 0644 "${archive}"
   for runtime_reference in "${references[@]}"; do
-    engine_operation 'remove temporary Nextcloud archive image alias' untag "${runtime_reference}"
+    release_run_owned_host_image "${runtime_reference}"
   done
+  while IFS=$'\t' read -r id reference _ _ _ _; do
+    [[ -z "${id}" || "${id}" == \#* ]] && continue
+    release_run_owned_host_image "${reference}"
+  done < "${fixture}/images.tsv"
 }
 
 nextcloud_assert_loaded_images() {

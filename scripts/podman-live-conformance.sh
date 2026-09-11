@@ -483,8 +483,8 @@ declare -a mounted_images=()
 # runner shares its host store with the runner image cache, so removing a
 # reviewed image which was already present would be surprising (and can make
 # a later matrix cell needlessly pull it again).
-declare -a run_owned_matrix_images=()
-declare -A run_owned_matrix_image_seen=()
+declare -a run_owned_host_images=()
+declare -A run_owned_host_image_seen=()
 discovery_parent_created=false
 started_outer=""
 apply_target_outer=""
@@ -747,32 +747,44 @@ boxferry_operation() {
   timed_operation 90s "${name}" "${boxferry_bin}" "$@"
 }
 
-record_run_owned_matrix_image() {
+record_run_owned_host_image() {
   local image=$1
-  [[ "${profile}" == full-container ]] || return 0
-  if [[ -z "${run_owned_matrix_image_seen[${image}]:-}" ]]; then
-    run_owned_matrix_images+=("${image}")
-    run_owned_matrix_image_seen[${image}]=true
+  if [[ -z "${run_owned_host_image_seen[${image}]:-}" ]]; then
+    run_owned_host_images+=("${image}")
+    run_owned_host_image_seen[${image}]=true
   fi
 }
 
-release_run_owned_matrix_image() {
-  local image=$1
-  [[ -n "${run_owned_matrix_image_seen[${image}]:-}" ]] || return 0
-
-  timed_operation 90s "release run-owned matrix image ${image}" \
-    "${engine}" image rm --ignore --no-prune -- "${image}" > /dev/null
-  unset "run_owned_matrix_image_seen[${image}]"
+record_run_owned_archive_alias() {
+  local source=$1 alias=$2 description=$3 status=0
+  engine_image_available "probe ${description} archive alias" "${alias}" || status=$?
+  if ((status == 0)); then
+    printf 'Refusing to overwrite existing %s archive alias %s.\n' "${description}" "${alias}" >&2
+    return 1
+  elif ((status != 1)); then
+    return "${status}"
+  fi
+  engine_operation "tag ${description} image for nested archive" tag "${source}" "${alias}"
+  record_run_owned_host_image "${alias}"
 }
 
-release_remaining_run_owned_matrix_images() {
+release_run_owned_host_image() {
+  local image=$1
+  [[ -n "${run_owned_host_image_seen[${image}]:-}" ]] || return 0
+
+  timed_operation 90s "release run-owned host image ${image}" \
+    "${engine}" image rm --ignore --no-prune -- "${image}" > /dev/null
+  unset "run_owned_host_image_seen[${image}]"
+}
+
+release_remaining_run_owned_host_images() {
   local index image release_failed=false
-  local -a image_indexes=("${!run_owned_matrix_images[@]}")
+  local -a image_indexes=("${!run_owned_host_images[@]}")
   # Images come after every outer container and image mount in EXIT cleanup.
   # Reverse acquisition order keeps any future image layering dependency safe.
   for ((index = ${#image_indexes[@]} - 1; index >= 0; index--)); do
-    image=${run_owned_matrix_images[${image_indexes[index]}]}
-    if ! release_run_owned_matrix_image "${image}"; then
+    image=${run_owned_host_images[${image_indexes[index]}]}
+    if ! release_run_owned_host_image "${image}"; then
       release_failed=true
     fi
   done
@@ -831,7 +843,7 @@ cleanup() {
         "${engine}" image unmount -- "${image}" > /dev/null 2>&1 || true
     done
   fi
-  if ! release_remaining_run_owned_matrix_images; then
+  if ! release_remaining_run_owned_host_images; then
     cleanup_failed=true
   fi
   for pid in "${fault_proxy_pids[@]}"; do
@@ -884,7 +896,7 @@ cleanup() {
     revalidation_failure_code="cleanup-failed"
     status=1
   fi
-  if [[ "${profile}" == full-container && "${cleanup_failed}" == true && "${status}" == 0 ]]; then
+  if [[ "${profile}" != smoke && "${cleanup_failed}" == true && "${status}" == 0 ]]; then
     status=1
   fi
   if [[ "${profile}" == limitation-revalidation && ! -f "${revalidation_evidence}" ]]; then
@@ -1369,6 +1381,7 @@ prepare_workload_archive() {
     timed_operation 5m 'pull digest-pinned workload image' \
       "${engine}" pull --quiet "${workload_image}" \
       > "${artifact_root}/workload-image.pull.log"
+    record_run_owned_host_image "${workload_image}"
   elif ((cache_status != 0)); then
     return "${cache_status}"
   fi
@@ -1379,12 +1392,13 @@ prepare_workload_archive() {
       "${expected_digest}" "${resolved_digest}" >&2
     return 1
   fi
-  engine_operation 'tag workload image for nested loading' \
-    tag "${workload_image}" "${workload_local_tag}"
+  record_run_owned_archive_alias "${workload_image}" "${workload_local_tag}" workload
   timed_operation 5m 'archive workload image for nested loading' \
     "${engine}" save --format docker-archive \
     --output "${workload_archive}" "${workload_local_tag}"
   chmod 0644 "${workload_archive}"
+  release_run_owned_host_image "${workload_local_tag}"
+  release_run_owned_host_image "${workload_image}"
 }
 
 prepare_matrix_image() {
@@ -1403,7 +1417,7 @@ prepare_matrix_image() {
     timed_operation 5m "pull reviewed ${id} image" \
       "${engine}" pull --quiet "${image}" \
       > "${artifact_root}/${id}.pull.log"
-    record_run_owned_matrix_image "${image}"
+    record_run_owned_host_image "${image}"
     resolved_digest="$(engine_operation "inspect ${id} image digest" \
       image inspect --format '{{.Digest}}' "${image}")"
   else
@@ -2428,7 +2442,7 @@ run_cell() {
     progress_run 'discover local Podman socket' run_discovery "${id}" "${image}" "${mode}"
   fi
   progress_run 'remove disposable outer container' remove_outer "${outer}"
-  release_run_owned_matrix_image "${image}"
+  release_run_owned_host_image "${image}"
   printf '%s CELL PASS  %s (%d/%d tests)\n' \
     "$(timestamp)" "${id}" "${progress_index}" "${progress_total}"
 }
@@ -2522,7 +2536,7 @@ run_limited_cell() {
     "${lane}" "${architecture}" "${current_case}" container-cli "${reason}"
   progress_pass
   progress_run 'remove disposable limitation container' remove_outer "${outer}"
-  release_run_owned_matrix_image "${image}"
+  release_run_owned_host_image "${image}"
   printf '%s CELL PASS  %s (%d/%d tests, reviewed limitation)\n' \
     "$(timestamp)" "${id}" "${progress_index}" "${progress_total}"
 }

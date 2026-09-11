@@ -154,6 +154,7 @@ observability_prepare_image_archive() {
       timed_operation 8m "pull digest-pinned observability ${id} image" \
         "${engine}" pull --quiet --platform linux/amd64 "${reference}" \
         > "${artifact_root}/observability-${id}.pull.log"
+      record_run_owned_host_image "${reference}"
     elif ((cache_status != 0)); then
       return "${cache_status}"
     fi
@@ -168,14 +169,15 @@ observability_prepare_image_archive() {
       return 1
     }
     runtime_reference="$(observability_image_reference "${id}")"
-    engine_operation "tag reviewed observability ${id} image" \
-      tag "${reference}" "${runtime_reference}"
+    record_run_owned_archive_alias "${reference}" "${runtime_reference}" "observability ${id}"
     timed_operation 10m "archive observability ${id} image" \
       "${engine}" save --format oci-archive \
       --output "${archive_directory}/${id}.oci.tar" "${runtime_reference}"
+    release_run_owned_host_image "${runtime_reference}"
+    release_run_owned_host_image "${reference}"
   done < "${fixture}/images.tsv"
   timed_operation 10m 'bundle digest-pinned observability image archives' \
-    tar --create --file "${archive}" --directory "${archive_directory}" .
+    tar --create --remove-files --file "${archive}" --directory "${archive_directory}" .
   rm -rf -- "${archive_directory}"
   chmod 0644 "${archive}"
   archive_size="$(stat -c '%s' "${archive}")"
@@ -209,8 +211,13 @@ observability_prepare_application_target() {
     "${engine}" exec "${outer}" /bin/sh -ceu '
       directory=/tmp/boxferry-observability-images
       mkdir -p "$directory"
+      trap "rm -rf -- \"$directory\"" EXIT
       tar -xf /boxferry-workload.tar -C "$directory"
-      for archive in "$directory"/*.oci.tar; do podman load --input "$archive"; done
+ for archive in "$directory"/*.oci.tar; do
+   podman load --input "$archive"
+   rm -f -- "$archive"
+ done
+ rmdir "$directory"
     ' > /dev/null
   observability_assert_loaded_images "${outer}"
   fixture="$(observability_fixture_root)"
