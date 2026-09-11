@@ -1,7 +1,7 @@
-BFP0007	services.{{resource_prefix}}observability-alloy.dependencies[0].options	warning	omitted	partial
-BFP0007	services.{{resource_prefix}}observability-alloy.dependencies[1].options	warning	omitted	partial
-BFP0007	services.{{resource_prefix}}observability-alloy.dependencies[2].options	warning	omitted	partial
-BFP0007	services.{{resource_prefix}}observability-grafana.dependencies[0].options	warning	omitted	partial
-BFP0007	services.{{resource_prefix}}observability-grafana.dependencies[1].options	warning	omitted	partial
-BFP0007	services.{{resource_prefix}}observability-grafana.dependencies[2].options	warning	omitted	partial
-BFP0007	services.{{resource_prefix}}observability-prometheus.dependencies[0].options	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}alloy.dependencies[0].options	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}alloy.dependencies[1].options	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}alloy.dependencies[2].options	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}grafana.dependencies[0].options	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}grafana.dependencies[1].options	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}grafana.dependencies[2].options	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}prometheus.dependencies[0].options	warning	omitted	partial

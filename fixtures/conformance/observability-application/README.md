@@ -75,9 +75,10 @@ contract; `live-reimport` selects independently authored Compose/Quadlet reimpor
 kind. The eight `reimport-*.tsv` templates cover all 36 live reimport combinations: two
 provisioners, three selectors, two inputs, and three outputs. Compose-to-Compose/Quadlet and
 Quadlet-to-Quadlet have empty multisets; remaining routes retain exact duplicate-sensitive
-omissions. Their sole interpolation is `{{resource_prefix}}`; static reviewed templates never
-derive expectations from reports or artifacts. Exact and label selectors agree, while all uses
-separately reviewed boundary-peer deltas.
+omissions. Their sole interpolation is `{{resource_prefix}}`, which is the complete
+`<run-prefix>-observability-` resource stem; templates must not append another application
+segment. Static reviewed templates never derive expectations from reports or artifacts. Exact and
+label selectors agree, while all uses separately reviewed boundary-peer deltas.
 
 [`diagnostics/`](diagnostics/) holds independently authored factored normalized multisets for the
 reviewed rootless Podman 6.1.0 nested image:

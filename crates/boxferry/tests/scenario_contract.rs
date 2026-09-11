@@ -867,6 +867,10 @@ fn observability_assert_reimport_template_contracts() -> Result<(), Box<dyn Erro
             expected_rows,
             "{mode}/{selection}/{input}-to-{output}"
         );
+        assert!(
+            !actual.contains("live-observability-observability-"),
+            "{mode}/{selection}/{input}-to-{output} duplicated the application prefix"
+        );
         assert!(!actual.contains("boxferry-public-observability-admin-canary"));
     }
     for mode in ["cli", "compose"] {
