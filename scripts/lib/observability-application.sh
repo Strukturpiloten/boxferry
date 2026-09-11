@@ -850,7 +850,7 @@ observability_append_live_diagnostic_template() {
       policy=
     fi
     printf '%s\t%s\t%s\t%s\t%s\n' \
-      "${code}" "${subject}" "${severity}" "${decision}" "${policy}" >> "${destination}"
+      "${code}" "${subject}" "${severity}" "${decision}" "${policy}" >> "${destination}" || return
     rows=$((rows + 1))
   done < "${template}"
   ((rows > 0)) || return 2
@@ -913,16 +913,83 @@ observability_write_live_diagnostic_template() {
   fi
 }
 
+# Reimport expectations are independently authored from the native-export
+# templates.  The route itself selects a reviewed fixture; it must never fall
+# back to the source-kind based native-export contract.
+observability_write_live_reimport_diagnostic_template() {
+  local mode=$1 selection=$2 source_kind=$3 output=$4 resource_prefix=$5 destination=$6
+  local fixture
+  case "${mode}" in cli | compose) ;; *) return 2 ;; esac
+  case "${selection}" in exact | label | all) ;; *) return 2 ;; esac
+  case "${source_kind}" in compose | quadlet) ;; *) return 2 ;; esac
+  case "${output}" in compose | quadlet | podman) ;; *) return 2 ;; esac
+  [[ "${resource_prefix}" =~ ^[[:alnum:]][[:alnum:].-]*-$ ]] || return 2
+
+  fixture="${repository_root}/fixtures/conformance/observability-application/diagnostics"
+  : > "${destination}" || return
+  case "${source_kind}-${output}" in
+    compose-compose | compose-quadlet | quadlet-quadlet)
+      ;;
+    compose-podman)
+      observability_append_live_diagnostic_template \
+        "${fixture}/reimport-compose-podman.tsv" "${resource_prefix}" "${destination}" || return
+      if [[ "${selection}" == all ]]; then
+        observability_append_live_diagnostic_template \
+          "${fixture}/reimport-compose-podman-all.tsv" "${resource_prefix}" "${destination}" || return
+      fi
+      ;;
+    quadlet-compose)
+      observability_append_live_diagnostic_template \
+        "${fixture}/reimport-quadlet-compose.tsv" "${resource_prefix}" "${destination}" || return
+      if [[ "${mode}" == cli ]]; then
+        observability_append_live_diagnostic_template \
+          "${fixture}/reimport-quadlet-compose-cli.tsv" "${resource_prefix}" "${destination}" || return
+      fi
+      if [[ "${selection}" == all ]]; then
+        observability_append_live_diagnostic_template \
+          "${fixture}/reimport-quadlet-compose-all.tsv" "${resource_prefix}" "${destination}" || return
+      fi
+      ;;
+    quadlet-podman)
+      observability_append_live_diagnostic_template \
+        "${fixture}/reimport-quadlet-podman.tsv" "${resource_prefix}" "${destination}" || return
+      if [[ "${mode}" == cli ]]; then
+        observability_append_live_diagnostic_template \
+          "${fixture}/reimport-quadlet-podman-cli.tsv" "${resource_prefix}" "${destination}" || return
+      fi
+      if [[ "${selection}" == all ]]; then
+        observability_append_live_diagnostic_template \
+          "${fixture}/reimport-quadlet-podman-all.tsv" "${resource_prefix}" "${destination}" || return
+      fi
+      ;;
+    *) return 2 ;;
+  esac
+}
+
 observability_write_expected_diagnostics() {
-  local mode=$1 selection=$2 source_kind=$3 output=$4 resource_prefix=$5 live_bindings=$6 destination=$7
+  local expectation_scope=$1 mode=$2 selection=$3 source_kind=$4 output=$5 resource_prefix=$6 destination=$7
+  local live_bindings=false
   local fixture diagnostics losses route service bind_count index
+  case "${mode}" in cli | compose) ;; *) return 2 ;; esac
+  case "${selection}" in exact | label | all) ;; *) return 2 ;; esac
   fixture="${repository_root}/fixtures/scenarios/observability-application"
   route="${source_kind}-${output}"
-  if [[ "${live_bindings}" == true ]]; then
-    observability_write_live_diagnostic_template \
-      "${mode}" "${selection}" "${source_kind}" "${output}" "${resource_prefix}" "${destination}"
-    return
-  fi
+  case "${expectation_scope}" in
+    live-native-export)
+      [[ "${source_kind}" == podman ]] || return 2
+      observability_write_live_diagnostic_template \
+        "${mode}" "${selection}" "${source_kind}" "${output}" "${resource_prefix}" "${destination}"
+      return
+      ;;
+    live-reimport)
+      observability_write_live_reimport_diagnostic_template \
+        "${mode}" "${selection}" "${source_kind}" "${output}" "${resource_prefix}" "${destination}"
+      return
+      ;;
+    offline-scenario)
+      ;;
+    *) return 2 ;;
+  esac
   case "${route}" in
     podman-compose | podman-quadlet | podman-podman | compose-podman | quadlet-podman) ;;
     compose-compose | compose-quadlet | quadlet-compose | quadlet-quadlet)
@@ -1051,12 +1118,12 @@ EOF
 }
 
 observability_assert_reviewed_diagnostics() {
-  local mode=$1 selection=$2 source_kind=$3 output=$4 resource_prefix=$5 live_bindings=$6 report=$7
+  local expectation_scope=$1 mode=$2 selection=$3 source_kind=$4 output=$5 resource_prefix=$6 report=$7
   local expected="${report}.diagnostics.expected.tsv"
   local observed="${report}.diagnostics.observed.tsv"
   observability_write_expected_diagnostics \
-    "${mode}" "${selection}" "${source_kind}" "${output}" "${resource_prefix}" \
-    "${live_bindings}" "${expected}" || return
+    "${expectation_scope}" "${mode}" "${selection}" "${source_kind}" "${output}" \
+    "${resource_prefix}" "${expected}" || return
   jq --raw-output '
     def field($name; $required):
       [.fields[] | select(type == "object" and .name == $name)] as $matches
@@ -1084,9 +1151,11 @@ observability_assert_reviewed_diagnostics() {
 }
 
 observability_assert_output_semantics() {
-  local mode=$1 selection=$2 source_kind=$3 output=$4 directory=$5 prefix=$6 report=$7 id
-  local live_bindings=false
-  [[ "${source_kind}" == podman ]] && live_bindings=true
+  local expectation_scope=$1 mode=$2 selection=$3 source_kind=$4 output=$5 directory=$6 prefix=$7 report=$8 id
+  case "${expectation_scope}" in
+    live-native-export | live-reimport) ;;
+    *) return 2 ;;
+  esac
   for id in prometheus loki grafana alloy producer; do
     grep --recursive --fixed-strings --quiet \
       "$(observability_image_reference "${id}")" "${directory}"
@@ -1117,8 +1186,8 @@ observability_assert_output_semantics() {
     fi
   fi
   observability_assert_reviewed_diagnostics \
-    "${mode}" "${selection}" "${source_kind}" "${output}" "${prefix}-observability-" \
-    "${live_bindings}" "${report}"
+    "${expectation_scope}" "${mode}" "${selection}" "${source_kind}" "${output}" \
+    "${prefix}-observability-" "${report}" || return
   grep --recursive --fixed-strings --quiet -- \
     '--storage.tsdb.retention.time=24h' "${directory}"
 }
@@ -1176,7 +1245,7 @@ observability_run_reimports() {
       observability_assert_output_membership "${selection}" "${output}" \
         "${result}" "${prefix}"
       observability_assert_output_semantics \
-        "${mode}" "${selection}" "${input}" "${output}" "${result}" "${prefix}" "${report}"
+        live-reimport "${mode}" "${selection}" "${input}" "${output}" "${result}" "${prefix}" "${report}"
       if [[ "${selection}" != all ]]; then
         observability_assert_external_edge "${output}" "${result}" \
           "${prefix}-observability-edge"
@@ -1230,7 +1299,7 @@ observability_run_exports() {
       observability_assert_output_membership "${selection}" "${output}" \
         "${directory}" "${prefix}"
       observability_assert_output_semantics \
-        "${mode}" "${selection}" podman "${output}" "${directory}" "${prefix}" "${report}"
+        live-native-export "${mode}" "${selection}" podman "${output}" "${directory}" "${prefix}" "${report}"
       if [[ "${selection}" != all ]]; then
         observability_assert_external_edge "${output}" "${directory}" \
           "${prefix}-observability-edge"

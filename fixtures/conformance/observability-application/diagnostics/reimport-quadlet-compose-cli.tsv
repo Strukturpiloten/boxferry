@@ -1,0 +1,7 @@
+BFC0007	services.{{resource_prefix}}observability-alloy.dependencies[0]	warning	-	-
+BFC0007	services.{{resource_prefix}}observability-alloy.dependencies[1]	warning	-	-
+BFC0007	services.{{resource_prefix}}observability-alloy.dependencies[2]	warning	-	-
+BFC0007	services.{{resource_prefix}}observability-grafana.dependencies[0]	warning	-	-
+BFC0007	services.{{resource_prefix}}observability-grafana.dependencies[1]	warning	-	-
+BFC0007	services.{{resource_prefix}}observability-grafana.dependencies[2]	warning	-	-
+BFC0007	services.{{resource_prefix}}observability-prometheus.dependencies[0]	warning	-	-
