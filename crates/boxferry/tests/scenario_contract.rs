@@ -3330,6 +3330,7 @@ fn default_network_evidence_cases() -> Vec<DefaultNetworkEvidenceCase> {
     ]
   }]
 }"#;
+    let additional_legacy_cases = additional_legacy_default_network_evidence_cases(legacy);
     let wrong_api = legacy.replacen(
         "\"source_api\", \"value\": \"3.0.0\"",
         "\"source_api\", \"value\": \"3.0.1\"",
@@ -3390,6 +3391,59 @@ fn default_network_evidence_cases() -> Vec<DefaultNetworkEvidenceCase> {
             "false",
             true,
             "default Podman network absent from live inventory",
+        ),
+    ]
+    .into_iter()
+    .chain(additional_legacy_cases)
+    .collect()
+}
+
+fn additional_legacy_default_network_evidence_cases(legacy_301: &str) -> Vec<DefaultNetworkEvidenceCase> {
+    let legacy_344 = legacy_301
+        .replace(
+            "\"source_engine\", \"value\": \"3.0.1\"",
+            "\"source_engine\", \"value\": \"3.4.4\"",
+        )
+        .replace(
+            "\"source_api\", \"value\": \"3.0.0\"",
+            "\"source_api\", \"value\": \"3.4.4\"",
+        );
+    vec![
+        (
+            "legacy-344",
+            legacy_344.clone(),
+            "3.4.4",
+            "false",
+            "true",
+            true,
+            "Podman 3.4.4 rootful default CNI network remains omitted",
+        ),
+        (
+            "legacy-344-crossed-api",
+            legacy_301.to_owned(),
+            "3.4.4",
+            "false",
+            "true",
+            false,
+            "",
+        ),
+        (
+            "legacy-301-crossed-api",
+            legacy_344,
+            "3.0.1",
+            "false",
+            "true",
+            false,
+            "",
+        ),
+        (
+            "unreviewed-legacy-version",
+            legacy_301.to_owned(),
+            "3.2.0",
+            "false",
+            "true",
+            false,
+            "",
         ),
     ]
 }
