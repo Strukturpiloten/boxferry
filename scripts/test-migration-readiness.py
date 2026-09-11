@@ -214,6 +214,11 @@ class MigrationReadinessTests(unittest.TestCase):
             ],
         )
 
+    def test_complete_podman_matrix_retains_disk_growth_cap(self) -> None:
+        catalogue = MODULE.load_catalogue()
+        task = MODULE.by_id(catalogue["tasks"], "podman-complete-matrix", "task")
+        self.assertEqual(task["maximum-disk-growth-mib"], 10240)
+
     def test_catalogue_rejects_a_successful_gap(self) -> None:
         source = MODULE.CATALOGUE.read_text(encoding="utf-8")
         changed = source.replace('state = "not-executed"', 'state = "passed"', 1)
