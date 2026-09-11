@@ -7,12 +7,16 @@ script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 bash_executable="$(command -v bash)"
 test_root="$(mktemp -d)"
 trap 'rm -r -- "${test_root}"' EXIT
-mkdir -p "${test_root}/repository/scripts" "${test_root}/repository/site" "${test_root}/bin"
+mkdir -p "${test_root}/repository/scripts/lib" "${test_root}/repository/site" "${test_root}/bin"
 cp -- "${script_directory}/check-all.sh" "${test_root}/repository/scripts/check-all.sh"
 cp -- "${script_directory}/podman-live-conformance.sh" \
   "${test_root}/repository/scripts/podman-live-conformance.sh"
 cp -- "${script_directory}/test-podman-live-cleanup.sh" \
   "${test_root}/repository/scripts/test-podman-live-cleanup.sh"
+cp -- "${script_directory}/test-observability-grafana-network.sh" \
+  "${test_root}/repository/scripts/test-observability-grafana-network.sh"
+cp -- "${script_directory}/lib/observability-application.sh" \
+  "${test_root}/repository/scripts/lib/observability-application.sh"
 cp -- "${script_directory}/../README.md" "${test_root}/repository/README.md"
 
 # These mock commands record exactly what the unmodified gate requests.
@@ -66,6 +70,11 @@ export BOXFERRY_WEBSITE_FORMAT_MODE=fix
 run_gate default
 run_gate fix --fix
 run_gate check --check
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/28\]' "${test_root}/default.output")" == 28 ]]
+grep --fixed-strings --quiet -- '[28/28] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 28 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/27\]' "${test_root}/default.output" || true)" == 0 ]]
+[[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 27 steps.' "${test_root}/default.output" || true)" == 0 ]]
 diff -u "${test_root}/default.commands" "${test_root}/fix.commands"
 assert_contains fix "bash scripts/check-files.sh --fix"
 assert_contains check "bash scripts/check-files.sh --check"
