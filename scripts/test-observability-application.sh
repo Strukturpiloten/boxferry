@@ -292,4 +292,55 @@ for forbidden in \
   assert_absent "${forbidden}" "${diagnostics}"
 done
 
-printf '%s\n' 'Observability Alloy timing and bounded diagnostics tests passed.'
+persistence_prometheus_calls=0
+persistence_loki_calls=0
+persistence_grafana_calls=0
+persistence_log_producer_marker="${test_root}/persistence-log-producer-called"
+observability_prometheus_has_value() {
+  [[ "$1" == /tmp/observability.sock ]]
+  [[ "$2" == bf-private ]]
+  [[ "$3" == 'max_over_time%28boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D%5B30m%5D%29' ]]
+  [[ "$4" == 84 ]]
+  ((persistence_prometheus_calls += 1))
+}
+observability_loki_has_known_log() {
+  [[ "$1" == /tmp/observability.sock ]]
+  [[ "$2" == bf-private ]]
+  ((persistence_loki_calls += 1))
+}
+observability_remote() {
+  local socket=$1
+  shift
+  [[ "${socket}" == /tmp/observability.sock ]]
+  case "$2" in
+    bf-private-observability-grafana)
+      [[ "$1" == exec ]]
+      [[ $# == 6 ]]
+      [[ "$3" == grep ]]
+      [[ "$4" == -Fx ]]
+      [[ "$5" == boxferry-grafana-persisted ]]
+      [[ "$6" == /var/lib/grafana/boxferry-persistence-marker ]]
+      ((persistence_grafana_calls += 1))
+      ;;
+    bf-private-observability-log-producer)
+      [[ "$1" == exec ]]
+      [[ $# == 5 ]]
+      [[ "$3" == wc ]]
+      [[ "$4" == -l ]]
+      [[ "$5" == /var/log/boxferry/telemetry.log ]]
+      touch "${persistence_log_producer_marker}"
+      printf '%s\n' 1
+      ;;
+    *)
+      printf 'Unexpected persistence remote target: %s\n' "$2" >&2
+      return 1
+      ;;
+  esac
+}
+observability_assert_persistence /tmp/observability.sock bf-private
+[[ "${persistence_prometheus_calls}" == 1 ]]
+[[ "${persistence_loki_calls}" == 1 ]]
+[[ "${persistence_grafana_calls}" == 1 ]]
+[[ -f "${persistence_log_producer_marker}" ]]
+
+printf '%s\n' 'Observability Alloy timing, persistence, and bounded diagnostics tests passed.'

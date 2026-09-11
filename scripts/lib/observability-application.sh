@@ -775,7 +775,7 @@ observability_assert_persistence() {
     'max_over_time%28boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D%5B30m%5D%29' 84
   observability_loki_has_known_log "${socket}" "${prefix}"
   observability_remote "${socket}" exec "${prefix}-observability-grafana" \
-    grep --fixed-strings --line-regexp boxferry-grafana-persisted \
+    grep -Fx boxferry-grafana-persisted \
     /var/lib/grafana/boxferry-persistence-marker > /dev/null
   [[ "$(observability_remote "${socket}" exec \
     "${prefix}-observability-log-producer" wc -l /var/log/boxferry/telemetry.log | awk '{ print $1 }')" == 1 ]]
