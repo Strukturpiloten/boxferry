@@ -1020,6 +1020,18 @@ observability_report_conversion_failure() {
   fi
 }
 
+observability_prepare_export_paths() {
+  local mode=$1 selection=$2
+  local export_root="${current_case:?caller must supply current_case}/outputs/${mode}-${selection}"
+  local reimports_root="${current_case}/reimports"
+
+  if [[ -e "${export_root}" && ! -d "${export_root}" ]]; then
+    printf 'Observability export parent is not a directory: %s\n' "${export_root}" >&2
+    return 1
+  fi
+  mkdir -p -- "${export_root}" "${reimports_root}"
+}
+
 observability_run_reimports() {
   local mode=$1 selection=$2 source=$3 prefix=$4 input output result report file
   for input in compose quadlet; do
@@ -1066,7 +1078,6 @@ observability_run_reimports() {
 observability_run_exports() {
   local mode=$1 socket=$2 prefix=$3 selection output directory report
   local -a selection_arguments=()
-  mkdir -p -- "${current_case}/outputs" "${current_case}/reimports"
   for selection in exact label all; do
     case "${selection}" in
       exact)
@@ -1082,6 +1093,12 @@ observability_run_exports() {
     for output in compose quadlet podman; do
       directory="${current_case}/outputs/${mode}-${selection}/${output}"
       report="${directory}.report.json"
+      observability_prepare_export_paths "${mode}" "${selection}"
+      if [[ -e "${directory}" ]]; then
+        printf 'Observability export target must not exist before conversion: %s\n' \
+          "${directory}" >&2
+        return 1
+      fi
       local -a target_arguments=()
       [[ "${output}" == podman ]] && target_arguments+=(--podman-target-context rootless)
       if ! boxferry_operation "Observability ${mode} ${selection} Podman-to-${output}" \

@@ -21,6 +21,101 @@ assert_absent() {
 observability_validate_alloy_scrape_timing \
   "${repository_root}/fixtures/conformance/observability-application/config.alloy"
 
+current_case="${test_root}/export-paths"
+observability_prepare_export_paths cli exact
+[[ -d "${current_case}/outputs/cli-exact" ]]
+[[ -d "${current_case}/reimports" ]]
+for output in compose quadlet podman; do
+  [[ ! -e "${current_case}/outputs/cli-exact/${output}" ]]
+done
+for selection in label all; do
+  observability_prepare_export_paths cli "${selection}"
+  [[ -d "${current_case}/outputs/cli-${selection}" ]]
+  for output in compose quadlet podman; do
+    [[ ! -e "${current_case}/outputs/cli-${selection}/${output}" ]]
+  done
+done
+
+current_case="${test_root}/regular-file-parent"
+mkdir -p "${current_case}/outputs"
+printf '%s\n' 'not-a-directory' > "${current_case}/outputs/cli-exact"
+status=0
+error="$(observability_prepare_export_paths cli exact 2>&1)" || status=$?
+[[ "${status}" == 1 ]]
+[[ "${error}" == "Observability export parent is not a directory: ${current_case}/outputs/cli-exact" ]]
+
+current_case="${test_root}/pre-existing-export-target"
+mkdir -p "${current_case}/outputs/cli-exact/compose"
+status=0
+error="$(observability_run_exports cli /tmp/observability.sock bf-private 2>&1)" || status=$?
+[[ "${status}" == 1 ]]
+[[ "${error}" == "Observability export target must not exist before conversion: ${current_case}/outputs/cli-exact/compose" ]]
+
+export_mode=
+export_operation_count=0
+reimport_count=0
+declare -A export_seen=() reimport_seen=()
+boxferry_operation() {
+  local description=$1 operation_label mode selection target output directory='' argument
+  shift
+  read -r operation_label mode selection target <<< "${description}"
+  [[ "${operation_label}" == Observability && "${mode}" == "${export_mode}" ]]
+  [[ "$1" == convert && "$2" == podman ]]
+  output=$3
+  case "${description}" in
+    "Observability ${export_mode} exact Podman-to-${output}" | \
+      "Observability ${export_mode} label Podman-to-${output}" | \
+      "Observability ${export_mode} all Podman-to-${output}") ;;
+    *)
+      printf 'Unexpected modeled observability export operation: %s\n' "${description}" >&2
+      return 1
+      ;;
+  esac
+  while (($#)); do
+    argument=$1
+    shift
+    if [[ "${argument}" == --output-directory ]]; then
+      directory=${1:?output directory argument is required}
+      shift
+      break
+    fi
+  done
+  [[ -n "${directory}" ]]
+  [[ -d "$(dirname -- "${directory}")" ]]
+  [[ ! -e "${directory}" ]]
+  mkdir -- "${directory}"
+  export_seen["${mode}-${selection}-${output}"]=$((export_seen["${mode}-${selection}-${output}"] + 1))
+  ((export_operation_count += 1))
+  printf '%s\n' '{"schema_version":1,"status":"success","exit_category":"success","diagnostics":[],"fidelity":{"invalid":0},"output_artifacts":["generated"]}'
+}
+observability_assert_output_membership() { :; }
+observability_assert_output_semantics() { :; }
+observability_assert_external_edge() { :; }
+observability_run_reimports() {
+  local mode=$1 selection=$2 source=$3 prefix=$4
+  [[ "${mode}" == "${export_mode}" ]]
+  [[ "${source}" == "${current_case}/outputs/${mode}-${selection}" ]]
+  [[ -d "${current_case}/reimports" ]]
+  [[ "${prefix}" == bf-private ]]
+  reimport_seen["${mode}-${selection}"]=$((reimport_seen["${mode}-${selection}"] + 1))
+  ((reimport_count += 1))
+}
+
+for export_mode in cli compose; do
+  current_case="${test_root}/modeled-${export_mode}-exports"
+  observability_run_exports "${export_mode}" /tmp/observability.sock bf-private
+done
+[[ "${export_operation_count}" == 18 ]]
+[[ "${reimport_count}" == 6 ]]
+for mode in cli compose; do
+  for selection in exact label all; do
+    [[ "${reimport_seen["${mode}-${selection}"]}" == 1 ]]
+    for output in compose quadlet podman; do
+      [[ "${export_seen["${mode}-${selection}-${output}"]}" == 1 ]]
+    done
+  done
+done
+
 prometheus_flags='{
   "status": "success",
   "data": {
