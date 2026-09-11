@@ -21,6 +21,33 @@ assert_absent() {
 observability_validate_alloy_scrape_timing \
   "${repository_root}/fixtures/conformance/observability-application/config.alloy"
 
+prometheus_flags='{
+  "status": "success",
+  "data": {
+    "storage.tsdb.retention.time": "1d",
+    "web.enable-remote-write-receiver": "true"
+  }
+}'
+observability_validate_prometheus_flags "${prometheus_flags}"
+
+for invalid_flags in \
+  '{"status":"success","data":{"storage.tsdb.retention.time":"24h","web.enable-remote-write-receiver":"true"}}' \
+  '{"status":"success","data":{"storage.tsdb.retention.time":"12h","web.enable-remote-write-receiver":"true"}}' \
+  '{"data":{"storage.tsdb.retention.time":"1d","web.enable-remote-write-receiver":"true"}}' \
+  '{"status":"success"}' \
+  '{"status":"success","data":{"web.enable-remote-write-receiver":"true"}}' \
+  '{"status":"success","data":{"storage.tsdb.retention.time":"1d"}}' \
+  '{"status":true,"data":{"storage.tsdb.retention.time":"1d","web.enable-remote-write-receiver":"true"}}' \
+  '{"status":"success","data":true}' \
+  '{"status":"success","data":{"storage.tsdb.retention.time":true,"web.enable-remote-write-receiver":"true"}}' \
+  '{"status":"success","data":{"storage.tsdb.retention.time":"1d","web.enable-remote-write-receiver":true}}' \
+  '{"status":"error","data":{"storage.tsdb.retention.time":"1d","web.enable-remote-write-receiver":"true"}}'; do
+  if observability_validate_prometheus_flags "${invalid_flags}"; then
+    printf '%s\n' 'Invalid Prometheus flags unexpectedly satisfied the observability contract.' >&2
+    exit 1
+  fi
+done
+
 write_timing_fixture() {
   local path=$1 interval=$2 timeout=${3:-}
   {
