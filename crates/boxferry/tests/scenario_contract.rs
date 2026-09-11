@@ -538,35 +538,60 @@ fn observability_live_diagnostic_matcher_is_route_specific_and_exact() -> Result
     let fixture = root.join("fixtures/scenarios/observability-application");
     let manifest = read_manifest_file(&fixture.join("scenario.toml"))?;
     let podman_sources = [fixture.join("input-podman.cassette.json")];
+    let exports = observability_live_exports(&manifest, &podman_sources)?;
 
+    observability_assert_reimport_routes(&exports)?;
+    observability_assert_report_adversaries(&exports.compose_report)?;
+    observability_assert_live_template_contracts()?;
+    Ok(())
+}
+
+struct ObservabilityLiveExports {
+    compose_output: TemporaryDirectory,
+    compose_report: serde_json::Value,
+    quadlet_output: TemporaryDirectory,
+}
+
+fn observability_live_exports(
+    manifest: &ScenarioManifest,
+    podman_sources: &[PathBuf],
+) -> Result<ObservabilityLiveExports, Box<dyn Error>> {
     let podman_compose = TemporaryDirectory::new("observability-podman-compose")?;
     let podman_compose_report = convert_cli(
-        &manifest,
-        &podman_sources,
-        observability_route(&manifest, "podman", "compose")?,
+        manifest,
+        podman_sources,
+        observability_route(manifest, "podman", "compose")?,
         podman_compose.path(),
     )?;
     assert_observability_diagnostic_match("podman-compose", "podman", "compose", &podman_compose_report, true)?;
 
     let podman_quadlet = TemporaryDirectory::new("observability-podman-quadlet")?;
     let podman_quadlet_report = convert_cli(
-        &manifest,
-        &podman_sources,
-        observability_route(&manifest, "podman", "quadlet")?,
+        manifest,
+        podman_sources,
+        observability_route(manifest, "podman", "quadlet")?,
         podman_quadlet.path(),
     )?;
     assert_observability_diagnostic_match("podman-quadlet", "podman", "quadlet", &podman_quadlet_report, true)?;
 
+    Ok(ObservabilityLiveExports {
+        compose_output: podman_compose,
+        compose_report: podman_compose_report,
+        quadlet_output: podman_quadlet,
+    })
+}
+
+fn observability_assert_reimport_routes(exports: &ObservabilityLiveExports) -> Result<(), Box<dyn Error>> {
     let compose_podman = TemporaryDirectory::new("observability-compose-podman")?;
     let compose_podman_report = observability_file_conversion(
         "compose",
         "podman",
-        &[podman_compose.path().join("compose.yaml")],
+        &[exports.compose_output.path().join("compose.yaml")],
         compose_podman.path(),
     )?;
     assert_observability_diagnostic_match("compose-podman", "compose", "podman", &compose_podman_report, true)?;
 
-    let quadlet_sources = observability_output_files(podman_quadlet.path())?;
+    let quadlet_sources = observability_output_files(exports.quadlet_output.path())?;
     let quadlet_podman = TemporaryDirectory::new("observability-quadlet-podman")?;
     let quadlet_podman_report =
         observability_file_conversion("quadlet", "podman", &quadlet_sources, quadlet_podman.path())?;
@@ -576,7 +601,7 @@ fn observability_live_diagnostic_matcher_is_route_specific_and_exact() -> Result
     let compose_quadlet_report = observability_file_conversion(
         "compose",
         "quadlet",
-        &[podman_compose.path().join("compose.yaml")],
+        &[exports.compose_output.path().join("compose.yaml")],
         compose_quadlet.path(),
     )?;
     assert!(
@@ -586,8 +611,11 @@ fn observability_live_diagnostic_matcher_is_route_specific_and_exact() -> Result
         "the expected-empty reimport route unexpectedly emitted diagnostics"
     );
     assert_observability_diagnostic_match("compose-quadlet", "compose", "quadlet", &compose_quadlet_report, true)?;
+    Ok(())
+}
 
-    let mut wrong_decision = podman_compose_report.clone();
+fn observability_assert_report_adversaries(report: &serde_json::Value) -> Result<(), Box<dyn Error>> {
+    let mut wrong_decision = report.clone();
     assert!(mutate_observability_diagnostic_field(
         &mut wrong_decision,
         "decision",
@@ -596,7 +624,55 @@ fn observability_live_diagnostic_matcher_is_route_specific_and_exact() -> Result
     ));
     assert_observability_diagnostic_match("wrong-decision", "podman", "compose", &wrong_decision, false)?;
 
-    let mut wrong_volume_subject = podman_compose_report.clone();
+    let mut wrong_severity = report.clone();
+    let severity = wrong_severity["diagnostics"]
+        .as_array_mut()
+        .and_then(|diagnostics| {
+            diagnostics
+                .iter_mut()
+                .find(|diagnostic| diagnostic["severity"] == "warning")
+        })
+        .ok_or("observability report has no warning diagnostic")?;
+    severity["severity"] = serde_json::Value::String("error".into());
+    assert_observability_diagnostic_match("wrong-severity", "podman", "compose", &wrong_severity, false)?;
+
+    let mut wrong_policy = report.clone();
+    assert!(mutate_observability_diagnostic_field(
+        &mut wrong_policy,
+        "required_loss_policy",
+        "partial",
+        "exact",
+    ));
+    assert_observability_diagnostic_match("wrong-policy", "podman", "compose", &wrong_policy, false)?;
+
+    let mut duplicate_field = report.clone();
+    assert!(duplicate_observability_diagnostic_field(
+        &mut duplicate_field,
+        "decision"
+    ));
+    assert_observability_diagnostic_match("duplicate-field", "podman", "compose", &duplicate_field, false)?;
+
+    let mut missing_diagnostic = report.clone();
+    assert!(
+        missing_diagnostic["diagnostics"]
+            .as_array_mut()
+            .is_some_and(|diagnostics| diagnostics.pop().is_some())
+    );
+    assert_observability_diagnostic_match("missing-diagnostic", "podman", "compose", &missing_diagnostic, false)?;
+
+    let mut injected_diagnostic = report.clone();
+    let duplicate = injected_diagnostic["diagnostics"]
+        .as_array()
+        .and_then(|diagnostics| diagnostics.first())
+        .cloned()
+        .ok_or("observability report has no diagnostic to duplicate")?;
+    injected_diagnostic["diagnostics"]
+        .as_array_mut()
+        .ok_or("observability report diagnostics are not an array")?
+        .push(duplicate);
+    assert_observability_diagnostic_match("injected-diagnostic", "podman", "compose", &injected_diagnostic, false)?;
+
+    let mut wrong_volume_subject = report.clone();
     assert!(mutate_observability_subject_prefix(
         &mut wrong_volume_subject,
         "volumes.",
@@ -609,21 +685,230 @@ fn observability_live_diagnostic_matcher_is_route_specific_and_exact() -> Result
         &wrong_volume_subject,
         false,
     )?;
-    assert_observability_diagnostic_match("wrong-source-route", "compose", "podman", &podman_compose_report, false)?;
+    assert_observability_diagnostic_match("wrong-source-route", "compose", "podman", report, false)?;
+    assert!(
+        !serde_json::to_string(report)?.contains("boxferry-public-observability-admin-canary"),
+        "the diagnostic report leaked the protected-value canary"
+    );
+    observability_assert_malformed_report_adversaries(report)
+}
 
-    let live_expected = observability_live_expected_diagnostics()?;
-    for expected in [
-        "BFP0003\tservices.live-observability-alloy.mounts[0]\twarning\tnot-promoted\tpartial",
-        "BFP0003\tservices.live-observability-alloy.mounts[1]\twarning\tapproximated\tapproximate",
-        "BFP0003\tservices.live-observability-grafana.mounts[3]\twarning\tapproximated\tapproximate",
-        "BFP0003\tvolumes.live-observability-alloy-data.driver\twarning\tnot-promoted\tpartial",
-    ] {
-        assert!(
-            live_expected.lines().any(|line| line == expected),
-            "live diagnostic derivation omitted `{expected}`"
+fn observability_assert_malformed_report_adversaries(report: &serde_json::Value) -> Result<(), Box<dyn Error>> {
+    let mut non_array_diagnostics = report.clone();
+    non_array_diagnostics["diagnostics"] = serde_json::json!({});
+    assert_observability_diagnostic_match(
+        "non-array-diagnostics",
+        "podman",
+        "compose",
+        &non_array_diagnostics,
+        false,
+    )?;
+
+    let mut non_array_fields = report.clone();
+    non_array_fields["diagnostics"][0]["fields"] = serde_json::json!({});
+    assert_observability_diagnostic_match("non-array-fields", "podman", "compose", &non_array_fields, false)?;
+
+    let mut non_string_subject = report.clone();
+    non_string_subject["diagnostics"][0]["fields"][0]["value"] = serde_json::json!(7);
+    assert_observability_diagnostic_match("non-string-subject", "podman", "compose", &non_string_subject, false)?;
+
+    let mut duplicate_subject = report.clone();
+    let subject = duplicate_subject["diagnostics"][0]["fields"][0].clone();
+    duplicate_subject["diagnostics"][0]["fields"]
+        .as_array_mut()
+        .ok_or("observability fields are not an array")?
+        .push(subject);
+    assert_observability_diagnostic_match("duplicate-subject", "podman", "compose", &duplicate_subject, false)?;
+
+    let mut missing_subject = report.clone();
+    missing_subject["diagnostics"][0]["fields"]
+        .as_array_mut()
+        .ok_or("observability fields are not an array")?
+        .retain(|field| field["name"] != "subject");
+    assert_observability_diagnostic_match("missing-subject", "podman", "compose", &missing_subject, false)?;
+
+    let mut trailing_malformed = report.clone();
+    trailing_malformed["diagnostics"]
+        .as_array_mut()
+        .ok_or("observability report diagnostics are not an array")?
+        .push(serde_json::json!({"code": 7, "severity": "warning", "fields": []}));
+    assert_observability_diagnostic_match("trailing-malformed", "podman", "compose", &trailing_malformed, false)
+}
+
+type ObservabilityTemplateContract = (
+    &'static str,
+    &'static str,
+    &'static str,
+    usize,
+    &'static [(&'static str, usize)],
+);
+
+fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> {
+    let expected_contracts: [ObservabilityTemplateContract; 12] = [
+        (
+            "cli",
+            "exact",
+            "compose",
+            226,
+            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 163)],
+        ),
+        ("cli", "exact", "quadlet", 215, &[("BFP0002", 52), ("BFP0003", 163)]),
+        (
+            "cli",
+            "exact",
+            "podman",
+            274,
+            &[("BFP0002", 52), ("BFP0003", 163), ("BFP0007", 59)],
+        ),
+        (
+            "cli",
+            "all",
+            "compose",
+            245,
+            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 174)],
+        ),
+        ("cli", "all", "quadlet", 233, &[("BFP0002", 59), ("BFP0003", 174)]),
+        (
+            "cli",
+            "all",
+            "podman",
+            303,
+            &[("BFP0002", 59), ("BFP0003", 174), ("BFP0007", 70)],
+        ),
+        (
+            "compose",
+            "exact",
+            "compose",
+            213,
+            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 163)],
+        ),
+        ("compose", "exact", "quadlet", 209, &[("BFP0002", 46), ("BFP0003", 163)]),
+        (
+            "compose",
+            "exact",
+            "podman",
+            268,
+            &[("BFP0002", 46), ("BFP0003", 163), ("BFP0007", 59)],
+        ),
+        (
+            "compose",
+            "all",
+            "compose",
+            232,
+            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 174)],
+        ),
+        ("compose", "all", "quadlet", 227, &[("BFP0002", 53), ("BFP0003", 174)]),
+        (
+            "compose",
+            "all",
+            "podman",
+            297,
+            &[("BFP0002", 53), ("BFP0003", 174), ("BFP0007", 70)],
+        ),
+    ];
+    for contract in expected_contracts {
+        observability_assert_template_contract(contract)?;
+    }
+    observability_assert_template_selection_contract()?;
+    observability_assert_template_files()?;
+    assert_observability_expected_generation_failure_rejected()
+}
+
+fn observability_assert_template_contract(
+    (mode, selection, output, expected_rows, expected_codes): ObservabilityTemplateContract,
+) -> Result<(), Box<dyn Error>> {
+    let diagnostics = observability_live_expected_diagnostics_for(mode, selection, output, "live-observability-")?;
+    assert_eq!(
+        diagnostics.lines().count(),
+        expected_rows,
+        "{mode}/{selection}/{output} rows"
+    );
+    for (code, expected_count) in expected_codes {
+        assert_eq!(
+            diagnostics.lines().filter(|line| line.starts_with(code)).count(),
+            *expected_count,
+            "{mode}/{selection}/{output} {code} rows"
         );
     }
+    let label = observability_live_expected_diagnostics_for(mode, "label", output, "live-observability-")?;
+    let exact = observability_live_expected_diagnostics_for(mode, "exact", output, "live-observability-")?;
+    assert_eq!(exact, label, "{mode}/{output} exact and label contracts differ");
+    Ok(())
+}
 
+fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Error>> {
+    let exact = observability_live_expected_diagnostics_for("cli", "exact", "quadlet", "live-observability-")?;
+    let all = observability_live_expected_diagnostics_for("cli", "all", "quadlet", "live-observability-")?;
+    assert!(!exact.contains("boundary-peer"));
+    assert_eq!(all.lines().filter(|line| line.contains("boundary-peer")).count(), 12);
+    assert_eq!(all.lines().count() - exact.lines().count(), 18);
+
+    let temporary = TemporaryDirectory::new("observability-unsafe-prefix")?;
+    let unsafe_prefix = Command::new("bash")
+        .args([
+            "-c",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics cli exact podman compose \"$3\" true \"$4\"",
+            "observability-unsafe-prefix",
+        ])
+        .arg(repository_root())
+        .arg(repository_root().join("scripts/lib/observability-application.sh"))
+        .arg("unsafe/prefix-")
+        .arg(temporary.path().join("expected.tsv"))
+        .output()?;
+    assert!(
+        !unsafe_prefix.status.success(),
+        "unsafe resource prefix must not be substituted"
+    );
+    Ok(())
+}
+
+fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
+    let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
+    for (name, expected_rows) in [
+        ("base-compose-provisioned.tsv", 209),
+        ("cli-creation-evidence.tsv", 6),
+        ("compose-export-network.tsv", 4),
+        ("cli-compose-export-dependencies.tsv", 7),
+        ("podman-export.tsv", 59),
+        ("all-importer.tsv", 18),
+        ("all-compose-export.tsv", 1),
+        ("all-podman-export.tsv", 11),
+    ] {
+        let template = fs::read_to_string(template_root.join(name))?;
+        assert_eq!(template.lines().count(), expected_rows, "{name} row count");
+        assert!(
+            !template.contains("boxferry-public-observability-admin-canary"),
+            "{name} leaked protected-value canary"
+        );
+        for (line_number, line) in template.lines().enumerate() {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 5, "{name}:{} must have five fields", line_number + 1);
+            let subject_without_marker = fields[1].replace("{{resource_prefix}}", "");
+            assert!(
+                !subject_without_marker.contains('{') && !subject_without_marker.contains('}'),
+                "{name}:{} contains an unsafe template marker",
+                line_number + 1
+            );
+        }
+    }
+    for (label, malformed) in [
+        ("unknown-code", "BFP9999\tsubject\twarning\tomitted\tpartial\n"),
+        ("invalid-tuple", "BFP0003\tsubject\twarning\tomitted\tpartial\n"),
+        ("implicit-native-empty", "BFC0007\tsubject\twarning\t\t\n"),
+        (
+            "duplicate-marker",
+            "BFP0002\tcontainer:{{resource_prefix}}{{resource_prefix}}peer\twarning\tomitted\tpartial\n",
+        ),
+        (
+            "unbalanced-index",
+            "BFP0003\tservices.{{resource_prefix}}peer.mounts[0\twarning\tnot-promoted\tpartial\n",
+        ),
+        ("missing-field", "BFP0002\tsubject\twarning\tomitted\n"),
+        ("extra-field", "BFP0002\tsubject\twarning\tomitted\tpartial\textra\n"),
+        ("empty-template", ""),
+    ] {
+        assert_observability_template_rejected(label, malformed)?;
+    }
     Ok(())
 }
 
@@ -702,7 +987,7 @@ fn assert_observability_diagnostic_match(
     let result = Command::new("bash")
         .args([
             "-c",
-            "repository_root=$1; source \"$2\"; observability_assert_reviewed_diagnostics \"$3\" \"$4\" \"$5\" \"\" false \"$6\"",
+            "repository_root=$1; source \"$2\"; observability_assert_reviewed_diagnostics cli \"$3\" \"$4\" \"$5\" \"\" false \"$6\"",
             "observability-diagnostic-match",
         ])
         .arg(&root)
@@ -742,6 +1027,23 @@ fn mutate_observability_diagnostic_field(report: &mut serde_json::Value, name: &
     false
 }
 
+fn duplicate_observability_diagnostic_field(report: &mut serde_json::Value, name: &str) -> bool {
+    let Some(diagnostics) = report["diagnostics"].as_array_mut() else {
+        return false;
+    };
+    for diagnostic in diagnostics {
+        let Some(fields) = diagnostic["fields"].as_array_mut() else {
+            continue;
+        };
+        let Some(field) = fields.iter().find(|field| field["name"] == name).cloned() else {
+            continue;
+        };
+        fields.push(field);
+        return true;
+    }
+    false
+}
+
 fn mutate_observability_subject_prefix(report: &mut serde_json::Value, old: &str, new: &str) -> bool {
     let Some(diagnostics) = report["diagnostics"].as_array_mut() else {
         return false;
@@ -763,7 +1065,12 @@ fn mutate_observability_subject_prefix(report: &mut serde_json::Value, old: &str
     false
 }
 
-fn observability_live_expected_diagnostics() -> Result<String, Box<dyn Error>> {
+fn observability_live_expected_diagnostics_for(
+    mode: &str,
+    selection: &str,
+    output: &str,
+    prefix: &str,
+) -> Result<String, Box<dyn Error>> {
     let temporary = TemporaryDirectory::new("observability-live-diagnostics")?;
     let destination = temporary.path().join("expected.tsv");
     let root = repository_root();
@@ -771,11 +1078,15 @@ fn observability_live_expected_diagnostics() -> Result<String, Box<dyn Error>> {
     let result = Command::new("bash")
         .args([
             "-c",
-            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics label podman compose live-observability- true \"$3\"",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics \"$3\" \"$4\" podman \"$5\" \"$6\" true \"$7\"",
             "observability-live-diagnostics",
         ])
         .arg(&root)
         .arg(&helper)
+        .arg(mode)
+        .arg(selection)
+        .arg(output)
+        .arg(prefix)
         .arg(&destination)
         .output()?;
     if !result.status.success() {
@@ -786,6 +1097,53 @@ fn observability_live_expected_diagnostics() -> Result<String, Box<dyn Error>> {
         .into());
     }
     Ok(fs::read_to_string(destination)?)
+}
+
+fn assert_observability_template_rejected(label: &str, contents: &str) -> Result<(), Box<dyn Error>> {
+    let temporary = TemporaryDirectory::new("observability-malformed-live-diagnostics")?;
+    let template = temporary.path().join("template.tsv");
+    let destination = temporary.path().join("expected.tsv");
+    fs::write(&template, contents)?;
+    let root = repository_root();
+    let helper = root.join("scripts/lib/observability-application.sh");
+    let result = Command::new("bash")
+        .args([
+            "-c",
+            "source \"$1\"; observability_append_live_diagnostic_template \"$2\" live-observability- \"$3\"",
+            "observability-malformed-live-diagnostics",
+        ])
+        .arg(&helper)
+        .arg(&template)
+        .arg(&destination)
+        .output()?;
+    assert!(
+        !result.status.success(),
+        "malformed live diagnostic template `{label}` was accepted"
+    );
+    Ok(())
+}
+
+fn assert_observability_expected_generation_failure_rejected() -> Result<(), Box<dyn Error>> {
+    let temporary = TemporaryDirectory::new("observability-expected-generation-failure")?;
+    let report = temporary.path().join("report.json");
+    fs::write(&report, br#"{"diagnostics":[]}"#)?;
+    let root = repository_root();
+    let helper = root.join("scripts/lib/observability-application.sh");
+    let result = Command::new("bash")
+        .args([
+            "-c",
+            "repository_root=$1; source \"$2\"; observability_write_expected_diagnostics() { : > \"$7\"; return 2; }; observability_assert_reviewed_diagnostics cli exact podman compose \"\" false \"$3\"",
+            "observability-expected-generation-failure",
+        ])
+        .arg(&root)
+        .arg(&helper)
+        .arg(&report)
+        .output()?;
+    assert!(
+        !result.status.success(),
+        "expected-template generation failure was ignored"
+    );
+    Ok(())
 }
 
 #[allow(

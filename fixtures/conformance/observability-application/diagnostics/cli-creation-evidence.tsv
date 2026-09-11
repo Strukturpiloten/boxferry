@@ -1,0 +1,6 @@
+BFP0002	services.{{resource_prefix}}alloy.creation_evidence	warning	omitted	partial
+BFP0002	services.{{resource_prefix}}grafana.creation_evidence	warning	omitted	partial
+BFP0002	services.{{resource_prefix}}log-producer.creation_evidence	warning	omitted	partial
+BFP0002	services.{{resource_prefix}}loki.creation_evidence	warning	omitted	partial
+BFP0002	services.{{resource_prefix}}metrics-producer.creation_evidence	warning	omitted	partial
+BFP0002	services.{{resource_prefix}}prometheus.creation_evidence	warning	omitted	partial

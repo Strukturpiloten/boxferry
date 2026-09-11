@@ -66,3 +66,28 @@ The entry point sources `scripts/lib/observability-application.sh`, exposes the 
 selects only `podman-6.1-rootless`, and calls `run_observability_application_cell` through the same
 deadline, cleanup, and evidence boundary as the established application profiles. The pre-release
 migration-readiness tier owns this live task; ordinary pull requests retain the offline scenario.
+
+## Live diagnostic contracts
+
+[`diagnostics/`](diagnostics/) holds independently authored factored normalized multisets for the
+reviewed rootless Podman 6.1.0 nested image:
+`ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e`.
+They apply the `podman-lens` 0.2.3 acquisition and promotion evidence to both independently provisioned
+topologies: direct Podman CLI and Docker Compose 5.5.0. The templates retain native image, network,
+creation-evidence, runtime, mount, and volume findings; no conversion report is read to construct an
+expectation. The failed focused pre-release run at
+`ff840133a1d8ddef9bdf3c532179b6751e464064` is only a cross-check.
+
+Each row has five fields: code, subject, severity, decision, and required loss policy. The visible
+`-` marker represents the two fields absent from a native Compose diagnostic and is normalized to
+empty fields before exact comparison. The 209-row Compose-provisioned importer base is augmented by six CLI creation-evidence
+tuples. Compose output adds four network tuples in either mode plus seven CLI-only dependency tuples;
+Podman output adds 59 output-omission tuples. Exact and label selectors are equal. The all selector
+adds 18 shared importer tuples (the boundary peer and default Podman network), then one Compose
+network tuple or eleven Podman omission tuples as appropriate. This factoring preserves duplicate
+tuples and represents each observed mode/selection/output multiset without copying six full routes.
+
+`{{resource_prefix}}` is the only supported template marker. The harness validates its generated
+prefix and every row before substitution; malformed templates and reports fail closed. Reports and
+diagnostic TSVs must not contain the protected-value canary. Deployable Compose and Quadlet artifacts
+may retain it as explicitly authorized protected configuration; Podman plans must not.
