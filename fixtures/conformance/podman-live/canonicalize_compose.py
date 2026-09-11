@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 SORTED_RESOURCE_SECTIONS = {"services:", "networks:", "volumes:", "configs:", "secrets:"}
+EMPTY_MAPPING_SUFFIX = ": {}\n"
 
 
 def entry_key(block: list[str]) -> str:
@@ -23,8 +24,10 @@ def normalize_entry(section: str, block: list[str]) -> list[str]:
 
 def canonicalize_section(section: str, lines: list[str]) -> list[str]:
     lines = [
-        f"{line.removesuffix(': {}\n')}:\n"
-        if line.startswith("  ") and not line.startswith("    ") and line.endswith(": {}\n")
+        line.removesuffix(EMPTY_MAPPING_SUFFIX) + ":\n"
+        if line.startswith("  ")
+        and not line.startswith("    ")
+        and line.endswith(EMPTY_MAPPING_SUFFIX)
         else line
         for line in lines
     ]
