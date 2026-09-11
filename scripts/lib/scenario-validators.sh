@@ -320,6 +320,7 @@ assert_strict_policy_blocks() {
 }
 
 run_reimports() {
+  local version=${1:?caller must supply declared Podman version}
   local selection input output reimport_directory
   mkdir -p -- "${current_case:?caller must supply current_case}/reimports"
   for selection in exact prefix label all network-boundary; do
@@ -353,35 +354,90 @@ run_reimports() {
         "${current_case:?caller must supply current_case}/outputs/${selection}-compose/compose.yaml" \
         "${current_case:?caller must supply current_case}/reimports/${selection}-quadlet-to-compose/compose.yaml" \
         "${selection}-quadlet-reimport"
-    elif [[ "${current_default_podman_network_present}" == true ]]; then
-      jq --exit-status '
-        .status == "success"
-        and any(
-          .diagnostics[]?;
-          .code == "BFQ0007"
-          and any(.fields[]?; .name == "subject" and .value == "networks.podman")
-          and any(
-            .fields[]?;
-            .name == "reason"
-            and .value == "network lifecycle ownership is uncertain; no managed .network unit was generated"
-          )
-        )
-      ' "${current_case:?caller must supply current_case}/outputs/all-quadlet.report.json" > /dev/null || {
-        printf '%s\n' \
-          'All-resource Quadlet export did not report its uncertain unreferenced default network.' >&2
-        return 1
-      }
-      printf '%s\n' \
-        'all-resource Quadlet export diagnoses the uncertain default Podman network before reimport' \
-        >> "${current_case:?caller must supply current_case}/feature-gates.txt"
     else
-      # Podman 3.0 rootless does not list a default `podman` CNI network.  Assert the
-      # lifecycle-ownership diagnostic only for a resource the live inventory actually contains.
-      printf '%s\n' \
-        'default Podman network absent from live inventory; default-network ownership diagnostic is inapplicable' \
-        >> "${current_case:?caller must supply current_case}/feature-gates.txt"
+      assert_default_podman_network_evidence \
+        "${current_case:?caller must supply current_case}/outputs/all-quadlet.report.json" \
+        "${current_case:?caller must supply current_case}/feature-gates.txt" \
+        "${version}" "${current_podman_rootless}" "${current_default_podman_network_present}" || return 1
     fi
   done
+}
+
+assert_podman_301_rootful_default_network_evidence() {
+  local report=${1:?caller must supply all-resource Quadlet report}
+
+  jq --exit-status '
+    .status == "success"
+    and any(
+      .diagnostics[]?;
+      .code == "BFP0002"
+      and .source_code == "PLN0023"
+      and any(.fields[]?; .name == "subject" and .value == "network:podman")
+      and any(
+        .fields[]?;
+        .name == "reason"
+        and .value == "PodmanLens found native response fields without typed portable mappings; path descriptors were retained without values"
+      )
+      and any(.fields[]?; .name == "decision" and .value == "omitted")
+      and any(.fields[]?; .name == "source_engine" and .value == "3.0.1")
+      and any(.fields[]?; .name == "source_api" and .value == "3.0.0")
+      and any(.fields[]?; .name == "native_path" and .value == "$.CniConfig")
+      and any(
+        .fields[]?;
+        .name == "native_value_policy"
+        and .value == "field paths retained; native values not retained"
+      )
+    )
+    and (any(
+      .diagnostics[]?;
+      .code == "BFQ0007"
+      and any(.fields[]?; .name == "subject" and .value == "networks.podman")
+    ) | not)
+  ' "${report}" > /dev/null || {
+    printf '%s\n' \
+      'Podman 3.0.1 rootful default CNI network did not retain its exact untyped acquisition evidence.' >&2
+    return 1
+  }
+}
+
+assert_default_podman_network_evidence() {
+  local report=${1:?caller must supply all-resource Quadlet report}
+  local feature_gates=${2:?caller must supply feature-gates path}
+  local version=${3:?caller must supply declared Podman version}
+  local rootless=${4:?caller must supply rootless state}
+  local present=${5:?caller must supply default-network inventory state}
+
+  if [[ "${present}" == true && "${version}" == 3.0.1 && "${rootless}" == false ]]; then
+    assert_podman_301_rootful_default_network_evidence "${report}" || return 1
+    printf '%s\n' \
+      'Podman 3.0.1 rootful default CNI network remains omitted with exact retained acquisition evidence' \
+      >> "${feature_gates}"
+  elif [[ "${present}" == true ]]; then
+    jq --exit-status '
+      .status == "success"
+      and any(
+        .diagnostics[]?;
+        .code == "BFQ0007"
+        and any(.fields[]?; .name == "subject" and .value == "networks.podman")
+        and any(
+          .fields[]?;
+          .name == "reason"
+          and .value == "network lifecycle ownership is uncertain; no managed .network unit was generated"
+        )
+      )
+    ' "${report}" > /dev/null || {
+      printf '%s\n' \
+        'All-resource Quadlet export did not report its uncertain unreferenced default network.' >&2
+      return 1
+    }
+    printf '%s\n' \
+      'all-resource Quadlet export diagnoses the uncertain default Podman network before reimport' \
+      >> "${feature_gates}"
+  else
+    printf '%s\n' \
+      'default Podman network absent from live inventory; default-network ownership diagnostic is inapplicable' \
+      >> "${feature_gates}"
+  fi
 }
 
 scenario_podman_socket() {
