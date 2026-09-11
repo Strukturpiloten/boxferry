@@ -363,10 +363,26 @@ run_reimports() {
   done
 }
 
-assert_podman_301_rootful_default_network_evidence() {
-  local report=${1:?caller must supply all-resource Quadlet report}
+legacy_default_network_api_for_version() {
+  local version=${1:?caller must supply declared Podman version}
 
-  jq --exit-status '
+  # These are reviewed observations, not a version-family rule.  Both legacy
+  # rootful engines expose the default CNI network only through CniConfig, so
+  # PodmanLens must retain the bounded untyped-field finding rather than
+  # pretending the resource is portable Quadlet intent.
+  case "${version}" in
+    3.0.1) printf '%s\n' 3.0.0 ;;
+    3.4.4) printf '%s\n' 3.4.4 ;;
+    *) return 1 ;;
+  esac
+}
+
+assert_legacy_rootful_default_network_evidence() {
+  local report=${1:?caller must supply all-resource Quadlet report}
+  local version=${2:?caller must supply declared Podman version}
+  local api_version=${3:?caller must supply declared Podman API version}
+
+  jq --exit-status --arg version "${version}" --arg api_version "${api_version}" '
     .status == "success"
     and any(
       .diagnostics[]?;
@@ -379,8 +395,8 @@ assert_podman_301_rootful_default_network_evidence() {
         and .value == "PodmanLens found native response fields without typed portable mappings; path descriptors were retained without values"
       )
       and any(.fields[]?; .name == "decision" and .value == "omitted")
-      and any(.fields[]?; .name == "source_engine" and .value == "3.0.1")
-      and any(.fields[]?; .name == "source_api" and .value == "3.0.0")
+      and any(.fields[]?; .name == "source_engine" and .value == $version)
+      and any(.fields[]?; .name == "source_api" and .value == $api_version)
       and any(.fields[]?; .name == "native_path" and .value == "$.CniConfig")
       and any(
         .fields[]?;
@@ -395,7 +411,7 @@ assert_podman_301_rootful_default_network_evidence() {
     ) | not)
   ' "${report}" > /dev/null || {
     printf '%s\n' \
-      'Podman 3.0.1 rootful default CNI network did not retain its exact untyped acquisition evidence.' >&2
+      "Podman ${version} rootful default CNI network did not retain its exact untyped acquisition evidence." >&2
     return 1
   }
 }
@@ -406,11 +422,14 @@ assert_default_podman_network_evidence() {
   local version=${3:?caller must supply declared Podman version}
   local rootless=${4:?caller must supply rootless state}
   local present=${5:?caller must supply default-network inventory state}
+  local legacy_api_version=
 
-  if [[ "${present}" == true && "${version}" == 3.0.1 && "${rootless}" == false ]]; then
-    assert_podman_301_rootful_default_network_evidence "${report}" || return 1
+  legacy_api_version=$(legacy_default_network_api_for_version "${version}") || true
+  if [[ "${present}" == true && "${rootless}" == false && -n "${legacy_api_version}" ]]; then
+    assert_legacy_rootful_default_network_evidence \
+      "${report}" "${version}" "${legacy_api_version}" || return 1
     printf '%s\n' \
-      'Podman 3.0.1 rootful default CNI network remains omitted with exact retained acquisition evidence' \
+      "Podman ${version} rootful default CNI network remains omitted with exact retained acquisition evidence" \
       >> "${feature_gates}"
   elif [[ "${present}" == true ]]; then
     jq --exit-status '
