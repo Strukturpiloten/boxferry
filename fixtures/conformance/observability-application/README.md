@@ -7,6 +7,13 @@ Prometheus metric and a second service writes one deterministic log line. Alloy 
 remote-writes that metric to Prometheus, tails the test-owned log volume, and pushes the line to
 Loki. It never mounts a host runtime socket, host log directory, or production collector path.
 
+The authored Alloy scrape interval is two seconds and its explicit timeout is one second. The
+timeout remains strictly below the interval so the pinned Alloy release can load the configuration
+and the live acceptance can distinguish configuration failure from missing metric ingestion.
+Before querying telemetry, the harness also checks every fixed application role is still running.
+Failure output contains only the role, running state, exit code, and OOM state; it never includes
+container names, runtime identifiers, paths, environment, protected values, or raw logs.
+
 The profile is deliberately one reviewed Podman 6.1 rootless cell rather than an application by
 version Cartesian product. It independently provisions the same topology through native Podman
 CLI and standalone Docker Compose 5.5.0. Only Grafana is published, on loopback port `13000`.

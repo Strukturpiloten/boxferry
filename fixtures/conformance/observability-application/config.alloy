@@ -7,6 +7,7 @@ prometheus.scrape "boxferry_fixture" {
   ]
   metrics_path     = "/metrics"
   scrape_interval = "2s"
+  scrape_timeout  = "1s"
   forward_to       = [prometheus.remote_write.boxferry_fixture.receiver]
 }
 
