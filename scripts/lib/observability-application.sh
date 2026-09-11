@@ -563,6 +563,17 @@ observability_loki_has_known_log() {
   ' <<< "${response}" > /dev/null
 }
 
+observability_validate_prometheus_flags() {
+  local flags=${1:?Prometheus status flags response is required}
+
+  jq --exit-status '
+    .status == "success" and
+    (.data | type == "object") and
+    (.data["storage.tsdb.retention.time"] | type == "string" and . == "1d") and
+    (.data["web.enable-remote-write-receiver"] | type == "string" and . == "true")
+  ' <<< "${flags}" > /dev/null
+}
+
 observability_grafana_api() {
   local socket=$1 prefix=$2 path=$3
   observability_backend_get "${socket}" "${prefix}" "http://grafana:3000${path}"
@@ -602,11 +613,7 @@ observability_assert_queries_and_grafana() {
 
   prometheus_flags="$(observability_backend_get "${socket}" "${prefix}" \
     http://prometheus:9090/api/v1/status/flags)"
-  jq --exit-status '
-    .status == "success" and
-    .data["storage.tsdb.retention.time"] == "24h" and
-    .data["web.enable-remote-write-receiver"] == "true"
-  ' <<< "${prometheus_flags}" > /dev/null
+  observability_validate_prometheus_flags "${prometheus_flags}"
 
   prometheus_source="$(observability_grafana_api "${socket}" "${prefix}" \
     /api/datasources/uid/boxferry-prometheus)"
