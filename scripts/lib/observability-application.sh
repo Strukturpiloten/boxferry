@@ -55,6 +55,45 @@ observability_validate_resource_budget() {
     "$(timestamp)" "${cpus}" "${memory_kib}" "${disk_kib}"
 }
 
+observability_validate_alloy_scrape_timing() {
+  local config=${1:?Alloy configuration required}
+
+  awk '
+    $0 == "prometheus.scrape \"boxferry_fixture\" {" {
+      in_scrape = 1
+      blocks++
+      next
+    }
+    in_scrape && $0 == "}" {
+      in_scrape = 0
+      next
+    }
+    in_scrape && $0 ~ /^[[:space:]]*scrape_interval[[:space:]]*=[[:space:]]*"[0-9]+s"[[:space:]]*$/ {
+      value = $0
+      sub(/^[^"]*"/, "", value)
+      sub(/s"[[:space:]]*$/, "", value)
+      interval = value + 0
+      intervals++
+    }
+    in_scrape && $0 ~ /^[[:space:]]*scrape_timeout[[:space:]]*=[[:space:]]*"[0-9]+s"[[:space:]]*$/ {
+      value = $0
+      sub(/^[^"]*"/, "", value)
+      sub(/s"[[:space:]]*$/, "", value)
+      timeout = value + 0
+      timeouts++
+    }
+    END {
+      exit !(blocks == 1 && intervals == 1 && timeouts == 1 &&
+        timeout > 0 && timeout < interval)
+    }
+  ' "${config}" || {
+    printf '%s\n' \
+      'Observability Alloy scrape timing requires one positive timeout strictly below its interval.' \
+      >&2
+    return 1
+  }
+}
+
 observability_validate_catalogues() {
   local fixture file
   fixture="$(observability_fixture_root)"
@@ -98,6 +137,7 @@ observability_validate_catalogues() {
     "${fixture}/config.alloy"
   grep --fixed-strings --quiet 'url = "http://loki:3100/loki/api/v1/push"' \
     "${fixture}/config.alloy"
+  observability_validate_alloy_scrape_timing "${fixture}/config.alloy"
 }
 
 observability_validate_provider() {
@@ -226,6 +266,14 @@ observability_prepare_application_target() {
     exec "${outer}" mkdir -p -- "${destination}"
   engine_operation 'copy reviewed observability fixture' \
     cp "${fixture}/." "${outer}:${destination}"
+  if ! engine_operation 'validate reviewed observability Alloy configuration' \
+    exec "${outer}" podman run --rm --pull=never --network none \
+    --volume "${destination}/config.alloy:/etc/alloy/config.alloy:ro" \
+    "$(observability_image_reference alloy)" \
+    validate /etc/alloy/config.alloy > /dev/null 2>&1; then
+    printf '%s\n' 'Pinned Alloy configuration validation failed.' >&2
+    return 1
+  fi
   activate_outer_runtime "${socket_directory}"
 }
 
@@ -454,6 +502,47 @@ observability_backend_get() {
     wget -qO- "${url}"
 }
 
+observability_read_pipeline_role_state() {
+  local socket=$1 prefix=$2 role=$3 observed
+  case "${role}" in
+    metrics-producer | alloy | prometheus | log-producer | loki | grafana) ;;
+    *) return 2 ;;
+  esac
+
+  observed="$(observability_remote "${socket}" inspect \
+    --format '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}' \
+    "${prefix}-observability-${role}" 2> /dev/null)" || return 1
+  if [[ "${observed}" =~ ^(true|false)[[:space:]]+([0-9]+)[[:space:]]+(true|false)$ ]]; then
+    printf 'running=%s exit-code=%s oom-killed=%s\n' \
+      "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+    return 0
+  fi
+  return 1
+}
+
+observability_pipeline_roles_running() {
+  local socket=$1 prefix=$2 role state
+  for role in metrics-producer alloy prometheus log-producer loki grafana; do
+    state="$(observability_read_pipeline_role_state "${socket}" "${prefix}" "${role}")" ||
+      return 1
+    [[ "${state}" == running=true\ * ]] || return 1
+  done
+}
+
+observability_report_pipeline_states() {
+  local socket=$1 prefix=$2 role state first_failed=unknown
+  for role in metrics-producer alloy prometheus log-producer loki grafana; do
+    state="$(observability_read_pipeline_role_state "${socket}" "${prefix}" "${role}")" ||
+      state='running=unknown exit-code=unknown oom-killed=unknown'
+    printf 'OBSERVABILITY DIAGNOSTIC role=%s %s\n' "${role}" "${state}" >&2
+    if [[ "${first_failed}" == unknown && "${state}" == running=false\ * ]]; then
+      first_failed="${role}-process"
+    fi
+  done
+  printf 'OBSERVABILITY DIAGNOSTIC first-failed-hop=%s\n' "${first_failed}" >&2
+  return 0
+}
+
 observability_prometheus_has_value() {
   local socket=$1 prefix=$2 query=$3 expected=$4 response
   response="$(observability_backend_get "${socket}" "${prefix}" \
@@ -487,11 +576,22 @@ observability_wait_application() {
     "${socket}" "${prefix}" http://loki:3100/ready
   observability_wait_for 240 'Grafana readiness' observability_grafana_api \
     "${socket}" "${prefix}" /api/health
-  observability_wait_for 240 'controlled PromQL result' observability_prometheus_has_value \
-    "${socket}" "${prefix}" \
-    'boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D' 42
-  observability_wait_for 240 'controlled LogQL result' observability_loki_has_known_log \
-    "${socket}" "${prefix}"
+  if ! observability_pipeline_roles_running "${socket}" "${prefix}"; then
+    printf '%s\n' 'Observability pipeline process stopped before ingestion completed.' >&2
+    observability_report_pipeline_states "${socket}" "${prefix}"
+    return 1
+  fi
+  if ! observability_wait_for 240 'controlled PromQL result' \
+    observability_prometheus_has_value "${socket}" "${prefix}" \
+    'boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D' 42; then
+    observability_report_pipeline_states "${socket}" "${prefix}"
+    return 1
+  fi
+  if ! observability_wait_for 240 'controlled LogQL result' \
+    observability_loki_has_known_log "${socket}" "${prefix}"; then
+    observability_report_pipeline_states "${socket}" "${prefix}"
+    return 1
+  fi
 }
 
 observability_assert_queries_and_grafana() {

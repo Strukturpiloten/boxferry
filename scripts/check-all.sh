@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=28
+readonly total_steps=29
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -166,6 +166,7 @@ fi
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
 run_step "Test Podman live cleanup collections" bash scripts/test-podman-live-cleanup.sh
 run_step "Test observability Grafana network topology" bash scripts/test-observability-grafana-network.sh
+run_step "Test observability application contracts" bash scripts/test-observability-application.sh
 run_step "Test migration-readiness contracts" python3 scripts/test-migration-readiness.py
 run_step "Run offline migration-readiness tier" python3 scripts/migration-readiness.py run \
   --tier offline --evidence target/migration-readiness/offline-evidence-v1.json

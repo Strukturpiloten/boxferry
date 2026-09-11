@@ -128,6 +128,36 @@ fn migration_readiness_restores_privileged_evidence_before_consumers() -> Result
 }
 
 #[test]
+fn migration_readiness_protects_focused_task_evidence() -> Result<(), String> {
+    let workflow = fs::read_to_string(repository_root().join(".github/workflows/migration-readiness.yml"))
+        .map_err(|error| format!("failed to read migration-readiness workflow: {error}"))?;
+
+    for required in [
+        "task:\n        description: Optional exact task ID",
+        "TASK: ${{ inputs.task }}",
+        "EVIDENCE_ARTIFACT: ${{ inputs.task == '' && format('migration-readiness-{0}-{1}', inputs.tier, github.sha) || format('migration-readiness-focused-{0}-{1}', inputs.tier, github.sha) }}",
+        "name: ${{ env.EVIDENCE_ARTIFACT }}",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!(
+                "migration-readiness workflow must retain focused selection contract `{required}`"
+            ));
+        }
+    }
+
+    if workflow.matches("task_arguments=(--task \"${TASK}\")").count() != 4
+        || workflow.matches("\"${task_arguments[@]}\"").count() != 4
+    {
+        return Err(
+            "migration-readiness workflow must pass one quoted task selection to plan, both runners, and evidence validation"
+                .to_owned(),
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), String> {
     let workflow_path = repository_root().join(".github/workflows/ci.yml");
     let workflow = fs::read_to_string(&workflow_path)
@@ -2502,6 +2532,11 @@ fn validate_live_observability_application_cell(runner: &str) -> Result<(), Stri
         "OBSERVABILITY_MIN_DISK_KIB=\"8388608\"",
         "OBSERVABILITY_ARCHIVE_MAX_BYTES=\"2147483648\"",
         "OBSERVABILITY_PROVIDER_VERSION=\"5.5.0\"",
+        "scrape_timeout  = \"1s\"",
+        "observability_validate_alloy_scrape_timing",
+        "validate /etc/alloy/config.alloy",
+        "observability_pipeline_roles_running",
+        "observability_report_pipeline_states",
         "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
         "prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
         "grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",

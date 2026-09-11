@@ -13,6 +13,10 @@ on:
           - offline
           - trusted-live
           - pre-release
+      task:
+        description: Optional exact task ID from the selected tier; empty runs the complete tier.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -33,6 +37,8 @@ jobs:
     timeout-minutes: ${{ inputs.tier == 'pre-release' && 360 || inputs.tier == 'trusted-live' && 60 || 30 }}
     env:
       TIER: ${{ inputs.tier }}
+      TASK: ${{ inputs.task }}
+      EVIDENCE_ARTIFACT: ${{ inputs.task == '' && format('migration-readiness-{0}-{1}', inputs.tier, github.sha) || format('migration-readiness-focused-{0}-{1}', inputs.tier, github.sha) }}
     steps:
       - name: Check out exact BoxFerry revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,7 +47,13 @@ jobs:
           persist-credentials: false
 
       - name: Validate exact catalogue selection
-        run: python3 scripts/migration-readiness.py plan --tier "${TIER}" --format json
+        run: |
+          task_arguments=()
+          if [[ -n "${TASK}" ]]; then
+            task_arguments=(--task "${TASK}")
+          fi
+          python3 scripts/migration-readiness.py plan \
+            --tier "${TIER}" "${task_arguments[@]}" --format json
 
       - name: Install outer Podman for trusted live tiers
         if: env.TIER != 'offline'
@@ -66,11 +78,16 @@ jobs:
 
       - name: Run offline tier through shared runner
         if: env.TIER == 'offline'
-        run: >-
-          python3 scripts/migration-readiness.py run
-          --tier "${TIER}"
-          --revision "${GITHUB_SHA}"
-          --evidence target/migration-readiness/evidence-v1.json
+        run: |
+          task_arguments=()
+          if [[ -n "${TASK}" ]]; then
+            task_arguments=(--task "${TASK}")
+          fi
+          python3 scripts/migration-readiness.py run \
+            --tier "${TIER}" \
+            "${task_arguments[@]}" \
+            --revision "${GITHUB_SHA}" \
+            --evidence target/migration-readiness/evidence-v1.json
 
       - name: Run trusted tier through shared runner
         if: env.TIER != 'offline'
@@ -79,17 +96,22 @@ jobs:
           BOXFERRY_COMPOSE_BIN: ${{ github.workspace }}/target/tools/docker-compose
           CARGO_HOME: /home/runner/.cargo
           RUSTUP_HOME: /home/runner/.rustup
-        run: >-
-          sudo env
-          BOXFERRY_BIN="${BOXFERRY_BIN}"
-          BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}"
-          CARGO_HOME="${CARGO_HOME}"
-          RUSTUP_HOME="${RUSTUP_HOME}"
-          PATH="${PATH}"
-          python3 scripts/migration-readiness.py run
-          --tier "${TIER}"
-          --revision "${GITHUB_SHA}"
-          --evidence target/migration-readiness/evidence-v1.json
+        run: |
+          task_arguments=()
+          if [[ -n "${TASK}" ]]; then
+            task_arguments=(--task "${TASK}")
+          fi
+          sudo env \
+            BOXFERRY_BIN="${BOXFERRY_BIN}" \
+            BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}" \
+            CARGO_HOME="${CARGO_HOME}" \
+            RUSTUP_HOME="${RUSTUP_HOME}" \
+            PATH="${PATH}" \
+            python3 scripts/migration-readiness.py run \
+            --tier "${TIER}" \
+            "${task_arguments[@]}" \
+            --revision "${GITHUB_SHA}" \
+            --evidence target/migration-readiness/evidence-v1.json
 
       - name: Restore bounded evidence ownership
         if: ${{ always() && env.TIER != 'offline' }}
@@ -100,18 +122,23 @@ jobs:
 
       - name: Validate evidence against exact run
         if: always() && hashFiles('target/migration-readiness/evidence-v1.json') != ''
-        run: >-
-          python3 scripts/migration-readiness.py validate-evidence
-          --evidence target/migration-readiness/evidence-v1.json
-          --tier "${TIER}"
-          --revision "${GITHUB_SHA}"
-          --require-success
+        run: |
+          task_arguments=()
+          if [[ -n "${TASK}" ]]; then
+            task_arguments=(--task "${TASK}")
+          fi
+          python3 scripts/migration-readiness.py validate-evidence \
+            --evidence target/migration-readiness/evidence-v1.json \
+            --tier "${TIER}" \
+            "${task_arguments[@]}" \
+            --revision "${GITHUB_SHA}" \
+            --require-success
 
       - name: Upload bounded migration-readiness evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: migration-readiness-${{ env.TIER }}-${{ github.sha }}
+          name: ${{ env.EVIDENCE_ARTIFACT }}
           path: target/migration-readiness/evidence-v1.json
           if-no-files-found: error
           retention-days: ${{ env.TIER == 'pre-release' && 30 || 7 }}
