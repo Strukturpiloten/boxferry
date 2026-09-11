@@ -363,24 +363,26 @@ run_reimports() {
   done
 }
 
-legacy_default_network_api_for_version() {
+legacy_default_network_api_for_observation() {
   local version=${1:?caller must supply declared Podman version}
+  local rootless=${2:?caller must supply rootless state}
 
-  # These are reviewed observations, not a version-family rule.  Both legacy
-  # rootful engines expose the default CNI network only through CniConfig, so
+  # These are reviewed observations, not a version-family rule.  The listed
+  # version/mode combinations expose the default CNI network only through CniConfig, so
   # PodmanLens must retain the bounded untyped-field finding rather than
   # pretending the resource is portable Quadlet intent.
-  case "${version}" in
-    3.0.1) printf '%s\n' 3.0.0 ;;
-    3.4.4) printf '%s\n' 3.4.4 ;;
+  case "${version}:${rootless}" in
+    3.0.1:false) printf '%s\n' 3.0.0 ;;
+    3.4.4:false | 3.4.4:true) printf '%s\n' 3.4.4 ;;
     *) return 1 ;;
   esac
 }
 
-assert_legacy_rootful_default_network_evidence() {
+assert_legacy_default_network_evidence() {
   local report=${1:?caller must supply all-resource Quadlet report}
   local version=${2:?caller must supply declared Podman version}
   local api_version=${3:?caller must supply declared Podman API version}
+  local root_mode=${4:?caller must supply root mode}
 
   jq --exit-status --arg version "${version}" --arg api_version "${api_version}" '
     .status == "success"
@@ -411,7 +413,7 @@ assert_legacy_rootful_default_network_evidence() {
     ) | not)
   ' "${report}" > /dev/null || {
     printf '%s\n' \
-      "Podman ${version} rootful default CNI network did not retain its exact untyped acquisition evidence." >&2
+      "Podman ${version} ${root_mode} default CNI network did not retain its exact untyped acquisition evidence." >&2
     return 1
   }
 }
@@ -423,13 +425,18 @@ assert_default_podman_network_evidence() {
   local rootless=${4:?caller must supply rootless state}
   local present=${5:?caller must supply default-network inventory state}
   local legacy_api_version=
+  local root_mode=rootful
 
-  legacy_api_version=$(legacy_default_network_api_for_version "${version}") || true
-  if [[ "${present}" == true && "${rootless}" == false && -n "${legacy_api_version}" ]]; then
-    assert_legacy_rootful_default_network_evidence \
-      "${report}" "${version}" "${legacy_api_version}" || return 1
+  if [[ "${rootless}" == true ]]; then
+    root_mode=rootless
+  fi
+
+  legacy_api_version=$(legacy_default_network_api_for_observation "${version}" "${rootless}") || true
+  if [[ "${present}" == true && -n "${legacy_api_version}" ]]; then
+    assert_legacy_default_network_evidence \
+      "${report}" "${version}" "${legacy_api_version}" "${root_mode}" || return 1
     printf '%s\n' \
-      "Podman ${version} rootful default CNI network remains omitted with exact retained acquisition evidence" \
+      "Podman ${version} ${root_mode} default CNI network remains omitted with exact retained acquisition evidence" \
       >> "${feature_gates}"
   elif [[ "${present}" == true ]]; then
     jq --exit-status '
