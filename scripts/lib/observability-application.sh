@@ -379,7 +379,7 @@ observability_create_cli_grafana() {
     --label "io.boxferry.live-run=${run}" \
     --label "io.boxferry.application=${prefix}-observability" \
     --requires "${prefix}-observability-prometheus,${prefix}-observability-loki,${prefix}-observability-alloy" \
-    --network "${prefix}-observability-backend" \
+    --network "${prefix}-observability-backend:alias=grafana" \
     --network "${prefix}-observability-edge:alias=grafana" \
     --publish "127.0.0.1:${OBSERVABILITY_HTTP_PORT}:3000" \
     --env GF_ANALYTICS_REPORTING_ENABLED=false \
