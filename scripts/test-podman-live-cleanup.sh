@@ -10,6 +10,7 @@ runner="${script_directory}/podman-live-conformance.sh"
 collections=(
   outer_containers
   mounted_images
+  run_owned_matrix_images
   fault_proxy_pids
   fault_proxy_sockets
   discovery_directories
@@ -24,6 +25,11 @@ for collection in "${collections[@]}"; do
       ;;
     mounted_images)
       safe='for image in "${mounted_images[@]}"; do'
+      ;;
+    run_owned_matrix_images)
+      # EXIT release deliberately uses an index loop so reverse order is
+      # explicit and remains correct if a future path creates sparse entries.
+      safe='local -a image_indexes=("${!run_owned_matrix_images[@]}")'
       ;;
     fault_proxy_pids)
       safe='for pid in "${fault_proxy_pids[@]}"; do'
@@ -49,6 +55,130 @@ for collection in "${collections[@]}"; do
     exit 1
   fi
 done
+
+grep --fixed-strings --quiet -- '[[ "${profile}" == full-container ]] || return 0' "${runner}"
+grep --fixed-strings --quiet -- 'record_run_owned_matrix_image "${image}"' "${runner}"
+grep --fixed-strings --quiet -- 'release_run_owned_matrix_image "${image}"' "${runner}"
+grep --fixed-strings --quiet -- 'release_remaining_run_owned_matrix_images' "${runner}"
+grep --fixed-strings --quiet -- '"${engine}" image rm --ignore --no-prune -- "${image}"' "${runner}"
+if grep --fixed-strings --quiet -- 'image rm --force' "${runner}"; then
+  printf '%s\n' 'Run-owned matrix images must not be force-removed.' >&2
+  exit 1
+fi
+if grep --extended-regexp --quiet -- 'image rm .*--prune' "${runner}"; then
+  printf '%s\n' 'Run-owned matrix images must not prune parent images.' >&2
+  exit 1
+fi
+
+# Bind ownership to the actual absent-cache pull branch, and clear it only
+# after the exact non-pruning remove completes successfully.
+absent_branch_line="$(grep -n --fixed-strings -- 'elif ((cache_status == 1)); then' "${runner}" | tail -n 1 | cut -d: -f1)"
+pull_line="$(grep -n --fixed-strings -- '"${engine}" pull --quiet "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
+record_line="$(grep -n --fixed-strings -- 'record_run_owned_matrix_image "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
+remove_line="$(grep -n --fixed-strings -- '"${engine}" image rm --ignore --no-prune -- "${image}"' "${runner}" | cut -d: -f1)"
+unset_line="$(grep -n --fixed-strings -- 'unset "run_owned_matrix_image_seen[${image}]"' "${runner}" | cut -d: -f1)"
+[[ "${absent_branch_line}" -lt "${pull_line}" && "${pull_line}" -lt "${record_line}" ]]
+[[ "${remove_line}" -lt "${unset_line}" ]]
+
+# Model a pull followed by a cache hit, release, then a repull of the same
+# digest. Ownership is current rather than historical: duplicate live
+# ownership is deduplicated, a cache-only image is never owned, and a repull
+# acquires a fresh release obligation.
+declare -a owned_images=()
+declare -A owned_seen=()
+declare -a release_log=()
+record_owned() {
+  local image=$1
+  if [[ -z "${owned_seen[${image}]:-}" ]]; then
+    owned_images+=("${image}")
+    owned_seen[${image}]=true
+  fi
+}
+release_owned() {
+  local image=$1
+  [[ -n "${owned_seen[${image}]:-}" ]] || return 0
+  release_log+=("${image}")
+  unset "owned_seen[${image}]"
+}
+record_owned 'example.invalid/matrix@sha256:one'
+record_owned 'example.invalid/matrix@sha256:one'
+[[ "${#owned_images[@]}" == 1 ]]
+release_owned 'example.invalid/matrix@sha256:one'
+# A cache hit does not call record_owned. A later repull records a fresh
+# acquisition generation, while duplicate simultaneous ownership is deduped.
+record_owned 'example.invalid/matrix@sha256:one'
+release_owned 'example.invalid/matrix@sha256:one'
+[[ "${#release_log[@]}" == 2 ]]
+[[ "${#owned_images[@]}" == 2 ]]
+cached_image='example.invalid/matrix@sha256:cached'
+[[ -z "${owned_seen[${cached_image}]:-}" ]]
+
+declare -a sparse_images=()
+sparse_images[3]=first
+sparse_images[9]=last
+declare -a sparse_indexes=("${!sparse_images[@]}") released_images=()
+for ((index = ${#sparse_indexes[@]} - 1; index >= 0; index--)); do
+  released_images+=("${sparse_images[${sparse_indexes[index]}]}")
+done
+[[ "${released_images[*]}" == 'last first' ]]
+
+# EXIT cleanup must attempt later run-owned refs even when an earlier exact
+# image removal fails, then report the aggregate failure.
+declare -a attempted_images=(first second)
+declare -a attempted_release_log=()
+release_model() {
+  local image=$1
+  attempted_release_log+=("${image}")
+  [[ "${image}" != first ]]
+}
+release_all_model() {
+  local image failed=false
+  for image in "${attempted_images[@]}"; do
+    if ! release_model "${image}"; then
+      failed=true
+    fi
+  done
+  [[ "${failed}" == false ]]
+}
+if release_all_model; then
+  printf '%s\n' 'Aggregate release model did not report the first failure.' >&2
+  exit 1
+fi
+[[ "${attempted_release_log[*]}" == 'first second' ]]
+grep --fixed-strings --quiet -- 'if ! release_run_owned_matrix_image "${image}"; then' "${runner}"
+grep --fixed-strings --quiet -- 'release_failed=true' "${runner}"
+grep --fixed-strings --quiet -- '[[ "${release_failed}" == false ]]' "${runner}"
+
+# Containers and mounts must be released before the reverse image pass.
+containers_line="$(grep -n --fixed-strings -- 'for outer in "${outer_containers[@]}"; do' "${runner}" | head -n 1 | cut -d: -f1)"
+mounts_line="$(grep -n --fixed-strings -- 'for image in "${mounted_images[@]}"; do' "${runner}" | head -n 1 | cut -d: -f1)"
+images_line="$(grep -n --fixed-strings -- 'release_remaining_run_owned_matrix_images' "${runner}" | tail -n 1 | cut -d: -f1)"
+[[ "${containers_line}" -lt "${mounts_line}" && "${mounts_line}" -lt "${images_line}" ]]
+
+# Releases emit their own timed evidence and must not change a cell's declared
+# scenario-check count.
+if grep --fixed-strings --quiet -- "progress_run 'release run-owned matrix image" "${runner}"; then
+  printf '%s\n' 'Run-owned image release must not increment cell progress.' >&2
+  exit 1
+fi
+[[ "$(grep --fixed-strings --count -- 'release_run_owned_matrix_image "${image}"' "${runner}")" -ge 2 ]]
+grep --fixed-strings --quiet -- '"${profile}" == full-container && "${cleanup_failed}" == true && "${status}" == 0' "${runner}"
+
+# Limited rootless cells mount before their explicit outer removal. Their
+# release must remain after both operations.
+limited_unmount_line="$(grep -n --fixed-strings -- "engine_operation 'unmount limited-cell image'" "${runner}" | cut -d: -f1)"
+limited_remove_line="$(grep -n --fixed-strings -- "progress_run 'remove disposable limitation container'" "${runner}" | cut -d: -f1)"
+limited_release_line="$(grep -n --fixed-strings -- 'release_run_owned_matrix_image "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
+[[ "${limited_unmount_line}" -lt "${limited_remove_line}" && "${limited_remove_line}" -lt "${limited_release_line}" ]]
+
+# A clean acquisition replaces the first outer runtime. Refresh the local
+# handle before later work can start an apply target, then remove that exact
+# acquisition runtime before releasing its matrix image.
+clean_restart_line="$(grep -n --fixed-strings -- 'start_clean_acquisition_outer "${id}" "${image}" "${mode}"' "${runner}" | tail -n 1 | cut -d: -f1)"
+outer_refresh_line="$(grep -n --fixed-strings -- 'outer="${started_outer}"' "${runner}" | tail -n 1 | cut -d: -f1)"
+normal_remove_line="$(grep -n --fixed-strings -- "progress_run 'remove disposable outer container'" "${runner}" | cut -d: -f1)"
+normal_release_line="$(grep -n --fixed-strings -- 'release_run_owned_matrix_image "${image}"' "${runner}" | sed -n '2p' | cut -d: -f1)"
+[[ "${clean_restart_line}" -lt "${outer_refresh_line}" && "${outer_refresh_line}" -lt "${normal_remove_line}" && "${normal_remove_line}" -lt "${normal_release_line}" ]]
 
 declare -a empty_collection=()
 iterations=0
