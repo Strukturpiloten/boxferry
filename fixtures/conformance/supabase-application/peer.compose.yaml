@@ -1,0 +1,19 @@
+---
+services:
+  boundary-peer:
+    image: ${BF_DB_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-boundary-peer
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-boundary-peer
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep 3600"]
+    networks:
+      edge:
+        aliases: [boundary-peer]
+
+networks:
+  edge:
+    name: ${BF_PREFIX}-supabase-edge
+    external: true

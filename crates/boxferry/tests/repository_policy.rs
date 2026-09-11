@@ -5,8 +5,9 @@ mod support;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 const FIXTURE_SUITES: &[&str] = &[
@@ -170,6 +171,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         "paperless-application.sh",
         "immich-application.sh",
         "observability-application.sh",
+        "supabase-application.sh",
     ] {
         let source = format!("source \"${{script_directory}}/lib/{module}\"");
         if !runner.contains(&source) {
@@ -226,6 +228,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         );
     }
     append_immich_fixture_contract(&root, &mut runner_contract)?;
+    append_supabase_fixture_contract(&root, &mut runner_contract)?;
     for fixture in [
         "compose.yaml",
         "config.alloy",
@@ -280,7 +283,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
     let candidate_ids = validate_podman_revalidation_candidates(&candidates, &matrix, &limitations)?;
     let revalidation_workflow = fs::read_to_string(root.join(".github/workflows/podman-limitation-revalidation.yml"))
         .map_err(|error| format!("failed to read Podman revalidation workflow: {error}"))?;
-    validate_live_runner(&runner_contract)?;
+    validate_live_runner(&runner_contract, &matrix)?;
     validate_limitation_revalidation_runner(&runner)?;
     validate_podman_revalidation_workflow(&revalidation_workflow, &candidate_ids)?;
     validate_live_workflow(&hosted)
@@ -299,6 +302,604 @@ fn append_immich_fixture_contract(root: &Path, runner_contract: &mut String) -> 
                 .map_err(|error| format!("failed read Immich application fixture: {error}"))?,
         );
     }
+    Ok(())
+}
+
+fn append_supabase_fixture_contract(root: &Path, runner_contract: &mut String) -> Result<(), String> {
+    for fixture in [
+        "README.md",
+        "application-probe.mjs",
+        "application.tsv",
+        "compose.yaml",
+        "db-init.sql",
+        "functions/main/index.ts",
+        "graph.tsv",
+        "images.tsv",
+        "kong.yml",
+        "peer.compose.yaml",
+        "postgres-components.tsv",
+        "providers.tsv",
+        "routes.tsv",
+        "success-contract.jq",
+    ] {
+        runner_contract.push_str(
+            &fs::read_to_string(root.join("fixtures/conformance/supabase-application").join(fixture))
+                .map_err(|error| format!("failed to read Supabase application fixture: {error}"))?,
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum SupabaseContractMode {
+    Validate,
+    Diagnostics,
+    Fidelity,
+}
+
+impl SupabaseContractMode {
+    const fn jq_value(self) -> &'static str {
+        match self {
+            Self::Validate => "false",
+            Self::Diagnostics => "true",
+            Self::Fidelity => "\"fidelity\"",
+        }
+    }
+}
+
+fn run_supabase_report_contract(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    mode: SupabaseContractMode,
+    report: Option<&serde_json::Value>,
+) -> Result<Output, String> {
+    let mut command = Command::new("jq");
+    command.arg("--exit-status");
+    if report.is_none() {
+        command.arg("--null-input");
+    }
+    command
+        .args(["--arg", "input", input])
+        .args(["--arg", "output", output])
+        .args(["--arg", "selection", selection])
+        .args(["--arg", "resource_prefix", "contract-supabase-"])
+        .args(["--argjson", "emit_expected", mode.jq_value()])
+        .arg("--from-file")
+        .arg(root.join("fixtures/conformance/supabase-application/success-contract.jq"));
+    if report.is_some() {
+        command.stdin(Stdio::piped());
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to start Supabase jq contract: {error}"))?;
+    if let Some(report) = report {
+        let mut stdin = child.stdin.take().ok_or("Supabase jq contract stdin was unavailable")?;
+        serde_json::to_writer(&mut stdin, report)
+            .map_err(|error| format!("failed to serialize Supabase contract report: {error}"))?;
+        stdin
+            .write_all(b"\n")
+            .map_err(|error| format!("failed to finish Supabase contract report: {error}"))?;
+    }
+    child
+        .wait_with_output()
+        .map_err(|error| format!("failed to wait for Supabase jq contract: {error}"))
+}
+
+fn supabase_contract_diagnostic(tuple: &serde_json::Value) -> serde_json::Value {
+    let mut fields = vec![
+        serde_json::json!({"name": "subject", "value": tuple["subject"]}),
+        serde_json::json!({"name": "decision", "value": tuple["decision"]}),
+    ];
+    if let Some(reason) = tuple.get("reason") {
+        fields.push(serde_json::json!({"name": "reason", "value": reason}));
+    }
+    serde_json::json!({
+        "code": tuple["code"],
+        "severity": tuple["severity"],
+        "name": "exact Supabase contract example",
+        "fields": fields,
+    })
+}
+
+fn supabase_contract_accepts(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    report: &serde_json::Value,
+) -> Result<bool, String> {
+    let result = run_supabase_report_contract(
+        root,
+        input,
+        output,
+        selection,
+        SupabaseContractMode::Validate,
+        Some(report),
+    )?;
+    if !result.status.success() && result.status.code() != Some(1) {
+        return Err(format!(
+            "Supabase jq contract failed to execute: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    Ok(result.status.success())
+}
+
+fn generated_supabase_contract(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    mode: SupabaseContractMode,
+) -> Result<serde_json::Value, String> {
+    let generated = run_supabase_report_contract(root, input, output, selection, mode, None)?;
+    if !generated.status.success() {
+        return Err(format!(
+            "failed to generate {selection} {input}-to-{output} Supabase contract: {}",
+            String::from_utf8_lossy(&generated.stderr).trim()
+        ));
+    }
+    serde_json::from_slice(&generated.stdout)
+        .map_err(|error| format!("invalid generated {selection} {input}-to-{output} Supabase contract: {error}"))
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps the complete Supabase report matrix and its counterexamples auditable as one contract"
+)]
+fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Result<(), String> {
+    let root = repository_root();
+    let compose_expected = run_supabase_report_contract(
+        &root,
+        "compose",
+        "podman",
+        "storage",
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    if !compose_expected.status.success() {
+        return Err(format!(
+            "failed to generate Compose rejection contract: {}",
+            String::from_utf8_lossy(&compose_expected.stderr).trim()
+        ));
+    }
+    let expected: serde_json::Value = serde_json::from_slice(&compose_expected.stdout)
+        .map_err(|error| format!("invalid generated Compose rejection contract: {error}"))?;
+    let expected_diagnostics = expected
+        .as_array()
+        .ok_or("generated Compose rejection contract must be an array")?;
+    let mut subjects = expected_diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == "BFP0008")
+        .map(|diagnostic| {
+            diagnostic["subject"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or("generated BFP0008 subject must be a string")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    subjects.sort();
+    assert_eq!(
+        subjects,
+        [
+            "services.contract-supabase-db.image",
+            "services.contract-supabase-imgproxy.image",
+            "services.contract-supabase-rest.image",
+            "services.contract-supabase-storage.image",
+        ]
+    );
+    assert_eq!(
+        subjects.iter().collect::<BTreeSet<_>>().len(),
+        subjects.len(),
+        "generated rejection subjects must be unique"
+    );
+
+    let quadlet_expected = run_supabase_report_contract(
+        &root,
+        "quadlet",
+        "podman",
+        "storage",
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    if !quadlet_expected.status.success() {
+        return Err(format!(
+            "failed to generate Quadlet rejection contract: {}",
+            String::from_utf8_lossy(&quadlet_expected.stderr).trim()
+        ));
+    }
+    let quadlet_expected: serde_json::Value = serde_json::from_slice(&quadlet_expected.stdout)
+        .map_err(|error| format!("invalid generated Quadlet rejection contract: {error}"))?;
+    let quadlet_expected = quadlet_expected
+        .as_array()
+        .ok_or("generated Quadlet rejection contract must be an array")?;
+    let mut quadlet_subjects = quadlet_expected
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == "BFP0008")
+        .filter_map(|diagnostic| diagnostic["subject"].as_str())
+        .collect::<Vec<_>>();
+    quadlet_subjects.sort_unstable();
+    assert_eq!(quadlet_subjects, subjects);
+
+    for (selection, expected_count) in [("exact", 10), ("label", 11), ("all", 12)] {
+        let generated = run_supabase_report_contract(
+            &root,
+            "compose",
+            "podman",
+            selection,
+            SupabaseContractMode::Diagnostics,
+            None,
+        )?;
+        if !generated.status.success() {
+            return Err(format!(
+                "failed to generate {selection} rejection contract: {}",
+                String::from_utf8_lossy(&generated.stderr).trim()
+            ));
+        }
+        let generated: serde_json::Value = serde_json::from_slice(&generated.stdout)
+            .map_err(|error| format!("invalid generated {selection} rejection contract: {error}"))?;
+        let generated = generated
+            .as_array()
+            .ok_or("generated rejection contract must be an array")?;
+        let unique_subjects = generated
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFP0008")
+            .filter_map(|diagnostic| diagnostic["subject"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            generated
+                .iter()
+                .filter(|diagnostic| diagnostic["code"] == "BFP0008")
+                .count(),
+            expected_count,
+            "{selection} image count"
+        );
+        assert_eq!(unique_subjects.len(), expected_count, "{selection} subjects");
+        if selection == "exact" {
+            assert!(unique_subjects.contains("services.contract-supabase-realtime.image"));
+            assert!(!unique_subjects.contains("services.contract-supabase-supavisor.image"));
+        }
+    }
+
+    for (input, selection, unsupported, invalid) in [
+        ("compose", "exact", 28, 10),
+        ("compose", "storage", 12, 4),
+        ("compose", "label", 30, 11),
+        ("compose", "all", 30, 12),
+        ("quadlet", "exact", 52, 10),
+        ("quadlet", "storage", 20, 4),
+        ("quadlet", "label", 55, 11),
+        ("quadlet", "all", 54, 12),
+    ] {
+        let generated =
+            generated_supabase_contract(&root, input, "podman", selection, SupabaseContractMode::Diagnostics)?;
+        let generated = generated
+            .as_array()
+            .ok_or("generated rejection contract must be an array")?;
+        assert_eq!(
+            generated
+                .iter()
+                .filter(|diagnostic| diagnostic["code"] == "BFP0007")
+                .count(),
+            unsupported,
+            "{input} {selection} unsupported diagnostics"
+        );
+        assert_eq!(
+            generated
+                .iter()
+                .filter(|diagnostic| diagnostic["code"] == "BFP0008")
+                .count(),
+            invalid,
+            "{input} {selection} invalid diagnostics"
+        );
+        assert_eq!(
+            generated_supabase_contract(&root, input, "podman", selection, SupabaseContractMode::Fidelity,)?,
+            serde_json::json!({
+                "approximate": 0,
+                "unsupported": unsupported,
+                "invalid": invalid,
+                "other": 0,
+            }),
+            "{input} {selection} rejection fidelity"
+        );
+    }
+
+    let diagnostics = expected_diagnostics
+        .iter()
+        .map(supabase_contract_diagnostic)
+        .collect::<Vec<_>>();
+    let mut rejection_report = serde_json::json!({
+        "schema_version": 1,
+        "status": "failure",
+        "exit_category": "input-or-execution",
+        "primary_diagnostic_code": "BFP0008",
+        "output_artifacts": [],
+        "fidelity": {
+            "exact": 7,
+            "approximate": 0,
+            "unsupported": 12,
+            "invalid": 4,
+            "other": 0,
+        },
+        "diagnostics": diagnostics,
+    });
+    assert!(supabase_contract_accepts(
+        &root,
+        "compose",
+        "podman",
+        "storage",
+        &rejection_report
+    )?);
+    let quadlet_diagnostics = quadlet_expected
+        .iter()
+        .map(supabase_contract_diagnostic)
+        .collect::<Vec<_>>();
+    let quadlet_rejection_report = serde_json::json!({
+        "schema_version": 1,
+        "status": "failure",
+        "exit_category": "input-or-execution",
+        "primary_diagnostic_code": "BFP0008",
+        "output_artifacts": [],
+        "fidelity": {
+            "exact": 7,
+            "approximate": 0,
+            "unsupported": 20,
+            "invalid": 4,
+            "other": 0,
+        },
+        "diagnostics": quadlet_diagnostics,
+    });
+    assert!(supabase_contract_accepts(
+        &root,
+        "quadlet",
+        "podman",
+        "storage",
+        &quadlet_rejection_report
+    )?);
+
+    let mut duplicate = rejection_report.clone();
+    let first = duplicate["diagnostics"][0].clone();
+    duplicate["diagnostics"][1] = first;
+    assert!(!supabase_contract_accepts(
+        &root, "compose", "podman", "storage", &duplicate
+    )?);
+
+    let mut unseen = rejection_report.clone();
+    unseen["diagnostics"][0]["fields"][0]["value"] = serde_json::json!("services.contract-supabase-unseen.image");
+    assert!(!supabase_contract_accepts(
+        &root, "compose", "podman", "storage", &unseen
+    )?);
+
+    let mut missing_target_loss = rejection_report.clone();
+    let target_loss_index = missing_target_loss["diagnostics"]
+        .as_array()
+        .and_then(|diagnostics| {
+            diagnostics
+                .iter()
+                .position(|diagnostic| diagnostic["code"] == "BFP0007")
+        })
+        .ok_or("synthetic rejection report must contain BFP0007")?;
+    missing_target_loss["diagnostics"]
+        .as_array_mut()
+        .ok_or("synthetic rejection diagnostics must be an array")?
+        .remove(target_loss_index);
+    assert!(!supabase_contract_accepts(
+        &root,
+        "compose",
+        "podman",
+        "storage",
+        &missing_target_loss
+    )?);
+
+    let mut wrong_target_fidelity = rejection_report.clone();
+    wrong_target_fidelity["fidelity"]["unsupported"] = serde_json::json!(15);
+    assert!(!supabase_contract_accepts(
+        &root,
+        "compose",
+        "podman",
+        "storage",
+        &wrong_target_fidelity
+    )?);
+
+    let mut emitted_artifact = rejection_report.clone();
+    emitted_artifact["output_artifacts"] = serde_json::json!(["podman.json"]);
+    assert!(!supabase_contract_accepts(
+        &root,
+        "compose",
+        "podman",
+        "storage",
+        &emitted_artifact
+    )?);
+
+    rejection_report["fidelity"]["invalid"] = serde_json::json!(3);
+    assert!(!supabase_contract_accepts(
+        &root,
+        "compose",
+        "podman",
+        "storage",
+        &rejection_report
+    )?);
+
+    let reviewed_fidelity = [
+        ("exact", "podman", "compose", 46, 105),
+        ("exact", "podman", "quadlet", 36, 81),
+        ("exact", "podman", "podman", 36, 118),
+        ("exact", "quadlet", "compose", 10, 24),
+        ("exact", "compose", "compose", 10, 0),
+        ("exact", "compose", "quadlet", 0, 0),
+        ("exact", "quadlet", "quadlet", 0, 0),
+        ("storage", "podman", "compose", 20, 43),
+        ("storage", "podman", "quadlet", 16, 35),
+        ("storage", "podman", "podman", 16, 51),
+        ("storage", "quadlet", "compose", 4, 8),
+        ("storage", "compose", "compose", 4, 0),
+        ("storage", "compose", "quadlet", 0, 0),
+        ("storage", "quadlet", "quadlet", 0, 0),
+        ("label", "podman", "compose", 49, 111),
+        ("label", "podman", "quadlet", 38, 86),
+        ("label", "podman", "podman", 38, 125),
+        ("label", "quadlet", "compose", 11, 25),
+        ("label", "compose", "compose", 11, 0),
+        ("label", "compose", "quadlet", 0, 0),
+        ("label", "quadlet", "quadlet", 0, 0),
+        ("all", "podman", "compose", 51, 116),
+        ("all", "podman", "quadlet", 39, 90),
+        ("all", "podman", "podman", 39, 129),
+        ("all", "quadlet", "compose", 12, 25),
+        ("all", "compose", "compose", 12, 0),
+        ("all", "compose", "quadlet", 0, 0),
+        ("all", "quadlet", "quadlet", 0, 0),
+    ];
+    for (selection, input, output, approximate, unsupported) in reviewed_fidelity {
+        let generated = generated_supabase_contract(&root, input, output, selection, SupabaseContractMode::Fidelity)?;
+        assert_eq!(
+            generated,
+            serde_json::json!({
+                "approximate": approximate,
+                "unsupported": unsupported,
+                "invalid": 0,
+                "other": 0,
+            }),
+            "{selection} {input}-to-{output} fidelity"
+        );
+    }
+
+    let success_expected = run_supabase_report_contract(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    if !success_expected.status.success() {
+        return Err(format!(
+            "failed to generate successful route contract: {}",
+            String::from_utf8_lossy(&success_expected.stderr).trim()
+        ));
+    }
+    let success_expected: serde_json::Value = serde_json::from_slice(&success_expected.stdout)
+        .map_err(|error| format!("invalid generated successful route contract: {error}"))?;
+    let success_expected = success_expected
+        .as_array()
+        .ok_or("generated successful route contract must be an array")?;
+    let authored_podman_losses =
+        fs::read_to_string(root.join("fixtures/scenarios/supabase-application/expected.podman-podman.losses.tsv"))
+            .map_err(|error| format!("failed to read authored Podman losses: {error}"))?;
+    for (authored_subject, generated_subject) in [
+        (
+            "services.kong.environment.KONG_DATABASE",
+            "services.contract-supabase-kong.environment.KONG_DATABASE",
+        ),
+        (
+            "services.kong.environment.KONG_DECLARATIVE_CONFIG",
+            "services.contract-supabase-kong.environment.KONG_DECLARATIVE_CONFIG",
+        ),
+    ] {
+        assert!(
+            success_expected
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == "BFP0007" && diagnostic["subject"] == generated_subject)
+        );
+        assert!(authored_podman_losses.lines().any(|row| {
+            let fields = row.split('\t').collect::<Vec<_>>();
+            fields.len() == 5 && fields[0] == "BFP0007" && fields[1] == authored_subject
+        }));
+    }
+    let expected_fidelity =
+        run_supabase_report_contract(&root, "podman", "podman", "label", SupabaseContractMode::Fidelity, None)?;
+    if !expected_fidelity.status.success() {
+        return Err(format!(
+            "failed to generate successful route fidelity: {}",
+            String::from_utf8_lossy(&expected_fidelity.stderr).trim()
+        ));
+    }
+    let mut expected_fidelity: serde_json::Value = serde_json::from_slice(&expected_fidelity.stdout)
+        .map_err(|error| format!("invalid generated successful route fidelity: {error}"))?;
+    assert_eq!(
+        expected_fidelity,
+        serde_json::json!({
+            "approximate": 38,
+            "unsupported": 125,
+            "invalid": 0,
+            "other": 0,
+        })
+    );
+    expected_fidelity["exact"] = serde_json::json!(11);
+    let success_diagnostics = success_expected
+        .iter()
+        .map(supabase_contract_diagnostic)
+        .collect::<Vec<_>>();
+    let success_report = serde_json::json!({
+        "schema_version": 1,
+        "status": "success",
+        "fidelity": expected_fidelity,
+        "diagnostics": success_diagnostics,
+    });
+    assert!(supabase_contract_accepts(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        &success_report
+    )?);
+
+    let mut volume_metadata_as_approximate = success_report.clone();
+    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(50);
+    volume_metadata_as_approximate["fidelity"]["unsupported"] = serde_json::json!(113);
+    assert!(!supabase_contract_accepts(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        &volume_metadata_as_approximate
+    )?);
+
+    let mut missing_kong_network_outcome = success_report.clone();
+    missing_kong_network_outcome["fidelity"]["approximate"] = serde_json::json!(37);
+    assert!(!supabase_contract_accepts(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        &missing_kong_network_outcome
+    )?);
+
+    let mut arbitrary_exact_count = success_report.clone();
+    arbitrary_exact_count["fidelity"]["exact"] = serde_json::json!(999);
+    assert!(supabase_contract_accepts(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        &arbitrary_exact_count
+    )?);
+    let mut invalid_exact_count = success_report.clone();
+    invalid_exact_count["fidelity"]["exact"] = serde_json::json!(1.5);
+    assert!(!supabase_contract_accepts(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        &invalid_exact_count
+    )?);
+
+    let mut missing_category = success_report;
+    missing_category["fidelity"]
+        .as_object_mut()
+        .ok_or("synthetic success fidelity must be an object")?
+        .remove("other");
+    assert!(!supabase_contract_accepts(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        &missing_category
+    )?);
     Ok(())
 }
 
@@ -910,7 +1511,7 @@ fn live_external_apply_reacquire_rejects_stale_prerequisite_contracts() -> Resul
     Ok(())
 }
 
-fn validate_live_runner(runner: &str) -> Result<(), String> {
+fn validate_live_runner(runner: &str, matrix: &str) -> Result<(), String> {
     validate_paperless_live_runner(runner)?;
     validate_immich_live_runner(runner)?;
     validate_external_apply_reacquire_runner(runner)?;
@@ -992,6 +1593,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
     validate_live_paperless_application_cell(runner)?;
     validate_live_immich_application_cell(runner)?;
     validate_live_observability_application_cell(runner)?;
+    validate_live_supabase_application_cell(runner, matrix)?;
     validate_live_target_contracts(runner)?;
 
     Ok(())
@@ -1003,7 +1605,7 @@ fn validate_live_runner(runner: &str) -> Result<(), String> {
 )]
 fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
     for required in [
-        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application|supabase-application>",
         "--candidate-cell is required with --profile limitation-revalidation.",
         "--candidate-cell is valid only with --profile limitation-revalidation.",
         "initialize-evidence",
@@ -1034,7 +1636,7 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         "Unexpected limitation-revalidation check",
         "[[ \"${#revalidation_checks[@]}\" == \"${#revalidation_required_checks[@]}\" ]]",
         "[[ \"${progress_total}\" == \"${#revalidation_required_checks[@]}\" ]]",
-        "[[ \"${profile}\" == full-container || \"${profile}\" == limitation-revalidation ||\n    \"${profile}\" == observability-application ]]",
+        "[[ \"${profile}\" == full-container || \"${profile}\" == limitation-revalidation ||\n    \"${profile}\" == observability-application || \"${profile}\" == supabase-application ]]",
         "for selection in 'exact container' 'prefix selection' 'label selection' 'all resources' 'network boundary'; do",
         "for exporter in compose quadlet podman; do",
         "mark_revalidation_result \"selector_exporters.${selection}.${exporter}\"",
@@ -1301,7 +1903,7 @@ fn validate_live_application_cell(runner: &str) -> Result<(), String> {
 
 fn validate_live_forgejo_application_cells(runner: &str) -> Result<(), String> {
     for contract in [
-        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application|supabase-application>",
         "run_forgejo_application_cell()",
         "forgejo_assert_clean_prefix",
         "forgejo_git_probe",
@@ -1854,7 +2456,7 @@ fn immich_captured_native_evidence_is_supplementary_and_redacted() -> Result<(),
 
 fn validate_live_observability_application_cell(runner: &str) -> Result<(), String> {
     for required in [
-        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application|supabase-application>",
         "observability-application)",
         "run_observability_application_cell \"$@\"",
     ] {
@@ -1930,6 +2532,229 @@ fn validate_live_observability_application_cell(runner: &str) -> Result<(), Stri
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeps the complete Supabase live contract auditable in one place"
+)]
+fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result<(), String> {
+    let exact_cell = "podman-6.1-rootless\tghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e\t6.1.0\tupstream-source\trootless\tcontainer\tamd64";
+    if !matrix.lines().any(|line| line == exact_cell) {
+        return Err(
+            "Supabase application target must remain the exact reviewed Podman 6.1.0 rootless amd64 cell".to_owned(),
+        );
+    }
+    for contract in [
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application|supabase-application>",
+        "--profile must be smoke, full-container, limitation-revalidation, application, forgejo-application, paperless-application, immich-application, observability-application, or supabase-application.",
+        "supabase-application)\n      [[ \"${id}\" == podman-6.1-rootless &&",
+        "run_supabase_application_cell \"$@\"",
+        "[[ \"${id}-${mode}\" == podman-6.1-rootless-rootless ]]",
+        "[[ \"${architecture}\" == amd64 &&",
+        "[[ \"${declared_version}\" =~ ^6\\.1($|\\.) ]]",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!(
+                "live Podman runner must retain Supabase entry-point and target contract: `{contract}`"
+            ));
+        }
+    }
+
+    for contract in [
+        "SUPABASE_MIN_CPUS=\"4\"",
+        "SUPABASE_MIN_MEMORY_KIB=\"12582912\"",
+        "SUPABASE_MIN_DISK_KIB=\"25165824\"",
+        "SUPABASE_ARCHIVE_MAX_BYTES=\"5368709120\"",
+        "SUPABASE_MAX_CONCURRENCY=\"1\"",
+        "SUPABASE_CELL_TIMEOUT=\"90m\"",
+        "cpus=\"$(nproc)\"",
+        "memory_kib=\"$(awk '$1 == \"MemAvailable:\" { print $2 }' /proc/meminfo)\"",
+        "info --format '{{.Store.GraphRoot}}'",
+        "for path in \"${runtime_root:?caller must supply runtime_root}\" \"${graph_root}\"; do",
+        "progress_total=40",
+        "supabase_validate_resource_budget",
+        "supabase_prepare_image_archive",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!("Supabase resource contract is missing `{contract}`"));
+        }
+    }
+
+    let cell = runner
+        .split_once("supabase_run_application_cell_unbounded() {")
+        .and_then(|(_, following)| {
+            following
+                .split_once("\nrun_supabase_application_cell() {")
+                .map(|(cell, _)| cell)
+        })
+        .ok_or("Supabase numbered cell body could not be isolated")?;
+    let progress_checks = cell.matches("progress_run '").count();
+    if progress_checks != 40 {
+        return Err(format!(
+            "Supabase application cell must contain 40 numbered checks, found {progress_checks}"
+        ));
+    }
+    for invocation in [
+        "supabase_provision_cli \"${socket}\" \"${current_prefix}\" \"${run_id}\"",
+        "supabase_probe \"${socket}\" \"${current_prefix}\" seed",
+        "supabase_probe \"${socket}\" \"${current_prefix}\" verify",
+        "supabase_run_exports cli \"${socket}\" \"${current_prefix}\"",
+        "supabase_run_reimports cli \"${current_prefix}\"",
+        "supabase_recreate_application cli \"${socket}\" \"${current_prefix}\" \"${run_id}\"",
+        "supabase_assert_database_state \"${socket}\" \"${current_prefix}\" 2",
+        "supabase_cleanup_mode cli \"${socket}\" \"${current_prefix}\" \"${run_id}\"",
+        "supabase_provision_compose \"${socket}\" \"${current_prefix}\" \"${run_id}\"",
+        "supabase_run_exports compose \"${socket}\" \"${current_prefix}\"",
+        "supabase_run_reimports compose \"${current_prefix}\"",
+        "supabase_recreate_application compose \"${socket}\" \"${current_prefix}\" \"${run_id}\"",
+        "supabase_cleanup_mode compose \"${socket}\" \"${current_prefix}\" \"${run_id}\"",
+        "remove_outer \"${outer}\"",
+    ] {
+        if !cell.contains(invocation) {
+            return Err(format!(
+                "Supabase numbered cell is missing executable contract `{invocation}`"
+            ));
+        }
+    }
+
+    for image in [
+        "docker.io/supabase/studio:2026.08.03-sha-022b374@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8",
+        "docker.io/kong/kong:3.9.3@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3",
+        "docker.io/supabase/gotrue:v2.189.0@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf",
+        "docker.io/postgrest/postgrest:v14.12@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+        "docker.io/supabase/realtime:v2.102.3@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471",
+        "docker.io/supabase/storage-api:v1.60.4@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf",
+        "docker.io/darthsim/imgproxy:v3.30.1@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d",
+        "docker.io/supabase/postgres-meta:v0.96.6@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300",
+        "docker.io/supabase/edge-runtime:v1.74.0@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120",
+        "docker.io/supabase/postgres:17.6.1.136@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00",
+        "docker.io/supabase/supavisor:2.9.5@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07",
+    ] {
+        if !runner.contains(image) {
+            return Err(format!("Supabase image catalogue is missing exact pin `{image}`"));
+        }
+    }
+    for provider in [
+        "SUPABASE_PROVIDER_VERSION=\"5.5.0\"",
+        "SUPABASE_PROVIDER_SHA256=\"c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b\"",
+        "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64",
+    ] {
+        if !runner.contains(provider) {
+            return Err(format!("Supabase provider contract is missing `{provider}`"));
+        }
+    }
+
+    for contract in [
+        "supabase_provision_cli",
+        "supabase_provision_compose",
+        "supabase_wait_application",
+        "supabase_enable_realtime_table",
+        "ALTER PUBLICATION supabase_realtime ADD TABLE public.boxferry_items;",
+        "/boxferry-fixture/application-probe.mjs \"${phase}\"",
+        "jsonRequest(\"/auth/v1/signup\"",
+        "jsonRequest(\"/auth/v1/token?grant_type=password\"",
+        "new WebSocket(",
+        "jsonRequest(\"/rest/v1/boxferry_items",
+        "request(\"/storage/v1/object/authenticated/boxferry/probe.txt\"",
+        "jsonRequest(\"/functions/v1/main\"",
+        "request(\"/studio/api/platform/profile\")",
+        "fetch(`${supavisorBase}/api/health`)",
+        "supabase_probe_published_api",
+        "http://127.0.0.1:${SUPABASE_HTTP_PORT}/auth/v1/health",
+        "supabase_assert_application_boundaries",
+        ".[0].HostConfig.PortBindings == {}",
+        ".[0].HostConfig.PortBindings[\"8000/tcp\"][0].HostIp == \"127.0.0.1\"",
+        "supabase_assert_storage_ownership",
+        ".Destination == \"/var/lib/storage\" and .RW == false",
+        "supabase_expect_collision",
+        "[[ \"${status}\" == 125 ]]",
+        "for selection in exact storage label all; do",
+        "selection_arguments=(--podman-resource \"container=${prefix}-supabase-kong\")",
+        "selection_arguments=(--podman-label io.boxferry.selection=storage)",
+        "selection_arguments=(--podman-label \"io.boxferry.application=${prefix}-supabase\")",
+        "selection_arguments=(--podman-all)",
+        "for output in compose quadlet podman; do",
+        "supabase_recreate_application",
+        "supabase_assert_report_privacy",
+        "--include='*.report.json'",
+        "supabase_assert_clean_resources",
+        "index($0, prefix) == 1",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!("Supabase live behavior contract is missing `{contract}`"));
+        }
+    }
+
+    let privacy = runner
+        .split_once("supabase_assert_report_privacy() {")
+        .and_then(|(_, following)| {
+            following
+                .split_once("\nsupabase_remove_cli_application_containers() {")
+                .map(|(privacy, _)| privacy)
+        })
+        .ok_or("Supabase report-privacy body could not be isolated")?;
+    for protected_value in [
+        "-e \"${SUPABASE_DB_PASSWORD}\"",
+        "-e \"${SUPABASE_JWT_SECRET}\"",
+        "-e \"${SUPABASE_ANON_KEY}\"",
+        "-e \"${SUPABASE_SERVICE_KEY}\"",
+        "-e \"${SUPABASE_REALTIME_SECRET}\"",
+        "-e \"${SUPABASE_POOLER_SECRET}\"",
+        "-e \"${SUPABASE_REALTIME_DB_KEY}\"",
+        "-e \"${SUPABASE_META_CRYPTO_KEY}\"",
+        "-e \"${SUPABASE_VAULT_ENC_KEY}\"",
+        "-e \"${SUPABASE_TEST_PASSWORD}\"",
+    ] {
+        if !privacy.contains(protected_value) {
+            return Err(format!(
+                "Supabase report privacy omits protected value `{protected_value}`"
+            ));
+        }
+    }
+
+    for fixture_contract in [
+        "9952d6f10fb9a7b2d9d8c3312b279bfab2c4ba96",
+        "CREATE TABLE IF NOT EXISTS public.boxferry_items",
+        "Deno.serve({ port: 9000 }",
+        "crypto.subtle.digest(\"SHA-256\"",
+        "Phoenix-WebSocket-PostgreSQL-insert",
+        "private-bucket-upload-byte-exact-download",
+        "seed-SHA-256-cd2c400852048a021086994cc5f266472d53e72ffddb1c1f5d01a17ddaa27ca4-and-verify-SHA-256-71059a67ee64b2891c41a31b66660b18e366342f765ccf07fd68fb0436eb6638",
+        "one-error-per-tag-and-digest-image-no-artifacts",
+        ".primary_diagnostic_code == \"BFP0008\"",
+        "(.output_artifacts | length) == 0",
+        "($actual_subjects | length) == ($actual_subjects | unique | length)",
+        ".fidelity.unsupported == $fidelity.unsupported",
+        ".fidelity.invalid == $fidelity.invalid",
+        "expected_rejection_fidelity",
+        "expected_success_fidelity",
+        "exact_fidelity_shape",
+        "length(seen) != 9 || success != 7 || rejected != 2",
+    ] {
+        if !runner.contains(fixture_contract) {
+            return Err(format!(
+                "Supabase fixture and route contract is missing `{fixture_contract}`"
+            ));
+        }
+    }
+
+    for route in [
+        "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFC0007,BFC0009\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
+        "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
+        "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0007\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
+        "compose\tcompose\tmigration-success\tlive-unperformed\tBFC0009\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
+        "compose\tquadlet\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
+        "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007,BFC0009\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
+        "quadlet\tquadlet\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
+        "compose\tpodman\texpected-rejection\tlive-unperformed\tBFP0007,BFP0008\tone-error-per-tag-and-digest-image-no-artifacts",
+        "quadlet\tpodman\texpected-rejection\tlive-unperformed\tBFP0007,BFP0008\tone-error-per-tag-and-digest-image-no-artifacts",
+    ] {
+        if !runner.contains(route) {
+            return Err(format!("Supabase route catalogue is missing exact row `{route}`"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> {
     const PORTABLE_AF_UNIX_PATH_BYTES: usize = 104;
     const CAPTURE_RUNTIME_ROOT_TEMPLATE: &str = "/tmp/boxferry-podman-live.XXXXXX";
@@ -1947,7 +2772,7 @@ fn validate_live_paperless_application_cell(runner: &str) -> Result<(), String> 
     }
 
     for contract in [
-        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application>",
+        "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application|supabase-application>",
         "paperless-application)",
         "run_paperless_application_cell()",
         "run_paperless_application_cell \"$@\"",

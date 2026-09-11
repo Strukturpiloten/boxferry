@@ -1,0 +1,114 @@
+---
+name: supabase-application
+
+services:
+  db:
+    image: docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: boxferry-public-supabase-db-password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+
+  auth:
+    image: docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf
+    depends_on: [db]
+    environment:
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres
+    networks: [backend]
+
+  rest:
+    image: docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c
+    depends_on: [db]
+    environment:
+      PGRST_DB_URI: postgres://authenticator:boxferry-public-supabase-db-password@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+    networks: [backend]
+
+  realtime:
+    image: docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471
+    depends_on: [db]
+    environment:
+      DB_HOST: db
+      DB_NAME: postgres
+      DB_PASSWORD: boxferry-public-supabase-db-password
+    networks: [backend]
+
+  imgproxy:
+    image: docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d
+    environment:
+      IMGPROXY_BIND: ":5001"
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+    volumes:
+      - storage:/var/lib/storage:ro
+    networks: [backend]
+
+  storage:
+    image: docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf
+    depends_on: [db, rest, imgproxy]
+    environment:
+      DATABASE_URL: postgres://supabase_storage_admin:boxferry-public-supabase-db-password@db:5432/postgres
+      POSTGREST_URL: http://rest:3000
+      IMGPROXY_URL: http://imgproxy:5001
+      STORAGE_BACKEND: file
+    volumes:
+      - storage:/var/lib/storage
+    networks: [backend]
+
+  meta:
+    image: docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300
+    depends_on: [db]
+    environment:
+      PG_META_DB_HOST: db
+      PG_META_DB_NAME: postgres
+    networks: [backend]
+
+  supavisor:
+    image: docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07
+    depends_on: [db]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: postgres
+    networks: [backend]
+
+  functions:
+    image: docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120
+    depends_on: [db]
+    environment:
+      SUPABASE_DB_URL: postgresql://postgres:boxferry-public-supabase-db-password@db:5432/postgres
+      SUPABASE_URL: http://kong:8000
+      VERIFY_JWT: "false"
+    volumes:
+      - deno-cache:/root/.cache/deno
+    networks: [backend]
+
+  studio:
+    image: docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8
+    depends_on: [meta]
+    environment:
+      STUDIO_PG_META_URL: http://meta:8080
+      SUPABASE_URL: http://kong:8000
+    networks: [backend]
+
+  kong:
+    image: docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3
+    depends_on: [auth, rest, realtime, storage, functions, studio]
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+    ports:
+      - "127.0.0.1:18000:8000"
+    networks: [backend, edge]
+
+networks:
+  backend:
+    internal: true
+  edge: {}
+
+volumes:
+  deno-cache: {}
+  pgdata: {}
+  storage: {}

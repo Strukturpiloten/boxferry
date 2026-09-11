@@ -1,0 +1,13 @@
+[Unit]
+
+Requires=auth.service rest.service realtime.service storage.service functions.service studio.service
+After=auth.service rest.service realtime.service storage.service functions.service studio.service
+
+[Container]
+
+Image=docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3
+Environment=KONG_DATABASE=off
+Environment=KONG_DECLARATIVE_CONFIG=/etc/kong/kong.yml
+PublishPort=127.0.0.1:18000:8000/tcp
+Network=backend.network
+Network=edge.network

@@ -1,0 +1,11 @@
+[Unit]
+
+Requires=meta.service
+After=meta.service
+
+[Container]
+
+Image=docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8
+Environment=STUDIO_PG_META_URL=http://meta:8080
+Environment=SUPABASE_URL=http://kong:8000
+Network=backend.network

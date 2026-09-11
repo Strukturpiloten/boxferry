@@ -23,6 +23,8 @@ source "${script_directory}/lib/paperless-application.sh"
 source "${script_directory}/lib/immich-application.sh"
 # shellcheck source=scripts/lib/observability-application.sh
 source "${script_directory}/lib/observability-application.sh"
+# shellcheck source=scripts/lib/supabase-application.sh
+source "${script_directory}/lib/supabase-application.sh"
 
 profile=""
 matrix_cell=""
@@ -173,7 +175,7 @@ profile_seen=false
 
 usage() {
   cat << 'EOF'
-Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application> [OPTIONS]
+Usage: scripts/podman-live-conformance.sh --profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application|supabase-application> [OPTIONS]
 
 Options:
   --engine <PATH>       Outer Podman executable (default: podman).
@@ -270,10 +272,10 @@ while (($# > 0)); do
 done
 
 case "${profile}" in
-  smoke | full-container | limitation-revalidation | application | forgejo-application | paperless-application | immich-application | observability-application) ;;
+  smoke | full-container | limitation-revalidation | application | forgejo-application | paperless-application | immich-application | observability-application | supabase-application) ;;
   *)
     write_revalidation_initialization_failure preflight invalid-invocation
-    printf '%s\n' '--profile must be smoke, full-container, limitation-revalidation, application, forgejo-application, paperless-application, immich-application, or observability-application.' >&2
+    printf '%s\n' '--profile must be smoke, full-container, limitation-revalidation, application, forgejo-application, paperless-application, immich-application, observability-application, or supabase-application.' >&2
     usage >&2
     exit 2
     ;;
@@ -998,7 +1000,7 @@ contains_smoke_cell() {
 
 is_complete_resource_profile() {
   [[ "${profile}" == full-container || "${profile}" == limitation-revalidation ||
-    "${profile}" == observability-application ]]
+    "${profile}" == observability-application || "${profile}" == supabase-application ]]
 }
 
 selected() {
@@ -1026,6 +1028,10 @@ selected() {
         (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
       ;;
     observability-application)
+      [[ "${id}" == podman-6.1-rootless &&
+        (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
+      ;;
+    supabase-application)
       [[ "${id}" == podman-6.1-rootless &&
         (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]]
       ;;
@@ -2227,6 +2233,10 @@ run_cell() {
   fi
   if [[ "${profile}" == observability-application ]]; then
     run_observability_application_cell "$@"
+    return
+  fi
+  if [[ "${profile}" == supabase-application ]]; then
+    run_supabase_application_cell "$@"
     return
   fi
 

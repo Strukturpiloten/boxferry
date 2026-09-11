@@ -10,7 +10,7 @@
 
 ## Context
 
-BoxFerry has independent offline scenario contracts, a 48-cell Podman catalogue, and four genuine
+BoxFerry has independent offline scenario contracts, a 48-cell Podman catalogue, and six genuine
 application harnesses. Running every application against every runtime on every pull request would
 repeat expensive evidence without strengthening the claim. Conversely, a skipped privileged job,
 an offline parse, or BoxFerry reimport alone must never appear as a successful migration.
@@ -33,9 +33,9 @@ RSS, disk, and concurrency budgets:
    package/API cells cover 5.4 rootless and 6.1 rootful/rootless boundaries; Forgejo supplies genuine
    HTTP and SSH application behavior across both deployment origins.
 3. `pre-release` is explicit manual evidence on the exact candidate SHA. It adds the complete
-   reviewed container distribution matrix, Nextcloud, Forgejo, Paperless-ngx, CPU-only Immich, and
-   exact-revision ComposeLens and QuadletLens native application gates. It is not scheduled and uses
-   no virtual machines.
+   reviewed container distribution matrix, Nextcloud, Forgejo, Paperless-ngx, CPU-only Immich,
+   observability, Supabase, and exact-revision ComposeLens and QuadletLens native application
+   gates. It is not scheduled and uses no virtual machines.
 
 [`scripts/migration-readiness.py`](../../scripts/migration-readiness.py) is the sole tier-selection,
 budget-measurement, and evidence helper locally and in GitHub Actions. It delegates provisioning to
@@ -57,9 +57,8 @@ evidence is rejected unless its recorded effective UID agrees with the catalogue
 It binds a fresh run identity, exact BoxFerry revision, exact Lens revisions, workload, source,
 target/version claim, approved losses, manual prerequisites, budgets, observations, and outcome.
 `unavailable`, `not-run`, timeout, new loss, failed behavior, or missing exporter evidence makes the
-tier fail. Observability issue #139, Supabase runtime issue #140, GPU behavior, virtual machines,
-SELinux enforcing runtime effects, and booted systemd remain explicit non-success gaps in every
-document.
+tier fail. GPU behavior, virtual machines, SELinux enforcing runtime effects, and booted systemd
+remain explicit non-success gaps in every document.
 
 GitHub runs the offline tier once through ordinary CI. Privileged tiers are manual, default-branch,
 same-repository jobs. A protected release does not rerun or infer pre-release success: it downloads a
@@ -73,7 +72,7 @@ retain released crates.io dependencies only.
 
 ## Consequences
 
-- Ordinary pull requests retain complete deterministic application semantics without four large
+- Ordinary pull requests retain complete deterministic application semantics without six large
   live jobs or an application-by-runtime Cartesian product.
 - Trusted live and release claims are reproducible with one tier or one task command; a skipped host
   prerequisite is evidence of a gap and a failed gate, never success.

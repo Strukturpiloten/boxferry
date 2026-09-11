@@ -1,0 +1,689 @@
+{
+  "scenario_id": "supabase-application-authored-podman-6.1.0",
+  "engine_version": "6.1.0",
+  "execution_context": "rootless",
+  "interactions": [
+    {
+      "request": { "method": "GET", "path": "/libpod/_ping" },
+      "response": { "status": 200, "headers": [["libpod-api-version", "6.1.0"]], "body": null }
+    },
+    {
+      "request": { "method": "GET", "path": "/v4.0.0/libpod/version" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Components": [{ "Name": "Podman Engine", "Version": "6.1.0" }] }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/json?all=true&sync=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          { "Id": "c-auth", "Names": ["auth"] },
+          { "Id": "c-db", "Names": ["db"] },
+          { "Id": "c-functions", "Names": ["functions"] },
+          { "Id": "c-imgproxy", "Names": ["imgproxy"] },
+          { "Id": "c-kong", "Names": ["kong"] },
+          { "Id": "c-meta", "Names": ["meta"] },
+          { "Id": "c-realtime", "Names": ["realtime"] },
+          { "Id": "c-rest", "Names": ["rest"] },
+          { "Id": "c-storage", "Names": ["storage"] },
+          { "Id": "c-studio", "Names": ["studio"] },
+          { "Id": "c-supavisor", "Names": ["supavisor"] }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/pods/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          { "id": "n-backend", "name": "backend" },
+          { "id": "n-edge", "name": "edge" }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Volumes": [{ "Name": "deno-cache" }, { "Name": "pgdata" }, { "Name": "storage" }]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/images/json?all=true" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": [
+          {
+            "Id": "sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120",
+            "Names": [
+              "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120"
+            ]
+          },
+          {
+            "Id": "sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07",
+            "Names": [
+              "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07"
+            ]
+          },
+          {
+            "Id": "sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf",
+            "Names": [
+              "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf"
+            ]
+          },
+          {
+            "Id": "sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d",
+            "Names": [
+              "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d"
+            ]
+          },
+          {
+            "Id": "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+            "Names": [
+              "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c"
+            ]
+          },
+          {
+            "Id": "sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8",
+            "Names": [
+              "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8"
+            ]
+          },
+          {
+            "Id": "sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3",
+            "Names": [
+              "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3"
+            ]
+          },
+          {
+            "Id": "sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300",
+            "Names": [
+              "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300"
+            ]
+          },
+          {
+            "Id": "sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471",
+            "Names": [
+              "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471"
+            ]
+          },
+          {
+            "Id": "sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf",
+            "Names": [
+              "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf"
+            ]
+          },
+          {
+            "Id": "sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00",
+            "Names": [
+              "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/secrets/json" },
+      "response": { "status": 200, "headers": [["content-type", "application/json"]], "body": [] }
+    },
+
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-auth/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-auth",
+          "Name": "auth",
+          "Image": "sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf",
+          "ImageName": "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf",
+          "Pod": "",
+          "Dependencies": ["c-db"],
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "GOTRUE_DB_DRIVER=postgres",
+              "GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-db/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-db",
+          "Name": "db",
+          "Image": "sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00",
+          "ImageName": "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "POSTGRES_DB=postgres",
+              "POSTGRES_USER=postgres",
+              "POSTGRES_PASSWORD=boxferry-public-supabase-db-password"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "pgdata",
+              "Source": "/home/test/.local/share/containers/storage/volumes/pgdata/_data",
+              "Destination": "/var/lib/postgresql/data",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-functions/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-functions",
+          "Name": "functions",
+          "Image": "sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120",
+          "ImageName": "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120",
+          "Pod": "",
+          "Dependencies": ["c-db"],
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "SUPABASE_DB_URL=postgresql://postgres:boxferry-public-supabase-db-password@db:5432/postgres",
+              "SUPABASE_URL=http://kong:8000",
+              "VERIFY_JWT=false"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "deno-cache",
+              "Source": "/home/test/.local/share/containers/storage/volumes/deno-cache/_data",
+              "Destination": "/root/.cache/deno",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-imgproxy/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-imgproxy",
+          "Name": "imgproxy",
+          "Image": "sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d",
+          "ImageName": "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d",
+          "Pod": "",
+          "Config": {
+            "Entrypoint": "",
+            "Env": ["IMGPROXY_BIND=:5001", "IMGPROXY_LOCAL_FILESYSTEM_ROOT=/"]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "storage",
+              "Source": "/home/test/.local/share/containers/storage/volumes/storage/_data",
+              "Destination": "/var/lib/storage",
+              "RW": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-kong/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-kong",
+          "Name": "kong",
+          "Image": "sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3",
+          "ImageName": "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3",
+          "Pod": "",
+          "Dependencies": [
+            "c-auth",
+            "c-functions",
+            "c-realtime",
+            "c-rest",
+            "c-storage",
+            "c-studio"
+          ],
+          "Config": {
+            "Entrypoint": "",
+            "Env": ["KONG_DATABASE=off", "KONG_DECLARATIVE_CONFIG=/etc/kong/kong.yml"]
+          },
+          "HostConfig": {
+            "PortBindings": { "8000/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "18000" }] }
+          },
+          "NetworkSettings": {
+            "Networks": {
+              "backend": { "NetworkID": "n-backend" },
+              "edge": { "NetworkID": "n-edge" }
+            }
+          },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-meta/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-meta",
+          "Name": "meta",
+          "Image": "sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300",
+          "ImageName": "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300",
+          "Pod": "",
+          "Dependencies": ["c-db"],
+          "Config": { "Entrypoint": "", "Env": ["PG_META_DB_HOST=db", "PG_META_DB_NAME=postgres"] },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-realtime/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-realtime",
+          "Name": "realtime",
+          "Image": "sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471",
+          "ImageName": "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471",
+          "Pod": "",
+          "Dependencies": ["c-db"],
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "DB_HOST=db",
+              "DB_NAME=postgres",
+              "DB_PASSWORD=boxferry-public-supabase-db-password"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-rest/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-rest",
+          "Name": "rest",
+          "Image": "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+          "ImageName": "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+          "Pod": "",
+          "Dependencies": ["c-db"],
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "PGRST_DB_URI=postgres://authenticator:boxferry-public-supabase-db-password@db:5432/postgres",
+              "PGRST_DB_SCHEMAS=public"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-storage/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-storage",
+          "Name": "storage",
+          "Image": "sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf",
+          "ImageName": "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf",
+          "Pod": "",
+          "Dependencies": ["c-db", "c-imgproxy", "c-rest"],
+          "Config": {
+            "Entrypoint": "",
+            "Env": [
+              "DATABASE_URL=postgres://supabase_storage_admin:boxferry-public-supabase-db-password@db:5432/postgres",
+              "POSTGREST_URL=http://rest:3000",
+              "IMGPROXY_URL=http://imgproxy:5001",
+              "STORAGE_BACKEND=file"
+            ]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": [
+            {
+              "Type": "volume",
+              "Name": "storage",
+              "Source": "/home/test/.local/share/containers/storage/volumes/storage/_data",
+              "Destination": "/var/lib/storage",
+              "RW": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-studio/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-studio",
+          "Name": "studio",
+          "Image": "sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8",
+          "ImageName": "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8",
+          "Pod": "",
+          "Dependencies": ["c-meta"],
+          "Config": {
+            "Entrypoint": "",
+            "Env": ["STUDIO_PG_META_URL=http://meta:8080", "SUPABASE_URL=http://kong:8000"]
+          },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": []
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/containers/c-supavisor/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "c-supavisor",
+          "Name": "supavisor",
+          "Image": "sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07",
+          "ImageName": "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07",
+          "Pod": "",
+          "Dependencies": ["c-db"],
+          "Config": { "Entrypoint": "", "Env": ["POSTGRES_HOST=db", "POSTGRES_DB=postgres"] },
+          "HostConfig": {},
+          "NetworkSettings": { "Networks": { "backend": { "NetworkID": "n-backend" } } },
+          "Mounts": []
+        }
+      }
+    },
+
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/n-backend/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-backend",
+          "name": "backend",
+          "internal": true,
+          "subnets": [],
+          "containers": {
+            "c-auth": { "name": "auth" },
+            "c-db": { "name": "db" },
+            "c-functions": { "name": "functions" },
+            "c-imgproxy": { "name": "imgproxy" },
+            "c-kong": { "name": "kong" },
+            "c-meta": { "name": "meta" },
+            "c-realtime": { "name": "realtime" },
+            "c-rest": { "name": "rest" },
+            "c-storage": { "name": "storage" },
+            "c-studio": { "name": "studio" },
+            "c-supavisor": { "name": "supavisor" }
+          }
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/networks/n-edge/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "id": "n-edge",
+          "name": "edge",
+          "internal": false,
+          "subnets": [],
+          "containers": { "c-kong": { "name": "kong" } }
+        }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/deno-cache/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "deno-cache", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/pgdata/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "pgdata", "Driver": "local", "Anonymous": false }
+      }
+    },
+    {
+      "request": { "method": "GET", "path": "/v6.1.0/libpod/volumes/storage/json" },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": { "Name": "storage", "Driver": "local", "Anonymous": false }
+      }
+    },
+
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120",
+          "RepoDigests": [
+            "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07",
+          "RepoDigests": [
+            "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf",
+          "RepoDigests": [
+            "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d",
+          "RepoDigests": [
+            "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+          "RepoDigests": [
+            "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8",
+          "RepoDigests": [
+            "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3A9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3",
+          "RepoDigests": [
+            "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Aa84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300",
+          "RepoDigests": [
+            "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Aaa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471",
+          "RepoDigests": [
+            "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Ac8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf",
+          "RepoDigests": [
+            "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Af371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00",
+          "RepoDigests": [
+            "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00"
+          ]
+        }
+      }
+    }
+  ]
+}

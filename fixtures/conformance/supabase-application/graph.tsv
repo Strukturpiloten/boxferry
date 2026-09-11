@@ -1,0 +1,12 @@
+# schema=2; service image-id networks dependencies mounts runtime-proof
+db	db	backend	-	pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/80-boxferry.sql:ro	SQL-row-extension-publication-counts
+auth	auth	backend	db	-	sign-up-sign-in-current-user
+rest	rest	backend	db	-	insert-select-and-Realtime-source
+realtime	realtime	backend	db	-	Phoenix-WebSocket-PostgreSQL-insert
+imgproxy	imgproxy	backend	-	storage:/var/lib/storage:ro	health-and-shared-consumer-mode
+storage	storage	backend	db,imgproxy,rest	storage:/var/lib/storage:rw	private-bucket-upload-byte-exact-download
+meta	meta	backend	db	-	HTTP-health
+supavisor	supavisor	backend	db	-	HTTP-health-and-private-database
+functions	functions	backend	db	bind:/home/deno/functions:ro,deno-cache:/root/.cache/deno:rw	seed-SHA-256-cd2c400852048a021086994cc5f266472d53e72ffddb1c1f5d01a17ddaa27ca4-and-verify-SHA-256-71059a67ee64b2891c41a31b66660b18e366342f765ccf07fd68fb0436eb6638
+studio	studio	backend	meta	bind:/boxferry-fixture:ro	profile-API-and-probe-runtime
+kong	kong	backend,edge	auth,functions,realtime,rest,storage,studio	bind:/etc/kong/kong.yml:ro	loopback-only-public-gateway

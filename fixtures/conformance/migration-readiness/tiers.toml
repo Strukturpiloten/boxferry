@@ -2,11 +2,6 @@ schema = 1
 evidence-schema = "docs/schemas/migration-readiness-evidence-v1.schema.json"
 
 [[gaps]]
-id = "supabase-runtime"
-state = "planned"
-reason = "Supabase runtime behavior is tracked by BoxFerry issue #140; its offline source fixture is not a successful runtime migration."
-
-[[gaps]]
 id = "gpu"
 state = "not-executed"
 reason = "GPU acceleration and Immich machine-learning inference are outside the CPU-only reviewed application contract."
@@ -61,8 +56,9 @@ max-concurrency = 1
 tier-deadline-seconds = 19800
 manual-prerequisites = [
   "all trusted-live prerequisites",
-  "at least 8 GiB available RAM",
-  "at least 12 GiB free temporary and Podman graph-root space",
+  "at least 4 CPUs",
+  "at least 12 GiB available RAM",
+  "at least 24 GiB free temporary and Podman graph-root space",
   "Git network access to the exact reviewed Lens revisions",
 ]
 tasks = [
@@ -73,6 +69,7 @@ tasks = [
   "paperless-application",
   "immich-application",
   "observability-application",
+  "supabase-application",
   "compose-lens-candidate",
   "quadlet-lens-candidate",
 ]
@@ -267,6 +264,24 @@ maximum-disk-growth-mib = 6144
 required-tools = ["podman"]
 required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
 command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "observability-application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
+
+[[tasks]]
+id = "supabase-application"
+kind = "command"
+privileged = true
+workload = "supabase-eleven-service"
+sources = ["native-podman", "docker-compose-5.5.0", "podman-api-6.1.0-rootless"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "reviewed application assertions in scripts/lib/supabase-application.sh"
+runtime-claim = "authentication, database/API and storage round trips, Realtime, Edge Runtime, persistence, privacy, selectors, shared ownership, ingress, collision, recreation, and cleanup"
+deadline-seconds = 5400
+minimum-memory-mib = 12288
+minimum-disk-mib = 24576
+maximum-rss-mib = 14336
+maximum-disk-growth-mib = 20480
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "supabase-application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
 
 [[tasks]]
 id = "compose-lens-candidate"

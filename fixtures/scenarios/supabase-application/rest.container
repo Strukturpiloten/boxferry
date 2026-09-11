@@ -1,0 +1,11 @@
+[Unit]
+
+Requires=db.service
+After=db.service
+
+[Container]
+
+Image=docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c
+Environment=PGRST_DB_URI=postgres://authenticator:boxferry-public-supabase-db-password@db:5432/postgres
+Environment=PGRST_DB_SCHEMAS=public
+Network=backend.network

@@ -1,0 +1,388 @@
+---
+services:
+  db:
+    image: ${BF_DB_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-db
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?required}
+      POSTGRES_USER: postgres
+    command: ["postgres", "-c", "log_min_messages=fatal"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 150
+    networks:
+      backend:
+        aliases: [db]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ${BF_FIXTURE_ROOT:?required}/db-init.sql:/docker-entrypoint-initdb.d/80-boxferry.sql:ro,z
+
+  auth:
+    image: ${BF_AUTH_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-auth
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      API_EXTERNAL_URL: http://127.0.0.1:18000
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${BF_DB_PASSWORD}@db:5432/postgres
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_SECRET: ${BF_JWT_SECRET:?required}
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_SITE_URL: http://127.0.0.1:18000
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 150
+    networks:
+      backend:
+        aliases: [auth]
+
+  rest:
+    image: ${BF_REST_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-rest
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_ADMIN_SERVER_HOST: 0.0.0.0
+      PGRST_ADMIN_SERVER_PORT: "3001"
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_DB_EXTRA_SEARCH_PATH: public
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_URI: postgres://authenticator:${BF_DB_PASSWORD}@db:5432/postgres
+      PGRST_JWT_SECRET: ${BF_JWT_SECRET:?required}
+    healthcheck:
+      test: ["CMD", "postgrest", "--ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 150
+    networks:
+      backend:
+        aliases: [rest]
+
+  realtime:
+    image: ${BF_REALTIME_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-realtime
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      API_JWT_SECRET: ${BF_JWT_SECRET:?required}
+      APP_NAME: realtime
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      DB_ENC_KEY: boxferry-public-realtime-db-key
+      DB_HOST: db
+      DB_NAME: postgres
+      DB_PASSWORD: ${BF_DB_PASSWORD:?required}
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DNS_NODES: "''"
+      ERL_AFLAGS: -proto_dist inet_tcp
+      PORT: "4000"
+      RLIMIT_NOFILE: "10000"
+      RUN_JANITOR: "false"
+      SECRET_KEY_BASE: ${BF_REALTIME_SECRET:?required}
+      SEED_SELF_HOST: "true"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS -o /dev/null http://127.0.0.1:4000/api/tenants/realtime-dev/health -H 'Authorization: Bearer ${BF_ANON_KEY}'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 10s
+    networks:
+      backend:
+        aliases: [realtime, realtime-dev.supabase-realtime]
+
+  imgproxy:
+    image: ${BF_IMGPROXY_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-imgproxy
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    environment:
+      IMGPROXY_BIND: :5001
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /
+      IMGPROXY_MAX_SRC_RESOLUTION: "16.8"
+      IMGPROXY_USE_ETAG: "true"
+    healthcheck:
+      test: ["CMD", "imgproxy", "health"]
+      interval: 2s
+      timeout: 3s
+      retries: 150
+    networks:
+      backend:
+        aliases: [imgproxy]
+    volumes:
+      - storage:/var/lib/storage:ro
+
+  storage:
+    image: ${BF_STORAGE_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-storage
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+      io.boxferry.selection: storage
+    depends_on:
+      db:
+        condition: service_healthy
+      imgproxy:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+    environment:
+      ANON_KEY: ${BF_ANON_KEY:?required}
+      AUTH_JWT_SECRET: ${BF_JWT_SECRET:?required}
+      DATABASE_URL: postgres://supabase_storage_admin:${BF_DB_PASSWORD}@db:5432/postgres
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      FILE_SIZE_LIMIT: "1048576"
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      GLOBAL_S3_BUCKET: stub
+      IMGPROXY_URL: http://imgproxy:5001
+      POSTGREST_URL: http://rest:3000
+      REGION: local
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      SERVICE_KEY: ${BF_SERVICE_KEY:?required}
+      STORAGE_BACKEND: file
+      STORAGE_PUBLIC_URL: http://127.0.0.1:18000/storage/v1
+      TENANT_ID: stub
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"]
+      interval: 3s
+      timeout: 3s
+      retries: 150
+    networks:
+      backend:
+        aliases: [storage]
+    volumes:
+      - storage:/var/lib/storage
+
+  meta:
+    image: ${BF_META_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-meta
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CRYPTO_KEY: boxferry-public-pg-meta-crypto-key
+      PG_META_DB_HOST: db
+      PG_META_DB_NAME: postgres
+      PG_META_DB_PASSWORD: ${BF_DB_PASSWORD:?required}
+      PG_META_DB_PORT: "5432"
+      PG_META_DB_USER: postgres
+      PG_META_PORT: "8080"
+    networks:
+      backend:
+        aliases: [meta]
+
+  supavisor:
+    image: ${BF_SUPAVISOR_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-supavisor
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      API_JWT_SECRET: ${BF_JWT_SECRET:?required}
+      CLUSTER_POSTGRES: "true"
+      DATABASE_URL: ecto://supabase_admin:${BF_DB_PASSWORD}@db:5432/_supabase
+      ERL_AFLAGS: -proto_dist inet_tcp
+      METRICS_JWT_SECRET: ${BF_JWT_SECRET:?required}
+      PORT: "4000"
+      POSTGRES_DB: postgres
+      POSTGRES_HOST: db
+      POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?required}
+      POSTGRES_PORT: "5432"
+      POOLER_DEFAULT_POOL_SIZE: "5"
+      POOLER_MAX_CLIENT_CONN: "25"
+      POOLER_POOL_MODE: transaction
+      POOLER_TENANT_ID: boxferry
+      REGION: local
+      SECRET_KEY_BASE: ${BF_POOLER_SECRET:?required}
+      VAULT_ENC_KEY: boxferry-public-vault-key-32byte
+    command: ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/server"]
+    networks:
+      backend:
+        aliases: [supavisor]
+
+  functions:
+    image: ${BF_FUNCTIONS_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-functions
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      JWT_SECRET: ${BF_JWT_SECRET:?required}
+      SUPABASE_ANON_KEY: ${BF_ANON_KEY:?required}
+      SUPABASE_DB_URL: postgresql://postgres:${BF_DB_PASSWORD}@db:5432/postgres
+      SUPABASE_SERVICE_ROLE_KEY: ${BF_SERVICE_KEY:?required}
+      SUPABASE_URL: http://kong:8000
+      VERIFY_JWT: "false"
+    command: ["start", "--main-service", "/home/deno/functions/main"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/9000'"]
+      interval: 3s
+      timeout: 3s
+      retries: 150
+    networks:
+      backend:
+        aliases: [functions]
+    volumes:
+      - ${BF_FIXTURE_ROOT}/functions:/home/deno/functions:ro,z
+      - deno-cache:/root/.cache/deno
+
+  studio:
+    image: ${BF_STUDIO_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-studio
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      meta:
+        condition: service_started
+    environment:
+      AUTH_JWT_SECRET: ${BF_JWT_SECRET:?required}
+      DEFAULT_ORGANIZATION_NAME: BoxFerry
+      DEFAULT_PROJECT_NAME: Supabase acceptance
+      ENABLED_FEATURES_LOGS_ALL: "false"
+      HOSTNAME: 0.0.0.0
+      PG_META_CRYPTO_KEY: boxferry-public-pg-meta-crypto-key
+      POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?required}
+      POSTGRES_USER_READ_WRITE: postgres
+      STUDIO_PG_META_URL: http://meta:8080
+      SUPABASE_ANON_KEY: ${BF_ANON_KEY:?required}
+      SUPABASE_PUBLIC_URL: http://127.0.0.1:18000
+      SUPABASE_SERVICE_KEY: ${BF_SERVICE_KEY:?required}
+      SUPABASE_URL: http://kong:8000
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "fetch(''http://127.0.0.1:3000/api/platform/profile'').then((r) => { if (!r.ok) process.exit(1) })"',
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 150
+      start_period: 10s
+    networks:
+      backend:
+        aliases: [studio]
+    volumes:
+      - ${BF_FIXTURE_ROOT}:/boxferry-fixture:ro,z
+
+  kong:
+    image: ${BF_KONG_IMAGE:?required}
+    pull_policy: never
+    container_name: ${BF_PREFIX}-supabase-kong
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+    depends_on:
+      auth:
+        condition: service_healthy
+      functions:
+        condition: service_healthy
+      realtime:
+        condition: service_healthy
+      rest:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+      studio:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      KONG_PLUGINS: bundled
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 3s
+      timeout: 5s
+      retries: 150
+    ports:
+      - "127.0.0.1:18000:8000"
+    networks:
+      backend:
+        aliases: [kong]
+      edge:
+        aliases: [supabase]
+    volumes:
+      - ${BF_FIXTURE_ROOT}/kong.yml:/etc/kong/kong.yml:ro,z
+
+networks:
+  backend:
+    name: ${BF_PREFIX}-supabase-backend
+    internal: true
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+  edge:
+    name: ${BF_PREFIX}-supabase-edge
+    external: true
+
+volumes:
+  deno-cache:
+    name: ${BF_PREFIX}-supabase-deno-cache
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+  pgdata:
+    name: ${BF_PREFIX}-supabase-pgdata
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase
+  storage:
+    name: ${BF_PREFIX}-supabase-storage
+    labels:
+      io.boxferry.live-run: ${BF_RUN:?required}
+      io.boxferry.application: ${BF_PREFIX}-supabase

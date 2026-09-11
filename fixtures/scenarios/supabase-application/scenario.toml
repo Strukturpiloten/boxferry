@@ -1,0 +1,736 @@
+schema = 1
+id = "supabase-application"
+source-capabilities = ["compose", "podman", "quadlet"]
+target-capabilities = ["compose", "podman", "quadlet"]
+protected-values = ["boxferry-public-supabase-db-password"]
+
+[application]
+name = "supabase-application"
+version = "1.0.0"
+
+[[components]]
+name = "auth"
+version = "2.189.0"
+image = "docker.io/supabase/gotrue"
+digest = "sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf"
+configured-image = "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf"
+
+[[components]]
+name = "db"
+version = "17.6.1"
+image = "docker.io/supabase/postgres"
+digest = "sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00"
+configured-image = "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00"
+
+[[components]]
+name = "functions"
+version = "1.74.0"
+image = "docker.io/supabase/edge-runtime"
+digest = "sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120"
+configured-image = "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120"
+
+[[components]]
+name = "imgproxy"
+version = "3.30.1"
+image = "docker.io/darthsim/imgproxy"
+digest = "sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d"
+configured-image = "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d"
+
+[[components]]
+name = "kong"
+version = "3.9.3"
+image = "docker.io/kong/kong"
+digest = "sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3"
+configured-image = "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3"
+
+[[components]]
+name = "meta"
+version = "0.96.6"
+image = "docker.io/supabase/postgres-meta"
+digest = "sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300"
+configured-image = "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300"
+
+[[components]]
+name = "realtime"
+version = "2.102.3"
+image = "docker.io/supabase/realtime"
+digest = "sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471"
+configured-image = "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471"
+
+[[components]]
+name = "rest"
+version = "14.12.0"
+image = "docker.io/postgrest/postgrest"
+digest = "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c"
+configured-image = "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c"
+
+[[components]]
+name = "storage"
+version = "1.60.4"
+image = "docker.io/supabase/storage-api"
+digest = "sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf"
+configured-image = "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf"
+
+[[components]]
+name = "studio"
+version = "2026.8.3"
+image = "docker.io/supabase/studio"
+digest = "sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8"
+configured-image = "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8"
+
+[[components]]
+name = "supavisor"
+version = "2.9.5"
+image = "docker.io/supabase/supavisor"
+digest = "sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07"
+configured-image = "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07"
+
+[[native-inputs]]
+id = "compose"
+importer = "compose"
+files = ["compose.yaml"]
+format-version = "compose-specification"
+import-diagnostics = []
+
+[[native-inputs]]
+id = "quadlet"
+importer = "quadlet"
+files = [
+  "auth.container",
+  "backend.network",
+  "db.container",
+  "deno-cache.volume",
+  "edge.network",
+  "functions.container",
+  "imgproxy.container",
+  "kong.container",
+  "meta.container",
+  "pgdata.volume",
+  "realtime.container",
+  "rest.container",
+  "storage.container",
+  "storage.volume",
+  "studio.container",
+  "supavisor.container",
+]
+format-version = "0.2.3"
+import-diagnostics = []
+
+[[native-inputs]]
+id = "podman"
+importer = "podman"
+files = ["input-podman.cassette.json"]
+format-version = "6.1.0"
+import-diagnostics-file = "expected.podman-import.diagnostics"
+
+[native-inputs.podman]
+application = "supabase-application"
+cassette-scenario-id = "supabase-application-authored-podman-6.1.0"
+root-mode = "rootless"
+include-environment-values = true
+selectors = [
+  { kind = "container", exact = "auth" },
+  { kind = "container", exact = "db" },
+  { kind = "container", exact = "functions" },
+  { kind = "container", exact = "imgproxy" },
+  { kind = "container", exact = "kong" },
+  { kind = "container", exact = "meta" },
+  { kind = "container", exact = "realtime" },
+  { kind = "container", exact = "rest" },
+  { kind = "container", exact = "storage" },
+  { kind = "container", exact = "studio" },
+  { kind = "container", exact = "supavisor" },
+  { kind = "network", exact = "backend" },
+  { kind = "network", exact = "edge" },
+  { kind = "volume", exact = "deno-cache" },
+  { kind = "volume", exact = "pgdata" },
+  { kind = "volume", exact = "storage" },
+]
+promotion-policy = { effective-bind-mounts = false, effective-named-volume-mounts = true, effective-named-networks = true, portable-effective-settings = true }
+
+[provenance]
+source = "authored"
+license = "MPL-2.0"
+privacy-reviewed = true
+test-data = "Repository-authored offline Compose, Quadlet, and deterministic Libpod replay inputs were written independently of BoxFerry output. Public canaries exercise report redaction; no runtime behavior is claimed."
+image-evidence = "Reviewed Supabase application image identities match the separately catalogued live pins, but ordinary scenario tests never pull or execute them."
+
+[deployment]
+origin = "authored"
+root-mode = "not-applicable"
+
+[semantics]
+selected-resources = [
+  "network:backend",
+  "network:edge",
+  "service:auth",
+  "service:db",
+  "service:functions",
+  "service:imgproxy",
+  "service:kong",
+  "service:meta",
+  "service:realtime",
+  "service:rest",
+  "service:storage",
+  "service:studio",
+  "service:supavisor",
+  "volume:deno-cache",
+  "volume:pgdata",
+  "volume:storage",
+]
+excluded-resources = ["service:boundary-peer"]
+ownership-boundaries = [
+  "volume:deno-cache:application",
+  "volume:pgdata:application",
+  "volume:storage:application",
+]
+shared-boundaries = [
+  "volume:deno-cache:consumers=functions",
+  "volume:pgdata:consumers=db",
+  "volume:storage:consumers=imgproxy,storage",
+]
+required-mounts = []
+required-environment = [
+  "auth:GOTRUE_DB_DATABASE_URL=postgres://supabase_auth_admin:boxferry-public-supabase-db-password@db:5432/postgres",
+  "auth:GOTRUE_DB_DRIVER=postgres",
+  "db:POSTGRES_DB=postgres",
+  "db:POSTGRES_PASSWORD=boxferry-public-supabase-db-password",
+  "db:POSTGRES_USER=postgres",
+  "functions:SUPABASE_DB_URL=postgresql://postgres:boxferry-public-supabase-db-password@db:5432/postgres",
+  "functions:SUPABASE_URL=http://kong:8000",
+  "functions:VERIFY_JWT=false",
+  "imgproxy:IMGPROXY_BIND=:5001",
+  "imgproxy:IMGPROXY_LOCAL_FILESYSTEM_ROOT=/",
+  "kong:KONG_DATABASE=off",
+  "kong:KONG_DECLARATIVE_CONFIG=/etc/kong/kong.yml",
+  "meta:PG_META_DB_HOST=db",
+  "meta:PG_META_DB_NAME=postgres",
+  "realtime:DB_HOST=db",
+  "realtime:DB_NAME=postgres",
+  "realtime:DB_PASSWORD=boxferry-public-supabase-db-password",
+  "rest:PGRST_DB_SCHEMAS=public",
+  "rest:PGRST_DB_URI=postgres://authenticator:boxferry-public-supabase-db-password@db:5432/postgres",
+  "storage:DATABASE_URL=postgres://supabase_storage_admin:boxferry-public-supabase-db-password@db:5432/postgres",
+  "storage:IMGPROXY_URL=http://imgproxy:5001",
+  "storage:POSTGREST_URL=http://rest:3000",
+  "storage:STORAGE_BACKEND=file",
+  "studio:STUDIO_PG_META_URL=http://meta:8080",
+  "studio:SUPABASE_URL=http://kong:8000",
+  "supavisor:POSTGRES_DB=postgres",
+  "supavisor:POSTGRES_HOST=db",
+]
+required-dependencies = [
+  { service = "auth", dependency = "db", condition = "unspecified", assert-options = false },
+  { service = "functions", dependency = "db", condition = "unspecified", assert-options = false },
+  { service = "kong", dependency = "auth", condition = "unspecified", assert-options = false },
+  { service = "kong", dependency = "functions", condition = "unspecified", assert-options = false },
+  { service = "kong", dependency = "realtime", condition = "unspecified", assert-options = false },
+  { service = "kong", dependency = "rest", condition = "unspecified", assert-options = false },
+  { service = "kong", dependency = "storage", condition = "unspecified", assert-options = false },
+  { service = "kong", dependency = "studio", condition = "unspecified", assert-options = false },
+  { service = "meta", dependency = "db", condition = "unspecified", assert-options = false },
+  { service = "realtime", dependency = "db", condition = "unspecified", assert-options = false },
+  { service = "rest", dependency = "db", condition = "unspecified", assert-options = false },
+  { service = "storage", dependency = "db", condition = "unspecified", assert-options = false },
+  { service = "storage", dependency = "imgproxy", condition = "unspecified", assert-options = false },
+  { service = "storage", dependency = "rest", condition = "unspecified", assert-options = false },
+  { service = "studio", dependency = "meta", condition = "unspecified", assert-options = false },
+  { service = "supavisor", dependency = "db", condition = "unspecified", assert-options = false },
+]
+required-ports = ["kong:18000:8000/tcp"]
+unpublished-services = ["auth", "db", "functions", "imgproxy", "meta", "realtime", "rest", "storage", "studio", "supavisor"]
+required-networks = [
+  { name = "backend", ownership = "application", internal = true },
+  { name = "edge", ownership = "application" },
+]
+exact-network-memberships = [
+  "auth:backend",
+  "db:backend",
+  "functions:backend",
+  "imgproxy:backend",
+  "kong:backend,edge",
+  "meta:backend",
+  "realtime:backend",
+  "rest:backend",
+  "storage:backend",
+  "studio:backend",
+  "supavisor:backend",
+]
+required-commands = [
+  { service = "auth", kind = "absent" },
+  { service = "db", kind = "absent" },
+  { service = "functions", kind = "absent" },
+  { service = "imgproxy", kind = "absent" },
+  { service = "kong", kind = "absent" },
+  { service = "meta", kind = "absent" },
+  { service = "realtime", kind = "absent" },
+  { service = "rest", kind = "absent" },
+  { service = "storage", kind = "absent" },
+  { service = "studio", kind = "absent" },
+  { service = "supavisor", kind = "absent" },
+]
+required-entrypoints = [
+  { service = "auth", kind = "absent" },
+  { service = "db", kind = "absent" },
+  { service = "functions", kind = "absent" },
+  { service = "imgproxy", kind = "absent" },
+  { service = "kong", kind = "absent" },
+  { service = "meta", kind = "absent" },
+  { service = "realtime", kind = "absent" },
+  { service = "rest", kind = "absent" },
+  { service = "storage", kind = "absent" },
+  { service = "studio", kind = "absent" },
+  { service = "supavisor", kind = "absent" },
+]
+required-image-sources = [
+  { service = "auth", kind = "literal", value = "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf" },
+  { service = "db", kind = "literal", value = "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00" },
+  { service = "functions", kind = "literal", value = "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120" },
+  { service = "imgproxy", kind = "literal", value = "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d" },
+  { service = "kong", kind = "literal", value = "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3" },
+  { service = "meta", kind = "literal", value = "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300" },
+  { service = "realtime", kind = "literal", value = "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471" },
+  { service = "rest", kind = "literal", value = "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c" },
+  { service = "storage", kind = "literal", value = "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf" },
+  { service = "studio", kind = "literal", value = "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8" },
+  { service = "supavisor", kind = "literal", value = "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07" },
+]
+required-port-bindings = [{ service = "kong", container = 8000, published = 18000, host-address = "127.0.0.1", protocol = "tcp" }]
+required-volume-mounts = [
+  { service = "db", source = "pgdata", target = "/var/lib/postgresql/data", read-only = false },
+  { service = "functions", source = "deno-cache", target = "/root/.cache/deno", read-only = false },
+  { service = "imgproxy", source = "storage", target = "/var/lib/storage", read-only = true },
+  { service = "storage", source = "storage", target = "/var/lib/storage", read-only = false },
+]
+
+[[evidence]]
+input = "compose"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.compose-compose.diagnostics"
+allowed-losses-file = "expected.compose-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+]
+reimport-semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+]
+
+[[evidence]]
+input = "compose"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["auth.container", "backend.network", "db.container", "deno-cache.volume", "edge.network", "functions.container", "imgproxy.container", "kong.container", "meta.container", "pgdata.volume", "realtime.container", "rest.container", "storage.container", "storage.volume", "studio.container", "supavisor.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "compose"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain dependencies, protected environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.compose-podman.diagnostics"
+allowed-losses-file = "expected.compose-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+  "environment:auth:GOTRUE_DB_DATABASE_URL",
+  "environment:auth:GOTRUE_DB_DRIVER",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:functions:SUPABASE_DB_URL",
+  "environment:functions:SUPABASE_URL",
+  "environment:functions:VERIFY_JWT",
+  "environment:imgproxy:IMGPROXY_BIND",
+  "environment:imgproxy:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:kong:KONG_DATABASE",
+  "environment:kong:KONG_DECLARATIVE_CONFIG",
+  "environment:meta:PG_META_DB_HOST",
+  "environment:meta:PG_META_DB_NAME",
+  "environment:realtime:DB_HOST",
+  "environment:realtime:DB_NAME",
+  "environment:realtime:DB_PASSWORD",
+  "environment:rest:PGRST_DB_SCHEMAS",
+  "environment:rest:PGRST_DB_URI",
+  "environment:storage:DATABASE_URL",
+  "environment:storage:IMGPROXY_URL",
+  "environment:storage:POSTGREST_URL",
+  "environment:storage:STORAGE_BACKEND",
+  "environment:studio:STUDIO_PG_META_URL",
+  "environment:studio:SUPABASE_URL",
+  "environment:supavisor:POSTGRES_DB",
+  "environment:supavisor:POSTGRES_HOST",
+  "network-internal:backend",
+  "port:kong:8000:Some(18000)",
+  "publication:kong:18000:8000/tcp",
+]
+podman-plan = { creatable-resources = ["container:auth", "container:db", "container:functions", "container:imgproxy", "container:kong", "container:meta", "container:realtime", "container:rest", "container:storage", "container:studio", "container:supavisor", "network:backend", "network:edge", "volume:deno-cache", "volume:pgdata", "volume:storage"], external-preconditions = [], image-operations = [
+  { resource = "auth-image", reference = "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf", policy = "missing" },
+  { resource = "db-image", reference = "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00", policy = "missing" },
+  { resource = "functions-image", reference = "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120", policy = "missing" },
+  { resource = "imgproxy-image", reference = "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d", policy = "missing" },
+  { resource = "kong-image", reference = "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3", policy = "missing" },
+  { resource = "meta-image", reference = "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300", policy = "missing" },
+  { resource = "realtime-image", reference = "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471", policy = "missing" },
+  { resource = "rest-image", reference = "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c", policy = "missing" },
+  { resource = "storage-image", reference = "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf", policy = "missing" },
+  { resource = "studio-image", reference = "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8", policy = "missing" },
+  { resource = "supavisor-image", reference = "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07", policy = "missing" },
+], start-order = ["db", "auth", "functions", "imgproxy", "meta", "realtime", "rest", "storage", "studio", "kong", "supavisor"] }
+
+[[evidence]]
+input = "quadlet"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.quadlet-compose.diagnostics"
+allowed-losses-file = "expected.quadlet-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+]
+reimport-semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+]
+
+[[evidence]]
+input = "quadlet"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["auth.container", "backend.network", "db.container", "deno-cache.volume", "edge.network", "functions.container", "imgproxy.container", "kong.container", "meta.container", "pgdata.volume", "realtime.container", "rest.container", "storage.container", "storage.volume", "studio.container", "supavisor.container"]
+diagnostics = []
+allowed-losses = []
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "quadlet"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain dependency options, protected environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.quadlet-podman.diagnostics"
+allowed-losses-file = "expected.quadlet-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+  "environment:auth:GOTRUE_DB_DATABASE_URL",
+  "environment:auth:GOTRUE_DB_DRIVER",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:functions:SUPABASE_DB_URL",
+  "environment:functions:SUPABASE_URL",
+  "environment:functions:VERIFY_JWT",
+  "environment:imgproxy:IMGPROXY_BIND",
+  "environment:imgproxy:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:kong:KONG_DATABASE",
+  "environment:kong:KONG_DECLARATIVE_CONFIG",
+  "environment:meta:PG_META_DB_HOST",
+  "environment:meta:PG_META_DB_NAME",
+  "environment:realtime:DB_HOST",
+  "environment:realtime:DB_NAME",
+  "environment:realtime:DB_PASSWORD",
+  "environment:rest:PGRST_DB_SCHEMAS",
+  "environment:rest:PGRST_DB_URI",
+  "environment:storage:DATABASE_URL",
+  "environment:storage:IMGPROXY_URL",
+  "environment:storage:POSTGREST_URL",
+  "environment:storage:STORAGE_BACKEND",
+  "environment:studio:STUDIO_PG_META_URL",
+  "environment:studio:SUPABASE_URL",
+  "environment:supavisor:POSTGRES_DB",
+  "environment:supavisor:POSTGRES_HOST",
+  "network-internal:backend",
+  "port:kong:8000:Some(18000)",
+  "publication:kong:18000:8000/tcp",
+]
+podman-plan = { creatable-resources = ["container:auth", "container:db", "container:functions", "container:imgproxy", "container:kong", "container:meta", "container:realtime", "container:rest", "container:storage", "container:studio", "container:supavisor", "network:backend", "network:edge", "volume:deno-cache", "volume:pgdata", "volume:storage"], external-preconditions = [], image-operations = [
+  { resource = "auth-image", reference = "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf", policy = "missing" },
+  { resource = "db-image", reference = "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00", policy = "missing" },
+  { resource = "functions-image", reference = "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120", policy = "missing" },
+  { resource = "imgproxy-image", reference = "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d", policy = "missing" },
+  { resource = "kong-image", reference = "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3", policy = "missing" },
+  { resource = "meta-image", reference = "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300", policy = "missing" },
+  { resource = "realtime-image", reference = "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471", policy = "missing" },
+  { resource = "rest-image", reference = "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c", policy = "missing" },
+  { resource = "storage-image", reference = "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf", policy = "missing" },
+  { resource = "studio-image", reference = "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8", policy = "missing" },
+  { resource = "supavisor-image", reference = "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07", policy = "missing" },
+], start-order = ["db", "auth", "functions", "imgproxy", "meta", "realtime", "rest", "storage", "studio", "kong", "supavisor"] }
+
+[[evidence]]
+input = "podman"
+exporter = "compose"
+target-implementation = "compose-specification"
+target-minimum = "1.0.0"
+target-maximum = "1.0.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Compose output cannot retain dependency intent."
+artifacts = ["compose.yaml"]
+diagnostics-file = "expected.podman-compose.diagnostics"
+allowed-losses-file = "expected.podman-compose.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct dependency intent omitted by export." }
+semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+]
+reimport-semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+]
+
+[[evidence]]
+input = "podman"
+exporter = "quadlet"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "migration-success"
+artifacts = ["auth.container", "backend.network", "db.container", "deno-cache.volume", "edge.network", "functions.container", "imgproxy.container", "kong.container", "meta.container", "pgdata.volume", "realtime.container", "rest.container", "storage.container", "storage.volume", "studio.container", "supavisor.container"]
+diagnostics-file = "expected.podman-quadlet.diagnostics"
+allowed-losses-file = "expected.podman-quadlet.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "passed" }
+
+[[evidence]]
+input = "podman"
+exporter = "podman"
+target-implementation = "podman"
+target-minimum = "6.1.0"
+target-maximum = "6.1.0"
+loss-policy = "partial"
+outcome = "known-migration-gap"
+reason = "Podman deployment output cannot retain reviewed dependencies, environment, internal-network, or loopback publication intent."
+artifacts = ["podman-commands.sh", "podman.json"]
+diagnostics-file = "expected.podman-podman.diagnostics"
+allowed-losses-file = "expected.podman-podman.losses.tsv"
+native-validation = { state = "passed" }
+runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
+reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
+semantic-gaps = [
+  "dependency:auth:db",
+  "dependency:functions:db",
+  "dependency:kong:auth",
+  "dependency:kong:functions",
+  "dependency:kong:realtime",
+  "dependency:kong:rest",
+  "dependency:kong:storage",
+  "dependency:kong:studio",
+  "dependency:meta:db",
+  "dependency:realtime:db",
+  "dependency:rest:db",
+  "dependency:storage:db",
+  "dependency:storage:imgproxy",
+  "dependency:storage:rest",
+  "dependency:studio:meta",
+  "dependency:supavisor:db",
+  "environment:auth:GOTRUE_DB_DATABASE_URL",
+  "environment:auth:GOTRUE_DB_DRIVER",
+  "environment:db:POSTGRES_DB",
+  "environment:db:POSTGRES_PASSWORD",
+  "environment:db:POSTGRES_USER",
+  "environment:functions:SUPABASE_DB_URL",
+  "environment:functions:SUPABASE_URL",
+  "environment:functions:VERIFY_JWT",
+  "environment:imgproxy:IMGPROXY_BIND",
+  "environment:imgproxy:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:kong:KONG_DATABASE",
+  "environment:kong:KONG_DECLARATIVE_CONFIG",
+  "environment:meta:PG_META_DB_HOST",
+  "environment:meta:PG_META_DB_NAME",
+  "environment:realtime:DB_HOST",
+  "environment:realtime:DB_NAME",
+  "environment:realtime:DB_PASSWORD",
+  "environment:rest:PGRST_DB_SCHEMAS",
+  "environment:rest:PGRST_DB_URI",
+  "environment:storage:DATABASE_URL",
+  "environment:storage:IMGPROXY_URL",
+  "environment:storage:POSTGREST_URL",
+  "environment:storage:STORAGE_BACKEND",
+  "environment:studio:STUDIO_PG_META_URL",
+  "environment:studio:SUPABASE_URL",
+  "environment:supavisor:POSTGRES_DB",
+  "environment:supavisor:POSTGRES_HOST",
+  "network-internal:backend",
+  "port:kong:8000:Some(18000)",
+  "publication:kong:18000:8000/tcp",
+]
+podman-plan = { creatable-resources = ["container:auth", "container:db", "container:functions", "container:imgproxy", "container:kong", "container:meta", "container:realtime", "container:rest", "container:storage", "container:studio", "container:supavisor", "network:backend", "network:edge", "volume:deno-cache", "volume:pgdata", "volume:storage"], external-preconditions = [], image-operations = [
+  { resource = "auth-image", reference = "docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf", policy = "missing" },
+  { resource = "db-image", reference = "docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00", policy = "missing" },
+  { resource = "functions-image", reference = "docker.io/supabase/edge-runtime@sha256:2781daf92394db91f7e94129cc3d04ec474ad16a8fe64b3fbeef6e7d557ab120", policy = "missing" },
+  { resource = "imgproxy-image", reference = "docker.io/darthsim/imgproxy@sha256:3b709e4a0e5e8e0e959b556b7031229202b4b8e7e7d955c517ea7abed68ee34d", policy = "missing" },
+  { resource = "kong-image", reference = "docker.io/kong/kong@sha256:9a2ae6699a2ce0d60592eb176555d3594a22782c20cc6557a61ff3a7e8b559a3", policy = "missing" },
+  { resource = "meta-image", reference = "docker.io/supabase/postgres-meta@sha256:a84cc713585eea7b401e4a2561ec4a1e48c87083d1c7ecb4502f204bb4391300", policy = "missing" },
+  { resource = "realtime-image", reference = "docker.io/supabase/realtime@sha256:aa1c92c0cf326007563641730ec9da9c60478caa6853887775365fa2c097a471", policy = "missing" },
+  { resource = "rest-image", reference = "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c", policy = "missing" },
+  { resource = "storage-image", reference = "docker.io/supabase/storage-api@sha256:c8eb9858eafec891a97c27125470aaad54703c3f4eb4d55ca7f1bf6c6411febf", policy = "missing" },
+  { resource = "studio-image", reference = "docker.io/supabase/studio@sha256:606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8", policy = "missing" },
+  { resource = "supavisor-image", reference = "docker.io/supabase/supavisor@sha256:31c2f05b13b11069660fdfae2f6cfd37b509748d2710aca121cfee8b16cb8b07", policy = "missing" },
+], start-order = ["db", "auth", "functions", "imgproxy", "meta", "realtime", "rest", "storage", "studio", "kong", "supavisor"] }
