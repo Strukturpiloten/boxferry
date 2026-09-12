@@ -387,6 +387,55 @@ bash -c '
 ' bash "${library}" "${database_health_failure_marker}"
 [[ "$(tr '\n' ' ' < "${database_health_failure_marker}")" == 'contract evidence ' ]]
 
+database_peer_success_marker="${test_root}/database-peer-success.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
+  supabase_wait_healthy() {
+    printf "health:%s\n" "$2" >> "${marker}"
+    [[ "$2" != *-supabase-db ]]
+  }
+  supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
+  supabase_remote() {
+    if [[ "$2" == inspect && "$*" == *".State.Health.Status"* ]]; then
+      printf "%s\n" "Database health must not be inspected after peer readiness." >&2
+      return 1
+    fi
+    printf "remote:%s\n" "$2" >> "${marker}"
+  }
+  supabase_wait_application test-socket test-prefix
+' bash "${library}" "${database_peer_success_marker}"
+[[ "$(head -n 1 "${database_peer_success_marker}")" == peer-sql ]]
+if grep --fixed-strings --quiet -- 'test-prefix-supabase-db' \
+  "${database_peer_success_marker}"; then
+  printf '%s\n' 'Successful peer readiness inspected the database health state.' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet -- 'health:test-prefix-supabase-auth' \
+  "${database_peer_success_marker}"
+
+database_peer_failure_marker="${test_root}/database-peer-failure.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_database_sql_contract() { printf "peer-sql-failed\n" >> "${marker}"; return 1; }
+  supabase_report_database_contract_failure() { printf "contract-evidence\n" >> "${marker}"; }
+  supabase_report_database_failure_evidence() { printf "state-log-evidence\n" >> "${marker}"; }
+  supabase_wait_healthy() { printf "non-db-health-check\n" >> "${marker}"; return 1; }
+  supabase_wait_running() { printf "non-db-running-check\n" >> "${marker}"; return 1; }
+  supabase_remote() { printf "non-db-http-check\n" >> "${marker}"; return 1; }
+  if supabase_wait_application test-socket test-prefix; then
+    printf "%s\n" "Failed peer SQL readiness unexpectedly passed." >&2
+    exit 1
+  fi
+' bash "${library}" "${database_peer_failure_marker}"
+[[ "$(tr '\n' ' ' < "${database_peer_failure_marker}")" == 'peer-sql-failed contract-evidence state-log-evidence ' ]]
+
 database_contract_marker="${test_root}/database-contract.marker"
 database_contract_argv="${test_root}/database-contract.argv"
 bash -c '
