@@ -2629,6 +2629,7 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "SUPABASE_ARCHIVE_MAX_BYTES=\"5368709120\"",
         "SUPABASE_MAX_CONCURRENCY=\"1\"",
         "SUPABASE_CELL_TIMEOUT=\"90m\"",
+        "SUPABASE_CELL_KILL_AFTER=\"10s\"",
         "cpus=\"$(nproc)\"",
         "memory_kib=\"$(awk '$1 == \"MemAvailable:\" { print $2 }' /proc/meminfo)\"",
         "info --format '{{.Store.GraphRoot}}'",
@@ -2646,7 +2647,7 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         .split_once("supabase_run_application_cell_unbounded() {")
         .and_then(|(_, following)| {
             following
-                .split_once("\nrun_supabase_application_cell() {")
+                .split_once("\nsupabase_timed_in_shell_operation() {")
                 .map(|(cell, _)| cell)
         })
         .ok_or("Supabase numbered cell body could not be isolated")?;
@@ -2655,6 +2656,16 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         return Err(format!(
             "Supabase application cell must contain 40 numbered checks, found {progress_checks}"
         ));
+    }
+    for contract in [
+        "python3 \"${script_directory}/lib/in-shell-deadline.py\"",
+        "--kill-after \"${SUPABASE_CELL_KILL_AFTER}\"",
+        "supabase_timed_in_shell_operation \"${SUPABASE_CELL_TIMEOUT}\"",
+        "supabase_run_application_cell_unbounded \"$@\"",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!("Supabase in-shell deadline contract is missing `{contract}"));
+        }
     }
     for invocation in [
         "supabase_provision_cli \"${socket}\" \"${current_prefix}\" \"${run_id}\"",

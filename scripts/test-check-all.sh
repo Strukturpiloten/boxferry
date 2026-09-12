@@ -17,8 +17,14 @@ cp -- "${script_directory}/test-observability-grafana-network.sh" \
   "${test_root}/repository/scripts/test-observability-grafana-network.sh"
 cp -- "${script_directory}/test-observability-application.sh" \
   "${test_root}/repository/scripts/test-observability-application.sh"
+cp -- "${script_directory}/test-supabase-application.sh" \
+  "${test_root}/repository/scripts/test-supabase-application.sh"
 cp -- "${script_directory}/lib/observability-application.sh" \
   "${test_root}/repository/scripts/lib/observability-application.sh"
+cp -- "${script_directory}/lib/supabase-application.sh" \
+  "${test_root}/repository/scripts/lib/supabase-application.sh"
+cp -- "${script_directory}/lib/in-shell-deadline.py" \
+  "${test_root}/repository/scripts/lib/in-shell-deadline.py"
 cp -- "${script_directory}/../README.md" "${test_root}/repository/README.md"
 
 # These mock commands record exactly what the unmodified gate requests.
@@ -72,11 +78,11 @@ export BOXFERRY_WEBSITE_FORMAT_MODE=fix
 run_gate default
 run_gate fix --fix
 run_gate check --check
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/29\]' "${test_root}/default.output")" == 29 ]]
-grep --fixed-strings --quiet -- '[29/29] Check published API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 29 steps.' ]]
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/28\]' "${test_root}/default.output" || true)" == 0 ]]
-[[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 28 steps.' "${test_root}/default.output" || true)" == 0 ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/30\]' "${test_root}/default.output")" == 30 ]]
+grep --fixed-strings --quiet -- '[30/30] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 30 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/29\]' "${test_root}/default.output" || true)" == 0 ]]
+[[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 29 steps.' "${test_root}/default.output" || true)" == 0 ]]
 diff -u "${test_root}/default.commands" "${test_root}/fix.commands"
 assert_contains fix "bash scripts/check-files.sh --fix"
 assert_contains check "bash scripts/check-files.sh --check"
