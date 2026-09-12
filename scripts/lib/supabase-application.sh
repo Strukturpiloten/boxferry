@@ -47,7 +47,17 @@ supabase_image_reference() {
             found = 1
         }
         END { exit !found }
-    ' "$(supabase_fixture_root)/images.tsv"
+  ' "$(supabase_fixture_root)/images.tsv"
+}
+
+supabase_skopeo_source_reference() {
+  local reference=${1:?source image reference required}
+  local repository index_digest
+
+  repository="${reference%@*}"
+  repository="${repository%:*}"
+  index_digest="${reference##*@}"
+  printf 'docker://%s@%s\n' "${repository}" "${index_digest}"
 }
 
 supabase_validate_resource_budget() {
@@ -83,6 +93,11 @@ supabase_validate_resource_budget() {
 supabase_validate_catalogues() {
   local fixture
   fixture="$(supabase_fixture_root)"
+
+  [[ "$(head -n 1 "${fixture}/images.tsv")" == '# schema=4; id index-reference platform platform-manifest-digest platform-manifest-media-type version license source-url source-revision build-file build-file-sha256 redistribution inspection-caveat' ]] || {
+    printf '%s\n' 'Supabase image catalogue schema does not retain platform manifest evidence.' >&2
+    return 1
+  }
   [[ "${SUPABASE_MAX_CONCURRENCY}" == 1 && "${SUPABASE_CELL_TIMEOUT}" == 90m &&
     "${SUPABASE_CELL_KILL_AFTER}" == 10s ]] || {
     printf 'Supabase profile requires concurrency one and a 90-minute cell bound.\n' >&2
@@ -90,10 +105,11 @@ supabase_validate_catalogues() {
   }
   awk -F '\t' '
     NF && $1 !~ /^#/ {
-            if (NF != 12 || $2 !~ /:[^\/@]+@sha256:[0-9a-f]{64}$/ ||
-                    $3 != "linux/amd64" || $4 !~ /^sha256:[0-9a-f]{64}$/ ||
-                    $8 !~ /^[0-9a-f]{40}$/ || $10 !~ /^[0-9a-f]{64}$/ ||
-                    $11 != "not-redistributed-transient-test-pull" || seen[$1]++) {
+      if (NF != 13 || $2 !~ /:[^\/@]+@sha256:[0-9a-f]{64}$/ ||
+          $3 != "linux/amd64" || $4 !~ /^sha256:[0-9a-f]{64}$/ ||
+          $5 !~ /^application\/vnd\.(oci\.image\.manifest\.v1\+json|docker\.distribution\.manifest\.v2\+json)$/ ||
+          $9 !~ /^[0-9a-f]{40}$/ || $11 !~ /^[0-9a-f]{64}$/ ||
+          $12 != "not-redistributed-transient-test-pull" || seen[$1]++) {
         printf "invalid Supabase image row %d: %s\\n", NR, $0 > "/dev/stderr"; bad = 1
       }
     }
@@ -231,8 +247,11 @@ supabase_validate_provider() {
 }
 
 supabase_validate_image_archive() {
-  local id=$1 archive=$2 archive_reference=$3 expected_digest=$4 digest_file=$5
-  local written_digest descriptor descriptor_digest descriptor_reference blob_digest
+  local id=$1 archive=$2 runtime_reference=$3 expected_digest=$4 expected_media_type=$5
+  local digest_file=$6
+  local written_digest descriptor descriptor_digest descriptor_media_type descriptor_size
+  local descriptor_reference blob_digest blob_size
+
   [[ -s "${digest_file}" ]] || {
     printf 'Supabase %s archive did not record a manifest digest.\n' "${id}" >&2
     return 1
@@ -245,23 +264,30 @@ supabase_validate_image_archive() {
   }
   descriptor="$(
     tar --extract --to-stdout --file "${archive}" index.json | jq --exit-status --raw-output \
-      --arg reference "${archive_reference}" '
-                if .schemaVersion == 2 and (.manifests | length) == 1 and
-                    .manifests[0].annotations["org.opencontainers.image.ref.name"] == $reference
-                then [.manifests[0].digest, $reference] | @tsv
-                else error("unexpected Supabase OCI archive index")
-                end
-            '
+      --arg reference "${runtime_reference}" '
+        if .schemaVersion == 2 and (.manifests | length) == 1 and
+           .manifests[0].annotations["org.opencontainers.image.ref.name"] == $reference
+        then [.manifests[0].digest, .manifests[0].mediaType, .manifests[0].size, $reference] | @tsv
+        else error("unexpected Supabase OCI archive index")
+        end
+      '
   )" || {
     printf 'Supabase %s OCI archive has an invalid descriptor or reference.\n' "${id}" >&2
     return 1
   }
-  IFS=$'\t' read -r descriptor_digest descriptor_reference <<< "${descriptor}"
+  IFS=$'\t' read -r descriptor_digest descriptor_media_type descriptor_size descriptor_reference \
+    <<< "${descriptor}"
   [[ "${descriptor_digest}" == "${expected_digest}" &&
-    "${descriptor_reference}" == "${archive_reference}" ]] || {
-    printf 'Supabase %s OCI descriptor mismatch: expected %s at %s, observed %s at %s.\n' \
-      "${id}" "${expected_digest}" "${archive_reference}" \
-      "${descriptor_digest}" "${descriptor_reference}" >&2
+    "${descriptor_media_type}" == "${expected_media_type}" &&
+    "${descriptor_reference}" == "${runtime_reference}" ]] || {
+    printf 'Supabase %s OCI descriptor mismatch: expected %s (%s) at %s, observed %s (%s) at %s.\n' \
+      "${id}" "${expected_digest}" "${expected_media_type}" "${runtime_reference}" \
+      "${descriptor_digest}" "${descriptor_media_type}" "${descriptor_reference}" >&2
+    return 1
+  }
+  [[ "${descriptor_size}" =~ ^[0-9]+$ ]] || {
+    printf 'Supabase %s OCI descriptor has invalid manifest size %s.\n' \
+      "${id}" "${descriptor_size}" >&2
     return 1
   }
   blob_digest="sha256:$(
@@ -273,6 +299,13 @@ supabase_validate_image_archive() {
       "${id}" "${expected_digest}" "${blob_digest}" >&2
     return 1
   }
+  blob_size="$(tar --extract --to-stdout --file "${archive}" \
+    "blobs/sha256/${expected_digest#sha256:}" | wc -c)"
+  [[ "${blob_size}" == "${descriptor_size}" ]] || {
+    printf 'Supabase %s OCI descriptor size mismatch: expected blob size %s, observed %s.\n' \
+      "${id}" "${blob_size}" "${descriptor_size}" >&2
+    return 1
+  }
 }
 
 supabase_prepare_image_archive() {
@@ -281,44 +314,34 @@ supabase_prepare_image_archive() {
     [[ "$(stat -c '%s' "${archive}")" -le "${SUPABASE_ARCHIVE_MAX_BYTES}" ]]
     return
   fi
-  local fixture id reference platform platform_digest expected_digest status archive_directory
-  local observed_digest observed_architecture observed_os image_id archive_reference archive_path
-  local archive_digest_file
+  local fixture id reference platform platform_digest platform_media_type archive_directory
+  local archive_reference runtime_reference archive_path archive_digest_file
+  local platform_os platform_architecture skopeo_source skopeo_version
   fixture="$(supabase_fixture_root)"
+  command -v skopeo > /dev/null || {
+    printf '%s\n' 'Supabase application profile requires Skopeo for digest-preserving OCI acquisition.' >&2
+    return 1
+  }
+  skopeo_version="$(skopeo --version)"
+  printf '%s SUPABASE OCI-ARCHIVE tool=%s\n' "$(timestamp)" "${skopeo_version}"
   archive_directory="$(mktemp -d "${runtime_root}/supabase-image-archives.XXXXXX")"
-  while IFS=$'\t' read -r id reference platform platform_digest _; do
+  while IFS=$'\t' read -r id reference platform platform_digest platform_media_type _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
-    status=0
-    engine_image_available "probe Supabase ${id} image cache" "${reference}" || status=$?
-    if ((status == 1)); then
-      timed_operation 20m "pull digest-pinned Supabase ${id} image" \
-        "${engine}" pull --quiet --platform "${platform}" "${reference}" \
-        > "${artifact_root}/supabase-${id}.pull.log" 2>&1
-      record_run_owned_host_image "${reference}"
-    elif ((status != 0)); then
-      return "${status}"
-    fi
-    expected_digest="${reference##*@}"
-    read -r observed_digest observed_architecture observed_os image_id < <(
-      "${engine}" image inspect \
-        --format '{{.Digest}} {{.Architecture}} {{.Os}} {{.Id}}' "${reference}"
-    )
-    [[ "${observed_digest}" == "${expected_digest}" &&
-      "${observed_os}/${observed_architecture}" == "${platform}" ]] || {
-      printf 'Supabase %s source identity mismatch: expected %s at %s, observed %s at %s/%s.\n' \
-        "${id}" "${expected_digest}" "${platform}" "${observed_digest}" \
-        "${observed_os}" "${observed_architecture}" >&2
-      return 1
-    }
     archive_reference="${reference%@*}"
+    runtime_reference="${archive_reference}@${platform_digest}"
     archive_path="${archive_directory}/${id}.oci.tar"
     archive_digest_file="${artifact_root}/supabase-${id}.archive-digest"
+    platform_os="${platform%/*}"
+    platform_architecture="${platform#*/}"
+    skopeo_source="$(supabase_skopeo_source_reference "${reference}")"
     timed_operation 8m "write Supabase ${id} OCI archive" \
-      "${engine}" push --quiet --digestfile "${archive_digest_file}" \
-      "${image_id}" "oci-archive:${archive_path}:${archive_reference}"
+      skopeo copy --quiet --preserve-digests \
+      --override-os "${platform_os}" --override-arch "${platform_architecture}" \
+      --digestfile "${archive_digest_file}" "${skopeo_source}" \
+      "oci-archive:${archive_path}:${runtime_reference}"
     supabase_validate_image_archive "${id}" "${archive_path}" \
-      "${archive_reference}" "${platform_digest}" "${archive_digest_file}"
-    release_run_owned_host_image "${reference}"
+      "${runtime_reference}" "${platform_digest}" "${platform_media_type}" \
+      "${archive_digest_file}"
   done < "${fixture}/images.tsv"
   tar --remove-files --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
     --mode='u+rw,go+rX,go-w' -C "${archive_directory}" -cf "${archive}" .

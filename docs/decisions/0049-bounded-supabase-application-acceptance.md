@@ -114,3 +114,11 @@ deterministic conversion cannot establish user-facing behavior.
 Running the graph across the full Podman matrix on pull requests was rejected
 because existing matrix evidence owns acquisition coverage and the large live
 claim belongs in the manual pre-release gate.
+
+## Archive identity evidence
+
+The privileged live lane records `skopeo --version` and copies each selected `linux/amd64`
+child directly from `repository@index` with `skopeo copy --preserve-digests`; it does not
+round-trip through lossy containers-storage recompression. Before a nested load, the bounded
+archive must prove exactly one descriptor with the recorded child digest, media type, byte size,
+exact `tag@child-digest` annotation, and a manifest blob whose hash is that child digest.

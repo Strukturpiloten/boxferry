@@ -18,6 +18,8 @@ auth_runtime_reference="$(supabase_image_reference auth)"
 [[ "${auth_source_reference}" == docker.io/supabase/gotrue:v2.189.0@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf ]]
 [[ "${auth_runtime_reference}" == docker.io/supabase/gotrue:v2.189.0@sha256:0a8557cbe0fd53a067726fe656f79eb1b03a1ab3cdde4b59907ce5a1e1a202ab ]]
 [[ "${auth_source_reference}" != "${auth_runtime_reference}" ]]
+
+[[ "$(supabase_skopeo_source_reference "${auth_source_reference}")" == docker://docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf ]]
 if supabase_source_image_reference missing-image > /dev/null 2>&1; then
   printf '%s\n' 'Unknown Supabase source image unexpectedly resolved.' >&2
   exit 1
@@ -51,20 +53,24 @@ archive_layout="${test_root}/archive-layout"
 archive_path="${test_root}/auth.oci.tar"
 archive_digest_file="${test_root}/auth.digest"
 archive_reference=docker.io/supabase/gotrue:v2.189.0
+archive_media_type=application/vnd.oci.image.manifest.v1+json
 mkdir -p -- "${archive_layout}/blobs/sha256"
 printf '%s' '{"schemaVersion":2,"config":{"digest":"sha256:test"},"layers":[]}' \
   > "${archive_layout}/manifest.json"
 archive_digest="sha256:$(sha256sum "${archive_layout}/manifest.json" | awk '{ print $1 }')"
+runtime_reference="${archive_reference}@${archive_digest}"
+archive_size="$(stat -c '%s' "${archive_layout}/manifest.json")"
 mv -- "${archive_layout}/manifest.json" \
   "${archive_layout}/blobs/sha256/${archive_digest#sha256:}"
 printf '%s\n' '{"imageLayoutVersion":"1.0.0"}' > "${archive_layout}/oci-layout"
-jq --null-input --arg digest "${archive_digest}" --arg reference "${archive_reference}" '
+jq --null-input --arg digest "${archive_digest}" --arg reference "${runtime_reference}" \
+  --arg media_type "${archive_media_type}" --argjson size "${archive_size}" '
     {
         schemaVersion: 2,
         manifests: [{
-            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            mediaType: $media_type,
             digest: $digest,
-            size: 65,
+            size: $size,
             annotations: {"org.opencontainers.image.ref.name": $reference}
         }]
     }
@@ -79,13 +85,14 @@ mv -- "${archive_layout}/index.changed.json" "${archive_layout}/index.json"
 tar --create --file "${test_root}/auth-changed.oci.tar" --directory "${archive_layout}" \
   index.json oci-layout blobs
 if supabase_validate_image_archive auth "${test_root}/auth-changed.oci.tar" \
-  "${archive_reference}" "${archive_digest}" "${archive_digest_file}" > /dev/null 2>&1; then
+  "${runtime_reference}" "${archive_digest}" "${archive_media_type}" \
+  "${archive_digest_file}" > /dev/null 2>&1; then
   printf '%s\n' 'Supabase archive validator accepted a changed descriptor reference.' >&2
   exit 1
 fi
 
 changed_digest=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-jq --arg digest "${changed_digest}" --arg reference "${archive_reference}" '
+jq --arg digest "${changed_digest}" --arg reference "${runtime_reference}" '
     .manifests[0].digest = $digest |
     .manifests[0].annotations["org.opencontainers.image.ref.name"] = $reference
 ' "${archive_layout}/index.json" > "${archive_layout}/index.changed.json"
@@ -93,29 +100,79 @@ mv -- "${archive_layout}/index.changed.json" "${archive_layout}/index.json"
 tar --create --file "${test_root}/auth-changed-digest.oci.tar" --directory "${archive_layout}" \
   index.json oci-layout blobs
 if supabase_validate_image_archive auth "${test_root}/auth-changed-digest.oci.tar" \
-  "${archive_reference}" "${archive_digest}" "${archive_digest_file}" > /dev/null 2>&1; then
+  "${runtime_reference}" "${archive_digest}" "${archive_media_type}" \
+  "${archive_digest_file}" > /dev/null 2>&1; then
   printf '%s\n' 'Supabase archive validator accepted a changed descriptor digest.' >&2
   exit 1
 fi
-supabase_validate_image_archive auth "${archive_path}" "${archive_reference}" \
-  "${archive_digest}" "${archive_digest_file}"
+supabase_validate_image_archive auth "${archive_path}" "${runtime_reference}" \
+  "${archive_digest}" "${archive_media_type}" "${archive_digest_file}"
 
 printf '%s\n' 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' \
   > "${archive_digest_file}"
-if supabase_validate_image_archive auth "${archive_path}" "${archive_reference}" \
-  "${archive_digest}" "${archive_digest_file}" > /dev/null 2>&1; then
+if supabase_validate_image_archive auth "${archive_path}" "${runtime_reference}" \
+  "${archive_digest}" "${archive_media_type}" \
+  "${archive_digest_file}" > /dev/null 2>&1; then
   printf '%s\n' 'Supabase archive validator accepted a changed written digest.' >&2
   exit 1
 fi
 printf '%s\n' "${archive_digest}" > "${archive_digest_file}"
 
 loaded_digest_mode=exact
+write_valid_archive_index() {
+  jq --null-input --arg digest "${archive_digest}" --arg reference "${runtime_reference}" \
+    --arg media_type "${archive_media_type}" --argjson size "${archive_size}" '
+      {schemaVersion: 2, manifests: [{
+        mediaType: $media_type, digest: $digest, size: $size,
+        annotations: {"org.opencontainers.image.ref.name": $reference}
+      }]}
+    ' > "${archive_layout}/index.json"
+}
+
+assert_rejected_archive() {
+  local label=$1
+  shift
+  if supabase_validate_image_archive auth "$@" > /dev/null 2>&1; then
+    printf 'Supabase archive validator accepted %s.\n' "${label}" >&2
+    exit 1
+  fi
+}
+
+write_valid_archive_index
+jq '.manifests += [.manifests[0]]' "${archive_layout}/index.json" > "${archive_layout}/index.changed.json"
+mv -- "${archive_layout}/index.changed.json" "${archive_layout}/index.json"
+tar --create --file "${test_root}/auth-changed-index.oci.tar" --directory "${archive_layout}" index.json oci-layout blobs
+assert_rejected_archive 'multiple index descriptors' "${test_root}/auth-changed-index.oci.tar" "${runtime_reference}" "${archive_digest}" "${archive_media_type}" "${archive_digest_file}"
+
+write_valid_archive_index
+jq '.manifests[0].mediaType = "application/invalid"' "${archive_layout}/index.json" > "${archive_layout}/index.changed.json"
+mv -- "${archive_layout}/index.changed.json" "${archive_layout}/index.json"
+tar --create --file "${test_root}/auth-changed-media.oci.tar" --directory "${archive_layout}" index.json oci-layout blobs
+assert_rejected_archive 'a changed descriptor media type' "${test_root}/auth-changed-media.oci.tar" "${runtime_reference}" "${archive_digest}" "${archive_media_type}" "${archive_digest_file}"
+
+write_valid_archive_index
+jq '.manifests[0].size += 1' "${archive_layout}/index.json" > "${archive_layout}/index.changed.json"
+mv -- "${archive_layout}/index.changed.json" "${archive_layout}/index.json"
+tar --create --file "${test_root}/auth-changed-size.oci.tar" --directory "${archive_layout}" index.json oci-layout blobs
+assert_rejected_archive 'a changed descriptor size' "${test_root}/auth-changed-size.oci.tar" "${runtime_reference}" "${archive_digest}" "${archive_media_type}" "${archive_digest_file}"
+
+write_valid_archive_index
+printf '%s' changed > "${archive_layout}/blobs/sha256/${archive_digest#sha256:}"
+tar --create --file "${test_root}/auth-changed-blob.oci.tar" --directory "${archive_layout}" index.json oci-layout blobs
+assert_rejected_archive 'a changed manifest blob' "${test_root}/auth-changed-blob.oci.tar" "${runtime_reference}" "${archive_digest}" "${archive_media_type}" "${archive_digest_file}"
+
 # shellcheck disable=SC2329 # Invoked by the sourced loaded-image assertion.
 engine_operation() {
-  local description=$1 id
+  local description=$1 id runtime_argument="${!#}"
+  if [[ "${description}" == "verify loaded Supabase "*" image" ]]; then
+    id="${description#verify loaded Supabase }"
+    id="${id% image}"
+    [[ "${runtime_argument}" == "$(supabase_image_reference "${id}")" ]] || return 1
+  fi
   if [[ "${description}" == "inspect loaded Supabase "*" image digest" ]]; then
     id="${description#inspect loaded Supabase }"
     id="${id% image digest}"
+    [[ "${runtime_argument}" == "$(supabase_image_reference "${id}")" ]] || return 1
     if [[ "${loaded_digest_mode}" == changed && "${id}" == auth ]]; then
       printf '%s\n' 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
     else

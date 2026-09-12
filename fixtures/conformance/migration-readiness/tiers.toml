@@ -279,7 +279,7 @@ minimum-memory-mib = 12288
 minimum-disk-mib = 24576
 maximum-rss-mib = 14336
 maximum-disk-growth-mib = 20480
-required-tools = ["podman"]
+required-tools = ["podman", "skopeo"]
 required-environment = ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
 command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "supabase-application", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
 
