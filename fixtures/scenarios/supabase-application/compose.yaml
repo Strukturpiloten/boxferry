@@ -21,7 +21,7 @@ services:
     networks: [backend]
 
   rest:
-    image: docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c
+    image: docker.io/postgrest/postgrest@sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962
     depends_on: [db]
     environment:
       PGRST_DB_URI: postgres://authenticator:boxferry-public-supabase-db-password@db:5432/postgres

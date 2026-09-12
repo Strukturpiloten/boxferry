@@ -91,9 +91,9 @@
             ]
           },
           {
-            "Id": "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+            "Id": "sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962",
             "Names": [
-              "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c"
+              "docker.io/postgrest/postgrest@sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962"
             ]
           },
           {
@@ -350,8 +350,8 @@
         "body": {
           "Id": "c-rest",
           "Name": "rest",
-          "Image": "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
-          "ImageName": "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
+          "Image": "sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962",
+          "ImageName": "docker.io/postgrest/postgrest@sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962",
           "Pod": "",
           "Dependencies": ["c-db"],
           "Config": {
@@ -576,22 +576,6 @@
     {
       "request": {
         "method": "GET",
-        "path": "/v6.1.0/libpod/images/sha256%3A54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c/json"
-      },
-      "response": {
-        "status": 200,
-        "headers": [["content-type", "application/json"]],
-        "body": {
-          "Id": "sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c",
-          "RepoDigests": [
-            "docker.io/postgrest/postgrest@sha256:54000f24847d01a2c2302e0041cf0618b875c57fb48507d743cfa9aaa50bf43c"
-          ]
-        }
-      }
-    },
-    {
-      "request": {
-        "method": "GET",
         "path": "/v6.1.0/libpod/images/sha256%3A606aca9fdaa753b60968d5c304e2ada83869b76c9043684e63d5885aca9550e8/json"
       },
       "response": {
@@ -669,6 +653,23 @@
         }
       }
     },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v6.1.0/libpod/images/sha256%3Aec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": {
+          "Id": "sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962",
+          "RepoDigests": [
+            "docker.io/postgrest/postgrest@sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962"
+          ]
+        }
+      }
+    },
+
     {
       "request": {
         "method": "GET",
