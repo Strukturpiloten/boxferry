@@ -592,22 +592,80 @@ rest_health_failure_marker="${test_root}/rest-health-failure.marker"
 if bash -c '
   set -Eeuo pipefail
   source "$1"
-  marker=$2
+  test_marker=$2
   supabase_wait_for() { shift 2; "$@"; }
-  supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
+  supabase_database_sql_contract() { printf "peer-sql\n" >> "${test_marker}"; }
   supabase_run_healthcheck() {
-    printf "health:%s\n" "$2" >> "${marker}"
+    printf "health:%s\n" "$2" >> "${test_marker}"
     [[ "$2" != test-prefix-supabase-rest ]]
   }
-  supabase_report_service_health_failure() { printf "report:%s\n" "$3" >> "${marker}"; }
   supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
-  supabase_remote() { printf "unexpected:%s\n" "$*" >> "${marker}"; return 1; }
+  supabase_remote() {
+    case "$2" in
+      healthcheck)
+        printf "fresh-healthcheck:%s\n" "$4" >> "${test_marker}"
+        [[ "$4" != test-prefix-supabase-rest ]]
+        ;;
+      exec)
+        [[ "$3" == test-prefix-supabase-rest && "$4" == postgrest && "$5" == --ready ]]
+        printf "direct-probe-succeeded\n" >> "${test_marker}"
+        ;;
+      inspect)
+        case "$*" in
+          *".Config.Healthcheck.Test"*) printf "[\"CMD\",\"postgrest\",\"--ready\"]\n" ;;
+          *".Config.Env"*) printf "PGRST_ADMIN_SERVER_HOST=127.0.0.1\nPGRST_ADMIN_SERVER_PORT=3001\n" ;;
+          *".State.Health.Log"*) printf "stored-health-log\n" ;;
+          *) printf "status=running health=unhealthy\n" ;;
+        esac
+        ;;
+      logs) printf "container-log\n" ;;
+      *) printf "unexpected:%s\n" "$*" >> "${test_marker}"; return 1 ;;
+    esac
+  }
   supabase_wait_application test-socket test-prefix
 ' bash "${library}" "${rest_health_failure_marker}"; then
   printf '%s\n' 'Failed PostgREST healthcheck incorrectly allowed readiness.' >&2
   exit 1
 fi
-[[ "$(tr '\n' ' ' < "${rest_health_failure_marker}")" == 'peer-sql health:test-prefix-supabase-auth health:test-prefix-supabase-rest report:rest ' ]]
+[[ "$(tr '\n' ' ' < "${rest_health_failure_marker}")" == 'peer-sql health:test-prefix-supabase-auth health:test-prefix-supabase-rest fresh-healthcheck:test-prefix-supabase-rest direct-probe-succeeded ' ]]
+
+non_postgrest_health_output="${test_root}/non-postgrest-health.output"
+non_postgrest_health_invocations="${test_root}/non-postgrest-health-invocations"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  invocation_file=$2
+  supabase_remote() {
+    printf "%s\n" "$*" >> "${invocation_file}"
+    case "$2" in
+      healthcheck)
+        [[ "$3" == run && "$4" == test-prefix-supabase-auth ]]
+        return 12
+        ;;
+      inspect)
+        [[ "$*" != *".Config."* ]]
+        printf "bounded inspect\n"
+        ;;
+      logs)
+        [[ "$3" == --tail && "$4" == 20 && "$5" == test-prefix-supabase-auth ]]
+        printf "bounded log\n"
+        ;;
+      *) return 1 ;;
+    esac
+  }
+  supabase_report_service_health_failure test-socket test-prefix auth
+' bash "${library}" "${non_postgrest_health_invocations}" \
+  > "${non_postgrest_health_output}" 2>&1
+
+[[ "$(wc -l < "${non_postgrest_health_invocations}")" == 4 ]]
+grep --fixed-strings --quiet -- 'Supabase auth health failure: final healthcheck exit=12' \
+  "${non_postgrest_health_output}"
+if grep --fixed-strings --quiet -- ' exec ' "${non_postgrest_health_invocations}" ||
+  grep --fixed-strings --quiet -- '.Config.' "${non_postgrest_health_invocations}" ||
+  grep --extended-regexp --quiet -- 'PostgREST|PGRST_' "${non_postgrest_health_output}"; then
+  printf '%s\n' 'Non-PostgREST health diagnostics invoked PostgREST evidence collection.' >&2
+  exit 1
+fi
 
 service_health_diagnostic_output="${test_root}/service-health-diagnostic.output"
 service_health_invocations="${test_root}/service-health-invocations"
@@ -625,8 +683,21 @@ bash -c '
         printf "unbounded-healthcheck-marker"
         return 12
         ;;
+      exec)
+        [[ "$3" == test-prefix-supabase-rest && "$4" == postgrest && "$5" == --ready ]]
+        printf "postgrest-direct-probe\n" >> "${invocation_file}"
+        printf "password boxferry-public-supabase-db-password email boxferry-supabase@example.invalid "
+        printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" "" | tr " " p
+        printf "unbounded-postgrest-probe-marker"
+        return 23
+        ;;
       inspect)
-        if [[ "$*" == *".State.Health.Log"* ]]; then
+        if [[ "$*" == *".Config.Healthcheck.Test"* ]]; then
+          printf "[\"CMD\",\"postgrest\",\"--ready\"]\n"
+        elif [[ "$*" == *".Config.Env"* ]]; then
+          printf "PGRST_ADMIN_SERVER_HOST=127.0.0.1\nPGRST_ADMIN_SERVER_PORT=3001\n"
+          printf "PGRST_DB_URI=postgres://authenticator:boxferry-public-supabase-db-password@db/postgres\n"
+        elif [[ "$*" == *".State.Health.Log"* ]]; then
           printf "health-log password boxferry-public-supabase-db-password "
           printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" "" | tr " " y
           printf "unbounded-health-log-marker"
@@ -647,22 +718,32 @@ bash -c '
   }
   supabase_report_service_health_failure test-socket test-prefix rest
 ' bash "${library}" "${service_health_invocations}" > "${service_health_diagnostic_output}" 2>&1
-[[ "$(wc -l < "${service_health_invocations}")" == 1 ]]
+[[ "$(wc -l < "${service_health_invocations}")" == 2 ]]
 grep --fixed-strings --quiet -- 'Supabase rest health failure: final healthcheck exit=12' \
   "${service_health_diagnostic_output}"
+grep --fixed-strings --quiet -- 'PostgREST direct configured-command probe: exit=23' \
+  "${service_health_diagnostic_output}"
+grep --fixed-strings --quiet -- 'stored health test: ["CMD","postgrest","--ready"]' \
+  "${service_health_diagnostic_output}"
+grep --fixed-strings --quiet -- 'admin configuration: PGRST_ADMIN_SERVER_HOST=127.0.0.1' \
+  "${service_health_diagnostic_output}"
+if grep --fixed-strings --quiet -- 'PGRST_DB_URI' "${service_health_diagnostic_output}"; then
+  printf '%s\n' 'PostgREST diagnostics exposed non-administrative configuration.' >&2
+  exit 1
+fi
 grep --fixed-strings --quiet -- 'diagnostic health log:' "${service_health_diagnostic_output}"
 grep --fixed-strings --quiet -- 'bounded container log tail:' "${service_health_diagnostic_output}"
 grep --fixed-strings --quiet -- '[REDACTED]' "${service_health_diagnostic_output}"
 for protected in boxferry-public-supabase-db-password boxferry-supabase@example.invalid \
   unbounded-healthcheck-marker unbounded-health-log-marker unbounded-state-marker \
-  unbounded-container-log-marker; do
+  unbounded-container-log-marker unbounded-postgrest-probe-marker; do
   if grep --fixed-strings --quiet -- "${protected}" "${service_health_diagnostic_output}"; then
     printf 'Supabase service health diagnostics leaked or exceeded their bound: %s\n' \
       "${protected}" >&2
     exit 1
   fi
 done
-[[ "$(wc -c < "${service_health_diagnostic_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES * 4 + 1024))" ]]
+[[ "$(wc -c < "${service_health_diagnostic_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES * 7 + 1536))" ]]
 
 service_health_boundary_output="${test_root}/service-health-boundary.output"
 bash -c '
@@ -670,16 +751,22 @@ bash -c '
   source "$1"
   supabase_remote() {
     if [[ "$2" == healthcheck ]]; then
+      printf "healthcheck-failed"
+      return 12
+    fi
+    if [[ "$2" == exec ]]; then
       for ((index = 0; index < 230; index++)); do
         printf "%s" "${SUPABASE_DB_PASSWORD}"
       done
-      return 12
+      return 23
     fi
     printf "bounded diagnostic"
   }
   supabase_report_service_health_failure test-socket test-prefix rest
 ' bash "${library}" > "${service_health_boundary_output}" 2>&1
 grep --fixed-strings --quiet -- 'final healthcheck exit=12' \
+  "${service_health_boundary_output}"
+grep --fixed-strings --quiet -- 'PostgREST direct configured-command probe: exit=23' \
   "${service_health_boundary_output}"
 grep --fixed-strings --quiet -- '[REDACTED]' "${service_health_boundary_output}"
 if grep --fixed-strings --quiet -- 'boxferry-public' "${service_health_boundary_output}"; then
