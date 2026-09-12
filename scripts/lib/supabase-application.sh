@@ -209,7 +209,7 @@ supabase_validate_catalogues() {
   ' "${fixture}/routes.tsv"
   awk -F '\t' '
     BEGIN {
-      image["db"] = "db";                 networks["db"] = "backend";        dependencies["db"] = "-";                                       mounts["db"] = "pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro"; proof["db"] = "SQL-row-extension-publication-counts"
+      image["db"] = "db";                 networks["db"] = "backend";        dependencies["db"] = "-";                                       mounts["db"] = "pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql:ro"; proof["db"] = "SQL-row-extension-publication-counts"
       image["auth"] = "auth";             networks["auth"] = "backend";      dependencies["auth"] = "db";                                     mounts["auth"] = "-";                                                                                             proof["auth"] = "sign-up-sign-in-current-user"
       image["rest"] = "rest";             networks["rest"] = "backend";      dependencies["rest"] = "db";                                     mounts["rest"] = "-";                                                                                             proof["rest"] = "insert-select-and-Realtime-source"
       image["realtime"] = "realtime";     networks["realtime"] = "backend";  dependencies["realtime"] = "db";                                 mounts["realtime"] = "-";                                                                                         proof["realtime"] = "Phoenix-WebSocket-PostgreSQL-insert"
@@ -483,6 +483,25 @@ supabase_database_sql_contract() {
     > /dev/null
 }
 
+supabase_report_database_contract_failure() {
+  local socket=$1 prefix=$2 output status
+  if output="$(
+    supabase_database_sql_contract "${socket}" "${prefix}" 2>&1 |
+      {
+        captured=""
+        IFS= LC_ALL=C read -r -N "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" captured || true
+        printf '%s' "${captured}"
+        cat > /dev/null
+      }
+  )"; then
+    status=0
+  else
+    status=$?
+  fi
+  printf 'Supabase PostgreSQL final SQL probe: exit=%d; bounded output: %s\n' \
+    "${status}" "$(supabase_redact_runtime_text "${output}")" >&2
+}
+
 supabase_container_names() {
   local prefix=$1 service
   for service in db auth rest realtime imgproxy storage meta supavisor functions studio kong; do
@@ -522,13 +541,15 @@ supabase_create_networks_volumes() {
 supabase_create_cli_database() {
   local socket=$1 prefix=$2 run=$3 fixture_root
   fixture_root="/tmp/boxferry-fixture/${prefix}"
+  # The inherited entrypoint expands only top-level init files. The z-prefix also
+  # keeps authored SQL after the image-owned migrate.sh driver.
   supabase_remote "${socket}" run --pull=never --detach \
     --name "${prefix}-supabase-db" \
     --label "io.boxferry.live-run=${run}" \
     --label "io.boxferry.application=${prefix}-supabase" \
     --network "${prefix}-supabase-backend:alias=db" \
     --volume "${prefix}-supabase-pgdata:/var/lib/postgresql/data" \
-    --volume "${fixture_root}/db-init.sql:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro" \
+    --volume "${fixture_root}/db-init.sql:/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql:ro" \
     --env POSTGRES_DB=postgres --env POSTGRES_USER=supabase_admin \
     --env "POSTGRES_PASSWORD=${SUPABASE_DB_PASSWORD}" \
     --health-cmd 'pg_isready -U postgres -d postgres' \
@@ -544,6 +565,7 @@ supabase_create_cli_services() {
   supabase_create_cli_database "${socket}" "${prefix}" "${run}"
   if ! supabase_wait_for 360 'Supabase PostgreSQL bootstrap contract' \
     supabase_database_sql_contract "${socket}" "${prefix}"; then
+    supabase_report_database_contract_failure "${socket}" "${prefix}"
     supabase_report_database_failure_evidence "${socket}" "${prefix}"
     return 1
   fi
@@ -768,6 +790,7 @@ supabase_provision_compose() {
     "${prefix}-supabase-edge" > /dev/null
   if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
     up --detach --remove-orphans > "${current_case}/supabase-compose.log" 2>&1; then
+    supabase_report_database_contract_failure "${socket}" "${prefix}"
     supabase_report_database_failure_evidence "${socket}" "${prefix}"
     return 1
   fi
@@ -791,6 +814,7 @@ supabase_wait_application() {
     if ! supabase_wait_for 600 "Supabase ${service} health" \
       supabase_wait_healthy "${socket}" "${prefix}-supabase-${service}"; then
       if [[ "${service}" == db ]]; then
+        supabase_report_database_contract_failure "${socket}" "${prefix}"
         supabase_report_database_failure_evidence "${socket}" "${prefix}"
       fi
       return 1
@@ -969,7 +993,7 @@ supabase_assert_storage_ownership() {
       any(.[0].Mounts[]?; .Type == "volume" and .Name == $name and
         .Destination == "/var/lib/postgresql/data" and .RW == true) and
       any(.[0].Mounts[]?; .Type == "bind" and
-        .Destination == "/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql" and .RW == false)
+        .Destination == "/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql" and .RW == false)
     ' > /dev/null
   supabase_remote "${socket}" inspect "${prefix}-supabase-storage" |
     jq --exit-status --arg name "${prefix}-supabase-storage" '

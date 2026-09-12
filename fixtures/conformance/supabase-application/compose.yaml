@@ -33,7 +33,7 @@ services:
         aliases: [db]
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ${BF_FIXTURE_ROOT:?required}/db-init.sql:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro,z
+      - ${BF_FIXTURE_ROOT:?required}/db-init.sql:/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql:ro,z
 
   auth:
     image: ${BF_AUTH_IMAGE:?required}

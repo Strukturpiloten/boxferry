@@ -6,6 +6,9 @@
   [ADR 0039](0039-independent-migration-scenarios.md),
   [ADR 0047](0047-bounded-migration-readiness-tiers.md), and
   [ADR 0048](0048-bounded-observability-application-acceptance.md)
+- Superseded in part by:
+  [ADR 0050](0050-executable-post-migration-supabase-bootstrap.md) for the authored SQL placement
+  and ordering contract
 
 ## Context
 
