@@ -64,7 +64,9 @@ jq --raw-input --slurp --exit-status '
   split("\n")[:-1] as $argv |
   ($argv | index("POSTGRES_USER=supabase_admin")) and
   ($argv | index("POSTGRES_USER=postgres") | not) and
-  ($argv | index("/tmp/boxferry-fixture/test-prefix/db-init.sql:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro")) and
+  ($argv | index("/tmp/boxferry-fixture/test-prefix/db-init.sql:/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql:ro")) and
+  (any($argv[]; contains("/docker-entrypoint-initdb.d/init-scripts/")) | not) and
+  (any($argv[]; contains("/docker-entrypoint-initdb.d/99999999999999-boxferry.sql")) | not) and
   (any($argv[]; contains("80-boxferry.sql")) | not) and
   ($argv | index("pg_isready -U postgres -d postgres")) and
   ($argv | index("pg_isready -U supabase_admin -d postgres") | not)
@@ -105,12 +107,42 @@ assert "pg_isready" not in db["healthcheck"]["test"][1]
 db_init = open(sys.argv[4], encoding="utf-8").read()
 assert "CREATE TABLE IF NOT EXISTS public.boxferry_bootstrap_complete" in db_init
 assert db_init.rstrip().endswith("ON CONFLICT (singleton) DO NOTHING;")
-assert any(
-    "/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro,z" in mount
+authored_init_target = "/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql"
+authored_init_name = authored_init_target.rsplit("/", maxsplit=1)[1]
+assert authored_init_name > "migrate.sh"
+assert any(f"{authored_init_target}:ro,z" in mount for mount in db["volumes"])
+assert all("/docker-entrypoint-initdb.d/init-scripts/" not in mount for mount in db["volumes"])
+assert all(
+    "/docker-entrypoint-initdb.d/99999999999999-boxferry.sql" not in mount
     for mount in db["volumes"]
 )
 assert all("80-boxferry.sql" not in mount for mount in db["volumes"])
 PY
+
+entrypoint_order_root="${test_root}/entrypoint-order"
+mkdir -p -- "${entrypoint_order_root}/init-scripts" "${entrypoint_order_root}/migrations"
+: > "${entrypoint_order_root}/migrate.sh"
+: > "${entrypoint_order_root}/init-scripts/99999999999999-boxferry.sql"
+: > "${entrypoint_order_root}/zzzzzzzzzzzz-boxferry.sql"
+mapfile -t dispatched_init_files < <(
+  export LC_ALL=C
+  for init_file in "${entrypoint_order_root}"/*; do
+    case "${init_file}" in
+      *.sh | *.sql) basename -- "${init_file}" ;;
+    esac
+  done
+)
+[[ "${dispatched_init_files[*]}" == 'migrate.sh zzzzzzzzzzzz-boxferry.sql' ]]
+: > "${entrypoint_order_root}/99999999999999-boxferry.sql"
+mapfile -t early_init_order < <(
+  export LC_ALL=C
+  for init_file in "${entrypoint_order_root}"/*; do
+    case "${init_file}" in
+      *.sh | *.sql) basename -- "${init_file}" ;;
+    esac
+  done
+)
+[[ "${early_init_order[*]}" == '99999999999999-boxferry.sql migrate.sh zzzzzzzzzzzz-boxferry.sql' ]]
 
 database_failure_output="${test_root}/database-failure.output"
 bash -c '
@@ -149,6 +181,38 @@ if grep --fixed-strings --quiet -- 'unbounded-tail-marker' "${database_failure_o
 fi
 [[ "$(wc -c < "${database_failure_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES + 512))" ]]
 
+database_contract_failure_output="${test_root}/database-contract-failure.output"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  supabase_database_sql_contract() {
+    printf "password boxferry-public-supabase-db-password email boxferry-supabase@example.invalid "
+    printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" | tr " " x
+    printf "unbounded-contract-marker"
+    return 2
+  }
+  supabase_report_database_contract_failure test-socket test-prefix
+' bash "${library}" > "${database_contract_failure_output}" 2>&1
+grep --fixed-strings --quiet -- 'final SQL probe: exit=2' \
+  "${database_contract_failure_output}"
+grep --fixed-strings --quiet -- '[REDACTED]' "${database_contract_failure_output}"
+if grep --fixed-strings --quiet -- 'boxferry-public-supabase-db-password' \
+  "${database_contract_failure_output}"; then
+  printf '%s\n' 'Supabase SQL-contract diagnostics leaked protected value.' >&2
+  exit 1
+fi
+if grep --fixed-strings --quiet -- 'boxferry-supabase@example.invalid' \
+  "${database_contract_failure_output}"; then
+  printf '%s\n' 'Supabase SQL-contract diagnostics leaked test identity.' >&2
+  exit 1
+fi
+if grep --fixed-strings --quiet -- 'unbounded-contract-marker' \
+  "${database_contract_failure_output}"; then
+  printf '%s\n' 'Supabase SQL-contract diagnostics did not cap probe output.' >&2
+  exit 1
+fi
+[[ "$(wc -c < "${database_contract_failure_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES + 512))" ]]
+
 compose_failure_output="${test_root}/compose-failure.output"
 compose_attempt_marker="${test_root}/compose-attempted"
 compose_peer_marker="${test_root}/compose-peer-ran"
@@ -162,6 +226,12 @@ bash -c '
   supabase_remote() {
     case "$2" in
       network) : ;;
+      exec)
+        printf "password boxferry-public-supabase-db-password email boxferry-supabase@example.invalid " >&2
+        printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" | tr " " x >&2
+        printf "unbounded-compose-contract-marker" >&2
+        return 2
+        ;;
       inspect) printf "status=exited exit=2 error=" ;;
       logs) printf "database bootstrap failed" ;;
     esac
@@ -182,6 +252,44 @@ bash -c '
 grep --fixed-strings --quiet -- \
   'Supabase PostgreSQL failure evidence: status=exited exit=2 error=' \
   "${compose_failure_output}"
+grep --fixed-strings --quiet -- 'final SQL probe: exit=2' "${compose_failure_output}"
+grep --fixed-strings --quiet -- '[REDACTED]' "${compose_failure_output}"
+if grep --fixed-strings --quiet -- 'boxferry-public-supabase-db-password' \
+  "${compose_failure_output}"; then
+  printf '%s\n' 'Compose SQL-contract diagnostics leaked protected value.' >&2
+  exit 1
+fi
+if grep --fixed-strings --quiet -- 'boxferry-supabase@example.invalid' \
+  "${compose_failure_output}"; then
+  printf '%s\n' 'Compose SQL-contract diagnostics leaked test identity.' >&2
+  exit 1
+fi
+if grep --fixed-strings --quiet -- 'unbounded-compose-contract-marker' \
+  "${compose_failure_output}"; then
+  printf '%s\n' 'Compose SQL-contract diagnostics did not cap probe output.' >&2
+  exit 1
+fi
+compose_contract_line="$(grep --line-number --max-count=1 --fixed-strings \
+  'final SQL probe:' "${compose_failure_output}" | cut -d: -f1)"
+compose_evidence_line="$(grep --line-number --max-count=1 --fixed-strings \
+  'failure evidence:' "${compose_failure_output}" | cut -d: -f1)"
+((compose_contract_line < compose_evidence_line))
+[[ "$(wc -c < "${compose_failure_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES * 3 + 1024))" ]]
+
+database_health_failure_marker="${test_root}/database-health-failure.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  supabase_wait_for() { return 1; }
+  supabase_report_database_contract_failure() { printf "contract\n" >> "${marker}"; }
+  supabase_report_database_failure_evidence() { printf "evidence\n" >> "${marker}"; }
+  if supabase_wait_application test-socket test-prefix; then
+    printf "%s\n" "Database health failure unexpectedly passed." >&2
+    exit 1
+  fi
+' bash "${library}" "${database_health_failure_marker}"
+[[ "$(tr '\n' ' ' < "${database_health_failure_marker}")" == 'contract evidence ' ]]
 
 database_contract_marker="${test_root}/database-contract.marker"
 database_contract_argv="${test_root}/database-contract.argv"

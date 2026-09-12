@@ -45,6 +45,7 @@ active table; superseded records are history and are read only when that history
 | [0047](0047-bounded-migration-readiness-tiers.md) | Offline, trusted-live, and exact-revision pre-release evidence gates |
 | [0048](0048-bounded-observability-application-acceptance.md) | Bounded Prometheus, Loki, Grafana, and Alloy live acceptance |
 | [0049](0049-bounded-supabase-application-acceptance.md) | Bounded eleven-service Supabase live application acceptance |
+| [0050](0050-executable-post-migration-supabase-bootstrap.md) | Executable post-migration Supabase bootstrap ordering |
 
 ## Superseded history
 
