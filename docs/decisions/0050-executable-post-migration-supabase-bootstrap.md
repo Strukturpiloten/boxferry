@@ -4,6 +4,8 @@
 - Date: 2026-09-12
 - Builds on: [ADR 0049](0049-bounded-supabase-application-acceptance.md)
 - Supersedes: ADR 0049's authored SQL placement and ordering clause
+- Superseded in part by: [ADR 0051](0051-peer-network-supabase-readiness.md)
+  for database readiness
 
 ## Context
 
@@ -27,8 +29,7 @@ Both native Podman and Docker Compose provisioners mount the authored SQL as the
 structural regressions use the same path and reject both the ignored nested path and an early
 top-level numeric path.
 
-The database readiness contract is unchanged. It uses password-authenticated non-loopback TCP as
-the application-facing `postgres` role and requires the exact PostgreSQL configuration file, the
+The database predicate requires the application-facing `postgres` role and the exact PostgreSQL configuration file, the
 image-owned `supabase_read_only_user` migration role, the authored `public.boxferry_items` table,
 and the terminal `public.boxferry_bootstrap_complete` marker. Successful migration-readiness still
 requires fresh protected `pre-release` evidence for the exact merged BoxFerry revision.

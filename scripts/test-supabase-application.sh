@@ -94,10 +94,9 @@ assert db["command"] == expected_command["values"]
 assert cli_argv[-5:] == expected_command["values"]
 assert db["healthcheck"]["test"][0] == "CMD-SHELL"
 assert "PGPASSWORD=\"$$POSTGRES_PASSWORD\"" in db["healthcheck"]["test"][1]
-assert "for candidate in $$(hostname -i)" in db["healthcheck"]["test"][1]
-assert "127.*|::1" in db["healthcheck"]["test"][1]
-assert "-h \"$$host\" -U postgres -d postgres -tAc" in db["healthcheck"]["test"][1]
-assert "127.0.0.1" not in db["healthcheck"]["test"][1]
+assert "hostname -i" not in db["healthcheck"]["test"][1]
+assert "-h 127.0.0.1 -U postgres -d postgres -tAc" in db["healthcheck"]["test"][1]
+assert "127.0.0.1" in db["healthcheck"]["test"][1]
 assert "current_user = 'postgres'" in db["healthcheck"]["test"][1]
 assert "current_setting('config_file') = '/etc/postgresql/postgresql.conf'" in db["healthcheck"]["test"][1]
 assert "rolname = 'supabase_read_only_user'" in db["healthcheck"]["test"][1]
@@ -223,10 +222,12 @@ bash -c '
   compose_attempt_marker=$3
   compose_peer_marker=$4
   supabase_assert_clean_prefix() { :; }
+  supabase_wait_for() { shift 2; "$@" > /dev/null 2>&1; }
+  supabase_image_reference() { printf "%s" test-db-image; }
   supabase_remote() {
     case "$2" in
       network) : ;;
-      exec)
+      run)
         printf "password boxferry-public-supabase-db-password email boxferry-supabase@example.invalid " >&2
         printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" | tr " " x >&2
         printf "unbounded-compose-contract-marker" >&2
@@ -237,7 +238,11 @@ bash -c '
     esac
   }
   supabase_compose_project() {
-    : > "${compose_attempt_marker}"
+    if [[ " $* " == *" up --detach db "* ]]; then
+      : > "${compose_attempt_marker}"
+      return 0
+    fi
+    printf "%s\\n" "full-graph-started" >> "${compose_attempt_marker}"
     return 42
   }
   supabase_peer_compose_project() { : > "${compose_peer_marker}"; }
@@ -246,6 +251,10 @@ bash -c '
     exit 1
   fi
   [[ -e "${compose_attempt_marker}" ]]
+  if grep --fixed-strings --quiet -- full-graph-started "${compose_attempt_marker}"; then
+    printf "%s\\n" "Compose peer failure started the full graph." >&2
+    exit 1
+  fi
   [[ ! -e "${compose_peer_marker}" ]]
 ' bash "${library}" "${test_root}" "${compose_attempt_marker}" \
   "${compose_peer_marker}" > "${compose_failure_output}" 2>&1
@@ -276,6 +285,93 @@ compose_evidence_line="$(grep --line-number --max-count=1 --fixed-strings \
 ((compose_contract_line < compose_evidence_line))
 [[ "$(wc -c < "${compose_failure_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES * 3 + 1024))" ]]
 
+compose_order_marker="${test_root}/compose-order.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  marker=$3
+  supabase_assert_clean_prefix() { :; }
+  supabase_image_reference() { printf "%s" test-db-image; }
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_remote() {
+    case "$2" in
+      network) printf "edge-network\\n" >> "$marker" ;;
+      run) printf "readiness-peer\\n" >> "$marker" ;;
+    esac
+  }
+  supabase_compose_project() { printf "compose:%s\\n" "$*" >> "$marker"; }
+  supabase_peer_compose_project() { printf "boundary-peer:%s\\n" "$*" >> "$marker"; }
+  supabase_provision_compose test-socket test-prefix test-run
+' bash "${library}" "${test_root}" "${compose_order_marker}"
+mapfile -t compose_order < "${compose_order_marker}"
+[[ "${compose_order[0]}" == edge-network ]]
+[[ "${compose_order[1]}" == 'compose:test-socket test-prefix test-run up --detach db' ]]
+[[ "${compose_order[2]}" == readiness-peer ]]
+[[ "${compose_order[3]}" == 'compose:test-socket test-prefix test-run up --detach --remove-orphans' ]]
+[[ "${compose_order[4]}" == 'boundary-peer:test-socket test-prefix test-run up --detach --remove-orphans' ]]
+
+compose_recreate_order_marker="${test_root}/compose-recreate-order.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  marker=$3
+  supabase_image_reference() { printf "%s" test-db-image; }
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_remote() {
+    [[ "$2" == run ]]
+    printf "readiness-peer\\n" >> "$marker"
+  }
+  supabase_compose_project() { printf "compose:%s\\n" "$*" >> "$marker"; }
+  supabase_wait_application() { printf "application-ready\\n" >> "$marker"; }
+  supabase_enable_realtime_table() { printf "realtime-enabled\\n" >> "$marker"; }
+  supabase_recreate_application compose test-socket test-prefix test-run
+' bash "${library}" "${test_root}" "${compose_recreate_order_marker}"
+mapfile -t compose_recreate_order < "${compose_recreate_order_marker}"
+[[ "${compose_recreate_order[0]}" == 'compose:test-socket test-prefix test-run stop --timeout 30' ]]
+[[ "${compose_recreate_order[1]}" == 'compose:test-socket test-prefix test-run rm --force' ]]
+[[ "${compose_recreate_order[2]}" == 'compose:test-socket test-prefix test-run up --detach db' ]]
+[[ "${compose_recreate_order[3]}" == readiness-peer ]]
+[[ "${compose_recreate_order[4]}" == 'compose:test-socket test-prefix test-run up --detach --remove-orphans' ]]
+[[ "${compose_recreate_order[5]}" == application-ready ]]
+[[ "${compose_recreate_order[6]}" == realtime-enabled ]]
+
+compose_recreate_failure_marker="${test_root}/compose-recreate-failure.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  marker=$3
+  supabase_image_reference() { printf "%s" test-db-image; }
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_remote() {
+    [[ "$2" == run ]]
+    printf "readiness-peer-failed\\n" >> "$marker"
+    return 1
+  }
+  supabase_compose_project() {
+    printf "compose:%s\\n" "$*" >> "$marker"
+  }
+  supabase_report_database_contract_failure() { printf "contract-evidence\\n" >> "$marker"; }
+  supabase_report_database_failure_evidence() { printf "database-evidence\\n" >> "$marker"; }
+  supabase_wait_application() { printf "application-ready\\n" >> "$marker"; }
+  supabase_enable_realtime_table() { printf "realtime-enabled\\n" >> "$marker"; }
+  if supabase_recreate_application compose test-socket test-prefix test-run; then
+    printf "%s\\n" "Compose recreation unexpectedly accepted failed peer readiness." >&2
+    exit 1
+  fi
+' bash "${library}" "${test_root}" "${compose_recreate_failure_marker}"
+grep --fixed-strings --quiet -- readiness-peer-failed "${compose_recreate_failure_marker}"
+grep --fixed-strings --quiet -- contract-evidence "${compose_recreate_failure_marker}"
+grep --fixed-strings --quiet -- database-evidence "${compose_recreate_failure_marker}"
+if grep --fixed-strings --quiet \
+  -e 'up --detach --remove-orphans' -e application-ready -e realtime-enabled -- \
+  "${compose_recreate_failure_marker}"; then
+  printf '%s\n' 'Compose recreation peer failure started or accepted the full graph.' >&2
+  exit 1
+fi
+
 database_health_failure_marker="${test_root}/database-health-failure.marker"
 bash -c '
   set -Eeuo pipefail
@@ -299,12 +395,11 @@ bash -c '
   marker=$2
   probe_argv=$3
   supabase_create_cli_database() { :; }
+  supabase_image_reference() { printf "%s" test-db-image; }
   supabase_wait_for() { shift 2; "$@"; }
   supabase_report_database_failure_evidence() { :; }
   supabase_remote() {
-    if [[ "$2" == exec && " $* " == *pg_isready* ]]; then
-      printf "pg_isready-green\\n" >> "$marker"
-    elif [[ "$2" == exec && " $* " == *psql* ]]; then
+    if [[ "$2" == run && " $* " == *psql* ]]; then
       printf "%s\\n" "$@" > "$probe_argv"
       printf "sql-contract-failed\\n" >> "$marker"
       return 1
@@ -313,13 +408,11 @@ bash -c '
       return 1
     fi
   }
-  supabase_remote test-socket exec test-prefix-supabase-db pg_isready -U postgres -d postgres
   if supabase_create_cli_services test-socket test-prefix test-run; then
     printf "%s\\n" "SQL contract failure incorrectly started dependents." >&2
     exit 1
   fi
 ' bash "${library}" "${database_contract_marker}" "${database_contract_argv}"
-grep --fixed-strings --quiet -- 'pg_isready-green' "${database_contract_marker}"
 grep --fixed-strings --quiet -- 'sql-contract-failed' "${database_contract_marker}"
 if grep --fixed-strings --quiet -- 'dependent-started' "${database_contract_marker}"; then
   printf '%s\n' 'Supabase PostgreSQL SQL contract failure started a dependent service.' >&2
@@ -327,11 +420,23 @@ if grep --fixed-strings --quiet -- 'dependent-started' "${database_contract_mark
 fi
 jq --raw-input --slurp --exit-status '
   split("\n")[:-1] as $argv |
+  ($argv | index("--rm")) and
+  ($argv | index("--pull=never")) and
+  ($argv | index("--name")) and
+  ($argv | index("test-prefix-supabase-db-readiness-peer")) and
+  ($argv | index("--network")) and
+  ($argv | index("test-prefix-supabase-backend")) and
+  ($argv | index("--entrypoint")) and
+  ($argv | index("psql")) and
+  ($argv | index("test-db-image")) and
   ($argv | index("--env")) and
   ($argv | index("PGPASSWORD=boxferry-public-supabase-db-password")) and
-  (any($argv[]; contains("hostname -i"))) and
-  (any($argv[]; contains("127.*|::1"))) and
-  (any($argv[]; contains("-h \"${host}\" -U postgres"))) and
+  ($argv | index("-h")) and
+  ($argv | index("db")) and
+  ($argv | index("-U")) and
+  ($argv | index("postgres")) and
+  (any($argv[]; contains("exec")) | not) and
+  (any($argv[]; contains("hostname")) | not) and
   (any($argv[]; contains("127.0.0.1")) | not) and
   (any($argv[]; contains("current_setting"))) and
   (any($argv[]; contains("config_file"))) and

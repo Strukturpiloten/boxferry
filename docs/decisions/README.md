@@ -46,6 +46,7 @@ active table; superseded records are history and are read only when that history
 | [0048](0048-bounded-observability-application-acceptance.md) | Bounded Prometheus, Loki, Grafana, and Alloy live acceptance |
 | [0049](0049-bounded-supabase-application-acceptance.md) | Bounded eleven-service Supabase live application acceptance |
 | [0050](0050-executable-post-migration-supabase-bootstrap.md) | Executable post-migration Supabase bootstrap ordering |
+| [0051](0051-peer-network-supabase-readiness.md) | Peer-network Supabase readiness |
 
 ## Superseded history
 

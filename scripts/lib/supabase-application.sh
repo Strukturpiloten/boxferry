@@ -467,20 +467,13 @@ supabase_report_database_failure_evidence() {
 
 supabase_database_sql_contract() {
   local socket=$1 prefix=$2
-  supabase_remote "${socket}" exec --env "PGPASSWORD=${SUPABASE_DB_PASSWORD}" \
-    "${prefix}-supabase-db" /bin/sh -ceu '
-      host=
-      for candidate in $(hostname -i); do
-        case "${candidate}" in
-          127.*|::1) ;;
-          *) host="${candidate}"; break ;;
-        esac
-      done
-      test -n "${host}"
-      psql -v ON_ERROR_STOP=1 -h "${host}" -U postgres -d postgres -tAc \
-        "SELECT 1 / CASE WHEN current_user = '\''postgres'\'' AND current_setting('\''config_file'\'') = '\''/etc/postgresql/postgresql.conf'\'' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '\''supabase_read_only_user'\'') AND to_regclass('\''public.boxferry_items'\'') IS NOT NULL AND EXISTS (SELECT 1 FROM public.boxferry_bootstrap_complete WHERE singleton) THEN 1 ELSE 0 END" \
-    ' \
-    > /dev/null
+  supabase_remote "${socket}" run --rm --pull=never \
+    --name "${prefix}-supabase-db-readiness-peer" \
+    --network "${prefix}-supabase-backend" \
+    --env "PGPASSWORD=${SUPABASE_DB_PASSWORD}" \
+    --entrypoint psql "$(supabase_image_reference db)" \
+    -v ON_ERROR_STOP=1 -h db -U postgres -d postgres -tAc \
+    "SELECT 1 / CASE WHEN current_user = 'postgres' AND current_setting('config_file') = '/etc/postgresql/postgresql.conf' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_read_only_user') AND to_regclass('public.boxferry_items') IS NOT NULL AND EXISTS (SELECT 1 FROM public.boxferry_bootstrap_complete WHERE singleton) THEN 1 ELSE 0 END"
 }
 
 supabase_report_database_contract_failure() {
@@ -781,6 +774,27 @@ supabase_peer_compose_project() {
     --file "$(supabase_fixture_root)/peer.compose.yaml" "$@"
 }
 
+supabase_start_compose_graph() {
+  local socket=$1 prefix=$2 run=$3 database_log=$4 graph_log=$5
+  if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
+    up --detach db > "${database_log}" 2>&1; then
+    supabase_report_database_contract_failure "${socket}" "${prefix}"
+    supabase_report_database_failure_evidence "${socket}" "${prefix}"
+    return 1
+  fi
+  if ! supabase_wait_for 360 'Supabase PostgreSQL peer SQL contract' \
+    supabase_database_sql_contract "${socket}" "${prefix}"; then
+    supabase_report_database_contract_failure "${socket}" "${prefix}"
+    supabase_report_database_failure_evidence "${socket}" "${prefix}"
+    return 1
+  fi
+  if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
+    up --detach --remove-orphans > "${graph_log}" 2>&1; then
+    supabase_report_database_failure_evidence "${socket}" "${prefix}"
+    return 1
+  fi
+}
+
 supabase_provision_compose() {
   local socket=$1 prefix=$2 run=$3
   supabase_assert_clean_prefix "${socket}" "${prefix}"
@@ -788,10 +802,9 @@ supabase_provision_compose() {
     --label "io.boxferry.live-run=${run}" \
     --label "io.boxferry.application=${prefix}-supabase" \
     "${prefix}-supabase-edge" > /dev/null
-  if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
-    up --detach --remove-orphans > "${current_case}/supabase-compose.log" 2>&1; then
-    supabase_report_database_contract_failure "${socket}" "${prefix}"
-    supabase_report_database_failure_evidence "${socket}" "${prefix}"
+  if ! supabase_start_compose_graph "${socket}" "${prefix}" "${run}" \
+    "${current_case}/supabase-compose-db.log" \
+    "${current_case}/supabase-compose.log"; then
     return 1
   fi
   supabase_peer_compose_project "${socket}" "${prefix}" "${run}" \
@@ -1867,8 +1880,11 @@ supabase_recreate_application() {
       stop --timeout 30 > "${current_case}/supabase-compose-stop.log" 2>&1
     supabase_compose_project "${socket}" "${prefix}" "${run}" \
       rm --force >> "${current_case}/supabase-compose-stop.log" 2>&1
-    supabase_compose_project "${socket}" "${prefix}" "${run}" \
-      up --detach --remove-orphans > "${current_case}/supabase-compose-recreate.log" 2>&1
+    if ! supabase_start_compose_graph "${socket}" "${prefix}" "${run}" \
+      "${current_case}/supabase-compose-recreate-db.log" \
+      "${current_case}/supabase-compose-recreate.log"; then
+      return 1
+    fi
   else
     supabase_remove_cli_application_containers "${socket}" "${prefix}"
     supabase_create_cli_services "${socket}" "${prefix}" "${run}"

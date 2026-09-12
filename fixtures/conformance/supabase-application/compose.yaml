@@ -23,7 +23,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          'host=; for candidate in $$(hostname -i); do case "$$candidate" in 127.*|::1) ;; *) host="$$candidate"; break ;; esac; done; test -n "$$host"; PGPASSWORD="$$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -h "$$host" -U postgres -d postgres -tAc "SELECT 1 / CASE WHEN current_user = ''postgres'' AND current_setting(''config_file'') = ''/etc/postgresql/postgresql.conf'' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''supabase_read_only_user'') AND to_regclass(''public.boxferry_items'') IS NOT NULL AND EXISTS (SELECT 1 FROM public.boxferry_bootstrap_complete WHERE singleton) THEN 1 ELSE 0 END" >/dev/null',
+          'PGPASSWORD="$$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U postgres -d postgres -tAc "SELECT 1 / CASE WHEN current_user = ''postgres'' AND current_setting(''config_file'') = ''/etc/postgresql/postgresql.conf'' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''supabase_read_only_user'') AND to_regclass(''public.boxferry_items'') IS NOT NULL AND EXISTS (SELECT 1 FROM public.boxferry_bootstrap_complete WHERE singleton) THEN 1 ELSE 0 END" >/dev/null',
         ]
       interval: 2s
       timeout: 2s
