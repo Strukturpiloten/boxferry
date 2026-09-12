@@ -43,7 +43,11 @@ and the enclosing 360-minute workflow limit. The Supabase task has its own
 5,400-second deadline. Before pulling images, the profile requires four CPUs,
 12 GiB available memory, and 24 GiB free space on the temporary/archive and
 Podman graph-root filesystems. The eleven-image cold archive is capped at
-5 GiB.
+5 GiB. Each catalogue row records both the immutable registry index used for acquisition and the
+independently resolved `linux/amd64` child manifest used by the OCI archive and live runtime.
+Archive creation and target loading fail unless that child digest and immutable runtime reference
+survive exactly; a single-platform archive never claims to retain the multi-architecture index
+digest.
 
 The readiness task uses a conservative 14 GiB (14,336 MiB) maximum RSS ceiling:
 the 12 GiB application admission requirement plus 2 GiB for the outer runner,

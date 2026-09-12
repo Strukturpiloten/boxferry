@@ -32,10 +32,22 @@ supabase_fixture_root() {
     "${repository_root:?caller must supply repository_root}"
 }
 
-supabase_image_reference() {
+supabase_source_image_reference() {
   local id=${1:?image id required}
   awk -F '\t' -v id="${id}" '$1 == id { print $2; found = 1 } END { exit !found }' \
     "$(supabase_fixture_root)/images.tsv"
+}
+
+supabase_image_reference() {
+  local id=${1:?image id required}
+  awk -F '\t' -v id="${id}" '
+        $1 == id {
+            sub(/@sha256:[0-9a-f]+$/, "", $2)
+            print $2 "@" $4
+            found = 1
+        }
+        END { exit !found }
+    ' "$(supabase_fixture_root)/images.tsv"
 }
 
 supabase_validate_resource_budget() {
@@ -78,10 +90,10 @@ supabase_validate_catalogues() {
   }
   awk -F '\t' '
     NF && $1 !~ /^#/ {
-      if (NF != 11 || $2 !~ /:[^\/@]+@sha256:[0-9a-f]{64}$/ ||
-          $3 != "linux/amd64" || $7 !~ /^[0-9a-f]{40}$/ ||
-          $9 !~ /^[0-9a-f]{64}$/ ||
-          $10 != "not-redistributed-transient-test-pull" || seen[$1]++) {
+            if (NF != 12 || $2 !~ /:[^\/@]+@sha256:[0-9a-f]{64}$/ ||
+                    $3 != "linux/amd64" || $4 !~ /^sha256:[0-9a-f]{64}$/ ||
+                    $8 !~ /^[0-9a-f]{40}$/ || $10 !~ /^[0-9a-f]{64}$/ ||
+                    $11 != "not-redistributed-transient-test-pull" || seen[$1]++) {
         printf "invalid Supabase image row %d: %s\\n", NR, $0 > "/dev/stderr"; bad = 1
       }
     }
@@ -218,37 +230,94 @@ supabase_validate_provider() {
   [[ "${observed_version}" == "${SUPABASE_PROVIDER_VERSION}" ]]
 }
 
+supabase_validate_image_archive() {
+  local id=$1 archive=$2 archive_reference=$3 expected_digest=$4 digest_file=$5
+  local written_digest descriptor descriptor_digest descriptor_reference blob_digest
+  [[ -s "${digest_file}" ]] || {
+    printf 'Supabase %s archive did not record a manifest digest.\n' "${id}" >&2
+    return 1
+  }
+  written_digest="$(< "${digest_file}")"
+  [[ "${written_digest}" == "${expected_digest}" ]] || {
+    printf 'Supabase %s archive digest mismatch: expected %s, observed %s.\n' \
+      "${id}" "${expected_digest}" "${written_digest}" >&2
+    return 1
+  }
+  descriptor="$(
+    tar --extract --to-stdout --file "${archive}" index.json | jq --exit-status --raw-output \
+      --arg reference "${archive_reference}" '
+                if .schemaVersion == 2 and (.manifests | length) == 1 and
+                    .manifests[0].annotations["org.opencontainers.image.ref.name"] == $reference
+                then [.manifests[0].digest, $reference] | @tsv
+                else error("unexpected Supabase OCI archive index")
+                end
+            '
+  )" || {
+    printf 'Supabase %s OCI archive has an invalid descriptor or reference.\n' "${id}" >&2
+    return 1
+  }
+  IFS=$'\t' read -r descriptor_digest descriptor_reference <<< "${descriptor}"
+  [[ "${descriptor_digest}" == "${expected_digest}" &&
+    "${descriptor_reference}" == "${archive_reference}" ]] || {
+    printf 'Supabase %s OCI descriptor mismatch: expected %s at %s, observed %s at %s.\n' \
+      "${id}" "${expected_digest}" "${archive_reference}" \
+      "${descriptor_digest}" "${descriptor_reference}" >&2
+    return 1
+  }
+  blob_digest="sha256:$(
+    tar --extract --to-stdout --file "${archive}" \
+      "blobs/sha256/${expected_digest#sha256:}" | sha256sum | awk '{ print $1 }'
+  )"
+  [[ "${blob_digest}" == "${expected_digest}" ]] || {
+    printf 'Supabase %s OCI manifest blob mismatch: expected %s, observed %s.\n' \
+      "${id}" "${expected_digest}" "${blob_digest}" >&2
+    return 1
+  }
+}
+
 supabase_prepare_image_archive() {
   local archive=${1:?archive path required}
   if [[ -s "${archive}" ]]; then
     [[ "$(stat -c '%s' "${archive}")" -le "${SUPABASE_ARCHIVE_MAX_BYTES}" ]]
     return
   fi
-  local fixture id reference expected_digest observed_digest status archive_directory
+  local fixture id reference platform platform_digest expected_digest status archive_directory
+  local observed_digest observed_architecture observed_os image_id archive_reference archive_path
+  local archive_digest_file
   fixture="$(supabase_fixture_root)"
   archive_directory="$(mktemp -d "${runtime_root}/supabase-image-archives.XXXXXX")"
-  while IFS=$'\t' read -r id reference _; do
+  while IFS=$'\t' read -r id reference platform platform_digest _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     status=0
     engine_image_available "probe Supabase ${id} image cache" "${reference}" || status=$?
     if ((status == 1)); then
       timed_operation 20m "pull digest-pinned Supabase ${id} image" \
-        "${engine}" pull --quiet "${reference}" \
+        "${engine}" pull --quiet --platform "${platform}" "${reference}" \
         > "${artifact_root}/supabase-${id}.pull.log" 2>&1
       record_run_owned_host_image "${reference}"
     elif ((status != 0)); then
       return "${status}"
     fi
     expected_digest="${reference##*@}"
-    observed_digest="$("${engine}" image inspect --format '{{.Digest}}' "${reference}")"
-    [[ "${observed_digest}" == "${expected_digest}" ]] || {
-      printf 'Supabase %s digest mismatch: expected %s, observed %s.\n' \
-        "${id}" "${expected_digest}" "${observed_digest}" >&2
+    read -r observed_digest observed_architecture observed_os image_id < <(
+      "${engine}" image inspect \
+        --format '{{.Digest}} {{.Architecture}} {{.Os}} {{.Id}}' "${reference}"
+    )
+    [[ "${observed_digest}" == "${expected_digest}" &&
+      "${observed_os}/${observed_architecture}" == "${platform}" ]] || {
+      printf 'Supabase %s source identity mismatch: expected %s at %s, observed %s at %s/%s.\n' \
+        "${id}" "${expected_digest}" "${platform}" "${observed_digest}" \
+        "${observed_os}" "${observed_architecture}" >&2
       return 1
     }
-    timed_operation 8m "save Supabase ${id} OCI archive" \
-      "${engine}" save --format oci-archive \
-      --output "${archive_directory}/${id}.oci.tar" "${reference}"
+    archive_reference="${reference%@*}"
+    archive_path="${archive_directory}/${id}.oci.tar"
+    archive_digest_file="${artifact_root}/supabase-${id}.archive-digest"
+    timed_operation 8m "write Supabase ${id} OCI archive" \
+      "${engine}" push --quiet --digestfile "${archive_digest_file}" \
+      "${image_id}" "oci-archive:${archive_path}:${archive_reference}"
+    supabase_validate_image_archive "${id}" "${archive_path}" \
+      "${archive_reference}" "${platform_digest}" "${archive_digest_file}"
     release_run_owned_host_image "${reference}"
   done < "${fixture}/images.tsv"
   tar --remove-files --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
@@ -261,11 +330,22 @@ supabase_prepare_image_archive() {
 }
 
 supabase_assert_loaded_images() {
-  local outer=$1 id reference _
-  while IFS=$'\t' read -r id reference _; do
+  local outer=$1 id platform_digest runtime_reference observed_digest
+  while IFS=$'\t' read -r id _ _ platform_digest _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
+    runtime_reference="$(supabase_image_reference "${id}")"
     engine_operation "verify loaded Supabase ${id} image" \
-      exec "${outer}" podman image exists "${reference}"
+      exec "${outer}" podman image exists "${runtime_reference}"
+    observed_digest="$(
+      engine_operation "inspect loaded Supabase ${id} image digest" \
+        exec "${outer}" podman image inspect --format '{{.Digest}}' \
+        "${runtime_reference}"
+    )"
+    [[ "${observed_digest}" == "${platform_digest}" ]] || {
+      printf 'Loaded Supabase %s digest mismatch: expected %s, observed %s.\n' \
+        "${id}" "${platform_digest}" "${observed_digest}" >&2
+      return 1
+    }
   done < "$(supabase_fixture_root)/images.tsv"
 }
 

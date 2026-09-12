@@ -129,6 +129,14 @@ verified, passed into the disposable nested engine, and removed; BoxFerry does
 not redistribute them. [`providers.tsv`](providers.tsv) applies the same
 immutable check to Docker Compose.
 
+The catalogue also records each independently resolved `linux/amd64` child in
+`platform-manifest-digest`. The index reference remains the acquisition authority; the child
+manifest is the OCI archive and live-runtime identity. The child digests were captured on
+2026-09-12 with skopeo 1.24.0 from
+`skopeo inspect --raw docker://<repository>@<index-digest>`, selecting the unique descriptor whose
+platform is `linux/amd64`. They are registry-observed values, not digests inferred from generated
+archives. Revalidate both immutable identities before changing a row.
+
 Most registries do not attest a source revision in image labels. A tag, source
 commit, and build-file hash therefore document review inputs, not a reproducible
 image-to-source proof. Kong and imgproxy provide useful OCI revision labels;

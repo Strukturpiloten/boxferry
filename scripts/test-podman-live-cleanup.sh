@@ -199,6 +199,27 @@ for application in "${applications[@]}"; do
   grep --fixed-strings --quiet -- 'release_run_owned_host_image "${reference}"' "${module}"
 done
 
+supabase_module="${script_directory}/lib/supabase-application.sh"
+grep --fixed-strings --quiet -- '--platform "${platform}" "${reference}"' "${supabase_module}"
+grep --fixed-strings --quiet -- 'push --quiet --digestfile "${archive_digest_file}"' \
+  "${supabase_module}"
+grep --fixed-strings --quiet -- '"${image_id}" "oci-archive:${archive_path}:${archive_reference}"' \
+  "${supabase_module}"
+grep --fixed-strings --quiet -- 'supabase_validate_image_archive "${id}" "${archive_path}"' \
+  "${supabase_module}"
+if grep --fixed-strings --quiet -- 'save --format oci-archive' "${supabase_module}"; then
+  printf '%s\n' 'Supabase archive creation bypasses the platform-digest proof.' >&2
+  exit 1
+fi
+supabase_push_line="$(grep -n --fixed-strings -- 'push --quiet --digestfile' \
+  "${supabase_module}" | cut -d: -f1)"
+supabase_validate_line="$(grep -n --fixed-strings -- 'supabase_validate_image_archive "${id}"' \
+  "${supabase_module}" | tail -n 1 | cut -d: -f1)"
+supabase_release_line="$(grep -n --fixed-strings -- 'release_run_owned_host_image "${reference}"' \
+  "${supabase_module}" | cut -d: -f1)"
+[[ "${supabase_push_line}" -lt "${supabase_validate_line}" &&
+  "${supabase_validate_line}" -lt "${supabase_release_line}" ]]
+
 # Aliases are never overwritten: the helper probes first and records only after tag succeeds.
 grep --fixed-strings --quiet -- 'Refusing to overwrite existing %s archive alias %s.' "${runner}"
 alias_probe_line="$(grep -n --fixed-strings -- 'engine_image_available "probe ${description} archive alias"' "${runner}" | cut -d: -f1)"
