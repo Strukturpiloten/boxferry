@@ -74,7 +74,8 @@ jq --raw-input --slurp --exit-status '
 
 python3 - "$(supabase_fixture_root)/compose.yaml" \
   "${repository_root}/fixtures/scenarios/real-world-compose-supabase/scenario.toml" \
-  "${cli_database_argv}" "$(supabase_fixture_root)/db-init.sql" << 'PY'
+  "${cli_database_argv}" "$(supabase_fixture_root)/db-init.sql" \
+  "$(supabase_fixture_root)/images.tsv" << 'PY'
 import sys
 import tomllib
 import yaml
@@ -112,6 +113,28 @@ assert rest["environment"]["PGRST_ADMIN_SERVER_HOST"] == "127.0.0.1"
 assert rest["environment"]["PGRST_ADMIN_SERVER_HOST"] != "0.0.0.0"
 assert rest["environment"]["PGRST_ADMIN_SERVER_PORT"] == "3001"
 assert rest["healthcheck"]["test"] == ["CMD", "postgrest", "--ready"]
+assert "PGRST_SERVER_HOST" not in rest["environment"]
+assert "PGRST_DB_CHANNEL_ENABLED" not in rest["environment"]
+images = {
+    row.split("\t", maxsplit=1)[0]: row.rstrip("\n").split("\t")
+    for row in open(sys.argv[5], encoding="utf-8")
+    if row and not row.startswith("#")
+}
+assert images["rest"] == [
+    "rest",
+    "docker.io/postgrest/postgrest:v16.3@sha256:ec0e25a4e24b0a3bc5e4f011369bfc736bd1b19f513bd01079b86329a7636962",
+    "linux/amd64",
+    "sha256:63b567a462c4fd81ede0bdff0b38a150f732ad5fe4f4b01cebeb6a1aa8dbe0d6",
+    "application/vnd.docker.distribution.manifest.v2+json",
+    "16.3",
+    "MIT",
+    "https://github.com/PostgREST/postgrest",
+    "b42f5f50e3bdd0e949b40cd8e66eef4536776544",
+    "nix/tools/docker/default.nix",
+    "4cd8b5042b63438726d8853c90c522ac0958622ac2d440f252f02ee0d5bdc2c5",
+    "not-redistributed-transient-test-pull",
+    "registry labels absent; release tag and build file were reviewed independently but are not an image-to-source attestation",
+]
 authored_init_target = "/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql"
 authored_init_name = authored_init_target.rsplit("/", maxsplit=1)[1]
 assert authored_init_name > "migrate.sh"
@@ -150,6 +173,13 @@ if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
   printf '%s\n' 'Native PostgREST administrative host retained wildcard binding.' >&2
   exit 1
 fi
+for overridden_default in PGRST_SERVER_HOST PGRST_DB_CHANNEL_ENABLED; do
+  if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
+    "${overridden_default}="; then
+    printf 'Native PostgREST CLI unexpectedly overrides %s.\n' "${overridden_default}" >&2
+    exit 1
+  fi
+done
 
 entrypoint_order_root="${test_root}/entrypoint-order"
 mkdir -p -- "${entrypoint_order_root}/init-scripts" "${entrypoint_order_root}/migrations"
