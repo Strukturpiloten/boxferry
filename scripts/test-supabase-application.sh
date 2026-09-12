@@ -298,6 +298,8 @@ bash -c '
     case "$2" in
       network) printf "edge-network\\n" >> "$marker" ;;
       run) printf "readiness-peer\\n" >> "$marker" ;;
+      inspect) return 1 ;;
+      *) return 1 ;;
     esac
   }
   supabase_compose_project() { printf "compose:%s\\n" "$*" >> "$marker"; }
@@ -311,6 +313,87 @@ mapfile -t compose_order < "${compose_order_marker}"
 [[ "${compose_order[3]}" == 'compose:test-socket test-prefix test-run up --detach --remove-orphans' ]]
 [[ "${compose_order[4]}" == 'boundary-peer:test-socket test-prefix test-run up --detach --remove-orphans' ]]
 
+compose_lifecycle_marker="${test_root}/compose-lifecycle.marker"
+compose_lifecycle_release="${test_root}/compose-lifecycle.release"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  marker=$3
+  release=$4
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
+  supabase_compose_project() {
+    if [[ " $* " == *" up --detach db "* ]]; then
+      printf "database-start\n" >> "${marker}"
+      return 0
+    fi
+    printf "full-graph-blocked\n" >> "${marker}"
+    while [[ ! -e "${release}" ]]; do sleep 0.01; done
+    printf "full-graph-unblocked\n" >> "${marker}"
+  }
+  supabase_remote() {
+    case "$2" in
+      inspect) printf "running\n" ;;
+      healthcheck)
+        printf "healthcheck:%s\n" "$4" >> "${marker}"
+        if [[ "$4" == test-prefix-supabase-kong ]]; then : > "${release}"; fi
+        ;;
+      *) return 1 ;;
+    esac
+  }
+  supabase_start_compose_graph test-socket test-prefix test-run \
+    "${current_case}/database.log" "${current_case}/graph.log"
+' bash "${library}" "${test_root}" "${compose_lifecycle_marker}" "${compose_lifecycle_release}"
+grep --fixed-strings --quiet -- 'healthcheck:test-prefix-supabase-db' \
+  "${compose_lifecycle_marker}"
+grep --fixed-strings --quiet -- 'healthcheck:test-prefix-supabase-kong' \
+  "${compose_lifecycle_marker}"
+compose_lifecycle_kong_line="$(grep --line-number --max-count=1 --fixed-strings \
+  'healthcheck:test-prefix-supabase-kong' "${compose_lifecycle_marker}" | cut -d: -f1)"
+compose_lifecycle_unblocked_line="$(grep --line-number --max-count=1 --fixed-strings \
+  full-graph-unblocked "${compose_lifecycle_marker}" | cut -d: -f1)"
+((compose_lifecycle_kong_line < compose_lifecycle_unblocked_line))
+
+compose_lifecycle_failure_marker="${test_root}/compose-lifecycle-failure.marker"
+compose_lifecycle_failure_release="${test_root}/compose-lifecycle-failure.release"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  marker=$3
+  release=$4
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_database_sql_contract() { :; }
+  supabase_report_database_failure_evidence() { :; }
+  supabase_compose_project() {
+    if [[ " $* " == *" up --detach db "* ]]; then return 0; fi
+    while [[ ! -e "${release}" ]]; do sleep 0.01; done
+    printf "provider-failed\n" >> "${marker}"
+    return 42
+  }
+  supabase_remote() {
+    case "$2" in
+      inspect) printf "running\n" ;;
+      healthcheck)
+        printf "healthcheck-failed:%s\n" "$4" >> "${marker}"
+        : > "${release}"
+        return 1
+        ;;
+      *) return 1 ;;
+    esac
+  }
+  supabase_start_compose_graph test-socket test-prefix test-run \
+    "${current_case}/database.log" "${current_case}/graph.log"
+' bash "${library}" "${test_root}" "${compose_lifecycle_failure_marker}" \
+  "${compose_lifecycle_failure_release}"; then
+  printf '%s\n' 'Failed Compose lifecycle healthcheck incorrectly accepted the graph.' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet -- 'healthcheck-failed:test-prefix-supabase-db' \
+  "${compose_lifecycle_failure_marker}"
+grep --fixed-strings --quiet -- provider-failed "${compose_lifecycle_failure_marker}"
+
 compose_recreate_order_marker="${test_root}/compose-recreate-order.marker"
 bash -c '
   set -Eeuo pipefail
@@ -320,8 +403,11 @@ bash -c '
   supabase_image_reference() { printf "%s" test-db-image; }
   supabase_wait_for() { shift 2; "$@"; }
   supabase_remote() {
-    [[ "$2" == run ]]
-    printf "readiness-peer\\n" >> "$marker"
+    case "$2" in
+      run) printf "readiness-peer\\n" >> "$marker" ;;
+      inspect) return 1 ;;
+      *) return 1 ;;
+    esac
   }
   supabase_compose_project() { printf "compose:%s\\n" "$*" >> "$marker"; }
   supabase_wait_application() { printf "application-ready\\n" >> "$marker"; }
@@ -346,9 +432,14 @@ bash -c '
   supabase_image_reference() { printf "%s" test-db-image; }
   supabase_wait_for() { shift 2; "$@"; }
   supabase_remote() {
-    [[ "$2" == run ]]
-    printf "readiness-peer-failed\\n" >> "$marker"
-    return 1
+    case "$2" in
+      run)
+        printf "readiness-peer-failed\\n" >> "$marker"
+        return 1
+        ;;
+      inspect) return 1 ;;
+      *) return 1 ;;
+    esac
   }
   supabase_compose_project() {
     printf "compose:%s\\n" "$*" >> "$marker"
@@ -394,28 +485,44 @@ bash -c '
   marker=$2
   supabase_wait_for() { shift 2; "$@"; }
   supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
-  supabase_wait_healthy() {
-    printf "health:%s\n" "$2" >> "${marker}"
-    [[ "$2" != *-supabase-db ]]
-  }
   supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
   supabase_remote() {
-    if [[ "$2" == inspect && "$*" == *".State.Health.Status"* ]]; then
-      printf "%s\n" "Database health must not be inspected after peer readiness." >&2
+    [[ "$1" == test-socket ]]
+    shift
+    if [[ "$1" == inspect || "$*" == *".State.Health.Status"* ]]; then
+      printf "%s\n" "Supabase application readiness must not inspect cached health status." >&2
       return 1
     fi
-    printf "remote:%s\n" "$2" >> "${marker}"
+    printf "remote:%s\n" "$*" >> "${marker}"
   }
   supabase_wait_application test-socket test-prefix
 ' bash "${library}" "${database_peer_success_marker}"
 [[ "$(head -n 1 "${database_peer_success_marker}")" == peer-sql ]]
-if grep --fixed-strings --quiet -- 'test-prefix-supabase-db' \
-  "${database_peer_success_marker}"; then
-  printf '%s\n' 'Successful peer readiness inspected the database health state.' >&2
+mapfile -t database_peer_success_order < "${database_peer_success_marker}"
+[[ "${database_peer_success_order[*]}" == 'peer-sql remote:healthcheck run test-prefix-supabase-auth remote:healthcheck run test-prefix-supabase-rest remote:healthcheck run test-prefix-supabase-realtime remote:healthcheck run test-prefix-supabase-imgproxy remote:healthcheck run test-prefix-supabase-storage remote:healthcheck run test-prefix-supabase-functions remote:healthcheck run test-prefix-supabase-studio remote:healthcheck run test-prefix-supabase-kong running:test-prefix-supabase-meta running:test-prefix-supabase-supavisor remote:exec test-prefix-supabase-studio node -e fetch('\''http://meta:8080/health'\'').then(r=>{if(!r.ok)process.exit(1)}) remote:exec test-prefix-supabase-studio node -e fetch('\''http://supavisor:4000/api/health'\'').then(r=>{if(!r.ok)process.exit(1)})' ]]
+
+service_health_failure_marker="${test_root}/service-health-failure.marker"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
+  supabase_remote() {
+    [[ "$2" == healthcheck && "$3" == run ]] || {
+      printf "unexpected:%s\n" "$*" >> "${marker}"
+      return 1
+    }
+    printf "healthcheck:%s\n" "$4" >> "${marker}"
+    [[ "$4" != test-prefix-supabase-auth ]]
+  }
+  supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
+  supabase_wait_application test-socket test-prefix
+' bash "${library}" "${service_health_failure_marker}"; then
+  printf '%s\n' 'Failed Supabase Auth healthcheck incorrectly allowed readiness.' >&2
   exit 1
 fi
-grep --fixed-strings --quiet -- 'health:test-prefix-supabase-auth' \
-  "${database_peer_success_marker}"
+[[ "$(tr '\n' ' ' < "${service_health_failure_marker}")" == 'peer-sql healthcheck:test-prefix-supabase-auth ' ]]
 
 database_peer_failure_marker="${test_root}/database-peer-failure.marker"
 bash -c '
@@ -426,7 +533,7 @@ bash -c '
   supabase_database_sql_contract() { printf "peer-sql-failed\n" >> "${marker}"; return 1; }
   supabase_report_database_contract_failure() { printf "contract-evidence\n" >> "${marker}"; }
   supabase_report_database_failure_evidence() { printf "state-log-evidence\n" >> "${marker}"; }
-  supabase_wait_healthy() { printf "non-db-health-check\n" >> "${marker}"; return 1; }
+  supabase_run_healthcheck() { printf "non-db-health-check\n" >> "${marker}"; return 1; }
   supabase_wait_running() { printf "non-db-running-check\n" >> "${marker}"; return 1; }
   supabase_remote() { printf "non-db-http-check\n" >> "${marker}"; return 1; }
   if supabase_wait_application test-socket test-prefix; then

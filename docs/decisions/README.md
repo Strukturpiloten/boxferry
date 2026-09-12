@@ -47,6 +47,7 @@ active table; superseded records are history and are read only when that history
 | [0049](0049-bounded-supabase-application-acceptance.md) | Bounded eleven-service Supabase live application acceptance |
 | [0050](0050-executable-post-migration-supabase-bootstrap.md) | Executable post-migration Supabase bootstrap ordering |
 | [0051](0051-peer-network-supabase-readiness.md) | Peer-network Supabase readiness |
+| [0052](0052-fresh-supabase-service-health-acceptance.md) | Fresh Supabase service-health acceptance |
 
 ## Superseded history
 

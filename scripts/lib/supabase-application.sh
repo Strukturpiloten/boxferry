@@ -774,6 +774,29 @@ supabase_peer_compose_project() {
     --file "$(supabase_fixture_root)/peer.compose.yaml" "$@"
 }
 
+supabase_drive_compose_lifecycle_healthchecks() {
+  local socket=$1 prefix=$2 service container status
+  for service in db auth rest realtime imgproxy storage functions studio kong; do
+    container="${prefix}-supabase-${service}"
+    status="$(supabase_remote "${socket}" inspect --format '{{.State.Status}}' \
+      "${container}" 2> /dev/null || true)"
+    [[ "${status}" == running ]] || continue
+    supabase_remote "${socket}" healthcheck run "${container}" > /dev/null 2>&1 || true
+  done
+}
+
+supabase_start_compose_provider() {
+  local socket=$1 prefix=$2 run=$3 graph_log=$4 compose_pid
+  supabase_compose_project "${socket}" "${prefix}" "${run}" \
+    up --detach --remove-orphans > "${graph_log}" 2>&1 &
+  compose_pid=$!
+  while kill -0 "${compose_pid}" 2> /dev/null; do
+    supabase_drive_compose_lifecycle_healthchecks "${socket}" "${prefix}"
+    sleep 1
+  done
+  wait "${compose_pid}"
+}
+
 supabase_start_compose_graph() {
   local socket=$1 prefix=$2 run=$3 database_log=$4 graph_log=$5
   if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
@@ -788,8 +811,8 @@ supabase_start_compose_graph() {
     supabase_report_database_failure_evidence "${socket}" "${prefix}"
     return 1
   fi
-  if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
-    up --detach --remove-orphans > "${graph_log}" 2>&1; then
+  if ! supabase_start_compose_provider "${socket}" "${prefix}" "${run}" \
+    "${graph_log}"; then
     supabase_report_database_failure_evidence "${socket}" "${prefix}"
     return 1
   fi
@@ -811,9 +834,9 @@ supabase_provision_compose() {
     up --detach --remove-orphans > "${current_case}/supabase-peer-compose.log" 2>&1
 }
 
-supabase_wait_healthy() {
+supabase_run_healthcheck() {
   local socket=$1 container=$2
-  [[ "$(supabase_remote "${socket}" inspect --format '{{.State.Health.Status}}' "${container}")" == healthy ]]
+  supabase_remote "${socket}" healthcheck run "${container}"
 }
 
 supabase_wait_running() {
@@ -831,7 +854,7 @@ supabase_wait_application() {
   fi
   for service in auth rest realtime imgproxy storage functions studio kong; do
     if ! supabase_wait_for 600 "Supabase ${service} health" \
-      supabase_wait_healthy "${socket}" "${prefix}-supabase-${service}"; then
+      supabase_run_healthcheck "${socket}" "${prefix}-supabase-${service}"; then
       return 1
     fi
   done
