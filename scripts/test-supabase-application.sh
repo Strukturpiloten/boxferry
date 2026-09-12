@@ -79,7 +79,9 @@ import sys
 import tomllib
 import yaml
 
-db = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["services"]["db"]
+compose = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+db = compose["services"]["db"]
+rest = compose["services"]["rest"]
 with open(sys.argv[2], "rb") as scenario_file:
     scenario = tomllib.load(scenario_file)
 expected_command = next(
@@ -106,6 +108,10 @@ assert "pg_isready" not in db["healthcheck"]["test"][1]
 db_init = open(sys.argv[4], encoding="utf-8").read()
 assert "CREATE TABLE IF NOT EXISTS public.boxferry_bootstrap_complete" in db_init
 assert db_init.rstrip().endswith("ON CONFLICT (singleton) DO NOTHING;")
+assert rest["environment"]["PGRST_ADMIN_SERVER_HOST"] == "127.0.0.1"
+assert rest["environment"]["PGRST_ADMIN_SERVER_HOST"] != "0.0.0.0"
+assert rest["environment"]["PGRST_ADMIN_SERVER_PORT"] == "3001"
+assert rest["healthcheck"]["test"] == ["CMD", "postgrest", "--ready"]
 authored_init_target = "/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql"
 authored_init_name = authored_init_target.rsplit("/", maxsplit=1)[1]
 assert authored_init_name > "migrate.sh"
@@ -117,6 +123,33 @@ assert all(
 )
 assert all("80-boxferry.sql" not in mount for mount in db["volumes"])
 PY
+
+cli_services_argv="${test_root}/cli-services.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  cli_output=$2
+  supabase_remote() { printf "%s\\0" "$@" >> "${cli_output}"; }
+  supabase_image_reference() { printf "%s" test-image; }
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_create_cli_services test-socket test-prefix test-run
+' bash "${library}" "${cli_services_argv}"
+tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
+  'PGRST_ADMIN_SERVER_HOST=127.0.0.1'
+tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
+  'PGRST_ADMIN_SERVER_PORT=3001'
+tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
+  '["CMD","postgrest","--ready"]'
+if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
+  'postgrest --ready'; then
+  printf '%s\n' 'Native PostgREST healthcheck retained shell form.' >&2
+  exit 1
+fi
+if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
+  'PGRST_ADMIN_SERVER_HOST=0.0.0.0'; then
+  printf '%s\n' 'Native PostgREST administrative host retained wildcard binding.' >&2
+  exit 1
+fi
 
 entrypoint_order_root="${test_root}/entrypoint-order"
 mkdir -p -- "${entrypoint_order_root}/init-scripts" "${entrypoint_order_root}/migrations"
@@ -516,13 +549,140 @@ if bash -c '
     printf "healthcheck:%s\n" "$4" >> "${marker}"
     [[ "$4" != test-prefix-supabase-auth ]]
   }
+  supabase_report_service_health_failure() { printf "report:%s\n" "$3" >> "${marker}"; }
   supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
   supabase_wait_application test-socket test-prefix
 ' bash "${library}" "${service_health_failure_marker}"; then
   printf '%s\n' 'Failed Supabase Auth healthcheck incorrectly allowed readiness.' >&2
   exit 1
 fi
-[[ "$(tr '\n' ' ' < "${service_health_failure_marker}")" == 'peer-sql healthcheck:test-prefix-supabase-auth ' ]]
+[[ "$(tr '\n' ' ' < "${service_health_failure_marker}")" == 'peer-sql healthcheck:test-prefix-supabase-auth report:auth ' ]]
+
+rest_health_failure_marker="${test_root}/rest-health-failure.marker"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
+  supabase_run_healthcheck() {
+    printf "health:%s\n" "$2" >> "${marker}"
+    [[ "$2" != test-prefix-supabase-rest ]]
+  }
+  supabase_report_service_health_failure() { printf "report:%s\n" "$3" >> "${marker}"; }
+  supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
+  supabase_remote() { printf "unexpected:%s\n" "$*" >> "${marker}"; return 1; }
+  supabase_wait_application test-socket test-prefix
+' bash "${library}" "${rest_health_failure_marker}"; then
+  printf '%s\n' 'Failed PostgREST healthcheck incorrectly allowed readiness.' >&2
+  exit 1
+fi
+[[ "$(tr '\n' ' ' < "${rest_health_failure_marker}")" == 'peer-sql health:test-prefix-supabase-auth health:test-prefix-supabase-rest report:rest ' ]]
+
+service_health_diagnostic_output="${test_root}/service-health-diagnostic.output"
+service_health_invocations="${test_root}/service-health-invocations"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  invocation_file=$2
+  supabase_remote() {
+    case "$2" in
+      healthcheck)
+        [[ "$3" == run && "$4" == test-prefix-supabase-rest ]]
+        printf "healthcheck\n" >> "${invocation_file}"
+        printf "password boxferry-public-supabase-db-password email boxferry-supabase@example.invalid "
+        printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" "" | tr " " x
+        printf "unbounded-healthcheck-marker"
+        return 12
+        ;;
+      inspect)
+        if [[ "$*" == *".State.Health.Log"* ]]; then
+          printf "health-log password boxferry-public-supabase-db-password "
+          printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" "" | tr " " y
+          printf "unbounded-health-log-marker"
+        else
+          printf "status=running health=unhealthy email boxferry-supabase@example.invalid "
+          printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" "" | tr " " z
+          printf "unbounded-state-marker"
+        fi
+        ;;
+      logs)
+        [[ "$3" == --tail && "$4" == 20 && "$5" == test-prefix-supabase-rest ]]
+        printf "container-log password boxferry-public-supabase-db-password "
+        printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" "" | tr " " q
+        printf "unbounded-container-log-marker"
+        ;;
+      *) return 1 ;;
+    esac
+  }
+  supabase_report_service_health_failure test-socket test-prefix rest
+' bash "${library}" "${service_health_invocations}" > "${service_health_diagnostic_output}" 2>&1
+[[ "$(wc -l < "${service_health_invocations}")" == 1 ]]
+grep --fixed-strings --quiet -- 'Supabase rest health failure: final healthcheck exit=12' \
+  "${service_health_diagnostic_output}"
+grep --fixed-strings --quiet -- 'diagnostic health log:' "${service_health_diagnostic_output}"
+grep --fixed-strings --quiet -- 'bounded container log tail:' "${service_health_diagnostic_output}"
+grep --fixed-strings --quiet -- '[REDACTED]' "${service_health_diagnostic_output}"
+for protected in boxferry-public-supabase-db-password boxferry-supabase@example.invalid \
+  unbounded-healthcheck-marker unbounded-health-log-marker unbounded-state-marker \
+  unbounded-container-log-marker; do
+  if grep --fixed-strings --quiet -- "${protected}" "${service_health_diagnostic_output}"; then
+    printf 'Supabase service health diagnostics leaked or exceeded their bound: %s\n' \
+      "${protected}" >&2
+    exit 1
+  fi
+done
+[[ "$(wc -c < "${service_health_diagnostic_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES * 4 + 1024))" ]]
+
+service_health_boundary_output="${test_root}/service-health-boundary.output"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  supabase_remote() {
+    if [[ "$2" == healthcheck ]]; then
+      for ((index = 0; index < 230; index++)); do
+        printf "%s" "${SUPABASE_DB_PASSWORD}"
+      done
+      return 12
+    fi
+    printf "bounded diagnostic"
+  }
+  supabase_report_service_health_failure test-socket test-prefix rest
+' bash "${library}" > "${service_health_boundary_output}" 2>&1
+grep --fixed-strings --quiet -- 'final healthcheck exit=12' \
+  "${service_health_boundary_output}"
+grep --fixed-strings --quiet -- '[REDACTED]' "${service_health_boundary_output}"
+if grep --fixed-strings --quiet -- 'boxferry-public' "${service_health_boundary_output}"; then
+  printf '%s\n' 'Boundary-split protected healthcheck value leaked.' >&2
+  exit 1
+fi
+
+service_health_interruption_root="${test_root}/service-health-interruption"
+mkdir -p -- "${service_health_interruption_root}"
+set +e
+TMPDIR="${service_health_interruption_root}" timeout --signal=TERM --kill-after=1s 1s \
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    supabase_remote() {
+      if [[ "$2" == healthcheck ]]; then
+        printf "%s" "${SUPABASE_DB_PASSWORD}"
+        sleep 30
+      fi
+    }
+    supabase_report_service_health_failure test-socket test-prefix rest
+  ' bash "${library}" > /dev/null 2>&1
+service_health_interruption_status=$?
+set -e
+if [[ "${service_health_interruption_status}" -ne 124 ]]; then
+  printf 'Interrupted health reporter returned unexpected status: %s\n' \
+    "${service_health_interruption_status}" >&2
+  exit 1
+fi
+if find "${service_health_interruption_root}" -mindepth 1 -print -quit | grep --quiet .; then
+  printf '%s\n' 'Interrupted health reporter retained a raw diagnostic capture.' >&2
+  exit 1
+fi
 
 database_peer_failure_marker="${test_root}/database-peer-failure.marker"
 bash -c '

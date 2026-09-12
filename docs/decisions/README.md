@@ -48,6 +48,7 @@ active table; superseded records are history and are read only when that history
 | [0050](0050-executable-post-migration-supabase-bootstrap.md) | Executable post-migration Supabase bootstrap ordering |
 | [0051](0051-peer-network-supabase-readiness.md) | Peer-network Supabase readiness |
 | [0052](0052-fresh-supabase-service-health-acceptance.md) | Fresh Supabase service-health acceptance |
+| [0053](0053-connectable-postgrest-health-and-bounded-diagnostics.md) | Connectable PostgREST health and bounded diagnostics |
 
 ## Superseded history
 

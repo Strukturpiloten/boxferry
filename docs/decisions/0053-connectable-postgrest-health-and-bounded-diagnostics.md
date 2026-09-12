@@ -1,0 +1,52 @@
+# ADR 0053: Connectable PostgREST health and bounded diagnostics
+
+- Status: accepted
+- Date: 2026-09-12
+- Builds on: [ADR 0049](0049-bounded-supabase-application-acceptance.md),
+  [ADR 0051](0051-peer-network-supabase-readiness.md), and
+  [ADR 0052](0052-fresh-supabase-service-health-acceptance.md)
+
+## Context
+
+PostgREST's `postgrest --ready` health command connects to its configured administrative host.
+A wildcard administrative host is a listener address, not a reviewed concrete loopback endpoint,
+and therefore cannot reliably serve that native health command. Native Podman and Compose must
+express the same PostgREST contract.
+
+Fresh healthcheck execution is authoritative for non-database service acceptance under ADR 0052.
+When it times out, a stale health state cannot make readiness pass, but it is useful diagnostic
+evidence if it is bounded and redacted with the final configured-healthcheck result.
+
+## Decision
+
+Both native Podman and Compose configure `PGRST_ADMIN_SERVER_HOST=127.0.0.1` and retain
+`PGRST_ADMIN_SERVER_PORT=3001` plus `postgrest --ready`. Native Podman stores the health command
+as JSON exec form `["CMD","postgrest","--ready"]`; Compose retains its equivalent YAML CMD list.
+The pinned PostgREST image has no `/bin/sh`, so shell-form health commands are not valid. PostgREST
+remains private to the backend network; this setting does not publish a port or alter the public
+Kong boundary.
+
+On timeout of any non-database configured service healthcheck, the runner fails closed after one
+final `podman healthcheck run`. It emits that bounded, redacted result together with bounded
+container state, the diagnostic health-log, and the bounded container-log tail. Cached health
+state is diagnostic evidence only and never satisfies readiness. PostgreSQL remains governed by
+ADR 0051's peer-network SQL proof.
+Raw final-healthcheck output remains only in bounded process memory. Redaction conservatively masks
+protected values split at the raw capture boundary before the diagnostic output is truncated.
+
+## Consequences
+
+- The PostgREST configured readiness command has a concrete loopback administrative target in
+  both provisioners.
+- Service-health failures provide actionable but privacy-safe evidence without extending existing
+  deadlines or weakening ordering.
+- A configured healthcheck that cannot succeed remains a migration-readiness failure regardless
+  of retained lifecycle metadata.
+
+## Alternatives considered
+
+Keeping the wildcard host was rejected because a bind address is not a dependable readiness target.
+Using a shell-form native health command was rejected because the pinned image does not provide a
+shell. Using cached health status as a fallback was rejected because it repeats the stale-metadata
+failure addressed by ADR 0052. Emitting unbounded inspect or container logs was rejected because
+live failure evidence can contain protected values.
