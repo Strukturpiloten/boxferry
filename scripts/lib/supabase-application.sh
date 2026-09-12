@@ -441,7 +441,8 @@ supabase_wait_for() {
 }
 
 supabase_redact_runtime_text() {
-  local value=$1 protected
+  local value=$1 protected fragment fragment_length
+  local LC_ALL=C
   for protected in \
     "${SUPABASE_DB_PASSWORD}" "${SUPABASE_JWT_SECRET}" "${SUPABASE_ANON_KEY}" \
     "${SUPABASE_SERVICE_KEY}" "${SUPABASE_REALTIME_SECRET}" \
@@ -449,8 +450,19 @@ supabase_redact_runtime_text() {
     "${SUPABASE_META_CRYPTO_KEY}" "${SUPABASE_VAULT_ENC_KEY}" \
     "${SUPABASE_TEST_EMAIL}" "${SUPABASE_TEST_PASSWORD}"; do
     value=${value//"${protected}"/[REDACTED]}
+    # A bounded raw capture can end partway through a protected value. Mask any
+    # protected prefix at the capture boundary before truncating
+    # the redacted diagnostic, or repeated replacements could move that raw
+    # suffix into the emitted output.
+    for ((fragment_length = ${#protected} - 1; fragment_length > 0; fragment_length--)); do
+      fragment=${protected:0:fragment_length}
+      if [[ ${value} == *"${fragment}" ]]; then
+        value="${value%"${fragment}"}[REDACTED]"
+        break
+      fi
+    done
   done
-  LC_ALL=C printf '%.*s' "${SUPABASE_DIAGNOSTIC_OUTPUT_BYTES}" "${value}"
+  printf '%.*s' "${SUPABASE_DIAGNOSTIC_OUTPUT_BYTES}" "${value}"
 }
 
 supabase_report_database_failure_evidence() {
@@ -462,6 +474,40 @@ supabase_report_database_failure_evidence() {
     head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
   printf 'Supabase PostgreSQL failure evidence: %s; bounded log tail: %s\n' \
     "$(supabase_redact_runtime_text "${state}")" \
+    "$(supabase_redact_runtime_text "${logs}")" >&2
+}
+
+supabase_report_service_health_failure() {
+  local socket=$1 prefix=$2 service=$3 container result marker output status state health_log logs
+  local -a pipeline_status
+  container="${prefix}-supabase-${service}"
+  marker=$'\036boxferry-healthcheck-exit='
+  result="$(
+    if supabase_remote "${socket}" healthcheck run "${container}" 2>&1 | {
+      head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}"
+      cat > /dev/null
+    }; then
+      pipeline_status=("${PIPESTATUS[@]}")
+    else
+      pipeline_status=("${PIPESTATUS[@]}")
+    fi
+    printf '%s%d' "${marker}" "${pipeline_status[0]}"
+  )"
+  status=${result##*"${marker}"}
+  output=${result%"${marker}${status}"}
+  state="$(supabase_remote "${socket}" inspect \
+    --format 'status={{.State.Status}} exit={{.State.ExitCode}} health={{.State.Health.Status}} error={{.State.Error}}' \
+    "${container}" 2>&1 | head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  health_log="$(supabase_remote "${socket}" inspect \
+    --format '{{range .State.Health.Log}}{{printf "exit=%d output=%s\\n" .ExitCode .Output}}{{end}}' \
+    "${container}" 2>&1 | head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  logs="$(supabase_remote "${socket}" logs --tail 20 "${container}" 2>&1 |
+    head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  printf 'Supabase %s health failure: final healthcheck exit=%d; bounded output: %s; state: %s; diagnostic health log: %s; bounded container log tail: %s\n' \
+    "${service}" "${status}" \
+    "$(supabase_redact_runtime_text "${output}")" \
+    "$(supabase_redact_runtime_text "${state}")" \
+    "$(supabase_redact_runtime_text "${health_log}")" \
     "$(supabase_redact_runtime_text "${logs}")" >&2
 }
 
@@ -583,12 +629,12 @@ supabase_create_cli_services() {
     --name "${prefix}-supabase-rest" \
     --label "io.boxferry.live-run=${run}" --label "io.boxferry.application=${prefix}-supabase" \
     --requires "${prefix}-supabase-db" --network "${prefix}-supabase-backend:alias=rest" \
-    --env PGRST_ADMIN_SERVER_HOST=0.0.0.0 --env PGRST_ADMIN_SERVER_PORT=3001 \
+    --env PGRST_ADMIN_SERVER_HOST=127.0.0.1 --env PGRST_ADMIN_SERVER_PORT=3001 \
     --env PGRST_DB_ANON_ROLE=anon --env PGRST_DB_EXTRA_SEARCH_PATH=public \
     --env PGRST_DB_SCHEMAS=public \
     --env "PGRST_DB_URI=postgres://authenticator:${SUPABASE_DB_PASSWORD}@db:5432/postgres" \
     --env "PGRST_JWT_SECRET=${SUPABASE_JWT_SECRET}" \
-    --health-cmd 'postgrest --ready' --health-interval 2s --health-retries 150 \
+    --health-cmd '["CMD","postgrest","--ready"]' --health-interval 2s --health-retries 150 \
     "$(supabase_image_reference rest)" > /dev/null
 
   supabase_remote "${socket}" run --pull=never --detach \
@@ -855,6 +901,7 @@ supabase_wait_application() {
   for service in auth rest realtime imgproxy storage functions studio kong; do
     if ! supabase_wait_for 600 "Supabase ${service} health" \
       supabase_run_healthcheck "${socket}" "${prefix}-supabase-${service}"; then
+      supabase_report_service_health_failure "${socket}" "${prefix}" "${service}"
       return 1
     fi
   done
