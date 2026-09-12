@@ -8,6 +8,20 @@ library="${script_directory}/lib/supabase-application.sh"
 deadline_helper="${script_directory}/lib/in-shell-deadline.py"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "${test_root}"' EXIT
+# shellcheck disable=SC2034 # Used by the sourced Supabase module.
+repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
+# shellcheck source=scripts/lib/supabase-application.sh
+source "${library}"
+
+auth_source_reference="$(supabase_source_image_reference auth)"
+auth_runtime_reference="$(supabase_image_reference auth)"
+[[ "${auth_source_reference}" == docker.io/supabase/gotrue:v2.189.0@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf ]]
+[[ "${auth_runtime_reference}" == docker.io/supabase/gotrue:v2.189.0@sha256:0a8557cbe0fd53a067726fe656f79eb1b03a1ab3cdde4b59907ce5a1e1a202ab ]]
+[[ "${auth_source_reference}" != "${auth_runtime_reference}" ]]
+if supabase_source_image_reference missing-image > /dev/null 2>&1; then
+  printf '%s\n' 'Unknown Supabase source image unexpectedly resolved.' >&2
+  exit 1
+fi
 
 case_status=0
 run_case() {
@@ -32,6 +46,91 @@ assert_process_gone() {
   printf 'Deadline regression left process %s alive.\n' "${pid}" >&2
   return 1
 }
+
+archive_layout="${test_root}/archive-layout"
+archive_path="${test_root}/auth.oci.tar"
+archive_digest_file="${test_root}/auth.digest"
+archive_reference=docker.io/supabase/gotrue:v2.189.0
+mkdir -p -- "${archive_layout}/blobs/sha256"
+printf '%s' '{"schemaVersion":2,"config":{"digest":"sha256:test"},"layers":[]}' \
+  > "${archive_layout}/manifest.json"
+archive_digest="sha256:$(sha256sum "${archive_layout}/manifest.json" | awk '{ print $1 }')"
+mv -- "${archive_layout}/manifest.json" \
+  "${archive_layout}/blobs/sha256/${archive_digest#sha256:}"
+printf '%s\n' '{"imageLayoutVersion":"1.0.0"}' > "${archive_layout}/oci-layout"
+jq --null-input --arg digest "${archive_digest}" --arg reference "${archive_reference}" '
+    {
+        schemaVersion: 2,
+        manifests: [{
+            mediaType: "application/vnd.oci.image.manifest.v1+json",
+            digest: $digest,
+            size: 65,
+            annotations: {"org.opencontainers.image.ref.name": $reference}
+        }]
+    }
+' > "${archive_layout}/index.json"
+tar --create --file "${archive_path}" --directory "${archive_layout}" \
+  index.json oci-layout blobs
+printf '%s\n' "${archive_digest}" > "${archive_digest_file}"
+
+jq '.manifests[0].annotations["org.opencontainers.image.ref.name"] = "changed.invalid/image:test"' \
+  "${archive_layout}/index.json" > "${archive_layout}/index.changed.json"
+mv -- "${archive_layout}/index.changed.json" "${archive_layout}/index.json"
+tar --create --file "${test_root}/auth-changed.oci.tar" --directory "${archive_layout}" \
+  index.json oci-layout blobs
+if supabase_validate_image_archive auth "${test_root}/auth-changed.oci.tar" \
+  "${archive_reference}" "${archive_digest}" "${archive_digest_file}" > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase archive validator accepted a changed descriptor reference.' >&2
+  exit 1
+fi
+
+changed_digest=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+jq --arg digest "${changed_digest}" --arg reference "${archive_reference}" '
+    .manifests[0].digest = $digest |
+    .manifests[0].annotations["org.opencontainers.image.ref.name"] = $reference
+' "${archive_layout}/index.json" > "${archive_layout}/index.changed.json"
+mv -- "${archive_layout}/index.changed.json" "${archive_layout}/index.json"
+tar --create --file "${test_root}/auth-changed-digest.oci.tar" --directory "${archive_layout}" \
+  index.json oci-layout blobs
+if supabase_validate_image_archive auth "${test_root}/auth-changed-digest.oci.tar" \
+  "${archive_reference}" "${archive_digest}" "${archive_digest_file}" > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase archive validator accepted a changed descriptor digest.' >&2
+  exit 1
+fi
+supabase_validate_image_archive auth "${archive_path}" "${archive_reference}" \
+  "${archive_digest}" "${archive_digest_file}"
+
+printf '%s\n' 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' \
+  > "${archive_digest_file}"
+if supabase_validate_image_archive auth "${archive_path}" "${archive_reference}" \
+  "${archive_digest}" "${archive_digest_file}" > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase archive validator accepted a changed written digest.' >&2
+  exit 1
+fi
+printf '%s\n' "${archive_digest}" > "${archive_digest_file}"
+
+loaded_digest_mode=exact
+# shellcheck disable=SC2329 # Invoked by the sourced loaded-image assertion.
+engine_operation() {
+  local description=$1 id
+  if [[ "${description}" == "inspect loaded Supabase "*" image digest" ]]; then
+    id="${description#inspect loaded Supabase }"
+    id="${id% image digest}"
+    if [[ "${loaded_digest_mode}" == changed && "${id}" == auth ]]; then
+      printf '%s\n' 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+    else
+      awk -F '\t' -v id="${id}" '$1 == id { print $4; found = 1 } END { exit !found }' \
+        "$(supabase_fixture_root)/images.tsv"
+    fi
+  fi
+}
+supabase_assert_loaded_images test-target
+loaded_digest_mode=changed
+if supabase_assert_loaded_images test-target > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase loaded-image check accepted a changed platform digest.' >&2
+  exit 1
+fi
+unset -f engine_operation
 
 unsupported_output="${test_root}/unsupported.output"
 run_case "${unsupported_output}" bash -c '
