@@ -15,6 +15,8 @@ SUPABASE_MIN_DISK_KIB="25165824"
 SUPABASE_MAX_CONCURRENCY="1"
 SUPABASE_CELL_TIMEOUT="90m"
 SUPABASE_CELL_KILL_AFTER="10s"
+SUPABASE_DIAGNOSTIC_CAPTURE_BYTES=8192
+SUPABASE_DIAGNOSTIC_OUTPUT_BYTES=4096
 SUPABASE_DB_PASSWORD="boxferry-public-supabase-db-password"
 SUPABASE_JWT_SECRET="boxferry-public-jwt-secret-at-least-thirty-two-characters"
 SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6InN1cGFiYXNlIiwicm9sZSI6ImFub24ifQ.lGRwynjOirFYPqa-6IzEfCCIS_yNsl4riV9_TYukv0g"
@@ -104,11 +106,24 @@ supabase_validate_catalogues() {
     return 1
   }
   awk -F '\t' '
+    function is_hex(value, expected) {
+      return length(value) == expected && value ~ /^[0-9a-f]+$/
+    }
+    function is_sha256(value) {
+      return substr(value, 1, 7) == "sha256:" && is_hex(substr(value, 8), 64)
+    }
+    function is_tagged_sha256_reference(value, at, tagged, digest) {
+      at = index(value, "@")
+      if (at <= 1 || index(substr(value, at + 1), "@")) return 0
+      tagged = substr(value, 1, at - 1)
+      digest = substr(value, at + 1)
+      return tagged ~ /:[^\/@]+$/ && is_sha256(digest)
+    }
     NF && $1 !~ /^#/ {
-      if (NF != 13 || $2 !~ /:[^\/@]+@sha256:[0-9a-f]{64}$/ ||
-          $3 != "linux/amd64" || $4 !~ /^sha256:[0-9a-f]{64}$/ ||
+      if (NF != 13 || !is_tagged_sha256_reference($2) ||
+          $3 != "linux/amd64" || !is_sha256($4) ||
           $5 !~ /^application\/vnd\.(oci\.image\.manifest\.v1\+json|docker\.distribution\.manifest\.v2\+json)$/ ||
-          $9 !~ /^[0-9a-f]{40}$/ || $11 !~ /^[0-9a-f]{64}$/ ||
+          !is_hex($9, 40) || !is_hex($11, 64) ||
           $12 != "not-redistributed-transient-test-pull" || seen[$1]++) {
         printf "invalid Supabase image row %d: %s\\n", NR, $0 > "/dev/stderr"; bad = 1
       }
@@ -116,12 +131,15 @@ supabase_validate_catalogues() {
     END { if (length(seen) != 11) bad = 1; exit bad }
   ' "${fixture}/images.tsv"
   awk -F '\t' '
+    function is_hex(value, expected) {
+      return length(value) == expected && value ~ /^[0-9a-f]+$/
+    }
     NF && $1 !~ /^#/ {
       if (NF != 8 || !$1 || !$2 || !$3 || !$4 || !$5 || !$6 || !$7 || !$8 || seen[$1]++) {
         bad = 1
       }
       if ($3 != "NOASSERTION" && $3 !~ /^https:\/\/github\.com\//) bad = 1
-      if ($4 != "NOASSERTION" && $4 !~ /^[0-9a-f]{40}$/) bad = 1
+      if ($4 != "NOASSERTION" && !is_hex($4, 40)) bad = 1
       if ($1 == "supabase-postgres" &&
           ($2 != "17.6.1.136" || $3 != "https://github.com/supabase/postgres" ||
            $4 != "d156ba65c14694c12cc5e782bc15b9b8ed2d1376" ||
@@ -191,7 +209,7 @@ supabase_validate_catalogues() {
   ' "${fixture}/routes.tsv"
   awk -F '\t' '
     BEGIN {
-      image["db"] = "db";                 networks["db"] = "backend";        dependencies["db"] = "-";                                       mounts["db"] = "pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/80-boxferry.sql:ro"; proof["db"] = "SQL-row-extension-publication-counts"
+      image["db"] = "db";                 networks["db"] = "backend";        dependencies["db"] = "-";                                       mounts["db"] = "pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro"; proof["db"] = "SQL-row-extension-publication-counts"
       image["auth"] = "auth";             networks["auth"] = "backend";      dependencies["auth"] = "db";                                     mounts["auth"] = "-";                                                                                             proof["auth"] = "sign-up-sign-in-current-user"
       image["rest"] = "rest";             networks["rest"] = "backend";      dependencies["rest"] = "db";                                     mounts["rest"] = "-";                                                                                             proof["rest"] = "insert-select-and-Realtime-source"
       image["realtime"] = "realtime";     networks["realtime"] = "backend";  dependencies["realtime"] = "db";                                 mounts["realtime"] = "-";                                                                                         proof["realtime"] = "Phoenix-WebSocket-PostgreSQL-insert"
@@ -422,6 +440,49 @@ supabase_wait_for() {
   done
 }
 
+supabase_redact_runtime_text() {
+  local value=$1 protected
+  for protected in \
+    "${SUPABASE_DB_PASSWORD}" "${SUPABASE_JWT_SECRET}" "${SUPABASE_ANON_KEY}" \
+    "${SUPABASE_SERVICE_KEY}" "${SUPABASE_REALTIME_SECRET}" \
+    "${SUPABASE_POOLER_SECRET}" "${SUPABASE_REALTIME_DB_KEY}" \
+    "${SUPABASE_META_CRYPTO_KEY}" "${SUPABASE_VAULT_ENC_KEY}" \
+    "${SUPABASE_TEST_EMAIL}" "${SUPABASE_TEST_PASSWORD}"; do
+    value=${value//"${protected}"/[REDACTED]}
+  done
+  LC_ALL=C printf '%.*s' "${SUPABASE_DIAGNOSTIC_OUTPUT_BYTES}" "${value}"
+}
+
+supabase_report_database_failure_evidence() {
+  local socket=$1 prefix=$2 state logs
+  state="$(supabase_remote "${socket}" inspect \
+    --format 'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' \
+    "${prefix}-supabase-db" 2>&1 | head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  logs="$(supabase_remote "${socket}" logs --tail 20 "${prefix}-supabase-db" 2>&1 |
+    head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  printf 'Supabase PostgreSQL failure evidence: %s; bounded log tail: %s\n' \
+    "$(supabase_redact_runtime_text "${state}")" \
+    "$(supabase_redact_runtime_text "${logs}")" >&2
+}
+
+supabase_database_sql_contract() {
+  local socket=$1 prefix=$2
+  supabase_remote "${socket}" exec --env "PGPASSWORD=${SUPABASE_DB_PASSWORD}" \
+    "${prefix}-supabase-db" /bin/sh -ceu '
+      host=
+      for candidate in $(hostname -i); do
+        case "${candidate}" in
+          127.*|::1) ;;
+          *) host="${candidate}"; break ;;
+        esac
+      done
+      test -n "${host}"
+      psql -v ON_ERROR_STOP=1 -h "${host}" -U postgres -d postgres -tAc \
+        "SELECT 1 / CASE WHEN current_user = '\''postgres'\'' AND current_setting('\''config_file'\'') = '\''/etc/postgresql/postgresql.conf'\'' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '\''supabase_read_only_user'\'') AND to_regclass('\''public.boxferry_items'\'') IS NOT NULL AND EXISTS (SELECT 1 FROM public.boxferry_bootstrap_complete WHERE singleton) THEN 1 ELSE 0 END" \
+    ' \
+    > /dev/null
+}
+
 supabase_container_names() {
   local prefix=$1 service
   for service in db auth rest realtime imgproxy storage meta supavisor functions studio kong; do
@@ -467,21 +528,25 @@ supabase_create_cli_database() {
     --label "io.boxferry.application=${prefix}-supabase" \
     --network "${prefix}-supabase-backend:alias=db" \
     --volume "${prefix}-supabase-pgdata:/var/lib/postgresql/data" \
-    --volume "${fixture_root}/db-init.sql:/docker-entrypoint-initdb.d/80-boxferry.sql:ro" \
-    --env POSTGRES_DB=postgres --env POSTGRES_USER=postgres \
+    --volume "${fixture_root}/db-init.sql:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro" \
+    --env POSTGRES_DB=postgres --env POSTGRES_USER=supabase_admin \
     --env "POSTGRES_PASSWORD=${SUPABASE_DB_PASSWORD}" \
     --health-cmd 'pg_isready -U postgres -d postgres' \
     --health-interval 2s --health-retries 150 \
-    "$(supabase_image_reference db)" postgres -c log_min_messages=fatal > /dev/null
+    "$(supabase_image_reference db)" postgres \
+    -c config_file=/etc/postgresql/postgresql.conf \
+    -c log_min_messages=fatal > /dev/null
 }
 
 supabase_create_cli_services() {
   local socket=$1 prefix=$2 run=$3 fixture_root
   fixture_root="/tmp/boxferry-fixture/${prefix}"
   supabase_create_cli_database "${socket}" "${prefix}" "${run}"
-  supabase_wait_for 360 'Supabase PostgreSQL readiness' \
-    supabase_remote "${socket}" exec "${prefix}-supabase-db" \
-    pg_isready -U postgres -d postgres
+  if ! supabase_wait_for 360 'Supabase PostgreSQL bootstrap contract' \
+    supabase_database_sql_contract "${socket}" "${prefix}"; then
+    supabase_report_database_failure_evidence "${socket}" "${prefix}"
+    return 1
+  fi
 
   supabase_remote "${socket}" run --pull=never --detach \
     --name "${prefix}-supabase-auth" \
@@ -701,8 +766,11 @@ supabase_provision_compose() {
     --label "io.boxferry.live-run=${run}" \
     --label "io.boxferry.application=${prefix}-supabase" \
     "${prefix}-supabase-edge" > /dev/null
-  supabase_compose_project "${socket}" "${prefix}" "${run}" \
-    up --detach --remove-orphans > "${current_case}/supabase-compose.log" 2>&1
+  if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
+    up --detach --remove-orphans > "${current_case}/supabase-compose.log" 2>&1; then
+    supabase_report_database_failure_evidence "${socket}" "${prefix}"
+    return 1
+  fi
   supabase_peer_compose_project "${socket}" "${prefix}" "${run}" \
     up --detach --remove-orphans > "${current_case}/supabase-peer-compose.log" 2>&1
 }
@@ -720,8 +788,13 @@ supabase_wait_running() {
 supabase_wait_application() {
   local socket=$1 prefix=$2 service
   for service in db auth rest realtime imgproxy storage functions studio kong; do
-    supabase_wait_for 600 "Supabase ${service} health" \
-      supabase_wait_healthy "${socket}" "${prefix}-supabase-${service}"
+    if ! supabase_wait_for 600 "Supabase ${service} health" \
+      supabase_wait_healthy "${socket}" "${prefix}-supabase-${service}"; then
+      if [[ "${service}" == db ]]; then
+        supabase_report_database_failure_evidence "${socket}" "${prefix}"
+      fi
+      return 1
+    fi
   done
   for service in meta supavisor; do
     supabase_wait_for 300 "Supabase ${service} process" \
@@ -896,7 +969,7 @@ supabase_assert_storage_ownership() {
       any(.[0].Mounts[]?; .Type == "volume" and .Name == $name and
         .Destination == "/var/lib/postgresql/data" and .RW == true) and
       any(.[0].Mounts[]?; .Type == "bind" and
-        .Destination == "/docker-entrypoint-initdb.d/80-boxferry.sql" and .RW == false)
+        .Destination == "/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql" and .RW == false)
     ' > /dev/null
   supabase_remote "${socket}" inspect "${prefix}-supabase-storage" |
     jq --exit-status --arg name "${prefix}-supabase-storage" '
@@ -1663,12 +1736,12 @@ supabase_assert_pinned_image_rejection() {
   local image_count
   case "${input}" in
     compose)
-      image_count="$(awk '/^[[:space:]]+image: .*@sha256:[0-9a-f]{64}$/ { count++ } END { print count + 0 }' \
+      image_count="$(awk '/^[[:space:]]+image: .*@sha256:[0-9a-f]+$/ { if (match($0, /@sha256:[0-9a-f]+$/) && RLENGTH == 72) count++ } END { print count + 0 }' \
         "${source}/compose.yaml")"
       ;;
     quadlet)
       image_count="$(find "${source}" -maxdepth 1 -type f -name '*.container' -exec \
-        awk '/^Image=.*@sha256:[0-9a-f]{64}$/ { count++ } END { print count + 0 }' {} + |
+        awk '/^Image=.*@sha256:[0-9a-f]+$/ { if (match($0, /@sha256:[0-9a-f]+$/) && RLENGTH == 72) count++ } END { print count + 0 }' {} + |
         awk '{ total += $1 } END { print total + 0 }')"
       ;;
   esac

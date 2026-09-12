@@ -6,7 +6,7 @@ services:
     image: docker.io/supabase/postgres@sha256:f371b5f3f2ac0a05703f33d6e6134515fb2498cab708fb948a0aeb7481467c00
     environment:
       POSTGRES_DB: postgres
-      POSTGRES_USER: postgres
+      POSTGRES_USER: supabase_admin
       POSTGRES_PASSWORD: boxferry-public-supabase-db-password
     volumes:
       - pgdata:/var/lib/postgresql/data

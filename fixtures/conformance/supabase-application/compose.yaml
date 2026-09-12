@@ -10,10 +10,21 @@ services:
     environment:
       POSTGRES_DB: postgres
       POSTGRES_PASSWORD: ${BF_DB_PASSWORD:?required}
-      POSTGRES_USER: postgres
-    command: ["postgres", "-c", "log_min_messages=fatal"]
+      POSTGRES_USER: supabase_admin
+    command:
+      [
+        "postgres",
+        "-c",
+        "config_file=/etc/postgresql/postgresql.conf",
+        "-c",
+        "log_min_messages=fatal",
+      ]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test:
+        [
+          "CMD-SHELL",
+          'host=; for candidate in $$(hostname -i); do case "$$candidate" in 127.*|::1) ;; *) host="$$candidate"; break ;; esac; done; test -n "$$host"; PGPASSWORD="$$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -h "$$host" -U postgres -d postgres -tAc "SELECT 1 / CASE WHEN current_user = ''postgres'' AND current_setting(''config_file'') = ''/etc/postgresql/postgresql.conf'' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''supabase_read_only_user'') AND to_regclass(''public.boxferry_items'') IS NOT NULL AND EXISTS (SELECT 1 FROM public.boxferry_bootstrap_complete WHERE singleton) THEN 1 ELSE 0 END" >/dev/null',
+        ]
       interval: 2s
       timeout: 2s
       retries: 150
@@ -22,7 +33,7 @@ services:
         aliases: [db]
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ${BF_FIXTURE_ROOT:?required}/db-init.sql:/docker-entrypoint-initdb.d/80-boxferry.sql:ro,z
+      - ${BF_FIXTURE_ROOT:?required}/db-init.sql:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro,z
 
   auth:
     image: ${BF_AUTH_IMAGE:?required}

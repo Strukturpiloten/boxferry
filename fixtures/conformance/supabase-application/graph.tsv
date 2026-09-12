@@ -1,5 +1,5 @@
 # schema=2; service image-id networks dependencies mounts runtime-proof
-db	db	backend	-	pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/80-boxferry.sql:ro	SQL-row-extension-publication-counts
+db	db	backend	-	pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro	SQL-row-extension-publication-counts
 auth	auth	backend	db	-	sign-up-sign-in-current-user
 rest	rest	backend	db	-	insert-select-and-Realtime-source
 realtime	realtime	backend	db	-	Phoenix-WebSocket-PostgreSQL-insert

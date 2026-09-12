@@ -13,6 +13,8 @@ repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
 # shellcheck source=scripts/lib/supabase-application.sh
 source "${library}"
 
+supabase_validate_catalogues
+
 auth_source_reference="$(supabase_source_image_reference auth)"
 auth_runtime_reference="$(supabase_image_reference auth)"
 [[ "${auth_source_reference}" == docker.io/supabase/gotrue:v2.189.0@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf ]]
@@ -48,6 +50,189 @@ assert_process_gone() {
   printf 'Deadline regression left process %s alive.\n' "${pid}" >&2
   return 1
 }
+
+cli_database_argv="${test_root}/cli-database.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  cli_output=$2
+  supabase_remote() { printf "%s\\n" "$@" > "$cli_output"; }
+  supabase_image_reference() { printf "%s" "test-db-image"; }
+  supabase_create_cli_database test-socket test-prefix test-run
+' bash "${library}" "${cli_database_argv}"
+jq --raw-input --slurp --exit-status '
+  split("\n")[:-1] as $argv |
+  ($argv | index("POSTGRES_USER=supabase_admin")) and
+  ($argv | index("POSTGRES_USER=postgres") | not) and
+  ($argv | index("/tmp/boxferry-fixture/test-prefix/db-init.sql:/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro")) and
+  (any($argv[]; contains("80-boxferry.sql")) | not) and
+  ($argv | index("pg_isready -U postgres -d postgres")) and
+  ($argv | index("pg_isready -U supabase_admin -d postgres") | not)
+' "${cli_database_argv}" > /dev/null
+
+python3 - "$(supabase_fixture_root)/compose.yaml" \
+  "${repository_root}/fixtures/scenarios/real-world-compose-supabase/scenario.toml" \
+  "${cli_database_argv}" "$(supabase_fixture_root)/db-init.sql" << 'PY'
+import sys
+import tomllib
+import yaml
+
+db = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))["services"]["db"]
+with open(sys.argv[2], "rb") as scenario_file:
+    scenario = tomllib.load(scenario_file)
+expected_command = next(
+    command for command in scenario["semantics"]["required-commands"]
+    if command["service"] == "db"
+)
+assert expected_command["kind"] == "exec"
+with open(sys.argv[3], encoding="utf-8") as argv_file:
+    cli_argv = argv_file.read().splitlines()
+assert db["environment"]["POSTGRES_USER"] == "supabase_admin"
+assert db["command"] == expected_command["values"]
+assert cli_argv[-5:] == expected_command["values"]
+assert db["healthcheck"]["test"][0] == "CMD-SHELL"
+assert "PGPASSWORD=\"$$POSTGRES_PASSWORD\"" in db["healthcheck"]["test"][1]
+assert "for candidate in $$(hostname -i)" in db["healthcheck"]["test"][1]
+assert "127.*|::1" in db["healthcheck"]["test"][1]
+assert "-h \"$$host\" -U postgres -d postgres -tAc" in db["healthcheck"]["test"][1]
+assert "127.0.0.1" not in db["healthcheck"]["test"][1]
+assert "current_user = 'postgres'" in db["healthcheck"]["test"][1]
+assert "current_setting('config_file') = '/etc/postgresql/postgresql.conf'" in db["healthcheck"]["test"][1]
+assert "rolname = 'supabase_read_only_user'" in db["healthcheck"]["test"][1]
+assert "to_regclass('public.boxferry_items') IS NOT NULL" in db["healthcheck"]["test"][1]
+assert "public.boxferry_bootstrap_complete WHERE singleton" in db["healthcheck"]["test"][1]
+assert "pg_isready" not in db["healthcheck"]["test"][1]
+db_init = open(sys.argv[4], encoding="utf-8").read()
+assert "CREATE TABLE IF NOT EXISTS public.boxferry_bootstrap_complete" in db_init
+assert db_init.rstrip().endswith("ON CONFLICT (singleton) DO NOTHING;")
+assert any(
+    "/docker-entrypoint-initdb.d/init-scripts/99999999999999-boxferry.sql:ro,z" in mount
+    for mount in db["volumes"]
+)
+assert all("80-boxferry.sql" not in mount for mount in db["volumes"])
+PY
+
+database_failure_output="${test_root}/database-failure.output"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  supabase_remote() {
+    case "$2" in
+      inspect) printf "status=exited exit=1 error=database bootstrap failed" ;;
+      logs)
+        [[ "$3" == --tail && "$4" == 20 && "$5" == test-prefix-supabase-db ]]
+        printf "password boxferry-public-supabase-db-password email boxferry-supabase@example.invalid "
+      printf "%*s" "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" "" | tr " " x
+        printf "unbounded-tail-marker"
+        ;;
+    esac
+  }
+  supabase_report_database_failure_evidence test-socket test-prefix
+' bash "${library}" > "${database_failure_output}" 2>&1
+grep --fixed-strings --quiet -- 'status=exited exit=1 error=database bootstrap failed' \
+  "${database_failure_output}"
+grep --fixed-strings --quiet -- 'bounded log tail:' "${database_failure_output}"
+grep --fixed-strings --quiet -- '[REDACTED]' "${database_failure_output}"
+if grep --fixed-strings --quiet -- 'boxferry-public-supabase-db-password' \
+  "${database_failure_output}"; then
+  printf '%s\n' 'Supabase database failure diagnostics leaked a protected value.' >&2
+  exit 1
+fi
+if grep --fixed-strings --quiet -- 'boxferry-supabase@example.invalid' \
+  "${database_failure_output}"; then
+  printf '%s\n' 'Supabase database failure diagnostics leaked the test identity.' >&2
+  exit 1
+fi
+if grep --fixed-strings --quiet -- 'unbounded-tail-marker' "${database_failure_output}"; then
+  printf '%s\n' 'Supabase database failure diagnostics did not cap a long log line.' >&2
+  exit 1
+fi
+[[ "$(wc -c < "${database_failure_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES + 512))" ]]
+
+compose_failure_output="${test_root}/compose-failure.output"
+compose_attempt_marker="${test_root}/compose-attempted"
+compose_peer_marker="${test_root}/compose-peer-ran"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  compose_attempt_marker=$3
+  compose_peer_marker=$4
+  supabase_assert_clean_prefix() { :; }
+  supabase_remote() {
+    case "$2" in
+      network) : ;;
+      inspect) printf "status=exited exit=2 error=" ;;
+      logs) printf "database bootstrap failed" ;;
+    esac
+  }
+  supabase_compose_project() {
+    : > "${compose_attempt_marker}"
+    return 42
+  }
+  supabase_peer_compose_project() { : > "${compose_peer_marker}"; }
+  if supabase_provision_compose test-socket test-prefix test-run; then
+    printf "%s\n" "Compose provisioning unexpectedly accepted a failed database startup." >&2
+    exit 1
+  fi
+  [[ -e "${compose_attempt_marker}" ]]
+  [[ ! -e "${compose_peer_marker}" ]]
+' bash "${library}" "${test_root}" "${compose_attempt_marker}" \
+  "${compose_peer_marker}" > "${compose_failure_output}" 2>&1
+grep --fixed-strings --quiet -- \
+  'Supabase PostgreSQL failure evidence: status=exited exit=2 error=' \
+  "${compose_failure_output}"
+
+database_contract_marker="${test_root}/database-contract.marker"
+database_contract_argv="${test_root}/database-contract.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  probe_argv=$3
+  supabase_create_cli_database() { :; }
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_report_database_failure_evidence() { :; }
+  supabase_remote() {
+    if [[ "$2" == exec && " $* " == *pg_isready* ]]; then
+      printf "pg_isready-green\\n" >> "$marker"
+    elif [[ "$2" == exec && " $* " == *psql* ]]; then
+      printf "%s\\n" "$@" > "$probe_argv"
+      printf "sql-contract-failed\\n" >> "$marker"
+      return 1
+    elif [[ "$2" == run ]]; then
+      printf "dependent-started\\n" >> "$marker"
+      return 1
+    fi
+  }
+  supabase_remote test-socket exec test-prefix-supabase-db pg_isready -U postgres -d postgres
+  if supabase_create_cli_services test-socket test-prefix test-run; then
+    printf "%s\\n" "SQL contract failure incorrectly started dependents." >&2
+    exit 1
+  fi
+' bash "${library}" "${database_contract_marker}" "${database_contract_argv}"
+grep --fixed-strings --quiet -- 'pg_isready-green' "${database_contract_marker}"
+grep --fixed-strings --quiet -- 'sql-contract-failed' "${database_contract_marker}"
+if grep --fixed-strings --quiet -- 'dependent-started' "${database_contract_marker}"; then
+  printf '%s\n' 'Supabase PostgreSQL SQL contract failure started a dependent service.' >&2
+  exit 1
+fi
+jq --raw-input --slurp --exit-status '
+  split("\n")[:-1] as $argv |
+  ($argv | index("--env")) and
+  ($argv | index("PGPASSWORD=boxferry-public-supabase-db-password")) and
+  (any($argv[]; contains("hostname -i"))) and
+  (any($argv[]; contains("127.*|::1"))) and
+  (any($argv[]; contains("-h \"${host}\" -U postgres"))) and
+  (any($argv[]; contains("127.0.0.1")) | not) and
+  (any($argv[]; contains("current_setting"))) and
+  (any($argv[]; contains("config_file"))) and
+  (any($argv[]; contains("/etc/postgresql/postgresql.conf"))) and
+  (any($argv[]; contains("supabase_read_only_user"))) and
+  (any($argv[]; contains("public.boxferry_items"))) and
+  (any($argv[]; contains("public.boxferry_bootstrap_complete WHERE singleton"))) and
+  (any($argv[]; contains("pg_isready")) | not)
+' "${database_contract_argv}" > /dev/null
 
 archive_layout="${test_root}/archive-layout"
 archive_path="${test_root}/auth.oci.tar"
