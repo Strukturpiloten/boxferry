@@ -59,7 +59,7 @@ jobs:
         if: env.TIER != 'offline'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libcap2-bin podman
+          sudo apt-get install --yes libcap2-bin podman skopeo
 
       - name: Build BoxFerry once for trusted live tiers
         if: env.TIER != 'offline'

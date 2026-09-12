@@ -130,12 +130,15 @@ not redistribute them. [`providers.tsv`](providers.tsv) applies the same
 immutable check to Docker Compose.
 
 The catalogue also records each independently resolved `linux/amd64` child in
-`platform-manifest-digest`. The index reference remains the acquisition authority; the child
-manifest is the OCI archive and live-runtime identity. The child digests were captured on
-2026-09-12 with skopeo 1.24.0 from
+`platform-manifest-digest` and `platform-manifest-media-type`. The index reference remains
+acquisition authority; the child manifest is the OCI archive and live-runtime identity. The child
+values were captured on 2026-09-12 with Skopeo 1.24.0 from
 `skopeo inspect --raw docker://<repository>@<index-digest>`, selecting the unique descriptor whose
-platform is `linux/amd64`. They are registry-observed values, not digests inferred from generated
-archives. Revalidate both immutable identities before changing a row.
+platform is `linux/amd64`. The live lane records its installed `skopeo --version`, then uses
+`skopeo copy --preserve-digests` directly from `docker://<repository>@<index-digest>` to a bounded
+OCI archive. It verifies the sole descriptor's child digest, media type, byte size, blob hash, and
+exact `tag@child-digest` annotation before loading. These are registry-observed values, not digests
+inferred from generated archives. Revalidate both immutable identities before changing a row.
 
 Most registries do not attest a source revision in image labels. A tag, source
 commit, and build-file hash therefore document review inputs, not a reproducible

@@ -196,7 +196,7 @@ class MigrationReadinessTests(unittest.TestCase):
         self.assertEqual(task["minimum-disk-mib"], 24576)
         self.assertEqual(task["maximum-rss-mib"], 14336)
         self.assertEqual(task["maximum-disk-growth-mib"], 20480)
-        self.assertEqual(task["required-tools"], ["podman"])
+        self.assertEqual(task["required-tools"], ["podman", "skopeo"])
         self.assertEqual(
             task["required-environment"], ["BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"]
         )
@@ -213,6 +213,42 @@ class MigrationReadinessTests(unittest.TestCase):
                 "podman",
             ],
         )
+
+    def test_supabase_preflight_reports_missing_skopeo(self) -> None:
+        catalogue = MODULE.load_catalogue()
+        task = MODULE.by_id(catalogue["tasks"], "supabase-application", "task")
+        sampler = mock.Mock()
+        sampler.snapshot.return_value = {
+            "available_memory_mib": task["minimum-memory-mib"],
+            "filesystems": [
+                {"baseline_free_mib": task["minimum-disk-mib"]},
+            ],
+        }
+        identity_evidence = {
+            "uid": 0,
+            "gid": 0,
+            "user": "root",
+            "home": "/root",
+            "groups": [0],
+        }
+
+        with (
+            mock.patch.object(
+                MODULE.shutil,
+                "which",
+                side_effect=lambda tool: None if tool == "skopeo" else f"/usr/bin/{tool}",
+            ),
+            mock.patch.object(
+                MODULE,
+                "execution_identity",
+                return_value=(identity_evidence, None),
+            ),
+        ):
+            observed, reason, identity = MODULE.preflight(task, sampler, None)
+
+        self.assertEqual(reason, "missing required tools: skopeo")
+        self.assertEqual(identity, identity_evidence)
+        self.assertEqual(observed, sampler.snapshot.return_value)
 
     def test_complete_podman_matrix_retains_disk_growth_cap(self) -> None:
         catalogue = MODULE.load_catalogue()

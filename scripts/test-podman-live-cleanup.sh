@@ -192,7 +192,7 @@ for unused in "${empty_collection[@]}"; do
 done
 [[ "${iterations}" == 0 ]]
 
-applications=(nextcloud forgejo paperless immich observability supabase)
+applications=(nextcloud forgejo paperless immich observability)
 for application in "${applications[@]}"; do
   module="${script_directory}/lib/${application}-application.sh"
   grep --fixed-strings --quiet -- 'record_run_owned_host_image "${reference}"' "${module}"
@@ -200,25 +200,25 @@ for application in "${applications[@]}"; do
 done
 
 supabase_module="${script_directory}/lib/supabase-application.sh"
-grep --fixed-strings --quiet -- '--platform "${platform}" "${reference}"' "${supabase_module}"
-grep --fixed-strings --quiet -- 'push --quiet --digestfile "${archive_digest_file}"' \
+grep --fixed-strings --quiet -- 'supabase_skopeo_source_reference "${reference}"' "${supabase_module}"
+grep --fixed-strings --quiet -- 'skopeo copy --quiet --preserve-digests' \
   "${supabase_module}"
-grep --fixed-strings --quiet -- '"${image_id}" "oci-archive:${archive_path}:${archive_reference}"' \
+grep --fixed-strings --quiet -- '--override-os "${platform_os}" --override-arch "${platform_architecture}"' \
+  "${supabase_module}"
+grep --fixed-strings --quiet -- '"oci-archive:${archive_path}:${runtime_reference}"' \
   "${supabase_module}"
 grep --fixed-strings --quiet -- 'supabase_validate_image_archive "${id}" "${archive_path}"' \
   "${supabase_module}"
-if grep --fixed-strings --quiet -- 'save --format oci-archive' "${supabase_module}"; then
-  printf '%s\n' 'Supabase archive creation bypasses the platform-digest proof.' >&2
+if grep --fixed-strings --quiet -- '"${engine}" pull --quiet --platform' "${supabase_module}" ||
+  grep --fixed-strings --quiet -- '"${engine}" push --quiet' "${supabase_module}"; then
+  printf '%s\n' 'Supabase archive creation retains a lossy containers-storage hop.' >&2
   exit 1
 fi
-supabase_push_line="$(grep -n --fixed-strings -- 'push --quiet --digestfile' \
+supabase_copy_line="$(grep -n --fixed-strings -- 'skopeo copy --quiet --preserve-digests' \
   "${supabase_module}" | cut -d: -f1)"
 supabase_validate_line="$(grep -n --fixed-strings -- 'supabase_validate_image_archive "${id}"' \
   "${supabase_module}" | tail -n 1 | cut -d: -f1)"
-supabase_release_line="$(grep -n --fixed-strings -- 'release_run_owned_host_image "${reference}"' \
-  "${supabase_module}" | cut -d: -f1)"
-[[ "${supabase_push_line}" -lt "${supabase_validate_line}" &&
-  "${supabase_validate_line}" -lt "${supabase_release_line}" ]]
+[[ "${supabase_copy_line}" -lt "${supabase_validate_line}" ]]
 
 # Aliases are never overwritten: the helper probes first and records only after tag succeeds.
 grep --fixed-strings --quiet -- 'Refusing to overwrite existing %s archive alias %s.' "${runner}"
