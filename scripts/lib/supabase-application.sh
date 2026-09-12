@@ -479,6 +479,8 @@ supabase_report_database_failure_evidence() {
 
 supabase_report_service_health_failure() {
   local socket=$1 prefix=$2 service=$3 container result marker output status state health_log logs
+  local postgrest_probe_result postgrest_probe_output postgrest_probe_status
+  local postgrest_health_test postgrest_admin_configuration
   local -a pipeline_status
   container="${prefix}-supabase-${service}"
   marker=$'\036boxferry-healthcheck-exit='
@@ -503,12 +505,44 @@ supabase_report_service_health_failure() {
     "${container}" 2>&1 | head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
   logs="$(supabase_remote "${socket}" logs --tail 20 "${container}" 2>&1 |
     head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
-  printf 'Supabase %s health failure: final healthcheck exit=%d; bounded output: %s; state: %s; diagnostic health log: %s; bounded container log tail: %s\n' \
+  if [[ "${service}" == rest ]]; then
+    # This is evidence only.  The fresh healthcheck above remains the readiness
+    # authority, even when the directly invoked configured command succeeds.
+    postgrest_probe_result="$(
+      if supabase_remote "${socket}" exec "${container}" postgrest --ready 2>&1 | {
+        head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}"
+        cat > /dev/null
+      }; then
+        pipeline_status=("${PIPESTATUS[@]}")
+      else
+        pipeline_status=("${PIPESTATUS[@]}")
+      fi
+      printf '%s%d' "${marker}" "${pipeline_status[0]}"
+    )"
+    postgrest_probe_status=${postgrest_probe_result##*"${marker}"}
+    postgrest_probe_output=${postgrest_probe_result%"${marker}""${postgrest_probe_status}"}
+    postgrest_health_test="$(supabase_remote "${socket}" inspect \
+      --format '{{json .Config.Healthcheck.Test}}' "${container}" 2>&1 |
+      head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+    postgrest_admin_configuration="$(supabase_remote "${socket}" inspect \
+      --format '{{range .Config.Env}}{{println .}}{{end}}' "${container}" 2>&1 |
+      LC_ALL=C awk -F= '$1 == "PGRST_ADMIN_SERVER_HOST" || $1 == "PGRST_ADMIN_SERVER_PORT"' |
+      head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  fi
+  printf 'Supabase %s health failure: final healthcheck exit=%d; bounded output: %s; state: %s; diagnostic health log: %s; bounded container log tail: %s' \
     "${service}" "${status}" \
     "$(supabase_redact_runtime_text "${output}")" \
     "$(supabase_redact_runtime_text "${state}")" \
     "$(supabase_redact_runtime_text "${health_log}")" \
     "$(supabase_redact_runtime_text "${logs}")" >&2
+  if [[ "${service}" == rest ]]; then
+    printf '; PostgREST direct configured-command probe: exit=%d; bounded output: %s; stored health test: %s; admin configuration: %s' \
+      "${postgrest_probe_status}" \
+      "$(supabase_redact_runtime_text "${postgrest_probe_output}")" \
+      "$(supabase_redact_runtime_text "${postgrest_health_test}")" \
+      "$(supabase_redact_runtime_text "${postgrest_admin_configuration}")" >&2
+  fi
+  printf '\n' >&2
 }
 
 supabase_database_sql_contract() {

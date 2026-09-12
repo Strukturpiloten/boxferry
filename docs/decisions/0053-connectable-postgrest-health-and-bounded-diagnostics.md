@@ -31,6 +31,12 @@ final `podman healthcheck run`. It emits that bounded, redacted result together 
 container state, the diagnostic health-log, and the bounded container-log tail. Cached health
 state is diagnostic evidence only and never satisfies readiness. PostgreSQL remains governed by
 ADR 0051's peer-network SQL proof.
+For a final PostgREST failure only, the diagnostic phase additionally runs exactly one bounded
+`podman exec <rest> postgrest --ready` probe through the runner's standard 90-second
+per-operation `engine_operation` bound. Its exit and bounded, redacted output,
+the stored health-test shape, and only `PGRST_ADMIN_SERVER_HOST` and
+`PGRST_ADMIN_SERVER_PORT` are evidence; a successful probe never overrides the failed fresh
+healthcheck. No other PostgREST environment is emitted.
 Raw final-healthcheck output remains only in bounded process memory. Redaction conservatively masks
 protected values split at the raw capture boundary before the diagnostic output is truncated.
 
@@ -38,8 +44,10 @@ protected values split at the raw capture boundary before the diagnostic output 
 
 - The PostgREST configured readiness command has a concrete loopback administrative target in
   both provisioners.
-- Service-health failures provide actionable but privacy-safe evidence without extending existing
-  deadlines or weakening ordering.
+- Service-health failures provide actionable but privacy-safe evidence without weakening ordering;
+  the additional PostgREST diagnostic uses the runner's standard 90-second operation cap.
+- The extra PostgREST command probe cannot promote a failed
+  healthcheck to readiness.
 - A configured healthcheck that cannot succeed remains a migration-readiness failure regardless
   of retained lifecycle metadata.
 
