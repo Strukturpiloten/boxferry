@@ -823,13 +823,15 @@ supabase_wait_running() {
 
 supabase_wait_application() {
   local socket=$1 prefix=$2 service
-  for service in db auth rest realtime imgproxy storage functions studio kong; do
+  if ! supabase_wait_for 600 'Supabase PostgreSQL peer SQL contract' \
+    supabase_database_sql_contract "${socket}" "${prefix}"; then
+    supabase_report_database_contract_failure "${socket}" "${prefix}"
+    supabase_report_database_failure_evidence "${socket}" "${prefix}"
+    return 1
+  fi
+  for service in auth rest realtime imgproxy storage functions studio kong; do
     if ! supabase_wait_for 600 "Supabase ${service} health" \
       supabase_wait_healthy "${socket}" "${prefix}-supabase-${service}"; then
-      if [[ "${service}" == db ]]; then
-        supabase_report_database_contract_failure "${socket}" "${prefix}"
-        supabase_report_database_failure_evidence "${socket}" "${prefix}"
-      fi
       return 1
     fi
   done
