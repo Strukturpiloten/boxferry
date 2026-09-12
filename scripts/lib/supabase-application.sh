@@ -14,6 +14,7 @@ SUPABASE_MIN_MEMORY_KIB="12582912"
 SUPABASE_MIN_DISK_KIB="25165824"
 SUPABASE_MAX_CONCURRENCY="1"
 SUPABASE_CELL_TIMEOUT="90m"
+SUPABASE_CELL_KILL_AFTER="10s"
 SUPABASE_DB_PASSWORD="boxferry-public-supabase-db-password"
 SUPABASE_JWT_SECRET="boxferry-public-jwt-secret-at-least-thirty-two-characters"
 SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6InN1cGFiYXNlIiwicm9sZSI6ImFub24ifQ.lGRwynjOirFYPqa-6IzEfCCIS_yNsl4riV9_TYukv0g"
@@ -70,7 +71,8 @@ supabase_validate_resource_budget() {
 supabase_validate_catalogues() {
   local fixture
   fixture="$(supabase_fixture_root)"
-  [[ "${SUPABASE_MAX_CONCURRENCY}" == 1 && "${SUPABASE_CELL_TIMEOUT}" == 90m ]] || {
+  [[ "${SUPABASE_MAX_CONCURRENCY}" == 1 && "${SUPABASE_CELL_TIMEOUT}" == 90m &&
+    "${SUPABASE_CELL_KILL_AFTER}" == 10s ]] || {
     printf 'Supabase profile requires concurrency one and a 90-minute cell bound.\n' >&2
     return 1
   }
@@ -1833,8 +1835,112 @@ supabase_run_application_cell_unbounded() {
     "$(timestamp)" "${id}" "${progress_index}" "${progress_total}"
 }
 
+supabase_timed_in_shell_operation() {
+  local deadline=$1 name=$2 started_at elapsed status runner_pid
+  local installed_term_trap=false
+  local watchdog_fd watchdog_pid watchdog_ready watchdog_start_fd watchdog_status
+  shift 2
+  started_at="$(date +%s)"
+  runner_pid=${BASHPID}
+  printf '%s STEP START %s (deadline %s)\n' \
+    "$(timestamp)" "${name}" "${deadline}" >&3
+  coproc SUPABASE_DEADLINE_WATCHDOG {
+    local start_request
+    IFS= read -r start_request || exit 125
+    [[ "${start_request}" == start ]] || exit 125
+    exec python3 "${script_directory}/lib/in-shell-deadline.py" \
+      --runner-pid "${runner_pid}" \
+      --deadline "${deadline}" \
+      --kill-after "${SUPABASE_CELL_KILL_AFTER}" \
+      --name "${name}" 2>&3
+  }
+  watchdog_pid=$!
+  watchdog_fd=${SUPABASE_DEADLINE_WATCHDOG[0]}
+  watchdog_start_fd=${SUPABASE_DEADLINE_WATCHDOG[1]}
+  if ! printf 'start\n' >&"${watchdog_start_fd}"; then
+    exec {watchdog_fd}<&-
+    exec {watchdog_start_fd}>&-
+    wait "${watchdog_pid}" > /dev/null 2>&1 || true
+    printf '%s STEP FAIL  %s (deadline helper failed to arm, exit 125)\n' \
+      "$(timestamp)" "${name}" >&3
+    return 125
+  fi
+  watchdog_ready=""
+  if ! IFS= read -r -u "${watchdog_fd}" watchdog_ready ||
+    [[ "${watchdog_ready}" != ready ]]; then
+    exec {watchdog_fd}<&-
+    exec {watchdog_start_fd}>&-
+    kill -TERM "${watchdog_pid}" > /dev/null 2>&1 || true
+    if wait "${watchdog_pid}"; then
+      watchdog_status=0
+    else
+      watchdog_status=$?
+    fi
+    printf '%s STEP FAIL  %s (deadline helper failed to arm, exit %d)\n' \
+      "$(timestamp)" "${name}" "${watchdog_status}" >&3
+    return 125
+  fi
+
+  if [[ -z "$(trap -p TERM)" ]]; then
+    trap 'exit 143' TERM
+    installed_term_trap=true
+  fi
+  "$@"
+  status=$?
+  if ! printf 'cancel\n' >&"${watchdog_start_fd}"; then
+    exec {watchdog_fd}<&-
+    exec {watchdog_start_fd}>&-
+    if wait "${watchdog_pid}"; then
+      watchdog_status=0
+    else
+      watchdog_status=$?
+    fi
+    [[ "${installed_term_trap}" == false ]] || trap - TERM
+    printf '%s STEP FAIL  %s (deadline helper stopped unexpectedly, exit %d)\n' \
+      "$(timestamp)" "${name}" "${watchdog_status}" >&3
+    return 125
+  fi
+  exec {watchdog_start_fd}>&-
+  watchdog_ready=""
+  if ! IFS= read -r -u "${watchdog_fd}" watchdog_ready ||
+    [[ "${watchdog_ready}" != cancelled ]]; then
+    exec {watchdog_fd}<&-
+    if wait "${watchdog_pid}"; then
+      watchdog_status=0
+    else
+      watchdog_status=$?
+    fi
+    [[ "${installed_term_trap}" == false ]] || trap - TERM
+    printf '%s STEP FAIL  %s (deadline helper rejected cancellation, exit %d)\n' \
+      "$(timestamp)" "${name}" "${watchdog_status}" >&3
+    return 125
+  fi
+  exec {watchdog_fd}<&-
+  if wait "${watchdog_pid}"; then
+    watchdog_status=0
+  else
+    watchdog_status=$?
+  fi
+  [[ "${installed_term_trap}" == false ]] || trap - TERM
+  if ((watchdog_status != 0)); then
+    printf '%s STEP FAIL  %s (deadline helper cancellation returned %d)\n' \
+      "$(timestamp)" "${name}" "${watchdog_status}" >&3
+    return 125
+  fi
+
+  elapsed=$(($(date +%s) - started_at))
+  if ((status == 0)); then
+    printf '%s STEP PASS %s (%s)\n' \
+      "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" >&3
+    return 0
+  fi
+  printf '%s STEP FAIL  %s (%s, exit %d)\n' \
+    "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" "${status}" >&3
+  return "${status}"
+}
+
 run_supabase_application_cell() {
-  timed_operation "${SUPABASE_CELL_TIMEOUT}" \
+  supabase_timed_in_shell_operation "${SUPABASE_CELL_TIMEOUT}" \
     'complete Supabase application cell' \
     supabase_run_application_cell_unbounded "$@"
 }
