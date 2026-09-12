@@ -5,6 +5,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.9.0...boxferry-v0.9.1) - 2026-09-12
+
 ### Changed
 
 - Add bounded Immich 3.1.0 CPU-only migration acceptance with deterministic PNG upload,
