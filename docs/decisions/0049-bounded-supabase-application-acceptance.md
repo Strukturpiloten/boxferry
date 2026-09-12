@@ -8,7 +8,8 @@
   [ADR 0048](0048-bounded-observability-application-acceptance.md)
 - Superseded in part by:
   [ADR 0050](0050-executable-post-migration-supabase-bootstrap.md) for the authored SQL placement
-  and ordering contract
+  and ordering contract, and [ADR 0051](0051-peer-network-supabase-readiness.md)
+  for database readiness
 
 ## Context
 
@@ -39,9 +40,7 @@ bash scripts/podman-live-conformance.sh --profile supabase-application --matrix-
 Both live provisioners retain the pinned PostgreSQL image's `supabase_admin` bootstrap identity,
 run the upstream-derived command with
 `config_file=/etc/postgresql/postgresql.conf`, and add the authored idempotent SQL as the
-lexically last script in the image-owned `init-scripts` phase. Readiness continues to probe the
-application-facing `postgres` role created by the image migration over an authenticated
-non-loopback self-address, never its trusted local socket. The readiness SQL requires the exact
+lexically last script in the image-owned `init-scripts` phase. The readiness SQL requires the exact
 PostgreSQL configuration path, the image-owned `supabase_read_only_user` migration marker, and
 the terminal authored completion marker after every application grant and extension. When database readiness or
 Compose provisioning fails, the harness reports bounded database state and log-tail context with
