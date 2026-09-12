@@ -33,6 +33,18 @@ privileged `pre-release` migration-readiness task immediately after
 bash scripts/podman-live-conformance.sh --profile supabase-application --matrix-cell podman-6.1-rootless --engine podman
 ```
 
+Both live provisioners retain the pinned PostgreSQL image's `supabase_admin` bootstrap identity,
+run the upstream-derived command with
+`config_file=/etc/postgresql/postgresql.conf`, and add the authored idempotent SQL as the
+lexically last script in the image-owned `init-scripts` phase. Readiness continues to probe the
+application-facing `postgres` role created by the image migration over an authenticated
+non-loopback self-address, never its trusted local socket. The readiness SQL requires the exact
+PostgreSQL configuration path, the image-owned `supabase_read_only_user` migration marker, and
+the terminal authored completion marker after every application grant and extension. When database readiness or
+Compose provisioning fails, the harness reports bounded database state and log-tail context with
+every protected fixture value redacted; that context is evidence, not a claim that the database
+caused every Compose failure.
+
 The task requires Podman, `BOXFERRY_BIN`, and a checksum-verified Docker
 Compose 5.5.0 binary in `BOXFERRY_COMPOSE_BIN`. Its sources are independent
 native Podman provisioning, Docker Compose 5.5.0 provisioning, and read-only

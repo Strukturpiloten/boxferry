@@ -52,3 +52,9 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, se
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+CREATE TABLE IF NOT EXISTS public.boxferry_bootstrap_complete (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton)
+);
+INSERT INTO public.boxferry_bootstrap_complete (singleton) VALUES (true)
+  ON CONFLICT (singleton) DO NOTHING;

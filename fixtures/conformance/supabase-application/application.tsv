@@ -1,3 +1,3 @@
 # schema=1; application source-url revision source-file source-file-sha256 license relationship redistribution
 supabase-self-hosted	https://github.com/supabase/supabase	9952d6f10fb9a7b2d9d8c3312b279bfab2c4ba96	docker/docker-compose.yml	340bb4d4b79c19e682d1a6297d56a6ec63997a49e0e19611c2cb3a6332eb32de	Apache-2.0	compatibility-reference-only-not-copied	not-redistributed
-boxferry-supabase-application	https://github.com/Strukturpiloten/boxferry	repository-authored	fixtures/conformance/supabase-application/compose.yaml	9f29ce86a893c52f6b66261e7036e9d7e7c2a7444a9ab28396feef4ef6009e8d	MPL-2.0	independently-authored-test-topology	repository-source
+boxferry-supabase-application	https://github.com/Strukturpiloten/boxferry	repository-authored	fixtures/conformance/supabase-application/compose.yaml	fde2eca4b5c61f94de25bd3a9be9edf794971bd1e172ae4b42b410aee5732311	MPL-2.0	independently-authored-test-topology	repository-source
