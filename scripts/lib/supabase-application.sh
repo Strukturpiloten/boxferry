@@ -779,6 +779,9 @@ supabase_create_cli_services() {
     --env "SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}" \
     --env "SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}" \
     --env "AUTH_JWT_SECRET=${SUPABASE_JWT_SECRET}" --env ENABLED_FEATURES_LOGS_ALL=false \
+    --health-cmd "node -e \"fetch('http://127.0.0.1:3000/api/platform/profile').then((r) => { if (!r.ok) process.exit(1) })\"" \
+    --health-interval 3s --health-timeout 5s --health-retries 150 \
+    --health-start-period 10s \
     "$(supabase_image_reference studio)" > /dev/null
 
   supabase_remote "${socket}" run --pull=never --detach \

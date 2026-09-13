@@ -100,6 +100,7 @@ compose = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 db = compose["services"]["db"]
 realtime = compose["services"]["realtime"]
 rest = compose["services"]["rest"]
+studio = compose["services"]["studio"]
 with open(sys.argv[2], "rb") as scenario_file:
     scenario = tomllib.load(scenario_file)
 expected_command = next(
@@ -135,6 +136,17 @@ assert "PGRST_DB_CHANNEL_ENABLED" not in rest["environment"]
 assert realtime["environment"]["API_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
 assert realtime["environment"]["METRICS_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
 assert realtime["environment"]["DB_ENC_KEY"] == "${BF_REALTIME_DB_KEY:?required}"
+studio_health_command = (
+    'node -e "fetch(\'http://127.0.0.1:3000/api/platform/profile\').then('
+    '(r) => { if (!r.ok) process.exit(1) })"'
+)
+assert studio["healthcheck"] == {
+    "test": ["CMD-SHELL", studio_health_command],
+    "interval": "3s",
+    "timeout": "5s",
+    "retries": 150,
+    "start_period": "10s",
+}
 images = {
     row.split("\t", maxsplit=1)[0]: row.rstrip("\n").split("\t")
     for row in open(sys.argv[5], encoding="utf-8")
@@ -195,9 +207,29 @@ realtime = next(
     for record in records
     if b"--name" in record and b"test-prefix-supabase-realtime" in record
 )
+studio = next(
+    record
+    for record in records
+    if b"--name" in record and b"test-prefix-supabase-studio" in record
+)
 assert b"API_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
 assert b"METRICS_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
 assert b"DB_ENC_KEY=boxferry-rt-key1" in realtime
+studio_health_command = (
+    b'node -e "fetch(\'http://127.0.0.1:3000/api/platform/profile\').then('
+    b'(r) => { if (!r.ok) process.exit(1) })"'
+)
+health_command = studio.index(b"--health-cmd")
+assert studio[health_command + 1] == studio_health_command
+for option, value in (
+    (b"--health-interval", b"3s"),
+    (b"--health-timeout", b"5s"),
+    (b"--health-retries", b"150"),
+    (b"--health-start-period", b"10s"),
+):
+    index = studio.index(option)
+    assert studio[index + 1] == value
+assert all(not argument.startswith(b'["CMD') for argument in studio)
 PY
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
   'PGRST_ADMIN_SERVER_HOST=127.0.0.1'
@@ -634,6 +666,27 @@ if bash -c '
   exit 1
 fi
 [[ "$(tr '\n' ' ' < "${service_health_failure_marker}")" == 'peer-sql healthcheck:test-prefix-supabase-auth report:auth ' ]]
+
+studio_health_failure_marker="${test_root}/studio-health-failure.marker"
+if bash -c '
+set -Eeuo pipefail
+source "$1"
+marker=$2
+supabase_wait_for() { shift 2; "$@"; }
+supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
+supabase_run_healthcheck() {
+  printf "health:%s\n" "$2" >> "${marker}"
+  [[ "$2" != test-prefix-supabase-studio ]]
+}
+supabase_report_service_health_failure() { printf "report:%s\n" "$3" >> "${marker}"; }
+supabase_wait_running() { printf "process-fallback:%s\n" "$2" >> "${marker}"; }
+supabase_remote() { printf "remote-fallback:%s\n" "$*" >> "${marker}"; }
+supabase_wait_application test-socket test-prefix
+' bash "${library}" "${studio_health_failure_marker}"; then
+  printf '%s\n' 'Failed Studio healthcheck incorrectly allowed readiness.' >&2
+  exit 1
+fi
+[[ "$(tr '\n' ' ' < "${studio_health_failure_marker}")" == 'peer-sql health:test-prefix-supabase-auth health:test-prefix-supabase-rest health:test-prefix-supabase-realtime health:test-prefix-supabase-imgproxy health:test-prefix-supabase-storage health:test-prefix-supabase-functions health:test-prefix-supabase-studio report:studio ' ]]
 
 rest_health_failure_marker="${test_root}/rest-health-failure.marker"
 if bash -c '

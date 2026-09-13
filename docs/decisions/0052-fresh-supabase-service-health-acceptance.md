@@ -23,6 +23,14 @@ After the PostgreSQL peer SQL contract succeeds, native and Compose provisioning
 Storage, Edge Runtime, Studio, and Kong. Each command is retried only within its existing
 600-second deadline; a non-zero result fails closed and prevents later readiness checks.
 
+The pinned Studio image has no embedded healthcheck. Native provisioning therefore installs the
+independently defined Compose-equivalent profile-endpoint probe at container creation: `node -e`
+requests `http://127.0.0.1:3000/api/platform/profile`, with a 3-second interval, 5-second timeout,
+150 retries, and 10-second start period. The native command is passed as a scalar Podman
+`--health-cmd`, which Podman records as `CMD-SHELL`; explicit JSON `CMD` or `CMD-SHELL` marker
+arrays are avoided because the reviewed remote client does not serialize them safely. Studio
+remains a mandatory fresh-execution contract.
+
 Compose first runs its normal full `up --detach --remove-orphans` provider command in the
 background. While that bounded provider command is waiting on its retained
 `condition: service_healthy` dependencies, the runner explicitly executes each configured
