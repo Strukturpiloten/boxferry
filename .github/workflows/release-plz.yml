@@ -67,7 +67,7 @@ jobs:
           exit 1
 
       - name: Create or update release pull request
-        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        uses: release-plz/action@346832d73e3415c2ebd0432cba3a2bf5881e5f7d # v0.5.135
         with:
           command: release-pr
           # renovate: datasource=crate depName=release-plz
