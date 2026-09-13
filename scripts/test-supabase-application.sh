@@ -82,6 +82,7 @@ import yaml
 
 compose = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 db = compose["services"]["db"]
+realtime = compose["services"]["realtime"]
 rest = compose["services"]["rest"]
 with open(sys.argv[2], "rb") as scenario_file:
     scenario = tomllib.load(scenario_file)
@@ -115,6 +116,8 @@ assert rest["environment"]["PGRST_ADMIN_SERVER_PORT"] == "3001"
 assert rest["healthcheck"]["test"] == ["CMD", "postgrest", "--ready"]
 assert "PGRST_SERVER_HOST" not in rest["environment"]
 assert "PGRST_DB_CHANNEL_ENABLED" not in rest["environment"]
+assert realtime["environment"]["API_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
+assert realtime["environment"]["METRICS_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
 images = {
     row.split("\t", maxsplit=1)[0]: row.rstrip("\n").split("\t")
     for row in open(sys.argv[5], encoding="utf-8")
@@ -152,11 +155,32 @@ bash -c '
   set -Eeuo pipefail
   source "$1"
   cli_output=$2
-  supabase_remote() { printf "%s\\0" "$@" >> "${cli_output}"; }
+  supabase_remote() {
+    printf "%s\\0" "$@" >> "${cli_output}"
+    printf "\\0" >> "${cli_output}"
+  }
   supabase_image_reference() { printf "%s" test-image; }
   supabase_wait_for() { shift 2; "$@"; }
   supabase_create_cli_services test-socket test-prefix test-run
 ' bash "${library}" "${cli_services_argv}"
+
+python3 - "${cli_services_argv}" << 'PY'
+import pathlib
+import sys
+
+records = [
+    record.split(b"\0")
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")
+    if record
+]
+realtime = next(
+    record
+    for record in records
+    if b"--name" in record and b"test-prefix-supabase-realtime" in record
+)
+assert b"API_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
+assert b"METRICS_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
+PY
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
   'PGRST_ADMIN_SERVER_HOST=127.0.0.1'
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \

@@ -50,7 +50,10 @@ caused every Compose failure.
 The task requires Podman, `BOXFERRY_BIN`, and a checksum-verified Docker
 Compose 5.5.0 binary in `BOXFERRY_COMPOSE_BIN`. Its sources are independent
 native Podman provisioning, Docker Compose 5.5.0 provisioning, and read-only
-acquisition through the Podman 6.1.0 rootless API.
+acquisition through the Podman 6.1.0 rootless API. Realtime v2.102.3 receives both required
+`API_JWT_SECRET` and `METRICS_JWT_SECRET` keys in both provisioners. They deliberately reuse the
+existing reviewed JWT canary, matching the pinned upstream Realtime Compose contract; the metrics
+endpoint remains private and is not a separately claimed acceptance surface.
 
 The pre-release tier retains concurrency one, its 19,800-second wall deadline,
 and the enclosing 360-minute workflow limit. The Supabase task has its own
