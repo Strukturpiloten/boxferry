@@ -53,7 +53,9 @@ native Podman provisioning, Docker Compose 5.5.0 provisioning, and read-only
 acquisition through the Podman 6.1.0 rootless API. Realtime v2.102.3 receives both required
 `API_JWT_SECRET` and `METRICS_JWT_SECRET` keys in both provisioners. They deliberately reuse the
 existing reviewed JWT canary, matching the pinned upstream Realtime Compose contract; the metrics
-endpoint remains private and is not a separately claimed acceptance surface.
+endpoint remains private and is not a separately claimed acceptance surface. Realtime's tenant
+encryption uses one shared, fail-fast-validated 16-byte public fixture key in both provisioners,
+matching the pinned implementation's raw AES-128 key boundary.
 
 The pre-release tier retains concurrency one, its 19,800-second wall deadline,
 and the enclosing 360-minute workflow limit. The Supabase task has its own

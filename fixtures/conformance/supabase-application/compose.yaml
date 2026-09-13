@@ -111,7 +111,7 @@ services:
       METRICS_JWT_SECRET: ${BF_JWT_SECRET:?required}
       APP_NAME: realtime
       DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
-      DB_ENC_KEY: boxferry-public-realtime-db-key
+      DB_ENC_KEY: ${BF_REALTIME_DB_KEY:?required}
       DB_HOST: db
       DB_NAME: postgres
       DB_PASSWORD: ${BF_DB_PASSWORD:?required}

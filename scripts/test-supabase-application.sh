@@ -14,6 +14,22 @@ repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
 source "${library}"
 
 supabase_validate_catalogues
+[[ "${SUPABASE_REALTIME_DB_KEY}" == boxferry-rt-key1 ]]
+[[ "$(LC_ALL=C printf '%s' "${SUPABASE_REALTIME_DB_KEY}" | wc -c)" == 16 ]]
+compose_environment="$(supabase_compose_environment test-prefix test-run env)"
+grep --fixed-strings --line-regexp --quiet \
+  "BF_REALTIME_DB_KEY=${SUPABASE_REALTIME_DB_KEY}" <<< "${compose_environment}"
+invalid_realtime_key_output="${test_root}/invalid-realtime-key.output"
+if (
+  SUPABASE_REALTIME_DB_KEY=too-short
+  supabase_validate_catalogues
+) > "${invalid_realtime_key_output}" 2>&1; then
+  printf '%s\n' 'Supabase catalogue accepted an invalid Realtime AES-128 key.' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Supabase Realtime DB encryption key must be exactly 16 bytes for AES-128.' \
+  "${invalid_realtime_key_output}"
 
 auth_source_reference="$(supabase_source_image_reference auth)"
 auth_runtime_reference="$(supabase_image_reference auth)"
@@ -118,6 +134,7 @@ assert "PGRST_SERVER_HOST" not in rest["environment"]
 assert "PGRST_DB_CHANNEL_ENABLED" not in rest["environment"]
 assert realtime["environment"]["API_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
 assert realtime["environment"]["METRICS_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
+assert realtime["environment"]["DB_ENC_KEY"] == "${BF_REALTIME_DB_KEY:?required}"
 images = {
     row.split("\t", maxsplit=1)[0]: row.rstrip("\n").split("\t")
     for row in open(sys.argv[5], encoding="utf-8")
@@ -180,6 +197,7 @@ realtime = next(
 )
 assert b"API_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
 assert b"METRICS_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
+assert b"DB_ENC_KEY=boxferry-rt-key1" in realtime
 PY
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
   'PGRST_ADMIN_SERVER_HOST=127.0.0.1'
