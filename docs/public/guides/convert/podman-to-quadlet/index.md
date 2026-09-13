@@ -29,10 +29,12 @@ Runtime-effective, runtime-assigned, and locally resolved observations remain go
 promotion and loss policy. The two promotion flags in the example authorize only effective named
 volumes and networks; they do not promote arbitrary runtime-local state. Add
 `--promote-podman-portable-effective-settings` only after reviewing environment, published-port,
-restart, normal-health, and DNS evidence. It allows sensitive environment acquisition, but
-diagnostic reports and snapshots remain redacted.
+restart, normal-health, DNS, and standalone-container effective network-alias evidence. Alias
+promotion also requires named-network promotion; runtime container-ID aliases remain evidence only,
+and pod-member networking remains pod-scoped evidence. The flag allows sensitive environment
+acquisition, but diagnostic reports and snapshots remain redacted.
 
-The portable-effective flag also promotes typed network-internal, subnet, gateway, and lease-range
+The portable-effective flag also promotes typed network-internal, subnet, gateway, lease-range, and attachment-alias
 observations. Lease endpoints become Quadlet's supported `<start-IP>-<end-IP>` `IPRange` form. An
 IPv6 subnet enables `IPv6=true`, so an application-owned `.network` unit carries these settings
 instead of remaining empty. Driver, DNS, IPAM-driver, interface, and standalone IPv6 flags remain

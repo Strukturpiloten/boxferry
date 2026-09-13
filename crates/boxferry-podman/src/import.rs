@@ -21,8 +21,8 @@ use podman_lens::{
     ContainerMountObservation, ContainerMountSelinuxRelabel, ContainerMountSource, ContainerObservation,
     ContainerSecretGrantObservation, DiscoveryExplanationKind, MAX_UNKNOWN_FIELDS_PER_INVENTORY,
     MAX_UNKNOWN_FIELDS_PER_RECORD, NativeHealthCheckObservation, NativeHealthCommand, NativeNamespaceMode,
-    NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol, NativeRestartPolicyName,
-    NativeRestartPolicyObservation, ObservationField, ObservationOrigin, ProtectedEnvironment,
+    NativeNetworkAliasKind, NativeNetworkingObservation, NativePortBindingObservation, NativePortProtocol,
+    NativeRestartPolicyName, NativeRestartPolicyObservation, ObservationField, ObservationOrigin, ProtectedEnvironment,
     ProtectedEnvironmentValue, ResourceDetails, ResourceIdentity, ResourceKind, ResourceObservation,
     ResourceObservationState,
 };
@@ -1884,13 +1884,104 @@ impl<'a> Mapping<'a> {
                 self.identity_conflict(&field_subject, "network reference does not resolve uniquely");
                 continue;
             };
-            service.add_network(self.decision_sourced(NeutralNetworkAttachment::new(name, Vec::new())));
+            let alias_subject = format!("{field_subject}.{}.aliases", name.as_str());
+            let aliases = self.map_effective_network_aliases(&alias_subject, networking.value(), reference.reference());
+            service.add_network(self.decision_sourced(NeutralNetworkAttachment::new(name, aliases)));
             self.approximate_with_flag(
                 &field_subject,
                 "effective named network promoted without runtime-assigned addresses",
                 "--promote-podman-effective-named-networks",
             );
         }
+    }
+
+    /// Maps only explicitly reviewed effective aliases. `networks()` remains the
+    /// topology authority: attachment observations can be unavailable or malformed
+    /// without removing an otherwise promotable named-network attachment.
+    fn map_effective_network_aliases(
+        &mut self,
+        alias_subject: &str,
+        networking: &NativeNetworkingObservation,
+        native_reference: &str,
+    ) -> Vec<Sourced<ProtectedString>> {
+        let attachments = networking.network_attachments();
+        let Some(attachments) = attachments.observed() else {
+            self.report_state(attachments, alias_subject);
+            return Vec::new();
+        };
+        if attachments.origin() != ObservationOrigin::Effective {
+            self.report_state(networking.network_attachments(), alias_subject);
+            return Vec::new();
+        }
+
+        // The relationship reference, never an incidental vector position, joins
+        // typed alias evidence to topology-owned `networks()` entries.
+        let Some(attachment) = attachments
+            .value()
+            .iter()
+            .find(|attachment| attachment.network().reference() == native_reference)
+        else {
+            self.invalid(
+                alias_subject,
+                "native network attachment alias evidence is inconsistent",
+            );
+            return Vec::new();
+        };
+
+        let aliases = attachment.aliases();
+        let Some(aliases) = aliases.observed() else {
+            self.report_state(aliases, alias_subject);
+            return Vec::new();
+        };
+        if aliases.origin() != ObservationOrigin::Effective {
+            self.report_state(attachment.aliases(), alias_subject);
+            return Vec::new();
+        }
+
+        let mut candidates = Vec::new();
+        let mut future_kind = false;
+        for alias in aliases.value() {
+            match alias.kind() {
+                NativeNetworkAliasKind::EffectiveCandidate => candidates.push(alias),
+                NativeNetworkAliasKind::RuntimeContainerId => {}
+                _ => future_kind = true,
+            }
+        }
+        if future_kind {
+            self.unsupported(
+                alias_subject,
+                "future native network alias classification is not reviewed",
+            );
+        }
+        if candidates.is_empty() {
+            // Container-ID aliases are local runtime evidence. They deliberately
+            // have no portable-neutral representation and never enter reports.
+            if !future_kind {
+                self.evidence_only(alias_subject);
+            }
+            return Vec::new();
+        }
+        if !self.source.promotion_policy().promotes_portable_effective_settings() {
+            self.promotion_required_with_flag(
+                alias_subject,
+                "effective network aliases require explicit portable-settings promotion authorization",
+                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+            );
+            return Vec::new();
+        }
+
+        self.approximate_with_flag(
+            alias_subject,
+            "effective network aliases explicitly promoted portable intent",
+            PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+        );
+        candidates
+            .into_iter()
+            // Explicit promotion makes these spellings portable output intent.
+            // Diagnostics remain value-free, while exporters must receive the
+            // plain value so they can preserve the functional DNS alias.
+            .map(|alias| self.portable_sourced(ProtectedString::plain(alias.spelling()), true))
+            .collect()
     }
 
     fn map_dependencies(&mut self, subject: &str, details: &ContainerObservation, service: &mut Service) {

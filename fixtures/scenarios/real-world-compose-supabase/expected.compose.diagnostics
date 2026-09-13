@@ -3,7 +3,6 @@ BFC0004|services.kong.ports[1]
 BFC0004|services.supavisor.ports[0]
 BFC0004|services.supavisor.ports[1]
 BFC0007|services.studio.healthcheck
-BFC0007|services.kong.networks.default
 BFC0007|services.kong.healthcheck
 BFC0007|services.kong.dependencies[0]
 BFC0007|services.auth.healthcheck

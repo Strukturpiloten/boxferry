@@ -54,8 +54,12 @@ Choose the output:
   container destinations, and read-only state. It explicitly assumes those paths are valid on
   the target. Non-default native options, propagation, and subpaths remain diagnostic findings.
 - **Portable effective settings:** `--promote-podman-portable-effective-settings` authorizes the
-  reviewed environment, published-port, restart, normal-health, and DNS subset. It also authorizes
-  environment acquisition into sensitive in-memory wrappers. Reports and snapshots stay redacted.
+  reviewed environment, published-port, restart, normal-health, DNS, and standalone-container
+  effective network-alias subset. Alias promotion also requires
+  `--promote-podman-effective-named-networks`; runtime container-ID aliases remain evidence only,
+  and pod-member networking remains pod-scoped evidence. The portable-effective flag also
+  authorizes environment acquisition into sensitive in-memory wrappers. Reports and snapshots stay
+  redacted.
 - **Network definition settings:** the portable-effective flag also promotes typed network-internal,
   subnet, gateway, and lease-range observations. Inclusive lease endpoints become the supported
   `<start-IP>-<end-IP>` `IPRange` form. An IPv6 subnet enables IPv6 output. Driver, DNS, IPAM-driver,

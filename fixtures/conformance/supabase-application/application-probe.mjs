@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 
+import {
+  connectRealtimeWebSocket,
+  joinRealtimePostgresChanges,
+  waitForRealtimeChange,
+} from "./realtime-websocket.mjs";
+
 const phase = process.argv[2];
 assert.match(phase ?? "", /^(seed|verify)$/);
 
@@ -69,54 +75,14 @@ async function assertCurrentUser(token) {
   assert.equal(body.email, email);
 }
 
-function waitForSocket(socket, predicate, description) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`timed out waiting for ${description}`)),
-      30_000,
-    );
-    const listener = (event) => {
-      let message;
-      try {
-        message = JSON.parse(String(event.data));
-      } catch {
-        return;
-      }
-      if (predicate(message)) {
-        clearTimeout(timeout);
-        socket.removeEventListener("message", listener);
-        resolve(message);
-      }
-    };
-    socket.addEventListener("message", listener);
-  });
-}
-
 async function realtimeInsert(marker) {
-  const websocket = new WebSocket(
+  const topic = "realtime:public:boxferry_items";
+  const websocket = await connectRealtimeWebSocket(
     `${base.replace(/^http/, "ws")}/realtime/v1/websocket?apikey=${encodeURIComponent(anonKey)}&vsn=1.0.0`,
   );
-  await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("realtime open timeout")), 30_000);
-    websocket.addEventListener(
-      "open",
-      () => {
-        clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
-    websocket.addEventListener("error", reject, { once: true });
-  });
-
-  const joinReply = waitForSocket(
-    websocket,
-    (message) => message.event === "phx_reply" && message.ref === "1",
-    "Realtime channel join",
-  );
-  websocket.send(
-    JSON.stringify({
-      topic: "realtime:public:boxferry_items",
+  try {
+    await joinRealtimePostgresChanges(websocket, {
+      topic,
       event: "phx_join",
       ref: "1",
       payload: {
@@ -127,33 +93,37 @@ async function realtimeInsert(marker) {
           postgres_changes: [{ event: "INSERT", schema: "public", table: "boxferry_items" }],
         },
       },
-    }),
-  );
-  const joined = await joinReply;
-  assert.equal(joined.payload?.status, "ok");
+    });
 
-  const change = waitForSocket(
-    websocket,
-    (message) =>
-      message.event === "postgres_changes" && message.payload?.data?.record?.body === marker,
-    "Realtime PostgreSQL change",
-  );
-  const inserted = await jsonRequest(
-    "/rest/v1/boxferry_items",
-    {
-      method: "POST",
-      headers: {
-        ...serviceHeaders,
-        "content-type": "application/json",
-        prefer: "return=representation",
-      },
-      body: JSON.stringify({ body: marker }),
-    },
-    [200, 201],
-  );
-  assert.equal(inserted[0]?.body, marker);
-  await change;
-  websocket.close();
+    const changeWait = new AbortController();
+    const change = waitForRealtimeChange(websocket, topic, marker, { signal: changeWait.signal }).then(
+      (message) => ({ message }),
+      (error) => ({ error }),
+    );
+    try {
+      const inserted = await jsonRequest(
+        "/rest/v1/boxferry_items",
+        {
+          method: "POST",
+          headers: {
+            ...serviceHeaders,
+            "content-type": "application/json",
+            prefer: "return=representation",
+          },
+          body: JSON.stringify({ body: marker }),
+        },
+        [200, 201],
+      );
+      assert.equal(inserted[0]?.body, marker);
+      const changeResult = await change;
+      if (changeResult.error) throw changeResult.error;
+    } finally {
+      changeWait.abort();
+      await change;
+    }
+  } finally {
+    websocket.close();
+  }
 }
 
 async function assertRows(expectedMarkers) {

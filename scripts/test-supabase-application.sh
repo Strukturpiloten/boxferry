@@ -14,6 +14,7 @@ repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
 source "${library}"
 
 supabase_validate_catalogues
+node --test "$(supabase_fixture_root)/realtime-websocket.test.mjs"
 [[ "${SUPABASE_REALTIME_DB_KEY}" == boxferry-rt-key1 ]]
 [[ "$(LC_ALL=C printf '%s' "${SUPABASE_REALTIME_DB_KEY}" | wc -c)" == 16 ]]
 compose_environment="$(supabase_compose_environment test-prefix test-run env)"
@@ -33,9 +34,63 @@ grep --fixed-strings --quiet \
 
 auth_source_reference="$(supabase_source_image_reference auth)"
 auth_runtime_reference="$(supabase_image_reference auth)"
+auth_observed_reference="$(supabase_podman_observed_image_reference auth)"
 [[ "${auth_source_reference}" == docker.io/supabase/gotrue:v2.189.0@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf ]]
 [[ "${auth_runtime_reference}" == docker.io/supabase/gotrue:v2.189.0@sha256:0a8557cbe0fd53a067726fe656f79eb1b03a1ab3cdde4b59907ce5a1e1a202ab ]]
+[[ "${auth_observed_reference}" == docker.io/supabase/gotrue@sha256:0a8557cbe0fd53a067726fe656f79eb1b03a1ab3cdde4b59907ce5a1e1a202ab ]]
 [[ "${auth_source_reference}" != "${auth_runtime_reference}" ]]
+
+digest_projection="$(supabase_expected_output_projection exact compose compose podman)"
+grep --fixed-strings --line-regexp --quiet \
+  $'auth\timage\tdocker.io/supabase/gotrue@sha256:0a8557cbe0fd53a067726fe656f79eb1b03a1ab3cdde4b59907ce5a1e1a202ab' \
+  <<< "${digest_projection}"
+if grep --fixed-strings --line-regexp --quiet \
+  $'auth\timage\tdocker.io/supabase/gotrue:v2.189.0@sha256:0a8557cbe0fd53a067726fe656f79eb1b03a1ab3cdde4b59907ce5a1e1a202ab' \
+  <<< "${digest_projection}"; then
+  printf '%s\n' 'Podman-origin reimport projection restored an unavailable image tag.' >&2
+  exit 1
+fi
+
+reimport_argument_log="${test_root}/reimport-semantics.tsv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  argument_log=$3
+  boxferry_bin=unused
+  timed_operation() { return 0; }
+  assert_successful_conversion() { :; }
+  supabase_assert_success_contract() { :; }
+  supabase_assert_output_membership() { :; }
+  supabase_assert_output_semantics() {
+    [[ "$#" == 7 ]]
+    printf "%s\t%s\t%s\t%s\n" "$1" "$2" "$3" "$7" >> "${argument_log}"
+  }
+  supabase_run_reimports cli test-prefix
+' bash "${library}" "${test_root}/reimport-case" "${reimport_argument_log}"
+awk -F '\t' '
+  NF != 4 ||
+  $1 !~ /^(exact|storage|label|all)$/ ||
+  $2 !~ /^(compose|quadlet)$/ ||
+  $3 !~ /^(compose|quadlet|podman)$/ ||
+  $4 != "podman" { bad = 1 }
+  { seen[$2 "->" $3] = 1; count++ }
+  END { exit bad || count != 24 || length(seen) != 6 }
+' "${reimport_argument_log}"
+
+supabase_selection_includes_service exact supavisor
+if supabase_selection_includes_service exact boundary-peer; then
+  printf '%s\n' 'Supabase exact selection admitted the all-only boundary peer.' >&2
+  exit 1
+fi
+for provisioner_mode in cli compose; do
+  supabase_selection_includes_system_network "${provisioner_mode}" all
+  if supabase_selection_includes_system_network "${provisioner_mode}" exact; then
+    printf 'Supabase %s exact selection admitted the persistent system network.\n' \
+      "${provisioner_mode}" >&2
+    exit 1
+  fi
+done
 
 [[ "$(supabase_skopeo_source_reference "${auth_source_reference}")" == docker://docker.io/supabase/gotrue@sha256:385184459f57569c54c25209f51f3b2be99ddd7c4ce9e3555b5d3eea8447b7cf ]]
 if supabase_source_image_reference missing-image > /dev/null 2>&1; then
@@ -136,6 +191,9 @@ assert "PGRST_DB_CHANNEL_ENABLED" not in rest["environment"]
 assert realtime["environment"]["API_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
 assert realtime["environment"]["METRICS_JWT_SECRET"] == "${BF_JWT_SECRET:?required}"
 assert realtime["environment"]["DB_ENC_KEY"] == "${BF_REALTIME_DB_KEY:?required}"
+assert realtime["networks"] == {
+    "backend": {"aliases": ["realtime-dev.supabase-realtime", "realtime"]}
+}
 studio_health_command = (
     'node -e "fetch(\'http://127.0.0.1:3000/api/platform/profile\').then('
     '(r) => { if (!r.ok) process.exit(1) })"'
@@ -215,6 +273,15 @@ studio = next(
 assert b"API_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
 assert b"METRICS_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters" in realtime
 assert b"DB_ENC_KEY=boxferry-rt-key1" in realtime
+network = realtime.index(b"--network")
+assert realtime[network + 1] == b"test-prefix-supabase-backend"
+aliases = [
+    realtime[index + 1]
+    for index, argument in enumerate(realtime[:-1])
+    if argument == b"--network-alias"
+]
+assert aliases == [b"realtime-dev.supabase-realtime", b"realtime"]
+assert all(b":alias=" not in argument for argument in realtime)
 studio_health_command = (
     b'node -e "fetch(\'http://127.0.0.1:3000/api/platform/profile\').then('
     b'(r) => { if (!r.ok) process.exit(1) })"'
@@ -231,6 +298,146 @@ for option, value in (
     assert studio[index + 1] == value
 assert all(not argument.startswith(b'["CMD') for argument in studio)
 PY
+alias_output_root="${test_root}/alias-outputs"
+mkdir -p -- "${alias_output_root}/compose" "${alias_output_root}/quadlet" \
+  "${alias_output_root}/podman"
+printf '%s\n' \
+  '---' \
+  'services:' \
+  '  test-prefix-supabase-realtime:' \
+  '    networks:' \
+  '      test-prefix-supabase-backend:' \
+  '        aliases:' \
+  '          - realtime-dev.supabase-realtime' \
+  '          - realtime' \
+  > "${alias_output_root}/compose/compose.yaml"
+printf '%s\n' \
+  '[Container]' \
+  'Network=test-prefix-supabase-backend.network' \
+  'NetworkAlias=realtime-dev.supabase-realtime' \
+  'NetworkAlias=realtime' \
+  > "${alias_output_root}/quadlet/test-prefix-supabase-realtime.container"
+jq --null-input '
+  {
+    operations: [{
+      action: "create",
+      resource: {kind: "container", name: "test-prefix-supabase-realtime"},
+      libpod: {body: {json: {Networks: {
+        "test-prefix-supabase-backend": {
+          aliases: ["realtime-dev.supabase-realtime", "realtime"]
+        }
+      }}}}
+    }]
+  }
+' > "${alias_output_root}/podman/podman.json"
+for alias_output in compose quadlet podman; do
+  supabase_assert_realtime_output_aliases \
+    "${alias_output}" "${alias_output_root}/${alias_output}" test-prefix
+done
+
+ownership_output_root="${test_root}/ownership-outputs"
+for selection in exact all; do
+  include_system_network=false
+  [[ "${selection}" == all ]] && include_system_network=true
+  mkdir -p -- \
+    "${ownership_output_root}/${selection}/compose" \
+    "${ownership_output_root}/${selection}/quadlet" \
+    "${ownership_output_root}/${selection}/podman"
+  if [[ "${selection}" == exact ]]; then
+    printf '%s\n' \
+      '---' \
+      'networks:' \
+      '  test-prefix-supabase-backend:' \
+      '    internal: true' \
+      '  test-prefix-supabase-edge:' \
+      '    name: test-prefix-supabase-edge' \
+      '    external: true' \
+      > "${ownership_output_root}/${selection}/compose/compose.yaml"
+  else
+    printf '%s\n' \
+      '---' \
+      'networks:' \
+      '  test-prefix-supabase-backend:' \
+      '    internal: true' \
+      '  test-prefix-supabase-edge:' \
+      '    name: test-prefix-supabase-edge' \
+      '    external: true' \
+      '  podman:' \
+      '    internal: false' \
+      > "${ownership_output_root}/${selection}/compose/compose.yaml"
+  fi
+  printf '%s\n' '[Network]' \
+    > "${ownership_output_root}/${selection}/quadlet/test-prefix-supabase-backend.network"
+  if [[ "${selection}" == all ]]; then
+    printf '%s\n' '[Network]' 'Internal=false' \
+      > "${ownership_output_root}/${selection}/quadlet/podman.network"
+  fi
+  jq --null-input \
+    --argjson include_system_network "${include_system_network}" '
+      {
+        operations: ([{
+          action: "create",
+          resource: {kind: "network", name: "test-prefix-supabase-backend"}
+        }] + if $include_system_network then [{
+          action: "create",
+          resource: {kind: "network", name: "podman"}
+        }] else [] end)
+      }
+    ' > "${ownership_output_root}/${selection}/podman/podman.json"
+done
+
+for ownership_output in compose quadlet podman; do
+  supabase_assert_network_ownership exact "${ownership_output}" \
+    "${ownership_output_root}/exact/${ownership_output}" test-prefix
+  supabase_assert_network_ownership all "${ownership_output}" \
+    "${ownership_output_root}/all/${ownership_output}" test-prefix true
+  if supabase_assert_network_ownership all "${ownership_output}" \
+    "${ownership_output_root}/all/${ownership_output}" test-prefix false > /dev/null 2>&1; then
+    printf 'Supabase %s ownership assertion admitted an unexpected system network.\n' \
+      "${ownership_output}" >&2
+    exit 1
+  fi
+done
+
+owned_edge_output_root="${test_root}/owned-edge-outputs"
+mkdir -p -- \
+  "${owned_edge_output_root}/compose" \
+  "${owned_edge_output_root}/quadlet" \
+  "${owned_edge_output_root}/podman"
+printf '%s\n' \
+  '---' \
+  'networks:' \
+  '  test-prefix-supabase-backend:' \
+  '    internal: true' \
+  '  test-prefix-supabase-edge:' \
+  '    internal: false' \
+  > "${owned_edge_output_root}/compose/compose.yaml"
+printf '%s\n' '[Network]' \
+  > "${owned_edge_output_root}/quadlet/test-prefix-supabase-backend.network"
+printf '%s\n' '[Network]' \
+  > "${owned_edge_output_root}/quadlet/test-prefix-supabase-edge.network"
+jq --null-input '
+    {
+      operations: [
+        {
+          action: "create",
+          resource: {kind: "network", name: "test-prefix-supabase-backend"}
+        },
+        {
+          action: "create",
+          resource: {kind: "network", name: "test-prefix-supabase-edge"}
+        }
+      ]
+    }
+  ' > "${owned_edge_output_root}/podman/podman.json"
+for ownership_output in compose quadlet podman; do
+  if supabase_assert_network_ownership all "${ownership_output}" \
+    "${owned_edge_output_root}/${ownership_output}" test-prefix > /dev/null 2>&1; then
+    printf 'Supabase %s ownership assertion admitted the externally owned edge as creatable.\n' \
+      "${ownership_output}" >&2
+    exit 1
+  fi
+done
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
   'PGRST_ADMIN_SERVER_HOST=127.0.0.1'
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
@@ -427,6 +634,18 @@ compose_evidence_line="$(grep --line-number --max-count=1 --fixed-strings \
 ((compose_contract_line < compose_evidence_line))
 [[ "$(wc -c < "${compose_failure_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES * 3 + 1024))" ]]
 
+network_volume_marker="${test_root}/network-volume.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  supabase_remote() { printf "%s\n" "$*" >> "$marker"; }
+  supabase_create_networks_volumes test-socket test-prefix test-run
+' bash "${library}" "${network_volume_marker}"
+mapfile -t network_volume_calls < "${network_volume_marker}"
+[[ "${network_volume_calls[0]}" == 'test-socket network create --internal --label io.boxferry.live-run=test-run --label io.boxferry.application=test-prefix-supabase test-prefix-supabase-backend' ]]
+[[ "${network_volume_calls[1]}" == 'test-socket network create --label io.boxferry.live-run=test-run test-prefix-supabase-edge' ]]
+
 compose_order_marker="${test_root}/compose-order.marker"
 bash -c '
   set -Eeuo pipefail
@@ -438,7 +657,7 @@ bash -c '
   supabase_wait_for() { shift 2; "$@"; }
   supabase_remote() {
     case "$2" in
-      network) printf "edge-network\\n" >> "$marker" ;;
+ network) printf "edge-network:%s\\n" "$*" >> "$marker" ;;
       run) printf "readiness-peer\\n" >> "$marker" ;;
       inspect) return 1 ;;
       *) return 1 ;;
@@ -449,7 +668,7 @@ bash -c '
   supabase_provision_compose test-socket test-prefix test-run
 ' bash "${library}" "${test_root}" "${compose_order_marker}"
 mapfile -t compose_order < "${compose_order_marker}"
-[[ "${compose_order[0]}" == edge-network ]]
+[[ "${compose_order[0]}" == 'edge-network:test-socket network create --label io.boxferry.live-run=test-run test-prefix-supabase-edge' ]]
 [[ "${compose_order[1]}" == 'compose:test-socket test-prefix test-run up --detach db' ]]
 [[ "${compose_order[2]}" == readiness-peer ]]
 [[ "${compose_order[3]}" == 'compose:test-socket test-prefix test-run up --detach --remove-orphans' ]]

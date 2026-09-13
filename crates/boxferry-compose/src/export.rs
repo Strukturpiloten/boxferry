@@ -1377,22 +1377,18 @@ impl<'a> Mapping<'a> {
                 Ok(mut value) => {
                     let mut valid = true;
                     for (index, alias) in network.value().aliases().iter().enumerate() {
-                        if network
+                        let alias = if network
                             .value()
                             .alias_sensitivities()
                             .get(index)
                             .copied()
                             .unwrap_or(false)
                         {
-                            self.unsupported(
-                                &subject,
-                                "sensitive network aliases cannot be passed to ComposeLens' plain-string generator",
-                                network.origins(),
-                            );
-                            valid = false;
-                            break;
-                        }
-                        if let Err(error) = value.add_alias(alias) {
+                            ProtectedString::sensitive(alias)
+                        } else {
+                            ProtectedString::plain(alias)
+                        };
+                        if let Err(error) = generated_string(&alias).and_then(|alias| value.add_alias_value(&alias)) {
                             self.generation_error(&subject, &error, network.origins());
                             valid = false;
                             break;

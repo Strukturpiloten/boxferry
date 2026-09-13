@@ -33,9 +33,11 @@ compose-output/
 
 Runtime-effective, runtime-assigned, and locally resolved observations do not automatically become
 portable desired state. Add `--promote-podman-portable-effective-settings` to explicitly retain the
-reviewed environment, published-port, restart, normal-health, and DNS subset; reports remain
-redacted. Every other required decision or unsupported field stays visible through the normal
-diagnostic and loss-policy contract.
+reviewed environment, published-port, restart, normal-health, DNS, and standalone-container
+effective network-alias subset; reports remain redacted. Aliases additionally require named-network
+promotion, runtime container-ID aliases remain evidence only, and pod-member networking remains
+pod-scoped evidence. Every other required decision or unsupported field stays visible through the
+normal diagnostic and loss-policy contract.
 
 Use `--promote-podman-effective-bind-mounts` only for a target that deliberately reuses the same
 absolute host paths. The flag preserves source, destination, and read-only state; it does not claim
@@ -44,7 +46,7 @@ that the paths or their contents were migrated.
 A configured local image spelling remains the service image; `image_builds` stays empty because local
 availability is not a build recipe or registry provenance. A promoted named network needs both the
 named-network and portable-effective settings authorizations before its typed internal, subnet,
-gateway, lease-range, and inferred IPv6 definition is emitted. Driver, IPAM-driver, and standalone
+gateway, lease-range, inferred IPv6, and attachment-alias intent is emitted. Driver, IPAM-driver, and standalone
 IPv6 observations currently have no automatic promotion. Newly generated environment mappings are
 key-sorted only after duplicate and last-wins semantics have been resolved by PodmanLens.
 

@@ -37,7 +37,7 @@ sources = ["compose.yaml", "compose.override.yaml"]
 
 [extensions.scenarios.exports.compose]
 loss-policy = "partial"
-diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009"]
+diagnostic-codes = ["BFC0007", "BFC0009", "BFC0009"]
 fixed-diagnostic-codes = ["BFC0009", "BFC0009"]
 
 [[extensions.scenarios.exports.compose.artifacts]]

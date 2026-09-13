@@ -1,10 +1,10 @@
 # schema=2; source target expected-outcome evidence-state allowed-diagnostic-codes contract
-podman	compose	migration-success	live-unperformed	BFP0002,BFP0003,BFC0007,BFC0009	exact-diagnostic-tuple-multiset-plus-fidelity-v1
-podman	quadlet	migration-success	live-unperformed	BFP0002,BFP0003	exact-diagnostic-tuple-multiset-plus-fidelity-v1
-podman	podman	migration-success	live-unperformed	BFP0002,BFP0003,BFP0007	exact-diagnostic-tuple-multiset-plus-fidelity-v1
-compose	compose	migration-success	live-unperformed	BFC0009	exact-diagnostic-tuple-multiset-plus-fidelity-v1
-compose	quadlet	migration-success	live-unperformed	-	zero-loss-zero-diagnostic-reimport
-compose	podman	expected-rejection	live-unperformed	BFP0007,BFP0008	one-error-per-tag-and-digest-image-no-artifacts
-quadlet	compose	migration-success	live-unperformed	BFC0007,BFC0009	exact-diagnostic-tuple-multiset-plus-fidelity-v1
+podman	compose	migration-success	live-unperformed	BFP0002,BFP0003,BFC0007	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1
+podman	quadlet	migration-success	live-unperformed	BFP0002,BFP0003,BFQ0003	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1
+podman	podman	migration-success	live-unperformed	BFP0002,BFP0003,BFP0007	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1
+compose	compose	migration-success	live-unperformed	BFC0009	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1
+compose	quadlet	migration-success	live-unperformed	BFQ0003	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1
+compose	podman	migration-success	live-unperformed	BFP0007	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1
+quadlet	compose	migration-success	live-unperformed	BFC0007,BFC0009	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1
 quadlet	quadlet	migration-success	live-unperformed	-	zero-loss-zero-diagnostic-reimport
-quadlet	podman	expected-rejection	live-unperformed	BFP0007,BFP0008	one-error-per-tag-and-digest-image-no-artifacts
+quadlet	podman	migration-success	live-unperformed	BFP0007	exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1

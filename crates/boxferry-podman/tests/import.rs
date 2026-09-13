@@ -3,7 +3,7 @@
 #![allow(clippy::expect_used, clippy::panic)] // Fixture transport failures should identify broken test data.
 
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     error::Error,
     sync::Mutex,
 };
@@ -1313,5 +1313,163 @@ fn failed_section_blocks_label_selection_that_must_scan_all_resource_kinds() -> 
                 .iter()
                 .any(|field| field.name() == "resource_kind" && field.value().redacted() == "volume")
     }));
+    Ok(())
+}
+
+fn alias_source(aliases: &str, policy: PodmanPromotionPolicy) -> Result<PodmanSource, Box<dyn Error>> {
+    const CONTAINER_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let inspect = format!(
+        r#"{{"Id":"{CONTAINER_ID}","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{{"Entrypoint":""}},"HostConfig":{{"RestartPolicy":{{"Name":""}}}},"NetworkSettings":{{"Networks":{{"legacy-net":{{"NetworkID":"legacy-net","Aliases":{aliases}}}}}}},"Mounts":[]}}"#,
+    );
+    let mut responses = modern_responses(&inspect)?;
+    responses[2] = json(&format!(r#"[{{"Id":"{CONTAINER_ID}","Names":["web"]}}]"#))?;
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    Ok(legacy_source_with_options(responses, &request, AcquisitionOptions::redacted())?.with_promotion_policy(policy))
+}
+
+fn two_network_alias_source(policy: PodmanPromotionPolicy) -> Result<PodmanSource, Box<dyn Error>> {
+    let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{"legacy-net":{"NetworkID":"legacy-net","Aliases":["legacy-alias"]},"other-net":{"NetworkID":"other-net","Aliases":["other-alias"]}}},"Mounts":[]}"#;
+    let mut responses = modern_responses(inspect)?;
+    responses[4] = json(r#"[{"Name":"legacy-net"},{"Name":"other-net"}]"#)?;
+    responses.insert(
+        10,
+        json(
+            r#"{"id":"other-net","name":"other-net","driver":"bridge","ipv6_enabled":false,"internal":false,"ipam_options":{"driver":"host-local"},"subnets":[]}"#,
+        )?,
+    );
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    Ok(legacy_source_with_options(responses, &request, AcquisitionOptions::redacted())?.with_promotion_policy(policy))
+}
+
+fn unavailable_network_attachment_source(policy: PodmanPromotionPolicy) -> Result<PodmanSource, Box<dyn Error>> {
+    let inspect = r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{"legacy-net":null}},"Mounts":[]}"#;
+    let responses = modern_responses(inspect)?;
+    let mut request = DiscoveryRequest::new();
+    request.add_root(ResourceSelector::exact(ResourceKind::Container, "web")?);
+    Ok(legacy_source_with_options(responses, &request, AcquisitionOptions::redacted())?.with_promotion_policy(policy))
+}
+
+#[test]
+fn effective_network_aliases_require_both_promotions_and_exclude_runtime_ids() -> Result<(), Box<dyn Error>> {
+    const CONTAINER_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let source = alias_source(
+        &format!(r#"["{CONTAINER_ID}","0123456789ab","portable-alias"]"#),
+        PodmanPromotionPolicy::conservative()
+            .with_effective_named_networks(true)
+            .with_portable_effective_settings(true),
+    )?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    let attachment = &application.services()[0].value().networks()[0];
+    assert_eq!(attachment.value().network().as_str(), "legacy-net");
+    assert_eq!(attachment.value().aliases(), ["portable-alias"]);
+    assert!(!attachment.value().alias_sensitivities()[0]);
+
+    let rendered = format!("{:?}", result.diagnostics());
+    assert!(!rendered.contains("portable-alias"));
+    assert!(!rendered.contains(CONTAINER_ID));
+    assert!(!rendered.contains("0123456789ab"));
+    assert!(!rendered.contains("$.NetworkSettings.Networks.legacy-net.Aliases"));
+    Ok(())
+}
+
+#[test]
+fn effective_network_aliases_need_portable_settings_after_named_network_promotion() -> Result<(), Box<dyn Error>> {
+    let source = alias_source(
+        r#"["portable-alias"]"#,
+        PodmanPromotionPolicy::conservative().with_effective_named_networks(true),
+    )?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    assert_eq!(application.services()[0].value().networks().len(), 1);
+    assert!(
+        application.services()[0].value().networks()[0]
+            .value()
+            .aliases()
+            .is_empty()
+    );
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0003"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "subject" && field.value().redacted() == "services.web.networks.legacy-net.aliases"
+            })
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "available_promotion"
+                    && field.value().redacted() == "--promote-podman-portable-effective-settings"
+            })
+    }));
+    Ok(())
+}
+
+#[test]
+fn malformed_network_aliases_do_not_remove_topology_and_stay_value_free() -> Result<(), Box<dyn Error>> {
+    const PRIVATE_ALIAS: &str = "private-network-alias-canary";
+    let source = alias_source(
+        &format!(r#"["{PRIVATE_ALIAS}",false]"#),
+        PodmanPromotionPolicy::conservative()
+            .with_effective_named_networks(true)
+            .with_portable_effective_settings(true),
+    )?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    let attachment = &application.services()[0].value().networks()[0];
+    assert_eq!(attachment.value().network().as_str(), "legacy-net");
+    assert!(attachment.value().aliases().is_empty());
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0001"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "subject" && field.value().redacted() == "services.web.networks.legacy-net.aliases"
+            })
+    }));
+    let rendered = format!("{:?}", result.diagnostics());
+    assert!(!rendered.contains(PRIVATE_ALIAS));
+    Ok(())
+}
+
+#[test]
+fn unavailable_network_aliases_do_not_remove_topology() -> Result<(), Box<dyn Error>> {
+    let source = unavailable_network_attachment_source(
+        PodmanPromotionPolicy::conservative()
+            .with_effective_named_networks(true)
+            .with_portable_effective_settings(true),
+    )?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    let attachment = &application.services()[0].value().networks()[0];
+    assert_eq!(attachment.value().network().as_str(), "legacy-net");
+    assert!(attachment.value().aliases().is_empty());
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0001"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "subject" && field.value().redacted() == "services.web.networks.legacy-net.aliases"
+            })
+    }));
+    Ok(())
+}
+
+#[test]
+fn effective_aliases_are_joined_to_topology_by_native_network_reference() -> Result<(), Box<dyn Error>> {
+    let source = two_network_alias_source(
+        PodmanPromotionPolicy::conservative()
+            .with_effective_named_networks(true)
+            .with_portable_effective_settings(true),
+    )?;
+    let result = PodmanImporter::new()?.import(&source);
+    let application = result.application().ok_or("application")?;
+    let service = application.services()[0].value();
+    let aliases = service
+        .networks()
+        .iter()
+        .map(|attachment| {
+            (
+                attachment.value().network().as_str(),
+                attachment.value().aliases().to_vec(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(aliases["legacy-net"], ["legacy-alias"]);
+    assert_eq!(aliases["other-net"], ["other-alias"]);
     Ok(())
 }

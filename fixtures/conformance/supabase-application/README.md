@@ -41,9 +41,12 @@ multiset for every successful live route and selection. Each tuple fixes the
 code, severity, subject, and decision. It includes Podman acquisition findings,
 promoted healthchecks, Compose dependency and healthcheck losses, and the
 `BFC0009` tag-plus-digest approximation for each selected Compose image. Its
-fidelity totals count repeated native-finding occurrences independently.
-Catalogue validation admits a complete positive example while rejecting an
-unseen `BFP0003` subject and a duplicate `BFP0007` diagnostic.
+loss-fidelity totals fix the `approximate`, `unsupported`, `invalid`, and
+`other` counts, including repeated native-finding occurrences. The silent
+`exact` implementation counter has no independent semantic oracle and is
+therefore constrained only to a non-negative integer. Catalogue validation
+admits a complete positive example while rejecting an unseen `BFP0003` subject
+and a duplicate `BFP0007` diagnostic.
 
 ## Independent application contract
 
@@ -66,7 +69,8 @@ The standard-library Node probe performs behavior checks through Kong and
 direct private service endpoints:
 
 - create and authenticate a GoTrue user;
-- subscribe to Realtime PostgreSQL inserts over a Phoenix WebSocket;
+- resolve the tenant-scoped Realtime endpoint, await its PostgreSQL subscription acknowledgement,
+  and observe inserts over a Phoenix WebSocket;
 - insert and read a PostgREST row and observe its Realtime event;
 - create a private Storage bucket, upload an object, and retrieve exact bytes;
 - invoke the authored Edge Runtime function with distinct seed and verify
@@ -88,11 +92,13 @@ label, whole-application label, and all-resource acquisition. Each selection
 exports to Compose, Quadlet, and Podman. Generated Compose and Quadlet are each
 reimported to all three exporters, covering all nine route families without
 executing any BoxFerry-generated deployment artifact. Kong selection retains
-exactly ten application services through its reviewed dependencies, including
-Realtime, while excluding only Supavisor and the boundary peer. Storage
-selection retains exactly Storage, PostgreSQL, PostgREST, imgproxy, the backend
-network, and the `pgdata` and `storage` volumes; it excludes every other service,
-the edge network, and `deno-cache`. Presence and absence are asserted in every
+exactly eleven application services through its reviewed dependencies, including
+Realtime and Supavisor, while excluding only the boundary peer. The Storage label identifies the
+Storage root, but PodmanLens preserves the complete evidenced application group: native container
+dependencies connect Storage through Kong to all eleven services, and complete Compose ownership
+provides the same grouping boundary. Exact, Storage, and application-label selection therefore
+retain the same eleven services, both networks, and all three volumes while excluding the unrelated
+boundary peer. Only all-resource selection includes that peer. Presence and absence are asserted in every
 native artifact form. Each artifact must also project the selected services'
 catalog images, normalized networks, named-volume mount destinations and modes,
 and target-specific dependency semantics. Unknown extras or bind mounts rejected
@@ -102,15 +108,10 @@ Realtime healthcheck
 and reviewed dependency graph. Collision refusal, structured report redaction,
 and prefix-scoped cleanup are hard assertions.
 
-The current strict Podman image grammar does not accept a combined tag and
-digest when that reference is reimported from Compose or Quadlet. Those two
-Podman-target routes are exercised as expected rejections with an exact
-`BFP0007` target-loss and `BFP0008` image-error tuple multiset, exact non-exact
-fidelity counts, one unique `BFP0008` subject per pinned service image, and no
-output artifact. They are an explicit known migration gap, not a successful
-partial conversion. The other seven route families must succeed. A future
-grammar change must replace this reviewed rejection contract with successful
-artifact assertions.
+Podman-origin Compose and Quadlet artifacts carry digest-only platform references accepted by the
+Podman target. All nine route families must therefore succeed. Every Podman-target reimport checks
+its exact `BFP0007` target-loss tuple multiset, fidelity counts, and generated artifact projection;
+the harness never executes those generated deployment artifacts.
 
 All credentials are fixed public test canaries. They are intentionally safe to
 place in explicitly authorized deployment artifacts, but must not occur in any
