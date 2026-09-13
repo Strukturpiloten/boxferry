@@ -21,6 +21,111 @@ assert_absent() {
 observability_validate_alloy_scrape_timing \
   "${repository_root}/fixtures/conformance/observability-application/config.alloy"
 
+alias_directory="${test_root}/output-aliases-compose"
+mkdir -p "${alias_directory}"
+printf '%s\n' '---
+services:
+  bf-private-observability-grafana:
+    networks:
+      bf-private-observability-backend:
+        aliases: [grafana]
+      bf-private-observability-edge:
+        aliases: [grafana]
+  bf-private-observability-loki:
+    networks:
+      bf-private-observability-backend:
+        aliases: [loki]
+  bf-private-observability-metrics-producer:
+    networks:
+      bf-private-observability-backend:
+        aliases: [metrics-producer]
+  bf-private-observability-prometheus:
+    networks:
+      bf-private-observability-backend:
+        aliases: [prometheus]
+  bf-private-observability-alloy:
+    networks: [bf-private-observability-backend]' > "${alias_directory}/compose.yaml"
+observability_assert_output_aliases podman compose "${alias_directory}" bf-private
+
+printf '%s\n' '---
+services:
+  bf-private-observability-loki:
+    networks:
+      bf-private-observability-backend:
+        aliases: [loki, 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef]
+  bf-private-observability-metrics-producer:
+    networks:
+      bf-private-observability-backend:
+        aliases: [metrics-producer]
+  bf-private-observability-prometheus:
+    networks:
+      bf-private-observability-backend:
+        aliases: [prometheus]' > "${alias_directory}/compose.yaml"
+if observability_assert_output_aliases quadlet compose "${alias_directory}" bf-private 2> /dev/null; then
+  printf '%s\n' 'A runtime container-ID alias satisfied the observability output contract.' >&2
+  exit 1
+fi
+
+alias_directory="${test_root}/output-aliases-quadlet"
+mkdir -p "${alias_directory}"
+for service in loki metrics-producer prometheus; do
+  printf '[Container]\nNetworkAlias=%s\nNetwork=bf-private-observability-backend.network\n' \
+    "${service}" > "${alias_directory}/bf-private-observability-${service}.container"
+done
+printf '%s\n' \
+  '[Container]' \
+  'Network=bf-private-observability-backend.network' \
+  'Network=bf-private-observability-edge' \
+  > "${alias_directory}/bf-private-observability-grafana.container"
+observability_assert_output_aliases podman quadlet "${alias_directory}" bf-private
+grafana_quadlet="${alias_directory}/bf-private-observability-grafana.container"
+cp -- "${grafana_quadlet}" "${grafana_quadlet}.valid"
+for missing_network in backend edge; do
+  cp -- "${grafana_quadlet}.valid" "${grafana_quadlet}"
+  sed --in-place "/bf-private-observability-${missing_network}/d" "${grafana_quadlet}"
+  if observability_assert_output_aliases podman quadlet "${alias_directory}" bf-private 2> /dev/null; then
+    printf 'A Quadlet artifact without the Grafana %s network satisfied the alias contract.\n' \
+      "${missing_network}" >&2
+    exit 1
+  fi
+done
+cp -- "${grafana_quadlet}.valid" "${grafana_quadlet}"
+
+alias_directory="${test_root}/output-aliases-podman"
+mkdir -p "${alias_directory}"
+jq --null-input \
+  --arg stem 'bf-private-observability-' \
+  '{operations: [
+    {action: "create", resource: {kind: "container", name: ($stem + "grafana")}, libpod: {body: {json: {Networks: {
+      ($stem + "backend"): {aliases: ["grafana"]},
+      ($stem + "edge"): {aliases: ["grafana"]}
+    }}}}},
+    {action: "create", resource: {kind: "container", name: ($stem + "loki")}, libpod: {body: {json: {Networks: {
+      ($stem + "backend"): {aliases: ["loki"]}
+    }}}}},
+    {action: "create", resource: {kind: "container", name: ($stem + "metrics-producer")}, libpod: {body: {json: {Networks: {
+      ($stem + "backend"): {aliases: ["metrics-producer"]}
+    }}}}},
+    {action: "create", resource: {kind: "container", name: ($stem + "prometheus")}, libpod: {body: {json: {Networks: {
+      ($stem + "backend"): {aliases: ["prometheus"]}
+    }}}}}
+  ]}' > "${alias_directory}/podman.json"
+observability_assert_output_aliases podman podman "${alias_directory}" bf-private
+
+bfq_report="${test_root}/bfq-report.json"
+printf '%s\n' '{"diagnostics":[{"code":"BFQ0003","severity":"warning","fields":[{"name":"subject","value":"services.bf-private-observability-grafana.networks"},{"name":"reason","value":"reviewed multi-network alias omission"}]}]}' \
+  > "${bfq_report}"
+observability_assert_reviewed_diagnostics \
+  live-reimport cli exact compose quadlet bf-private-observability- "${bfq_report}"
+jq '.diagnostics[0].fields += [{"name":"decision","value":"omitted"}]' \
+  "${bfq_report}" > "${bfq_report}.unexpected-decision"
+if observability_assert_reviewed_diagnostics \
+  live-reimport cli exact compose quadlet bf-private-observability- \
+  "${bfq_report}.unexpected-decision" > /dev/null 2>&1; then
+  printf '%s\n' 'A Quadlet diagnostic with an invented decision field satisfied the contract.' >&2
+  exit 1
+fi
+
 current_case="${test_root}/export-paths"
 observability_prepare_export_paths cli exact
 [[ -d "${current_case}/outputs/cli-exact" ]]

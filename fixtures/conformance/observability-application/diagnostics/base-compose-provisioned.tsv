@@ -118,6 +118,8 @@ BFP0003	services.{{resource_prefix}}grafana.mounts[3].propagation	warning	not-pr
 BFP0003	services.{{resource_prefix}}grafana.mounts[3].writable	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}grafana.namespaces	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}grafana.networks	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}grafana.networks.{{resource_prefix}}backend.aliases	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}grafana.networks.{{resource_prefix}}edge.aliases	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}grafana.resource_controls	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}grafana.restart_policy	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}grafana.security	warning	not-promoted	partial
@@ -150,6 +152,7 @@ BFP0003	services.{{resource_prefix}}loki.mounts[1].propagation	warning	not-promo
 BFP0003	services.{{resource_prefix}}loki.mounts[1].writable	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}loki.namespaces	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}loki.networks	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}loki.networks.{{resource_prefix}}backend.aliases	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}loki.resource_controls	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}loki.restart_policy	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}loki.security	warning	not-promoted	partial
@@ -163,6 +166,7 @@ BFP0003	services.{{resource_prefix}}metrics-producer.mounts[0].propagation	warni
 BFP0003	services.{{resource_prefix}}metrics-producer.mounts[0].writable	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}metrics-producer.namespaces	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}metrics-producer.networks	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}metrics-producer.networks.{{resource_prefix}}backend.aliases	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}metrics-producer.resource_controls	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}metrics-producer.restart_policy	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}metrics-producer.security	warning	not-promoted	partial
@@ -179,6 +183,7 @@ BFP0003	services.{{resource_prefix}}prometheus.mounts[1].propagation	warning	not
 BFP0003	services.{{resource_prefix}}prometheus.mounts[1].writable	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}prometheus.namespaces	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}prometheus.networks	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}prometheus.networks.{{resource_prefix}}backend.aliases	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}prometheus.resource_controls	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}prometheus.restart_policy	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}prometheus.security	warning	not-promoted	partial
