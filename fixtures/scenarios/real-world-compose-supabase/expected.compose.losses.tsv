@@ -10,7 +10,6 @@ BFC0007	services.functions.healthcheck	unsupported	compose-specification@1.0.0..
 BFC0007	services.imgproxy.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0007	services.kong.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0007	services.kong.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1
-BFC0007	services.kong.networks.default	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0007	services.meta.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0007	services.realtime.dependencies[0]	unsupported	compose-specification@1.0.0..1.0.0	1
 BFC0007	services.realtime.healthcheck	unsupported	compose-specification@1.0.0..1.0.0	1

@@ -13,7 +13,7 @@ BFP0002	images.registry.example.invalid/complex/db:1.author	unsupported	compose-
 BFP0002	images.registry.example.invalid/complex/db:1.labels	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0002	images.registry.example.invalid/complex/proxy:1.author	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0002	images.registry.example.invalid/complex/proxy:1.labels	unsupported	compose-specification@1.0.0..1.0.0	1
-BFP0002	podman.acquisition.PLN0023	unsupported	compose-specification@1.0.0..1.0.0	7
+BFP0002	podman.acquisition.PLN0023	unsupported	compose-specification@1.0.0..1.0.0	6
 BFP0002	secrets.db-password.labels	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0002	secrets.tls-certificate.labels	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0002	service_groups.application.labels	unsupported	compose-specification@1.0.0..1.0.0	1
@@ -141,6 +141,7 @@ BFP0003	services.metrics.security	unsupported	compose-specification@1.0.0..1.0.0
 BFP0003	services.observer.mounts[0]	approximate	compose-specification@1.0.0..1.0.0	1
 BFP0003	services.observer.namespaces	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0003	services.observer.networks	approximate	compose-specification@1.0.0..1.0.0	1
+BFP0003	services.observer.networks.app-net.aliases	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0003	services.observer.resource_controls	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0003	services.observer.restart_policy	unsupported	compose-specification@1.0.0..1.0.0	1
 BFP0003	services.observer.security	unsupported	compose-specification@1.0.0..1.0.0	1

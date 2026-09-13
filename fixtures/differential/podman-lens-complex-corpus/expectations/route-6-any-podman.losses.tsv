@@ -4,7 +4,7 @@ BFP0002	images.registry.example.invalid/complex/db:1.author	unsupported	podman@6
 BFP0002	images.registry.example.invalid/complex/db:1.labels	unsupported	podman@6.1.0..6.1.0	1
 BFP0002	images.registry.example.invalid/complex/proxy:1.author	unsupported	podman@6.1.0..6.1.0	1
 BFP0002	images.registry.example.invalid/complex/proxy:1.labels	unsupported	podman@6.1.0..6.1.0	1
-BFP0002	podman.acquisition.PLN0023	unsupported	podman@6.1.0..6.1.0	7
+BFP0002	podman.acquisition.PLN0023	unsupported	podman@6.1.0..6.1.0	6
 BFP0002	secrets.db-password.labels	unsupported	podman@6.1.0..6.1.0	1
 BFP0002	secrets.tls-certificate.labels	unsupported	podman@6.1.0..6.1.0	1
 BFP0002	service_groups.application.labels	unsupported	podman@6.1.0..6.1.0	1
@@ -132,6 +132,7 @@ BFP0003	services.metrics.security	unsupported	podman@6.1.0..6.1.0	1
 BFP0003	services.observer.mounts[0]	approximate	podman@6.1.0..6.1.0	1
 BFP0003	services.observer.namespaces	unsupported	podman@6.1.0..6.1.0	1
 BFP0003	services.observer.networks	approximate	podman@6.1.0..6.1.0	1
+BFP0003	services.observer.networks.app-net.aliases	unsupported	podman@6.1.0..6.1.0	1
 BFP0003	services.observer.resource_controls	unsupported	podman@6.1.0..6.1.0	1
 BFP0003	services.observer.restart_policy	unsupported	podman@6.1.0..6.1.0	1
 BFP0003	services.observer.security	unsupported	podman@6.1.0..6.1.0	1

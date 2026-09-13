@@ -1843,6 +1843,7 @@ fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Bo
         "--include-podman-snapshot",
     ];
     let podman_input_help = &help[positions[0]..positions[1]];
+    assert!(podman_input_help.contains("network aliases"));
     let podman_option_positions = podman_option_order
         .iter()
         .map(|option| podman_input_help.find(option).ok_or(*option))
