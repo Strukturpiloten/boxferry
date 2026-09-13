@@ -189,9 +189,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "compose-lens"
-version = "0.3.0"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97c3993ef3cf441e105bb770d072317a61ff9349e422f6af2007718c443eba79"
+checksum = "f9850065d6b9797b7140e3f5bf626d73a254fd742bc11136f4ba4449b6cc76ae"
 dependencies = [
  "yaml-edit",
 ]
@@ -683,9 +683,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "podman-lens"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caab4f2deb9209cde078650dc2efa0cfe791dbd49f73f59410e889d8bc8b0697"
+checksum = "9ee6794aa1245ddba8b5b0c49fcfa4a4df8b79ae80ff0b73769f0888cf42526b"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -967,9 +967,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.4+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3aace63f4bbcdfc2c965b059de67119c89c4017a70d633be6c104910f67056f5"
+checksum = "12c0ba9680044b4ce98d391a62094047eada0d64860b80166c39f4a6b5640785"
 dependencies = [
  "indexmap",
  "serde_core",
