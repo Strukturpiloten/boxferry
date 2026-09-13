@@ -23,7 +23,7 @@ SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRoZW50aWNh
 SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6InN1cGFiYXNlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.GqsNLUWNCMg6So_4dAH5LRG2EtPKRYL2wb9gffU8eTU"
 SUPABASE_REALTIME_SECRET="boxferry-public-realtime-secret-key-base-64-characters-long-0000000000"
 SUPABASE_POOLER_SECRET="boxferry-public-pooler-secret-key-base-64-characters-long-000000000000"
-SUPABASE_REALTIME_DB_KEY="boxferry-public-realtime-db-key"
+SUPABASE_REALTIME_DB_KEY="boxferry-rt-key1"
 SUPABASE_META_CRYPTO_KEY="boxferry-public-pg-meta-crypto-key"
 SUPABASE_VAULT_ENC_KEY="boxferry-public-vault-key-32byte"
 SUPABASE_TEST_EMAIL="boxferry-supabase@example.invalid"
@@ -95,6 +95,11 @@ supabase_validate_resource_budget() {
 supabase_validate_catalogues() {
   local fixture
   fixture="$(supabase_fixture_root)"
+
+  [[ "$(LC_ALL=C printf '%s' "${SUPABASE_REALTIME_DB_KEY}" | wc -c)" == 16 ]] || {
+    printf '%s\n' 'Supabase Realtime DB encryption key must be exactly 16 bytes for AES-128.' >&2
+    return 1
+  }
 
   [[ "$(head -n 1 "${fixture}/images.tsv")" == '# schema=4; id index-reference platform platform-manifest-digest platform-manifest-media-type version license source-url source-revision build-file build-file-sha256 redistribution inspection-caveat' ]] || {
     printf '%s\n' 'Supabase image catalogue schema does not retain platform manifest evidence.' >&2
@@ -818,6 +823,7 @@ supabase_compose_environment() {
     BF_DB_PASSWORD="${SUPABASE_DB_PASSWORD}" BF_JWT_SECRET="${SUPABASE_JWT_SECRET}" \
     BF_ANON_KEY="${SUPABASE_ANON_KEY}" BF_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
     BF_REALTIME_SECRET="${SUPABASE_REALTIME_SECRET}" \
+    BF_REALTIME_DB_KEY="${SUPABASE_REALTIME_DB_KEY}" \
     BF_POOLER_SECRET="${SUPABASE_POOLER_SECRET}" \
     BF_STUDIO_IMAGE="$(supabase_image_reference studio)" \
     BF_KONG_IMAGE="$(supabase_image_reference kong)" \
