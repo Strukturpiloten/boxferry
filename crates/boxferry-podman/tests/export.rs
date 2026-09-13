@@ -323,6 +323,36 @@ fn invalid_network_alias_reports_its_exact_mapping_subject() -> Result<(), Box<d
 }
 
 #[test]
+fn duplicate_authored_network_alias_remains_invalid() -> Result<(), Box<dyn Error>> {
+    let mut application = Application::new(Identifier::new("duplicate-alias-test")?);
+    application.add_network(Sourced::generated(Network::new(
+        Identifier::new("frontend")?,
+        ResourceOwnership::Application,
+    )))?;
+    let mut service = Service::new(Identifier::new("web")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    service.add_network(Sourced::generated(NetworkAttachment::new(
+        Identifier::new("frontend")?,
+        vec![
+            Sourced::generated(ProtectedString::plain("web")),
+            Sourced::generated(ProtectedString::plain("web")),
+        ],
+    )));
+    application.add_service(Sourced::generated(service))?;
+
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    assert!(plan.candidate().is_none());
+    assert!(plan.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0008"
+            && diagnostic.fields().iter().any(|field| {
+                field.name() == "subject" && field.value().expose() == "services.web.networks[0].aliases[1]"
+            })
+    }));
+    Ok(())
+}
+
+#[test]
 fn local_image_portability_failure_reports_resource_and_field() -> Result<(), Box<dyn Error>> {
     let mut service = Service::new(Identifier::new("web")?);
     service.set_image(Sourced::generated(ImageReference::parse("localhost/example:1")?));
