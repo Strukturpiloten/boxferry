@@ -891,17 +891,19 @@ observability_append_live_diagnostic_template() {
     [[ -z "${extra}" ]] || return 2
     case "${code}|${severity}|${decision}|${policy}" in
       'BFC0007|warning|-|-' | \
+        'BFQ0003|warning|-|-' | \
         'BFP0002|warning|omitted|partial' | \
         'BFP0003|warning|not-promoted|partial' | \
         'BFP0003|warning|approximated|approximate' | \
         'BFP0007|warning|omitted|partial') ;;
       *) return 2 ;;
     esac
-    safe_subject="${subject/\{\{resource_prefix\}\}/}"
+    [[ "${subject}" != *'{{resource_prefix}}{{resource_prefix}}'* ]] || return 2
+    safe_subject="${subject//\{\{resource_prefix\}\}/}"
     [[ "${safe_subject}" != *'{'* && "${safe_subject}" != *'}'* ]] || return 2
-    subject="${subject/\{\{resource_prefix\}\}/${resource_prefix}}"
+    subject="${subject//\{\{resource_prefix\}\}/${resource_prefix}}"
     [[ "${subject}" =~ ^[[:alnum:]_.:/-]+(\[[0-9]+\][[:alnum:]_.:/-]*)*$ ]] || return 2
-    if [[ "${code}" == BFC0007 ]]; then
+    if [[ "${decision}|${policy}" == '-|-' ]]; then
       decision=
       policy=
     fi
@@ -948,6 +950,10 @@ observability_write_live_diagnostic_template() {
           "${fixture}/cli-compose-export-dependencies.tsv" "${resource_prefix}" "${destination}" || return
       fi
       ;;
+    quadlet)
+      observability_append_live_diagnostic_template \
+        "${fixture}/quadlet-network-alias.tsv" "${resource_prefix}" "${destination}" || return
+      ;;
     podman)
       observability_append_live_diagnostic_template \
         "${fixture}/podman-export.tsv" "${resource_prefix}" "${destination}" || return
@@ -984,7 +990,11 @@ observability_write_live_reimport_diagnostic_template() {
   fixture="${repository_root}/fixtures/conformance/observability-application/diagnostics"
   : > "${destination}" || return
   case "${source_kind}-${output}" in
-    compose-compose | compose-quadlet | quadlet-quadlet)
+    compose-compose | quadlet-quadlet)
+      ;;
+    compose-quadlet)
+      observability_append_live_diagnostic_template \
+        "${fixture}/quadlet-network-alias.tsv" "${resource_prefix}" "${destination}" || return
       ;;
     compose-podman)
       observability_append_live_diagnostic_template \
@@ -1197,13 +1207,92 @@ observability_assert_reviewed_diagnostics() {
     | [$diagnostic.code,
        ($diagnostic | field("subject"; true)),
        $diagnostic.severity,
-       ($diagnostic | field("decision"; $diagnostic.code != "BFC0007")),
-       ($diagnostic | field("required_loss_policy"; $diagnostic.code != "BFC0007"))]
+       ($diagnostic | field("decision"; ($diagnostic.code | startswith("BFP")))),
+       ($diagnostic | field("required_loss_policy"; ($diagnostic.code | startswith("BFP"))))]
     | @tsv
   ' "${report}" > "${observed}" || return
   sort --output="${expected}" "${expected}" || return
   sort --output="${observed}" "${observed}" || return
   diff --unified "${expected}" "${observed}"
+}
+
+observability_assert_output_aliases() {
+  local source_kind=$1 output=$2 directory=$3 prefix=$4
+  local include_grafana=true
+  [[ "${source_kind}" == quadlet ]] && include_grafana=false
+
+  python3 - "${output}" "${directory}" "${prefix}" "${include_grafana}" << 'PY'
+import glob
+import json
+import os
+import sys
+
+output, directory, prefix, include_grafana = sys.argv[1:]
+stem = f"{prefix}-observability-"
+backend = f"{stem}backend"
+expected = [
+    (f"{stem}loki", backend, ["loki"]),
+    (f"{stem}metrics-producer", backend, ["metrics-producer"]),
+    (f"{stem}prometheus", backend, ["prometheus"]),
+]
+if include_grafana == "true" and output != "quadlet":
+    expected.extend([
+        (f"{stem}grafana", backend, ["grafana"]),
+        (f"{stem}grafana", f"{stem}edge", ["grafana"]),
+    ])
+
+if output == "compose":
+    import yaml
+
+    with open(os.path.join(directory, "compose.yaml"), encoding="utf-8") as handle:
+        document = yaml.safe_load(handle)
+    actual = []
+    for service, definition in document["services"].items():
+        networks = definition.get("networks") or {}
+        if isinstance(networks, list):
+            continue
+        for network, attachment in networks.items():
+            if not isinstance(attachment, dict):
+                continue
+            aliases = attachment.get("aliases") or []
+            if aliases:
+                actual.append((service, network, aliases))
+elif output == "podman":
+    with open(os.path.join(directory, "podman.json"), encoding="utf-8") as handle:
+        document = json.load(handle)
+    actual = []
+    for operation in document["operations"]:
+        resource = operation.get("resource") or {}
+        if resource.get("kind") != "container" or operation.get("action") != "create":
+            continue
+        body = (((operation.get("libpod") or {}).get("body") or {}).get("json") or {})
+        for network, attachment in (body.get("Networks") or {}).items():
+            aliases = (attachment or {}).get("aliases") or []
+            if aliases:
+                actual.append((resource["name"], network, aliases))
+elif output == "quadlet":
+    actual = []
+    grafana_networks = None
+    for path in glob.glob(os.path.join(directory, "*.container")):
+        with open(path, encoding="utf-8") as handle:
+            lines = [line.rstrip("\n") for line in handle]
+        networks = [line.removeprefix("Network=") for line in lines if line.startswith("Network=")]
+        aliases = [line.removeprefix("NetworkAlias=") for line in lines if line.startswith("NetworkAlias=")]
+        service = os.path.basename(path).removesuffix(".container")
+        if service == f"{stem}grafana":
+            grafana_networks = networks
+        if aliases:
+            if len(networks) != 1 or not networks[0].endswith(".network"):
+                raise AssertionError("aliased Quadlet service does not have exactly one generated network")
+            actual.append((service, networks[0].removesuffix(".network"), aliases))
+    if sorted(grafana_networks or []) != sorted([f"{backend}.network", f"{stem}edge"]):
+        raise AssertionError("Grafana Quadlet network attachments differ from the reviewed contract")
+else:
+    raise AssertionError("unsupported observability output kind")
+
+if sorted(actual) != sorted(expected):
+    raise AssertionError("observability output network aliases differ from the reviewed contract")
+PY
 }
 
 observability_assert_output_semantics() {
@@ -1241,6 +1330,8 @@ observability_assert_output_semantics() {
         "${directory}"
     fi
   fi
+  observability_assert_output_aliases \
+    "${source_kind}" "${output}" "${directory}" "${prefix}" || return
   observability_assert_reviewed_diagnostics \
     "${expectation_scope}" "${mode}" "${selection}" "${source_kind}" "${output}" \
     "${prefix}-observability-" "${report}" || return

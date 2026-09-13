@@ -749,61 +749,85 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "cli",
             "exact",
             "compose",
-            226,
-            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 163)],
+            231,
+            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 168)],
         ),
-        ("cli", "exact", "quadlet", 215, &[("BFP0002", 52), ("BFP0003", 163)]),
+        (
+            "cli",
+            "exact",
+            "quadlet",
+            221,
+            &[("BFP0002", 52), ("BFP0003", 168), ("BFQ0003", 1)],
+        ),
         (
             "cli",
             "exact",
             "podman",
-            274,
-            &[("BFP0002", 52), ("BFP0003", 163), ("BFP0007", 59)],
+            279,
+            &[("BFP0002", 52), ("BFP0003", 168), ("BFP0007", 59)],
         ),
         (
             "cli",
             "all",
             "compose",
-            245,
-            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 174)],
+            250,
+            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 179)],
         ),
-        ("cli", "all", "quadlet", 233, &[("BFP0002", 59), ("BFP0003", 174)]),
+        (
+            "cli",
+            "all",
+            "quadlet",
+            239,
+            &[("BFP0002", 59), ("BFP0003", 179), ("BFQ0003", 1)],
+        ),
         (
             "cli",
             "all",
             "podman",
-            303,
-            &[("BFP0002", 59), ("BFP0003", 174), ("BFP0007", 70)],
+            308,
+            &[("BFP0002", 59), ("BFP0003", 179), ("BFP0007", 70)],
         ),
         (
             "compose",
             "exact",
             "compose",
-            213,
-            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 163)],
+            218,
+            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 168)],
         ),
-        ("compose", "exact", "quadlet", 209, &[("BFP0002", 46), ("BFP0003", 163)]),
+        (
+            "compose",
+            "exact",
+            "quadlet",
+            215,
+            &[("BFP0002", 46), ("BFP0003", 168), ("BFQ0003", 1)],
+        ),
         (
             "compose",
             "exact",
             "podman",
-            268,
-            &[("BFP0002", 46), ("BFP0003", 163), ("BFP0007", 59)],
+            273,
+            &[("BFP0002", 46), ("BFP0003", 168), ("BFP0007", 59)],
         ),
         (
             "compose",
             "all",
             "compose",
-            232,
-            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 174)],
+            237,
+            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 179)],
         ),
-        ("compose", "all", "quadlet", 227, &[("BFP0002", 53), ("BFP0003", 174)]),
+        (
+            "compose",
+            "all",
+            "quadlet",
+            233,
+            &[("BFP0002", 53), ("BFP0003", 179), ("BFQ0003", 1)],
+        ),
         (
             "compose",
             "all",
             "podman",
-            297,
-            &[("BFP0002", 53), ("BFP0003", 174), ("BFP0007", 70)],
+            302,
+            &[("BFP0002", 53), ("BFP0003", 179), ("BFP0007", 70)],
         ),
     ];
     for contract in expected_contracts {
@@ -818,37 +842,37 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
 fn observability_assert_reimport_template_contracts() -> Result<(), Box<dyn Error>> {
     let expectations = [
         ("cli", "exact", "compose", "compose", 0),
-        ("cli", "exact", "compose", "quadlet", 0),
+        ("cli", "exact", "compose", "quadlet", 1),
         ("cli", "exact", "compose", "podman", 56),
         ("cli", "exact", "quadlet", "compose", 8),
         ("cli", "exact", "quadlet", "quadlet", 0),
         ("cli", "exact", "quadlet", "podman", 63),
         ("cli", "label", "compose", "compose", 0),
-        ("cli", "label", "compose", "quadlet", 0),
+        ("cli", "label", "compose", "quadlet", 1),
         ("cli", "label", "compose", "podman", 56),
         ("cli", "label", "quadlet", "compose", 8),
         ("cli", "label", "quadlet", "quadlet", 0),
         ("cli", "label", "quadlet", "podman", 63),
         ("cli", "all", "compose", "compose", 0),
-        ("cli", "all", "compose", "quadlet", 0),
+        ("cli", "all", "compose", "quadlet", 1),
         ("cli", "all", "compose", "podman", 66),
         ("cli", "all", "quadlet", "compose", 9),
         ("cli", "all", "quadlet", "quadlet", 0),
         ("cli", "all", "quadlet", "podman", 74),
         ("compose", "exact", "compose", "compose", 0),
-        ("compose", "exact", "compose", "quadlet", 0),
+        ("compose", "exact", "compose", "quadlet", 1),
         ("compose", "exact", "compose", "podman", 56),
         ("compose", "exact", "quadlet", "compose", 1),
         ("compose", "exact", "quadlet", "quadlet", 0),
         ("compose", "exact", "quadlet", "podman", 56),
         ("compose", "label", "compose", "compose", 0),
-        ("compose", "label", "compose", "quadlet", 0),
+        ("compose", "label", "compose", "quadlet", 1),
         ("compose", "label", "compose", "podman", 56),
         ("compose", "label", "quadlet", "compose", 1),
         ("compose", "label", "quadlet", "quadlet", 0),
         ("compose", "label", "quadlet", "podman", 56),
         ("compose", "all", "compose", "compose", 0),
-        ("compose", "all", "compose", "quadlet", 0),
+        ("compose", "all", "compose", "quadlet", 1),
         ("compose", "all", "compose", "podman", 66),
         ("compose", "all", "quadlet", "compose", 2),
         ("compose", "all", "quadlet", "quadlet", 0),
@@ -872,6 +896,7 @@ fn observability_assert_reimport_template_contracts() -> Result<(), Box<dyn Erro
             "{mode}/{selection}/{input}-to-{output} duplicated the application prefix"
         );
         assert!(!actual.contains("boxferry-public-observability-admin-canary"));
+        observability_assert_reimport_alias_contract(&actual, mode, selection, input, output);
     }
     for mode in ["cli", "compose"] {
         for input in ["compose", "quadlet"] {
@@ -899,6 +924,29 @@ fn observability_assert_reimport_template_contracts() -> Result<(), Box<dyn Erro
     observability_reimport_template_dimensions_fail_closed()
 }
 
+fn observability_assert_reimport_alias_contract(
+    diagnostics: &str,
+    mode: &str,
+    selection: &str,
+    input: &str,
+    output: &str,
+) {
+    assert_eq!(
+        diagnostics.lines().filter(|line| line.contains(".aliases\t")).count(),
+        0,
+        "{mode}/{selection}/{input}-to-{output} must not recreate importer alias-promotion diagnostics"
+    );
+    let expected_quadlet_loss = "BFQ0003\tservices.live-observability-grafana.networks\twarning\t\t";
+    assert_eq!(
+        diagnostics
+            .lines()
+            .filter(|line| *line == expected_quadlet_loss)
+            .count(),
+        usize::from(input == "compose" && output == "quadlet"),
+        "{mode}/{selection}/{input}-to-{output} Grafana Quadlet alias-loss row count"
+    );
+}
+
 fn observability_assert_template_contract(
     (mode, selection, output, expected_rows, expected_codes): ObservabilityTemplateContract,
 ) -> Result<(), Box<dyn Error>> {
@@ -915,10 +963,46 @@ fn observability_assert_template_contract(
             "{mode}/{selection}/{output} {code} rows"
         );
     }
+    observability_assert_promoted_alias_contract(&diagnostics, mode, selection, output);
     let label = observability_live_expected_diagnostics_for(mode, "label", output, "live-observability-")?;
     let exact = observability_live_expected_diagnostics_for(mode, "exact", output, "live-observability-")?;
     assert_eq!(exact, label, "{mode}/{output} exact and label contracts differ");
     Ok(())
+}
+
+fn observability_assert_promoted_alias_contract(diagnostics: &str, mode: &str, selection: &str, output: &str) {
+    let attachments = [
+        ("grafana", "backend"),
+        ("grafana", "edge"),
+        ("loki", "backend"),
+        ("metrics-producer", "backend"),
+        ("prometheus", "backend"),
+    ];
+    for (service, network) in attachments {
+        let expected = format!(
+            "BFP0003\tservices.live-observability-{service}.networks.live-observability-{network}.aliases\twarning\tapproximated\tapproximate"
+        );
+        assert_eq!(
+            diagnostics.lines().filter(|line| *line == expected).count(),
+            1,
+            "{mode}/{selection}/{output} must contain exactly one {service}/{network} alias promotion"
+        );
+    }
+    assert_eq!(
+        diagnostics.lines().filter(|line| line.contains(".aliases\t")).count(),
+        attachments.len(),
+        "{mode}/{selection}/{output} alias-promotion row count"
+    );
+
+    let expected_quadlet_loss = "BFQ0003\tservices.live-observability-grafana.networks\twarning\t\t";
+    assert_eq!(
+        diagnostics
+            .lines()
+            .filter(|line| *line == expected_quadlet_loss)
+            .count(),
+        usize::from(output == "quadlet"),
+        "{mode}/{selection}/{output} Grafana Quadlet alias-loss row count"
+    );
 }
 
 fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Error>> {
@@ -950,7 +1034,7 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
 fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
     for (name, expected_rows) in [
-        ("base-compose-provisioned.tsv", 209),
+        ("base-compose-provisioned.tsv", 214),
         ("cli-creation-evidence.tsv", 6),
         ("compose-export-network.tsv", 4),
         ("cli-compose-export-dependencies.tsv", 7),
@@ -958,6 +1042,7 @@ fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
         ("all-importer.tsv", 18),
         ("all-compose-export.tsv", 1),
         ("all-podman-export.tsv", 11),
+        ("quadlet-network-alias.tsv", 1),
         ("reimport-compose-podman.tsv", 56),
         ("reimport-compose-podman-all.tsv", 10),
         ("reimport-quadlet-compose.tsv", 1),
