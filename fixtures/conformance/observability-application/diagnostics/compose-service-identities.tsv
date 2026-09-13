@@ -1,0 +1,2 @@
+BFP0003	services.{{resource_prefix}}alloy.networks.{{resource_prefix}}backend.aliases	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}log-producer.networks.{{resource_prefix}}backend.aliases	warning	approximated	approximate

@@ -45,7 +45,124 @@ services:
         aliases: [prometheus]
   bf-private-observability-alloy:
     networks: [bf-private-observability-backend]' > "${alias_directory}/compose.yaml"
-observability_assert_output_aliases podman compose "${alias_directory}" bf-private
+observability_assert_output_aliases cli podman compose "${alias_directory}" bf-private
+
+compose_alias_fixture="${repository_root}/fixtures/conformance/observability-application/expected-compose-provisioned-aliases.yaml"
+compose_alias_directory="${test_root}/output-aliases-compose-provisioned"
+mkdir -p "${compose_alias_directory}"
+cp -- "${compose_alias_fixture}" "${compose_alias_directory}/compose.yaml"
+observability_assert_output_aliases \
+  compose podman compose "${compose_alias_directory}" bf-private
+observability_assert_output_aliases \
+  compose compose compose "${compose_alias_directory}" bf-private
+
+compose_alias_podman_directory="${test_root}/output-aliases-compose-provisioned-podman"
+mkdir -p "${compose_alias_podman_directory}"
+jq --null-input --arg stem 'bf-private-observability-' '
+  def create($role; $networks):
+    {action: "create", resource: {kind: "container", name: ($stem + $role)},
+     libpod: {body: {json: {Networks: $networks}}}};
+  ($stem + "backend") as $backend
+  | ($stem + "edge") as $edge
+  | {operations: [
+      create("alloy"; {($backend): {aliases: [($stem + "alloy"), "alloy"]}}),
+      create("grafana"; {
+        ($backend): {aliases: [($stem + "grafana"), "grafana"]},
+        ($edge): {aliases: [($stem + "grafana"), "grafana"]}
+      }),
+      create("log-producer"; {($backend): {aliases: [($stem + "log-producer"), "log-producer"]}}),
+      create("loki"; {($backend): {aliases: [($stem + "loki"), "loki"]}}),
+      create("metrics-producer"; {
+        ($backend): {aliases: [($stem + "metrics-producer"), "metrics-producer"]}
+      }),
+      create("prometheus"; {($backend): {aliases: [($stem + "prometheus"), "prometheus"]}})
+    ]}
+' > "${compose_alias_podman_directory}/podman.json"
+observability_assert_output_aliases \
+  compose podman podman "${compose_alias_podman_directory}" bf-private
+observability_assert_output_aliases \
+  compose compose podman "${compose_alias_podman_directory}" bf-private
+
+compose_alias_quadlet_directory="${test_root}/output-aliases-compose-provisioned-quadlet"
+mkdir -p "${compose_alias_quadlet_directory}"
+for service in alloy log-producer loki metrics-producer prometheus; do
+  printf '[Container]\nNetworkAlias=bf-private-observability-%s\nNetworkAlias=%s\nNetwork=bf-private-observability-backend.network\n' \
+    "${service}" "${service}" \
+    > "${compose_alias_quadlet_directory}/bf-private-observability-${service}.container"
+done
+printf '%s\n' \
+  '[Container]' \
+  'Network=bf-private-observability-backend.network' \
+  'Network=bf-private-observability-edge' \
+  > "${compose_alias_quadlet_directory}/bf-private-observability-grafana.container"
+for source_kind in podman compose quadlet; do
+  observability_assert_output_aliases \
+    compose "${source_kind}" quadlet "${compose_alias_quadlet_directory}" bf-private
+done
+
+compose_alias_without_grafana_directory="${test_root}/output-aliases-compose-provisioned-without-grafana"
+mkdir -p "${compose_alias_without_grafana_directory}"
+cp -- "${compose_alias_fixture}" "${compose_alias_without_grafana_directory}/compose.yaml"
+sed --in-place \
+  's/aliases: \[bf-private-observability-grafana, grafana\]/aliases: []/' \
+  "${compose_alias_without_grafana_directory}/compose.yaml"
+observability_assert_output_aliases \
+  compose quadlet compose "${compose_alias_without_grafana_directory}" bf-private
+
+compose_alias_quadlet_podman_directory="${test_root}/output-aliases-compose-provisioned-quadlet-podman"
+mkdir -p "${compose_alias_quadlet_podman_directory}"
+jq '
+  (.operations[]
+   | select(.resource.name | endswith("-grafana"))
+   | .libpod.body.json.Networks[]
+   | .aliases) = []
+' "${compose_alias_podman_directory}/podman.json" \
+  > "${compose_alias_quadlet_podman_directory}/podman.json"
+observability_assert_output_aliases \
+  compose quadlet podman "${compose_alias_quadlet_podman_directory}" bf-private
+
+compose_alias_duplicate_directory="${test_root}/output-aliases-compose-provisioned-duplicate-attachment"
+mkdir -p "${compose_alias_duplicate_directory}"
+jq '.operations += [.operations[0]]' "${compose_alias_podman_directory}/podman.json" \
+  > "${compose_alias_duplicate_directory}/podman.json"
+status=0
+error="$(observability_assert_output_aliases \
+  compose podman podman "${compose_alias_duplicate_directory}" bf-private 2>&1)" || status=$?
+[[ "${status}" == 1 ]]
+grep --fixed-strings --quiet \
+  'duplicate-attachments=alloy/backend count=2' <<< "${error}"
+
+cp -- "${compose_alias_fixture}" "${compose_alias_directory}/compose.yaml"
+sed --in-place \
+  's/aliases: \[bf-private-observability-alloy, alloy\]/aliases: [bf-private-observability-alloy, alloy, alloy]/' \
+  "${compose_alias_directory}/compose.yaml"
+if observability_assert_output_aliases \
+  compose podman compose "${compose_alias_directory}" bf-private 2> /dev/null; then
+  printf '%s\n' 'A duplicate Compose-provisioned alias satisfied the observability output contract.' >&2
+  exit 1
+fi
+
+cp -- "${compose_alias_fixture}" "${compose_alias_directory}/compose.yaml"
+sed --in-place \
+  's/aliases: \[bf-private-observability-grafana, grafana\]/aliases: [bf-private-observability-grafana]/' \
+  "${compose_alias_directory}/compose.yaml"
+if observability_assert_output_aliases \
+  compose podman compose "${compose_alias_directory}" bf-private 2> /dev/null; then
+  printf '%s\n' 'A missing Compose-provisioned alias satisfied the observability output contract.' >&2
+  exit 1
+fi
+
+cp -- "${compose_alias_fixture}" "${compose_alias_directory}/compose.yaml"
+sed --in-place \
+  's/aliases: \[bf-private-observability-loki, loki\]/aliases: [bf-private-observability-loki, loki, private-alias-canary]/' \
+  "${compose_alias_directory}/compose.yaml"
+status=0
+error="$(observability_assert_output_aliases \
+  compose podman compose "${compose_alias_directory}" bf-private 2>&1)" || status=$?
+[[ "${status}" == 1 ]]
+assert_absent private-alias-canary "${error}"
+grep --fixed-strings --quiet \
+  'value-mismatches=loki/backend expected-count=2 actual-count=3' <<< "${error}"
 
 printf '%s\n' '---
 services:
@@ -61,7 +178,7 @@ services:
     networks:
       bf-private-observability-backend:
         aliases: [prometheus]' > "${alias_directory}/compose.yaml"
-if observability_assert_output_aliases quadlet compose "${alias_directory}" bf-private 2> /dev/null; then
+if observability_assert_output_aliases cli quadlet compose "${alias_directory}" bf-private 2> /dev/null; then
   printf '%s\n' 'A runtime container-ID alias satisfied the observability output contract.' >&2
   exit 1
 fi
@@ -77,13 +194,13 @@ printf '%s\n' \
   'Network=bf-private-observability-backend.network' \
   'Network=bf-private-observability-edge' \
   > "${alias_directory}/bf-private-observability-grafana.container"
-observability_assert_output_aliases podman quadlet "${alias_directory}" bf-private
+observability_assert_output_aliases cli podman quadlet "${alias_directory}" bf-private
 grafana_quadlet="${alias_directory}/bf-private-observability-grafana.container"
 cp -- "${grafana_quadlet}" "${grafana_quadlet}.valid"
 for missing_network in backend edge; do
   cp -- "${grafana_quadlet}.valid" "${grafana_quadlet}"
   sed --in-place "/bf-private-observability-${missing_network}/d" "${grafana_quadlet}"
-  if observability_assert_output_aliases podman quadlet "${alias_directory}" bf-private 2> /dev/null; then
+  if observability_assert_output_aliases cli podman quadlet "${alias_directory}" bf-private 2> /dev/null; then
     printf 'A Quadlet artifact without the Grafana %s network satisfied the alias contract.\n' \
       "${missing_network}" >&2
     exit 1
@@ -110,7 +227,7 @@ jq --null-input \
       ($stem + "backend"): {aliases: ["prometheus"]}
     }}}}}
   ]}' > "${alias_directory}/podman.json"
-observability_assert_output_aliases podman podman "${alias_directory}" bf-private
+observability_assert_output_aliases cli podman podman "${alias_directory}" bf-private
 
 bfq_report="${test_root}/bfq-report.json"
 printf '%s\n' '{"diagnostics":[{"code":"BFQ0003","severity":"warning","fields":[{"name":"subject","value":"services.bf-private-observability-grafana.networks"},{"name":"reason","value":"reviewed multi-network alias omission"}]}]}' \

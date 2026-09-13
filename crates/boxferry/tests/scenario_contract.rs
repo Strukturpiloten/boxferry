@@ -791,43 +791,43 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "compose",
             "exact",
             "compose",
-            218,
-            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 168)],
+            220,
+            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 170)],
         ),
         (
             "compose",
             "exact",
             "quadlet",
-            215,
-            &[("BFP0002", 46), ("BFP0003", 168), ("BFQ0003", 1)],
+            217,
+            &[("BFP0002", 46), ("BFP0003", 170), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "exact",
             "podman",
-            273,
-            &[("BFP0002", 46), ("BFP0003", 168), ("BFP0007", 59)],
+            275,
+            &[("BFP0002", 46), ("BFP0003", 170), ("BFP0007", 59)],
         ),
         (
             "compose",
             "all",
             "compose",
-            237,
-            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 179)],
+            239,
+            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 181)],
         ),
         (
             "compose",
             "all",
             "quadlet",
-            233,
-            &[("BFP0002", 53), ("BFP0003", 179), ("BFQ0003", 1)],
+            235,
+            &[("BFP0002", 53), ("BFP0003", 181), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "all",
             "podman",
-            302,
-            &[("BFP0002", 53), ("BFP0003", 179), ("BFP0007", 70)],
+            304,
+            &[("BFP0002", 53), ("BFP0003", 181), ("BFP0007", 70)],
         ),
     ];
     for contract in expected_contracts {
@@ -971,14 +971,17 @@ fn observability_assert_template_contract(
 }
 
 fn observability_assert_promoted_alias_contract(diagnostics: &str, mode: &str, selection: &str, output: &str) {
-    let attachments = [
+    let mut attachments = vec![
         ("grafana", "backend"),
         ("grafana", "edge"),
         ("loki", "backend"),
         ("metrics-producer", "backend"),
         ("prometheus", "backend"),
     ];
-    for (service, network) in attachments {
+    if mode == "compose" {
+        attachments.extend([("alloy", "backend"), ("log-producer", "backend")]);
+    }
+    for &(service, network) in &attachments {
         let expected = format!(
             "BFP0003\tservices.live-observability-{service}.networks.live-observability-{network}.aliases\twarning\tapproximated\tapproximate"
         );
@@ -1035,6 +1038,7 @@ fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
     for (name, expected_rows) in [
         ("base-compose-provisioned.tsv", 214),
+        ("compose-service-identities.tsv", 2),
         ("cli-creation-evidence.tsv", 6),
         ("compose-export-network.tsv", 4),
         ("cli-compose-export-dependencies.tsv", 7),

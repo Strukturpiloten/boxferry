@@ -940,6 +940,9 @@ observability_write_live_diagnostic_template() {
   if [[ "${mode}" == cli ]]; then
     observability_append_live_diagnostic_template \
       "${fixture}/cli-creation-evidence.tsv" "${resource_prefix}" "${destination}" || return
+  else
+    observability_append_live_diagnostic_template \
+      "${fixture}/compose-service-identities.tsv" "${resource_prefix}" "${destination}" || return
   fi
   case "${output}" in
     compose)
@@ -1217,28 +1220,42 @@ observability_assert_reviewed_diagnostics() {
 }
 
 observability_assert_output_aliases() {
-  local source_kind=$1 output=$2 directory=$3 prefix=$4
+  local mode=$1 source_kind=$2 output=$3 directory=$4 prefix=$5
   local include_grafana=true
   [[ "${source_kind}" == quadlet ]] && include_grafana=false
 
-  python3 - "${output}" "${directory}" "${prefix}" "${include_grafana}" << 'PY'
+  python3 - "${mode}" "${output}" "${directory}" "${prefix}" "${include_grafana}" << 'PY'
 import glob
 import json
 import os
 import sys
+from collections import Counter
 
-output, directory, prefix, include_grafana = sys.argv[1:]
+mode, output, directory, prefix, include_grafana = sys.argv[1:]
 stem = f"{prefix}-observability-"
 backend = f"{stem}backend"
-expected = [
-    (f"{stem}loki", backend, ["loki"]),
-    (f"{stem}metrics-producer", backend, ["metrics-producer"]),
-    (f"{stem}prometheus", backend, ["prometheus"]),
-]
+if mode == "cli":
+    expected = [
+        (f"{stem}loki", backend, ["loki"]),
+        (f"{stem}metrics-producer", backend, ["metrics-producer"]),
+        (f"{stem}prometheus", backend, ["prometheus"]),
+    ]
+elif mode == "compose":
+    # Compose gives each service its authored service-key identity in addition
+    # to the explicit network alias. A container_name also remains a stable
+    # identity in Podman inspect. Both are portable effective DNS evidence;
+    # runtime container IDs and repeated spellings are not.
+    expected = [
+        (f"{stem}{role}", backend, [f"{stem}{role}", role])
+        for role in ["alloy", "log-producer", "loki", "metrics-producer", "prometheus"]
+    ]
+else:
+    raise AssertionError("unsupported observability provisioner mode")
 if include_grafana == "true" and output != "quadlet":
+    aliases = ["grafana"] if mode == "cli" else [f"{stem}grafana", "grafana"]
     expected.extend([
-        (f"{stem}grafana", backend, ["grafana"]),
-        (f"{stem}grafana", f"{stem}edge", ["grafana"]),
+        (f"{stem}grafana", backend, aliases),
+        (f"{stem}grafana", f"{stem}edge", aliases),
     ])
 
 if output == "compose":
@@ -1291,7 +1308,43 @@ else:
     raise AssertionError("unsupported observability output kind")
 
 if sorted(actual) != sorted(expected):
-    raise AssertionError("observability output network aliases differ from the reviewed contract")
+    expected_by_attachment = {(service, network): aliases for service, network, aliases in expected}
+    actual_by_attachment = {(service, network): aliases for service, network, aliases in actual}
+    actual_attachment_counts = Counter((service, network) for service, network, _ in actual)
+
+    def reviewed_identity(value, accepted, fallback):
+        candidate = value.removeprefix(stem) if value.startswith(stem) else ""
+        return candidate if candidate in accepted else fallback
+
+    def attachment_name(key):
+        service = reviewed_identity(
+            key[0],
+            {"alloy", "grafana", "log-producer", "loki", "metrics-producer", "prometheus"},
+            "unreviewed-service",
+        )
+        network = reviewed_identity(key[1], {"backend", "edge"}, "unreviewed-network")
+        return f"{service}/{network}"
+
+    missing = sorted(attachment_name(key) for key in expected_by_attachment.keys() - actual_by_attachment.keys())
+    unexpected = sorted(attachment_name(key) for key in actual_by_attachment.keys() - expected_by_attachment.keys())
+    duplicates = sorted(
+        f"{attachment_name(key)} count={count}"
+        for key, count in actual_attachment_counts.items()
+        if count > 1
+    )
+    mismatched = sorted(
+        f"{attachment_name(key)} expected-count={len(expected_by_attachment[key])} "
+        f"actual-count={len(actual_by_attachment[key])}"
+        for key in expected_by_attachment.keys() & actual_by_attachment.keys()
+        if expected_by_attachment[key] != actual_by_attachment[key]
+    )
+    details = "; ".join([
+        "missing=" + (",".join(missing) or "none"),
+        "unexpected=" + (",".join(unexpected) or "none"),
+        "duplicate-attachments=" + (",".join(duplicates) or "none"),
+        "value-mismatches=" + (",".join(mismatched) or "none"),
+    ])
+    raise AssertionError(f"observability output network aliases differ from the reviewed contract; {details}")
 PY
 }
 
@@ -1331,7 +1384,7 @@ observability_assert_output_semantics() {
     fi
   fi
   observability_assert_output_aliases \
-    "${source_kind}" "${output}" "${directory}" "${prefix}" || return
+    "${mode}" "${source_kind}" "${output}" "${directory}" "${prefix}" || return
   observability_assert_reviewed_diagnostics \
     "${expectation_scope}" "${mode}" "${selection}" "${source_kind}" "${output}" \
     "${prefix}-observability-" "${report}" || return
