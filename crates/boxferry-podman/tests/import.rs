@@ -1352,10 +1352,10 @@ fn unavailable_network_attachment_source(policy: PodmanPromotionPolicy) -> Resul
 }
 
 #[test]
-fn effective_network_aliases_require_both_promotions_and_exclude_runtime_ids() -> Result<(), Box<dyn Error>> {
+fn promoted_network_aliases_deduplicate_stably_and_exclude_runtime_ids() -> Result<(), Box<dyn Error>> {
     const CONTAINER_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let source = alias_source(
-        &format!(r#"["{CONTAINER_ID}","0123456789ab","portable-alias"]"#),
+        &format!(r#"["{CONTAINER_ID}","0123456789ab","portable-alias","secondary-alias","portable-alias"]"#),
         PodmanPromotionPolicy::conservative()
             .with_effective_named_networks(true)
             .with_portable_effective_settings(true),
@@ -1364,11 +1364,24 @@ fn effective_network_aliases_require_both_promotions_and_exclude_runtime_ids() -
     let application = result.application().ok_or("application")?;
     let attachment = &application.services()[0].value().networks()[0];
     assert_eq!(attachment.value().network().as_str(), "legacy-net");
-    assert_eq!(attachment.value().aliases(), ["portable-alias"]);
-    assert!(!attachment.value().alias_sensitivities()[0]);
+    assert_eq!(attachment.value().aliases(), ["portable-alias", "secondary-alias"]);
+    assert_eq!(attachment.value().alias_sensitivities(), [false, false]);
+
+    let target = TargetProfile::new(
+        PODMAN_TARGET,
+        PlatformVersion::new(6, 1, 0),
+        Some(PlatformVersion::new(6, 1, 0)),
+    )?;
+    let plan = PodmanExporter::new()?.plan(application, &target)?;
+    assert!(
+        plan.candidate().is_some(),
+        "deduplicated imported aliases must produce valid Podman intent: {:?}",
+        plan.diagnostics()
+    );
 
     let rendered = format!("{:?}", result.diagnostics());
     assert!(!rendered.contains("portable-alias"));
+    assert!(!rendered.contains("secondary-alias"));
     assert!(!rendered.contains(CONTAINER_ID));
     assert!(!rendered.contains("0123456789ab"));
     assert!(!rendered.contains("$.NetworkSettings.Networks.legacy-net.Aliases"));

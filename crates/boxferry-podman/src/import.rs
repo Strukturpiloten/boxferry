@@ -1939,10 +1939,19 @@ impl<'a> Mapping<'a> {
         }
 
         let mut candidates = Vec::new();
+        let mut seen_candidates = BTreeSet::new();
         let mut future_kind = false;
         for alias in aliases.value() {
             match alias.kind() {
-                NativeNetworkAliasKind::EffectiveCandidate => candidates.push(alias),
+                NativeNetworkAliasKind::EffectiveCandidate => {
+                    // Libpod exposes network aliases as effective set-like DNS
+                    // names, but providers can repeat the same spelling. Keep
+                    // the first observation so portable intent remains ordered
+                    // without creating invalid duplicate target identities.
+                    if seen_candidates.insert(alias.spelling()) {
+                        candidates.push(alias);
+                    }
+                }
                 NativeNetworkAliasKind::RuntimeContainerId => {}
                 _ => future_kind = true,
             }
