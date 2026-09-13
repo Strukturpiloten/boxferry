@@ -44,6 +44,10 @@ services:
       - "./config:/etc/app:Z,ro"
       - ./shared:/srv/shared:z
       - "./data:/srv/data:Z,ro"
+    networks:
+      frontend:
+        aliases:
+          - web.local
 networks:
   frontend: {}
 volumes:

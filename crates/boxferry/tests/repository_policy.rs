@@ -349,6 +349,7 @@ fn append_supabase_fixture_contract(root: &Path, runner_contract: &mut String) -
         "peer.compose.yaml",
         "postgres-components.tsv",
         "providers.tsv",
+        "realtime-websocket.mjs",
         "routes.tsv",
         "success-contract.jq",
     ] {
@@ -382,6 +383,7 @@ fn run_supabase_report_contract(
     input: &str,
     output: &str,
     selection: &str,
+    include_system_network: bool,
     mode: SupabaseContractMode,
     report: Option<&serde_json::Value>,
 ) -> Result<Output, String> {
@@ -395,6 +397,11 @@ fn run_supabase_report_contract(
         .args(["--arg", "output", output])
         .args(["--arg", "selection", selection])
         .args(["--arg", "resource_prefix", "contract-supabase-"])
+        .args([
+            "--argjson",
+            "include_system_network",
+            if include_system_network { "true" } else { "false" },
+        ])
         .args(["--argjson", "emit_expected", mode.jq_value()])
         .arg("--from-file")
         .arg(root.join("fixtures/conformance/supabase-application/success-contract.jq"));
@@ -446,6 +453,7 @@ fn supabase_contract_accepts(
         input,
         output,
         selection,
+        false,
         SupabaseContractMode::Validate,
         Some(report),
     )?;
@@ -465,7 +473,7 @@ fn generated_supabase_contract(
     selection: &str,
     mode: SupabaseContractMode,
 ) -> Result<serde_json::Value, String> {
-    let generated = run_supabase_report_contract(root, input, output, selection, mode, None)?;
+    let generated = run_supabase_report_contract(root, input, output, selection, false, mode, None)?;
     if !generated.status.success() {
         return Err(format!(
             "failed to generate {selection} {input}-to-{output} Supabase contract: {}",
@@ -483,240 +491,127 @@ fn generated_supabase_contract(
 )]
 fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Result<(), String> {
     let root = repository_root();
-    let compose_expected = run_supabase_report_contract(
-        &root,
-        "compose",
-        "podman",
-        "storage",
-        SupabaseContractMode::Diagnostics,
-        None,
-    )?;
-    if !compose_expected.status.success() {
-        return Err(format!(
-            "failed to generate Compose rejection contract: {}",
-            String::from_utf8_lossy(&compose_expected.stderr).trim()
-        ));
-    }
-    let expected: serde_json::Value = serde_json::from_slice(&compose_expected.stdout)
-        .map_err(|error| format!("invalid generated Compose rejection contract: {error}"))?;
-    let expected_diagnostics = expected
-        .as_array()
-        .ok_or("generated Compose rejection contract must be an array")?;
-    let mut subjects = expected_diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic["code"] == "BFP0008")
-        .map(|diagnostic| {
-            diagnostic["subject"]
-                .as_str()
-                .map(str::to_owned)
-                .ok_or("generated BFP0008 subject must be a string")
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    subjects.sort();
-    assert_eq!(
-        subjects,
-        [
-            "services.contract-supabase-db.image",
-            "services.contract-supabase-imgproxy.image",
-            "services.contract-supabase-rest.image",
-            "services.contract-supabase-storage.image",
-        ]
-    );
-    assert_eq!(
-        subjects.iter().collect::<BTreeSet<_>>().len(),
-        subjects.len(),
-        "generated rejection subjects must be unique"
-    );
 
-    let quadlet_expected = run_supabase_report_contract(
-        &root,
-        "quadlet",
-        "podman",
-        "storage",
-        SupabaseContractMode::Diagnostics,
-        None,
-    )?;
-    if !quadlet_expected.status.success() {
-        return Err(format!(
-            "failed to generate Quadlet rejection contract: {}",
-            String::from_utf8_lossy(&quadlet_expected.stderr).trim()
-        ));
-    }
-    let quadlet_expected: serde_json::Value = serde_json::from_slice(&quadlet_expected.stdout)
-        .map_err(|error| format!("invalid generated Quadlet rejection contract: {error}"))?;
-    let quadlet_expected = quadlet_expected
-        .as_array()
-        .ok_or("generated Quadlet rejection contract must be an array")?;
-    let mut quadlet_subjects = quadlet_expected
-        .iter()
-        .filter(|diagnostic| diagnostic["code"] == "BFP0008")
-        .filter_map(|diagnostic| diagnostic["subject"].as_str())
-        .collect::<Vec<_>>();
-    quadlet_subjects.sort_unstable();
-    assert_eq!(quadlet_subjects, subjects);
-
-    for (selection, expected_count) in [("exact", 10), ("label", 11), ("all", 12)] {
-        let generated = run_supabase_report_contract(
-            &root,
-            "compose",
-            "podman",
-            selection,
-            SupabaseContractMode::Diagnostics,
-            None,
-        )?;
-        if !generated.status.success() {
-            return Err(format!(
-                "failed to generate {selection} rejection contract: {}",
-                String::from_utf8_lossy(&generated.stderr).trim()
-            ));
-        }
-        let generated: serde_json::Value = serde_json::from_slice(&generated.stdout)
-            .map_err(|error| format!("invalid generated {selection} rejection contract: {error}"))?;
-        let generated = generated
-            .as_array()
-            .ok_or("generated rejection contract must be an array")?;
-        let unique_subjects = generated
-            .iter()
-            .filter(|diagnostic| diagnostic["code"] == "BFP0008")
-            .filter_map(|diagnostic| diagnostic["subject"].as_str())
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            generated
-                .iter()
-                .filter(|diagnostic| diagnostic["code"] == "BFP0008")
-                .count(),
-            expected_count,
-            "{selection} image count"
-        );
-        assert_eq!(unique_subjects.len(), expected_count, "{selection} subjects");
-        if selection == "exact" {
-            assert!(unique_subjects.contains("services.contract-supabase-realtime.image"));
-            assert!(!unique_subjects.contains("services.contract-supabase-supavisor.image"));
-        }
-    }
-
-    for (input, selection, unsupported, invalid) in [
-        ("compose", "exact", 28, 10),
-        ("compose", "storage", 12, 4),
-        ("compose", "label", 30, 11),
-        ("compose", "all", 30, 12),
-        ("quadlet", "exact", 52, 10),
-        ("quadlet", "storage", 20, 4),
-        ("quadlet", "label", 55, 11),
-        ("quadlet", "all", 54, 12),
+    for (input, selection, unsupported) in [
+        ("compose", "exact", 198),
+        ("compose", "storage", 198),
+        ("compose", "label", 198),
+        ("compose", "all", 198),
+        ("quadlet", "exact", 223),
+        ("quadlet", "storage", 223),
+        ("quadlet", "label", 223),
+        ("quadlet", "all", 223),
     ] {
         let generated =
             generated_supabase_contract(&root, input, "podman", selection, SupabaseContractMode::Diagnostics)?;
-        let generated = generated
+        let diagnostics = generated
             .as_array()
-            .ok_or("generated rejection contract must be an array")?;
+            .ok_or("generated successful Podman contract must be an array")?;
         assert_eq!(
-            generated
-                .iter()
-                .filter(|diagnostic| diagnostic["code"] == "BFP0007")
-                .count(),
+            diagnostics.len(),
             unsupported,
-            "{input} {selection} unsupported diagnostics"
+            "{input} {selection} target-loss diagnostic count"
         );
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic["code"] == "BFP0007"
+                    && diagnostic["severity"] == "warning"
+                    && diagnostic["decision"] == "omitted"
+            }),
+            "{input} {selection} generated a non-target-loss diagnostic"
+        );
+        let unique_tuples = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                format!(
+                    "{}\t{}\t{}",
+                    diagnostic["code"], diagnostic["subject"], diagnostic["decision"]
+                )
+            })
+            .collect::<BTreeSet<_>>();
         assert_eq!(
-            generated
-                .iter()
-                .filter(|diagnostic| diagnostic["code"] == "BFP0008")
-                .count(),
-            invalid,
-            "{input} {selection} invalid diagnostics"
+            unique_tuples.len(),
+            diagnostics.len(),
+            "{input} {selection} diagnostic tuples must be unique"
         );
         assert_eq!(
             generated_supabase_contract(&root, input, "podman", selection, SupabaseContractMode::Fidelity,)?,
             serde_json::json!({
                 "approximate": 0,
                 "unsupported": unsupported,
-                "invalid": invalid,
+                "invalid": 0,
                 "other": 0,
             }),
-            "{input} {selection} rejection fidelity"
+            "{input} {selection} successful-route fidelity"
         );
     }
 
-    let diagnostics = expected_diagnostics
-        .iter()
-        .map(supabase_contract_diagnostic)
-        .collect::<Vec<_>>();
-    let mut rejection_report = serde_json::json!({
-        "schema_version": 1,
-        "status": "failure",
-        "exit_category": "input-or-execution",
-        "primary_diagnostic_code": "BFP0008",
-        "output_artifacts": [],
-        "fidelity": {
-            "exact": 7,
-            "approximate": 0,
-            "unsupported": 12,
-            "invalid": 4,
-            "other": 0,
-        },
-        "diagnostics": diagnostics,
-    });
-    assert!(supabase_contract_accepts(
-        &root,
-        "compose",
-        "podman",
-        "storage",
-        &rejection_report
-    )?);
-    let quadlet_diagnostics = quadlet_expected
-        .iter()
-        .map(supabase_contract_diagnostic)
-        .collect::<Vec<_>>();
-    let quadlet_rejection_report = serde_json::json!({
-        "schema_version": 1,
-        "status": "failure",
-        "exit_category": "input-or-execution",
-        "primary_diagnostic_code": "BFP0008",
-        "output_artifacts": [],
-        "fidelity": {
-            "exact": 7,
-            "approximate": 0,
-            "unsupported": 20,
-            "invalid": 4,
-            "other": 0,
-        },
-        "diagnostics": quadlet_diagnostics,
-    });
-    assert!(supabase_contract_accepts(
-        &root,
-        "quadlet",
-        "podman",
-        "storage",
-        &quadlet_rejection_report
-    )?);
+    for (input, unsupported) in [("compose", 198), ("quadlet", 223)] {
+        let expected =
+            generated_supabase_contract(&root, input, "podman", "storage", SupabaseContractMode::Diagnostics)?;
+        let expected = expected
+            .as_array()
+            .ok_or("generated storage Podman contract must be an array")?;
+        let report = serde_json::json!({
+            "schema_version": 1,
+            "status": "success",
+            "fidelity": {
+                "exact": 7,
+                "approximate": 0,
+                "unsupported": unsupported,
+                "invalid": 0,
+                "other": 0,
+            },
+            "diagnostics": expected
+                .iter()
+                .map(supabase_contract_diagnostic)
+                .collect::<Vec<_>>(),
+        });
+        assert!(
+            supabase_contract_accepts(&root, input, "podman", "storage", &report)?,
+            "{input} successful Podman route"
+        );
+    }
 
-    let mut duplicate = rejection_report.clone();
+    let expected =
+        generated_supabase_contract(&root, "compose", "podman", "storage", SupabaseContractMode::Diagnostics)?;
+    let expected = expected
+        .as_array()
+        .ok_or("generated Compose-to-Podman contract must be an array")?;
+    let success_report = serde_json::json!({
+        "schema_version": 1,
+        "status": "success",
+        "fidelity": {
+            "exact": 7,
+            "approximate": 0,
+            "unsupported": 198,
+            "invalid": 0,
+            "other": 0,
+        },
+        "diagnostics": expected
+            .iter()
+            .map(supabase_contract_diagnostic)
+            .collect::<Vec<_>>(),
+    });
+
+    let mut duplicate = success_report.clone();
     let first = duplicate["diagnostics"][0].clone();
     duplicate["diagnostics"][1] = first;
     assert!(!supabase_contract_accepts(
         &root, "compose", "podman", "storage", &duplicate
     )?);
 
-    let mut unseen = rejection_report.clone();
-    unseen["diagnostics"][0]["fields"][0]["value"] = serde_json::json!("services.contract-supabase-unseen.image");
+    let mut unseen = success_report.clone();
+    unseen["diagnostics"][0]["fields"][0]["value"] = serde_json::json!("networks.contract-supabase-unseen.internal");
     assert!(!supabase_contract_accepts(
         &root, "compose", "podman", "storage", &unseen
     )?);
 
-    let mut missing_target_loss = rejection_report.clone();
-    let target_loss_index = missing_target_loss["diagnostics"]
-        .as_array()
-        .and_then(|diagnostics| {
-            diagnostics
-                .iter()
-                .position(|diagnostic| diagnostic["code"] == "BFP0007")
-        })
-        .ok_or("synthetic rejection report must contain BFP0007")?;
+    let mut missing_target_loss = success_report.clone();
     missing_target_loss["diagnostics"]
         .as_array_mut()
-        .ok_or("synthetic rejection diagnostics must be an array")?
-        .remove(target_loss_index);
+        .ok_or("synthetic success diagnostics must be an array")?
+        .remove(0);
     assert!(!supabase_contract_accepts(
         &root,
         "compose",
@@ -725,8 +620,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         &missing_target_loss
     )?);
 
-    let mut wrong_target_fidelity = rejection_report.clone();
-    wrong_target_fidelity["fidelity"]["unsupported"] = serde_json::json!(15);
+    let mut wrong_target_fidelity = success_report.clone();
+    wrong_target_fidelity["fidelity"]["unsupported"] = serde_json::json!(199);
     assert!(!supabase_contract_accepts(
         &root,
         "compose",
@@ -735,54 +630,63 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         &wrong_target_fidelity
     )?);
 
-    let mut emitted_artifact = rejection_report.clone();
-    emitted_artifact["output_artifacts"] = serde_json::json!(["podman.json"]);
+    let mut invalid_fidelity = success_report.clone();
+    invalid_fidelity["fidelity"]["invalid"] = serde_json::json!(1);
     assert!(!supabase_contract_accepts(
         &root,
         "compose",
         "podman",
         "storage",
-        &emitted_artifact
+        &invalid_fidelity
     )?);
 
-    rejection_report["fidelity"]["invalid"] = serde_json::json!(3);
+    let mut failure_status = success_report;
+    failure_status["status"] = serde_json::json!("failure");
     assert!(!supabase_contract_accepts(
         &root,
         "compose",
         "podman",
         "storage",
-        &rejection_report
+        &failure_status
     )?);
 
     let reviewed_fidelity = [
-        ("exact", "podman", "compose", 46, 105),
-        ("exact", "podman", "quadlet", 36, 81),
-        ("exact", "podman", "podman", 36, 118),
-        ("exact", "quadlet", "compose", 10, 24),
-        ("exact", "compose", "compose", 10, 0),
-        ("exact", "compose", "quadlet", 0, 0),
+        ("exact", "podman", "compose", 63, 1_346),
+        ("exact", "podman", "quadlet", 63, 1_318),
+        ("exact", "podman", "podman", 63, 1_527),
+        ("exact", "quadlet", "compose", 11, 25),
+        ("exact", "compose", "compose", 11, 0),
+        ("exact", "compose", "quadlet", 0, 1),
+        ("exact", "compose", "podman", 0, 198),
         ("exact", "quadlet", "quadlet", 0, 0),
-        ("storage", "podman", "compose", 20, 43),
-        ("storage", "podman", "quadlet", 16, 35),
-        ("storage", "podman", "podman", 16, 51),
-        ("storage", "quadlet", "compose", 4, 8),
-        ("storage", "compose", "compose", 4, 0),
-        ("storage", "compose", "quadlet", 0, 0),
+        ("exact", "quadlet", "podman", 0, 223),
+        ("storage", "podman", "compose", 63, 1_346),
+        ("storage", "podman", "quadlet", 63, 1_318),
+        ("storage", "podman", "podman", 63, 1_527),
+        ("storage", "quadlet", "compose", 11, 25),
+        ("storage", "compose", "compose", 11, 0),
+        ("storage", "compose", "quadlet", 0, 1),
+        ("storage", "compose", "podman", 0, 198),
         ("storage", "quadlet", "quadlet", 0, 0),
-        ("label", "podman", "compose", 49, 111),
-        ("label", "podman", "quadlet", 38, 86),
-        ("label", "podman", "podman", 38, 125),
+        ("storage", "quadlet", "podman", 0, 223),
+        ("label", "podman", "compose", 63, 1_346),
+        ("label", "podman", "quadlet", 63, 1_318),
+        ("label", "podman", "podman", 63, 1_527),
         ("label", "quadlet", "compose", 11, 25),
         ("label", "compose", "compose", 11, 0),
-        ("label", "compose", "quadlet", 0, 0),
+        ("label", "compose", "quadlet", 0, 1),
+        ("label", "compose", "podman", 0, 198),
         ("label", "quadlet", "quadlet", 0, 0),
-        ("all", "podman", "compose", 51, 116),
-        ("all", "podman", "quadlet", 39, 90),
-        ("all", "podman", "podman", 39, 129),
+        ("label", "quadlet", "podman", 0, 223),
+        ("all", "podman", "compose", 67, 1_446),
+        ("all", "podman", "quadlet", 67, 1_418),
+        ("all", "podman", "podman", 67, 1_627),
         ("all", "quadlet", "compose", 12, 25),
         ("all", "compose", "compose", 12, 0),
-        ("all", "compose", "quadlet", 0, 0),
+        ("all", "compose", "quadlet", 0, 1),
+        ("all", "compose", "podman", 0, 198),
         ("all", "quadlet", "quadlet", 0, 0),
+        ("all", "quadlet", "podman", 0, 223),
     ];
     for (selection, input, output, approximate, unsupported) in reviewed_fidelity {
         let generated = generated_supabase_contract(&root, input, output, selection, SupabaseContractMode::Fidelity)?;
@@ -798,11 +702,75 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         );
     }
 
+    let system_network_fidelity = run_supabase_report_contract(
+        &root,
+        "podman",
+        "compose",
+        "all",
+        true,
+        SupabaseContractMode::Fidelity,
+        None,
+    )?;
+    assert!(system_network_fidelity.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&system_network_fidelity.stdout)
+            .map_err(|error| format!("invalid system-network fidelity contract: {error}"))?,
+        serde_json::json!({
+            "approximate": 69,
+            "unsupported": 1_452,
+            "invalid": 0,
+            "other": 0,
+        })
+    );
+    let system_network_diagnostics = run_supabase_report_contract(
+        &root,
+        "podman",
+        "compose",
+        "all",
+        true,
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    assert!(system_network_diagnostics.status.success());
+    let system_network_diagnostics: serde_json::Value = serde_json::from_slice(&system_network_diagnostics.stdout)
+        .map_err(|error| format!("invalid system-network diagnostic contract: {error}"))?;
+    let system_network_tuples = system_network_diagnostics
+        .as_array()
+        .ok_or("system-network diagnostic contract must be an array")?
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic["subject"] == "network:podman"
+                || diagnostic["subject"]
+                    .as_str()
+                    .is_some_and(|subject| subject.starts_with("networks.podman."))
+        })
+        .map(|diagnostic| {
+            (
+                diagnostic["code"].as_str().unwrap_or_default(),
+                diagnostic["subject"].as_str().unwrap_or_default(),
+                diagnostic["decision"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        system_network_tuples,
+        BTreeSet::from([
+            ("BFC0007", "networks.podman.ipam.config", ""),
+            ("BFP0002", "network:podman", "omitted"),
+            ("BFP0002", "networks.podman.driver", "omitted"),
+            ("BFP0002", "networks.podman.ipam_driver", "omitted"),
+            ("BFP0002", "networks.podman.native_ipv6_enabled", "omitted"),
+            ("BFP0003", "networks.podman.internal", "approximated"),
+            ("BFP0003", "networks.podman.ipam", "approximated"),
+        ])
+    );
+
     let success_expected = run_supabase_report_contract(
         &root,
         "podman",
         "podman",
         "label",
+        false,
         SupabaseContractMode::Diagnostics,
         None,
     )?;
@@ -840,8 +808,15 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             fields.len() == 5 && fields[0] == "BFP0007" && fields[1] == authored_subject
         }));
     }
-    let expected_fidelity =
-        run_supabase_report_contract(&root, "podman", "podman", "label", SupabaseContractMode::Fidelity, None)?;
+    let expected_fidelity = run_supabase_report_contract(
+        &root,
+        "podman",
+        "podman",
+        "label",
+        false,
+        SupabaseContractMode::Fidelity,
+        None,
+    )?;
     if !expected_fidelity.status.success() {
         return Err(format!(
             "failed to generate successful route fidelity: {}",
@@ -853,8 +828,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         expected_fidelity,
         serde_json::json!({
-            "approximate": 38,
-            "unsupported": 125,
+            "approximate": 63,
+            "unsupported": 1_527,
             "invalid": 0,
             "other": 0,
         })
@@ -879,8 +854,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let mut volume_metadata_as_approximate = success_report.clone();
-    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(50);
-    volume_metadata_as_approximate["fidelity"]["unsupported"] = serde_json::json!(113);
+    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(63);
+    volume_metadata_as_approximate["fidelity"]["unsupported"] = serde_json::json!(1_343);
     assert!(!supabase_contract_accepts(
         &root,
         "podman",
@@ -890,7 +865,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let mut missing_kong_network_outcome = success_report.clone();
-    missing_kong_network_outcome["fidelity"]["approximate"] = serde_json::json!(37);
+    missing_kong_network_outcome["fidelity"]["approximate"] = serde_json::json!(61);
     assert!(!supabase_contract_accepts(
         &root,
         "podman",
@@ -901,6 +876,9 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
 
     let mut arbitrary_exact_count = success_report.clone();
     arbitrary_exact_count["fidelity"]["exact"] = serde_json::json!(999);
+    // Exact diagnostics and every loss category are independent fixture
+    // contracts. The silent exact-success counter is implementation-derived,
+    // so only its integer shape is stable semantic evidence.
     assert!(supabase_contract_accepts(
         &root,
         "podman",
@@ -2724,6 +2702,13 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "supabase_enable_realtime_table",
         "ALTER PUBLICATION supabase_realtime ADD TABLE public.boxferry_items;",
         "/boxferry-fixture/application-probe.mjs \"${phase}\"",
+        "Realtime WebSocket connection failed",
+        "Realtime PostgreSQL subscription",
+        "message.payload?.extension === \"postgres_changes\"",
+        "supabase_assert_realtime_output_aliases",
+        "awk -F= '$1 == \"NetworkAlias\"",
+        "[[ \"${aliases[*]}\" == \"realtime-dev.supabase-realtime realtime\" ]]",
+        "[\"realtime-dev.supabase-realtime\", \"realtime\"]",
         "jsonRequest(\"/auth/v1/signup\"",
         "jsonRequest(\"/auth/v1/token?grant_type=password\"",
         "new WebSocket(",
@@ -2793,16 +2778,14 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "Phoenix-WebSocket-PostgreSQL-insert",
         "private-bucket-upload-byte-exact-download",
         "seed-SHA-256-cd2c400852048a021086994cc5f266472d53e72ffddb1c1f5d01a17ddaa27ca4-and-verify-SHA-256-71059a67ee64b2891c41a31b66660b18e366342f765ccf07fd68fb0436eb6638",
-        "one-error-per-tag-and-digest-image-no-artifacts",
-        ".primary_diagnostic_code == \"BFP0008\"",
-        "(.output_artifacts | length) == 0",
-        "($actual_subjects | length) == ($actual_subjects | unique | length)",
+        "generated_podman_diagnostics(false)",
+        "generated_podman_diagnostics(true) + quadlet_dependency_diagnostics",
+        "supabase_assert_output_semantics",
         ".fidelity.unsupported == $fidelity.unsupported",
         ".fidelity.invalid == $fidelity.invalid",
-        "expected_rejection_fidelity",
         "expected_success_fidelity",
         "exact_fidelity_shape",
-        "length(seen) != 9 || success != 7 || rejected != 2",
+        "length(seen) != 9 || success != 9 || rejected != 0",
     ] {
         if !runner.contains(fixture_contract) {
             return Err(format!(
@@ -2812,15 +2795,15 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
     }
 
     for route in [
-        "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFC0007,BFC0009\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
-        "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
-        "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0007\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
-        "compose\tcompose\tmigration-success\tlive-unperformed\tBFC0009\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
-        "compose\tquadlet\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
-        "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007,BFC0009\texact-diagnostic-tuple-multiset-plus-fidelity-v1",
+        "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "compose\tcompose\tmigration-success\tlive-unperformed\tBFC0009\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "compose\tquadlet\tmigration-success\tlive-unperformed\tBFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007,BFC0009\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "quadlet\tquadlet\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
-        "compose\tpodman\texpected-rejection\tlive-unperformed\tBFP0007,BFP0008\tone-error-per-tag-and-digest-image-no-artifacts",
-        "quadlet\tpodman\texpected-rejection\tlive-unperformed\tBFP0007,BFP0008\tone-error-per-tag-and-digest-image-no-artifacts",
+        "compose\tpodman\tmigration-success\tlive-unperformed\tBFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "quadlet\tpodman\tmigration-success\tlive-unperformed\tBFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
     ] {
         if !runner.contains(route) {
             return Err(format!("Supabase route catalogue is missing exact row `{route}`"));

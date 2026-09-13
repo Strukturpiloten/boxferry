@@ -136,7 +136,7 @@ services:
       start_period: 10s
     networks:
       backend:
-        aliases: [realtime, realtime-dev.supabase-realtime]
+        aliases: [realtime-dev.supabase-realtime, realtime]
 
   imgproxy:
     image: ${BF_IMGPROXY_IMAGE:?required}

@@ -5,6 +5,7 @@
 
 assert_successful_conversion() {
   local output=$1 selection=$2 output_directory=$3 report=$4
+  local membership_contract=${5:-shared}
   jq --exit-status '
     .schema_version == 1 and .status == "success" and .exit_category == "success" and
     (.primary_diagnostic_code == null) and
@@ -50,7 +51,16 @@ assert_successful_conversion() {
       return 1
       ;;
   esac
-  assert_selection_membership "${selection}" "${output}" "${output_directory}"
+  case "${membership_contract}" in
+    shared)
+      assert_selection_membership "${selection}" "${output}" "${output_directory}"
+      ;;
+    scenario-specific) ;;
+    *)
+      printf 'Unknown selection-membership contract: %s\n' "${membership_contract}" >&2
+      return 1
+      ;;
+  esac
 }
 
 assert_named_member() {

@@ -148,6 +148,7 @@ BFP0003|services.metrics.security
 BFP0003|services.observer.mounts[0]
 BFP0003|services.observer.namespaces
 BFP0003|services.observer.networks
+BFP0003|services.observer.networks.app-net.aliases
 BFP0003|services.observer.resource_controls
 BFP0003|services.observer.restart_policy
 BFP0003|services.observer.security

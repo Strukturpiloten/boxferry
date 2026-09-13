@@ -55,13 +55,12 @@ target-minimum = "1.0.0"
 target-maximum = "1.0.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Compose output cannot retain every reviewed network, healthcheck, user-namespace, and host-mapping detail."
+reason = "Compose output cannot retain every reviewed healthcheck, user-namespace, and host-mapping detail."
 artifacts = ["compose.yaml"]
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed semantic gaps." }
 diagnostics = [
-  "BFC0007|services.web.networks.frontend",
   "BFC0007|services.web.healthcheck",
   "BFC0009|services.web.user_namespace",
   "BFC0009|services.web.extra_hosts[0]",
@@ -69,7 +68,6 @@ diagnostics = [
 semantic-gaps = ["healthcheck:web"]
 reimport-semantic-gaps = ["healthcheck:web"]
 allowed-losses = [
-  { rule = "BFC0007", subject = "services.web.networks.frontend", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
   { rule = "BFC0007", subject = "services.web.healthcheck", decision = "unsupported", version-scope = "compose-specification@1.0.0..1.0.0" },
   { rule = "BFC0009", subject = "services.web.user_namespace", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },
   { rule = "BFC0009", subject = "services.web.extra_hosts[0]", decision = "approximate", version-scope = "compose-specification@1.0.0..1.0.0" },

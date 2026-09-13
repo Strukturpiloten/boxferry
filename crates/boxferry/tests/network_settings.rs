@@ -7,6 +7,7 @@ use std::error::Error;
 use boxferry::compose::compose_lens::{
     loader::{DocumentInput, DocumentOrigin, LoadedProject},
     merge::merge_project,
+    model::ServiceNetworks,
     source::SourceId as ComposeSourceId,
 };
 use boxferry::quadlet::quadlet_lens::source::SourceId as QuadletSourceId;
@@ -164,6 +165,97 @@ fn quadlet_network_resets_duplicates_and_multi_row_ipam_stay_explicit() -> Resul
         );
     }
     Ok(())
+}
+
+#[test]
+fn compose_and_quadlet_facade_reimports_preserve_protected_realtime_aliases() -> Result<(), Box<dyn Error>> {
+    let compose = compose_realtime_alias_source()?;
+    let quadlet = parse_source(
+        Identifier::new("realtime-aliases")?,
+        [
+            QuadletDocumentInput::new("backend.network", QuadletSourceId::new(41), "[Network]\n"),
+            QuadletDocumentInput::new(
+                "realtime.container",
+                QuadletSourceId::new(42),
+                concat!(
+                    "[Container]\nImage=example.invalid/realtime:1\nNetwork=backend.network\n",
+                    "NetworkAlias=realtime-dev.supabase-realtime\nNetworkAlias=realtime\n",
+                ),
+            ),
+        ],
+    )?;
+    let target_version = PlatformVersion::new(2, 30, 0);
+    let target = TargetProfile::new(DOCKER_COMPOSE_TARGET, target_version, Some(target_version))?;
+    let exporter = ComposeExporter::new()?;
+    let compose_result = convert(
+        &ComposeImporter::new()?,
+        &compose,
+        &exporter,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    let quadlet_result = convert(
+        &QuadletImporter::new()?,
+        &quadlet,
+        &exporter,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+
+    for (route, result) in [
+        ("compose-to-compose", compose_result),
+        ("quadlet-to-compose", quadlet_result),
+    ] {
+        assert!(!result.is_blocked(), "{route}: {:#?}", result.diagnostics());
+        assert_eq!(result.diagnostics(), &[], "{route}");
+        assert!(
+            result
+                .outcomes()
+                .iter()
+                .all(|outcome| outcome.kind() == ConversionKind::Exact),
+            "{route}: {:#?}",
+            result.outcomes()
+        );
+        let output = result.output().ok_or("exact Compose output expected")?;
+        assert!(
+            output.is_sensitive(),
+            "{route} must retain protected alias classification"
+        );
+        let service = output
+            .document()
+            .service("realtime")
+            .ok_or("generated realtime service expected")?;
+        let ServiceNetworks::Long { networks, .. } = service.networks().ok_or("generated service networks expected")?
+        else {
+            return Err(format!("{route} did not generate long network syntax").into());
+        };
+        let aliases = networks
+            .first()
+            .ok_or("generated backend attachment expected")?
+            .aliases()
+            .iter()
+            .map(|alias| alias.value().as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(aliases, ["realtime-dev.supabase-realtime", "realtime"], "{route}");
+    }
+    Ok(())
+}
+
+fn compose_realtime_alias_source() -> Result<ComposeSource, Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(140);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("realtime.compose.yaml", "realtime.compose.yaml"),
+        concat!(
+            "---\nname: realtime-aliases\nservices:\n  realtime:\n",
+            "    image: example.invalid/realtime:1\n    networks:\n      backend:\n",
+            "        aliases: [realtime-dev.supabase-realtime, realtime]\nnetworks:\n  backend: {}\n",
+        ),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    let project = merged.project().ok_or("merged project expected")?.clone();
+    Ok(ComposeSource::new(project, Identifier::new("realtime-aliases")?)?
+        .with_source_id(source_id, SourceId::new("realtime.compose.yaml")?))
 }
 
 fn compose_network_source() -> Result<ComposeSource, Box<dyn Error>> {

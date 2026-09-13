@@ -47,7 +47,7 @@ protected-values = [
 
 [extensions.scenarios.exports.compose]
 loss-policy = "partial"
-diagnostic-codes = ["BFC0007", "BFC0007", "BFC0009", "BFC0009"]
+diagnostic-codes = ["BFC0007", "BFC0009", "BFC0009"]
 fixed-diagnostic-codes = ["BFC0009", "BFC0009"]
 artifact-values = ["{\\\"channel\\\": \\\"stable\\\"}", "literal%h"]
 

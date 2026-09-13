@@ -243,7 +243,7 @@ struct PodmanInputOptions {
 struct PodmanPromotionOptions {
     #[command(flatten)]
     bind_mounts: PodmanBindMountPromotionOption,
-    /// Promote reviewed effective environment, ports, restart, health, and DNS settings.
+    /// Promote reviewed effective environment, ports, restart, health, DNS, and network aliases.
     #[arg(long)]
     promote_podman_portable_effective_settings: bool,
     /// Promote effective named-volume mounts into portable neutral intent.

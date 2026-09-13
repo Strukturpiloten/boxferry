@@ -52,6 +52,17 @@ supabase_image_reference() {
   ' "$(supabase_fixture_root)/images.tsv"
 }
 
+supabase_podman_observed_image_reference() {
+  local id=${1:?image id required}
+  local reference repository digest
+
+  reference="$(supabase_image_reference "${id}")"
+  repository="${reference%@*}"
+  repository="${repository%:*}"
+  digest="${reference##*@}"
+  printf '%s@%s\n' "${repository}" "${digest}"
+}
+
 supabase_skopeo_source_reference() {
   local reference=${1:?source image reference required}
   local repository index_digest
@@ -183,24 +194,24 @@ supabase_validate_catalogues() {
   ' "${fixture}/application.tsv"
   awk -F '\t' '
     BEGIN {
-    approved["podman compose"] = "BFP0002,BFP0003,BFC0007,BFC0009"
-      approved["podman quadlet"] = "BFP0002,BFP0003"
+		approved["podman compose"] = "BFP0002,BFP0003,BFC0007"
+		approved["podman quadlet"] = "BFP0002,BFP0003,BFQ0003"
       approved["podman podman"] = "BFP0002,BFP0003,BFP0007"
     approved["compose compose"] = "BFC0009"
-      approved["compose quadlet"] = "-"
-      approved["compose podman"] = "BFP0007,BFP0008"
+		approved["compose quadlet"] = "BFQ0003"
+      approved["compose podman"] = "BFP0007"
     approved["quadlet compose"] = "BFC0007,BFC0009"
-      approved["quadlet quadlet"] = "-"
-      approved["quadlet podman"] = "BFP0007,BFP0008"
-      contract["podman compose"] = "exact-diagnostic-tuple-multiset-plus-fidelity-v1"
-      contract["podman quadlet"] = "exact-diagnostic-tuple-multiset-plus-fidelity-v1"
-      contract["podman podman"] = "exact-diagnostic-tuple-multiset-plus-fidelity-v1"
-    contract["compose compose"] = "exact-diagnostic-tuple-multiset-plus-fidelity-v1"
-      contract["compose quadlet"] = "zero-loss-zero-diagnostic-reimport"
-      contract["compose podman"] = "one-error-per-tag-and-digest-image-no-artifacts"
-      contract["quadlet compose"] = "exact-diagnostic-tuple-multiset-plus-fidelity-v1"
-      contract["quadlet quadlet"] = "zero-loss-zero-diagnostic-reimport"
-      contract["quadlet podman"] = "one-error-per-tag-and-digest-image-no-artifacts"
+		approved["quadlet quadlet"] = "-"
+      approved["quadlet podman"] = "BFP0007"
+    contract["podman compose"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+    contract["podman quadlet"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+    contract["podman podman"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+    contract["compose compose"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+    contract["compose quadlet"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+    contract["compose podman"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+    contract["quadlet compose"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+		contract["quadlet quadlet"] = "zero-loss-zero-diagnostic-reimport"
+    contract["quadlet podman"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
     }
     NF && $1 !~ /^#/ {
       key = $1 "->" $2
@@ -210,8 +221,33 @@ supabase_validate_catalogues() {
       success += ($3 == "migration-success")
       rejected += ($3 == "expected-rejection")
     }
-    END { exit bad || length(seen) != 9 || success != 7 || rejected != 2 }
-  ' "${fixture}/routes.tsv"
+    END { exit bad || length(seen) != 9 || success != 9 || rejected != 0 }
+	' "${fixture}/routes.tsv"
+  while IFS=$'\t' read -r source target _outcome _evidence allowed_codes _contract; do
+    [[ -z "${source}" || "${source}" == \#* ]] && continue
+    local generated_codes normalized_allowed_codes
+    generated_codes="$(
+      jq --null-input \
+        --arg input "${source}" \
+        --arg output "${target}" \
+        --arg selection exact \
+        --arg resource_prefix contract-supabase- \
+        --argjson include_system_network false \
+        --argjson emit_expected true \
+        --from-file "${fixture}/success-contract.jq" |
+        jq --raw-output 'map(.code) | unique | if length == 0 then "-" else join(",") end'
+    )"
+    normalized_allowed_codes="$(
+      jq --null-input --raw-output --arg codes "${allowed_codes}" '
+          $codes | if . == "-" then . else split(",") | sort | join(",") end
+        '
+    )"
+    [[ "${generated_codes}" == "${normalized_allowed_codes}" ]] || {
+      printf 'Supabase %s-to-%s route allows %s but its exact diagnostic contract emits %s.\n' \
+        "${source}" "${target}" "${allowed_codes}" "${generated_codes}" >&2
+      return 1
+    }
+  done < "${fixture}/routes.tsv"
   awk -F '\t' '
     BEGIN {
       image["db"] = "db";                 networks["db"] = "backend";        dependencies["db"] = "-";                                       mounts["db"] = "pgdata:/var/lib/postgresql/data:rw,bind:/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql:ro"; proof["db"] = "SQL-row-extension-publication-counts"
@@ -606,7 +642,6 @@ supabase_create_networks_volumes() {
     "${prefix}-supabase-backend" > /dev/null
   supabase_remote "${socket}" network create \
     --label "io.boxferry.live-run=${run}" \
-    --label "io.boxferry.application=${prefix}-supabase" \
     "${prefix}-supabase-edge" > /dev/null
   for volume in pgdata storage deno-cache; do
     supabase_remote "${socket}" volume create \
@@ -680,8 +715,9 @@ supabase_create_cli_services() {
     --name "${prefix}-supabase-realtime" \
     --label "io.boxferry.live-run=${run}" --label "io.boxferry.application=${prefix}-supabase" \
     --requires "${prefix}-supabase-db" \
-    --network "${prefix}-supabase-backend:alias=realtime-dev.supabase-realtime" \
-    --network-alias realtime --env PORT=4000 --env DB_HOST=db --env DB_PORT=5432 \
+    --network "${prefix}-supabase-backend" \
+    --network-alias realtime-dev.supabase-realtime --network-alias realtime \
+    --env PORT=4000 --env DB_HOST=db --env DB_PORT=5432 \
     --env DB_USER=supabase_admin --env "DB_PASSWORD=${SUPABASE_DB_PASSWORD}" \
     --env DB_NAME=postgres --env 'DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime' \
     --env "DB_ENC_KEY=${SUPABASE_REALTIME_DB_KEY}" \
@@ -913,7 +949,6 @@ supabase_provision_compose() {
   supabase_assert_clean_prefix "${socket}" "${prefix}"
   supabase_remote "${socket}" network create \
     --label "io.boxferry.live-run=${run}" \
-    --label "io.boxferry.application=${prefix}-supabase" \
     "${prefix}-supabase-edge" > /dev/null
   if ! supabase_start_compose_graph "${socket}" "${prefix}" "${run}" \
     "${current_case}/supabase-compose-db.log" \
@@ -1247,17 +1282,18 @@ supabase_output_kind_count() {
 
 supabase_assert_exact_output_topology() {
   local selection=$1 output=$2 directory=$3 prefix=$4
+  local include_system_network=${5:-false}
   local expected_services expected_networks expected_volumes kind expected actual
   case "${selection}" in
     exact)
-      expected_services=10
+      expected_services=11
       expected_networks=2
       expected_volumes=3
       ;;
     storage)
-      expected_services=4
-      expected_networks=1
-      expected_volumes=2
+      expected_services=11
+      expected_networks=2
+      expected_volumes=3
       ;;
     label)
       expected_services=11
@@ -1274,6 +1310,7 @@ supabase_assert_exact_output_topology() {
       return 1
       ;;
   esac
+  [[ "${include_system_network}" == true ]] && expected_networks=$((expected_networks + 1))
 
   assert_resource_member "${output}" "${directory}" network \
     "${prefix}-supabase-backend"
@@ -1281,17 +1318,10 @@ supabase_assert_exact_output_topology() {
     "${prefix}-supabase-pgdata"
   assert_resource_member "${output}" "${directory}" volume \
     "${prefix}-supabase-storage"
-  if [[ "${selection}" == storage ]]; then
-    assert_resource_absent "${output}" "${directory}" network \
-      "${prefix}-supabase-edge"
-    assert_resource_absent "${output}" "${directory}" volume \
-      "${prefix}-supabase-deno-cache"
-  else
-    assert_resource_member "${output}" "${directory}" network \
-      "${prefix}-supabase-edge"
-    assert_resource_member "${output}" "${directory}" volume \
-      "${prefix}-supabase-deno-cache"
-  fi
+  assert_resource_member "${output}" "${directory}" network \
+    "${prefix}-supabase-edge"
+  assert_resource_member "${output}" "${directory}" volume \
+    "${prefix}-supabase-deno-cache"
 
   for kind in container network volume; do
     case "${kind}" in
@@ -1312,10 +1342,10 @@ supabase_selection_includes_service() {
   local selection=$1 service=$2
   case "${selection}" in
     exact)
-      [[ " auth db functions imgproxy kong meta realtime rest storage studio " == *" ${service} "* ]]
+      [[ " auth db functions imgproxy kong meta realtime rest storage studio supavisor " == *" ${service} "* ]]
       ;;
     storage)
-      [[ " db imgproxy rest storage " == *" ${service} "* ]]
+      [[ " auth db functions imgproxy kong meta realtime rest storage studio supavisor " == *" ${service} "* ]]
       ;;
     label)
       [[ " auth db functions imgproxy kong meta realtime rest storage studio supavisor " == *" ${service} "* ]]
@@ -1327,8 +1357,14 @@ supabase_selection_includes_service() {
   esac
 }
 
+supabase_selection_includes_system_network() {
+  local _mode=$1 selection=$2
+  [[ "${selection}" == all ]]
+}
+
 supabase_expected_output_projection() {
-  local selection=$1 origin=$2 output=$3
+  local selection=$1 route_input=$2 output=$3
+  local image_origin=${4:-${route_input}}
   local service image_id networks dependencies mounts _proof image network mount
   local service_dependency
   local -a values
@@ -1336,7 +1372,11 @@ supabase_expected_output_projection() {
   while IFS=$'\t' read -r service image_id networks dependencies mounts _proof; do
     [[ -z "${service}" || "${service}" == \#* ]] && continue
     supabase_selection_includes_service "${selection}" "${service}" || continue
-    image="$(supabase_image_reference "${image_id}")"
+    if [[ "${image_origin}" == podman ]]; then
+      image="$(supabase_podman_observed_image_reference "${image_id}")"
+    else
+      image="$(supabase_image_reference "${image_id}")"
+    fi
     printf '%s\timage\t%s\n' "${service}" "${image}"
 
     IFS=',' read -r -a values <<< "${networks}"
@@ -1352,7 +1392,7 @@ supabase_expected_output_projection() {
       done
     fi
 
-    if [[ "${output}" == quadlet && "${origin}" != compose &&
+    if [[ "${output}" == quadlet && "${route_input}" != compose &&
       "${dependencies}" != - ]]; then
       IFS=',' read -r -a values <<< "${dependencies}"
       for service_dependency in "${values[@]}"; do
@@ -1363,7 +1403,12 @@ supabase_expected_output_projection() {
   done < "$(supabase_fixture_root)/graph.tsv"
 
   if [[ "${selection}" == all ]]; then
-    printf 'boundary-peer\timage\t%s\n' "$(supabase_image_reference db)"
+    if [[ "${image_origin}" == podman ]]; then
+      image="$(supabase_podman_observed_image_reference db)"
+    else
+      image="$(supabase_image_reference db)"
+    fi
+    printf 'boundary-peer\timage\t%s\n' "${image}"
     printf 'boundary-peer\tnetwork\tedge\n'
   fi
 }
@@ -1622,7 +1667,8 @@ supabase_assert_podman_dependency_order() {
 }
 
 supabase_assert_output_graph() {
-  local selection=$1 origin=$2 output=$3 directory=$4 prefix=$5
+  local selection=$1 route_input=$2 output=$3 directory=$4 prefix=$5
+  local image_origin=${6:-${route_input}}
   local actual_projection
   case "${output}" in
     compose) actual_projection=supabase_compose_output_projection ;;
@@ -1631,10 +1677,11 @@ supabase_assert_output_graph() {
   esac
 
   diff --unified \
-    <(supabase_expected_output_projection "${selection}" "${origin}" "${output}" | LC_ALL=C sort) \
+    <(supabase_expected_output_projection \
+      "${selection}" "${route_input}" "${output}" "${image_origin}" | LC_ALL=C sort) \
     <("${actual_projection}" "${directory}" "${prefix}" | LC_ALL=C sort) || {
     printf 'Supabase %s-to-%s %s selection escaped its exact graph projection.\n' \
-      "${origin}" "${output}" "${selection}" >&2
+      "${route_input}" "${output}" "${selection}" >&2
     return 1
   }
 
@@ -1646,14 +1693,13 @@ supabase_assert_output_graph() {
 
 supabase_assert_output_membership() {
   local selection=$1 output=$2 directory=$3 prefix=$4 service
+  local include_system_network=${5:-false}
   case "${selection}" in
     exact)
-      for service in auth db functions imgproxy kong meta realtime rest storage studio; do
+      for service in auth db functions imgproxy kong meta realtime rest storage studio supavisor; do
         assert_named_member "${output}" "${directory}" "${service}" \
           "${prefix}-supabase-${service}"
       done
-      assert_named_absent "${output}" "${directory}" supavisor \
-        "${prefix}-supabase-supavisor"
       assert_named_absent "${output}" "${directory}" boundary-peer \
         "${prefix}-supabase-boundary-peer"
       ;;
@@ -1663,20 +1709,20 @@ supabase_assert_output_membership() {
           "${prefix}-supabase-${service}"
       done
       for service in auth functions kong meta realtime studio supavisor; do
-        assert_named_absent "${output}" "${directory}" "${service}" \
+        assert_named_member "${output}" "${directory}" "${service}" \
           "${prefix}-supabase-${service}"
       done
       assert_named_absent "${output}" "${directory}" boundary-peer \
         "${prefix}-supabase-boundary-peer"
       assert_resource_member "${output}" "${directory}" network \
         "${prefix}-supabase-backend"
-      assert_resource_absent "${output}" "${directory}" network \
+      assert_resource_member "${output}" "${directory}" network \
         "${prefix}-supabase-edge"
       assert_resource_member "${output}" "${directory}" volume \
         "${prefix}-supabase-pgdata"
       assert_resource_member "${output}" "${directory}" volume \
         "${prefix}-supabase-storage"
-      assert_resource_absent "${output}" "${directory}" volume \
+      assert_resource_member "${output}" "${directory}" volume \
         "${prefix}-supabase-deno-cache"
       ;;
     label | all)
@@ -1697,14 +1743,116 @@ supabase_assert_output_membership() {
       return 1
       ;;
   esac
+  if [[ "${include_system_network}" == true ]]; then
+    assert_resource_member "${output}" "${directory}" network podman
+  else
+    assert_resource_absent "${output}" "${directory}" network podman
+  fi
   supabase_assert_exact_output_topology \
-    "${selection}" "${output}" "${directory}" "${prefix}"
+    "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
+}
+
+supabase_assert_realtime_output_aliases() {
+  local output=$1 directory=$2 prefix=$3
+  local service="${prefix}-supabase-realtime"
+  local network="${prefix}-supabase-backend"
+  local -a aliases
+
+  case "${output}" in
+    compose)
+      python3 - "${directory}/compose.yaml" "${service}" "${network}" << 'PY'
+import sys
+
+import yaml
+
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+assert document["services"][sys.argv[2]]["networks"][sys.argv[3]]["aliases"] == [
+    "realtime-dev.supabase-realtime",
+    "realtime",
+]
+PY
+      ;;
+    quadlet)
+      mapfile -t aliases < <(
+        awk -F= '$1 == "NetworkAlias" { print substr($0, length($1) + 2) }' \
+          "${directory}/${service}.container"
+      )
+      [[ "${aliases[*]}" == "realtime-dev.supabase-realtime realtime" ]]
+      ;;
+    podman)
+      jq --exit-status \
+        --arg service "${service}" \
+        --arg network "${network}" '
+          .operations[] |
+          select(.resource.kind == "container" and .resource.name == $service and .action == "create") |
+          .libpod.body.json.Networks[$network].aliases ==
+            ["realtime-dev.supabase-realtime", "realtime"]
+        ' "${directory}/podman.json" > /dev/null
+      ;;
+  esac
+}
+
+supabase_assert_network_ownership() {
+  local _selection=$1 output=$2 directory=$3 prefix=$4
+  local include_system_network=${5:-false}
+  local backend="${prefix}-supabase-backend"
+  local edge="${prefix}-supabase-edge"
+  local expected_system_network=0
+  [[ "${include_system_network}" == true ]] && expected_system_network=1
+
+  case "${output}" in
+    compose)
+      python3 - "${directory}/compose.yaml" "${backend}" "${edge}" \
+        "${include_system_network}" << 'PY'
+import sys
+
+import yaml
+
+document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+backend, edge, include_system_network = sys.argv[2:]
+networks = document["networks"]
+assert networks[backend].get("external") is not True
+assert networks[edge] == {"name": edge, "external": True}
+assert ("podman" in networks) == (include_system_network == "true")
+if include_system_network == "true":
+    assert networks["podman"] == {"internal": False}
+PY
+      ;;
+    quadlet)
+      [[ -f "${directory}/${backend}.network" ]] || return 1
+      [[ ! -e "${directory}/${edge}.network" ]] || return 1
+      if [[ "${include_system_network}" == true ]]; then
+        grep --fixed-strings --line-regexp --quiet \
+          'Internal=false' "${directory}/podman.network" || return 1
+      else
+        [[ ! -e "${directory}/podman.network" ]] || return 1
+      fi
+      ;;
+    podman)
+      jq --exit-status \
+        --arg backend "${backend}" \
+        --arg edge "${edge}" \
+        --argjson expected_system_network "${expected_system_network}" '
+          [.operations[] |
+            select(.resource.kind == "network" and .action == "create") |
+            .resource.name] as $created |
+          ([$created[] | select(. == $backend)] | length) == 1 and
+          ([$created[] | select(. == $edge)] | length) == 0 and
+          ([$created[] | select(. == "podman")] | length) == $expected_system_network
+        ' "${directory}/podman.json" > /dev/null
+      ;;
+  esac
 }
 
 supabase_assert_output_semantics() {
-  local selection=$1 origin=$2 output=$3 directory=$4 prefix=$5
+  local selection=$1 route_input=$2 output=$3 directory=$4 prefix=$5
+  local include_system_network=${6:-false}
+  local image_origin=${7:-${route_input}}
   supabase_assert_output_graph \
-    "${selection}" "${origin}" "${output}" "${directory}" "${prefix}"
+    "${selection}" "${route_input}" "${output}" "${directory}" "${prefix}" \
+    "${image_origin}"
+  supabase_assert_network_ownership \
+    "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
   if [[ "${selection}" == exact || "${selection}" == storage ||
     "${selection}" == label || "${selection}" == all ]]; then
     assert_resource_member "${output}" "${directory}" network \
@@ -1714,28 +1862,25 @@ supabase_assert_output_semantics() {
     assert_resource_member "${output}" "${directory}" volume \
       "${prefix}-supabase-storage"
   fi
-  if [[ "${selection}" == exact || "${selection}" == label || "${selection}" == all ]]; then
+  if [[ "${selection}" == exact || "${selection}" == storage || "${selection}" == label || "${selection}" == all ]]; then
     assert_resource_member "${output}" "${directory}" network \
       "${prefix}-supabase-edge"
     assert_resource_member "${output}" "${directory}" volume \
       "${prefix}-supabase-deno-cache"
+    supabase_assert_realtime_output_aliases "${output}" "${directory}" "${prefix}"
   fi
   case "${output}" in
     compose)
       grep --fixed-strings --quiet 'internal: true' "${directory}/compose.yaml"
-      if [[ "${selection}" != storage ]]; then
-        grep --fixed-strings --quiet 'host_ip: 127.0.0.1' "${directory}/compose.yaml"
-        grep --fixed-strings --quiet "published: \"${SUPABASE_HTTP_PORT}\"" \
-          "${directory}/compose.yaml"
-      fi
+      grep --fixed-strings --quiet 'host_ip: 127.0.0.1' "${directory}/compose.yaml"
+      grep --fixed-strings --quiet "published: \"${SUPABASE_HTTP_PORT}\"" \
+        "${directory}/compose.yaml"
       ;;
     quadlet)
       grep --recursive --fixed-strings --quiet 'Internal=true' "${directory}"
-      if [[ "${selection}" != storage ]]; then
-        grep --recursive --extended-regexp --quiet \
-          "^PublishPort=127\\.0\\.0\\.1:${SUPABASE_HTTP_PORT}:8000(/tcp)?$" \
-          "${directory}"
-      fi
+      grep --recursive --extended-regexp --quiet \
+        "^PublishPort=127\\.0\\.0\\.1:${SUPABASE_HTTP_PORT}:8000(/tcp)?$" \
+        "${directory}"
       ;;
     podman)
       jq --exit-status '.schema_version == 1 and (.operations | length > 0)' \
@@ -1746,11 +1891,13 @@ supabase_assert_output_semantics() {
 
 supabase_assert_success_contract() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
+  local include_system_network=${6:-false}
   jq --exit-status \
     --arg input "${input}" \
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
+    --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected false \
     --from-file "$(supabase_fixture_root)/success-contract.jq" \
     "${report}" > /dev/null || {
@@ -1762,6 +1909,7 @@ supabase_assert_success_contract() {
 
 supabase_success_contract_example_report() {
   local input=$1 output=$2 selection=$3 prefix=$4
+  local include_system_network=${5:-false}
   local expected_fidelity
   expected_fidelity="$(
     jq --null-input \
@@ -1769,6 +1917,7 @@ supabase_success_contract_example_report() {
       --arg output "${output}" \
       --arg selection "${selection}" \
       --arg resource_prefix "${prefix}-supabase-" \
+      --argjson include_system_network "${include_system_network}" \
       --argjson emit_expected '"fidelity"' \
       --from-file "$(supabase_fixture_root)/success-contract.jq"
   )"
@@ -1777,6 +1926,7 @@ supabase_success_contract_example_report() {
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
+    --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected true \
     --from-file "$(supabase_fixture_root)/success-contract.jq" |
     jq --argjson fidelity "${expected_fidelity}" '
@@ -1839,10 +1989,14 @@ supabase_report_conversion_failure() {
 
 supabase_run_exports() {
   local mode=$1 socket=$2 prefix=$3
-  local selection output directory report
+  local selection output directory report include_system_network
   local -a selection_arguments target_arguments
   mkdir -p -- "${current_case}/outputs"
   for selection in exact storage label all; do
+    include_system_network=false
+    if supabase_selection_includes_system_network "${mode}" "${selection}"; then
+      include_system_network=true
+    fi
     case "${selection}" in
       exact)
         selection_arguments=(--podman-resource "container=${prefix}-supabase-kong")
@@ -1874,55 +2028,30 @@ supabase_run_exports() {
         supabase_report_conversion_failure "${report}"
         return 1
       fi
-      assert_successful_conversion "${output}" "${selection}" "${directory}" "${report}"
-      supabase_assert_success_contract podman "${output}" "${selection}" "${report}" "${prefix}"
+      assert_successful_conversion \
+        "${output}" "${selection}" "${directory}" "${report}" scenario-specific
+      supabase_assert_success_contract \
+        podman "${output}" "${selection}" "${report}" "${prefix}" "${include_system_network}"
       supabase_assert_output_membership \
-        "${selection}" "${output}" "${directory}" "${prefix}"
+        "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
       supabase_assert_output_semantics \
-        "${selection}" podman "${output}" "${directory}" "${prefix}"
+        "${selection}" podman "${output}" "${directory}" "${prefix}" "${include_system_network}"
     done
   done
 }
 
-supabase_assert_pinned_image_rejection() {
-  local input=$1 selection=$2 source=$3 report=$4 status=$5 prefix=$6
-  local image_count
-  case "${input}" in
-    compose)
-      image_count="$(awk '/^[[:space:]]+image: .*@sha256:[0-9a-f]+$/ { if (match($0, /@sha256:[0-9a-f]+$/) && RLENGTH == 72) count++ } END { print count + 0 }' \
-        "${source}/compose.yaml")"
-      ;;
-    quadlet)
-      image_count="$(find "${source}" -maxdepth 1 -type f -name '*.container' -exec \
-        awk '/^Image=.*@sha256:[0-9a-f]+$/ { if (match($0, /@sha256:[0-9a-f]+$/) && RLENGTH == 72) count++ } END { print count + 0 }' {} + |
-        awk '{ total += $1 } END { print total + 0 }')"
-      ;;
-  esac
-  [[ "${status}" == 1 && "${image_count}" -gt 0 ]] || {
-    printf 'Expected pinned-image migration gap; status=%s images=%s.\n' \
-      "${status}" "${image_count}" >&2
-    return 1
-  }
-  jq --exit-status \
-    --arg input "${input}" \
-    --arg output podman \
-    --arg selection "${selection}" \
-    --arg resource_prefix "${prefix}-supabase-" \
-    --argjson emit_expected false \
-    --from-file "$(supabase_fixture_root)/success-contract.jq" \
-    "${report}" > /dev/null || {
-    printf 'Supabase pinned-image rejection escaped its exact subject contract: %s (%s, %s).\n' \
-      "${input}" "${selection}" "${report}" >&2
-    return 1
-  }
-}
+# Generated Compose and Quadlet artifacts use digest-only image references, so every reimport succeeds.
 
 supabase_run_reimports() {
   local mode=$1 prefix=$2
-  local selection input output source result report
+  local selection input output source result report include_system_network
   local -a command
   mkdir -p -- "${current_case}/reimports"
   for selection in exact storage label all; do
+    include_system_network=false
+    if supabase_selection_includes_system_network "${mode}" "${selection}"; then
+      include_system_network=true
+    fi
     for input in compose quadlet; do
       source="${current_case}/outputs/${mode}-${selection}-${input}"
       for output in compose quadlet podman; do
@@ -1939,14 +2068,6 @@ supabase_run_reimports() {
         [[ "${output}" == podman ]] &&
           command+=(--podman-target-context rootless)
         command+=(--output-directory "${result}" --console-format json)
-        if [[ "${output}" == podman ]]; then
-          expected_failure_operation 120s \
-            "BoxFerry Supabase ${mode} ${selection} ${input}-to-${output} pinned-image rejection" \
-            1 "${command[@]}" > "${report}"
-          supabase_assert_pinned_image_rejection \
-            "${input}" "${selection}" "${source}" "${report}" 1 "${prefix}"
-          continue
-        fi
         local status=0
         timed_operation 120s \
           "BoxFerry Supabase ${mode} ${selection} ${input}-to-${output} reimport" \
@@ -1955,13 +2076,15 @@ supabase_run_reimports() {
           supabase_report_conversion_failure "${report}"
           return "${status}"
         fi
-        assert_successful_conversion "${output}" "${selection}" "${result}" "${report}"
+        assert_successful_conversion \
+          "${output}" "${selection}" "${result}" "${report}" scenario-specific
         supabase_assert_success_contract \
-          "${input}" "${output}" "${selection}" "${report}" "${prefix}"
+          "${input}" "${output}" "${selection}" "${report}" "${prefix}" "${include_system_network}"
         supabase_assert_output_membership \
-          "${selection}" "${output}" "${result}" "${prefix}"
+          "${selection}" "${output}" "${result}" "${prefix}" "${include_system_network}"
         supabase_assert_output_semantics \
-          "${selection}" "${input}" "${output}" "${result}" "${prefix}"
+          "${selection}" "${input}" "${output}" "${result}" "${prefix}" \
+          "${include_system_network}" podman
       done
     done
   done
