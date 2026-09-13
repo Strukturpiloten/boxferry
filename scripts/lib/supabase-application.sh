@@ -681,6 +681,7 @@ supabase_create_cli_services() {
     --env DB_NAME=postgres --env 'DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime' \
     --env "DB_ENC_KEY=${SUPABASE_REALTIME_DB_KEY}" \
     --env "API_JWT_SECRET=${SUPABASE_JWT_SECRET}" \
+    --env "METRICS_JWT_SECRET=${SUPABASE_JWT_SECRET}" \
     --env "SECRET_KEY_BASE=${SUPABASE_REALTIME_SECRET}" \
     --env APP_NAME=realtime --env SEED_SELF_HOST=true --env RUN_JANITOR=false \
     --env 'ERL_AFLAGS=-proto_dist inet_tcp' --env "DNS_NODES=''" --env RLIMIT_NOFILE=10000 \
