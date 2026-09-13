@@ -438,30 +438,30 @@ for ownership_output in compose quadlet podman; do
     exit 1
   fi
 done
-tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-  'PGRST_ADMIN_SERVER_HOST=127.0.0.1'
-tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-  'PGRST_ADMIN_SERVER_PORT=3001'
-tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-  '["postgrest","--ready"]'
-if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-  '["CMD","postgrest","--ready"]'; then
+tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings \
+  'PGRST_ADMIN_SERVER_HOST=127.0.0.1' > /dev/null
+tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings \
+  'PGRST_ADMIN_SERVER_PORT=3001' > /dev/null
+tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings \
+  '["postgrest","--ready"]' > /dev/null
+if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings \
+  '["CMD","postgrest","--ready"]' > /dev/null; then
   printf '%s\n' 'PostgREST CLI health command retained the remote-unsafe CMD marker.' >&2
   exit 1
 fi
-if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-  'postgrest --ready'; then
+if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings \
+  'postgrest --ready' > /dev/null; then
   printf '%s\n' 'Native PostgREST healthcheck retained shell form.' >&2
   exit 1
 fi
-if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-  'PGRST_ADMIN_SERVER_HOST=0.0.0.0'; then
+if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings \
+  'PGRST_ADMIN_SERVER_HOST=0.0.0.0' > /dev/null; then
   printf '%s\n' 'Native PostgREST administrative host retained wildcard binding.' >&2
   exit 1
 fi
 for overridden_default in PGRST_SERVER_HOST PGRST_DB_CHANNEL_ENABLED; do
-  if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-    "${overridden_default}="; then
+  if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings \
+    "${overridden_default}=" > /dev/null; then
     printf 'Native PostgREST CLI unexpectedly overrides %s.\n' "${overridden_default}" >&2
     exit 1
   fi
