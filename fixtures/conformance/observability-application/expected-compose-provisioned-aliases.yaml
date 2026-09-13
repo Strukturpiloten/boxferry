@@ -1,0 +1,28 @@
+---
+services:
+  bf-private-observability-alloy:
+    networks:
+      bf-private-observability-backend:
+        aliases: [bf-private-observability-alloy, alloy]
+  bf-private-observability-grafana:
+    networks:
+      bf-private-observability-backend:
+        aliases: [bf-private-observability-grafana, grafana]
+      bf-private-observability-edge:
+        aliases: [bf-private-observability-grafana, grafana]
+  bf-private-observability-log-producer:
+    networks:
+      bf-private-observability-backend:
+        aliases: [bf-private-observability-log-producer, log-producer]
+  bf-private-observability-loki:
+    networks:
+      bf-private-observability-backend:
+        aliases: [bf-private-observability-loki, loki]
+  bf-private-observability-metrics-producer:
+    networks:
+      bf-private-observability-backend:
+        aliases: [bf-private-observability-metrics-producer, metrics-producer]
+  bf-private-observability-prometheus:
+    networks:
+      bf-private-observability-backend:
+        aliases: [bf-private-observability-prometheus, prometheus]

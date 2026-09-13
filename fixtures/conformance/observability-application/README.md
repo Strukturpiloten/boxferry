@@ -44,6 +44,12 @@ generated artifact. It then reimports generated Compose and Quadlet through all 
 covering every reimportable route contract. Podman output remains a deployment plan and is never
 treated as observed inventory.
 
+[`expected-compose-provisioned-aliases.yaml`](expected-compose-provisioned-aliases.yaml) is an
+independently authored, privacy-safe regression contract for the exact stable identity shape
+created by the reviewed Compose provider. It distinguishes the authored Compose service-key and
+`container_name` identities from repeated spellings and runtime container IDs. The latter two are
+never accepted as additional output aliases.
+
 ## Reviewed provenance
 
 [`images.tsv`](images.tsv) is the machine-readable source of truth. Every reference combines the
@@ -91,8 +97,9 @@ expectation. The failed focused pre-release run at
 
 Each row has five fields: code, subject, severity, decision, and required loss policy. The visible
 `-` marker represents fields absent from native Compose and Quadlet diagnostics and is normalized to
-empty fields before exact comparison. The 214-row Compose-provisioned importer base includes five
-explicit portable DNS-alias promotions and is augmented by six CLI creation-evidence tuples.
+empty fields before exact comparison. The 214-row shared importer base includes five portable
+DNS-alias promotions. Compose mode adds two service-identity promotions, while CLI mode adds six
+creation-evidence tuples.
 Compose output adds four network tuples in either mode plus seven CLI-only dependency tuples;
 Quadlet output adds the reviewed multi-network Grafana alias omission; Podman output adds 59
 output-omission tuples. Exact and label selectors are equal. The all selector
