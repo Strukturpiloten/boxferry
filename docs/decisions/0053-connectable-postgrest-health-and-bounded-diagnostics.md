@@ -20,8 +20,12 @@ evidence if it is bounded and redacted with the final configured-healthcheck res
 ## Decision
 
 Both native Podman and Compose configure `PGRST_ADMIN_SERVER_HOST=127.0.0.1` and retain
-`PGRST_ADMIN_SERVER_PORT=3001` plus `postgrest --ready`. Native Podman stores the health command
-as JSON exec form `["CMD","postgrest","--ready"]`; Compose retains its equivalent YAML CMD list.
+`PGRST_ADMIN_SERVER_PORT=3001` plus `postgrest --ready`. Native Podman supplies
+`["postgrest","--ready"]` to `--health-cmd`; Podman prepends the exec-form `CMD` marker and stores
+`["CMD","postgrest","--ready"]`. This marker-free CLI form remains correctly encoded when the
+Podman 4.9.3 remote client provisions the nested Podman 6.1 service. Supplying the marker in the
+CLI argument makes the 4.9.3 client serialize the complete JSON array as one command string. Compose
+retains its equivalent YAML CMD list.
 The pinned PostgREST image has no `/bin/sh`, so shell-form health commands are not valid. PostgREST
 remains private to the backend network; this setting does not publish a port or alter the public
 Kong boundary.

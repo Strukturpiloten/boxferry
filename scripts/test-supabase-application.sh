@@ -162,7 +162,12 @@ tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
   'PGRST_ADMIN_SERVER_PORT=3001'
 tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
-  '["CMD","postgrest","--ready"]'
+  '["postgrest","--ready"]'
+if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
+  '["CMD","postgrest","--ready"]'; then
+  printf '%s\n' 'PostgREST CLI health command retained the remote-unsafe CMD marker.' >&2
+  exit 1
+fi
 if tr '\0' '\n' < "${cli_services_argv}" | grep --fixed-strings --quiet \
   'postgrest --ready'; then
   printf '%s\n' 'Native PostgREST healthcheck retained shell form.' >&2

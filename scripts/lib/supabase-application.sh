@@ -668,7 +668,7 @@ supabase_create_cli_services() {
     --env PGRST_DB_SCHEMAS=public \
     --env "PGRST_DB_URI=postgres://authenticator:${SUPABASE_DB_PASSWORD}@db:5432/postgres" \
     --env "PGRST_JWT_SECRET=${SUPABASE_JWT_SECRET}" \
-    --health-cmd '["CMD","postgrest","--ready"]' --health-interval 2s --health-retries 150 \
+    --health-cmd '["postgrest","--ready"]' --health-interval 2s --health-retries 150 \
     "$(supabase_image_reference rest)" > /dev/null
 
   supabase_remote "${socket}" run --pull=never --detach \
