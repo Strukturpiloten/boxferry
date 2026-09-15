@@ -9,13 +9,21 @@
     "**/examples/**",
     "**/__tests__/**",
     "**/test/**",
-    "**/tests/**",
-    "**/fixtures/**"
+    "**/tests/**"
   ],
   "minimumReleaseAge": "3 days",
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "timezone": "Europe/Berlin",
+  "dockerfile": {
+    "enabled": false
+  },
+  "docker-compose": {
+    "enabled": false
+  },
+  "quadlet": {
+    "enabled": false
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -68,6 +76,34 @@
       ],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "cli/cli"
+    },
+    {
+      "customType": "regex",
+      "description": "Signal updates for the checksum-pinned Docker Compose provider",
+      "managerFilePatterns": ["/^scripts/lib/compose-provider\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n  local -r expected_version=\"(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track reviewed live-application container images",
+      "managerFilePatterns": [
+        "/^fixtures/conformance/(?:forgejo|immich|nextcloud|observability|paperless-ngx|supabase)-application/images\\.tsv$/"
+      ],
+      "matchStrings": [
+        "(?:^|\\n)[^#\\s]+[ \\t]+(?<depName>[^\\s:@]+(?:/[^\\s:@]+)+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})(?:[ \\t]|$)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the digest-pinned live workload probe image",
+      "managerFilePatterns": ["/^scripts/podman-live-conformance\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nworkload_image=\"[^@\"]+@(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ]
     }
   ],
   "packageRules": [
@@ -133,6 +169,29 @@
       "automerge": false,
       "prBodyNotes": [
         "Regenerate and commit the Dev Container feature lock as documented in docs/development-environment.md."
+      ]
+    },
+    {
+      "description": "Require explicit revalidation for live application and workload images",
+      "matchDatasources": ["docker"],
+      "matchFileNames": [
+        "fixtures/conformance/*-application/images.tsv",
+        "scripts/podman-live-conformance.sh"
+      ],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "groupName": "Live acceptance images",
+      "prBodyNotes": [
+        "Review image provenance, license, platform digest, resource budget, and live behavior before merging."
+      ]
+    },
+    {
+      "description": "Require checksum review for the Docker Compose provider",
+      "matchFileNames": ["scripts/lib/compose-provider.sh"],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "Update the Linux release-asset SHA-256 and every provider catalogue, then run the live-provider contract checks before merging."
       ]
     },
     {

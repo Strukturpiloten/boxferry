@@ -29,8 +29,80 @@ const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry-quadlet",
     "boxferry",
 ];
-const CRATES_IO_AUTH_ACTION: &str = "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5";
+const CRATES_IO_AUTH_ACTION: &str = "uses: rust-lang/crates-io-auth-action@";
 const CRATES_IO_BOOTSTRAP_SECRET: &str = "secrets.CRATES_IO_BOOTSTRAP_TOKEN";
+
+fn shell_quoted_value<'a>(contents: &'a str, declaration: &str) -> Option<&'a str> {
+    let prefix = format!("{declaration}=\"");
+    contents.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix(&prefix)
+            .and_then(|value| value.strip_suffix('"'))
+    })
+}
+
+fn validate_workflow_renovate_pins(workflow_name: &str, workflow: &str) -> Result<(), String> {
+    let lines = workflow.lines().collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let yaml_value = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        let previous = index
+            .checked_sub(1)
+            .and_then(|previous| lines.get(previous))
+            .map_or("", |line| line.trim());
+
+        if trimmed.starts_with("node-version:")
+            && !trimmed.contains("${{")
+            && previous != "# renovate: datasource=node-version depName=node"
+        {
+            return Err(format!(
+                "{workflow_name}:{} has a literal Node.js version without its adjacent Renovate marker",
+                index + 1
+            ));
+        }
+
+        if trimmed.starts_with("version:")
+            && !trimmed.contains("${{")
+            && !previous.starts_with("# renovate: datasource=")
+        {
+            return Err(format!(
+                "{workflow_name}:{} has a literal tool version without an adjacent Renovate marker",
+                index + 1
+            ));
+        }
+
+        if trimmed.contains("cargo install")
+            && trimmed.contains("--version ")
+            && !trimmed.contains("--version ${")
+            && !previous.starts_with("# renovate: datasource=crate depName=")
+        {
+            return Err(format!(
+                "{workflow_name}:{} installs a literal Cargo tool version without an adjacent Renovate marker",
+                index + 1
+            ));
+        }
+
+        if trimmed.contains("/releases/download/") {
+            return Err(format!(
+                "{workflow_name}:{} embeds a release download; use a Renovate-managed shared installer",
+                index + 1
+            ));
+        }
+
+        if (yaml_value.starts_with("image:") && !yaml_value.contains("${{"))
+            || yaml_value.starts_with("uses: docker://")
+            || ["docker pull ", "docker run ", "podman pull ", "podman run "]
+                .iter()
+                .any(|command| trimmed.contains(command))
+        {
+            return Err(format!(
+                "{workflow_name}:{} embeds a container image; use a Renovate-managed script or catalogue",
+                index + 1
+            ));
+        }
+    }
+    Ok(())
+}
 
 #[test]
 fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
@@ -176,7 +248,7 @@ fn migration_readiness_parallel_workers_are_bounded_and_exactly_bound() -> Resul
         "--boxferry-binary-sha256 \"${BOXFERRY_BINARY_SHA256}\"",
         "sha256sum --check --strict boxferry.sha256",
         "chmod 0755 boxferry",
-        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+        "uses: actions/download-artifact@",
         "if: always() && matrix.privileged",
         "sudo chown --recursive \"$(id -u):$(id -g)\" target/migration-readiness",
         "name: Upload complete aggregate evidence",
@@ -1647,7 +1719,7 @@ fn validate_live_runner(runner: &str, matrix: &str) -> Result<(), String> {
         "postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94",
         "redis:8.2.1-alpine@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232",
         "library/nginx:1.29.1-alpine@sha256:42a516af16b852e33b7682d5ef8acbd5d13fe08fecadc7ed98605ba5e3b26ab8",
-        "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
+        "compose-provider.sh",
         "downloaded-test-tool",
         ".versionstring == \"32.0.10\"",
     ] {
@@ -2577,13 +2649,13 @@ fn validate_live_observability_application_cell(runner: &str) -> Result<(), Stri
         "OBSERVABILITY_MIN_MEMORY_KIB=\"4194304\"",
         "OBSERVABILITY_MIN_DISK_KIB=\"8388608\"",
         "OBSERVABILITY_ARCHIVE_MAX_BYTES=\"2147483648\"",
-        "OBSERVABILITY_PROVIDER_VERSION=\"5.5.0\"",
+        "OBSERVABILITY_PROVIDER_VERSION=\"${BOXFERRY_COMPOSE_PROVIDER_VERSION}\"",
         "scrape_timeout  = \"1s\"",
         "observability_validate_alloy_scrape_timing",
         "validate /etc/alloy/config.alloy",
         "observability_pipeline_roles_running",
         "observability_report_pipeline_states",
-        "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
+        "OBSERVABILITY_PROVIDER_SHA256=\"${BOXFERRY_COMPOSE_PROVIDER_SHA256}\"",
         "prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0",
         "grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
         "grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283",
@@ -2755,9 +2827,9 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         }
     }
     for provider in [
-        "SUPABASE_PROVIDER_VERSION=\"5.5.0\"",
-        "SUPABASE_PROVIDER_SHA256=\"c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b\"",
-        "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64",
+        "SUPABASE_PROVIDER_VERSION=\"${BOXFERRY_COMPOSE_PROVIDER_VERSION}\"",
+        "SUPABASE_PROVIDER_SHA256=\"${BOXFERRY_COMPOSE_PROVIDER_SHA256}\"",
+        "compose-provider.sh",
     ] {
         if !runner.contains(provider) {
             return Err(format!("Supabase provider contract is missing `{provider}`"));
@@ -3034,14 +3106,14 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     for required in [
         "build-boxferry:",
         "needs: [matrix, build-boxferry]",
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
-        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+        "uses: actions/upload-artifact@",
+        "uses: actions/download-artifact@",
         "chmod +x target/debug/boxferry",
         "application:",
         "name: Nextcloud application / podman-6.1-rootless",
         "timeout-minutes: 60",
-        "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64",
-        "c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b",
+        "source scripts/lib/compose-provider.sh",
+        "boxferry_install_compose_provider target/tools/docker-compose",
         "BOXFERRY_COMPOSE_BIN: ${{ github.workspace }}/target/tools/docker-compose",
         "BOXFERRY_COMPOSE_BIN=\"${BOXFERRY_COMPOSE_BIN}\"",
         "--profile application",
@@ -3072,7 +3144,6 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
         "paperless-native-capture-candidate",
         "path: ${{ runner.temp }}/paperless-capture",
         "github.event_name == 'pull_request' &&",
-        "sha256sum --check --strict",
     ] {
         if !hosted.contains(required) {
             return Err(format!("hosted live Podman workflow is missing `{required}`"));
@@ -4532,7 +4603,7 @@ fn release_plz_preparation_runs_only_for_reviewed_release_paths() -> Result<(), 
 
 #[test]
 fn public_api_compatibility_runs_in_ci_and_release() -> Result<(), String> {
-    const ACTION: &str = "obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9";
+    const ACTION: &str = "uses: obi1kenobi/cargo-semver-checks-action@";
 
     for workflow_name in ["ci.yml", "release.yml"] {
         let workflow_path = repository_root().join(".github/workflows").join(workflow_name);
@@ -4983,9 +5054,9 @@ fn validate_release_plz_workflow(root: &Path, repository: &str) -> Result<(), St
         "approve the updated permissions for the App installation",
         "command: release-pr",
         "renovate: datasource=crate depName=release-plz",
-        "version: \"0.3.160\"",
-        "release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131",
-        "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0",
+        "version: \"",
+        "uses: release-plz/action@",
+        "uses: actions/create-github-app-token@",
         "(.head.ref | startswith(\"release-plz-\"))",
         "actions/workflows/release.yml/dispatches",
         "actions: write",
@@ -5021,6 +5092,11 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         "Update directly pinned workflow tool versions",
         "Update the documented Dev Container CLI",
         "Update the GitHub CLI installed in the Dev Container",
+        "Signal updates for the checksum-pinned Docker Compose provider",
+        "Track reviewed live-application container images",
+        "Track the digest-pinned live workload probe image",
+        "Require explicit revalidation for live application and workload images",
+        "Require checksum review for the Docker Compose provider",
         r#""matchManagers": ["cargo"]"#,
         r#""matchManagers": ["npm"]"#,
         r#""matchManagers": ["github-actions"]"#,
@@ -5040,10 +5116,6 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         }
     }
 
-    if renovate.matches(r#""automerge": false"#).count() != 2 {
-        return Err("Renovate must keep Dev Container features and checksum-pinned tools manual".to_owned());
-    }
-
     for workflow_name in ["ci.yml", "release.yml"] {
         let workflow = fs::read_to_string(root.join(".github/workflows").join(workflow_name))
             .map_err(|error| format!("failed to read {workflow_name}: {error}"))?;
@@ -5054,6 +5126,351 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
             if !workflow.contains(required) {
                 return Err(format!("{workflow_name} is missing Renovate marker `{required}`"));
             }
+        }
+    }
+
+    for entry in fs::read_dir(root.join(".github/workflows"))
+        .map_err(|error| format!("failed to enumerate GitHub workflows: {error}"))?
+    {
+        let path = entry
+            .map_err(|error| format!("failed to inspect GitHub workflow entry: {error}"))?
+            .path();
+        if !matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("yml" | "yaml")
+        ) {
+            continue;
+        }
+        let workflow_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("workflow path is not valid UTF-8: {}", path.display()))?;
+        let workflow =
+            fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        validate_workflow_renovate_pins(workflow_name, &workflow)?;
+    }
+
+    let renovate_value: serde_json::Value =
+        serde_json::from_str(&renovate).map_err(|error| format!("failed to parse Renovate configuration: {error}"))?;
+    let package_rules = renovate_value["packageRules"]
+        .as_array()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    for description in [
+        "Require explicit revalidation for live application and workload images",
+        "Require checksum review for the Docker Compose provider",
+    ] {
+        let rule = package_rules
+            .iter()
+            .find(|rule| rule["description"] == description)
+            .ok_or_else(|| format!("Renovate is missing manual rule `{description}`"))?;
+        if rule["automerge"] != false || rule["dependencyDashboardApproval"] != true {
+            return Err(format!(
+                "Renovate rule `{description}` must require dashboard approval and disable automerge"
+            ));
+        }
+    }
+    for manager in ["dockerfile", "docker-compose", "quadlet"] {
+        if renovate_value[manager]["enabled"] != false {
+            return Err(format!(
+                "Renovate native {manager} extraction must stay disabled for fixture-owned files"
+            ));
+        }
+    }
+
+    if renovate.contains(r#""**/fixtures/**""#) {
+        return Err(
+            "Renovate must inspect curated live-image catalogues while package rules exclude native fixture managers"
+                .to_owned(),
+        );
+    }
+
+    let compose_provider = fs::read_to_string(root.join("scripts/lib/compose-provider.sh"))
+        .map_err(|error| format!("failed to read shared Compose provider metadata: {error}"))?;
+    for required in [
+        "renovate: datasource=github-releases depName=docker/compose",
+        "local -r expected_version=\"",
+        "local -r expected_sha256=\"",
+        "readonly BOXFERRY_COMPOSE_PROVIDER_VERSION=\"",
+        "readonly BOXFERRY_COMPOSE_PROVIDER_SHA256=\"",
+        "releases/download/v${expected_version}",
+        "must only come from this library",
+        "--retry 3 --retry-all-errors --connect-timeout 10 --max-time 300",
+        "sha256sum --check --strict",
+    ] {
+        if !compose_provider.contains(required) {
+            return Err(format!("shared Compose provider metadata is missing `{required}`"));
+        }
+    }
+    let provider_version = shell_quoted_value(&compose_provider, "local -r expected_version")
+        .ok_or_else(|| "shared Compose provider version must be a quoted canonical value".to_owned())?;
+    let provider_sha = shell_quoted_value(&compose_provider, "local -r expected_sha256")
+        .ok_or_else(|| "shared Compose provider checksum must be a quoted canonical value".to_owned())?;
+    if provider_sha.len() != 64 || !provider_sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("shared Compose provider checksum must be 64 lowercase hex characters".to_owned());
+    }
+
+    let provider_path = root.join("scripts/lib/compose-provider.sh");
+    let repeated_source = Command::new("bash")
+        .args(["-c", "source \"$1\" && source \"$1\"", "compose-provider-test"])
+        .arg(&provider_path)
+        .env_clear()
+        .output()
+        .map_err(|error| format!("failed to test repeated Compose provider loading: {error}"))?;
+    if !repeated_source.status.success() {
+        return Err(format!(
+            "shared Compose provider must support repeated sourcing: {}",
+            String::from_utf8_lossy(&repeated_source.stderr)
+        ));
+    }
+
+    let injected_metadata = Command::new("bash")
+        .args(["-c", "source \"$1\"", "compose-provider-test"])
+        .arg(&provider_path)
+        .env_clear()
+        .env("BOXFERRY_COMPOSE_PROVIDER_VERSION", "caller-controlled")
+        .env("BOXFERRY_COMPOSE_PROVIDER_SHA256", "caller-controlled")
+        .env(
+            "BOXFERRY_COMPOSE_PROVIDER_URL",
+            "https://example.invalid/caller-controlled",
+        )
+        .output()
+        .map_err(|error| format!("failed to test injected Compose provider metadata: {error}"))?;
+    if injected_metadata.status.success()
+        || !String::from_utf8_lossy(&injected_metadata.stderr).contains("must only come from this library")
+    {
+        return Err("shared Compose provider must reject caller-supplied metadata".to_owned());
+    }
+
+    for metadata_name in [
+        "BOXFERRY_COMPOSE_PROVIDER_VERSION",
+        "BOXFERRY_COMPOSE_PROVIDER_SHA256",
+        "BOXFERRY_COMPOSE_PROVIDER_URL",
+    ] {
+        let declared_unset_metadata = Command::new("bash")
+            .args(["-c", "readonly \"$2\"; source \"$1\"", "compose-provider-test"])
+            .arg(&provider_path)
+            .arg(metadata_name)
+            .env_clear()
+            .output()
+            .map_err(|error| format!("failed to test declared-but-unset Compose provider metadata: {error}"))?;
+        if declared_unset_metadata.status.success()
+            || !String::from_utf8_lossy(&declared_unset_metadata.stderr).contains("must only come from this library")
+        {
+            return Err(format!(
+                "shared Compose provider must reject declared-but-unset metadata `{metadata_name}`"
+            ));
+        }
+    }
+
+    for application in [
+        "nextcloud",
+        "forgejo",
+        "paperless",
+        "immich",
+        "observability",
+        "supabase",
+    ] {
+        let module_path = root.join("scripts/lib").join(format!("{application}-application.sh"));
+        let injected_metadata = Command::new("bash")
+            .args(["-c", "source \"$1\"", "application-provider-test"])
+            .arg(&module_path)
+            .env_clear()
+            .env("BOXFERRY_COMPOSE_PROVIDER_VERSION", "caller-controlled")
+            .env("BOXFERRY_COMPOSE_PROVIDER_SHA256", "caller-controlled")
+            .env(
+                "BOXFERRY_COMPOSE_PROVIDER_URL",
+                "https://example.invalid/caller-controlled",
+            )
+            .output()
+            .map_err(|error| format!("failed to test {application} provider loading: {error}"))?;
+        if injected_metadata.status.success()
+            || !String::from_utf8_lossy(&injected_metadata.stderr).contains("must only come from this library")
+        {
+            return Err(format!(
+                "{application} application module must propagate a rejected provider override"
+            ));
+        }
+    }
+    let provider_url =
+        format!("https://github.com/docker/compose/releases/download/v{provider_version}/docker-compose-linux-x86_64");
+    for application in [
+        "nextcloud-application",
+        "forgejo-application",
+        "paperless-ngx-application",
+        "immich-application",
+        "observability-application",
+        "supabase-application",
+    ] {
+        let catalogue = fs::read_to_string(
+            root.join("fixtures/conformance")
+                .join(application)
+                .join("providers.tsv"),
+        )
+        .map_err(|error| format!("failed to read {application} provider catalogue: {error}"))?;
+        for required in [provider_version, provider_sha, provider_url.as_str()] {
+            if !catalogue.contains(required) {
+                return Err(format!(
+                    "{application} provider catalogue does not match canonical value `{required}`"
+                ));
+            }
+        }
+    }
+
+    for (workflow_name, expected_installs) in [("migration-readiness.yml", 2), ("podman-live-conformance.yml", 4)] {
+        let workflow = fs::read_to_string(root.join(".github/workflows").join(workflow_name))
+            .map_err(|error| format!("failed to read {workflow_name}: {error}"))?;
+        if workflow
+            .matches("boxferry_install_compose_provider target/tools/docker-compose")
+            .count()
+            != expected_installs
+            || workflow.contains("COMPOSE_URL:")
+            || workflow.contains("COMPOSE_SHA256:")
+            || workflow.contains("docker/compose/releases/download/v")
+        {
+            return Err(format!(
+                "{workflow_name} must install the canonical Compose provider exactly {expected_installs} times without version duplicates"
+            ));
+        }
+    }
+
+    for application in [
+        "nextcloud",
+        "forgejo",
+        "paperless",
+        "immich",
+        "observability",
+        "supabase",
+    ] {
+        let module = fs::read_to_string(root.join("scripts/lib").join(format!("{application}-application.sh")))
+            .map_err(|error| format!("failed to read {application} application module: {error}"))?;
+        if !module.contains("source \"$(cd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\" && pwd -P)/compose-provider.sh\"")
+            || !module.contains("${BOXFERRY_COMPOSE_PROVIDER_VERSION}")
+            || !module.contains("${BOXFERRY_COMPOSE_PROVIDER_SHA256}")
+            || module.contains("docker/compose/releases/download/v5.5.0")
+        {
+            return Err(format!(
+                "{application} application module must consume shared Compose provider metadata"
+            ));
+        }
+    }
+
+    let image_catalogues = [
+        "nextcloud-application",
+        "forgejo-application",
+        "paperless-ngx-application",
+        "immich-application",
+        "observability-application",
+        "supabase-application",
+    ];
+    let mut active_images = 0;
+    for application in image_catalogues {
+        let catalogue = fs::read_to_string(root.join("fixtures/conformance").join(application).join("images.tsv"))
+            .map_err(|error| format!("failed to read {application} image catalogue: {error}"))?;
+        for line in catalogue.lines().filter(|line| {
+            let line = line.trim();
+            !line.is_empty() && !line.starts_with('#')
+        }) {
+            let reference = line
+                .split_whitespace()
+                .nth(1)
+                .ok_or_else(|| format!("{application} image row is missing a reference: {line}"))?;
+            let Some((_, digest)) = reference.rsplit_once("@sha256:") else {
+                return Err(format!("{application} image is not digest pinned: {reference}"));
+            };
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!("{application} image has an invalid digest: {reference}"));
+            }
+            active_images += 1;
+        }
+    }
+    if active_images != 32 {
+        return Err(format!(
+            "Renovate live-application manager must cover 32 active images, found {active_images}"
+        ));
+    }
+
+    let live_runner = fs::read_to_string(root.join("scripts/podman-live-conformance.sh"))
+        .map_err(|error| format!("failed to read live Podman runner: {error}"))?;
+    for required in [
+        "renovate: datasource=docker depName=quay.io/libpod/alpine",
+        "workload_image=\"quay.io/libpod/alpine@sha256:",
+        "workload_local_tag=\"localhost/boxferry-live/alpine:${workload_image##*@sha256:}\"",
+    ] {
+        if !live_runner.contains(required) {
+            return Err(format!("live workload probe is missing Renovate contract `{required}`"));
+        }
+    }
+
+    let file_tool_installer = fs::read_to_string(root.join("scripts/install-file-tools.sh"))
+        .map_err(|error| format!("failed to read file-tool installer: {error}"))?;
+    if !file_tool_installer.contains("--retry 3 --retry-all-errors --connect-timeout 10 --max-time 300") {
+        return Err("checksum-pinned file-tool downloads must retry bounded transient failures".to_owned());
+    }
+
+    let development = fs::read_to_string(root.join("docs/development-environment.md"))
+        .map_err(|error| format!("failed to read development environment guide: {error}"))?;
+    let devcontainer_command = development
+        .lines()
+        .find(|line| line.starts_with("npx --yes @devcontainers/cli@"))
+        .ok_or_else(|| "Dev Container feature-lock guide must pin its Renovate-managed CLI".to_owned())?;
+    let version = devcontainer_command
+        .strip_prefix("npx --yes @devcontainers/cli@")
+        .and_then(|command| command.strip_suffix(" upgrade --workspace-folder ."))
+        .ok_or_else(|| "Dev Container feature-lock command has an unexpected shape".to_owned())?;
+    if version.split('.').count() != 3
+        || !version
+            .split('.')
+            .all(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err("Dev Container feature-lock command must use an exact semantic version".to_owned());
+    }
+
+    let policy_source = fs::read_to_string(root.join("crates/boxferry/tests/repository_policy.rs"))
+        .map_err(|error| format!("failed to read repository policy source: {error}"))?;
+    for line in policy_source.lines() {
+        let Some((_, after_at)) = line.split_once('@') else {
+            continue;
+        };
+        let candidate = after_at.as_bytes();
+        if candidate.len() >= 40 && candidate[..40].iter().all(u8::is_ascii_hexdigit) && after_at[40..].contains("# v")
+        {
+            return Err("semantic repository policy must not embed a Renovate-owned action revision".to_owned());
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn renovate_policy_rejects_unmanaged_workflow_pin_counterexamples() -> Result<(), String> {
+    for (description, workflow) in [
+        (
+            "Node.js version",
+            "steps:\n  - uses: actions/setup-node@example\n    with:\n      node-version: 25.0.0\n",
+        ),
+        (
+            "Cargo tool version",
+            "steps:\n  - run: cargo install --locked --version 1.2.3 example-tool\n",
+        ),
+        (
+            "release download",
+            "steps:\n  - run: curl https://github.com/example/tool/releases/download/v1.2.3/tool\n",
+        ),
+        (
+            "job container image",
+            "jobs:\n  test:\n    container:\n      image: postgres:17.6\n",
+        ),
+        (
+            "Docker action image",
+            "steps:\n  - uses: docker://ghcr.io/example/tool:1.2.3\n",
+        ),
+        (
+            "direct container pull",
+            "steps:\n  - run: docker pull ghcr.io/example/tool:1.2.3\n",
+        ),
+    ] {
+        if validate_workflow_renovate_pins("counterexample.yml", workflow).is_ok() {
+            return Err(format!("Renovate workflow policy accepted an unmanaged {description}"));
         }
     }
 

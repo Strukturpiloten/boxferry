@@ -91,14 +91,9 @@ jobs:
       - name: Download verified Docker Compose provider
         if: steps.selection.outputs.needs_compose == 'true'
         continue-on-error: true
-        env:
-          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
-          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
         run: |
-          mkdir -p target/tools
-          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
-          printf '%s  %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
-          chmod 0755 target/tools/docker-compose
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
 
       - name: Run bounded serial evidence
         if: always() && steps.selection.outcome == 'success'
@@ -271,14 +266,9 @@ jobs:
       - name: Download verified Docker Compose provider
         if: matrix.needs_compose
         continue-on-error: true
-        env:
-          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
-          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
         run: |
-          mkdir -p target/tools
-          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
-          printf '%s  %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
-          chmod 0755 target/tools/docker-compose
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
 
       - name: Run bounded worker
         if: always()

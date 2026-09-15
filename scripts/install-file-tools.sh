@@ -49,6 +49,7 @@ download() {
 
   printf 'Downloading %s\n' "${url##*/}"
   curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+    --retry 3 --retry-all-errors --connect-timeout 10 --max-time 300 \
     --output "${destination}" "${url}"
   printf '%s  %s\n' "${checksum}" "${destination}" | sha256sum --check --status
 }

@@ -2,11 +2,14 @@
 # Immich application acceptance helpers. Sourced by the live entry point.
 # shellcheck disable=SC2016,SC2129,SC2154 # Remote expansion and phased logs are intentional.
 
+# shellcheck source=scripts/lib/compose-provider.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+
 readonly IMMICH_ADMIN_EMAIL="boxferry@example.invalid"
 readonly IMMICH_ADMIN_PASSWORD="boxferry-public-admin-canary"
 readonly IMMICH_DB_PASSWORD="boxferry-public-immich-db-password-canary"
-readonly IMMICH_PROVIDER_VERSION="5.5.0"
-readonly IMMICH_PROVIDER_SHA256="c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b"
+readonly IMMICH_PROVIDER_VERSION="${BOXFERRY_COMPOSE_PROVIDER_VERSION}"
+readonly IMMICH_PROVIDER_SHA256="${BOXFERRY_COMPOSE_PROVIDER_SHA256}"
 readonly IMMICH_HTTP_PORT="18283"
 readonly IMMICH_ARCHIVE_MAX_BYTES="2684354560"
 readonly IMMICH_MIN_CPUS="2"
@@ -72,7 +75,7 @@ immich_validate_catalogues() {
   awk -F '\t' -v version="${IMMICH_PROVIDER_VERSION}" -v sha="${IMMICH_PROVIDER_SHA256}" '
     NF && $1 !~ /^#/ {
       if (NF != 7 || $1 != "docker-compose" || $2 != version ||
-          $3 != "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64" ||
+        $3 != ("https://github.com/docker/compose/releases/download/v" version "/docker-compose-linux-x86_64") ||
           $4 != sha || $5 != "Apache-2.0" || $6 != "https://github.com/docker/compose" ||
           $7 != "downloaded-test-tool") {
         printf "Invalid Immich provider row at line %d: %s\\n", NR, $0 > "/dev/stderr"
