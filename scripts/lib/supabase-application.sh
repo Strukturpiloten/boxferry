@@ -474,12 +474,24 @@ supabase_wait_for() {
   local deadline_seconds=$1 description=$2
   shift 2
   local deadline=$((SECONDS + deadline_seconds))
-  until "$@" > /dev/null 2>&1; do
+  local remaining_seconds
+  while :; do
+    remaining_seconds=$((deadline - SECONDS))
+    if ((remaining_seconds <= 0)); then
+      printf 'Timed out waiting for %s.\n' "${description}" >&2
+      return 1
+    fi
+    if SUPABASE_WAIT_REMAINING_SECONDS=${remaining_seconds} "$@" > /dev/null 2>&1; then
+      return 0
+    fi
     if ((SECONDS >= deadline)); then
       printf 'Timed out waiting for %s.\n' "${description}" >&2
       return 1
     fi
-    sleep 2
+    remaining_seconds=$((deadline - SECONDS))
+    ((remaining_seconds <= 0)) && continue
+    ((remaining_seconds > 2)) && remaining_seconds=2
+    sleep "${remaining_seconds}"
   done
 }
 
@@ -1033,9 +1045,19 @@ supabase_probe() {
 
 supabase_probe_published_api() {
   local outer=$1
-  engine_operation 'probe Supabase gateway through loopback publication' \
-    exec "${outer}" curl --fail --silent --show-error \
-    "http://127.0.0.1:${SUPABASE_HTTP_PORT}/auth/v1/health" > /dev/null
+  supabase_wait_for 90 'Supabase gateway through loopback publication' \
+    supabase_probe_published_api_attempt "${outer}"
+}
+
+supabase_probe_published_api_attempt() {
+  local outer=$1 remaining_seconds=${SUPABASE_WAIT_REMAINING_SECONDS:-0}
+  if ((remaining_seconds <= 0)); then
+    return 1
+  fi
+  timed_operation "${remaining_seconds}s" \
+    'probe Supabase gateway through loopback publication' \
+    "${engine}" exec "${outer}" curl --fail --silent --show-error \
+    "http://127.0.0.1:${SUPABASE_HTTP_PORT}/auth/v1/health"
 }
 
 supabase_assert_database_state() {
