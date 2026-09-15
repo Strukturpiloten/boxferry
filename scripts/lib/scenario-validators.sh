@@ -108,7 +108,10 @@ assert_resource_member() {
       ;;
     quadlet)
       if [[ "${kind}" == network ]]; then
-        grep --recursive --extended-regexp --quiet "^Network=${name}(\\.network)?$" "${directory}"
+        [[ "${name}" != */* && "${name}" != *$'\n'* && "${name}" != *$'\r'* ]] &&
+          { [[ -f "${directory}/${name}.network" ]] ||
+            grep --recursive --fixed-strings --line-regexp --quiet \
+              --regexp "Network=${name}" --regexp "Network=${name}.network" "${directory}"; }
       else
         grep --recursive --extended-regexp --quiet "^Volume=${name}(\\.volume)?(:|$)" "${directory}"
       fi

@@ -3895,6 +3895,76 @@ assert_network_boundary_semantics quadlet "$2/quadlet"
 }
 
 #[test]
+fn quadlet_network_membership_is_exact_and_confined() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let output = TemporaryDirectory::new("quadlet-network-membership")?;
+    for name in [
+        "standalone",
+        "attachment",
+        "dotted",
+        "missing",
+        "lookalike",
+        "traversal",
+    ] {
+        fs::create_dir_all(output.path().join(name))?;
+    }
+    fs::write(output.path().join("standalone/managed.network"), "[Network]\n")?;
+    fs::write(
+        output.path().join("attachment/consumer.container"),
+        "[Container]\nNetwork=external.network\n",
+    )?;
+    fs::write(
+        output.path().join("dotted/consumer.container"),
+        "[Container]\nNetwork=prod.net.network\n",
+    )?;
+    fs::write(
+        output.path().join("lookalike/consumer.container"),
+        "[Container]\nNetwork=prodXnet.network\n",
+    )?;
+    fs::write(output.path().join("outside.network"), "[Network]\n")?;
+
+    let result = Command::new("bash")
+        .args([
+            "-c",
+            r#"set -Eeuo pipefail
+source "$1"
+assert_resource_member quadlet "$2/standalone" network managed
+assert_resource_member quadlet "$2/attachment" network external
+assert_resource_member quadlet "$2/dotted" network prod.net
+if assert_resource_member quadlet "$2/missing" network missing 2> "$2/missing.stderr"; then
+  printf 'Missing Quadlet network unexpectedly satisfied membership.\n' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Expected network resource missing is absent from quadlet output' "$2/missing.stderr"
+if assert_resource_member quadlet "$2/lookalike" network prod.net 2> "$2/lookalike.stderr"; then
+  printf 'Regex-lookalike Quadlet network unexpectedly satisfied exact membership.\n' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Expected network resource prod.net is absent from quadlet output' "$2/lookalike.stderr"
+if assert_resource_member quadlet "$2/traversal" network ../outside 2> "$2/traversal.stderr"; then
+  printf 'Out-of-directory Quadlet network unexpectedly satisfied membership.\n' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Expected network resource ../outside is absent from quadlet output' "$2/traversal.stderr"
+"#,
+            "scenario-validator",
+        ])
+        .arg(root.join("scripts/lib/scenario-validators.sh"))
+        .arg(output.path())
+        .output()?;
+    assert!(
+        result.status.success(),
+        "Quadlet network membership regression failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}
+
+#[test]
 fn default_network_evidence_dispatches_all_inventory_paths_under_set_u() -> Result<(), Box<dyn Error>> {
     let root = repository_root();
     let directory = TemporaryDirectory::new("legacy-default-network")?;
