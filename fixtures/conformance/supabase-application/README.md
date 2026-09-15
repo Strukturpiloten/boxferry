@@ -39,8 +39,10 @@ offline evidence remains independent of the manual live gate and cannot satisfy 
 [`success-contract.jq`](success-contract.jq) builds an exact diagnostic tuple
 multiset for every successful live route and selection. Each tuple fixes the
 code, severity, subject, and decision. It includes Podman acquisition findings,
-promoted healthchecks, Compose dependency and healthcheck losses, and the
-`BFC0009` tag-plus-digest approximation for each selected Compose image. Its
+promoted healthchecks, and Compose dependency and healthcheck losses.
+There is no image-grammar approximation: generated Supabase Compose images are digest-only.
+Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
+Quadlet-to-Compose retains only its `BFC0007` dependency and healthcheck losses. Its
 loss-fidelity totals fix the `approximate`, `unsupported`, `invalid`, and
 `other` counts, including repeated native-finding occurrences. The silent
 `exact` implementation counter has no independent semantic oracle and is

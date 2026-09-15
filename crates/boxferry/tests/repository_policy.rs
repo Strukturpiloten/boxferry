@@ -790,12 +790,165 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         &failure_status
     )?);
 
+    let expected_quadlet_compose_subjects = BTreeSet::from([
+        "services.contract-supabase-auth.dependencies[0]",
+        "services.contract-supabase-auth.healthcheck",
+        "services.contract-supabase-db.healthcheck",
+        "services.contract-supabase-functions.dependencies[0]",
+        "services.contract-supabase-functions.healthcheck",
+        "services.contract-supabase-imgproxy.healthcheck",
+        "services.contract-supabase-kong.dependencies[0]",
+        "services.contract-supabase-kong.dependencies[1]",
+        "services.contract-supabase-kong.dependencies[2]",
+        "services.contract-supabase-kong.dependencies[3]",
+        "services.contract-supabase-kong.dependencies[4]",
+        "services.contract-supabase-kong.dependencies[5]",
+        "services.contract-supabase-kong.healthcheck",
+        "services.contract-supabase-meta.dependencies[0]",
+        "services.contract-supabase-realtime.dependencies[0]",
+        "services.contract-supabase-realtime.healthcheck",
+        "services.contract-supabase-rest.dependencies[0]",
+        "services.contract-supabase-rest.healthcheck",
+        "services.contract-supabase-storage.dependencies[0]",
+        "services.contract-supabase-storage.dependencies[1]",
+        "services.contract-supabase-storage.dependencies[2]",
+        "services.contract-supabase-storage.healthcheck",
+        "services.contract-supabase-studio.dependencies[0]",
+        "services.contract-supabase-studio.healthcheck",
+        "services.contract-supabase-supavisor.dependencies[0]",
+    ]);
+    for selection in ["exact", "storage", "label", "all"] {
+        let compose_diagnostics = generated_supabase_contract(
+            &root,
+            "compose",
+            "compose",
+            selection,
+            SupabaseContractMode::Diagnostics,
+        )?;
+        assert_eq!(
+            compose_diagnostics,
+            serde_json::json!([]),
+            "{selection} Compose-to-Compose must be a zero-diagnostic digest-only reimport"
+        );
+        let compose_fidelity =
+            generated_supabase_contract(&root, "compose", "compose", selection, SupabaseContractMode::Fidelity)?;
+        assert_eq!(
+            compose_fidelity,
+            serde_json::json!({"approximate": 0, "unsupported": 0, "invalid": 0, "other": 0}),
+            "{selection} Compose-to-Compose must have zero fidelity loss"
+        );
+        let compose_report = serde_json::json!({
+            "schema_version": 1,
+            "status": "success",
+            "fidelity": {"exact": 0, "approximate": 0, "unsupported": 0, "invalid": 0, "other": 0},
+            "diagnostics": [],
+        });
+        assert!(supabase_contract_accepts(
+            &root,
+            "compose",
+            "compose",
+            selection,
+            &compose_report,
+        )?);
+        let mut spurious_image_approximation = compose_report.clone();
+        spurious_image_approximation["diagnostics"]
+            .as_array_mut()
+            .ok_or("synthetic Compose reimport diagnostics must be an array")?
+            .push(serde_json::json!({
+                "code": "BFC0009",
+                "severity": "warning",
+                "name": "spurious tag-plus-digest approximation",
+                "fields": [
+                    {"name": "subject", "value": "services.contract-supabase-auth.image"},
+                    {"name": "decision", "value": null},
+                ],
+            }));
+        assert!(
+            !supabase_contract_accepts(&root, "compose", "compose", selection, &spurious_image_approximation,)?,
+            "{selection} Compose-to-Compose must reject a spurious BFC0009"
+        );
+
+        let quadlet_diagnostics = generated_supabase_contract(
+            &root,
+            "quadlet",
+            "compose",
+            selection,
+            SupabaseContractMode::Diagnostics,
+        )?;
+        let quadlet_diagnostics = quadlet_diagnostics
+            .as_array()
+            .ok_or("generated Quadlet-to-Compose diagnostics must be an array")?;
+        assert_eq!(
+            quadlet_diagnostics.len(),
+            25,
+            "{selection} Quadlet-to-Compose diagnostic count"
+        );
+        assert!(quadlet_diagnostics.iter().all(|diagnostic| {
+            diagnostic["code"] == "BFC0007" && diagnostic["severity"] == "warning" && diagnostic["decision"].is_null()
+        }));
+        let quadlet_subjects = quadlet_diagnostics
+            .iter()
+            .map(|diagnostic| {
+                diagnostic["subject"]
+                    .as_str()
+                    .ok_or("Quadlet-to-Compose diagnostic subject must be a string")
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        assert_eq!(
+            quadlet_subjects, expected_quadlet_compose_subjects,
+            "{selection} Quadlet-to-Compose independent loss subjects"
+        );
+        let quadlet_fidelity =
+            generated_supabase_contract(&root, "quadlet", "compose", selection, SupabaseContractMode::Fidelity)?;
+        assert_eq!(
+            quadlet_fidelity,
+            serde_json::json!({"approximate": 0, "unsupported": 25, "invalid": 0, "other": 0}),
+            "{selection} Quadlet-to-Compose has only BFC0007 unsupported loss"
+        );
+        let quadlet_report = serde_json::json!({
+            "schema_version": 1,
+            "status": "success",
+            "fidelity": {"exact": 0, "approximate": 0, "unsupported": 25, "invalid": 0, "other": 0},
+            "diagnostics": quadlet_diagnostics.iter().map(supabase_contract_diagnostic).collect::<Vec<_>>(),
+        });
+        assert!(supabase_contract_accepts(
+            &root,
+            "quadlet",
+            "compose",
+            selection,
+            &quadlet_report,
+        )?);
+        let mut spurious_quadlet_image_approximation = quadlet_report.clone();
+        spurious_quadlet_image_approximation["diagnostics"]
+            .as_array_mut()
+            .ok_or("synthetic Quadlet-to-Compose diagnostics must be an array")?
+            .push(serde_json::json!({
+                "code": "BFC0009",
+                "severity": "warning",
+                "name": "spurious tag-plus-digest approximation",
+                "fields": [
+                    {"name": "subject", "value": "services.contract-supabase-auth.image"},
+                    {"name": "decision", "value": null},
+                ],
+            }));
+        assert!(
+            !supabase_contract_accepts(
+                &root,
+                "quadlet",
+                "compose",
+                selection,
+                &spurious_quadlet_image_approximation,
+            )?,
+            "{selection} Quadlet-to-Compose must reject BFC0009"
+        );
+    }
+
     let reviewed_fidelity = [
         ("exact", "podman", "compose", 63, 1_346),
         ("exact", "podman", "quadlet", 63, 1_318),
         ("exact", "podman", "podman", 63, 1_527),
-        ("exact", "quadlet", "compose", 11, 25),
-        ("exact", "compose", "compose", 11, 0),
+        ("exact", "quadlet", "compose", 0, 25),
+        ("exact", "compose", "compose", 0, 0),
         ("exact", "compose", "quadlet", 0, 1),
         ("exact", "compose", "podman", 0, 198),
         ("exact", "quadlet", "quadlet", 0, 0),
@@ -803,8 +956,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("storage", "podman", "compose", 63, 1_346),
         ("storage", "podman", "quadlet", 63, 1_318),
         ("storage", "podman", "podman", 63, 1_527),
-        ("storage", "quadlet", "compose", 11, 25),
-        ("storage", "compose", "compose", 11, 0),
+        ("storage", "quadlet", "compose", 0, 25),
+        ("storage", "compose", "compose", 0, 0),
         ("storage", "compose", "quadlet", 0, 1),
         ("storage", "compose", "podman", 0, 198),
         ("storage", "quadlet", "quadlet", 0, 0),
@@ -812,8 +965,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("label", "podman", "compose", 63, 1_346),
         ("label", "podman", "quadlet", 63, 1_318),
         ("label", "podman", "podman", 63, 1_527),
-        ("label", "quadlet", "compose", 11, 25),
-        ("label", "compose", "compose", 11, 0),
+        ("label", "quadlet", "compose", 0, 25),
+        ("label", "compose", "compose", 0, 0),
         ("label", "compose", "quadlet", 0, 1),
         ("label", "compose", "podman", 0, 198),
         ("label", "quadlet", "quadlet", 0, 0),
@@ -821,8 +974,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("all", "podman", "compose", 67, 1_446),
         ("all", "podman", "quadlet", 67, 1_418),
         ("all", "podman", "podman", 67, 1_641),
-        ("all", "quadlet", "compose", 12, 25),
-        ("all", "compose", "compose", 12, 0),
+        ("all", "quadlet", "compose", 0, 25),
+        ("all", "compose", "compose", 0, 0),
         ("all", "compose", "quadlet", 0, 1),
         ("all", "compose", "podman", 0, 212),
         ("all", "quadlet", "quadlet", 0, 0),
@@ -2939,9 +3092,9 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
-        "compose\tcompose\tmigration-success\tlive-unperformed\tBFC0009\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "compose\tcompose\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
         "compose\tquadlet\tmigration-success\tlive-unperformed\tBFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
-        "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007,BFC0009\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "quadlet\tquadlet\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
         "compose\tpodman\tmigration-success\tlive-unperformed\tBFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "quadlet\tpodman\tmigration-success\tlive-unperformed\tBFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
