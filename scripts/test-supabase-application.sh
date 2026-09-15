@@ -298,6 +298,124 @@ for option, value in (
     assert studio[index + 1] == value
 assert all(not argument.startswith(b'["CMD') for argument in studio)
 PY
+
+published_api_transient_marker="${test_root}/published-api-transient.marker"
+published_api_transient_argv="${test_root}/published-api-transient.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  argv=$3
+  engine=test-engine
+  attempts=0
+  sleep() { :; }
+  timed_operation() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+    attempts=$((attempts + 1))
+    printf "%s\\n" "${attempts}" >> "${marker}"
+    ((attempts > 2))
+  }
+  supabase_probe_published_api test-outer
+  [[ "$(tr "\\n" " " < "${marker}")" == "1 2 3 " ]]
+' bash "${library}" "${published_api_transient_marker}" "${published_api_transient_argv}"
+
+published_api_timeout_output="${test_root}/published-api-timeout.output"
+published_api_timeout_attempts="${test_root}/published-api-timeout-attempts.marker"
+published_api_timeout_sleeps="${test_root}/published-api-timeout-sleeps.marker"
+published_api_timeout_argv="${test_root}/published-api-timeout.argv"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  attempts_marker=$2
+  sleeps_marker=$3
+  argv=$4
+  engine=test-engine
+  SECONDS=0
+  sleep() {
+    printf "%s\\n" "$1" >> "${sleeps_marker}"
+    SECONDS=$((SECONDS + $1))
+  }
+  timed_operation() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+    printf "attempt\\n" >> "${attempts_marker}"
+    return 1
+  }
+  supabase_probe_published_api test-outer
+' bash "${library}" "${published_api_timeout_attempts}" "${published_api_timeout_sleeps}" \
+  "${published_api_timeout_argv}" \
+  > "${published_api_timeout_output}" 2>&1; then
+  printf "%s\\n" "Published Supabase API probe unexpectedly passed permanently failing ingress." >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Timed out waiting for Supabase gateway through loopback publication.' \
+  "${published_api_timeout_output}"
+[[ "$(sed -n '$=' "${published_api_timeout_attempts}")" == 45 ]]
+[[ "$(sed -n '$=' "${published_api_timeout_sleeps}")" == 45 ]]
+
+published_api_late_argv="${test_root}/published-api-late.argv"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  argv=$2
+  engine=test-engine
+  SECONDS=0
+  attempts=0
+  sleep() { SECONDS=$((SECONDS + $1)); }
+  timed_operation() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+    attempts=$((attempts + 1))
+    if ((attempts == 1)); then
+      SECONDS=87
+    else
+      SECONDS=$((SECONDS + ${1%s}))
+    fi
+    return 1
+  }
+  supabase_probe_published_api test-outer
+' bash "${library}" "${published_api_late_argv}" > /dev/null 2>&1; then
+  printf "%s\\n" "Late Supabase API probe unexpectedly passed." >&2
+  exit 1
+fi
+
+python3 - "${published_api_transient_argv}" "${published_api_timeout_argv}" \
+  "${published_api_late_argv}" << 'PY'
+import pathlib
+import sys
+
+expected_tail = [
+    "probe Supabase gateway through loopback publication",
+    "test-engine",
+    "exec",
+    "test-outer",
+    "curl",
+    "--fail",
+    "--silent",
+    "--show-error",
+    "http://127.0.0.1:18000/auth/v1/health",
+]
+
+def records(path):
+    return [record.split(b"\0") for record in pathlib.Path(path).read_bytes().split(b"\0\0")[:-1]]
+
+transient, permanent, late = map(records, sys.argv[1:])
+transient = [[field.decode() for field in record] for record in transient]
+permanent = [[field.decode() for field in record] for record in permanent]
+late = [[field.decode() for field in record] for record in late]
+assert transient == [["90s", *expected_tail]] * 3, transient
+assert [record[0] for record in permanent] == [
+    f"{seconds}s" for seconds in range(90, 0, -2)
+], permanent
+assert all(record[1:] == expected_tail for record in permanent), permanent
+assert late == [
+    ["90s", *expected_tail],
+    ["1s", *expected_tail],
+], late
+PY
+
 alias_output_root="${test_root}/alias-outputs"
 mkdir -p -- "${alias_output_root}/compose" "${alias_output_root}/quadlet" \
   "${alias_output_root}/podman"
