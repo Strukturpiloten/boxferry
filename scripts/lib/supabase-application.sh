@@ -1955,9 +1955,74 @@ supabase_success_contract_example_report() {
 
 supabase_validate_success_contract_examples() {
   local prefix=contract
+  local all_report
+
   supabase_assert_success_contract podman podman storage \
     <(supabase_success_contract_example_report podman podman storage "${prefix}") \
     "${prefix}"
+
+  all_report="$(
+    supabase_success_contract_example_report podman podman all "${prefix}" true
+  )"
+  if ! jq --exit-status '
+    (.diagnostics | length) == 541 and
+    ([.diagnostics[] | select(.code == "BFP0007")] | length) == 226 and
+    .fidelity == {
+      approximate: 69,
+      unsupported: 1648,
+      invalid: 0,
+      other: 0,
+      exact: 0
+    }
+  ' <<< "${all_report}" > /dev/null; then
+    printf '%s\n' 'Supabase all-selection diagnostic aggregate diverged from reviewed live evidence.' >&2
+    return 1
+  fi
+  if ! jq --exit-status --arg resource_prefix "${prefix}-supabase-" '
+    def subject:
+      [.fields[] | select(.name == "subject") | .value][0];
+    ([
+      .diagnostics[] |
+      select(.code == "BFP0007") |
+      subject |
+      select(startswith("services." + $resource_prefix + "boundary-peer.environment."))
+    ] | sort) == ([
+      "GRN_PLUGINS_DIR",
+      "HOME",
+      "HOSTNAME",
+      "LANG",
+      "LANGUAGE",
+      "LC_ALL",
+      "LOCALE_ARCHIVE",
+      "PATH",
+      "PGDATA",
+      "POSTGRES_DB",
+      "POSTGRES_HOST",
+      "POSTGRES_INITDB_ARGS",
+      "POSTGRES_USER",
+      "container"
+    ] | map("services." + $resource_prefix + "boundary-peer.environment." + .) | sort) and
+    ([
+      .diagnostics[] |
+      select(.code == "BFP0007") |
+      subject |
+      select(startswith("networks."))
+    ] | sort) == ([
+      "networks." + $resource_prefix + "backend.internal",
+      "networks." + $resource_prefix + "backend.ipam_configs",
+      "networks." + $resource_prefix + "backend.labels",
+      "networks." + $resource_prefix + "edge.internal",
+      "networks." + $resource_prefix + "edge.ipam_configs",
+      "networks." + $resource_prefix + "edge.labels",
+      "networks.podman.internal",
+      "networks.podman.ipam_configs"
+    ] | sort)
+  ' <<< "${all_report}" > /dev/null; then
+    printf '%s\n' 'Supabase all-selection diagnostic subjects diverged from reviewed live evidence.' >&2
+    return 1
+  fi
+  supabase_assert_success_contract podman podman all \
+    <(printf '%s\n' "${all_report}") "${prefix}" true
 
   if supabase_assert_success_contract podman podman storage \
     <(
@@ -1980,6 +2045,22 @@ supabase_validate_success_contract_examples() {
         jq '.diagnostics += [first(.diagnostics[] | select(.code == "BFP0007"))]'
     ) "${prefix}" > /dev/null 2>&1; then
     printf 'Supabase diagnostic contract admitted a duplicate BFP0007 tuple.\n' >&2
+    return 1
+  fi
+
+  if supabase_assert_success_contract podman podman all \
+    <(
+      jq '.diagnostics += [{
+        code: "BFP0007",
+        severity: "warning",
+        name: "exact Supabase contract example",
+        fields: [
+          {name: "subject", value: "networks.podman.labels"},
+          {name: "decision", value: "omitted"}
+        ]
+      }]' <<< "${all_report}"
+    ) "${prefix}" true > /dev/null 2>&1; then
+    printf '%s\n' 'Supabase diagnostic contract admitted unexpected system-network labels.' >&2
     return 1
   fi
 }

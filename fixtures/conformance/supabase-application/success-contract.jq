@@ -388,6 +388,22 @@ def observed_podman_environment_fields:
       "POSTGRES_USER",
       "container"
     ],
+    "boundary-peer": [
+      "GRN_PLUGINS_DIR",
+      "HOME",
+      "HOSTNAME",
+      "LANG",
+      "LANGUAGE",
+      "LC_ALL",
+      "LOCALE_ARCHIVE",
+      "PATH",
+      "PGDATA",
+      "POSTGRES_DB",
+      "POSTGRES_HOST",
+      "POSTGRES_INITDB_ARGS",
+      "POSTGRES_USER",
+      "container"
+    ],
     functions: [
       "HOME",
       "HOSTNAME",
@@ -639,8 +655,12 @@ def quadlet_dependency_diagnostics:
 def podman_diagnostics:
   ([
     selected_networks[] as $network |
-    ["internal", "ipam_configs", "labels"][] |
+    ["internal", "ipam_configs"][] |
     tuple("BFP0007"; "networks." + network_resource_name($network) + "." + .; "omitted")
+  ] + [
+    selected_networks[] as $network |
+    select($network != "podman") |
+    tuple("BFP0007"; "networks." + network_resource_name($network) + ".labels"; "omitted")
   ] + [
     selected_volumes[] |
     tuple("BFP0007"; "volumes." + $resource_prefix + . + ".settings"; "omitted")

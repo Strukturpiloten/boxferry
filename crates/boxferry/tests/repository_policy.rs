@@ -636,11 +636,11 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("compose", "exact", 198),
         ("compose", "storage", 198),
         ("compose", "label", 198),
-        ("compose", "all", 198),
+        ("compose", "all", 212),
         ("quadlet", "exact", 223),
         ("quadlet", "storage", 223),
         ("quadlet", "label", 223),
-        ("quadlet", "all", 223),
+        ("quadlet", "all", 237),
     ] {
         let generated =
             generated_supabase_contract(&root, input, "podman", selection, SupabaseContractMode::Diagnostics)?;
@@ -820,13 +820,13 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("label", "quadlet", "podman", 0, 223),
         ("all", "podman", "compose", 67, 1_446),
         ("all", "podman", "quadlet", 67, 1_418),
-        ("all", "podman", "podman", 67, 1_627),
+        ("all", "podman", "podman", 67, 1_641),
         ("all", "quadlet", "compose", 12, 25),
         ("all", "compose", "compose", 12, 0),
         ("all", "compose", "quadlet", 0, 1),
-        ("all", "compose", "podman", 0, 198),
+        ("all", "compose", "podman", 0, 212),
         ("all", "quadlet", "quadlet", 0, 0),
-        ("all", "quadlet", "podman", 0, 223),
+        ("all", "quadlet", "podman", 0, 237),
     ];
     for (selection, input, output, approximate, unsupported) in reviewed_fidelity {
         let generated = generated_supabase_contract(&root, input, output, selection, SupabaseContractMode::Fidelity)?;
