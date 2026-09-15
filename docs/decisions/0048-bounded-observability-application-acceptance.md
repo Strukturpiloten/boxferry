@@ -7,6 +7,9 @@
   [ADR 0042](0042-bounded-podman-creation-evidence-and-intent-promotion.md), and
   [ADR 0047](0047-bounded-migration-readiness-tiers.md)
 
+- Superseded in part by: [ADR 0055](0055-parallel-readiness-and-local-quality-feedback.md) for
+  pre-release scheduling and the aggregate deadline; the application contract remains unchanged
+
 ## Context
 
 Offline conversion of observability definitions can prove native parsing, neutral intent, every

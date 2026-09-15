@@ -50,6 +50,7 @@ active table; superseded records are history and are read only when that history
 | [0052](0052-fresh-supabase-service-health-acceptance.md) | Fresh Supabase service-health acceptance |
 | [0053](0053-connectable-postgrest-health-and-bounded-diagnostics.md) | Connectable PostgREST health and bounded diagnostics |
 | [0054](0054-typed-podman-network-alias-promotion.md) | Explicit typed Podman network-alias promotion |
+| [0055](0055-parallel-readiness-and-local-quality-feedback.md) | Parallel exact-SHA readiness and lightweight local quality feedback |
 
 ## Superseded history
 

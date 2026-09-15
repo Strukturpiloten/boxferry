@@ -274,12 +274,12 @@ jobs:
           python3 scripts/migration-readiness.py run
           --tier offline
           --revision "${GITHUB_SHA}"
-          --evidence target/migration-readiness/evidence-v1.json
+          --evidence target/migration-readiness/evidence-v2.json
       - name: Validate exact-revision evidence
-        if: always() && hashFiles('target/migration-readiness/evidence-v1.json') != ''
+        if: always() && hashFiles('target/migration-readiness/evidence-v2.json') != ''
         run: >-
           python3 scripts/migration-readiness.py validate-evidence
-          --evidence target/migration-readiness/evidence-v1.json
+          --evidence target/migration-readiness/evidence-v2.json
           --tier offline
           --revision "${GITHUB_SHA}"
           --require-success
@@ -288,7 +288,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: migration-readiness-offline-${{ github.sha }}
-          path: target/migration-readiness/evidence-v1.json
+          path: target/migration-readiness/evidence-v2.json
           if-no-files-found: error
           retention-days: 7
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -26,10 +27,12 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CATALOGUE = ROOT / "fixtures/conformance/migration-readiness/tiers.toml"
-DEFAULT_EVIDENCE = ROOT / "target/migration-readiness/evidence-v1.json"
+PODMAN_MATRIX = ROOT / "fixtures/conformance/podman-live/matrix.tsv"
+PODMAN_LIMITATIONS = ROOT / "fixtures/conformance/podman-live/limitations.tsv"
+DEFAULT_EVIDENCE = ROOT / "target/migration-readiness/evidence-v2.json"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 FINAL_STATES = {"passed", "failed", "unavailable", "not-run"}
-EVIDENCE_SCHEMA = ROOT / "docs/schemas/migration-readiness-evidence-v1.schema.json"
+EVIDENCE_SCHEMA = ROOT / "docs/schemas/migration-readiness-evidence-v2.schema.json"
 SAMPLE_INTERVAL_SECONDS = 0.25
 SAMPLE_INTERVAL_MILLISECONDS = 250
 CATALOGUE_KEYS = {"schema", "evidence-schema", "gaps", "tiers", "tasks"}
@@ -45,7 +48,10 @@ TASK_IDS = {
     "podman-api-5.4-rootless",
     "podman-api-6.1-rootful",
     "podman-api-6.1-rootless",
-    "podman-complete-matrix",
+    "podman-complete-matrix-shard-1",
+    "podman-complete-matrix-shard-2",
+    "podman-complete-matrix-shard-3",
+    "podman-complete-matrix-shard-4",
     "nextcloud-application",
     "forgejo-root-modes",
     "paperless-application",
@@ -59,6 +65,7 @@ LENS_TASKS = {
     "compose-lens-candidate": "compose-lens",
     "quadlet-lens-candidate": "quadlet-lens",
 }
+MATRIX_SHARD_RE = re.compile(r"^podman-complete-matrix-shard-([1-4])$")
 TIER_KEYS = {
     "id",
     "description",
@@ -127,7 +134,108 @@ def catalogue_label(path: pathlib.Path) -> str:
 
 
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )
+
+
+def catalogue_digest(path: pathlib.Path) -> str:
+    """Bind evidence to the exact reviewed catalogue bytes."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def configured_boxferry_binary_digest() -> str | None:
+    """Return the digest of the exact configured binary, when one is in scope."""
+    candidate = os.environ.get("BOXFERRY_BIN")
+    if not candidate:
+        return None
+    path = pathlib.Path(candidate)
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def tabular_ids(path: pathlib.Path) -> list[str]:
+    """Read unique first-column IDs from one reviewed TSV catalogue."""
+    ids: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        identifier = line.split("\t", 1)[0]
+        if not identifier or identifier in ids:
+            raise ContractError(f"{path.relative_to(ROOT)} has an empty or duplicate id")
+        ids.append(identifier)
+    if not ids:
+        raise ContractError(f"{path.relative_to(ROOT)} has no reviewed rows")
+    return ids
+
+
+def expected_matrix_evidence(task_id: str) -> dict[str, Any] | None:
+    """Bind one complete-matrix worker to its exact deterministic row shard."""
+    match = MATRIX_SHARD_RE.fullmatch(task_id)
+    if match is None:
+        return None
+    shard = int(match.group(1))
+    rows = tabular_ids(PODMAN_MATRIX)
+    if len(rows) != 48:
+        raise ContractError(f"reviewed Podman matrix must contain 48 rows, found {len(rows)}")
+    limitations = set(tabular_ids(PODMAN_LIMITATIONS))
+    if not limitations.issubset(rows):
+        raise ContractError("Podman limitation catalogue names rows outside the reviewed matrix")
+    selected = rows[shard - 1 :: 4]
+    selected_limitations = [identifier for identifier in selected if identifier in limitations]
+    return {
+        "shard": f"{shard}/4",
+        "matrix_sha256": catalogue_digest(PODMAN_MATRIX),
+        "limitations_sha256": catalogue_digest(PODMAN_LIMITATIONS),
+        "row_ids": selected,
+        "limitation_row_ids": selected_limitations,
+    }
+
+
+def maximum_interval_overlap(tasks: list[dict[str, Any]]) -> int:
+    """Measure maximum worker overlap from half-open task time intervals."""
+    events: list[tuple[dt.datetime, int]] = []
+    for task in tasks:
+        started = parse_date_time(task["started_at"], f"$.tasks.{task['id']}.started_at")
+        finished = parse_date_time(task["finished_at"], f"$.tasks.{task['id']}.finished_at")
+        if finished <= started:
+            raise ContractError(f"evidence task {task['id']} has an empty or reversed interval")
+        events.extend(((started, 1), (finished, -1)))
+    active = 0
+    maximum = 0
+    for _when, delta in sorted(events, key=lambda event: (event[0], event[1])):
+        active += delta
+        maximum = max(maximum, active)
+    if active != 0 or maximum < 1:
+        raise ContractError("evidence worker intervals are inconsistent")
+    return maximum
+
+
+def validate_complete_matrix_coverage(tasks: list[dict[str, Any]]) -> None:
+    """Require all four exact shards to cover every reviewed row once."""
+    shard_tasks = [task for task in tasks if MATRIX_SHARD_RE.fullmatch(task["id"])]
+    expected_ids = [f"podman-complete-matrix-shard-{index}" for index in range(1, 5)]
+    if [task["id"] for task in shard_tasks] != expected_ids:
+        raise ContractError("aggregate evidence lacks the four ordered Podman matrix shards")
+    row_ids = [
+        identifier
+        for task in shard_tasks
+        for identifier in task["matrix_evidence"]["row_ids"]
+    ]
+    limitation_ids = [
+        identifier
+        for task in shard_tasks
+        for identifier in task["matrix_evidence"]["limitation_row_ids"]
+    ]
+    expected_rows = tabular_ids(PODMAN_MATRIX)
+    expected_limitations = tabular_ids(PODMAN_LIMITATIONS)
+    if len(row_ids) != len(set(row_ids)) or set(row_ids) != set(expected_rows):
+        raise ContractError("Podman shard evidence must cover all 48 matrix rows exactly once")
+    if len(limitation_ids) != len(set(limitation_ids)) or set(limitation_ids) != set(
+        expected_limitations
+    ):
+        raise ContractError("Podman shard evidence must cover all five limitation rows exactly once")
 
 
 def json_type_matches(value: Any, expected: str) -> bool:
@@ -211,7 +319,7 @@ def validate_json_schema(
     root_schema: dict[str, Any],
     location: str = "$",
 ) -> None:
-    """Evaluate only the audited JSON-Schema subset used by evidence v1."""
+    """Evaluate only the audited JSON-Schema subset used by readiness evidence."""
     if "$ref" in schema:
         validate_json_schema(value, resolve_schema_reference(root_schema, schema["$ref"]), root_schema, location)
         return
@@ -369,7 +477,7 @@ def validate_catalogue_shape(catalogue: Any) -> None:
         concurrency = require_positive_integer(
             tier["max-concurrency"], f"catalogue tiers[{index}].max-concurrency"
         )
-        if concurrency > 2:
+        if concurrency > 4:
             raise ContractError(f"catalogue tier {tier_id} has unsafe max-concurrency")
         require_positive_integer(
             tier["tier-deadline-seconds"],
@@ -449,8 +557,8 @@ def load_catalogue(path: pathlib.Path = CATALOGUE) -> dict[str, Any]:
     with path.open("rb") as stream:
         catalogue = tomllib.load(stream)
     validate_catalogue_shape(catalogue)
-    if catalogue.get("schema") != 1:
-        raise ContractError("migration-readiness catalogue schema must be 1")
+    if catalogue.get("schema") != 2:
+        raise ContractError("migration-readiness catalogue schema must be 2")
     tasks = catalogue.get("tasks", [])
     tiers = catalogue.get("tiers", [])
     gaps = catalogue.get("gaps", [])
@@ -481,7 +589,7 @@ def load_catalogue(path: pathlib.Path = CATALOGUE) -> dict[str, Any]:
         if unknown:
             raise ContractError(f"tier {tier['id']} selects unknown tasks: {sorted(unknown)}")
         concurrency = tier.get("max-concurrency")
-        if not isinstance(concurrency, int) or not 1 <= concurrency <= 2:
+        if not isinstance(concurrency, int) or not 1 <= concurrency <= 4:
             raise ContractError(f"tier {tier['id']} has unsafe max-concurrency")
     for task in tasks:
         validate_task(task)
@@ -863,6 +971,14 @@ def preflight(
     identity, identity_error = execution_identity(task)
     missing_tools = [tool for tool in task["required-tools"] if shutil.which(tool) is None]
     missing_environment = [name for name in task.get("required-environment", []) if not os.environ.get(name)]
+    for name in ("BOXFERRY_BIN", "BOXFERRY_COMPOSE_BIN"):
+        candidate = os.environ.get(name)
+        if (
+            name in task.get("required-environment", [])
+            and candidate
+            and not os.access(candidate, os.X_OK)
+        ):
+            missing_environment.append(name)
     observed = sampler.snapshot()
     memory_mib = observed["available_memory_mib"]
     filesystems = observed["filesystems"]
@@ -1131,6 +1247,7 @@ def task_evidence(
         "targets": task["targets"],
         "approved_losses": task["approved-losses"],
         "runtime_claim": task["runtime-claim"],
+        "matrix_evidence": expected_matrix_evidence(task["id"]),
         "privileged": task["privileged"],
         "state": state,
         "reason": reason,
@@ -1170,7 +1287,11 @@ def validate_evidence_semantics(
     run_finished = parse_date_time(run["finished_at"], "$.run.finished_at")
     if run_finished < run_started:
         raise ContractError("evidence run chronology is reversed")
-    if run["wall_seconds"] > run["tier_deadline_seconds"] and not run["timed_out"]:
+    if (
+        run["evidence_kind"] != "worker"
+        and run["wall_seconds"] > run["tier_deadline_seconds"]
+        and not run["timed_out"]
+    ):
         raise ContractError("evidence run exceeded its tier deadline without timing out")
 
     previous_finished = run_started
@@ -1181,11 +1302,14 @@ def validate_evidence_semantics(
         task_finished = parse_date_time(
             actual["finished_at"], f"$.tasks.{actual['id']}.finished_at"
         )
-        if task_started < previous_finished or task_finished < task_started:
+        if (
+            task_finished < task_started
+            or (run.get("evidence_kind") != "aggregate" and task_started < previous_finished)
+        ):
             raise ContractError(f"evidence task {actual['id']} chronology is reversed")
         if task_finished > run_finished:
             raise ContractError(f"evidence task {actual['id']} finishes after its run")
-        previous_finished = task_finished
+        previous_finished = max(previous_finished, task_finished)
 
         observed = actual["observed"]
         if actual["state"] != "passed":
@@ -1292,6 +1416,20 @@ def validate_evidence_semantics(
                 raise ContractError(
                     f"successful evidence task {actual['id']} lacks its Lens revision"
                 )
+    if run["evidence_kind"] == "aggregate":
+        aggregate_started = min(
+            parse_date_time(task["started_at"], f"$.tasks.{task['id']}.started_at")
+            for task in tasks
+        )
+        aggregate_finished = max(
+            parse_date_time(task["finished_at"], f"$.tasks.{task['id']}.finished_at")
+            for task in tasks
+        )
+        if run_started != aggregate_started or run_finished != aggregate_finished:
+            raise ContractError("aggregate run boundaries do not match worker task boundaries")
+        elapsed = round((aggregate_finished - aggregate_started).total_seconds(), 3)
+        if run["wall_seconds"] != elapsed:
+            raise ContractError("aggregate wall time does not match worker task intervals")
 
 
 def validate_evidence(
@@ -1304,11 +1442,17 @@ def validate_evidence(
     catalogue = load_catalogue(catalogue_path)
     evidence_schema = load_evidence_schema(catalogue)
     validate_json_schema(value, evidence_schema, evidence_schema)
-    if value.get("schema_version") != 1:
-        raise ContractError("evidence schema_version must be 1")
+    if value.get("schema_version") != 2:
+        raise ContractError("evidence schema_version must be 2")
     run = value.get("run")
     if not isinstance(run, dict) or not SHA_RE.fullmatch(run.get("revision", "")):
         raise ContractError("evidence lacks an exact run revision")
+    if run.get("evidence_kind") not in {"serial", "worker", "aggregate"}:
+        raise ContractError("evidence has an invalid execution kind")
+    if not re.fullmatch(r"[0-9a-f]{64}", run.get("catalogue_sha256", "")):
+        raise ContractError("evidence lacks a catalogue digest")
+    if run["catalogue_sha256"] != catalogue_digest(catalogue_path):
+        raise ContractError("evidence catalogue digest does not match reviewed catalogue")
     if tier is not None and run.get("tier") != tier:
         raise ContractError(f"evidence tier is {run.get('tier')}, expected {tier}")
     if revision is not None and run.get("revision") != revision:
@@ -1331,7 +1475,10 @@ def validate_evidence(
     expected_success = (
         all(task["state"] == "passed" for task in tasks)
         and not run["timed_out"]
-        and run["wall_seconds"] <= run["tier_deadline_seconds"]
+        and (
+            run["evidence_kind"] == "worker"
+            or run["wall_seconds"] <= run["tier_deadline_seconds"]
+        )
     )
     if value.get("outcome") != ("passed" if expected_success else "failed"):
         raise ContractError("evidence outcome disagrees with task states")
@@ -1350,6 +1497,22 @@ def validate_evidence(
                 "partial evidence requires an explicit matching --task selection"
             )
         raise ContractError("evidence task selection does not match requested --task")
+    evidence_kind = run["evidence_kind"]
+    if evidence_kind == "serial":
+        if selection["kind"] != "tier" or run.get("worker_id") != "serial":
+            raise ContractError("serial evidence must bind a full tier to worker_id serial")
+        if run.get("coordinator_id") != run.get("id"):
+            raise ContractError("serial evidence must own its coordinator identity")
+    elif evidence_kind == "worker":
+        if selection["kind"] != "task" or run.get("worker_id") != selected_task_id:
+            raise ContractError("worker evidence must bind worker_id to its selected task")
+        if len(tasks) != 1:
+            raise ContractError("worker evidence must contain exactly one task")
+    else:
+        if selection["kind"] != "tier" or run.get("worker_id") != "aggregate":
+            raise ContractError("aggregate evidence must bind a full tier to worker_id aggregate")
+        if run.get("coordinator_id") != run.get("id"):
+            raise ContractError("aggregate evidence must own its coordinator identity")
     expected_tier, expected_tasks = selected_tasks(catalogue, tier, selected_task_id)
     expected_task_ids = [task["id"] for task in expected_tasks]
     if [task.get("id") for task in tasks] != expected_task_ids:
@@ -1362,12 +1525,21 @@ def validate_evidence(
     if gaps != catalogue["gaps"]:
         raise ContractError("evidence gaps do not match the reviewed catalogue")
 
+    expected_actual_concurrency = (
+        maximum_interval_overlap(tasks) if evidence_kind == "aggregate" else 1
+    )
+    expected_worker_wall = (
+        round(sum(task["observed"]["wall_seconds"] for task in tasks), 3)
+        if evidence_kind == "aggregate"
+        else run["wall_seconds"]
+    )
     expected_run_fields = {
         "runner": "scripts/migration-readiness.py",
         "catalogue": catalogue_label(catalogue_path),
         "maximum_concurrency": expected_tier["max-concurrency"],
-        "actual_concurrency": 1,
+        "actual_concurrency": expected_actual_concurrency,
         "tier_deadline_seconds": expected_tier["tier-deadline-seconds"],
+        "total_worker_wall_seconds": expected_worker_wall,
         "fresh": True,
     }
     for name, expected in expected_run_fields.items():
@@ -1387,6 +1559,11 @@ def validate_evidence(
         raise ContractError("evidence Lens revisions must be full lowercase Git SHAs")
     if lens_revisions != catalogue_lens_revisions(catalogue):
         raise ContractError("evidence Lens revisions do not match catalogue pins")
+    binary_digest = run.get("boxferry_binary_sha256")
+    if binary_digest is not None and re.fullmatch(r"[0-9a-f]{64}", binary_digest) is None:
+        raise ContractError("evidence BoxFerry binary digest must be lowercase SHA-256")
+    if evidence_kind == "aggregate" and binary_digest is None:
+        raise ContractError("aggregate evidence must bind the shared BoxFerry binary digest")
 
     for actual, expected in zip(tasks, expected_tasks, strict=True):
         expected_static = {
@@ -1396,6 +1573,7 @@ def validate_evidence(
             "targets": expected["targets"],
             "approved_losses": expected["approved-losses"],
             "runtime_claim": expected["runtime-claim"],
+            "matrix_evidence": expected_matrix_evidence(expected["id"]),
             "privileged": expected["privileged"],
             "budgets": {
                 "deadline_seconds": expected["deadline-seconds"],
@@ -1432,6 +1610,8 @@ def validate_evidence(
                 raise ContractError("successful evidence task has unsuccessful process observations")
 
     validate_evidence_semantics(run, tasks, expected_tasks)
+    if evidence_kind == "aggregate" and tier == "pre-release":
+        validate_complete_matrix_coverage(tasks)
 
 
 def plan(args: argparse.Namespace) -> int:
@@ -1443,7 +1623,14 @@ def plan(args: argparse.Namespace) -> int:
         "tier_deadline_seconds": tier["tier-deadline-seconds"],
         "manual_prerequisites": tier["manual-prerequisites"],
         "tasks": [
-            {"id": task["id"], "privileged": task["privileged"], "workload": task["workload"]}
+            {
+                "id": task["id"],
+                "privileged": task["privileged"],
+                "workload": task["workload"],
+                "required_tools": task["required-tools"],
+                "required_environment": task.get("required-environment", []),
+                "deadline_seconds": task["deadline-seconds"],
+            }
             for task in tasks
         ],
         "gaps": catalogue["gaps"],
@@ -1459,6 +1646,11 @@ def plan(args: argparse.Namespace) -> int:
 def run(args: argparse.Namespace) -> int:
     catalogue = load_catalogue(pathlib.Path(args.catalogue))
     tier, tasks = selected_tasks(catalogue, args.tier, args.task)
+    if tier["id"] == "pre-release" and args.task is None:
+        raise ContractError(
+            "complete pre-release execution requires the parallel GitHub coordinator; "
+            "select one --task for focused local reproduction"
+        )
     revision = args.revision or git_revision()
     if not SHA_RE.fullmatch(revision):
         raise ContractError("--revision must be a full lowercase 40-character Git SHA")
@@ -1468,7 +1660,10 @@ def run(args: argparse.Namespace) -> int:
     run_id = str(uuid.uuid4())
     started_at = now()
     run_started = time.monotonic()
-    tier_deadline = run_started + tier["tier-deadline-seconds"]
+    execution_deadline_seconds = (
+        tasks[0]["deadline-seconds"] if args.task is not None else tier["tier-deadline-seconds"]
+    )
+    tier_deadline = run_started + execution_deadline_seconds
     total_steps = len(tasks) * 2 + 1
     step = 1
     results: list[dict[str, Any]] = []
@@ -1500,10 +1695,10 @@ def run(args: argparse.Namespace) -> int:
         failed = result["state"] != "passed"
     emit(step, total_steps, "START", "write-evidence")
     run_wall_seconds = time.monotonic() - run_started
-    tier_timed_out = run_wall_seconds > tier["tier-deadline-seconds"]
+    tier_timed_out = run_wall_seconds > execution_deadline_seconds
     failed = failed or tier_timed_out
     evidence = {
-        "schema_version": 1,
+        "schema_version": 2,
         "outcome": "failed" if failed else "passed",
         "run": {
             "id": run_id,
@@ -1517,12 +1712,18 @@ def run(args: argparse.Namespace) -> int:
             "actual_concurrency": 1,
             "tier_deadline_seconds": tier["tier-deadline-seconds"],
             "wall_seconds": round(run_wall_seconds, 3),
+            "total_worker_wall_seconds": round(run_wall_seconds, 3),
             "timed_out": tier_timed_out,
             "fresh": True,
             "selection": {
                 "kind": "task" if args.task is not None else "tier",
                 "task": args.task,
             },
+            "coordinator_id": args.coordinator_id or run_id,
+            "catalogue_sha256": catalogue_digest(pathlib.Path(args.catalogue)),
+            "boxferry_binary_sha256": configured_boxferry_binary_digest(),
+            "worker_id": args.worker_id or (args.task or "serial"),
+            "evidence_kind": "worker" if args.task is not None else "serial",
             "lens_revisions": revisions,
         },
         "manual_prerequisites": tier["manual-prerequisites"],
@@ -1554,6 +1755,8 @@ def validate(args: argparse.Namespace) -> int:
     )
     if args.require_success and evidence["outcome"] != "passed":
         raise ContractError("evidence does not prove a successful tier")
+    if args.require_aggregate and evidence["run"]["evidence_kind"] != "aggregate":
+        raise ContractError("evidence is not complete aggregate evidence")
     print(
         f"validated migration-readiness evidence tier={evidence['run']['tier']} "
         f"revision={evidence['run']['revision']} outcome={evidence['outcome']}"
@@ -1561,10 +1764,118 @@ def validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def collect(args: argparse.Namespace) -> int:
+    """Fail closed while combining independently produced pre-release workers."""
+    if args.tier != "pre-release":
+        raise ContractError("only pre-release evidence may be collected from workers")
+    catalogue_path = pathlib.Path(args.catalogue)
+    catalogue = load_catalogue(catalogue_path)
+    tier, expected = selected_tasks(catalogue, args.tier, None)
+    revision = args.revision
+    if not SHA_RE.fullmatch(revision):
+        raise ContractError("--revision must be a full lowercase 40-character Git SHA")
+    try:
+        uuid.UUID(args.coordinator_id)
+    except ValueError as error:
+        raise ContractError("--coordinator-id must be a UUID") from error
+    if re.fullmatch(r"[0-9a-f]{64}", args.boxferry_binary_sha256) is None:
+        raise ContractError("--boxferry-binary-sha256 must be a lowercase SHA-256")
+    documents: list[dict[str, Any]] = []
+    seen_workers: set[str] = set()
+    for raw_path in args.evidence:
+        with pathlib.Path(raw_path).open(encoding="utf-8") as stream:
+            document = json.load(stream)
+        run = document.get("run", {})
+        task_id = run.get("selection", {}).get("task")
+        if run.get("evidence_kind") != "worker" or not isinstance(task_id, str):
+            raise ContractError(f"{raw_path} is not a single worker evidence document")
+        if run.get("coordinator_id") != args.coordinator_id:
+            raise ContractError(f"{raw_path} belongs to a different coordinator")
+        if run.get("worker_id") != task_id:
+            raise ContractError(f"{raw_path} worker identity does not match its selected task")
+        if task_id in seen_workers:
+            raise ContractError(f"duplicate worker evidence for {task_id}")
+        seen_workers.add(task_id)
+        validate_evidence(document, args.tier, revision, task_id=task_id, catalogue_path=catalogue_path)
+        if run.get("boxferry_binary_sha256") != args.boxferry_binary_sha256:
+            raise ContractError(f"{raw_path} belongs to a different BoxFerry binary")
+        if run.get("timed_out") or document["tasks"][0]["observed"]["timed_out"]:
+            raise ContractError(f"{raw_path} contains timed-out worker evidence")
+        if document.get("outcome") != "passed" or document["tasks"][0]["state"] != "passed":
+            raise ContractError(f"{raw_path} does not contain successful worker evidence")
+        documents.append(document)
+    by_task = {document["tasks"][0]["id"]: document for document in documents}
+    expected_ids = [task["id"] for task in expected]
+    if set(by_task) != set(expected_ids) or len(by_task) != len(documents):
+        raise ContractError("worker evidence must contain every selected task exactly once")
+    ordered = [by_task[task_id] for task_id in expected_ids]
+    tasks = [document["tasks"][0] for document in ordered]
+    validate_complete_matrix_coverage(tasks)
+    started_task = min(
+        tasks,
+        key=lambda task: parse_date_time(task["started_at"], f"$.tasks.{task['id']}.started_at"),
+    )
+    finished_task = max(
+        tasks,
+        key=lambda task: parse_date_time(task["finished_at"], f"$.tasks.{task['id']}.finished_at"),
+    )
+    started_at = started_task["started_at"]
+    finished_at = finished_task["finished_at"]
+    wall_seconds = round(
+        (
+            parse_date_time(finished_at, "aggregate.finished_at")
+            - parse_date_time(started_at, "aggregate.started_at")
+        ).total_seconds(),
+        3,
+    )
+    if wall_seconds > tier["tier-deadline-seconds"]:
+        raise ContractError("worker evidence exceeded the aggregate tier deadline")
+    actual_concurrency = maximum_interval_overlap(tasks)
+    if actual_concurrency > tier["max-concurrency"]:
+        raise ContractError("worker evidence exceeded the aggregate concurrency limit")
+    total_worker_wall_seconds = round(
+        sum(task["observed"]["wall_seconds"] for task in tasks), 3
+    )
+    evidence = {
+        "schema_version": 2,
+        "outcome": "passed",
+        "run": {
+            **ordered[0]["run"],
+            "id": args.coordinator_id,
+            "tier": tier["id"],
+            "revision": revision,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "actual_concurrency": actual_concurrency,
+            "wall_seconds": wall_seconds,
+            "total_worker_wall_seconds": total_worker_wall_seconds,
+            "timed_out": False,
+            "selection": {"kind": "tier", "task": None},
+            "worker_id": "aggregate",
+            "evidence_kind": "aggregate",
+            "boxferry_binary_sha256": args.boxferry_binary_sha256,
+        },
+        "manual_prerequisites": tier["manual-prerequisites"],
+        "tasks": tasks,
+        "gaps": catalogue["gaps"],
+    }
+    validate_evidence(evidence, args.tier, revision, catalogue_path=catalogue_path)
+    atomic_json(pathlib.Path(args.evidence_output), evidence)
+    return 0
+
+
+def create_coordinator_id(_args: argparse.Namespace) -> int:
+    """Print one lowercase coordinator UUID for workflow binding."""
+    print(uuid.uuid4())
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--catalogue", default=str(CATALOGUE))
     commands = result.add_subparsers(dest="operation", required=True)
+    coordinator_parser = commands.add_parser("coordinator-id")
+    coordinator_parser.set_defaults(function=create_coordinator_id)
     plan_parser = commands.add_parser("plan")
     plan_parser.add_argument("--tier", required=True, choices=("offline", "trusted-live", "pre-release"))
     plan_parser.add_argument("--task")
@@ -1575,6 +1886,8 @@ def parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--task")
     run_parser.add_argument("--revision")
     run_parser.add_argument("--evidence", default=str(DEFAULT_EVIDENCE))
+    run_parser.add_argument("--coordinator-id")
+    run_parser.add_argument("--worker-id")
     run_parser.set_defaults(function=run)
     validate_parser = commands.add_parser("validate-evidence")
     validate_parser.add_argument("--evidence", required=True)
@@ -1582,7 +1895,16 @@ def parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--task")
     validate_parser.add_argument("--revision")
     validate_parser.add_argument("--require-success", action="store_true")
+    validate_parser.add_argument("--require-aggregate", action="store_true")
     validate_parser.set_defaults(function=validate)
+    collect_parser = commands.add_parser("collect-evidence")
+    collect_parser.add_argument("--tier", required=True, choices=("offline", "trusted-live", "pre-release"))
+    collect_parser.add_argument("--revision", required=True)
+    collect_parser.add_argument("--coordinator-id", required=True)
+    collect_parser.add_argument("--boxferry-binary-sha256", required=True)
+    collect_parser.add_argument("--evidence", action="append", required=True)
+    collect_parser.add_argument("--evidence-output", required=True)
+    collect_parser.set_defaults(function=collect)
     return result
 
 

@@ -66,4 +66,8 @@ BoxFerry is maintained by [Martin “Becks” Beckert](https://github.com/TheRea
 [Mozilla Public License 2.0](LICENSE). Contributions, issue reports, and practical migration
 feedback are welcome.
 
-Run the complete development gate with `./scripts/check-all.sh` before submitting a change.
+Use `./scripts/format-lint.sh --fix` (or the VS Code task **BoxFerry: Format and lint only
+(no tests)**) for quick pre-push cleanup on a smaller development computer. It deliberately
+executes no tests and is not validation evidence. Run the complete development gate with
+`./scripts/check-all.sh` when resources permit; protected GitHub checks remain authoritative for
+every pull request.

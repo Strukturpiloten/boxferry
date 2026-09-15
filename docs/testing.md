@@ -40,9 +40,9 @@ budgets, and evidence used both locally and by GitHub Actions.
 The machine [tier catalogue and commands](../fixtures/conformance/migration-readiness/) define the
 ordinary `offline`, manual `trusted-live`, and exact-SHA `pre-release` gates. Evidence records
 measured wall/RSS/disk/concurrency budgets, sources, targets, approved losses, and explicit gaps.
-Each tier wall deadline is shorter than its enclosing workflow timeout and caps every task to its
-remaining time, leaving workflow setup and evidence handling outside the runner budget. Missing
-prerequisites, timeout, `not-run`, and gaps are never success.
+Pre-release evidence v2 collects isolated workers under one four-runner cap. Four shards cover all
+48 Podman cells and five limitations. Its 1,200-second aggregate deadline preserves task safety
+budgets; incomplete or failed work is never success.
 
 ## Fixture route corpus
 
@@ -183,9 +183,9 @@ complete profile totals 1,322 checks; there is deliberately no nightly schedule.
 
 ## Gate contents
 
-`./scripts/check-all.sh` formats and lints owned files, tests every Cargo target and feature
-boundary, checks Rust 1.85.0, audits dependencies, builds Rustdoc, checks coverage floors and local
-links, and validates publishable packages.
+`./scripts/format-lint.sh --fix` formats and lints without tests. `./scripts/check-all.sh` also tests
+every Cargo target and feature boundary, checks Rust 1.85.0, audits dependencies, builds Rustdoc,
+checks coverage floors and local links, and validates publishable packages.
 Changelog validation is a dedicated job required by the aggregate gate.
 
 Coverage is a regression ratchet, not proof of semantic correctness.

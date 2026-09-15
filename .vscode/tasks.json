@@ -12,6 +12,17 @@
       }
     },
     {
+      "label": "BoxFerry: Format and lint only (no tests)",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/format-lint.sh",
+      "args": ["--fix"],
+      "problemMatcher": "$rustc",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
       "label": "BoxFerry: Format check",
       "type": "process",
       "command": "cargo",

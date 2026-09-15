@@ -36,15 +36,31 @@ After pulling the fix, use **Dev Containers: Rebuild Container** for the updated
 
 ## Local verification
 
-Run the complete gate after the final edit:
+For fast pre-push cleanup on a smaller computer, run:
+
+```console
+./scripts/format-lint.sh --fix
+```
+
+The matching VS Code task is **BoxFerry: Format and lint only (no tests)**. The command formats
+Rust and repository-owned files, checks staged and unstaged whitespace, runs the file and GitHub
+Actions linters, and runs Clippy. It executes no tests. Clippy uses two Cargo jobs by default; use
+`BOXFERRY_LINT_JOBS=1 ./scripts/format-lint.sh --fix` on a particularly constrained machine.
+`--check` verifies without formatting. Run it in the Dev Container so every pinned linter is
+available.
+
+This task is a cleanliness aid, not evidence that tests passed. Run the complete gate after the
+final edit when local resources permit:
 
 ```console
 ./scripts/check-all.sh
 ```
 
 It formats before checking. Any later source, test, configuration, or documentation edit
-invalidates the result. Focused aliases in `.cargo/config.toml` help during development but do not
-replace this gate.
+invalidates the result. Focused aliases in `.cargo/config.toml` and the format/lint-only task help
+during development but do not replace the complete gate. Contributors whose machines cannot
+complete the gate may push after the lightweight task succeeds and rely on required GitHub checks;
+the pull request is not ready to merge until those checks pass.
 
 ## Issue-to-PR contribution workflow
 
@@ -52,7 +68,7 @@ replace this gate.
 2. Create or reuse one focused GitHub issue.
 3. Synchronize `main` and create `TheRealBecks/issue<NUMBER>`.
 4. Implement and review the complete scoped diff.
-5. Run `./scripts/check-all.sh`.
+5. Run `./scripts/format-lint.sh --fix`; run `./scripts/check-all.sh` locally when resources permit.
 6. Stage explicit paths, run `git diff --cached --check`, and review the staged diff.
 7. Commit once, push, and open a ready pull request containing `Closes #<NUMBER>`.
 8. Read the issue and pull request back and monitor required checks.
@@ -62,7 +78,8 @@ replace this gate.
    `git worktree prune --verbose`. Verify `git worktree list --porcelain` and
    `git status --short --branch` show no stale issue checkout.
 
-All steps must pass before the change is committed, pushed, or submitted.
+The lightweight task must pass before the change is pushed. Either the local complete gate or all
+required GitHub checks must provide complete validation before merge.
 
 The primary agent uses high reasoning effort and owns the final diff, complete gate, staging,
 commit, push, and GitHub readback. Worker agents may perform bounded work.
