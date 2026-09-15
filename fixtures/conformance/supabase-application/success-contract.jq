@@ -313,15 +313,9 @@ def compose_healthcheck_diagnostics:
     tuple("BFC0007"; "services." + $resource_prefix + . + ".healthcheck"; null)
   ];
 
-def compose_image_diagnostics:
-  if $input == "podman" then
-    []
-  else
-    [
-      selected_services[] |
-      tuple("BFC0009"; "services." + $resource_prefix + . + ".image"; null)
-    ]
-  end;
+# Generated Supabase Compose artifacts retain only digest-qualified image identities.
+# Reimporting any of those artifacts cannot create a tag-plus-digest approximation.
+def compose_image_diagnostics: [];
 
 def compose_network_diagnostics:
   if $input == "podman" then
@@ -808,10 +802,9 @@ def compose_outcomes:
   ];
 
 def compose_output_outcomes:
-  ([selected_services[] | "approximate"] +
-  if $input == "compose" then
-    []
-  else
+  if $input == "podman" then
+    # Native Podman evidence retains its independently reviewed accounting.
+    [selected_services[] | "approximate"] +
     compose_outcomes +
     [
       healthcheck_services[] |
@@ -823,7 +816,17 @@ def compose_output_outcomes:
     else
       []
     end
-  end);
+  elif $input == "quadlet" then
+    compose_outcomes +
+    [
+      healthcheck_services[] |
+      select(. as $service | contains(selected_services; $service)) |
+      "unsupported"
+    ]
+  else
+    # Generated Compose is a lossless canonical Compose reimport.
+    []
+  end;
 
 def podman_outcomes:
   ([selected_networks[] | "unsupported"] +
