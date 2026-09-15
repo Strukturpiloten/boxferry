@@ -148,15 +148,10 @@ jobs:
       - name: Restore executable permission
         run: chmod +x target/debug/boxferry
       - name: Download and verify Docker Compose provider
-        env:
-          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
-          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
         run: |
           set -Eeuo pipefail
-          mkdir -p target/tools
-          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
-          printf '%s  %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
-          chmod +x target/tools/docker-compose
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
       - name: Run checked-in Nextcloud application profile
         env:
           BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
@@ -192,15 +187,10 @@ jobs:
       - name: Restore executable permission
         run: chmod +x target/debug/boxferry
       - name: Download and verify Docker Compose provider
-        env:
-          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
-          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
         run: |
           set -Eeuo pipefail
-          mkdir -p target/tools
-          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
-          printf '%s %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
-          chmod +x target/tools/docker-compose
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
       - name: Run checked-in Forgejo application profile
         env:
           BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
@@ -235,15 +225,10 @@ jobs:
       - name: Restore executable permission
         run: chmod +x target/debug/boxferry
       - name: Download and verify Docker Compose provider
-        env:
-          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
-          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
         run: |
           set -Eeuo pipefail
-          mkdir -p target/tools
-          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
-          printf '%s %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
-          chmod +x target/tools/docker-compose
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
       - name: Run checked-in Paperless-ngx application profile
         env:
           BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
@@ -293,14 +278,9 @@ jobs:
       - name: Restore executable permission
         run: chmod +x target/debug/boxferry
       - name: Download and verify Docker Compose provider
-        env:
-          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
-          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
         run: |
-          mkdir -p target/tools
-          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
-          printf '%s  %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
-          chmod +x target/tools/docker-compose
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
       - name: Run checked-in Immich application profile
         env:
           BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry

@@ -2,13 +2,16 @@
 # Paperless-ngx application acceptance helpers. Sourced by the live entry point.
 # shellcheck disable=SC2129,SC2154 # Caller-owned globals and phased logs are intentional.
 
+# shellcheck source=scripts/lib/compose-provider.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+
 readonly PAPERLESS_ADMIN_USER="boxferry-admin"
 readonly PAPERLESS_ADMIN_PASSWORD="boxferry-public-admin-canary"
 readonly PAPERLESS_DB_PASSWORD="boxferry-public-database-canary"
 readonly PAPERLESS_REDIS_PASSWORD="boxferry-public-broker-canary"
 readonly PAPERLESS_SECRET_KEY="boxferry-public-paperless-secret-canary"
-readonly PAPERLESS_PROVIDER_VERSION="5.5.0"
-readonly PAPERLESS_PROVIDER_SHA256="c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b"
+readonly PAPERLESS_PROVIDER_VERSION="${BOXFERRY_COMPOSE_PROVIDER_VERSION}"
+readonly PAPERLESS_PROVIDER_SHA256="${BOXFERRY_COMPOSE_PROVIDER_SHA256}"
 readonly PAPERLESS_HTTP_PORT="18000"
 readonly PAPERLESS_ARCHIVE_MAX_BYTES="2684354560"
 readonly PAPERLESS_MIN_CPUS="2"
@@ -71,7 +74,7 @@ paperless_validate_catalogues() {
     -v sha="${PAPERLESS_PROVIDER_SHA256}" '
     NF && $1 !~ /^#/ {
       if (NF != 7 || $1 != "docker-compose" || $2 != version ||
-          $3 != "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64" ||
+        $3 != ("https://github.com/docker/compose/releases/download/v" version "/docker-compose-linux-x86_64") ||
           $4 != sha || $5 != "Apache-2.0" || $6 != "https://github.com/docker/compose" ||
           $7 != "downloaded-test-tool") {
         printf "Invalid Paperless provider row at line %d: %s\\n", NR, $0 > "/dev/stderr"

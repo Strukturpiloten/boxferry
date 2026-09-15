@@ -3,11 +3,14 @@
 # entry point; it never executes a scenario by itself.
 # shellcheck disable=SC2129,SC2154 # Caller globals and phased logs are intentional.
 
+# shellcheck source=scripts/lib/compose-provider.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+
 readonly NEXTCLOUD_ADMIN_PASSWORD="boxferry-public-admin-canary"
 readonly NEXTCLOUD_DB_PASSWORD="boxferry-public-database-canary"
 readonly NEXTCLOUD_REDIS_PASSWORD="boxferry-public-cache-canary"
-readonly NEXTCLOUD_PROVIDER_VERSION="5.5.0"
-readonly NEXTCLOUD_PROVIDER_SHA256="c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b"
+readonly NEXTCLOUD_PROVIDER_VERSION="${BOXFERRY_COMPOSE_PROVIDER_VERSION}"
+readonly NEXTCLOUD_PROVIDER_SHA256="${BOXFERRY_COMPOSE_PROVIDER_SHA256}"
 
 nextcloud_fixture_root() {
   printf '%s/fixtures/conformance/nextcloud-application\n' "${repository_root:?caller must supply repository_root}"
@@ -36,7 +39,7 @@ nextcloud_validate_catalogues() {
  NF && $1 !~ /^#/ {
  count++
  if (NF != 7 || $1 != "docker-compose" || $2 != version ||
- $3 != "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64" ||
+        $3 != ("https://github.com/docker/compose/releases/download/v" version "/docker-compose-linux-x86_64") ||
  $4 != sha || $5 != "Apache-2.0" || $6 != "https://github.com/docker/compose" ||
  $7 != "downloaded-test-tool") {
  printf "Invalid Nextcloud provider row at line %d: %s\\n", NR, $0 > "/dev/stderr"

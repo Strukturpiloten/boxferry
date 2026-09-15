@@ -40,8 +40,9 @@ limitation_path="${repository_root}/fixtures/conformance/podman-live/limitations
 candidate_path="${repository_root}/fixtures/conformance/podman-live/candidates.toml"
 revalidation_schema_path="${repository_root}/docs/schemas/podman-limitation-revalidation-v1.schema.json"
 revalidation_helper="${script_directory}/lib/podman-revalidation.py"
+# renovate: datasource=docker depName=quay.io/libpod/alpine
 workload_image="quay.io/libpod/alpine@sha256:634a8f35b5f16dcf4aaa0822adc0b1964bb786fca12f6831de8ddc45e5986a00"
-workload_local_tag="localhost/boxferry-live/alpine:634a8f35b5f16dcf4aaa0822adc0b1964bb786fca12f6831de8ddc45e5986a00"
+workload_local_tag="localhost/boxferry-live/alpine:${workload_image##*@sha256:}"
 
 revalidation_requested=false
 declare -a original_arguments=("$@")

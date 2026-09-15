@@ -34,6 +34,19 @@ bash .devcontainer/verify-tools.sh
 
 After pulling the fix, use **Dev Containers: Rebuild Container** for the updated image setup.
 
+## Refresh the Dev Container feature lock
+
+Renovate proposes Dev Container feature updates without rewriting the checksum-bearing lock file.
+From the repository root, regenerate it with the pinned CLI before reviewing the resulting diff:
+
+```console
+npx --yes @devcontainers/cli@0.89.0 upgrade --workspace-folder .
+```
+
+Commit `.devcontainer/devcontainer.json` and `.devcontainer/devcontainer-lock.json` together. A
+later CLI release is a separate Renovate-managed documentation update; do not replace the pin with
+`latest`.
+
 ## Local verification
 
 For fast pre-push cleanup on a smaller computer, run:
