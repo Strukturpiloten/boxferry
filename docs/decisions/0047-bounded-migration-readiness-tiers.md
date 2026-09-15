@@ -8,6 +8,9 @@
   [ADR 0045](0045-bounded-immich-media-processing-acceptance.md), and
   [ADR 0046](0046-bounded-podman-limitation-revalidation.md)
 
+- Superseded in part by: [ADR 0055](0055-parallel-readiness-and-local-quality-feedback.md)
+  for pre-release scheduling, evidence aggregation, and local feedback tiers
+
 ## Context
 
 BoxFerry has independent offline scenario contracts, a 48-cell Podman catalogue, and six genuine

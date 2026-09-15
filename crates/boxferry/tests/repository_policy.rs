@@ -90,11 +90,11 @@ fn migration_readiness_restores_privileged_evidence_before_consumers() -> Result
     let workflow = fs::read_to_string(repository_root().join(".github/workflows/migration-readiness.yml"))
         .map_err(|error| format!("failed to read migration-readiness workflow: {error}"))?;
     let trusted = workflow
-        .find("      - name: Run trusted tier through shared runner")
-        .ok_or("migration-readiness workflow must run its trusted tier")?;
+        .find("      - name: Run bounded serial evidence")
+        .ok_or("migration-readiness workflow must run its bounded serial tier")?;
     let restore_contract = concat!(
         "      - name: Restore bounded evidence ownership\n",
-        "        if: ${{ always() && env.TIER != 'offline' }}\n",
+        "        if: always() && steps.selection.outputs.privileged == 'true'\n",
         "        run: |\n",
         "          if [[ -e target/migration-readiness ]]; then\n",
         "            sudo chown --recursive \"$(id -u):$(id -g)\" target/migration-readiness\n",
@@ -111,7 +111,7 @@ fn migration_readiness_restores_privileged_evidence_before_consumers() -> Result
         return Err("evidence ownership restoration must immediately follow privileged execution".to_owned());
     }
     for consumer in [
-        "hashFiles('target/migration-readiness/evidence-v1.json')",
+        "- name: Validate serial evidence",
         "scripts/migration-readiness.py validate-evidence",
         "actions/upload-artifact@",
     ] {
@@ -135,8 +135,10 @@ fn migration_readiness_protects_focused_task_evidence() -> Result<(), String> {
     for required in [
         "task:\n        description: Optional exact task ID",
         "TASK: ${{ inputs.task }}",
-        "EVIDENCE_ARTIFACT: ${{ inputs.task == '' && format('migration-readiness-{0}-{1}', inputs.tier, github.sha) || format('migration-readiness-focused-{0}-{1}', inputs.tier, github.sha) }}",
-        "name: ${{ env.EVIDENCE_ARTIFACT }}",
+        "artifact=\"migration-readiness-focused-${TIER}-${GITHUB_SHA}-${TASK}\"",
+        "name: ${{ steps.selection.outputs.artifact }}",
+        "(inputs.tier != 'pre-release' || inputs.task != '')",
+        "name: migration-readiness-pre-release-${{ github.sha }}",
     ] {
         if !workflow.contains(required) {
             return Err(format!(
@@ -145,15 +147,81 @@ fn migration_readiness_protects_focused_task_evidence() -> Result<(), String> {
         }
     }
 
-    if workflow.matches("task_arguments=(--task \"${TASK}\")").count() != 4
-        || workflow.matches("\"${task_arguments[@]}\"").count() != 4
+    if workflow.matches("task_arguments=(--task \"${TASK}\")").count() != 3
+        || workflow.matches("\"${task_arguments[@]}\"").count() != 3
     {
         return Err(
-            "migration-readiness workflow must pass one quoted task selection to plan, both runners, and evidence validation"
+            "migration-readiness workflow must pass one quoted task selection to plan, runner, and evidence validation"
                 .to_owned(),
         );
     }
 
+    Ok(())
+}
+
+#[test]
+fn migration_readiness_parallel_workers_are_bounded_and_exactly_bound() -> Result<(), String> {
+    let workflow = fs::read_to_string(repository_root().join(".github/workflows/migration-readiness.yml"))
+        .map_err(|error| format!("failed to read migration-readiness workflow: {error}"))?;
+    for required in [
+        "fail-fast: false",
+        "max-parallel: 4",
+        "matrix: ${{ fromJSON(needs.plan.outputs.workers) }}",
+        "python3 scripts/migration-readiness.py coordinator-id",
+        "COORDINATOR_ID: ${{ needs.plan.outputs.coordinator }}",
+        "WORKER_ID: ${{ matrix.task }}",
+        "BOXFERRY_BINARY_SHA256: ${{ needs.build.outputs.binary_sha256 }}",
+        "--coordinator-id \"${COORDINATOR_ID}\"",
+        "--worker-id \"${WORKER_ID}\"",
+        "--boxferry-binary-sha256 \"${BOXFERRY_BINARY_SHA256}\"",
+        "sha256sum --check --strict boxferry.sha256",
+        "chmod 0755 boxferry",
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+        "if: always() && matrix.privileged",
+        "sudo chown --recursive \"$(id -u):$(id -g)\" target/migration-readiness",
+        "name: Upload complete aggregate evidence",
+        "path: target/migration-readiness/evidence-v2.json",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("parallel migration-readiness workflow is missing `{required}`"));
+        }
+    }
+    if workflow.contains("uuidgen") {
+        return Err("migration-readiness workflow must use its portable UUID helper".to_owned());
+    }
+    if workflow.matches("max-parallel:").count() != 1 {
+        return Err("migration-readiness must have one global worker concurrency cap".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn privileged_migration_readiness_cargo_keeps_the_runner_toolchain() -> Result<(), String> {
+    let root = repository_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/migration-readiness.yml"))
+        .map_err(|error| format!("failed to read migration-readiness workflow: {error}"))?;
+    let catalogue = fs::read_to_string(root.join("fixtures/conformance/migration-readiness/tiers.toml"))
+        .map_err(|error| format!("failed to read migration-readiness catalogue: {error}"))?;
+    let quadlet = catalogue
+        .split("id = \"quadlet-lens-candidate\"")
+        .nth(1)
+        .ok_or("catalogue must retain the QuadletLens candidate")?;
+    let quadlet = quadlet.split("[[tasks]]").next().unwrap_or(quadlet);
+    for required in ["privileged = true", "required-tools = [\"cargo\", \"git\", \"podman\"]"] {
+        if !quadlet.contains(required) {
+            return Err(format!("privileged QuadletLens candidate must retain `{required}`"));
+        }
+    }
+    for required in [
+        "CARGO_HOME=\"/home/runner/.cargo\"",
+        "RUSTUP_HOME=\"/home/runner/.rustup\"",
+    ] {
+        if workflow.matches(required).count() != 2 {
+            return Err(format!(
+                "both privileged migration-readiness runners must retain `{required}`"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1983,7 +2051,7 @@ paperless_clear_probe_state fixture.sock safe-prefix
             "paperless-cleanup-contract",
         ])
         .arg(root.join("scripts/lib/paperless-application.sh"))
-        .current_dir(&root)
+        .current_dir(root)
         .output()
         .map_err(|error| format!("failed to exercise Paperless cleanup helper: {error}"))?;
     if !output.status.success() {
@@ -3419,6 +3487,9 @@ fn vscode_workspace_configuration_covers_local_development() -> Result<(), Strin
             &[
                 "BoxFerry: Format, lint, and test all",
                 "scripts/check-all.sh",
+                "BoxFerry: Format and lint only (no tests)",
+                "scripts/format-lint.sh",
+                "\"args\": [\"--fix\"]",
                 "BoxFerry: Required Rust checks",
                 "BoxFerry: Build workspace",
                 "BoxFerry: Test",
@@ -3436,6 +3507,60 @@ fn vscode_workspace_configuration_covers_local_development() -> Result<(), Strin
         }
     }
 
+    Ok(())
+}
+
+#[test]
+fn lightweight_format_lint_task_is_bounded_and_executes_no_tests() -> Result<(), String> {
+    let root = repository_root();
+    let script = fs::read_to_string(root.join("scripts/format-lint.sh"))
+        .map_err(|error| format!("failed to read format/lint runner: {error}"))?;
+    for required in [
+        "--check|--fix",
+        "BOXFERRY_LINT_JOBS",
+        "cargo fmt --all",
+        "scripts/check-files.sh",
+        "git --no-pager diff --check",
+        "git --no-pager diff --cached --check",
+        "actionlint",
+        "zizmor .github/workflows",
+        "cargo ci-clippy",
+        "no tests were executed",
+    ] {
+        if !script.contains(required) {
+            return Err(format!("format/lint runner is missing `{required}`"));
+        }
+    }
+    for forbidden in [
+        "cargo test",
+        "cargo ci-test",
+        "migration-readiness.py run",
+        "llvm-cov",
+        "cargo semver-checks",
+        "podman-live-conformance",
+    ] {
+        if script.contains(forbidden) {
+            return Err(format!("format/lint runner must not dispatch `{forbidden}`"));
+        }
+    }
+    for document in [
+        "README.md",
+        "AGENTS.md",
+        "docs/testing.md",
+        "docs/development-environment.md",
+        "docs/public/development/testing/index.md",
+        "docs/public/development/contributing/index.md",
+    ] {
+        let text =
+            fs::read_to_string(root.join(document)).map_err(|error| format!("failed to read {document}: {error}"))?;
+        if !text.contains("scripts/format-lint.sh")
+            || !(text.contains("no tests")
+                || text.contains("without tests")
+                || text.contains("without executing any tests"))
+        {
+            return Err(format!("{document} must explain the no-tests format/lint task"));
+        }
+    }
     Ok(())
 }
 
@@ -3548,7 +3673,7 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
             "AGENTS.md",
             &[
                 "## GitHub issue-to-PR workflow",
-                "Run `./scripts/check-all.sh`",
+                "./scripts/check-all.sh",
                 "hard gate against commit, push",
                 "primary agent runs this workflow",
                 "high reasoning effort",
@@ -3562,7 +3687,7 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
             &[
                 "## Issue-to-PR contribution workflow",
                 "./scripts/check-all.sh",
-                "All steps must pass before the change is committed, pushed, or submitted",
+                "Either the local complete gate or all required GitHub checks",
                 "primary agent uses high reasoning effort",
                 "Worker agents",
                 "never perform Git or GitHub writes",
@@ -3572,8 +3697,9 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
     ] {
         let contents =
             fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        let flattened = contents.split_whitespace().collect::<Vec<_>>().join(" ");
         for value in required {
-            if !contents.contains(value) {
+            if !contents.contains(value) && !flattened.contains(value) {
                 return Err(format!("{path} is missing `{value}`"));
             }
         }
@@ -3858,6 +3984,8 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "\"path\": \".boxferry-workspace/quadlet-lens\"",
         "\"label\": \"Workspace: Format, lint, and test all repositories\"",
         "\"dependsOrder\": \"sequence\"",
+        "\"label\": \"Workspace: Format and lint BoxFerry only (no tests)\"",
+        "${workspaceFolder:BoxFerry}/scripts/format-lint.sh",
         "\"label\": \"Workspace: Check BoxFerry\"",
         "\"label\": \"Workspace: Check ComposeLens\"",
         "\"label\": \"Workspace: Check QuadletLens\"",
@@ -5181,11 +5309,21 @@ fn linux_gate_modes_and_failure_propagation_are_correct() -> Result<(), Box<dyn 
     let root = repository_root();
     let result = Command::new("bash")
         .arg("scripts/test-check-all.sh")
-        .current_dir(root)
+        .current_dir(&root)
         .output()?;
     assert!(
         result.status.success(),
         "gate mode regression failed:\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let result = Command::new("bash")
+        .arg("scripts/test-format-lint.sh")
+        .current_dir(&root)
+        .output()?;
+    assert!(
+        result.status.success(),
+        "format/lint task regression failed:\n{}\n{}",
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );

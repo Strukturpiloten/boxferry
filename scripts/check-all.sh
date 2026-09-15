@@ -170,7 +170,7 @@ run_step "Test observability application contracts" bash scripts/test-observabil
 run_step "Test Supabase application timeout boundary" bash scripts/test-supabase-application.sh
 run_step "Test migration-readiness contracts" python3 scripts/test-migration-readiness.py
 run_step "Run offline migration-readiness tier" python3 scripts/migration-readiness.py run \
-  --tier offline --evidence target/migration-readiness/offline-evidence-v1.json
+  --tier offline --evidence target/migration-readiness/offline-evidence-v2.json
 run_step "Validate release metadata and changelog" bash scripts/validate-release-metadata.sh
 run_step "Check whitespace errors" git --no-pager diff --check
 run_step "Lint GitHub Actions syntax" actionlint

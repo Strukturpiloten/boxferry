@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
 import importlib.util
 import json
@@ -106,7 +107,7 @@ class MigrationReadinessTests(unittest.TestCase):
             task_results.append(result)
 
         evidence = {
-            "schema_version": 1,
+            "schema_version": 2,
             "outcome": "passed" if state == "passed" else "failed",
             "run": {
                 "id": "0a20a918-93bd-43a2-b346-8f7dd63b08be",
@@ -120,12 +121,18 @@ class MigrationReadinessTests(unittest.TestCase):
                 "actual_concurrency": 1,
                 "tier_deadline_seconds": tier["tier-deadline-seconds"],
                 "wall_seconds": 60.0,
+                "total_worker_wall_seconds": 60.0,
                 "timed_out": False,
                 "fresh": True,
                 "selection": {
                     "kind": "task" if task_id is not None else "tier",
                     "task": task_id,
                 },
+                "coordinator_id": "0a20a918-93bd-43a2-b346-8f7dd63b08be",
+                "catalogue_sha256": MODULE.catalogue_digest(MODULE.CATALOGUE),
+                "boxferry_binary_sha256": None,
+                "worker_id": task_id or "serial",
+                "evidence_kind": "worker" if task_id is not None else "serial",
                 "lens_revisions": lens_revisions,
             },
             "manual_prerequisites": tier["manual-prerequisites"],
@@ -133,6 +140,63 @@ class MigrationReadinessTests(unittest.TestCase):
             "gaps": catalogue["gaps"],
         }
         return evidence, revision
+
+    def collector_fixture(
+        self, root: pathlib.Path
+    ) -> tuple[str, str, str, list[pathlib.Path], list[dict[str, object]]]:
+        coordinator = "0a20a918-93bd-43a2-b346-8f7dd63b08be"
+        binary_sha256 = "a" * 64
+        expected = MODULE.selected_tasks(MODULE.load_catalogue(), "pre-release", None)[1]
+        paths: list[pathlib.Path] = []
+        documents: list[dict[str, object]] = []
+        revision = "1" * 40
+        for index, task in enumerate(expected):
+            document, revision = self.evidence_fixture(
+                tier_id="pre-release", task_id=task["id"]
+            )
+            second = (index // 4) * 2
+            started_at = f"2026-09-10T12:00:{second:02d}Z"
+            finished_at = f"2026-09-10T12:00:{second + 1:02d}Z"
+            document["tasks"][0]["started_at"] = started_at
+            document["tasks"][0]["finished_at"] = finished_at
+            document["run"].update(
+                started_at=started_at,
+                finished_at=finished_at,
+                coordinator_id=coordinator,
+                worker_id=task["id"],
+                evidence_kind="worker",
+                boxferry_binary_sha256=binary_sha256,
+            )
+            path = root / f"{task['id']}.json"
+            paths.append(path)
+            documents.append(document)
+        return coordinator, binary_sha256, revision, paths, documents
+
+    def collect_args(
+        self,
+        coordinator: str,
+        binary_sha256: str,
+        revision: str,
+        paths: list[pathlib.Path],
+        output: pathlib.Path,
+    ) -> argparse.Namespace:
+        arguments = [item for path in paths for item in ("--evidence", str(path))]
+        return MODULE.parser().parse_args(
+            [
+                "collect-evidence",
+                "--tier",
+                "pre-release",
+                "--revision",
+                revision,
+                "--coordinator-id",
+                coordinator,
+                "--boxferry-binary-sha256",
+                binary_sha256,
+                *arguments,
+                "--evidence-output",
+                str(output),
+            ]
+        )
 
     def test_tier_plans_are_exact_and_gaps_never_pass(self) -> None:
         expected = {
@@ -145,7 +209,10 @@ class MigrationReadinessTests(unittest.TestCase):
             ],
             "pre-release": [
                 "offline-application-contracts",
-                "podman-complete-matrix",
+                "podman-complete-matrix-shard-1",
+                "podman-complete-matrix-shard-2",
+                "podman-complete-matrix-shard-3",
+                "podman-complete-matrix-shard-4",
                 "nextcloud-application",
                 "forgejo-root-modes",
                 "paperless-application",
@@ -159,7 +226,7 @@ class MigrationReadinessTests(unittest.TestCase):
         tier_deadlines = {
             "offline": 1200,
             "trusted-live": 2700,
-            "pre-release": 19800,
+            "pre-release": 1200,
         }
         for tier, tasks in expected.items():
             output = subprocess.run(
@@ -171,7 +238,7 @@ class MigrationReadinessTests(unittest.TestCase):
             )
             plan = json.loads(output.stdout)
             self.assertEqual([task["id"] for task in plan["tasks"]], tasks)
-            self.assertEqual(plan["max_concurrency"], 1)
+            self.assertEqual(plan["max_concurrency"], 4 if tier == "pre-release" else 1)
             self.assertEqual(plan["tier_deadline_seconds"], tier_deadlines[tier])
             self.assertEqual(len(plan["gaps"]), 4)
             self.assertFalse(any(gap["state"] == "passed" for gap in plan["gaps"]))
@@ -252,8 +319,33 @@ class MigrationReadinessTests(unittest.TestCase):
 
     def test_complete_podman_matrix_retains_disk_growth_cap(self) -> None:
         catalogue = MODULE.load_catalogue()
-        task = MODULE.by_id(catalogue["tasks"], "podman-complete-matrix", "task")
+        task = MODULE.by_id(catalogue["tasks"], "podman-complete-matrix-shard-1", "task")
         self.assertEqual(task["maximum-disk-growth-mib"], 10240)
+
+    def test_matrix_shards_cover_all_rows_and_limitations_once(self) -> None:
+        shards = [
+            MODULE.expected_matrix_evidence(f"podman-complete-matrix-shard-{index}")
+            for index in range(1, 5)
+        ]
+        self.assertTrue(all(shard is not None for shard in shards))
+        self.assertEqual([len(shard["row_ids"]) for shard in shards], [12, 12, 12, 12])
+        row_ids = [identifier for shard in shards for identifier in shard["row_ids"]]
+        limitation_ids = [
+            identifier for shard in shards for identifier in shard["limitation_row_ids"]
+        ]
+        self.assertEqual(len(row_ids), len(set(row_ids)))
+        self.assertEqual(set(row_ids), set(MODULE.tabular_ids(MODULE.PODMAN_MATRIX)))
+        self.assertEqual(len(limitation_ids), len(set(limitation_ids)))
+        self.assertEqual(
+            set(limitation_ids), set(MODULE.tabular_ids(MODULE.PODMAN_LIMITATIONS))
+        )
+        live_runner = (ROOT / "scripts/podman-live-conformance.sh").read_text(encoding="utf-8")
+        for required in (
+            '--matrix-shard <N/4>',
+            'if ((cells != 12)); then',
+            'if ((limited_cells != expected_limited_cells)); then',
+        ):
+            self.assertIn(required, live_runner)
 
     def test_catalogue_rejects_a_successful_gap(self) -> None:
         source = MODULE.CATALOGUE.read_text(encoding="utf-8")
@@ -269,12 +361,12 @@ class MigrationReadinessTests(unittest.TestCase):
 
         mutations = {
             "unknown top-level": source.replace(
-                'evidence-schema = "docs/schemas/migration-readiness-evidence-v1.schema.json"',
-                'evidence-schema = "docs/schemas/migration-readiness-evidence-v1.schema.json"\nunknown-top = true',
+                'evidence-schema = "docs/schemas/migration-readiness-evidence-v2.schema.json"',
+                'evidence-schema = "docs/schemas/migration-readiness-evidence-v2.schema.json"\nunknown-top = true',
                 1,
             ),
-            "missing top-level": source.replace("schema = 1\n", "", 1),
-            "mistyped top-level": source.replace("schema = 1", 'schema = "1"', 1),
+            "missing top-level": source.replace("schema = 2\n", "", 1),
+            "mistyped top-level": source.replace("schema = 2", 'schema = "2"', 1),
             "unknown gap": source.replace(
                 'id = "gpu"',
                 'id = "gpu"\nunknown-gap = true',
@@ -466,6 +558,7 @@ class MigrationReadinessTests(unittest.TestCase):
 
         changed = copy.deepcopy(evidence)
         changed["run"]["wall_seconds"] = changed["run"]["tier_deadline_seconds"] + 1
+        changed["run"]["total_worker_wall_seconds"] = changed["run"]["wall_seconds"]
         changed["outcome"] = "failed"
         with self.assertRaisesRegex(MODULE.ContractError, "without timing out"):
             MODULE.validate_evidence(changed, "offline", revision)
@@ -762,13 +855,15 @@ class MigrationReadinessTests(unittest.TestCase):
 
     def test_unavailable_and_not_run_tasks_fill_every_event_slot(self) -> None:
         revision = "1" * 40
+        catalogue = MODULE.load_catalogue()
+        task_count = len(MODULE.selected_tasks(catalogue, "trusted-live", None)[1])
         with tempfile.TemporaryDirectory() as temporary:
             evidence_path = pathlib.Path(temporary) / "evidence.json"
             args = MODULE.parser().parse_args(
                 [
                     "run",
                     "--tier",
-                    "pre-release",
+                    "trusted-live",
                     "--revision",
                     revision,
                     "--evidence",
@@ -789,13 +884,21 @@ class MigrationReadinessTests(unittest.TestCase):
             (call.args[0], call.args[2])
             for call in emit.call_args_list
             if call.args[2] in {"PASS", "FAIL", "GAP"}
-        ]
+            ]
         self.assertEqual(status, 1)
-        self.assertEqual([step for step, _state in terminal], list(range(1, 22)))
+        final_step = task_count * 2 + 1
+        self.assertEqual(
+            [step for step, _state in terminal], list(range(1, final_step + 1))
+        )
         self.assertTrue(all(state == "GAP" for _step, state in terminal[:-1]))
-        self.assertEqual(terminal[-1], (21, "PASS"))
+        self.assertEqual(terminal[-1], (final_step, "PASS"))
         self.assertEqual(evidence["tasks"][0]["state"], "unavailable")
         self.assertTrue(all(task["state"] == "not-run" for task in evidence["tasks"][1:]))
+
+    def test_run_rejects_unfiltered_pre_release_before_execution(self) -> None:
+        args = MODULE.parser().parse_args(["run", "--tier", "pre-release"])
+        with self.assertRaisesRegex(MODULE.ContractError, "parallel GitHub coordinator"):
+            MODULE.run(args)
 
     def test_run_rejects_abbreviated_revision_before_execution(self) -> None:
         output = subprocess.run(
@@ -858,10 +961,164 @@ class MigrationReadinessTests(unittest.TestCase):
             "migration-readiness-pre-release-${{ github.sha }}",
             "--tier pre-release",
             '--revision "${GITHUB_SHA}"',
+            "--require-aggregate",
             "--require-success",
             "needs: [validate, semver, migration-readiness-evidence]",
         ):
             self.assertIn(required, release)
+
+    def test_collector_requires_every_bound_pre_release_worker(self) -> None:
+        coordinator = "0a20a918-93bd-43a2-b346-8f7dd63b08be"
+        binary_sha256 = "a" * 64
+        catalogue = MODULE.load_catalogue()
+        expected = MODULE.selected_tasks(catalogue, "pre-release", None)[1]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            arguments = []
+            revision = "1" * 40
+            for index, task in enumerate(expected):
+                document, revision = self.evidence_fixture(
+                    tier_id="pre-release", task_id=task["id"]
+                )
+                second = (index // 4) * 2
+                started_at = f"2026-09-10T12:00:{second:02d}Z"
+                finished_at = f"2026-09-10T12:00:{second + 1:02d}Z"
+                document["tasks"][0]["started_at"] = started_at
+                document["tasks"][0]["finished_at"] = finished_at
+                document["run"].update(
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    coordinator_id=coordinator,
+                    worker_id=task["id"],
+                    evidence_kind="worker",
+                    boxferry_binary_sha256=binary_sha256,
+                )
+                path = root / f"{task['id']}.json"
+                MODULE.atomic_json(path, document)
+                arguments.extend(("--evidence", str(path)))
+            output = root / "aggregate.json"
+            args = MODULE.parser().parse_args([
+                "collect-evidence", "--tier", "pre-release", "--revision", revision,
+                "--coordinator-id", coordinator, *arguments,
+                "--boxferry-binary-sha256", binary_sha256,
+                "--evidence-output", str(output),
+            ])
+            self.assertEqual(MODULE.collect(args), 0)
+            MODULE.validate_evidence(
+                json.loads(output.read_text(encoding="utf-8")), "pre-release", revision
+            )
+            missing = arguments[:-2]
+            args = MODULE.parser().parse_args([
+                "collect-evidence", "--tier", "pre-release", "--revision", revision,
+                "--coordinator-id", coordinator, *missing,
+                "--boxferry-binary-sha256", binary_sha256,
+                "--evidence-output", str(output),
+            ])
+            with self.assertRaisesRegex(MODULE.ContractError, "every selected task"):
+                MODULE.collect(args)
+
+    def test_collector_rejects_invalid_worker_sets_and_bindings(self) -> None:
+        def failed(documents: list[dict[str, object]]) -> None:
+            document = documents[0]
+            document["outcome"] = "failed"
+            document["tasks"][0]["state"] = "failed"
+            document["tasks"][0]["reason"] = "fixture failure"
+            document["tasks"][0]["observed"]["exit_status"] = 1
+
+        def timed_out(documents: list[dict[str, object]]) -> None:
+            failed(documents)
+            documents[0]["run"]["timed_out"] = True
+            documents[0]["tasks"][0]["observed"]["exit_status"] = 124
+            documents[0]["tasks"][0]["observed"]["timed_out"] = True
+
+        def wrong_coordinator(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"]["coordinator_id"] = "8b2cb4cf-7ec3-4ba2-b87e-d4eca327ca52"
+
+        def wrong_revision(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"]["revision"] = "2" * 40
+
+        def wrong_catalogue(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"]["catalogue_sha256"] = "0" * 64
+
+        def wrong_worker(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"]["worker_id"] = "wrong-worker"
+
+        def wrong_binary(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"]["boxferry_binary_sha256"] = "b" * 64
+
+        def wrong_shard(documents: list[dict[str, object]]) -> None:
+            shard = next(
+                document
+                for document in documents
+                if document["tasks"][0]["id"] == "podman-complete-matrix-shard-1"
+            )
+            shard["tasks"][0]["matrix_evidence"]["shard"] = "2/4"
+
+        def wrong_matrix_digest(documents: list[dict[str, object]]) -> None:
+            shard = next(
+                document
+                for document in documents
+                if document["tasks"][0]["id"] == "podman-complete-matrix-shard-1"
+            )
+            shard["tasks"][0]["matrix_evidence"]["matrix_sha256"] = "0" * 64
+
+        def incomplete_matrix(documents: list[dict[str, object]]) -> None:
+            shard = next(
+                document
+                for document in documents
+                if document["tasks"][0]["id"] == "podman-complete-matrix-shard-1"
+            )
+            shard["tasks"][0]["matrix_evidence"]["row_ids"].pop()
+
+        def excessive_concurrency(documents: list[dict[str, object]]) -> None:
+            for document in documents:
+                document["run"]["started_at"] = "2026-09-10T12:00:00Z"
+                document["run"]["finished_at"] = "2026-09-10T12:00:01Z"
+                document["tasks"][0]["started_at"] = "2026-09-10T12:00:00Z"
+                document["tasks"][0]["finished_at"] = "2026-09-10T12:00:01Z"
+
+        def aggregate_timeout(documents: list[dict[str, object]]) -> None:
+            document = documents[-1]
+            document["run"]["finished_at"] = "2026-09-10T12:20:01Z"
+            document["tasks"][0]["finished_at"] = "2026-09-10T12:20:01Z"
+
+        cases = [
+            ("failed", failed, "successful worker evidence"),
+            ("timed out", timed_out, "timed-out worker evidence"),
+            ("wrong coordinator", wrong_coordinator, "different coordinator"),
+            ("wrong revision", wrong_revision, "revision is"),
+            ("wrong catalogue", wrong_catalogue, "catalogue digest"),
+            ("wrong worker", wrong_worker, "worker identity"),
+            ("wrong binary", wrong_binary, "different BoxFerry binary"),
+            ("wrong shard", wrong_shard, "matrix_evidence"),
+            ("wrong matrix digest", wrong_matrix_digest, "matrix_evidence"),
+            ("incomplete matrix", incomplete_matrix, "minItems"),
+            ("excessive concurrency", excessive_concurrency, "concurrency limit"),
+            ("aggregate timeout", aggregate_timeout, "aggregate tier deadline"),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            coordinator, binary_sha256, revision, paths, original = self.collector_fixture(root)
+            for label, mutate, pattern in cases:
+                with self.subTest(label=label):
+                    documents = copy.deepcopy(original)
+                    mutate(documents)
+                    for path, document in zip(paths, documents, strict=True):
+                        MODULE.atomic_json(path, document)
+                    args = self.collect_args(
+                        coordinator, binary_sha256, revision, paths, root / "aggregate.json"
+                    )
+                    with self.assertRaisesRegex(MODULE.ContractError, pattern):
+                        MODULE.collect(args)
+
+            for path, document in zip(paths, original, strict=True):
+                MODULE.atomic_json(path, document)
+            duplicate_paths = [*paths, paths[0]]
+            args = self.collect_args(
+                coordinator, binary_sha256, revision, duplicate_paths, root / "aggregate.json"
+            )
+            with self.assertRaisesRegex(MODULE.ContractError, "duplicate worker"):
+                MODULE.collect(args)
 
 
 if __name__ == "__main__":

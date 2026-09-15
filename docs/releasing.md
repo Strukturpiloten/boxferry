@@ -16,7 +16,8 @@ Breaking pre-1.0 changes use `!`, a minor version, and concise migration notes.
 2. Review the release-plz PR, lockstep versions, internal requirements, and changelog.
 3. Merge the release PR.
 4. Run `migration-readiness.yml` with `pre-release` on that exact default-branch SHA and retain its
-   successful evidence artifact. The catalogue tier deadline leaves a margin before the workflow
+   successful aggregate evidence artifact. Focused worker artifacts are diagnostic and never
+   release evidence. The catalogue aggregate deadline leaves a margin before the workflow
    job timeout so failed or unfinished tasks can still be recorded and uploaded.
 5. Run the protected release workflow for that same SHA. Publication is blocked unless the shared
    helper validates successful pre-release evidence whose embedded revision matches exactly.

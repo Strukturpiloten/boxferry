@@ -29,6 +29,7 @@ source "${script_directory}/lib/supabase-application.sh"
 profile=""
 matrix_cell=""
 matrix_start_at=""
+matrix_shard=""
 candidate_cell=""
 matrix_start_reached=false
 engine="podman"
@@ -181,6 +182,7 @@ Options:
   --engine <PATH>       Outer Podman executable (default: podman).
   --matrix <PATH>       Reviewed tab-separated image matrix.
   --matrix-cell <ID>    Run one exact reviewed container cell.
+  --matrix-shard <N/4>  Run one deterministic quarter of the complete 48-row matrix.
   --candidate-cell <ID> Run one exact reviewed limitation candidate.
   --matrix-start-at <ID>
                         Resume full-container at one exact reviewed container cell.
@@ -234,6 +236,15 @@ while (($# > 0)); do
         exit 2
       fi
       matrix_cell="${2:-}"
+      shift 2
+      ;;
+    --matrix-shard)
+      if (($# < 2)); then
+        write_revalidation_initialization_failure preflight invalid-invocation
+        printf '%s\n' '--matrix-shard requires value.' >&2
+        exit 2
+      fi
+      matrix_shard="${2:-}"
       shift 2
       ;;
     --candidate-cell)
@@ -389,6 +400,21 @@ validate_catalogues
 if [[ -n "${matrix_start_at}" && "${profile}" != full-container ]]; then
   printf '%s\n' '--matrix-start-at is valid only with --profile full-container.' >&2
   exit 2
+fi
+
+if [[ -n "${matrix_shard}" ]]; then
+  if [[ "${profile}" != full-container ]]; then
+    printf '%s\n' '--matrix-shard is valid only with --profile full-container.' >&2
+    exit 2
+  fi
+  if [[ -n "${matrix_cell}" || -n "${matrix_start_at}" ]]; then
+    printf '%s\n' '--matrix-shard is mutually exclusive with --matrix-cell and --matrix-start-at.' >&2
+    exit 2
+  fi
+  if [[ ! "${matrix_shard}" =~ ^[1-4]/4$ ]]; then
+    printf '%s\n' '--matrix-shard must be one of 1/4, 2/4, 3/4, or 4/4.' >&2
+    exit 2
+  fi
 fi
 if [[ -n "${matrix_cell}" && -n "${matrix_start_at}" ]]; then
   printf '%s\n' '--matrix-cell and --matrix-start-at are mutually exclusive.' >&2
@@ -1069,7 +1095,20 @@ selected() {
   fi
   case "${profile}" in
     smoke) contains_smoke_cell "${id}" && [[ -z "${matrix_cell}" || "${id}" == "${matrix_cell}" ]] ;;
-    full-container) [[ "${lane}" == container && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] ;;
+    full-container)
+      [[ "${lane}" == container && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] || return 1
+      if [[ -z "${matrix_shard}" ]]; then
+        return 0
+      fi
+      local shard_index=${matrix_shard%/4}
+      awk -F '\t' -v expected="${id}" -v shard="${shard_index}" '
+        NF && $1 !~ /^#/ {
+          count++
+          if ($1 == expected) exit ((count - 1) % 4 == shard - 1 ? 0 : 1)
+        }
+        END { if (count == 0) exit 1 }
+      ' "${matrix_path}"
+      ;;
     application) [[ "${id}" == podman-6.1-rootless && (-z "${matrix_cell}" || "${id}" == "${matrix_cell}") ]] ;;
     forgejo-application)
       [[ ("${id}" == podman-arch-rootful || "${id}" == podman-6.1-rootless) &&
@@ -2820,6 +2859,34 @@ done < "${matrix_path}"
 if ((cells == 0)); then
   printf 'No matrix cells match profile %s.\n' "${profile}" >&2
   exit 1
+fi
+if [[ -n "${matrix_shard}" ]]; then
+  if ((cells != 12)); then
+    printf 'Matrix shard %s selected %d cells instead of 12.\n' \
+      "${matrix_shard}" "${cells}" >&2
+    exit 1
+  fi
+  shard_index=${matrix_shard%/4}
+  expected_limited_cells="$(awk -F '\t' \
+    -v shard="${shard_index}" \
+    -v limitations="${limitation_path}" '
+      BEGIN {
+        while ((getline line < limitations) > 0) {
+          split(line, fields, "\t")
+          if (fields[1] !~ /^#/ && fields[1] != "") limited[fields[1]] = 1
+        }
+      }
+      NF && $1 !~ /^#/ {
+        count++
+        if ((count - 1) % 4 == shard - 1 && limited[$1]) selected++
+      }
+      END { print selected + 0 }
+    ' "${matrix_path}")"
+  if ((limited_cells != expected_limited_cells)); then
+    printf 'Matrix shard %s exercised %d limitations instead of %d.\n' \
+      "${matrix_shard}" "${limited_cells}" "${expected_limited_cells}" >&2
+    exit 1
+  fi
 fi
 suite_elapsed=$(($(date +%s) - suite_started_at))
 printf '%s SUITE PASS profile=%s cells=%d limitations=%d duration=%s\n' \
