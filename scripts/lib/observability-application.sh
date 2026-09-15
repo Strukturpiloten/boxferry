@@ -3,9 +3,12 @@
 # Sourced by the live entry point; this file performs no work while sourced.
 # shellcheck disable=SC2016,SC2129,SC2154 # Remote expansion and runner globals are intentional.
 
+# shellcheck source=scripts/lib/compose-provider.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+
 readonly OBSERVABILITY_ADMIN_PASSWORD="boxferry-public-observability-admin-canary"
-readonly OBSERVABILITY_PROVIDER_VERSION="5.5.0"
-readonly OBSERVABILITY_PROVIDER_SHA256="c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b"
+readonly OBSERVABILITY_PROVIDER_VERSION="${BOXFERRY_COMPOSE_PROVIDER_VERSION}"
+readonly OBSERVABILITY_PROVIDER_SHA256="${BOXFERRY_COMPOSE_PROVIDER_SHA256}"
 readonly OBSERVABILITY_HTTP_PORT="13000"
 readonly OBSERVABILITY_ARCHIVE_MAX_BYTES="2147483648"
 readonly OBSERVABILITY_MIN_CPUS="2"
@@ -113,7 +116,7 @@ observability_validate_catalogues() {
     -v sha="${OBSERVABILITY_PROVIDER_SHA256}" '
     NF && $1 !~ /^#/ {
       if (NF != 8 || $1 != "docker-compose" || $2 != version ||
-          $3 != "https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64" ||
+        $3 != ("https://github.com/docker/compose/releases/download/v" version "/docker-compose-linux-x86_64") ||
           $4 != sha || $5 != "Apache-2.0" || $6 != "https://github.com/docker/compose" ||
           $7 != "downloaded-test-tool" || $8 != "linux/amd64") {
         printf "Invalid observability provider row at line %d: %s\\n", NR, $0 > "/dev/stderr"

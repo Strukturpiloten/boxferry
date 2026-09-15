@@ -5,8 +5,10 @@
 # migration-readiness selection remains with the protected tier catalogue.
 # shellcheck disable=SC2016,SC2129,SC2154
 
-SUPABASE_PROVIDER_VERSION="5.5.0"
-SUPABASE_PROVIDER_SHA256="c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b"
+# shellcheck source=scripts/lib/compose-provider.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+readonly SUPABASE_PROVIDER_VERSION="${BOXFERRY_COMPOSE_PROVIDER_VERSION}"
+readonly SUPABASE_PROVIDER_SHA256="${BOXFERRY_COMPOSE_PROVIDER_SHA256}"
 SUPABASE_HTTP_PORT="18000"
 SUPABASE_ARCHIVE_MAX_BYTES="5368709120"
 SUPABASE_MIN_CPUS="4"

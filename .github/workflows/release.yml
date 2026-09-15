@@ -221,12 +221,13 @@ jobs:
           for run_id in "${run_ids[@]}"; do
             if gh run download "${run_id}" --name "${EVIDENCE_NAME}" --dir "${evidence_directory}"; then
               python3 scripts/migration-readiness.py validate-evidence \
-                --evidence "${evidence_directory}/evidence-v1.json" \
+                --evidence "${evidence_directory}/evidence-v2.json" \
                 --tier pre-release \
                 --revision "${GITHUB_SHA}" \
+                --require-aggregate \
                 --require-success
-              install -D -m 0600 "${evidence_directory}/evidence-v1.json" \
-                target/release-evidence/evidence-v1.json
+              install -D -m 0600 "${evidence_directory}/evidence-v2.json" \
+                target/release-evidence/evidence-v2.json
               exit 0
             fi
           done
@@ -237,7 +238,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-migration-readiness-${{ github.sha }}
-          path: target/release-evidence/evidence-v1.json
+          path: target/release-evidence/evidence-v2.json
           if-no-files-found: error
           retention-days: 90
 

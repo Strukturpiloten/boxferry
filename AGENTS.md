@@ -53,8 +53,10 @@ command, provenance, license, and redistribution status.
 ## Verification
 
 The workspace uses Rust 2024 and supports Rust 1.85.0 and newer. Focused `ci-*` aliases live in
-`.cargo/config.toml`. Run `./scripts/check-all.sh` after the final edit; never weaken a lint or
-replace the complete gate with a focused command before publication.
+`.cargo/config.toml`. Use `./scripts/format-lint.sh --fix` for bounded formatting and linting
+without tests. It is an iterative cleanliness aid, not validation evidence. Run `./scripts/check-all.sh`
+after the final edit; never weaken a lint or replace the complete gate
+with a focused command before publication.
 
 ## GitHub issue-to-PR workflow
 
@@ -65,7 +67,8 @@ When the user authorizes Git and GitHub writes:
 3. Fetch `origin/main`, verify synchronization, and create
    `TheRealBecks/issue<NUMBER>`.
 4. Complete and review the scoped change.
-5. Run `./scripts/check-all.sh`. A failed or incomplete run is a hard gate against commit, push,
+5. Run `./scripts/format-lint.sh --fix`, then `./scripts/check-all.sh`. A failed or incomplete
+   complete run is a hard gate against commit, push,
    and pull-request creation; a later edit invalidates the run.
 6. Stage explicit paths, run `git diff --cached --check`, review the staged diff, and create one
    intentional commit.
@@ -121,8 +124,10 @@ migration analysis. These are defaults, not permission grants.
   complete gate, and every authorized Git or GitHub write.
 
 The default `./scripts/check-all.sh` still formats before checking. `--check` runs the same
-complete gate without source formatting; it is not a reduced test tier. A later edit invalidates
-either result. Neither mode grants release, publication, or deployment authority.
+complete gate without source formatting; it is not a reduced test tier. `./scripts/format-lint.sh`
+supports the same modes, defaults to `--fix`, limits Clippy to two jobs unless
+`BOXFERRY_LINT_JOBS` is set, and executes no tests. A later edit invalidates complete-gate results.
+No mode grants release, publication, or deployment authority.
 
 ## Code discovery
 

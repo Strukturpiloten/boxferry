@@ -9,7 +9,9 @@
 - Superseded in part by:
   [ADR 0050](0050-executable-post-migration-supabase-bootstrap.md) for the authored SQL placement
   and ordering contract, and [ADR 0051](0051-peer-network-supabase-readiness.md)
-  for database readiness
+  for database readiness, and
+  [ADR 0055](0055-parallel-readiness-and-local-quality-feedback.md) for pre-release scheduling;
+  the Supabase worker's internal ordering and resource limits remain unchanged
 
 ## Context
 

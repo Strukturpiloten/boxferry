@@ -43,6 +43,16 @@
     "version": "2.0.0",
     "tasks": [
       {
+        "label": "Workspace: Format and lint BoxFerry only (no tests)",
+        "type": "process",
+        "command": "${workspaceFolder:BoxFerry}/scripts/format-lint.sh",
+        "args": ["--fix"],
+        "options": {
+          "cwd": "${workspaceFolder:BoxFerry}",
+        },
+        "problemMatcher": "$rustc",
+      },
+      {
         "label": "Workspace: Check BoxFerry",
         "type": "process",
         "command": "${workspaceFolder:BoxFerry}/scripts/check-all.sh",

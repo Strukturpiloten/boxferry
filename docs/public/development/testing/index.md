@@ -1,6 +1,15 @@
 # Testing
 
-Run the complete deterministic gate before every pull request:
+For quick formatting and linting without tests, run:
+
+```console
+./scripts/format-lint.sh --fix
+```
+
+Use `--check` for a read-only pass. Clippy defaults to two jobs; set `BOXFERRY_LINT_JOBS=1` on a
+smaller computer. This command is a pre-push cleanliness aid, not proof that tests passed. Run the
+complete deterministic gate locally when resources permit; required GitHub checks run it for every
+pull request:
 
 ```console
 ./scripts/check-all.sh

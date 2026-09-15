@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tier:
-        description: Bounded catalogue tier to execute at the checked-out exact revision.
+        description: Bounded catalogue tier for the checked-out exact revision.
         required: true
         default: trusted-live
         type: choice
@@ -14,7 +14,7 @@ on:
           - trusted-live
           - pre-release
       task:
-        description: Optional exact task ID from the selected tier; empty runs the complete tier.
+        description: Optional exact task ID. Focused evidence is never release evidence.
         required: false
         type: string
 
@@ -22,23 +22,22 @@ permissions:
   contents: read
 
 concurrency:
-  group: migration-readiness-${{ github.workflow }}-${{ github.ref }}
+  group: migration-readiness-${{ github.ref }}-${{ inputs.tier }}
   cancel-in-progress: false
 
 jobs:
-  tier:
-    name: ${{ inputs.tier }}
-    # Privileged tiers run only from an explicitly selected revision in the primary repository.
+  serial:
+    name: ${{ inputs.tier }}${{ inputs.task != '' && format(' / {0}', inputs.task) || '' }}
     if: >-
       github.repository == 'Strukturpiloten/boxferry' &&
-      github.ref_name == github.event.repository.default_branch
+      github.ref_name == github.event.repository.default_branch &&
+      (inputs.tier != 'pre-release' || inputs.task != '')
     runs-on: ubuntu-24.04
-    # Catalogue deadlines leave 10/15/30 minutes for setup and evidence upload respectively.
-    timeout-minutes: ${{ inputs.tier == 'pre-release' && 360 || inputs.tier == 'trusted-live' && 60 || 30 }}
+    timeout-minutes: 115
     env:
       TIER: ${{ inputs.tier }}
       TASK: ${{ inputs.task }}
-      EVIDENCE_ARTIFACT: ${{ inputs.task == '' && format('migration-readiness-{0}-{1}', inputs.tier, github.sha) || format('migration-readiness-focused-{0}-{1}', inputs.tier, github.sha) }}
+      EVIDENCE_PATH: target/migration-readiness/evidence-v2.json
     steps:
       - name: Check out exact BoxFerry revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,99 +45,327 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Validate exact catalogue selection
+      - id: selection
+        name: Plan exact serial selection
         run: |
+          set -euo pipefail
           task_arguments=()
           if [[ -n "${TASK}" ]]; then
             task_arguments=(--task "${TASK}")
           fi
           python3 scripts/migration-readiness.py plan \
-            --tier "${TIER}" "${task_arguments[@]}" --format json
+            --tier "${TIER}" "${task_arguments[@]}" --format json > plan.json
+          privilege_count="$(jq '[.tasks[].privileged] | unique | length' plan.json)"
+          if [[ "${privilege_count}" != 1 ]]; then
+            printf '%s\n' 'Serial selection may not mix privileged and unprivileged tasks.' >&2
+            exit 2
+          fi
+          if [[ -n "${TASK}" ]]; then
+            artifact="migration-readiness-focused-${TIER}-${GITHUB_SHA}-${TASK}"
+          else
+            artifact="migration-readiness-${TIER}-${GITHUB_SHA}"
+          fi
+          {
+            printf 'privileged=%s\n' "$(jq -r 'all(.tasks[]; .privileged)' plan.json)"
+            printf 'needs_podman=%s\n' \
+              "$(jq -r 'any(.tasks[]; .required_tools | index("podman") != null)' plan.json)"
+            printf 'needs_compose=%s\n' \
+              "$(jq -r 'any(.tasks[]; .required_environment | index("BOXFERRY_COMPOSE_BIN") != null)' plan.json)"
+            printf 'needs_boxferry=%s\n' \
+              "$(jq -r 'any(.tasks[]; .required_environment | index("BOXFERRY_BIN") != null)' plan.json)"
+            printf 'artifact=%s\n' "${artifact}"
+          } >> "${GITHUB_OUTPUT}"
 
-      - name: Install outer Podman for trusted live tiers
-        if: env.TIER != 'offline'
+      - name: Install live prerequisites
+        if: steps.selection.outputs.needs_podman == 'true'
+        continue-on-error: true
         run: |
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman skopeo
 
-      - name: Build BoxFerry once for trusted live tiers
-        if: env.TIER != 'offline'
+      - name: Build exact-revision BoxFerry
+        if: steps.selection.outputs.needs_boxferry == 'true'
+        continue-on-error: true
         run: cargo build --locked --package boxferry --bin boxferry --features podman
 
-      - name: Download and verify Docker Compose provider
-        if: env.TIER != 'offline'
-        env:
-          COMPOSE_URL: https://github.com/docker/compose/releases/download/v5.5.0/docker-compose-linux-x86_64
-          COMPOSE_SHA256: c57ab918abd5b05ca7e7d0f275875dd1330a695074f309dc9eab1b49efafcd4b
+      - name: Download verified Docker Compose provider
+        if: steps.selection.outputs.needs_compose == 'true'
+        continue-on-error: true
         run: |
-          mkdir -p target/tools
-          curl --fail --location --retry 3 --output target/tools/docker-compose "${COMPOSE_URL}"
-          printf '%s  %s\n' "${COMPOSE_SHA256}" target/tools/docker-compose | sha256sum --check --strict
-          chmod +x target/tools/docker-compose
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
 
-      - name: Run offline tier through shared runner
-        if: env.TIER == 'offline'
-        run: |
-          task_arguments=()
-          if [[ -n "${TASK}" ]]; then
-            task_arguments=(--task "${TASK}")
-          fi
-          python3 scripts/migration-readiness.py run \
-            --tier "${TIER}" \
-            "${task_arguments[@]}" \
-            --revision "${GITHUB_SHA}" \
-            --evidence target/migration-readiness/evidence-v1.json
-
-      - name: Run trusted tier through shared runner
-        if: env.TIER != 'offline'
+      - name: Run bounded serial evidence
+        if: always() && steps.selection.outcome == 'success'
         env:
           BOXFERRY_BIN: ${{ github.workspace }}/target/debug/boxferry
           BOXFERRY_COMPOSE_BIN: ${{ github.workspace }}/target/tools/docker-compose
-          CARGO_HOME: /home/runner/.cargo
-          RUSTUP_HOME: /home/runner/.rustup
+          PRIVILEGED: ${{ steps.selection.outputs.privileged }}
         run: |
+          set -euo pipefail
           task_arguments=()
           if [[ -n "${TASK}" ]]; then
             task_arguments=(--task "${TASK}")
           fi
-          sudo env \
-            BOXFERRY_BIN="${BOXFERRY_BIN}" \
-            BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}" \
-            CARGO_HOME="${CARGO_HOME}" \
-            RUSTUP_HOME="${RUSTUP_HOME}" \
-            PATH="${PATH}" \
-            python3 scripts/migration-readiness.py run \
-            --tier "${TIER}" \
-            "${task_arguments[@]}" \
-            --revision "${GITHUB_SHA}" \
-            --evidence target/migration-readiness/evidence-v1.json
+          runner=(
+            python3 scripts/migration-readiness.py run
+            --tier "${TIER}" "${task_arguments[@]}"
+            --revision "${GITHUB_SHA}"
+            --evidence "${EVIDENCE_PATH}"
+          )
+          if [[ "${PRIVILEGED}" == true ]]; then
+            sudo env PATH="${PATH}" \
+              CARGO_HOME="/home/runner/.cargo" \
+              RUSTUP_HOME="/home/runner/.rustup" \
+              BOXFERRY_BIN="${BOXFERRY_BIN}" \
+              BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}" \
+              "${runner[@]}"
+          else
+            "${runner[@]}"
+          fi
 
       - name: Restore bounded evidence ownership
-        if: ${{ always() && env.TIER != 'offline' }}
+        if: always() && steps.selection.outputs.privileged == 'true'
         run: |
           if [[ -e target/migration-readiness ]]; then
             sudo chown --recursive "$(id -u):$(id -g)" target/migration-readiness
           fi
 
-      - name: Validate evidence against exact run
-        if: always() && hashFiles('target/migration-readiness/evidence-v1.json') != ''
+      - name: Validate serial evidence
+        if: always() && steps.selection.outcome == 'success'
         run: |
+          set -euo pipefail
           task_arguments=()
           if [[ -n "${TASK}" ]]; then
             task_arguments=(--task "${TASK}")
           fi
           python3 scripts/migration-readiness.py validate-evidence \
-            --evidence target/migration-readiness/evidence-v1.json \
-            --tier "${TIER}" \
-            "${task_arguments[@]}" \
-            --revision "${GITHUB_SHA}" \
-            --require-success
+            --evidence "${EVIDENCE_PATH}" --tier "${TIER}" \
+            "${task_arguments[@]}" --revision "${GITHUB_SHA}" --require-success
 
-      - name: Upload bounded migration-readiness evidence
+      - name: Upload bounded serial evidence
+        if: always() && steps.selection.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.selection.outputs.artifact }}
+          path: ${{ env.EVIDENCE_PATH }}
+          if-no-files-found: error
+          retention-days: 7
+
+  plan:
+    name: Pre-release exact-SHA plan
+    if: >-
+      github.repository == 'Strukturpiloten/boxferry' &&
+      github.ref_name == github.event.repository.default_branch &&
+      inputs.tier == 'pre-release' && inputs.task == ''
+    runs-on: ubuntu-24.04
+    outputs:
+      workers: ${{ steps.plan.outputs.workers }}
+      coordinator: ${{ steps.plan.outputs.coordinator }}
+    steps:
+      - name: Check out exact BoxFerry revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: plan
+        name: Bind exact catalogue and worker descriptors
+        run: |
+          set -euo pipefail
+          python3 scripts/migration-readiness.py plan --tier pre-release --format json > plan.json
+          jq -c '{include: [.tasks[] | {
+            task: .id,
+            privileged: .privileged,
+            needs_podman: (.required_tools | index("podman") != null),
+            needs_compose: (.required_environment | index("BOXFERRY_COMPOSE_BIN") != null)
+          }]}' plan.json | sed 's/^/workers=/' >> "${GITHUB_OUTPUT}"
+          printf 'coordinator=%s\n' \
+            "$(python3 scripts/migration-readiness.py coordinator-id)" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build exact-SHA BoxFerry once
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      binary_sha256: ${{ steps.binary.outputs.sha256 }}
+    steps:
+      - name: Check out exact BoxFerry revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build BoxFerry
+        run: cargo build --locked --package boxferry --bin boxferry --features podman
+      - id: binary
+        name: Bind binary revision and SHA-256
+        run: |
+          set -euo pipefail
+          mkdir -p target/migration-readiness/build
+          install -m 0755 target/debug/boxferry target/migration-readiness/build/boxferry
+          digest="$(sha256sum target/migration-readiness/build/boxferry | cut -d ' ' -f 1)"
+          printf '%s  %s\n' "${digest}" boxferry > target/migration-readiness/build/boxferry.sha256
+          printf '%s\n' "${GITHUB_SHA}" > target/migration-readiness/build/revision
+          printf 'sha256=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+      - name: Upload bound BoxFerry binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: migration-readiness-boxferry-${{ github.sha }}
+          path: target/migration-readiness/build
+          if-no-files-found: error
+          retention-days: 1
+
+  worker:
+    name: Pre-release / ${{ matrix.task }}
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    # Every inner task has its own smaller deadline; 115 minutes leaves setup and evidence margin.
+    timeout-minutes: 115
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.workers) }}
+    env:
+      EVIDENCE_PATH: target/migration-readiness/${{ matrix.task }}.json
+      BOXFERRY_BIN: ${{ github.workspace }}/target/migration-readiness/build/boxferry
+      BOXFERRY_COMPOSE_BIN: ${{ github.workspace }}/target/tools/docker-compose
+      BOXFERRY_BINARY_SHA256: ${{ needs.build.outputs.binary_sha256 }}
+      COORDINATOR_ID: ${{ needs.plan.outputs.coordinator }}
+      WORKER_ID: ${{ matrix.task }}
+    steps:
+      - name: Check out exact BoxFerry revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download bound BoxFerry binary
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: migration-readiness-boxferry-${{ github.sha }}
+          path: target/migration-readiness/build
+
+      - name: Verify bound BoxFerry binary
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cd target/migration-readiness/build
+          test "$(cat revision)" = "${GITHUB_SHA}"
+          sha256sum --check --strict boxferry.sha256
+          test "$(sha256sum boxferry | cut -d ' ' -f 1)" = "${BOXFERRY_BINARY_SHA256}"
+          chmod 0755 boxferry
+
+      - name: Install worker live prerequisites
+        if: matrix.needs_podman
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libcap2-bin podman skopeo
+
+      - name: Download verified Docker Compose provider
+        if: matrix.needs_compose
+        continue-on-error: true
+        run: |
+          source scripts/lib/compose-provider.sh
+          boxferry_install_compose_provider target/tools/docker-compose
+
+      - name: Run bounded worker
+        if: always()
+        env:
+          PRIVILEGED: ${{ matrix.privileged }}
+        run: |
+          set -euo pipefail
+          runner=(
+              python3 scripts/migration-readiness.py run
+              --tier pre-release
+              --task "${WORKER_ID}"
+              --revision "${GITHUB_SHA}"
+              --coordinator-id "${COORDINATOR_ID}"
+              --worker-id "${WORKER_ID}"
+              --evidence "${EVIDENCE_PATH}"
+          )
+          if [[ "${PRIVILEGED}" == true ]]; then
+            sudo env PATH="${PATH}" \
+              CARGO_HOME="/home/runner/.cargo" \
+              RUSTUP_HOME="/home/runner/.rustup" \
+              BOXFERRY_BIN="${BOXFERRY_BIN}" \
+              BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}" \
+              "${runner[@]}"
+          else
+            "${runner[@]}"
+          fi
+
+      - name: Restore bounded worker evidence ownership
+        if: always() && matrix.privileged
+        run: |
+          if [[ -e target/migration-readiness ]]; then
+            sudo chown --recursive "$(id -u):$(id -g)" target/migration-readiness
+          fi
+
+      - name: Validate worker evidence
+        if: always()
+        run: |
+          python3 scripts/migration-readiness.py validate-evidence \
+            --evidence "${EVIDENCE_PATH}" --tier pre-release \
+            --task "${WORKER_ID}" --revision "${GITHUB_SHA}" --require-success
+
+      - name: Upload bounded worker evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ env.EVIDENCE_ARTIFACT }}
-          path: target/migration-readiness/evidence-v1.json
+          name: migration-readiness-worker-${{ github.sha }}-${{ matrix.task }}
+          path: ${{ env.EVIDENCE_PATH }}
           if-no-files-found: error
-          retention-days: ${{ env.TIER == 'pre-release' && 30 || 7 }}
+          retention-days: 30
+
+  collect:
+    name: Collect exact-SHA pre-release evidence
+    needs: [plan, build, worker]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      BOXFERRY_BINARY_SHA256: ${{ needs.build.outputs.binary_sha256 }}
+      COORDINATOR_ID: ${{ needs.plan.outputs.coordinator }}
+    steps:
+      - name: Check out exact BoxFerry revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download every available worker fragment
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: migration-readiness-worker-${{ github.sha }}-*
+          path: target/migration-readiness/workers
+          merge-multiple: true
+      - name: Reject incomplete, stale, duplicate, or failed worker evidence
+        run: |
+          set -euo pipefail
+          mapfile -t evidence < <(find target/migration-readiness/workers -name '*.json' -type f | sort)
+          if ((${#evidence[@]} == 0)); then
+            printf '%s\n' 'No worker evidence was downloaded.' >&2
+            exit 2
+          fi
+          arguments=()
+          for item in "${evidence[@]}"; do
+            arguments+=(--evidence "${item}")
+          done
+          python3 scripts/migration-readiness.py collect-evidence \
+            --tier pre-release --revision "${GITHUB_SHA}" \
+            --coordinator-id "${COORDINATOR_ID}" \
+            --boxferry-binary-sha256 "${BOXFERRY_BINARY_SHA256}" \
+            "${arguments[@]}" --evidence-output target/migration-readiness/evidence-v2.json
+          python3 scripts/migration-readiness.py validate-evidence \
+            --evidence target/migration-readiness/evidence-v2.json \
+            --tier pre-release --revision "${GITHUB_SHA}" \
+            --require-aggregate --require-success
+      - name: Upload complete aggregate evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: migration-readiness-pre-release-${{ github.sha }}
+          path: target/migration-readiness/evidence-v2.json
+          if-no-files-found: error
+          retention-days: 30

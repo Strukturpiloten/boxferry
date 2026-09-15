@@ -1,5 +1,5 @@
-schema = 1
-evidence-schema = "docs/schemas/migration-readiness-evidence-v1.schema.json"
+schema = 2
+evidence-schema = "docs/schemas/migration-readiness-evidence-v2.schema.json"
 
 [[gaps]]
 id = "gpu"
@@ -52,8 +52,8 @@ tasks = [
 [[tiers]]
 id = "pre-release"
 description = "Exact-revision release evidence: offline contracts, complete reviewed Podman matrix, expensive applications, and candidate Lens consumers."
-max-concurrency = 1
-tier-deadline-seconds = 19800
+max-concurrency = 4
+tier-deadline-seconds = 1200
 manual-prerequisites = [
   "all trusted-live prerequisites",
   "at least 4 CPUs",
@@ -63,7 +63,10 @@ manual-prerequisites = [
 ]
 tasks = [
   "offline-application-contracts",
-  "podman-complete-matrix",
+  "podman-complete-matrix-shard-1",
+  "podman-complete-matrix-shard-2",
+  "podman-complete-matrix-shard-3",
+  "podman-complete-matrix-shard-4",
   "nextcloud-application",
   "forgejo-root-modes",
   "paperless-application",
@@ -158,22 +161,76 @@ required-environment = ["BOXFERRY_BIN"]
 command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "smoke", "--matrix-cell", "podman-6.1-rootless", "--engine", "podman"]
 
 [[tasks]]
-id = "podman-complete-matrix"
+id = "podman-complete-matrix-shard-1"
 kind = "command"
 privileged = true
 workload = "podman-live-core"
 sources = ["all digest-pinned container cells in fixtures/conformance/podman-live/matrix.tsv"]
 targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
 approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
-runtime-claim = "complete reviewed container distribution and root-mode matrix"
-deadline-seconds = 10800
+runtime-claim = "deterministic shard 1/4 of the complete reviewed container distribution and root-mode matrix"
+deadline-seconds = 3600
 minimum-memory-mib = 4096
 minimum-disk-mib = 12288
 maximum-rss-mib = 8192
 maximum-disk-growth-mib = 10240
 required-tools = ["podman"]
 required-environment = ["BOXFERRY_BIN"]
-command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "full-container", "--engine", "podman"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "full-container", "--matrix-shard", "1/4", "--engine", "podman"]
+
+[[tasks]]
+id = "podman-complete-matrix-shard-2"
+kind = "command"
+privileged = true
+workload = "podman-live-core"
+sources = ["deterministic shard 2/4 of all digest-pinned container cells in fixtures/conformance/podman-live/matrix.tsv"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
+runtime-claim = "deterministic shard 2/4 of the complete reviewed container distribution and root-mode matrix"
+deadline-seconds = 3600
+minimum-memory-mib = 4096
+minimum-disk-mib = 12288
+maximum-rss-mib = 8192
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "full-container", "--matrix-shard", "2/4", "--engine", "podman"]
+
+[[tasks]]
+id = "podman-complete-matrix-shard-3"
+kind = "command"
+privileged = true
+workload = "podman-live-core"
+sources = ["deterministic shard 3/4 of all digest-pinned container cells in fixtures/conformance/podman-live/matrix.tsv"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
+runtime-claim = "deterministic shard 3/4 of the complete reviewed container distribution and root-mode matrix"
+deadline-seconds = 3600
+minimum-memory-mib = 4096
+minimum-disk-mib = 12288
+maximum-rss-mib = 8192
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "full-container", "--matrix-shard", "3/4", "--engine", "podman"]
+
+[[tasks]]
+id = "podman-complete-matrix-shard-4"
+kind = "command"
+privileged = true
+workload = "podman-live-core"
+sources = ["deterministic shard 4/4 of all digest-pinned container cells in fixtures/conformance/podman-live/matrix.tsv"]
+targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]
+approved-losses = "fixtures/conformance/podman-live/scenarios.tsv and limitation catalogue"
+runtime-claim = "deterministic shard 4/4 of the complete reviewed container distribution and root-mode matrix"
+deadline-seconds = 3600
+minimum-memory-mib = 4096
+minimum-disk-mib = 12288
+maximum-rss-mib = 8192
+maximum-disk-growth-mib = 10240
+required-tools = ["podman"]
+required-environment = ["BOXFERRY_BIN"]
+command = ["bash", "scripts/podman-live-conformance.sh", "--profile", "full-container", "--matrix-shard", "4/4", "--engine", "podman"]
 
 [[tasks]]
 id = "nextcloud-application"

@@ -1,6 +1,13 @@
 # Contributing
 
-Use the Dev Container, then run:
+Use the Dev Container. For quick pre-push cleanup on a smaller computer, run:
+
+```console
+./scripts/format-lint.sh --fix
+```
+
+The VS Code task **BoxFerry: Format and lint only (no tests)** runs the same command. It executes
+no tests and is not validation evidence. Run the complete gate locally when resources permit:
 
 ```console
 ./scripts/check-all.sh
@@ -17,5 +24,6 @@ Before changing code:
 Do not silently discard configuration, infer a target version from the development machine, or
 put conversion rules in the CLI.
 
-Pull requests use the repository's issue-to-PR workflow. The complete local gate must pass after
-the final source or documentation change and before the commit is pushed.
+Pull requests use the repository's issue-to-PR workflow. The lightweight task must pass before a
+push. Either the complete local gate or every required GitHub check must pass after the final
+source or documentation change before merge.
