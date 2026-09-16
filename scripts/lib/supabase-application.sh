@@ -280,7 +280,8 @@ supabase_validate_catalogues() {
   local expected
   for expected in application.tsv application-probe.mjs compose.yaml db-init.sql \
     graph.tsv images.tsv kong.yml peer.compose.yaml postgres-components.tsv \
-    providers.tsv README.md routes.tsv success-contract.jq functions/main/index.ts; do
+    providers.tsv README.md realtime-readiness.mjs routes.tsv success-contract.jq \
+    functions/main/index.ts; do
     [[ -s "${fixture}/${expected}" ]] || {
       printf 'Missing Supabase fixture file: %s\n' "${expected}" >&2
       return 1
@@ -1003,6 +1004,36 @@ supabase_wait_running() {
   [[ "$(supabase_remote "${socket}" inspect --format '{{.State.Status}}' "${container}")" == running ]]
 }
 
+supabase_realtime_websocket_ready() {
+  local socket=$1 prefix=$2
+  local remaining_seconds=${SUPABASE_WAIT_REMAINING_SECONDS:-0}
+  local command_deadline_seconds
+  local -a command
+  # timed_operation reserves ten seconds after TERM for a forced kill. Do not
+  # let either that grace period or a late Podman invocation outlive the
+  # readiness deadline supplied by supabase_wait_for.
+  ((remaining_seconds > 10)) || return 1
+  command_deadline_seconds=$((remaining_seconds - 10))
+  command=(
+    exec
+    --env "BF_ANON_KEY=${SUPABASE_ANON_KEY}"
+    --env BF_SUPABASE_URL=http://kong:8000
+    --env "SUPABASE_WAIT_REMAINING_SECONDS=${command_deadline_seconds}"
+    "${prefix}-supabase-studio" node
+    /boxferry-fixture/realtime-readiness.mjs
+  )
+
+  if [[ -n "${started_outer:-}" && ! -S "${socket}" ]]; then
+    timed_operation "${command_deadline_seconds}s" \
+      'nested Podman Supabase Realtime readiness through matching container CLI' \
+      "${engine}" exec "${started_outer}" podman "${command[@]}"
+  else
+    timed_operation "${command_deadline_seconds}s" \
+      'nested Podman Supabase Realtime readiness through acquisition socket' \
+      "${engine}" --url "unix://${socket}" "${command[@]}"
+  fi
+}
+
 supabase_wait_application() {
   local socket=$1 prefix=$2 service
   if ! supabase_wait_for 600 'Supabase PostgreSQL peer SQL contract' \
@@ -1028,6 +1059,8 @@ supabase_wait_application() {
   supabase_wait_for 300 'Supavisor HTTP readiness' \
     supabase_remote "${socket}" exec "${prefix}-supabase-studio" node -e \
     "fetch('http://supavisor:4000/api/health').then(r=>{if(!r.ok)process.exit(1)})"
+  supabase_wait_for 90 'Supabase Realtime WebSocket readiness' \
+    supabase_realtime_websocket_ready "${socket}" "${prefix}"
 }
 
 supabase_enable_realtime_table() {

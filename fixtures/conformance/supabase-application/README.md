@@ -77,7 +77,8 @@ direct private service endpoints:
 - create a private Storage bucket, upload an object, and retrieve exact bytes;
 - invoke the authored Edge Runtime function with distinct seed and verify
   payloads and require their exact SHA-256 checksums;
-- require Studio, Postgres Meta, Realtime, and Supavisor HTTP readiness; and
+- require Studio, Postgres Meta, Realtime, and Supavisor HTTP readiness plus a disposable
+  Kong-routed Realtime WebSocket connection before each mutating application probe; and
 - repeat authentication, Realtime insertion, API reads, storage retrieval, and
   function execution after all eleven containers are recreated without their
   volumes.

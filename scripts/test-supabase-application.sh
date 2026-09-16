@@ -14,7 +14,9 @@ repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
 source "${library}"
 
 supabase_validate_catalogues
-node --test "$(supabase_fixture_root)/realtime-websocket.test.mjs"
+node --test \
+  "$(supabase_fixture_root)/realtime-readiness.test.mjs" \
+  "$(supabase_fixture_root)/realtime-websocket.test.mjs"
 [[ "${SUPABASE_REALTIME_DB_KEY}" == boxferry-rt-key1 ]]
 [[ "$(LC_ALL=C printf '%s' "${SUPABASE_REALTIME_DB_KEY}" | wc -c)" == 16 ]]
 compose_environment="$(supabase_compose_environment test-prefix test-run env)"
@@ -1204,6 +1206,9 @@ bash -c '
   supabase_wait_for() { shift 2; "$@"; }
   supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
   supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
+  supabase_realtime_websocket_ready() {
+    printf "realtime-websocket:%s:%s\n" "$1" "$2" >> "${marker}"
+  }
   supabase_remote() {
     [[ "$1" == test-socket ]]
     shift
@@ -1217,7 +1222,76 @@ bash -c '
 ' bash "${library}" "${database_peer_success_marker}"
 [[ "$(head -n 1 "${database_peer_success_marker}")" == peer-sql ]]
 mapfile -t database_peer_success_order < "${database_peer_success_marker}"
-[[ "${database_peer_success_order[*]}" == 'peer-sql remote:healthcheck run test-prefix-supabase-auth remote:healthcheck run test-prefix-supabase-rest remote:healthcheck run test-prefix-supabase-realtime remote:healthcheck run test-prefix-supabase-imgproxy remote:healthcheck run test-prefix-supabase-storage remote:healthcheck run test-prefix-supabase-functions remote:healthcheck run test-prefix-supabase-studio remote:healthcheck run test-prefix-supabase-kong running:test-prefix-supabase-meta running:test-prefix-supabase-supavisor remote:exec test-prefix-supabase-studio node -e fetch('\''http://meta:8080/health'\'').then(r=>{if(!r.ok)process.exit(1)}) remote:exec test-prefix-supabase-studio node -e fetch('\''http://supavisor:4000/api/health'\'').then(r=>{if(!r.ok)process.exit(1)})' ]]
+[[ "${database_peer_success_order[*]}" == 'peer-sql remote:healthcheck run test-prefix-supabase-auth remote:healthcheck run test-prefix-supabase-rest remote:healthcheck run test-prefix-supabase-realtime remote:healthcheck run test-prefix-supabase-imgproxy remote:healthcheck run test-prefix-supabase-storage remote:healthcheck run test-prefix-supabase-functions remote:healthcheck run test-prefix-supabase-studio remote:healthcheck run test-prefix-supabase-kong running:test-prefix-supabase-meta running:test-prefix-supabase-supavisor remote:exec test-prefix-supabase-studio node -e fetch('\''http://meta:8080/health'\'').then(r=>{if(!r.ok)process.exit(1)}) remote:exec test-prefix-supabase-studio node -e fetch('\''http://supavisor:4000/api/health'\'').then(r=>{if(!r.ok)process.exit(1)}) realtime-websocket:test-socket:test-prefix' ]]
+
+realtime_readiness_argv="${test_root}/realtime-readiness.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  engine=test-engine
+  timed_operation() { printf "%s\0" "$@" > "${marker}"; }
+  SUPABASE_WAIT_REMAINING_SECONDS=17 \
+    supabase_realtime_websocket_ready test-socket test-prefix
+' bash "${library}" "${realtime_readiness_argv}"
+mapfile -d '' -t realtime_readiness_arguments < "${realtime_readiness_argv}"
+[[ "${#realtime_readiness_arguments[@]}" == 15 ]]
+[[ "${realtime_readiness_arguments[0]}" == 7s ]]
+[[ "${realtime_readiness_arguments[1]}" == 'nested Podman Supabase Realtime readiness through acquisition socket' ]]
+[[ "${realtime_readiness_arguments[2]}" == test-engine ]]
+[[ "${realtime_readiness_arguments[3]}" == --url ]]
+[[ "${realtime_readiness_arguments[4]}" == unix://test-socket ]]
+[[ "${realtime_readiness_arguments[5]}" == exec ]]
+[[ "${realtime_readiness_arguments[6]}" == --env ]]
+[[ "${realtime_readiness_arguments[7]}" == BF_ANON_KEY=* ]]
+[[ "${realtime_readiness_arguments[8]}" == --env ]]
+[[ "${realtime_readiness_arguments[9]}" == BF_SUPABASE_URL=http://kong:8000 ]]
+[[ "${realtime_readiness_arguments[10]}" == --env ]]
+[[ "${realtime_readiness_arguments[11]}" == SUPABASE_WAIT_REMAINING_SECONDS=7 ]]
+[[ "${realtime_readiness_arguments[12]}" == test-prefix-supabase-studio ]]
+[[ "${realtime_readiness_arguments[13]}" == node ]]
+[[ "${realtime_readiness_arguments[14]}" == /boxferry-fixture/realtime-readiness.mjs ]]
+if tr '\0' '\n' < "${realtime_readiness_argv}" |
+  grep --extended-regexp --quiet 'BF_(SERVICE_KEY|TEST_EMAIL|TEST_PASSWORD)='; then
+  printf '%s\n' 'Realtime readiness received unrelated protected application values.' >&2
+  exit 1
+fi
+
+late_realtime_readiness_marker="${test_root}/late-realtime-readiness.marker"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  engine=test-engine
+  timed_operation() { printf "invoked\n" > "${marker}"; }
+  SUPABASE_WAIT_REMAINING_SECONDS=10 \
+    supabase_realtime_websocket_ready test-socket test-prefix
+' bash "${library}" "${late_realtime_readiness_marker}"; then
+  printf '%s\n' 'Late Realtime readiness attempt ignored the transport kill grace.' >&2
+  exit 1
+fi
+[[ ! -e "${late_realtime_readiness_marker}" ]]
+
+realtime_readiness_failure_marker="${test_root}/realtime-readiness-failure.marker"
+if bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  marker=$2
+  supabase_wait_for() { shift 2; "$@"; }
+  supabase_database_sql_contract() { printf "peer-sql\n" >> "${marker}"; }
+  supabase_run_healthcheck() { printf "health:%s\n" "$2" >> "${marker}"; }
+  supabase_wait_running() { printf "running:%s\n" "$2" >> "${marker}"; }
+  supabase_remote() { printf "remote:%s\n" "$*" >> "${marker}"; }
+  supabase_realtime_websocket_ready() {
+    printf "realtime-websocket-failed:%s:%s\n" "$1" "$2" >> "${marker}"
+    return 1
+  }
+  supabase_wait_application test-socket test-prefix
+' bash "${library}" "${realtime_readiness_failure_marker}"; then
+  printf '%s\n' 'Failed Realtime WebSocket readiness incorrectly allowed application readiness.' >&2
+  exit 1
+fi
+[[ "$(tail -n 1 "${realtime_readiness_failure_marker}")" == realtime-websocket-failed:test-socket:test-prefix ]]
 
 service_health_failure_marker="${test_root}/service-health-failure.marker"
 if bash -c '

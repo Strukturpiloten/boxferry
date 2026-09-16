@@ -489,6 +489,7 @@ fn append_supabase_fixture_contract(root: &Path, runner_contract: &mut String) -
         "peer.compose.yaml",
         "postgres-components.tsv",
         "providers.tsv",
+        "realtime-readiness.mjs",
         "realtime-websocket.mjs",
         "routes.tsv",
         "success-contract.jq",
