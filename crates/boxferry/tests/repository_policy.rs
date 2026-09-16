@@ -7,7 +7,9 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Child, Command, ExitStatus, Output, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 const FIXTURE_SUITES: &[&str] = &[
@@ -31,6 +33,121 @@ const PUBLISHED_PACKAGES: &[&str] = &[
 ];
 const CRATES_IO_AUTH_ACTION: &str = "uses: rust-lang/crates-io-auth-action@";
 const CRATES_IO_BOOTSTRAP_SECRET: &str = "secrets.CRATES_IO_BOOTSTRAP_TOKEN";
+
+struct KillAndReapChild {
+    child: Option<Child>,
+}
+
+impl KillAndReapChild {
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        self.child
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("bounded child already consumed"))?
+            .try_wait()
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.child
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("bounded child already consumed"))?
+            .kill()
+    }
+
+    fn wait_with_output(mut self) -> std::io::Result<Output> {
+        self.child
+            .take()
+            .ok_or_else(|| std::io::Error::other("bounded child already consumed"))?
+            .wait_with_output()
+    }
+}
+
+impl Drop for KillAndReapChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn run_bounded_command(command: &mut Command, timeout: Duration, description: &str) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = KillAndReapChild::new(
+        command
+            .spawn()
+            .map_err(|error| format!("failed to start {description}: {error}"))?,
+    );
+    let started = Instant::now();
+
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| format!("failed to poll {description}: {error}"))?
+            .is_some()
+        {
+            return child
+                .wait_with_output()
+                .map_err(|error| format!("failed to collect {description} output: {error}"));
+        }
+        if started.elapsed() >= timeout {
+            if let Err(error) = child.kill() {
+                if child
+                    .try_wait()
+                    .map_err(|poll_error| format!("failed to poll timed-out {description}: {poll_error}"))?
+                    .is_none()
+                {
+                    return Err(format!("failed to stop timed-out {description}: {error}"));
+                }
+            }
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("failed to reap timed-out {description}: {error}"))?;
+            return Err(format!(
+                "{description} timed out after {:.3} seconds; stdout: {}; stderr: {}",
+                timeout.as_secs_f64(),
+                String::from_utf8_lossy(&output.stdout).trim(),
+                String::from_utf8_lossy(&output.stderr).trim(),
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn bounded_repository_policy_children_are_killed_and_reaped() -> Result<(), String> {
+    let Err(error) = run_bounded_command(
+        Command::new("python3").args(["-c", "import os, time; print(os.getpid(), flush=True); time.sleep(60)"]),
+        Duration::from_secs(1),
+        "synthetic sleeping child",
+    ) else {
+        return Err("sleeping child did not exceed its repository-policy deadline".to_owned());
+    };
+    if !error.contains("synthetic sleeping child timed out after 1.000 seconds") {
+        return Err(format!("bounded child reported unexpected failure: {error}"));
+    }
+    let pid = error
+        .split("; stdout: ")
+        .nth(1)
+        .and_then(|tail| tail.split(';').next())
+        .filter(|pid| !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()))
+        .ok_or_else(|| format!("bounded child did not report its PID: {error}"))?;
+    let child_is_gone = Command::new("python3")
+        .args([
+            "-c",
+            "import os, sys\ntry:\n os.kill(int(sys.argv[1]), 0)\nexcept ProcessLookupError:\n sys.exit(0)\nexcept PermissionError:\n sys.exit(2)\nelse:\n sys.exit(1)",
+            pid,
+        ])
+        .status()
+        .map_err(|check_error| format!("failed to check bounded child PID {pid}: {check_error}"))?;
+    if !child_is_gone.success() {
+        return Err(format!("bounded child PID {pid} still exists after timeout cleanup"));
+    }
+    Ok(())
+}
 
 fn shell_quoted_value<'a>(contents: &'a str, declaration: &str) -> Option<&'a str> {
     let prefix = format!("{declaration}=\"");
@@ -425,20 +542,23 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
         &fs::read_to_string(&capture_tool)
             .map_err(|error| format!("failed to read Paperless capture proxy: {error}"))?,
     );
-    let capture_self_test = Command::new("python3")
-        .arg(&capture_tool)
-        .arg("--self-test")
-        .status()
-        .map_err(|error| format!("failed to run Paperless capture self-test: {error}"))?;
-    if !capture_self_test.success() {
-        return Err("Paperless capture proxy self-test failed".to_owned());
+    let capture_self_test = run_bounded_command(
+        Command::new("python3").arg(&capture_tool).arg("--self-test"),
+        Duration::from_secs(180),
+        "Paperless capture proxy self-test",
+    )?;
+    if !capture_self_test.status.success() {
+        return Err(format!(
+            "Paperless capture proxy self-test failed: {}",
+            String::from_utf8_lossy(&capture_self_test.stderr).trim()
+        ));
     }
     let revalidation_tool = root.join("scripts/lib/podman-revalidation.py");
-    let revalidation_self_test = Command::new("python3")
-        .arg(&revalidation_tool)
-        .arg("--self-test")
-        .output()
-        .map_err(|error| format!("failed to run Podman revalidation self-test: {error}"))?;
+    let revalidation_self_test = run_bounded_command(
+        Command::new("python3").arg(&revalidation_tool).arg("--self-test"),
+        Duration::from_secs(30),
+        "Podman revalidation self-test",
+    )?;
     if !revalidation_self_test.status.success()
         || String::from_utf8_lossy(&revalidation_self_test.stdout).trim()
             != "podman-revalidation hardened self-test: PASS"

@@ -912,12 +912,16 @@ def build_artifacts(
         "interactions": sanitized,
     }
     sanitizer.verify(cassette)
-    revision = subprocess.run(
-        ["git", "-C", str(repository), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    try:
+        revision = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=SOCKET_TIMEOUT_SECONDS,
+        ).stdout.strip()
+    except subprocess.TimeoutExpired as error:
+        raise CaptureError("Git revision lookup exceeded capture deadline") from error
     manifest = {
         "schema_version": 1,
         "candidate": CASSETTE_NAME,
@@ -1539,6 +1543,7 @@ def self_test() -> None:
         real_repository = Path(__file__).resolve().parents[3]
         upstream_socket = root / "fake-podman.sock"
         upstream_ready = threading.Event()
+        upstream_stop = threading.Event()
         upstream_failure: list[BaseException] = []
 
         def fake_upstream() -> None:
@@ -1548,8 +1553,16 @@ def self_test() -> None:
                     listener.listen(1)
                     listener.settimeout(2)
                     upstream_ready.set()
-                    connection, _ = listener.accept()
+                    while not upstream_stop.is_set():
+                        try:
+                            connection, _ = listener.accept()
+                            break
+                        except TimeoutError:
+                            continue
+                    else:
+                        return
                     with connection:
+                        connection.settimeout(SOCKET_TIMEOUT_SECONDS)
                         forwarded = read_request(connection)
                         assert parse_request(forwarded)[0] == "/libpod/_ping"
                         connection.sendall(
@@ -1563,16 +1576,15 @@ def self_test() -> None:
             finally:
                 upstream_socket.unlink(missing_ok=True)
 
-        upstream_thread = threading.Thread(target=fake_upstream)
+        upstream_thread = threading.Thread(target=fake_upstream, daemon=True)
         upstream_thread.start()
-        if not upstream_ready.wait(2):
-            raise AssertionError(f"fake upstream failed to start: {upstream_failure!r}")
         validator = root / "boxferry-stub"
         validator.write_text(
             "#!/usr/bin/env python3\n"
             "import socket, sys\n"
             "path = sys.argv[sys.argv.index('--podman-socket') + 1]\n"
             "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:\n"
+            f"    client.settimeout({SOCKET_TIMEOUT_SECONDS})\n"
             "    client.connect(path)\n"
             "    client.sendall(b'GET /libpod/_ping HTTP/1.1\\r\\nHost: podman\\r\\n\\r\\n')\n"
             "    while client.recv(4096):\n"
@@ -1581,17 +1593,24 @@ def self_test() -> None:
         validator.chmod(0o700)
         record_output = root / "record-output"
         proxy_socket = root / "record-proxy.sock"
-        record(
-            argparse.Namespace(
-                repository=real_repository,
-                output_directory=record_output,
-                upstream_socket=upstream_socket,
-                proxy_socket=proxy_socket,
-                boxferry_bin=validator,
-                prefix="self-test-paper",
+        try:
+            if not upstream_ready.wait(2):
+                raise AssertionError(
+                    f"fake upstream failed to start: {upstream_failure!r}"
+                )
+            record(
+                argparse.Namespace(
+                    repository=real_repository,
+                    output_directory=record_output,
+                    upstream_socket=upstream_socket,
+                    proxy_socket=proxy_socket,
+                    boxferry_bin=validator,
+                    prefix="self-test-paper",
+                )
             )
-        )
-        upstream_thread.join(2)
+        finally:
+            upstream_stop.set()
+            upstream_thread.join(3)
         assert not upstream_thread.is_alive()
         assert not upstream_failure
         assert not proxy_socket.exists()
@@ -1632,16 +1651,22 @@ def self_test() -> None:
 
         rejected_proxy_path = root / "rejected-proxy.sock"
         rejected_proxy = Proxy(rejected_proxy_path, root / "unused-upstream.sock")
-        rejected_thread = threading.Thread(target=rejected_proxy.serve)
+        rejected_thread = threading.Thread(target=rejected_proxy.serve, daemon=True)
         rejected_thread.start()
-        for _ in range(40):
-            if rejected_proxy_path.exists():
-                break
-            rejected_proxy.stop.wait(0.05)
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.connect(str(rejected_proxy_path))
-            client.sendall(b"POST /libpod/_ping HTTP/1.1\r\n\r\n")
-        rejected_thread.join(2)
+        try:
+            for _ in range(40):
+                if rejected_proxy_path.exists():
+                    break
+                rejected_proxy.stop.wait(0.05)
+            if not rejected_proxy_path.exists():
+                raise AssertionError("rejected-request proxy failed to create its socket")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(SOCKET_TIMEOUT_SECONDS)
+                client.connect(str(rejected_proxy_path))
+                client.sendall(b"POST /libpod/_ping HTTP/1.1\r\n\r\n")
+        finally:
+            rejected_proxy.stop.set()
+            rejected_thread.join(SOCKET_TIMEOUT_SECONDS + 1)
         assert not rejected_thread.is_alive()
         assert isinstance(rejected_proxy.failure, CaptureError)
         assert not rejected_proxy_path.exists()
