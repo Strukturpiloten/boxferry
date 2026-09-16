@@ -677,7 +677,6 @@ for selection in exact all; do
       '  test-prefix-supabase-backend:' \
       '    internal: true' \
       '  test-prefix-supabase-edge:' \
-      '    name: test-prefix-supabase-edge' \
       '    external: true' \
       > "${ownership_output_root}/${selection}/compose/compose.yaml"
   else
@@ -725,6 +724,37 @@ for ownership_output in compose quadlet podman; do
     exit 1
   fi
 done
+
+invalid_external_network_root="${test_root}/invalid-external-network"
+mkdir -p -- "${invalid_external_network_root}"
+printf '%s\n' \
+  '---' \
+  'networks:' \
+  '  test-prefix-supabase-backend:' \
+  '    internal: true' \
+  '  test-prefix-supabase-edge:' \
+  '    name: renamed-supabase-edge' \
+  '    external: true' \
+  > "${invalid_external_network_root}/compose.yaml"
+if supabase_assert_network_ownership exact compose \
+  "${invalid_external_network_root}" test-prefix > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase Compose ownership assertion admitted a renamed external edge.' >&2
+  exit 1
+fi
+printf '%s\n' \
+  '---' \
+  'networks:' \
+  '  test-prefix-supabase-backend:' \
+  '    internal: true' \
+  '  test-prefix-supabase-edge:' \
+  '    external: true' \
+  '    driver: bridge' \
+  > "${invalid_external_network_root}/compose.yaml"
+if supabase_assert_network_ownership exact compose \
+  "${invalid_external_network_root}" test-prefix > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase Compose ownership assertion admitted extra external-edge configuration.' >&2
+  exit 1
+fi
 
 owned_edge_output_root="${test_root}/owned-edge-outputs"
 mkdir -p -- \
