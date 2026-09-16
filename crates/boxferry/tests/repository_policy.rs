@@ -672,12 +672,18 @@ impl SupabaseContractMode {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SupabaseContractContext<'a> {
+    podman_acquisition: &'a str,
+    include_system_network: bool,
+}
+
 fn run_supabase_report_contract(
     root: &Path,
     input: &str,
     output: &str,
     selection: &str,
-    include_system_network: bool,
+    context: SupabaseContractContext<'_>,
     mode: SupabaseContractMode,
     report: Option<&serde_json::Value>,
 ) -> Result<Output, String> {
@@ -691,10 +697,15 @@ fn run_supabase_report_contract(
         .args(["--arg", "output", output])
         .args(["--arg", "selection", selection])
         .args(["--arg", "resource_prefix", "contract-supabase-"])
+        .args(["--arg", "podman_acquisition", context.podman_acquisition])
         .args([
             "--argjson",
             "include_system_network",
-            if include_system_network { "true" } else { "false" },
+            if context.include_system_network {
+                "true"
+            } else {
+                "false"
+            },
         ])
         .args(["--argjson", "emit_expected", mode.jq_value()])
         .arg("--from-file")
@@ -717,6 +728,10 @@ fn run_supabase_report_contract(
     child
         .wait_with_output()
         .map_err(|error| format!("failed to wait for Supabase jq contract: {error}"))
+}
+
+fn default_supabase_contract_acquisition(input: &str) -> &'static str {
+    if input == "podman" { "cli" } else { "not-podman" }
 }
 
 fn supabase_contract_diagnostic(tuple: &serde_json::Value) -> serde_json::Value {
@@ -742,12 +757,33 @@ fn supabase_contract_accepts(
     selection: &str,
     report: &serde_json::Value,
 ) -> Result<bool, String> {
+    supabase_contract_accepts_with_acquisition(
+        root,
+        input,
+        output,
+        selection,
+        default_supabase_contract_acquisition(input),
+        report,
+    )
+}
+
+fn supabase_contract_accepts_with_acquisition(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    podman_acquisition: &str,
+    report: &serde_json::Value,
+) -> Result<bool, String> {
     let result = run_supabase_report_contract(
         root,
         input,
         output,
         selection,
-        false,
+        SupabaseContractContext {
+            podman_acquisition,
+            include_system_network: false,
+        },
         SupabaseContractMode::Validate,
         Some(report),
     )?;
@@ -767,12 +803,33 @@ fn supabase_contract_accepts_including_system_network(
     selection: &str,
     report: &serde_json::Value,
 ) -> Result<bool, String> {
+    supabase_contract_accepts_including_system_network_with_acquisition(
+        root,
+        input,
+        output,
+        selection,
+        default_supabase_contract_acquisition(input),
+        report,
+    )
+}
+
+fn supabase_contract_accepts_including_system_network_with_acquisition(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    podman_acquisition: &str,
+    report: &serde_json::Value,
+) -> Result<bool, String> {
     let result = run_supabase_report_contract(
         root,
         input,
         output,
         selection,
-        true,
+        SupabaseContractContext {
+            podman_acquisition,
+            include_system_network: true,
+        },
         SupabaseContractMode::Validate,
         Some(report),
     )?;
@@ -792,7 +849,36 @@ fn generated_supabase_contract(
     selection: &str,
     mode: SupabaseContractMode,
 ) -> Result<serde_json::Value, String> {
-    let generated = run_supabase_report_contract(root, input, output, selection, false, mode, None)?;
+    generated_supabase_contract_with_acquisition(
+        root,
+        input,
+        output,
+        selection,
+        default_supabase_contract_acquisition(input),
+        mode,
+    )
+}
+
+fn generated_supabase_contract_with_acquisition(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    podman_acquisition: &str,
+    mode: SupabaseContractMode,
+) -> Result<serde_json::Value, String> {
+    let generated = run_supabase_report_contract(
+        root,
+        input,
+        output,
+        selection,
+        SupabaseContractContext {
+            podman_acquisition,
+            include_system_network: false,
+        },
+        mode,
+        None,
+    )?;
     if !generated.status.success() {
         return Err(format!(
             "failed to generate {selection} {input}-to-{output} Supabase contract: {}",
@@ -969,6 +1055,39 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         &failure_status
     )?);
 
+    for (input, podman_acquisition) in [
+        ("podman", "not-podman"),
+        ("podman", "future"),
+        ("podman", ""),
+        ("compose", "cli"),
+        ("compose", "compose"),
+        ("compose", "future"),
+        ("quadlet", "cli"),
+        ("quadlet", "compose"),
+        ("quadlet", "future"),
+    ] {
+        for mode in [SupabaseContractMode::Diagnostics, SupabaseContractMode::Fidelity] {
+            let invalid = run_supabase_report_contract(
+                &root,
+                input,
+                "compose",
+                "storage",
+                SupabaseContractContext {
+                    podman_acquisition,
+                    include_system_network: false,
+                },
+                mode,
+                None,
+            )?;
+            assert_eq!(
+                invalid.status.code(),
+                Some(1),
+                "{input} input unexpectedly admitted {podman_acquisition:?} acquisition"
+            );
+            assert_eq!(invalid.stdout, b"null\n");
+        }
+    }
+
     let expected_quadlet_compose_subjects = BTreeSet::from([
         "networks.contract-supabase-backend.ipam.config",
         "services.contract-supabase-auth.dependencies[0]",
@@ -997,14 +1116,20 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "services.contract-supabase-studio.healthcheck",
         "services.contract-supabase-supavisor.dependencies[0]",
     ]);
-    let expected_podman_compose_target_subjects = BTreeSet::from([
+    let expected_compose_authored_podman_compose_subjects = BTreeSet::from([
         "networks.contract-supabase-backend.ipam.config",
         "networks.contract-supabase-edge.ipam.config",
     ]);
+    let mut expected_cli_authored_podman_compose_subjects = expected_quadlet_compose_subjects.clone();
+    expected_cli_authored_podman_compose_subjects.extend([
+        "networks.contract-supabase-edge.ipam.config",
+        "networks.contract-supabase-edge.internal",
+        "networks.contract-supabase-edge.labels",
+    ]);
     for selection in ["exact", "storage", "label", "all"] {
-        let podman_compose_diagnostics =
+        let cli_authored_diagnostics =
             generated_supabase_contract(&root, "podman", "compose", selection, SupabaseContractMode::Diagnostics)?;
-        let podman_compose_target_subjects = podman_compose_diagnostics
+        let cli_authored_subjects = cli_authored_diagnostics
             .as_array()
             .ok_or("Podman-to-Compose diagnostics must be an array")?
             .iter()
@@ -1016,9 +1141,103 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             })
             .collect::<Result<BTreeSet<_>, _>>()?;
         assert_eq!(
-            podman_compose_target_subjects, expected_podman_compose_target_subjects,
-            "{selection} Podman-to-Compose must not invent absent dependency, healthcheck, or network metadata intent"
+            cli_authored_subjects, expected_cli_authored_podman_compose_subjects,
+            "{selection} CLI-authored Podman-to-Compose independent loss subjects"
         );
+        let compose_authored_diagnostics = generated_supabase_contract_with_acquisition(
+            &root,
+            "podman",
+            "compose",
+            selection,
+            "compose",
+            SupabaseContractMode::Diagnostics,
+        )?;
+        let compose_authored_subjects = compose_authored_diagnostics
+            .as_array()
+            .ok_or("Compose-authored Podman-to-Compose diagnostics must be an array")?
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFC0007")
+            .map(|diagnostic| {
+                diagnostic["subject"]
+                    .as_str()
+                    .ok_or("Compose-authored Podman-to-Compose target-loss subject must be a string")
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        assert_eq!(
+            compose_authored_subjects, expected_compose_authored_podman_compose_subjects,
+            "{selection} Compose-authored Podman-to-Compose must not invent absent source intent"
+        );
+        let (approximate, cli_unsupported, compose_unsupported) = if selection == "all" {
+            (67, 1_446, 1_419)
+        } else {
+            (63, 1_346, 1_319)
+        };
+        let cli_authored_report = serde_json::json!({
+            "schema_version": 1,
+            "status": "success",
+            "fidelity": {
+                "exact": 0,
+                "approximate": approximate,
+                "unsupported": cli_unsupported,
+                "invalid": 0,
+                "other": 0,
+            },
+            "diagnostics": cli_authored_diagnostics
+                .as_array()
+                .ok_or("CLI-authored Podman-to-Compose diagnostics must be an array")?
+                .iter()
+                .map(supabase_contract_diagnostic)
+                .collect::<Vec<_>>(),
+        });
+        let compose_authored_report = serde_json::json!({
+            "schema_version": 1,
+            "status": "success",
+            "fidelity": {
+                "exact": 0,
+                "approximate": approximate,
+                "unsupported": compose_unsupported,
+                "invalid": 0,
+                "other": 0,
+            },
+            "diagnostics": compose_authored_diagnostics
+                .as_array()
+                .ok_or("Compose-authored Podman-to-Compose diagnostics must be an array")?
+                .iter()
+                .map(supabase_contract_diagnostic)
+                .collect::<Vec<_>>(),
+        });
+        assert!(supabase_contract_accepts_with_acquisition(
+            &root,
+            "podman",
+            "compose",
+            selection,
+            "cli",
+            &cli_authored_report,
+        )?);
+        assert!(supabase_contract_accepts_with_acquisition(
+            &root,
+            "podman",
+            "compose",
+            selection,
+            "compose",
+            &compose_authored_report,
+        )?);
+        assert!(!supabase_contract_accepts_with_acquisition(
+            &root,
+            "podman",
+            "compose",
+            selection,
+            "compose",
+            &cli_authored_report,
+        )?);
+        assert!(!supabase_contract_accepts_with_acquisition(
+            &root,
+            "podman",
+            "compose",
+            selection,
+            "cli",
+            &compose_authored_report,
+        )?);
         let compose_diagnostics = generated_supabase_contract(
             &root,
             "compose",
@@ -1149,7 +1368,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "compose",
         "podman",
         "all",
-        true,
+        SupabaseContractContext {
+            podman_acquisition: "not-podman",
+            include_system_network: true,
+        },
         SupabaseContractMode::Diagnostics,
         None,
     )?;
@@ -1220,7 +1442,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "quadlet",
         "compose",
         "all",
-        true,
+        SupabaseContractContext {
+            podman_acquisition: "not-podman",
+            include_system_network: true,
+        },
         SupabaseContractMode::Diagnostics,
         None,
     )?;
@@ -1288,7 +1513,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "quadlet",
         "podman",
         "all",
-        true,
+        SupabaseContractContext {
+            podman_acquisition: "not-podman",
+            include_system_network: true,
+        },
         SupabaseContractMode::Diagnostics,
         None,
     )?;
@@ -1364,7 +1592,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let reviewed_fidelity = [
-        ("exact", "podman", "compose", 63, 1_319),
+        ("exact", "podman", "compose", 63, 1_346),
         ("exact", "podman", "quadlet", 63, 1_318),
         ("exact", "podman", "podman", 63, 1_527),
         ("exact", "quadlet", "compose", 0, 26),
@@ -1373,7 +1601,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("exact", "compose", "podman", 0, 198),
         ("exact", "quadlet", "quadlet", 0, 0),
         ("exact", "quadlet", "podman", 0, 223),
-        ("storage", "podman", "compose", 63, 1_319),
+        ("storage", "podman", "compose", 63, 1_346),
         ("storage", "podman", "quadlet", 63, 1_318),
         ("storage", "podman", "podman", 63, 1_527),
         ("storage", "quadlet", "compose", 0, 26),
@@ -1382,7 +1610,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("storage", "compose", "podman", 0, 198),
         ("storage", "quadlet", "quadlet", 0, 0),
         ("storage", "quadlet", "podman", 0, 223),
-        ("label", "podman", "compose", 63, 1_319),
+        ("label", "podman", "compose", 63, 1_346),
         ("label", "podman", "quadlet", 63, 1_318),
         ("label", "podman", "podman", 63, 1_527),
         ("label", "quadlet", "compose", 0, 26),
@@ -1391,7 +1619,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("label", "compose", "podman", 0, 198),
         ("label", "quadlet", "quadlet", 0, 0),
         ("label", "quadlet", "podman", 0, 223),
-        ("all", "podman", "compose", 67, 1_419),
+        ("all", "podman", "compose", 67, 1_446),
         ("all", "podman", "quadlet", 67, 1_418),
         ("all", "podman", "podman", 67, 1_641),
         ("all", "quadlet", "compose", 0, 26),
@@ -1414,13 +1642,41 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "{selection} {input}-to-{output} fidelity"
         );
     }
+    for (selection, approximate, unsupported) in [
+        ("exact", 63, 1_319),
+        ("storage", 63, 1_319),
+        ("label", 63, 1_319),
+        ("all", 67, 1_419),
+    ] {
+        let generated = generated_supabase_contract_with_acquisition(
+            &root,
+            "podman",
+            "compose",
+            selection,
+            "compose",
+            SupabaseContractMode::Fidelity,
+        )?;
+        assert_eq!(
+            generated,
+            serde_json::json!({
+                "approximate": approximate,
+                "unsupported": unsupported,
+                "invalid": 0,
+                "other": 0,
+            }),
+            "{selection} Compose-authored Podman-to-Compose fidelity"
+        );
+    }
 
     let system_network_fidelity = run_supabase_report_contract(
         &root,
         "podman",
         "compose",
         "all",
-        true,
+        SupabaseContractContext {
+            podman_acquisition: "cli",
+            include_system_network: true,
+        },
         SupabaseContractMode::Fidelity,
         None,
     )?;
@@ -1428,6 +1684,29 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&system_network_fidelity.stdout)
             .map_err(|error| format!("invalid system-network fidelity contract: {error}"))?,
+        serde_json::json!({
+            "approximate": 69,
+            "unsupported": 1_452,
+            "invalid": 0,
+            "other": 0,
+        })
+    );
+    let compose_authored_system_network_fidelity = run_supabase_report_contract(
+        &root,
+        "podman",
+        "compose",
+        "all",
+        SupabaseContractContext {
+            podman_acquisition: "compose",
+            include_system_network: true,
+        },
+        SupabaseContractMode::Fidelity,
+        None,
+    )?;
+    assert!(compose_authored_system_network_fidelity.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&compose_authored_system_network_fidelity.stdout)
+            .map_err(|error| format!("invalid Compose-authored system-network fidelity contract: {error}"))?,
         serde_json::json!({
             "approximate": 69,
             "unsupported": 1_425,
@@ -1440,13 +1719,52 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "podman",
         "compose",
         "all",
-        true,
+        SupabaseContractContext {
+            podman_acquisition: "cli",
+            include_system_network: true,
+        },
         SupabaseContractMode::Diagnostics,
         None,
     )?;
     assert!(system_network_diagnostics.status.success());
     let system_network_diagnostics: serde_json::Value = serde_json::from_slice(&system_network_diagnostics.stdout)
         .map_err(|error| format!("invalid system-network diagnostic contract: {error}"))?;
+    assert_eq!(
+        system_network_diagnostics
+            .as_array()
+            .ok_or("system-network diagnostic contract must be an array")?
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFC0007")
+            .count(),
+        30,
+        "CLI-authored all-selection system-network target losses"
+    );
+    let compose_authored_system_network_diagnostics = run_supabase_report_contract(
+        &root,
+        "podman",
+        "compose",
+        "all",
+        SupabaseContractContext {
+            podman_acquisition: "compose",
+            include_system_network: true,
+        },
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    assert!(compose_authored_system_network_diagnostics.status.success());
+    let compose_authored_system_network_diagnostics: serde_json::Value =
+        serde_json::from_slice(&compose_authored_system_network_diagnostics.stdout)
+            .map_err(|error| format!("invalid Compose-authored system-network diagnostic contract: {error}"))?;
+    assert_eq!(
+        compose_authored_system_network_diagnostics
+            .as_array()
+            .ok_or("Compose-authored system-network diagnostic contract must be an array")?
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFC0007")
+            .count(),
+        3,
+        "Compose-authored all-selection system-network target losses"
+    );
     let system_network_tuples = system_network_diagnostics
         .as_array()
         .ok_or("system-network diagnostic contract must be an array")?
@@ -1483,7 +1801,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "podman",
         "podman",
         "label",
-        false,
+        SupabaseContractContext {
+            podman_acquisition: "cli",
+            include_system_network: false,
+        },
         SupabaseContractMode::Diagnostics,
         None,
     )?;
@@ -1526,7 +1847,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "podman",
         "podman",
         "label",
-        false,
+        SupabaseContractContext {
+            podman_acquisition: "cli",
+            include_system_network: false,
+        },
         SupabaseContractMode::Fidelity,
         None,
     )?;

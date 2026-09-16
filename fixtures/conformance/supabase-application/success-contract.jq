@@ -1,6 +1,16 @@
 def contains($values; $candidate):
   any($values[]; . == $candidate);
 
+def podman_acquisition_valid:
+  if $input == "podman" then
+    $podman_acquisition == "cli" or $podman_acquisition == "compose"
+  else
+    $podman_acquisition == "not-podman"
+  end;
+
+def cli_podman_acquisition:
+  $input == "podman" and $podman_acquisition == "cli";
+
 def tuple($code; $subject; $decision):
   {
     code: $code,
@@ -321,6 +331,14 @@ def compose_network_diagnostics:
   if $input == "podman" then
     [tuple("BFC0007"; "networks." + $resource_prefix + "backend.ipam.config"; null)] +
     [tuple("BFC0007"; "networks." + $resource_prefix + "edge.ipam.config"; null)] +
+    if cli_podman_acquisition then
+      [
+        tuple("BFC0007"; "networks." + $resource_prefix + "edge.internal"; null),
+        tuple("BFC0007"; "networks." + $resource_prefix + "edge.labels"; null)
+      ]
+    else
+      []
+    end +
     if $include_system_network then
       [tuple("BFC0007"; "networks.podman.ipam.config"; null)]
     else
@@ -345,9 +363,13 @@ def compose_output_diagnostics:
     []
   else
     if $input == "podman" then
-      # Live Podman acquisition does not promote Compose-authored dependency or
-      # healthcheck fields. Do not invent target losses for absent source intent.
-      compose_network_diagnostics
+      if cli_podman_acquisition then
+        compose_diagnostics + compose_healthcheck_diagnostics + compose_network_diagnostics
+      else
+        # Compose-provider reacquisition does not promote authored dependency,
+        # healthcheck, or external-network metadata as portable source intent.
+        compose_network_diagnostics
+      end
     else
       compose_diagnostics + compose_healthcheck_diagnostics + compose_network_diagnostics
     end
@@ -920,7 +942,20 @@ def compose_output_outcomes:
   if $input == "podman" then
     # Native Podman evidence retains its independently reviewed accounting.
     [selected_services[] | "approximate"] +
-    if $input == "podman" and $selection == "all" then
+    (
+      if cli_podman_acquisition then
+        compose_outcomes +
+        [
+          healthcheck_services[] |
+          select(. as $service | contains(selected_services; $service)) |
+          "unsupported"
+        ] +
+        ["unsupported", "unsupported"]
+      else
+        []
+      end
+    ) +
+    if $selection == "all" then
       ["unsupported"]
     else
       []
@@ -1036,7 +1071,9 @@ def success_contract($expected):
   all(.diagnostics[]?; (.name | length) > 0);
 
 
-if $emit_expected == "fidelity" then
+if (podman_acquisition_valid | not) then
+  null
+elif $emit_expected == "fidelity" then
   expected_success_fidelity
 elif $emit_expected == "delta" then
   diagnostic_delta

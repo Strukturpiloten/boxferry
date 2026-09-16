@@ -228,13 +228,16 @@ supabase_validate_catalogues() {
 	' "${fixture}/routes.tsv"
   while IFS=$'\t' read -r source target _outcome _evidence allowed_codes _contract; do
     [[ -z "${source}" || "${source}" == \#* ]] && continue
-    local generated_codes normalized_allowed_codes
+    local generated_codes normalized_allowed_codes podman_acquisition
+    podman_acquisition=not-podman
+    [[ "${source}" == podman ]] && podman_acquisition=cli
     generated_codes="$(
       jq --null-input \
         --arg input "${source}" \
         --arg output "${target}" \
         --arg selection exact \
         --arg resource_prefix contract-supabase- \
+        --arg podman_acquisition "${podman_acquisition}" \
         --argjson include_system_network false \
         --argjson emit_expected true \
         --from-file "${fixture}/success-contract.jq" |
@@ -2076,14 +2079,31 @@ supabase_assert_output_semantics() {
   esac
 }
 
+supabase_validate_contract_acquisition() {
+  local input=$1 podman_acquisition=$2
+  case "${input}:${podman_acquisition}" in
+    podman:cli | podman:compose | compose:not-podman | quadlet:not-podman)
+      return 0
+      ;;
+    *)
+      printf 'Unsupported Supabase acquisition contract: input=%s; origin=%s.\n' \
+        "${input}" "${podman_acquisition}" >&2
+      return 2
+      ;;
+  esac
+}
+
 supabase_assert_success_contract() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
+  local podman_acquisition=$7
+  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
   if jq --exit-status \
     --arg input "${input}" \
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
+    --arg podman_acquisition "${podman_acquisition}" \
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected false \
     --from-file "$(supabase_fixture_root)/success-contract.jq" \
@@ -2094,18 +2114,21 @@ supabase_assert_success_contract() {
     "${input}" "${output}" "${selection}" "${report}" >&2
   supabase_report_success_contract_delta \
     "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
-    "${include_system_network}"
+    "${include_system_network}" "${podman_acquisition}"
   return 1
 }
 
 supabase_success_contract_delta() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
+  local podman_acquisition=$7
+  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
   jq --compact-output \
     --arg input "${input}" \
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
+    --arg podman_acquisition "${podman_acquisition}" \
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected '"delta"' \
     --from-file "$(supabase_fixture_root)/success-contract.jq" \
@@ -2115,11 +2138,12 @@ supabase_success_contract_delta() {
 supabase_report_success_contract_delta() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
+  local podman_acquisition=$7
   local delta byte_count
   if ! delta="$(
     supabase_success_contract_delta \
       "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
-      "${include_system_network}"
+      "${include_system_network}" "${podman_acquisition}"
   )" || [[ -z "${delta}" ]]; then
     printf '%s\n' 'Supabase diagnostic contract delta unavailable.' >&2
     return 0
@@ -2136,13 +2160,16 @@ supabase_report_success_contract_delta() {
 supabase_success_contract_example_report() {
   local input=$1 output=$2 selection=$3 prefix=$4
   local include_system_network=${5:-false}
+  local podman_acquisition=$6
   local expected_fidelity
+  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
   expected_fidelity="$(
     jq --null-input \
       --arg input "${input}" \
       --arg output "${output}" \
       --arg selection "${selection}" \
       --arg resource_prefix "${prefix}-supabase-" \
+      --arg podman_acquisition "${podman_acquisition}" \
       --argjson include_system_network "${include_system_network}" \
       --argjson emit_expected '"fidelity"' \
       --from-file "$(supabase_fixture_root)/success-contract.jq"
@@ -2152,6 +2179,7 @@ supabase_success_contract_example_report() {
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
+    --arg podman_acquisition "${podman_acquisition}" \
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected true \
     --from-file "$(supabase_fixture_root)/success-contract.jq" |
@@ -2179,19 +2207,23 @@ supabase_success_contract_example_report() {
 
 supabase_validate_success_contract_examples() {
   local prefix=contract
-  local all_report base_report drift_report duplicate_report redacted_report capped_report
+  local podman_acquisition=cli
+  local all_report base_report cli_compose_report compose_compose_report
+  local drift_report duplicate_report redacted_report capped_report
   local delta delta_again bounded_output unavailable_output
 
   supabase_assert_success_contract podman podman storage \
-    <(supabase_success_contract_example_report podman podman storage "${prefix}") \
-    "${prefix}"
+    <(supabase_success_contract_example_report \
+      podman podman storage "${prefix}" false "${podman_acquisition}") \
+    "${prefix}" false "${podman_acquisition}"
 
   base_report="$(
-    supabase_success_contract_example_report podman podman storage "${prefix}"
+    supabase_success_contract_example_report \
+      podman podman storage "${prefix}" false "${podman_acquisition}"
   )"
   delta="$(
     supabase_success_contract_delta podman podman storage \
-      <(printf '%s\n' "${base_report}") "${prefix}"
+      <(printf '%s\n' "${base_report}") "${prefix}" false "${podman_acquisition}"
   )"
   jq --exit-status '
     .missing_total == 0 and
@@ -2206,6 +2238,55 @@ supabase_validate_success_contract_examples() {
     printf '%s\n' 'Supabase matching diagnostic contract emitted a non-empty delta.' >&2
     return 1
   }
+
+  cli_compose_report="$(
+    supabase_success_contract_example_report podman compose storage "${prefix}" false cli
+  )"
+  compose_compose_report="$(
+    supabase_success_contract_example_report podman compose storage "${prefix}" false compose
+  )"
+  jq --exit-status '
+    ([.diagnostics[] | select(.code == "BFC0007")] | length) == 29 and
+    .fidelity.approximate == 63 and
+    .fidelity.unsupported == 1346
+  ' <<< "${cli_compose_report}" > /dev/null || {
+    printf '%s\n' 'Supabase CLI-authored Podman-to-Compose contract lost reviewed evidence.' >&2
+    return 1
+  }
+  jq --exit-status '
+    ([.diagnostics[] | select(.code == "BFC0007")] | length) == 2 and
+    .fidelity.approximate == 63 and
+    .fidelity.unsupported == 1319
+  ' <<< "${compose_compose_report}" > /dev/null || {
+    printf '%s\n' 'Supabase Compose-authored Podman-to-Compose contract invented source intent.' >&2
+    return 1
+  }
+  supabase_assert_success_contract podman compose storage \
+    <(printf '%s\n' "${cli_compose_report}") "${prefix}" false cli
+  supabase_assert_success_contract podman compose storage \
+    <(printf '%s\n' "${compose_compose_report}") "${prefix}" false compose
+  if supabase_assert_success_contract podman compose storage \
+    <(printf '%s\n' "${cli_compose_report}") "${prefix}" false compose \
+    > /dev/null 2>&1; then
+    printf '%s\n' 'Supabase Compose-authored contract admitted CLI-only native evidence.' >&2
+    return 1
+  fi
+  if supabase_assert_success_contract podman compose storage \
+    <(printf '%s\n' "${compose_compose_report}") "${prefix}" false cli \
+    > /dev/null 2>&1; then
+    printf '%s\n' 'Supabase CLI-authored contract admitted missing native evidence.' >&2
+    return 1
+  fi
+  if supabase_success_contract_example_report \
+    podman compose storage "${prefix}" false future > /dev/null 2>&1; then
+    printf '%s\n' 'Supabase contract admitted an unsupported acquisition origin.' >&2
+    return 1
+  fi
+  if supabase_success_contract_example_report \
+    compose compose storage "${prefix}" false cli > /dev/null 2>&1; then
+    printf '%s\n' 'Supabase contract admitted a Podman origin for Compose input.' >&2
+    return 1
+  fi
   drift_report="$(
     jq '
       (
@@ -2222,7 +2303,7 @@ supabase_validate_success_contract_examples() {
   )"
   delta="$(
     supabase_success_contract_delta podman podman storage \
-      <(printf '%s\n' "${drift_report}") "${prefix}"
+      <(printf '%s\n' "${drift_report}") "${prefix}" false "${podman_acquisition}"
   )"
   jq --exit-status '
     .missing_total == 1 and
@@ -2264,7 +2345,7 @@ supabase_validate_success_contract_examples() {
   )"
   delta="$(
     supabase_success_contract_delta podman podman storage \
-      <(printf '%s\n' "${duplicate_report}") "${prefix}"
+      <(printf '%s\n' "${duplicate_report}") "${prefix}" false "${podman_acquisition}"
   )"
   jq --exit-status '
     .missing_total == 0 and
@@ -2300,7 +2381,7 @@ supabase_validate_success_contract_examples() {
   )"
   delta="$(
     supabase_success_contract_delta podman podman storage \
-      <(printf '%s\n' "${redacted_report}") "${prefix}"
+      <(printf '%s\n' "${redacted_report}") "${prefix}" false "${podman_acquisition}"
   )"
   jq --exit-status '
     .missing_total == 0 and
@@ -2338,11 +2419,11 @@ supabase_validate_success_contract_examples() {
   )"
   delta="$(
     supabase_success_contract_delta podman podman storage \
-      <(printf '%s\n' "${capped_report}") "${prefix}"
+      <(printf '%s\n' "${capped_report}") "${prefix}" false "${podman_acquisition}"
   )"
   delta_again="$(
     supabase_success_contract_delta podman podman storage \
-      <(printf '%s\n' "${capped_report}") "${prefix}"
+      <(printf '%s\n' "${capped_report}") "${prefix}" false "${podman_acquisition}"
   )"
   [[ "${delta}" == "${delta_again}" ]] || {
     printf '%s\n' 'Supabase diagnostic contract delta ordering was nondeterministic.' >&2
@@ -2366,7 +2447,8 @@ supabase_validate_success_contract_examples() {
   bounded_output="$(
     SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES=32 \
       supabase_report_success_contract_delta podman podman storage \
-      <(printf '%s\n' "${drift_report}") "${prefix}" 2>&1
+      <(printf '%s\n' "${drift_report}") "${prefix}" false \
+      "${podman_acquisition}" 2>&1
   )"
   grep --extended-regexp --quiet \
     '^Supabase diagnostic contract delta omitted: byte-limit=32; observed-bytes=[0-9]+; truncated=true\.$' \
@@ -2381,7 +2463,7 @@ supabase_validate_success_contract_examples() {
   fi
   unavailable_output="$(
     supabase_report_success_contract_delta podman podman storage \
-      <(printf '') "${prefix}" 2>&1
+      <(printf '') "${prefix}" false "${podman_acquisition}" 2>&1
   )"
   [[ "${unavailable_output}" == 'Supabase diagnostic contract delta unavailable.' ]] || {
     printf '%s\n' 'Supabase empty diagnostic delta lacked its unavailable marker.' >&2
@@ -2389,7 +2471,8 @@ supabase_validate_success_contract_examples() {
   }
 
   all_report="$(
-    supabase_success_contract_example_report podman podman all "${prefix}" true
+    supabase_success_contract_example_report \
+      podman podman all "${prefix}" true "${podman_acquisition}"
   )"
   if ! jq --exit-status '
     (.diagnostics | length) == 541 and
@@ -2449,11 +2532,12 @@ supabase_validate_success_contract_examples() {
     return 1
   fi
   supabase_assert_success_contract podman podman all \
-    <(printf '%s\n' "${all_report}") "${prefix}" true
+    <(printf '%s\n' "${all_report}") "${prefix}" true "${podman_acquisition}"
 
   if supabase_assert_success_contract podman podman storage \
     <(
-      supabase_success_contract_example_report podman podman storage "${prefix}" |
+      supabase_success_contract_example_report \
+        podman podman storage "${prefix}" false "${podman_acquisition}" |
         jq '(
           .diagnostics[] |
           select(.code == "BFP0003") |
@@ -2461,16 +2545,17 @@ supabase_validate_success_contract_examples() {
           select(.name == "subject") |
           .value
         ) = "services.contract-supabase-auth.unseen"'
-    ) "${prefix}" > /dev/null 2>&1; then
+    ) "${prefix}" false "${podman_acquisition}" > /dev/null 2>&1; then
     printf 'Supabase diagnostic contract admitted an unseen BFP0003 subject.\n' >&2
     return 1
   fi
 
   if supabase_assert_success_contract podman podman storage \
     <(
-      supabase_success_contract_example_report podman podman storage "${prefix}" |
+      supabase_success_contract_example_report \
+        podman podman storage "${prefix}" false "${podman_acquisition}" |
         jq '.diagnostics += [first(.diagnostics[] | select(.code == "BFP0007"))]'
-    ) "${prefix}" > /dev/null 2>&1; then
+    ) "${prefix}" false "${podman_acquisition}" > /dev/null 2>&1; then
     printf 'Supabase diagnostic contract admitted a duplicate BFP0007 tuple.\n' >&2
     return 1
   fi
@@ -2486,7 +2571,7 @@ supabase_validate_success_contract_examples() {
           {name: "decision", value: "omitted"}
         ]
       }]' <<< "${all_report}"
-    ) "${prefix}" true > /dev/null 2>&1; then
+    ) "${prefix}" true "${podman_acquisition}" > /dev/null 2>&1; then
     printf '%s\n' 'Supabase diagnostic contract admitted unexpected system-network labels.' >&2
     return 1
   fi
@@ -2541,7 +2626,8 @@ supabase_run_exports() {
       assert_successful_conversion \
         "${output}" "${selection}" "${directory}" "${report}" scenario-specific
       supabase_assert_success_contract \
-        podman "${output}" "${selection}" "${report}" "${prefix}" "${include_system_network}"
+        podman "${output}" "${selection}" "${report}" "${prefix}" \
+        "${include_system_network}" "${mode}"
       supabase_assert_output_membership \
         "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
       supabase_assert_output_semantics \
@@ -2607,7 +2693,8 @@ supabase_run_reimports() {
         assert_successful_conversion \
           "${output}" "${selection}" "${result}" "${report}" scenario-specific
         supabase_assert_success_contract \
-          "${input}" "${output}" "${selection}" "${report}" "${prefix}" "${include_system_network}"
+          "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
+          "${include_system_network}" not-podman
         supabase_assert_output_membership \
           "${selection}" "${output}" "${result}" "${prefix}" "${include_system_network}"
         supabase_assert_output_semantics \

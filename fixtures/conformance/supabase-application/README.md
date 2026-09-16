@@ -40,8 +40,12 @@ offline evidence remains independent of the manual live gate and cannot satisfy 
 multiset for every successful live route and selection. Each tuple fixes the
 code, severity, subject, and decision. It includes Podman acquisition findings,
 promoted healthchecks, and Quadlet-to-Compose dependency and healthcheck losses.
-Live Podman-to-Compose expects only acquired network IPAM losses; it never
-invents dependency, healthcheck, or unpromoted network metadata losses.
+The contract receives the Podman acquisition origin explicitly. CLI-authored
+Podman-to-Compose retains the independently observed dependency, healthcheck,
+external-network metadata, and two network-IPAM losses. Compose-authored
+reacquisition retains only the two network-IPAM losses because the provider does
+not promote the other authored fields as portable source intent. The harness
+rejects unknown origins and Podman origins supplied for non-Podman inputs.
 There is no image-grammar approximation: generated Supabase Compose images are digest-only.
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
 Quadlet-to-Compose retains only its `BFC0007` dependency, healthcheck, and managed-backend IPAM
