@@ -42,8 +42,8 @@ code, severity, subject, and decision. It includes Podman acquisition findings,
 promoted healthchecks, and Compose dependency and healthcheck losses.
 There is no image-grammar approximation: generated Supabase Compose images are digest-only.
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
-Quadlet-to-Compose retains only its `BFC0007` dependency and healthcheck losses. Its
-loss-fidelity totals fix the `approximate`, `unsupported`, `invalid`, and
+Quadlet-to-Compose retains only its `BFC0007` dependency, healthcheck, and managed-backend IPAM
+losses. Its loss-fidelity totals fix the `approximate`, `unsupported`, `invalid`, and
 `other` counts, including repeated native-finding occurrences. The silent
 `exact` implementation counter has no independent semantic oracle and is
 therefore constrained only to a non-negative integer. Catalogue validation
