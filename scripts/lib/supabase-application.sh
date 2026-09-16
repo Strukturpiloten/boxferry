@@ -1748,7 +1748,16 @@ supabase_assert_podman_dependency_order() {
 supabase_assert_output_graph() {
   local selection=$1 route_input=$2 output=$3 directory=$4 prefix=$5
   local image_origin=${6:-${route_input}}
+  local require_dependency_order=${7:-true}
   local actual_projection
+  case "${require_dependency_order}" in
+    true | false) ;;
+    *)
+      printf 'Invalid Supabase dependency-order expectation: %s.\n' \
+        "${require_dependency_order}" >&2
+      return 2
+      ;;
+  esac
   case "${output}" in
     compose) actual_projection=supabase_compose_output_projection ;;
     quadlet) actual_projection=supabase_quadlet_output_projection ;;
@@ -1764,7 +1773,7 @@ supabase_assert_output_graph() {
     return 1
   }
 
-  if [[ "${output}" == podman ]]; then
+  if [[ "${output}" == podman && "${require_dependency_order}" == true ]]; then
     supabase_assert_podman_dependency_order \
       "${selection}" "${directory}" "${prefix}"
   fi
@@ -1927,9 +1936,10 @@ supabase_assert_output_semantics() {
   local selection=$1 route_input=$2 output=$3 directory=$4 prefix=$5
   local include_system_network=${6:-false}
   local image_origin=${7:-${route_input}}
+  local require_dependency_order=${8:-true}
   supabase_assert_output_graph \
     "${selection}" "${route_input}" "${output}" "${directory}" "${prefix}" \
-    "${image_origin}"
+    "${image_origin}" "${require_dependency_order}"
   supabase_assert_network_ownership \
     "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
   if [[ "${selection}" == exact || "${selection}" == storage ||
@@ -2202,9 +2212,26 @@ supabase_run_exports() {
 
 # Generated Compose and Quadlet artifacts use digest-only image references, so every reimport succeeds.
 
+supabase_reimport_dependency_order_required() {
+  case $1 in
+    compose)
+      # Compose generation reports neutral dependencies as an approved loss.
+      printf '%s\n' false
+      ;;
+    quadlet)
+      printf '%s\n' true
+      ;;
+    *)
+      printf 'Unsupported Supabase reimport dependency source: %s.\n' "$1" >&2
+      return 2
+      ;;
+  esac
+}
+
 supabase_run_reimports() {
   local mode=$1 prefix=$2
   local selection input output source result report include_system_network
+  local require_dependency_order
   local -a command
   mkdir -p -- "${current_case}/reimports"
   for selection in exact storage label all; do
@@ -2213,6 +2240,7 @@ supabase_run_reimports() {
       include_system_network=true
     fi
     for input in compose quadlet; do
+      require_dependency_order="$(supabase_reimport_dependency_order_required "${input}")"
       source="${current_case}/outputs/${mode}-${selection}-${input}"
       for output in compose quadlet podman; do
         result="${current_case}/reimports/${mode}-${selection}-${input}-to-${output}"
@@ -2244,7 +2272,7 @@ supabase_run_reimports() {
           "${selection}" "${output}" "${result}" "${prefix}" "${include_system_network}"
         supabase_assert_output_semantics \
           "${selection}" "${input}" "${output}" "${result}" "${prefix}" \
-          "${include_system_network}" podman
+          "${include_system_network}" podman "${require_dependency_order}"
       done
     done
   done
