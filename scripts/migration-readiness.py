@@ -35,6 +35,7 @@ FINAL_STATES = {"passed", "failed", "unavailable", "not-run"}
 EVIDENCE_SCHEMA = ROOT / "docs/schemas/migration-readiness-evidence-v2.schema.json"
 SAMPLE_INTERVAL_SECONDS = 0.25
 SAMPLE_INTERVAL_MILLISECONDS = 250
+PODMAN_GRAPH_ROOT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 CATALOGUE_KEYS = {"schema", "evidence-schema", "gaps", "tiers", "tasks"}
 GAP_IDS = {
     "gpu",
@@ -751,7 +752,9 @@ def existing_ancestor(path: pathlib.Path) -> pathlib.Path:
     return candidate
 
 
-def discover_podman_graph_root(timeout_seconds: float = 10.0) -> pathlib.Path | None:
+def discover_podman_graph_root(
+    timeout_seconds: float = PODMAN_GRAPH_ROOT_DISCOVERY_TIMEOUT_SECONDS,
+) -> pathlib.Path | None:
     """Read Podman's graph root without issuing a mutating runtime request."""
     if shutil.which("podman") is None:
         return None
@@ -885,7 +888,7 @@ def resource_sampler_for_task(
     ]
     discovery_error = None
     if "podman" in task["required-tools"] and shutil.which("podman") is not None:
-        timeout_seconds = 10.0
+        timeout_seconds = PODMAN_GRAPH_ROOT_DISCOVERY_TIMEOUT_SECONDS
         if tier_deadline is not None:
             timeout_seconds = min(
                 timeout_seconds, max(0.001, tier_deadline - time.monotonic())

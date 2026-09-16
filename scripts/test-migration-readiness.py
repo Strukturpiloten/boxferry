@@ -628,6 +628,7 @@ class MigrationReadinessTests(unittest.TestCase):
         self.assertIn(str(pathlib.Path(tempfile.gettempdir()).resolve()), paths)
 
     def test_podman_graph_root_discovery_is_read_only_and_bounded(self) -> None:
+        self.assertEqual(MODULE.PODMAN_GRAPH_ROOT_DISCOVERY_TIMEOUT_SECONDS, 30.0)
         completed = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="/var/lib/containers/storage\n", stderr=""
         )
@@ -644,7 +645,72 @@ class MigrationReadinessTests(unittest.TestCase):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=10.0,
+            timeout=MODULE.PODMAN_GRAPH_ROOT_DISCOVERY_TIMEOUT_SECONDS,
+        )
+
+    def test_podman_graph_root_discovery_failures_remain_unavailable(self) -> None:
+        failures = (
+            subprocess.CompletedProcess(args=[], returncode=1, stdout="ignored\n", stderr="error"),
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="\n", stderr=""),
+        )
+        for completed in failures:
+            with (
+                self.subTest(returncode=completed.returncode, stdout=completed.stdout),
+                mock.patch.object(MODULE.shutil, "which", return_value="/usr/bin/podman"),
+                mock.patch.object(MODULE.subprocess, "run", return_value=completed),
+            ):
+                self.assertIsNone(MODULE.discover_podman_graph_root())
+
+        with (
+            mock.patch.object(MODULE.shutil, "which", return_value="/usr/bin/podman"),
+            mock.patch.object(
+                MODULE.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["podman", "info"],
+                    timeout=MODULE.PODMAN_GRAPH_ROOT_DISCOVERY_TIMEOUT_SECONDS,
+                ),
+            ),
+        ):
+            self.assertIsNone(MODULE.discover_podman_graph_root())
+
+    def test_task_sampler_admits_discovered_graph_root_and_caps_its_deadline(self) -> None:
+        task = copy.deepcopy(MODULE.load_catalogue()["tasks"][0])
+        task["required-tools"] = ["podman"]
+        with tempfile.TemporaryDirectory() as temporary:
+            graph_root = pathlib.Path(temporary).resolve()
+            with (
+                mock.patch.object(MODULE.shutil, "which", return_value="/usr/bin/podman"),
+                mock.patch.object(MODULE.time, "monotonic", return_value=100.0),
+                mock.patch.object(
+                    MODULE, "discover_podman_graph_root", return_value=graph_root
+                ) as discover,
+            ):
+                sampler, discovery_error = MODULE.resource_sampler_for_task(
+                    task, tier_deadline=112.5
+                )
+
+        self.assertIsNone(discovery_error)
+        discover.assert_called_once_with(12.5)
+        snapshot = sampler.snapshot(sample=False)
+        measured_paths = {
+            path
+            for filesystem in snapshot["filesystems"]
+            for path in filesystem["paths"]
+        }
+        self.assertIn(str(graph_root), measured_paths)
+
+    def test_task_sampler_fails_closed_when_graph_root_is_unavailable(self) -> None:
+        task = copy.deepcopy(MODULE.load_catalogue()["tasks"][0])
+        task["required-tools"] = ["podman"]
+        with (
+            mock.patch.object(MODULE.shutil, "which", return_value="/usr/bin/podman"),
+            mock.patch.object(MODULE, "discover_podman_graph_root", return_value=None),
+        ):
+            _sampler, discovery_error = MODULE.resource_sampler_for_task(task)
+
+        self.assertEqual(
+            discovery_error, "Podman graph root could not be discovered read-only"
         )
 
     def test_preflight_checks_every_monitored_filesystem(self) -> None:
