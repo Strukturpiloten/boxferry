@@ -19,7 +19,7 @@ supabase_validate_catalogues
 contract_report="${test_root}/success-contract.report.json"
 contract_drift_report="${test_root}/success-contract-drift.report.json"
 contract_drift_output="${test_root}/success-contract-drift.output"
-supabase_success_contract_example_report podman podman storage contract \
+supabase_success_contract_example_report podman podman storage contract false cli \
   > "${contract_report}"
 jq '
   (
@@ -34,7 +34,7 @@ jq '
   ) = "network:podman"
 ' "${contract_report}" > "${contract_drift_report}"
 if supabase_assert_success_contract podman podman storage \
-  "${contract_drift_report}" contract > "${contract_drift_output}" 2>&1; then
+  "${contract_drift_report}" contract false cli > "${contract_drift_output}" 2>&1; then
   printf '%s\n' 'Supabase diagnostic tuple drift unexpectedly satisfied its exact contract.' >&2
   exit 1
 fi
@@ -254,7 +254,9 @@ bash -c '
   boxferry_bin=unused
   timed_operation() { return 0; }
   assert_successful_conversion() { :; }
-  supabase_assert_success_contract() { :; }
+  supabase_assert_success_contract() {
+    [[ "$#" == 7 && "$1" =~ ^(compose|quadlet)$ && "$7" == not-podman ]]
+  }
   supabase_assert_output_membership() { :; }
   supabase_assert_output_semantics() {
     [[ "$#" == 8 ]]
