@@ -44,12 +44,21 @@
     {
       "customType": "regex",
       "description": "Update directly pinned workflow tool versions",
-      "managerFilePatterns": ["/^\\.github/workflows/.*\\.yml$/"],
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+version: \"(?<currentValue>[^\"]+)\"",
         "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+node-version: (?<currentValue>[^\\s]+)",
         "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n\\s+run: cargo install --locked --version (?<currentValue>[^\\s]+) [^\\s]+"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track fixed GitHub-hosted runner environments",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "(?:^|\\n)\\s*runs-on:\\s*(?<depName>ubuntu|macos|windows)-(?<currentValue>[0-9]+(?:\\.[0-9]+)?(?:-[a-z0-9]+)*)\\s*(?:\\n|$)"
+      ],
+      "datasourceTemplate": "github-runners"
     },
     {
       "customType": "regex",
@@ -144,6 +153,15 @@
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": false
+    },
+    {
+      "description": "Review GitHub-hosted runner environment upgrades manually",
+      "matchDatasources": ["github-runners"],
+      "groupName": "GitHub-hosted runners",
+      "automerge": false,
+      "prBodyNotes": [
+        "Review the hosted image release notes and verify every workflow's operating-system environment before merging."
+      ]
     },
     {
       "description": "Do not delay BoxFerry and Lens releases",

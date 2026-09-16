@@ -168,6 +168,39 @@ fn validate_workflow_renovate_pins(workflow_name: &str, workflow: &str) -> Resul
             .and_then(|previous| lines.get(previous))
             .map_or("", |line| line.trim());
 
+        if let Some(runner) = trimmed.strip_prefix("runs-on:").map(str::trim) {
+            let looks_hosted = ["ubuntu", "macos", "windows"]
+                .iter()
+                .any(|platform| runner.starts_with(platform) || runner.contains(&format!("{platform}-")));
+            if !runner.contains("${{") && looks_hosted {
+                let Some((platform, version)) = runner.split_once('-') else {
+                    return Err(format!(
+                        "{workflow_name}:{} malformed GitHub-hosted runner label `{runner}`",
+                        index + 1
+                    ));
+                };
+                let mut version_parts = version.split('-');
+                let numeric_version = version_parts.next().unwrap_or_default();
+                if !matches!(platform, "ubuntu" | "macos" | "windows")
+                    || numeric_version.is_empty()
+                    || !numeric_version
+                        .split('.')
+                        .all(|component| !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
+                    || version_parts.any(|suffix| {
+                        suffix.is_empty()
+                            || !suffix
+                                .bytes()
+                                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                    })
+                {
+                    return Err(format!(
+                        "{workflow_name}:{} fixed GitHub-hosted runner `{runner}` is not Renovate-managed",
+                        index + 1
+                    ));
+                }
+            }
+        }
+
         if trimmed.starts_with("node-version:")
             && !trimmed.contains("${{")
             && previous != "# renovate: datasource=node-version depName=node"
@@ -5993,6 +6026,90 @@ fn renovate_policy_rejects_unmanaged_workflow_pin_counterexamples() -> Result<()
         }
     }
 
+    Ok(())
+}
+
+#[test]
+fn renovate_workflow_tool_manager_covers_yaml_extensions() -> Result<(), String> {
+    let path = repository_root().join(".github/renovate.json");
+    let renovate = fs::read_to_string(&path).map_err(|error| format!("failed read {}: {error}", path.display()))?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&renovate).map_err(|error| format!("failed parse {}: {error}", path.display()))?;
+    let managers = renovate["customManagers"]
+        .as_array()
+        .ok_or_else(|| "Renovate customManagers must be an array".to_owned())?;
+    let workflow_tool_manager = managers
+        .iter()
+        .find(|manager| manager["description"] == "Update directly pinned workflow tool versions")
+        .ok_or_else(|| "Renovate must track directly pinned workflow tool versions".to_owned())?;
+    if workflow_tool_manager["managerFilePatterns"] != serde_json::json!(["/^\\.github/workflows/.*\\.ya?ml$/"]) {
+        return Err("Renovate workflow-tool manager must inspect .yml and .yaml workflows".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn renovate_tracks_fixed_github_hosted_runners() -> Result<(), String> {
+    let path = repository_root().join(".github/renovate.json");
+    let renovate = fs::read_to_string(&path).map_err(|error| format!("failed read {}: {error}", path.display()))?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&renovate).map_err(|error| format!("failed parse {}: {error}", path.display()))?;
+    let managers = renovate["customManagers"]
+        .as_array()
+        .ok_or_else(|| "Renovate customManagers must be an array".to_owned())?;
+    let runner_manager = managers
+        .iter()
+        .find(|manager| manager["description"] == "Track fixed GitHub-hosted runner environments")
+        .ok_or_else(|| "Renovate must track fixed GitHub-hosted runner labels".to_owned())?;
+    let expected_pattern = concat!(
+        "(?:^|\\n)\\s*runs-on:\\s*(?<depName>ubuntu|macos|windows)-",
+        "(?<currentValue>[0-9]+(?:\\.[0-9]+)?(?:-[a-z0-9]+)*)\\s*(?:\\n|$)"
+    );
+    if runner_manager["datasourceTemplate"] != "github-runners"
+        || runner_manager["managerFilePatterns"] != serde_json::json!(["/^\\.github/workflows/.*\\.ya?ml$/"])
+        || runner_manager["matchStrings"] != serde_json::json!([expected_pattern])
+    {
+        return Err(
+            "Renovate runner manager must capture fixed workflow runner names and versions with a JavaScript-compatible pattern"
+                .to_owned(),
+        );
+    }
+
+    let rules = renovate["packageRules"]
+        .as_array()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    let rule = rules
+        .iter()
+        .find(|rule| rule["description"] == "Review GitHub-hosted runner environment upgrades manually")
+        .ok_or_else(|| "Renovate must retain a manual GitHub-hosted runner review rule".to_owned())?;
+    if rule["automerge"] != false || rule["groupName"] != "GitHub-hosted runners" {
+        return Err("Renovate GitHub-hosted runner updates must be grouped without automerge".to_owned());
+    }
+
+    for workflow in [
+        "runs-on: ubuntu-latest\n",
+        "runs-on: ubuntu22\n",
+        "runs-on: macos-preview\n",
+        "runs-on: windows-preview\n",
+        "runs-on: \"ubuntu-24.04\"\n",
+        "runs-on: &hosted macos-14\n",
+    ] {
+        if validate_workflow_renovate_pins("runner-counterexample.yml", workflow).is_ok() {
+            return Err(format!(
+                "Renovate workflow policy accepted unmanaged runner `{workflow:?}`"
+            ));
+        }
+    }
+    for workflow in [
+        "runs-on: ubuntu-24.04\n",
+        "runs-on: ubuntu-24.04-arm\n",
+        "runs-on: macos-14-large\n",
+        "runs-on: windows-2025\n",
+        "runs-on: ${{ matrix.runner }}\n",
+        "runs-on: self-hosted\n",
+    ] {
+        validate_workflow_renovate_pins("runner-example.yml", workflow)?;
+    }
     Ok(())
 }
 

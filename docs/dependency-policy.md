@@ -47,7 +47,13 @@ Review the relevant manifest and ADR for exact features and constraints.
 ## Automation
 
 Every operational software pin used by CI, the Dev Container, or a live harness has one Renovate
-owner. Native managers own Cargo, npm, Rust toolchains, Dev Container features, runner images, and
+owner. Canonical fixed GitHub-hosted `ubuntu-*`, `macos-*`, and `windows-*` workflow labels belong
+to the Renovate `github-runners` regex manager, including numeric architecture or size suffixes.
+Those prefixes are reserved for Renovate-owned hosted labels, which use an unquoted and unanchored
+scalar so extraction stays explicit. Dynamic matrix expressions and self-hosted forms remain
+visibly distinct. Grouped runner proposals never auto-merge: review hosted environment release
+notes and every affected workflow before merging. Native managers own Cargo, npm, Rust toolchains,
+Dev Container features, and
 GitHub Actions. Explicit regex managers own downloaded CLI versions, atomic Dev Container base
 image release/digest pairs, the checksum-pinned Docker Compose provider, actively executed
 application images, and the live workload probe image. The shared
