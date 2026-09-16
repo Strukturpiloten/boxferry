@@ -470,13 +470,32 @@ supabase_remote() {
   podman_socket "${socket}" "Supabase ${1:-command}" "$@"
 }
 
+supabase_remote_diagnostic() {
+  local socket=$1
+  shift
+  local action=${1:-command}
+  if [[ -n "${started_outer:-}" && ! -S "${socket}" ]]; then
+    timed_operation 5s "diagnose nested Podman ${action} through matching container CLI" \
+      "${engine}" exec "${started_outer}" podman "$@"
+  else
+    timed_operation 5s "diagnose nested Podman ${action} through acquisition socket" \
+      "${engine}" --url "unix://${socket}" "$@"
+  fi
+}
+
+supabase_monotonic_seconds() {
+  printf '%s\n' "${SECONDS}"
+}
+
 supabase_wait_for() {
   local deadline_seconds=$1 description=$2
   shift 2
-  local deadline=$((SECONDS + deadline_seconds))
-  local remaining_seconds
+  local now deadline remaining_seconds
+  now="$(supabase_monotonic_seconds)"
+  deadline=$((now + deadline_seconds))
   while :; do
-    remaining_seconds=$((deadline - SECONDS))
+    now="$(supabase_monotonic_seconds)"
+    remaining_seconds=$((deadline - now))
     if ((remaining_seconds <= 0)); then
       printf 'Timed out waiting for %s.\n' "${description}" >&2
       return 1
@@ -484,11 +503,12 @@ supabase_wait_for() {
     if SUPABASE_WAIT_REMAINING_SECONDS=${remaining_seconds} "$@" > /dev/null 2>&1; then
       return 0
     fi
-    if ((SECONDS >= deadline)); then
+    now="$(supabase_monotonic_seconds)"
+    if ((now >= deadline)); then
       printf 'Timed out waiting for %s.\n' "${description}" >&2
       return 1
     fi
-    remaining_seconds=$((deadline - SECONDS))
+    remaining_seconds=$((deadline - now))
     ((remaining_seconds <= 0)) && continue
     ((remaining_seconds > 2)) && remaining_seconds=2
     sleep "${remaining_seconds}"
@@ -1044,9 +1064,13 @@ supabase_probe() {
 }
 
 supabase_probe_published_api() {
-  local outer=$1
-  supabase_wait_for 90 'Supabase gateway through loopback publication' \
-    supabase_probe_published_api_attempt "${outer}"
+  local outer=$1 socket=$2 prefix=$3
+  if supabase_wait_for 90 'Supabase gateway through loopback publication' \
+    supabase_probe_published_api_attempt "${outer}"; then
+    return 0
+  fi
+  supabase_report_published_api_failure "${outer}" "${socket}" "${prefix}"
+  return 1
 }
 
 supabase_probe_published_api_attempt() {
@@ -1058,6 +1082,37 @@ supabase_probe_published_api_attempt() {
     'probe Supabase gateway through loopback publication' \
     "${engine}" exec "${outer}" curl --fail --silent --show-error \
     "http://127.0.0.1:${SUPABASE_HTTP_PORT}/auth/v1/health"
+}
+
+supabase_report_published_api_failure() {
+  local outer=$1 socket=$2 prefix=$3 container
+  local inspection port_mapping listeners logs port_hex
+  container="${prefix}-supabase-kong"
+  printf -v port_hex '%04X' "${SUPABASE_HTTP_PORT}"
+
+  inspection="$(supabase_remote_diagnostic "${socket}" inspect \
+    --format 'status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}} bindings={{json .HostConfig.PortBindings}} runtime-ports={{json .NetworkSettings.Ports}}' \
+    "${container}" 2>&1 | head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  port_mapping="$(supabase_remote_diagnostic "${socket}" port "${container}" 2>&1 |
+    head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  listeners="$(timed_operation 5s 'inspect outer Supabase published-port listeners' \
+    "${engine}" exec "${outer}" /bin/sh -ceu '
+      awk -v port=":""$1" '\''$2 ~ (port "$") && $4 == "0A" {
+        printf "%s local=%s state=%s\\n", FILENAME, $2, $4
+      }'\'' /proc/net/tcp /proc/net/tcp6
+    ' sh "${port_hex}" 2>&1 | head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+  logs="$(supabase_remote_diagnostic "${socket}" logs --tail 20 "${container}" 2>&1 |
+    head -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" || true)"
+
+  [[ -n "${inspection}" ]] || inspection='unavailable'
+  [[ -n "${port_mapping}" ]] || port_mapping='unavailable'
+  [[ -n "${listeners}" ]] || listeners='no matching LISTEN socket'
+  [[ -n "${logs}" ]] || logs='unavailable'
+  printf 'Supabase gateway publication failure evidence: Kong inspection: %s; podman port: %s; outer published-port listeners: %s; bounded Kong log tail: %s\n' \
+    "$(supabase_redact_runtime_text "${inspection}")" \
+    "$(supabase_redact_runtime_text "${port_mapping}")" \
+    "$(supabase_redact_runtime_text "${listeners}")" \
+    "$(supabase_redact_runtime_text "${logs}")" >&2
 }
 
 supabase_assert_database_state() {
@@ -2332,7 +2387,7 @@ supabase_run_application_cell_unbounded() {
   progress_run 'enable Podman CLI Realtime table publication' \
     supabase_enable_realtime_table "${socket}" "${current_prefix}"
   progress_run 'prove Podman CLI gateway loopback publication' \
-    supabase_probe_published_api "${outer}"
+    supabase_probe_published_api "${outer}" "${socket}" "${current_prefix}"
   progress_run 'exercise Podman CLI auth database storage Realtime edge graph' \
     supabase_probe "${socket}" "${current_prefix}" seed
   progress_run 'prove Podman CLI database auth storage state' \
@@ -2365,7 +2420,7 @@ supabase_run_application_cell_unbounded() {
   progress_run 'enable Docker Compose Realtime table publication' \
     supabase_enable_realtime_table "${socket}" "${current_prefix}"
   progress_run 'prove Docker Compose gateway loopback publication' \
-    supabase_probe_published_api "${outer}"
+    supabase_probe_published_api "${outer}" "${socket}" "${current_prefix}"
   progress_run 'exercise Compose auth database storage Realtime edge graph' \
     supabase_probe "${socket}" "${current_prefix}" seed
   progress_run 'prove Compose database auth storage state' \

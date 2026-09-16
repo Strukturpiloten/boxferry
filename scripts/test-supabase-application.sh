@@ -308,7 +308,9 @@ bash -c '
   argv=$3
   engine=test-engine
   attempts=0
-  sleep() { :; }
+  clock=0
+  supabase_monotonic_seconds() { printf "%s\\n" "${clock}"; }
+  sleep() { clock=$((clock + 1)); }
   timed_operation() {
     printf "%s\\0" "$@" >> "${argv}"
     printf "\\0" >> "${argv}"
@@ -316,7 +318,7 @@ bash -c '
     printf "%s\\n" "${attempts}" >> "${marker}"
     ((attempts > 2))
   }
-  supabase_probe_published_api test-outer
+  supabase_probe_published_api test-outer test-socket test-prefix
   [[ "$(tr "\\n" " " < "${marker}")" == "1 2 3 " ]]
 ' bash "${library}" "${published_api_transient_marker}" "${published_api_transient_argv}"
 
@@ -330,11 +332,13 @@ if bash -c '
   attempts_marker=$2
   sleeps_marker=$3
   argv=$4
+  diagnostic_marker=$5
   engine=test-engine
-  SECONDS=0
+  clock=0
+  supabase_monotonic_seconds() { printf "%s\\n" "${clock}"; }
   sleep() {
     printf "%s\\n" "$1" >> "${sleeps_marker}"
-    SECONDS=$((SECONDS + $1))
+    clock=$((clock + $1))
   }
   timed_operation() {
     printf "%s\\0" "$@" >> "${argv}"
@@ -342,9 +346,12 @@ if bash -c '
     printf "attempt\\n" >> "${attempts_marker}"
     return 1
   }
-  supabase_probe_published_api test-outer
+  supabase_report_published_api_failure() {
+    printf "%s\\n" "$*" >> "${diagnostic_marker}"
+  }
+  supabase_probe_published_api test-outer test-socket test-prefix
 ' bash "${library}" "${published_api_timeout_attempts}" "${published_api_timeout_sleeps}" \
-  "${published_api_timeout_argv}" \
+  "${published_api_timeout_argv}" "${test_root}/published-api-timeout-diagnostic.marker" \
   > "${published_api_timeout_output}" 2>&1; then
   printf "%s\\n" "Published Supabase API probe unexpectedly passed permanently failing ingress." >&2
   exit 1
@@ -354,6 +361,7 @@ grep --fixed-strings --quiet \
   "${published_api_timeout_output}"
 [[ "$(sed -n '$=' "${published_api_timeout_attempts}")" == 45 ]]
 [[ "$(sed -n '$=' "${published_api_timeout_sleeps}")" == 45 ]]
+[[ "$(cat "${test_root}/published-api-timeout-diagnostic.marker")" == 'test-outer test-socket test-prefix' ]]
 
 published_api_late_argv="${test_root}/published-api-late.argv"
 if bash -c '
@@ -361,21 +369,23 @@ if bash -c '
   source "$1"
   argv=$2
   engine=test-engine
-  SECONDS=0
+  clock=0
   attempts=0
-  sleep() { SECONDS=$((SECONDS + $1)); }
+  supabase_monotonic_seconds() { printf "%s\\n" "${clock}"; }
+  sleep() { clock=$((clock + $1)); }
   timed_operation() {
     printf "%s\\0" "$@" >> "${argv}"
     printf "\\0" >> "${argv}"
     attempts=$((attempts + 1))
     if ((attempts == 1)); then
-      SECONDS=87
+      clock=87
     else
-      SECONDS=$((SECONDS + ${1%s}))
+      clock=$((clock + ${1%s}))
     fi
     return 1
   }
-  supabase_probe_published_api test-outer
+  supabase_report_published_api_failure() { :; }
+  supabase_probe_published_api test-outer test-socket test-prefix
 ' bash "${library}" "${published_api_late_argv}" > /dev/null 2>&1; then
   printf "%s\\n" "Late Supabase API probe unexpectedly passed." >&2
   exit 1
@@ -405,7 +415,11 @@ transient, permanent, late = map(records, sys.argv[1:])
 transient = [[field.decode() for field in record] for record in transient]
 permanent = [[field.decode() for field in record] for record in permanent]
 late = [[field.decode() for field in record] for record in late]
-assert transient == [["90s", *expected_tail]] * 3, transient
+assert transient == [
+    ["90s", *expected_tail],
+    ["89s", *expected_tail],
+    ["88s", *expected_tail],
+], transient
 assert [record[0] for record in permanent] == [
     f"{seconds}s" for seconds in range(90, 0, -2)
 ], permanent
@@ -414,6 +428,141 @@ assert late == [
     ["90s", *expected_tail],
     ["1s", *expected_tail],
 ], late
+PY
+
+published_api_diagnostic_transport_argv="${test_root}/published-api-diagnostic-transport.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  argv=$2
+  engine=test-engine
+  timed_operation() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+  }
+  supabase_remote_diagnostic test-socket inspect test-container
+  started_outer=test-outer
+  supabase_remote_diagnostic test-missing-socket logs --tail 20 test-container
+' bash "${library}" "${published_api_diagnostic_transport_argv}"
+
+python3 - "${published_api_diagnostic_transport_argv}" << 'PY'
+import pathlib
+import sys
+
+records = [
+    [field.decode() for field in record.split(b"\0")]
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")[:-1]
+]
+assert records == [
+    [
+        "5s",
+        "diagnose nested Podman inspect through acquisition socket",
+        "test-engine",
+        "--url",
+        "unix://test-socket",
+        "inspect",
+        "test-container",
+    ],
+    [
+        "5s",
+        "diagnose nested Podman logs through matching container CLI",
+        "test-engine",
+        "exec",
+        "test-outer",
+        "podman",
+        "logs",
+        "--tail",
+        "20",
+        "test-container",
+    ],
+], records
+PY
+
+published_api_diagnostic_output="${test_root}/published-api-diagnostic.output"
+published_api_diagnostic_argv="${test_root}/published-api-diagnostic.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  argv=$2
+  engine=test-engine
+  supabase_remote_diagnostic() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+    case "$2" in
+      inspect)
+        printf "status=running exit=0 error=%s bindings=loopback runtime-ports=ready %s\\n" \
+          "${SUPABASE_ANON_KEY}" "${SUPABASE_DB_PASSWORD}"
+        ;;
+      port)
+        printf "8000/tcp -> 127.0.0.1:18000\\n"
+        ;;
+      logs)
+        printf "Kong bounded log %s\\n" "${SUPABASE_TEST_PASSWORD}"
+        ;;
+    esac
+  }
+  timed_operation() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+    printf "/proc/net/tcp local=0100007F:4650 state=0A %s\\n" "${SUPABASE_SERVICE_KEY}"
+    printf "/proc/net/tcp local=00000000:4650 state=0A\\n"
+  }
+  supabase_report_published_api_failure test-outer test-socket test-prefix
+' bash "${library}" "${published_api_diagnostic_argv}" \
+  > "${published_api_diagnostic_output}" 2>&1
+grep --fixed-strings --quiet \
+  'Kong inspection: status=running exit=0 error=[REDACTED] bindings=loopback runtime-ports=ready [REDACTED]' \
+  "${published_api_diagnostic_output}"
+grep --fixed-strings --quiet 'podman port: 8000/tcp -> 127.0.0.1:18000' \
+  "${published_api_diagnostic_output}"
+grep --fixed-strings --quiet \
+  'outer published-port listeners: /proc/net/tcp local=0100007F:4650 state=0A [REDACTED]' \
+  "${published_api_diagnostic_output}"
+grep --fixed-strings --quiet '/proc/net/tcp local=00000000:4650 state=0A' \
+  "${published_api_diagnostic_output}"
+grep --fixed-strings --quiet 'bounded Kong log tail: Kong bounded log [REDACTED]' \
+  "${published_api_diagnostic_output}"
+for protected in \
+  "${SUPABASE_DB_PASSWORD}" "${SUPABASE_ANON_KEY}" \
+  "${SUPABASE_SERVICE_KEY}" "${SUPABASE_TEST_PASSWORD}"; do
+  if grep --fixed-strings --quiet "${protected}" "${published_api_diagnostic_output}"; then
+    printf 'Published API diagnostic leaked a protected fixture value.\n' >&2
+    exit 1
+  fi
+done
+
+python3 - "${published_api_diagnostic_argv}" << 'PY'
+import pathlib
+import sys
+
+records = [
+    [field.decode() for field in record.split(b"\0")]
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")[:-1]
+]
+assert len(records) == 4, records
+assert records[0] == [
+    "test-socket",
+    "inspect",
+    "--format",
+    "status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}} "
+    "bindings={{json .HostConfig.PortBindings}} runtime-ports={{json .NetworkSettings.Ports}}",
+    "test-prefix-supabase-kong",
+], records[0]
+assert records[1] == ["test-socket", "port", "test-prefix-supabase-kong"], records[1]
+assert records[2][0:3] == [
+    "5s",
+    "inspect outer Supabase published-port listeners",
+    "test-engine",
+], records[2]
+assert records[2][3:6] == ["exec", "test-outer", "/bin/sh"], records[2]
+assert records[2][-2:] == ["sh", "4650"], records[2]
+assert records[3] == [
+    "test-socket",
+    "logs",
+    "--tail",
+    "20",
+    "test-prefix-supabase-kong",
+], records[3]
 PY
 
 alias_output_root="${test_root}/alias-outputs"
