@@ -325,22 +325,27 @@ bash -c '
   }
   supabase_assert_output_membership() { :; }
   supabase_assert_output_semantics() {
-    [[ "$#" == 8 ]]
-    printf "%s\t%s\t%s\t%s\t%s\n" \
-      "$1" "$2" "$3" "$7" "$8" >> "${argument_log}"
+    [[ "$#" == 9 ]]
+    printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "$1" "$2" "$3" "$7" "$8" "$9" >> "${argument_log}"
   }
   supabase_run_reimports cli test-prefix
+  supabase_run_reimports compose test-prefix
 ' bash "${library}" "${test_root}/reimport-case" "${reimport_argument_log}"
 awk -F '\t' '
-  NF != 5 ||
+  NF != 6 ||
   $1 !~ /^(exact|storage|label|all)$/ ||
   $2 !~ /^(compose|quadlet)$/ ||
   $3 !~ /^(compose|quadlet|podman)$/ ||
   $4 != "podman" ||
+  $6 !~ /^(cli|compose)$/ ||
   ($2 == "compose" && $5 != "false") ||
   ($2 == "quadlet" && $5 != "true") { bad = 1 }
-  { seen[$2 "->" $3] = 1; count++ }
-  END { exit bad || count != 24 || length(seen) != 6 }
+  { seen[$6 ":" $2 "->" $3] = 1; count[$6]++; total++ }
+  END {
+    exit bad || total != 48 || count["cli"] != 24 || count["compose"] != 24 ||
+      length(seen) != 12
+  }
 ' "${reimport_argument_log}"
 
 supabase_selection_includes_service exact supavisor
@@ -921,7 +926,114 @@ jq --null-input '
 ' > "${alias_output_root}/podman/podman.json"
 for alias_output in compose quadlet podman; do
   supabase_assert_realtime_output_aliases \
-    "${alias_output}" "${alias_output_root}/${alias_output}" test-prefix
+    "${alias_output}" "${alias_output_root}/${alias_output}" test-prefix cli
+done
+
+write_realtime_alias_fixture() {
+  local output=$1 directory=$2
+  shift 2
+  local aliases_json alias_value
+  local -a fixture_aliases=("$@")
+
+  mkdir -p -- "${directory}"
+  case "${output}" in
+    compose)
+      {
+        printf '%s\n' \
+          '---' \
+          'services:' \
+          '  test-prefix-supabase-realtime:' \
+          '    networks:' \
+          '      test-prefix-supabase-backend:' \
+          '        aliases:'
+        for alias_value in "${fixture_aliases[@]}"; do
+          printf '          - %s\n' "${alias_value}"
+        done
+      } > "${directory}/compose.yaml"
+      ;;
+    quadlet)
+      {
+        printf '%s\n' \
+          '[Container]' \
+          'Network=test-prefix-supabase-backend.network'
+        for alias_value in "${fixture_aliases[@]}"; do
+          printf 'NetworkAlias=%s\n' "${alias_value}"
+        done
+      } > "${directory}/test-prefix-supabase-realtime.container"
+      ;;
+    podman)
+      aliases_json="$(
+        printf '%s\n' "${fixture_aliases[@]}" |
+          jq --raw-input --slurp 'split("\n")[:-1]'
+      )"
+      jq --null-input --argjson aliases "${aliases_json}" '
+        {
+          operations: [{
+            action: "create",
+            resource: {kind: "container", name: "test-prefix-supabase-realtime"},
+            libpod: {body: {json: {Networks: {
+              "test-prefix-supabase-backend": {aliases: $aliases}
+            }}}}
+          }]
+        }
+      ' > "${directory}/podman.json"
+      ;;
+  esac
+}
+
+for provisioner_mode in cli compose; do
+  case "${provisioner_mode}" in
+    cli)
+      expected_aliases=("realtime-dev.supabase-realtime" "realtime")
+      ;;
+    compose)
+      expected_aliases=(
+        "test-prefix-supabase-realtime"
+        "realtime"
+        "realtime-dev.supabase-realtime"
+      )
+      ;;
+  esac
+  for alias_output in compose quadlet podman; do
+    alias_directory="${alias_output_root}/${provisioner_mode}-strict/${alias_output}"
+    write_realtime_alias_fixture \
+      "${alias_output}" "${alias_directory}" "${expected_aliases[@]}"
+    supabase_assert_realtime_output_aliases \
+      "${alias_output}" "${alias_directory}" test-prefix "${provisioner_mode}"
+
+    for alias_mutation in missing extra reordered; do
+      case "${alias_mutation}" in
+        missing)
+          mutated_aliases=("${expected_aliases[@]:0:${#expected_aliases[@]}-1}")
+          ;;
+        extra)
+          mutated_aliases=("${expected_aliases[@]}" private-alias-canary)
+          ;;
+        reordered)
+          mutated_aliases=("${expected_aliases[@]}")
+          first_alias=${mutated_aliases[0]}
+          mutated_aliases[0]=${mutated_aliases[1]}
+          mutated_aliases[1]=${first_alias}
+          ;;
+      esac
+      write_realtime_alias_fixture \
+        "${alias_output}" "${alias_directory}" "${mutated_aliases[@]}"
+      alias_error="${alias_output_root}/${provisioner_mode}-${alias_output}-${alias_mutation}.error"
+      if supabase_assert_realtime_output_aliases \
+        "${alias_output}" "${alias_directory}" test-prefix "${provisioner_mode}" \
+        2> "${alias_error}"; then
+        printf 'Supabase %s-origin %s aliases admitted %s drift.\n' \
+          "${provisioner_mode}" "${alias_output}" "${alias_mutation}" >&2
+        exit 1
+      fi
+      for alias_value in "${expected_aliases[@]}" private-alias-canary; do
+        if grep --fixed-strings --quiet "${alias_value}" "${alias_error}"; then
+          printf 'Supabase alias failure exposed an alias value.\n' >&2
+          exit 1
+        fi
+      done
+    done
+  done
 done
 
 ownership_output_root="${test_root}/ownership-outputs"
