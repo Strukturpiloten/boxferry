@@ -40,6 +40,12 @@ offline evidence remains independent of the manual live gate and cannot satisfy 
 multiset for every successful live route and selection. Each tuple fixes the
 code, severity, subject, and decision. It includes Podman acquisition findings,
 promoted healthchecks, and Quadlet-to-Compose dependency and healthcheck losses.
+On a failed success contract, the harness reports a bounded static list of
+failed predicates plus only the expected and observed well-shaped integer
+fidelity counters, and the invalid diagnostic-name count. Schema, status, and
+malformed values are never printed. The existing bounded, redacted diagnostic
+tuple delta remains a separate aid for tuple drift; both reports use the same
+4 KiB omission limit.
 The contract receives the Podman acquisition origin explicitly. CLI-authored
 Podman-to-Compose retains the independently observed dependency, healthcheck,
 external-network metadata, and two network-IPAM losses. Compose-authored

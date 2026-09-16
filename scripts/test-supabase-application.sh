@@ -39,8 +39,13 @@ if supabase_assert_success_contract podman podman storage \
   exit 1
 fi
 grep --fixed-strings --quiet \
-  'Supabase route emitted a diagnostic multiset outside its exact contract:' \
+  'Supabase route failed its exact success contract:' \
   "${contract_drift_output}"
+grep --fixed-strings 'Supabase success-contract mismatch summary: ' \
+  "${contract_drift_output}" | sed 's/^Supabase success-contract mismatch summary: //' |
+  jq --exit-status \
+    '.failed_predicates == [] and .fidelity_counters == {} and .invalid_diagnostic_names == 0' \
+    > /dev/null
 grep --fixed-strings --quiet \
   '"subject":"container:contract-supabase-auth","decision":"omitted","count":1' \
   "${contract_drift_output}"
@@ -50,6 +55,67 @@ grep --fixed-strings --quiet \
 if grep --fixed-strings --quiet -- "${SUPABASE_TEST_PASSWORD}" \
   "${contract_drift_output}"; then
   printf '%s\n' 'Supabase diagnostic contract failure output leaked a protected value.' >&2
+  exit 1
+fi
+
+assert_contract_predicate_failure() {
+  local name=$1 report=$2 expected_label=$3 expected_counter=${4:-} output mismatch
+  output="${test_root}/${name}.output"
+  if supabase_assert_success_contract podman podman storage \
+    "${report}" contract false cli > "${output}" 2>&1; then
+    printf 'Supabase %s predicate drift unexpectedly satisfied its exact contract.\n' "${name}" >&2
+    exit 1
+  fi
+  mismatch="$(grep --fixed-strings 'Supabase success-contract mismatch summary: ' "${output}" |
+    sed 's/^Supabase success-contract mismatch summary: //')"
+  jq --exit-status --arg label "${expected_label}" \
+    '.failed_predicates == [$label]' <<< "${mismatch}" > /dev/null
+  if [[ -n "${expected_counter}" ]]; then
+    jq --exit-status --argjson expected_counter "${expected_counter}" \
+      '.fidelity_counters.unsupported == {expected: $expected_counter - 1, actual: $expected_counter}' \
+      <<< "${mismatch}" > /dev/null
+  else
+    jq --exit-status '.fidelity_counters == {}' <<< "${mismatch}" > /dev/null
+  fi
+  if grep --fixed-strings --quiet -- "${SUPABASE_TEST_PASSWORD}" "${output}"; then
+    printf 'Supabase %s mismatch output leaked a protected value.\n' "${name}" >&2
+    exit 1
+  fi
+}
+
+schema_drift_report="${test_root}/success-contract-schema-drift.report.json"
+status_drift_report="${test_root}/success-contract-status-drift.report.json"
+fidelity_shape_drift_report="${test_root}/success-contract-fidelity-shape-drift.report.json"
+non_object_fidelity_drift_report="${test_root}/success-contract-non-object-fidelity-drift.report.json"
+fidelity_counter_drift_report="${test_root}/success-contract-fidelity-counter-drift.report.json"
+empty_name_drift_report="${test_root}/success-contract-empty-name-drift.report.json"
+jq '.schema_version = 2' "${contract_report}" > "${schema_drift_report}"
+jq --arg status "${SUPABASE_TEST_PASSWORD}" '.status = $status' \
+  "${contract_report}" > "${status_drift_report}"
+jq '.fidelity = {exact: 1}' "${contract_report}" > "${fidelity_shape_drift_report}"
+jq '.fidelity = 1' "${contract_report}" > "${non_object_fidelity_drift_report}"
+jq '.fidelity.unsupported += 1' "${contract_report}" > "${fidelity_counter_drift_report}"
+jq '.diagnostics[0].name = ""' "${contract_report}" > "${empty_name_drift_report}"
+assert_contract_predicate_failure schema-version "${schema_drift_report}" schema-version
+assert_contract_predicate_failure status "${status_drift_report}" status
+assert_contract_predicate_failure fidelity-shape "${fidelity_shape_drift_report}" fidelity-shape
+assert_contract_predicate_failure non-object-fidelity \
+  "${non_object_fidelity_drift_report}" fidelity-shape
+assert_contract_predicate_failure fidelity-unsupported \
+  "${fidelity_counter_drift_report}" fidelity-unsupported 1528
+assert_contract_predicate_failure diagnostic-names \
+  "${empty_name_drift_report}" diagnostic-names
+
+bounded_mismatch_output="$(
+  SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES=8 \
+    supabase_report_success_contract_mismatches podman podman storage \
+    "${schema_drift_report}" contract false cli 2>&1
+)"
+grep --extended-regexp --quiet \
+  'Supabase success-contract mismatch summary omitted: byte-limit=8; observed-bytes=[0-9]+; truncated=true\.' \
+  <<< "${bounded_mismatch_output}"
+if grep --fixed-strings --quiet -- "${SUPABASE_TEST_PASSWORD}" <<< "${bounded_mismatch_output}"; then
+  printf '%s\n' 'Supabase bounded mismatch output leaked a protected value.' >&2
   exit 1
 fi
 
