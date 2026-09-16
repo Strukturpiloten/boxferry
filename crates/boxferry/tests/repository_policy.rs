@@ -997,7 +997,28 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "services.contract-supabase-studio.healthcheck",
         "services.contract-supabase-supavisor.dependencies[0]",
     ]);
+    let expected_podman_compose_target_subjects = BTreeSet::from([
+        "networks.contract-supabase-backend.ipam.config",
+        "networks.contract-supabase-edge.ipam.config",
+    ]);
     for selection in ["exact", "storage", "label", "all"] {
+        let podman_compose_diagnostics =
+            generated_supabase_contract(&root, "podman", "compose", selection, SupabaseContractMode::Diagnostics)?;
+        let podman_compose_target_subjects = podman_compose_diagnostics
+            .as_array()
+            .ok_or("Podman-to-Compose diagnostics must be an array")?
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFC0007")
+            .map(|diagnostic| {
+                diagnostic["subject"]
+                    .as_str()
+                    .ok_or("Podman-to-Compose target-loss subject must be a string")
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        assert_eq!(
+            podman_compose_target_subjects, expected_podman_compose_target_subjects,
+            "{selection} Podman-to-Compose must not invent absent dependency, healthcheck, or network metadata intent"
+        );
         let compose_diagnostics = generated_supabase_contract(
             &root,
             "compose",
@@ -1343,7 +1364,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let reviewed_fidelity = [
-        ("exact", "podman", "compose", 63, 1_346),
+        ("exact", "podman", "compose", 63, 1_319),
         ("exact", "podman", "quadlet", 63, 1_318),
         ("exact", "podman", "podman", 63, 1_527),
         ("exact", "quadlet", "compose", 0, 26),
@@ -1352,7 +1373,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("exact", "compose", "podman", 0, 198),
         ("exact", "quadlet", "quadlet", 0, 0),
         ("exact", "quadlet", "podman", 0, 223),
-        ("storage", "podman", "compose", 63, 1_346),
+        ("storage", "podman", "compose", 63, 1_319),
         ("storage", "podman", "quadlet", 63, 1_318),
         ("storage", "podman", "podman", 63, 1_527),
         ("storage", "quadlet", "compose", 0, 26),
@@ -1361,7 +1382,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("storage", "compose", "podman", 0, 198),
         ("storage", "quadlet", "quadlet", 0, 0),
         ("storage", "quadlet", "podman", 0, 223),
-        ("label", "podman", "compose", 63, 1_346),
+        ("label", "podman", "compose", 63, 1_319),
         ("label", "podman", "quadlet", 63, 1_318),
         ("label", "podman", "podman", 63, 1_527),
         ("label", "quadlet", "compose", 0, 26),
@@ -1370,7 +1391,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("label", "compose", "podman", 0, 198),
         ("label", "quadlet", "quadlet", 0, 0),
         ("label", "quadlet", "podman", 0, 223),
-        ("all", "podman", "compose", 67, 1_446),
+        ("all", "podman", "compose", 67, 1_419),
         ("all", "podman", "quadlet", 67, 1_418),
         ("all", "podman", "podman", 67, 1_641),
         ("all", "quadlet", "compose", 0, 26),
@@ -1409,7 +1430,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             .map_err(|error| format!("invalid system-network fidelity contract: {error}"))?,
         serde_json::json!({
             "approximate": 69,
-            "unsupported": 1_452,
+            "unsupported": 1_425,
             "invalid": 0,
             "other": 0,
         })
