@@ -791,6 +791,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let expected_quadlet_compose_subjects = BTreeSet::from([
+        "networks.contract-supabase-backend.ipam.config",
         "services.contract-supabase-auth.dependencies[0]",
         "services.contract-supabase-auth.healthcheck",
         "services.contract-supabase-db.healthcheck",
@@ -880,7 +881,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             .ok_or("generated Quadlet-to-Compose diagnostics must be an array")?;
         assert_eq!(
             quadlet_diagnostics.len(),
-            25,
+            26,
             "{selection} Quadlet-to-Compose diagnostic count"
         );
         assert!(quadlet_diagnostics.iter().all(|diagnostic| {
@@ -902,13 +903,13 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             generated_supabase_contract(&root, "quadlet", "compose", selection, SupabaseContractMode::Fidelity)?;
         assert_eq!(
             quadlet_fidelity,
-            serde_json::json!({"approximate": 0, "unsupported": 25, "invalid": 0, "other": 0}),
+            serde_json::json!({"approximate": 0, "unsupported": 26, "invalid": 0, "other": 0}),
             "{selection} Quadlet-to-Compose has only BFC0007 unsupported loss"
         );
         let quadlet_report = serde_json::json!({
             "schema_version": 1,
             "status": "success",
-            "fidelity": {"exact": 0, "approximate": 0, "unsupported": 25, "invalid": 0, "other": 0},
+            "fidelity": {"exact": 0, "approximate": 0, "unsupported": 26, "invalid": 0, "other": 0},
             "diagnostics": quadlet_diagnostics.iter().map(supabase_contract_diagnostic).collect::<Vec<_>>(),
         });
         assert!(supabase_contract_accepts(
@@ -947,7 +948,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("exact", "podman", "compose", 63, 1_346),
         ("exact", "podman", "quadlet", 63, 1_318),
         ("exact", "podman", "podman", 63, 1_527),
-        ("exact", "quadlet", "compose", 0, 25),
+        ("exact", "quadlet", "compose", 0, 26),
         ("exact", "compose", "compose", 0, 0),
         ("exact", "compose", "quadlet", 0, 1),
         ("exact", "compose", "podman", 0, 198),
@@ -956,7 +957,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("storage", "podman", "compose", 63, 1_346),
         ("storage", "podman", "quadlet", 63, 1_318),
         ("storage", "podman", "podman", 63, 1_527),
-        ("storage", "quadlet", "compose", 0, 25),
+        ("storage", "quadlet", "compose", 0, 26),
         ("storage", "compose", "compose", 0, 0),
         ("storage", "compose", "quadlet", 0, 1),
         ("storage", "compose", "podman", 0, 198),
@@ -965,7 +966,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("label", "podman", "compose", 63, 1_346),
         ("label", "podman", "quadlet", 63, 1_318),
         ("label", "podman", "podman", 63, 1_527),
-        ("label", "quadlet", "compose", 0, 25),
+        ("label", "quadlet", "compose", 0, 26),
         ("label", "compose", "compose", 0, 0),
         ("label", "compose", "quadlet", 0, 1),
         ("label", "compose", "podman", 0, 198),
@@ -974,7 +975,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("all", "podman", "compose", 67, 1_446),
         ("all", "podman", "quadlet", 67, 1_418),
         ("all", "podman", "podman", 67, 1_641),
-        ("all", "quadlet", "compose", 0, 25),
+        ("all", "quadlet", "compose", 0, 26),
         ("all", "compose", "compose", 0, 0),
         ("all", "compose", "quadlet", 0, 1),
         ("all", "compose", "podman", 0, 212),
