@@ -6,6 +6,7 @@ set -Eeuo pipefail
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 library="${script_directory}/lib/supabase-application.sh"
 deadline_helper="${script_directory}/lib/in-shell-deadline.py"
+timed_operation_helper="${script_directory}/lib/timed-operation.sh"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "${test_root}"' EXIT
 # shellcheck disable=SC2034 # Used by the sourced Supabase module.
@@ -2279,6 +2280,98 @@ if grep --fixed-strings --quiet -e readiness-ran -e provider-ran -e peer-ran \
   printf '%s\n' 'Initial Compose database failure continued into a later lifecycle stage.' >&2
   exit 1
 fi
+
+compose_timeout_provider="${test_root}/timeout-compatible-compose-provider"
+compose_timeout_capture="${test_root}/timeout-compatible-compose"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -Eeuo pipefail' \
+  'env | LC_ALL=C sort > "${SUPABASE_PROVIDER_CAPTURE:?}.env"' \
+  'printf "%s\\0" "$@" > "${SUPABASE_PROVIDER_CAPTURE:?}.argv"' \
+  > "${compose_timeout_provider}"
+chmod +x "${compose_timeout_provider}"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  source "$2"
+  provider=$3
+  capture=$4
+  repository_root=$5
+  timestamp() { printf "test-time"; }
+  format_duration() { printf "%ss" "$1"; }
+  exec 3> "${capture}.timing"
+  BOXFERRY_COMPOSE_BIN="${provider}" \
+    SUPABASE_PROVIDER_CAPTURE="${capture}-application" \
+    supabase_compose_project test-socket test-prefix test-run up --detach
+  BOXFERRY_COMPOSE_BIN="${provider}" \
+    SUPABASE_PROVIDER_CAPTURE="${capture}-peer" \
+    supabase_peer_compose_project test-socket test-prefix test-run up --detach --remove-orphans
+' bash "${library}" "${timed_operation_helper}" "${compose_timeout_provider}" \
+  "${compose_timeout_capture}" "${PWD}"
+grep --fixed-strings --quiet \
+  'test-time STEP START Docker Compose Supabase up (deadline 15m)' \
+  "${compose_timeout_capture}.timing"
+grep -E --quiet \
+  '^test-time STEP PASS  Docker Compose Supabase up \([0-9]+s\)$' \
+  "${compose_timeout_capture}.timing"
+grep --fixed-strings --quiet \
+  'test-time STEP START Docker Compose Supabase boundary peer up (deadline 3m)' \
+  "${compose_timeout_capture}.timing"
+grep -E --quiet \
+  '^test-time STEP PASS  Docker Compose Supabase boundary peer up \([0-9]+s\)$' \
+  "${compose_timeout_capture}.timing"
+for compose_timeout_kind in application peer; do
+  capture_path="${compose_timeout_capture}-${compose_timeout_kind}"
+  expected_environment_path="${capture_path}.expected-env"
+  expected_environment=(
+    'BF_PREFIX=test-prefix'
+    'BF_RUN=test-run'
+    'BF_FIXTURE_ROOT=/tmp/boxferry-fixture/test-prefix'
+    'BF_DB_PASSWORD=boxferry-public-supabase-db-password'
+    'BF_JWT_SECRET=boxferry-public-jwt-secret-at-least-thirty-two-characters'
+    'BF_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6InN1cGFiYXNlIiwicm9sZSI6ImFub24ifQ.lGRwynjOirFYPqa-6IzEfCCIS_yNsl4riV9_TYukv0g'
+    'BF_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6InN1cGFiYXNlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSJ9.GqsNLUWNCMg6So_4dAH5LRG2EtPKRYL2wb9gffU8eTU'
+    'BF_REALTIME_SECRET=boxferry-public-realtime-secret-key-base-64-characters-long-0000000000'
+    'BF_REALTIME_DB_KEY=boxferry-rt-key1'
+    'BF_POOLER_SECRET=boxferry-public-pooler-secret-key-base-64-characters-long-000000000000'
+    'BF_STUDIO_IMAGE=docker.io/supabase/studio:2026.08.03-sha-022b374@sha256:2616bb9ed337963fe27ce682b1783875083537d5fb54bfea4c399fb0c56ff03e'
+    'BF_KONG_IMAGE=docker.io/kong/kong:3.9.3@sha256:61591af560fc9ba4d1e2fcc8be87f28e374c4b2f4a8f0e637702ee12dcaddade'
+    'BF_AUTH_IMAGE=docker.io/supabase/gotrue:v2.189.0@sha256:0a8557cbe0fd53a067726fe656f79eb1b03a1ab3cdde4b59907ce5a1e1a202ab'
+    'BF_REST_IMAGE=docker.io/postgrest/postgrest:v16.3@sha256:63b567a462c4fd81ede0bdff0b38a150f732ad5fe4f4b01cebeb6a1aa8dbe0d6'
+    'BF_REALTIME_IMAGE=docker.io/supabase/realtime:v2.102.3@sha256:2cc87edf0db5cebf1f58c9a4116bb80a25ff764c8706b6802fa68d976e66e5d7'
+    'BF_STORAGE_IMAGE=docker.io/supabase/storage-api:v1.60.4@sha256:6f706c1184d97b081446527bb62a3193d3d47ad0daafcf738fd5c3e5a62aed97'
+    'BF_IMGPROXY_IMAGE=docker.io/darthsim/imgproxy:v3.30.1@sha256:965c3782818766a477a056016e18f88f9a028bf68b39cb2316978945ac2c0492'
+    'BF_META_IMAGE=docker.io/supabase/postgres-meta:v0.96.6@sha256:b9edad6fff2d4fb991ecd57837dbe3f21d2efa0f0ccb186f6ccf0e2d57192fed'
+    'BF_FUNCTIONS_IMAGE=docker.io/supabase/edge-runtime:v1.74.0@sha256:8c17262ecf2fcc43fe19c48d239280592129f2164e61f0f17ba56533120f92d5'
+    'BF_DB_IMAGE=docker.io/supabase/postgres:17.6.1.136@sha256:5a4314708484bec672de2c09653a5c01fb1c84a998564ac231b0325e2238ed5b'
+    'BF_SUPAVISOR_IMAGE=docker.io/supabase/supavisor:2.9.5@sha256:4dd940610c0ef5c8284ef88a28530566d45b52f7d3de285497a67c169e00cec9'
+    'DOCKER_HOST=unix://test-socket'
+  )
+  printf '%s\n' "${expected_environment[@]}" |
+    LC_ALL=C sort > "${expected_environment_path}"
+  grep -E '^(BF_|DOCKER_HOST=)' "${capture_path}.env" |
+    LC_ALL=C sort > "${capture_path}.actual-env"
+  diff --unified=3 "${expected_environment_path}" "${capture_path}.actual-env"
+  mapfile -d '' -t compose_timeout_argv < "${capture_path}.argv"
+  if [[ "${compose_timeout_kind}" == application ]]; then
+    expected_project=test-prefix-supabase
+    expected_file="$(supabase_fixture_root)/compose.yaml"
+    expected_arguments=(up --detach)
+  else
+    expected_project=test-prefix-supabase-peer
+    expected_file="$(supabase_fixture_root)/peer.compose.yaml"
+    expected_arguments=(up --detach --remove-orphans)
+  fi
+  expected_compose_argv=(
+    --project-name "${expected_project}"
+    --file "${expected_file}"
+    "${expected_arguments[@]}"
+  )
+  [[ "${#compose_timeout_argv[@]}" == "${#expected_compose_argv[@]}" ]]
+  for compose_timeout_index in "${!expected_compose_argv[@]}"; do
+    [[ "${compose_timeout_argv[compose_timeout_index]}" == "${expected_compose_argv[compose_timeout_index]}" ]]
+  done
+done
 
 cleanup_output="${test_root}/cleanup.output"
 cleanup_observation="${test_root}/cleanup-observation"
