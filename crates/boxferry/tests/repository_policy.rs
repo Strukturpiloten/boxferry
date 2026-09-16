@@ -607,6 +607,31 @@ fn supabase_contract_accepts(
     Ok(result.status.success())
 }
 
+fn supabase_contract_accepts_including_system_network(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    report: &serde_json::Value,
+) -> Result<bool, String> {
+    let result = run_supabase_report_contract(
+        root,
+        input,
+        output,
+        selection,
+        true,
+        SupabaseContractMode::Validate,
+        Some(report),
+    )?;
+    if !result.status.success() && result.status.code() != Some(1) {
+        return Err(format!(
+            "Supabase jq contract failed to execute: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    Ok(result.status.success())
+}
+
 fn generated_supabase_contract(
     root: &Path,
     input: &str,
@@ -944,6 +969,77 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "{selection} Quadlet-to-Compose must reject BFC0009"
         );
     }
+
+    let all_compose_podman = run_supabase_report_contract(
+        &root,
+        "compose",
+        "podman",
+        "all",
+        true,
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    if !all_compose_podman.status.success() {
+        return Err(format!(
+            "failed to generate all Compose-to-Podman system-network contract: {}",
+            String::from_utf8_lossy(&all_compose_podman.stderr).trim()
+        ));
+    }
+    let all_compose_podman: serde_json::Value = serde_json::from_slice(&all_compose_podman.stdout)
+        .map_err(|error| format!("invalid all Compose-to-Podman system-network contract: {error}"))?;
+    let all_compose_podman = all_compose_podman
+        .as_array()
+        .ok_or("all Compose-to-Podman diagnostics must be an array")?;
+    assert_eq!(all_compose_podman.len(), 213);
+    let system_network_losses = all_compose_podman
+        .iter()
+        .filter(|diagnostic| diagnostic["subject"] == "networks.podman.internal")
+        .map(|diagnostic| {
+            (
+                diagnostic["code"].as_str().unwrap_or_default(),
+                diagnostic["severity"].as_str().unwrap_or_default(),
+                diagnostic["decision"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        system_network_losses,
+        BTreeSet::from([("BFP0007", "warning", "omitted")])
+    );
+    let all_compose_podman_report = serde_json::json!({
+        "schema_version": 1,
+        "status": "success",
+        "fidelity": {"exact": 0, "approximate": 0, "unsupported": 213, "invalid": 0, "other": 0},
+        "diagnostics": all_compose_podman
+            .iter()
+            .map(supabase_contract_diagnostic)
+            .collect::<Vec<_>>(),
+    });
+    assert!(supabase_contract_accepts_including_system_network(
+        &root,
+        "compose",
+        "podman",
+        "all",
+        &all_compose_podman_report,
+    )?);
+    let mut missing_system_network_loss = all_compose_podman_report.clone();
+    missing_system_network_loss["diagnostics"]
+        .as_array_mut()
+        .ok_or("all Compose-to-Podman report diagnostics must be an array")?
+        .retain(|diagnostic| {
+            diagnostic["fields"].as_array().is_none_or(|fields| {
+                !fields
+                    .iter()
+                    .any(|field| field["name"] == "subject" && field["value"] == "networks.podman.internal")
+            })
+        });
+    assert!(!supabase_contract_accepts_including_system_network(
+        &root,
+        "compose",
+        "podman",
+        "all",
+        &missing_system_network_loss,
+    )?);
 
     let reviewed_fidelity = [
         ("exact", "podman", "compose", 63, 1_346),
