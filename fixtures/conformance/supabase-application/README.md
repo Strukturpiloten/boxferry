@@ -43,8 +43,11 @@ promoted healthchecks, and Quadlet-to-Compose dependency and healthcheck losses.
 The contract receives the Podman acquisition origin explicitly. CLI-authored
 Podman-to-Compose retains the independently observed dependency, healthcheck,
 external-network metadata, and two network-IPAM losses. Compose-authored
-reacquisition retains only the two network-IPAM losses because the provider does
-not promote the other authored fields as portable source intent. The harness
+reacquisition promotes authored dependencies as portable source intent, omits
+the eleven application containers' unavailable creation evidence, and retains
+healthcheck, external-network metadata, and network-IPAM loss evidence. The
+independently acquired boundary peer retains creation evidence in the `all`
+selection for both origins. The harness
 rejects unknown origins and Podman origins supplied for non-Podman inputs.
 There is no image-grammar approximation: generated Supabase Compose images are digest-only.
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.

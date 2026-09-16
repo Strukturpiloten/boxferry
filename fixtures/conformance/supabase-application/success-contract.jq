@@ -159,12 +159,20 @@ def selected_unusable_bind_mount_count:
 def selected_image_label_count:
   [image_label_services[] | select(. as $service | contains(selected_services; $service))] | length;
 
+def selected_creation_evidence_count:
+  if cli_podman_acquisition then
+    selected_services | length
+  else
+    [selected_services[] | select(. == "boundary-peer")] | length
+  end;
+
 def podman_native_unsupported_occurrences:
   ([selected_services[] | container_native_field_occurrences[.]] | sum_values) +
   ([selected_services[] | image_native_field_occurrences[.] // 0] | sum_values) +
   ((selected_networks | length) * 5) +
   ((selected_volumes | length) * 3) +
-  ((selected_services | length) * 2) +
+  (selected_services | length) +
+  selected_creation_evidence_count +
   selected_unusable_bind_mount_count +
   selected_image_label_count;
 
@@ -218,7 +226,12 @@ def import_diagnostics:
     tuple("BFP0002"; "networks." + network_resource_name($network) + "." + .; "omitted")
   ] + [
     selected_services[] as $service |
-    ["creation_evidence", "hostname"][] |
+    (["hostname"] +
+      if cli_podman_acquisition or $service == "boundary-peer" then
+        ["creation_evidence"]
+      else
+        []
+      end)[] |
     tuple("BFP0002"; "services." + $resource_prefix + $service + "." + .; "omitted")
   ] + [
     unusable_bind_mounts | to_entries[] |
@@ -331,14 +344,10 @@ def compose_network_diagnostics:
   if $input == "podman" then
     [tuple("BFC0007"; "networks." + $resource_prefix + "backend.ipam.config"; null)] +
     [tuple("BFC0007"; "networks." + $resource_prefix + "edge.ipam.config"; null)] +
-    if cli_podman_acquisition then
-      [
-        tuple("BFC0007"; "networks." + $resource_prefix + "edge.internal"; null),
-        tuple("BFC0007"; "networks." + $resource_prefix + "edge.labels"; null)
-      ]
-    else
-      []
-    end +
+    [
+      tuple("BFC0007"; "networks." + $resource_prefix + "edge.internal"; null),
+      tuple("BFC0007"; "networks." + $resource_prefix + "edge.labels"; null)
+    ] +
     if $include_system_network then
       [tuple("BFC0007"; "networks.podman.ipam.config"; null)]
     else
@@ -364,12 +373,14 @@ def compose_output_diagnostics:
   else
     if $input == "podman" then
       if cli_podman_acquisition then
-        compose_diagnostics + compose_healthcheck_diagnostics + compose_network_diagnostics
+        compose_diagnostics
       else
-        # Compose-provider reacquisition does not promote authored dependency,
-        # healthcheck, or external-network metadata as portable source intent.
-        compose_network_diagnostics
-      end
+        # Compose-provider reacquisition promotes authored dependencies as
+        # portable source intent.
+        []
+      end +
+      compose_healthcheck_diagnostics +
+      compose_network_diagnostics
     else
       compose_diagnostics + compose_healthcheck_diagnostics + compose_network_diagnostics
     end
@@ -942,19 +953,13 @@ def compose_output_outcomes:
   if $input == "podman" then
     # Native Podman evidence retains its independently reviewed accounting.
     [selected_services[] | "approximate"] +
-    (
-      if cli_podman_acquisition then
-        compose_outcomes +
-        [
-          healthcheck_services[] |
-          select(. as $service | contains(selected_services; $service)) |
-          "unsupported"
-        ] +
-        ["unsupported", "unsupported"]
-      else
-        []
-      end
-    ) +
+    (if cli_podman_acquisition then compose_outcomes else [] end) +
+    [
+      healthcheck_services[] |
+      select(. as $service | contains(selected_services; $service)) |
+      "unsupported"
+    ] +
+    ["unsupported", "unsupported"] +
     if $selection == "all" then
       ["unsupported"]
     else
