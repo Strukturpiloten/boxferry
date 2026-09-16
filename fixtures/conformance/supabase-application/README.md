@@ -51,6 +51,8 @@ admits a complete positive example while rejecting an unseen `BFP0003` subject
 and a duplicate `BFP0007` diagnostic.
 Compose-to-Podman `all` selection additionally retains the system `podman` network's unsupported
 neutral `internal` state; narrower selections exclude that runtime-observed network.
+The generated Quadlet-to-Compose `all` reimport likewise reports the system network's retained IPAM
+configuration as unsupported; the no-system-network baseline remains unchanged.
 
 ## Independent application contract
 
