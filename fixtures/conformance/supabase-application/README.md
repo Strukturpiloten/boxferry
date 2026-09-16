@@ -53,6 +53,8 @@ Compose-to-Podman `all` selection additionally retains the system `podman` netwo
 neutral `internal` state; narrower selections exclude that runtime-observed network.
 The generated Quadlet-to-Compose `all` reimport likewise reports the system network's retained IPAM
 configuration as unsupported; the no-system-network baseline remains unchanged.
+The generated Quadlet-to-Podman `all` reimport reports the retained system network's internal state
+and IPAM rows as omitted; narrower selections continue to exclude that runtime-observed network.
 
 ## Independent application contract
 
