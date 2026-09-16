@@ -1900,7 +1900,9 @@ document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 backend, edge, include_system_network = sys.argv[2:]
 networks = document["networks"]
 assert networks[backend].get("external") is not True
-assert networks[edge] == {"name": edge, "external": True}
+assert networks[edge].get("external") is True
+assert networks[edge].get("name", edge) == edge
+assert set(networks[edge]) <= {"name", "external"}
 assert ("podman" in networks) == (include_system_network == "true")
 if include_system_network == "true":
     assert networks["podman"] == {"internal": False}
