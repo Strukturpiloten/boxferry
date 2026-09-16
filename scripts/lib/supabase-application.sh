@@ -651,9 +651,12 @@ supabase_report_database_contract_failure() {
     "${status}" "$(supabase_redact_runtime_text "${output}")" >&2
 }
 
-supabase_container_names() {
+supabase_cli_application_removal_order() {
   local prefix=$1 service
-  for service in db auth rest realtime imgproxy storage meta supavisor functions studio kong; do
+  # Tear down dependents before their database and shared-service prerequisites.
+  # Keep this explicit rather than deriving it from creation order: both CLI
+  # recreation and final cleanup rely on this Podman-safe sequence.
+  for service in kong studio functions supavisor meta storage imgproxy realtime rest auth db; do
     printf '%s-supabase-%s\n' "${prefix}" "${service}"
   done
 }
@@ -2329,12 +2332,8 @@ supabase_assert_report_privacy() {
 
 supabase_remove_cli_application_containers() {
   local socket=$1 prefix=$2
-  local -a containers dependent_first=()
-  local -i index
-  mapfile -t containers < <(supabase_container_names "${prefix}")
-  for ((index = ${#containers[@]} - 1; index >= 0; index--)); do
-    dependent_first+=("${containers[index]}")
-  done
+  local -a dependent_first=()
+  mapfile -t dependent_first < <(supabase_cli_application_removal_order "${prefix}")
   supabase_remote "${socket}" stop --time 30 "${dependent_first[@]}" > /dev/null
   supabase_remote "${socket}" rm --force "${dependent_first[@]}" > /dev/null
 }
@@ -2376,7 +2375,7 @@ supabase_assert_clean_resources() {
 
 supabase_cleanup_mode() {
   local mode=$1 socket=$2 prefix=$3 run=$4
-  local -a containers
+  local -a containers dependent_first=()
   if [[ "${mode}" == compose ]]; then
     supabase_peer_compose_project "${socket}" "${prefix}" "${run}" \
       down --volumes --remove-orphans \
@@ -2385,8 +2384,8 @@ supabase_cleanup_mode() {
       down --volumes --remove-orphans --timeout 30 \
       > "${current_case}/supabase-compose-down.log" 2>&1 || true
   else
-    mapfile -t containers < <(supabase_container_names "${prefix}")
-    containers+=("${prefix}-supabase-boundary-peer")
+    mapfile -t dependent_first < <(supabase_cli_application_removal_order "${prefix}")
+    containers=("${prefix}-supabase-boundary-peer" "${dependent_first[@]}")
     supabase_remote "${socket}" rm --force --time 0 --ignore \
       "${containers[@]}" > /dev/null 2>&1 || true
     supabase_remote "${socket}" volume rm --force \
