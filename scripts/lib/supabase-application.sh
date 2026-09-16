@@ -2247,6 +2247,9 @@ supabase_validate_success_contract_examples() {
   )"
   jq --exit-status '
     ([.diagnostics[] | select(.code == "BFC0007")] | length) == 29 and
+    ([.diagnostics[] | select(.code == "BFP0002") | .fields[]? |
+      select(.name == "subject" and ((.value // "") | endswith(".creation_evidence")))] |
+      length) == 11 and
     .fidelity.approximate == 63 and
     .fidelity.unsupported == 1346
   ' <<< "${cli_compose_report}" > /dev/null || {
@@ -2254,7 +2257,10 @@ supabase_validate_success_contract_examples() {
     return 1
   }
   jq --exit-status '
-    ([.diagnostics[] | select(.code == "BFC0007")] | length) == 2 and
+    ([.diagnostics[] | select(.code == "BFC0007")] | length) == 13 and
+    ([.diagnostics[] | select(.code == "BFP0002") | .fields[]? |
+      select(.name == "subject" and ((.value // "") | endswith(".creation_evidence")))] |
+      length) == 0 and
     .fidelity.approximate == 63 and
     .fidelity.unsupported == 1319
   ' <<< "${compose_compose_report}" > /dev/null || {

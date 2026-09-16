@@ -1119,6 +1119,30 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     let expected_compose_authored_podman_compose_subjects = BTreeSet::from([
         "networks.contract-supabase-backend.ipam.config",
         "networks.contract-supabase-edge.ipam.config",
+        "networks.contract-supabase-edge.internal",
+        "networks.contract-supabase-edge.labels",
+        "services.contract-supabase-auth.healthcheck",
+        "services.contract-supabase-db.healthcheck",
+        "services.contract-supabase-functions.healthcheck",
+        "services.contract-supabase-imgproxy.healthcheck",
+        "services.contract-supabase-kong.healthcheck",
+        "services.contract-supabase-realtime.healthcheck",
+        "services.contract-supabase-rest.healthcheck",
+        "services.contract-supabase-storage.healthcheck",
+        "services.contract-supabase-studio.healthcheck",
+    ]);
+    let application_creation_evidence_subjects = BTreeSet::from([
+        "services.contract-supabase-auth.creation_evidence",
+        "services.contract-supabase-db.creation_evidence",
+        "services.contract-supabase-functions.creation_evidence",
+        "services.contract-supabase-imgproxy.creation_evidence",
+        "services.contract-supabase-kong.creation_evidence",
+        "services.contract-supabase-meta.creation_evidence",
+        "services.contract-supabase-realtime.creation_evidence",
+        "services.contract-supabase-rest.creation_evidence",
+        "services.contract-supabase-storage.creation_evidence",
+        "services.contract-supabase-studio.creation_evidence",
+        "services.contract-supabase-supavisor.creation_evidence",
     ]);
     let mut expected_cli_authored_podman_compose_subjects = expected_quadlet_compose_subjects.clone();
     expected_cli_authored_podman_compose_subjects.extend([
@@ -1166,6 +1190,44 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         assert_eq!(
             compose_authored_subjects, expected_compose_authored_podman_compose_subjects,
             "{selection} Compose-authored Podman-to-Compose must not invent absent source intent"
+        );
+        assert!(
+            compose_authored_subjects
+                .iter()
+                .all(|subject| !subject.contains(".dependencies[")),
+            "{selection} Compose-authored Podman-to-Compose must retain authored dependencies"
+        );
+        let cli_creation_evidence_subjects = cli_authored_diagnostics
+            .as_array()
+            .ok_or("CLI-authored Podman-to-Compose diagnostics must be an array")?
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFP0002")
+            .filter_map(|diagnostic| diagnostic["subject"].as_str())
+            .filter(|subject| subject.ends_with(".creation_evidence"))
+            .collect::<BTreeSet<_>>();
+        let compose_creation_evidence_subjects = compose_authored_diagnostics
+            .as_array()
+            .ok_or("Compose-authored Podman-to-Compose diagnostics must be an array")?
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == "BFP0002")
+            .filter_map(|diagnostic| diagnostic["subject"].as_str())
+            .filter(|subject| subject.ends_with(".creation_evidence"))
+            .collect::<BTreeSet<_>>();
+        let mut expected_cli_creation_evidence_subjects = application_creation_evidence_subjects.clone();
+        let mut expected_compose_creation_evidence_subjects = BTreeSet::new();
+        if selection == "all" {
+            expected_cli_creation_evidence_subjects
+                .insert("services.contract-supabase-boundary-peer.creation_evidence");
+            expected_compose_creation_evidence_subjects
+                .insert("services.contract-supabase-boundary-peer.creation_evidence");
+        }
+        assert_eq!(
+            cli_creation_evidence_subjects, expected_cli_creation_evidence_subjects,
+            "{selection} CLI acquisition must retain all observed creation evidence"
+        );
+        assert_eq!(
+            compose_creation_evidence_subjects, expected_compose_creation_evidence_subjects,
+            "{selection} Compose acquisition must omit only application creation evidence"
         );
         let (approximate, cli_unsupported, compose_unsupported) = if selection == "all" {
             (67, 1_446, 1_419)
@@ -1762,7 +1824,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             .iter()
             .filter(|diagnostic| diagnostic["code"] == "BFC0007")
             .count(),
-        3,
+        14,
         "Compose-authored all-selection system-network target losses"
     );
     let system_network_tuples = system_network_diagnostics
