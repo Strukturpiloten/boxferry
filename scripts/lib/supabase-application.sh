@@ -927,49 +927,66 @@ supabase_provision_cli() {
   supabase_create_cli_peer "${socket}" "${prefix}" "${run}"
 }
 
-supabase_compose_environment() {
-  local prefix=$1 run=$2 fixture_root
-  shift 2
+supabase_compose_environment_assignments() {
+  local prefix=$1 run=$2 output_name=$3 fixture_root
+  local -n environment_output=${output_name}
   fixture_root="/tmp/boxferry-fixture/${prefix}"
-  env \
-    BF_PREFIX="${prefix}" BF_RUN="${run}" BF_FIXTURE_ROOT="${fixture_root}" \
-    BF_DB_PASSWORD="${SUPABASE_DB_PASSWORD}" BF_JWT_SECRET="${SUPABASE_JWT_SECRET}" \
-    BF_ANON_KEY="${SUPABASE_ANON_KEY}" BF_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
-    BF_REALTIME_SECRET="${SUPABASE_REALTIME_SECRET}" \
-    BF_REALTIME_DB_KEY="${SUPABASE_REALTIME_DB_KEY}" \
-    BF_POOLER_SECRET="${SUPABASE_POOLER_SECRET}" \
-    BF_STUDIO_IMAGE="$(supabase_image_reference studio)" \
-    BF_KONG_IMAGE="$(supabase_image_reference kong)" \
-    BF_AUTH_IMAGE="$(supabase_image_reference auth)" \
-    BF_REST_IMAGE="$(supabase_image_reference rest)" \
-    BF_REALTIME_IMAGE="$(supabase_image_reference realtime)" \
-    BF_STORAGE_IMAGE="$(supabase_image_reference storage)" \
-    BF_IMGPROXY_IMAGE="$(supabase_image_reference imgproxy)" \
-    BF_META_IMAGE="$(supabase_image_reference meta)" \
-    BF_FUNCTIONS_IMAGE="$(supabase_image_reference functions)" \
-    BF_DB_IMAGE="$(supabase_image_reference db)" \
-    BF_SUPAVISOR_IMAGE="$(supabase_image_reference supavisor)" \
-    "$@"
+  environment_output=(
+    "BF_PREFIX=${prefix}"
+    "BF_RUN=${run}"
+    "BF_FIXTURE_ROOT=${fixture_root}"
+    "BF_DB_PASSWORD=${SUPABASE_DB_PASSWORD}"
+    "BF_JWT_SECRET=${SUPABASE_JWT_SECRET}"
+    "BF_ANON_KEY=${SUPABASE_ANON_KEY}"
+    "BF_SERVICE_KEY=${SUPABASE_SERVICE_KEY}"
+    "BF_REALTIME_SECRET=${SUPABASE_REALTIME_SECRET}"
+    "BF_REALTIME_DB_KEY=${SUPABASE_REALTIME_DB_KEY}"
+    "BF_POOLER_SECRET=${SUPABASE_POOLER_SECRET}"
+    "BF_STUDIO_IMAGE=$(supabase_image_reference studio)"
+    "BF_KONG_IMAGE=$(supabase_image_reference kong)"
+    "BF_AUTH_IMAGE=$(supabase_image_reference auth)"
+    "BF_REST_IMAGE=$(supabase_image_reference rest)"
+    "BF_REALTIME_IMAGE=$(supabase_image_reference realtime)"
+    "BF_STORAGE_IMAGE=$(supabase_image_reference storage)"
+    "BF_IMGPROXY_IMAGE=$(supabase_image_reference imgproxy)"
+    "BF_META_IMAGE=$(supabase_image_reference meta)"
+    "BF_FUNCTIONS_IMAGE=$(supabase_image_reference functions)"
+    "BF_DB_IMAGE=$(supabase_image_reference db)"
+    "BF_SUPAVISOR_IMAGE=$(supabase_image_reference supavisor)"
+  )
+  ((${#environment_output[@]} > 0))
+}
+
+supabase_compose_environment() {
+  local prefix=$1 run=$2
+  local -a compose_environment
+  shift 2
+  supabase_compose_environment_assignments "${prefix}" "${run}" compose_environment
+  env "${compose_environment[@]}" "$@"
 }
 
 supabase_compose_project() {
   local socket=$1 prefix=$2 run=$3
+  local -a compose_environment
   shift 3
   local provider=${BOXFERRY_COMPOSE_BIN:-${repository_root}/target/tools/docker-compose}
-  timed_operation 15m "Docker Compose Supabase ${1:-command}" \
-    supabase_compose_environment "${prefix}" "${run}" \
-    env DOCKER_HOST="unix://${socket}" \
+  supabase_compose_environment_assignments "${prefix}" "${run}" compose_environment
+  timed_operation 15m "Docker Compose Supabase ${1:-command}" env \
+    "${compose_environment[@]}" \
+    DOCKER_HOST="unix://${socket}" \
     "${provider}" --project-name "${prefix}-supabase" \
     --file "$(supabase_fixture_root)/compose.yaml" "$@"
 }
 
 supabase_peer_compose_project() {
   local socket=$1 prefix=$2 run=$3
+  local -a compose_environment
   shift 3
   local provider=${BOXFERRY_COMPOSE_BIN:-${repository_root}/target/tools/docker-compose}
-  timed_operation 3m "Docker Compose Supabase boundary peer ${1:-command}" \
-    supabase_compose_environment "${prefix}" "${run}" \
-    env DOCKER_HOST="unix://${socket}" \
+  supabase_compose_environment_assignments "${prefix}" "${run}" compose_environment
+  timed_operation 3m "Docker Compose Supabase boundary peer ${1:-command}" env \
+    "${compose_environment[@]}" \
+    DOCKER_HOST="unix://${socket}" \
     "${provider}" --project-name "${prefix}-supabase-peer" \
     --file "$(supabase_fixture_root)/peer.compose.yaml" "$@"
 }
