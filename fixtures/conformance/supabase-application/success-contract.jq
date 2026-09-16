@@ -1075,6 +1075,52 @@ def success_contract($expected):
   .fidelity.other == $fidelity.other and
   all(.diagnostics[]?; (.name | length) > 0);
 
+# This deliberately reports predicate names and bounded semantic integer counters only.
+# Live failure output is retained and shared only after privacy review, so the immediate
+# assertion must not make arbitrary native values observable in a CI log.
+def success_contract_mismatches($expected):
+  expected_success_fidelity as $fidelity |
+  (exact_fidelity_shape) as $fidelity_is_well_shaped |
+  .fidelity as $actual_fidelity |
+  def diagnostic_name_is_valid:
+    if type != "object" then false
+    elif (.name | type) != "string" then false
+    else (.name | length) > 0
+    end;
+  (if (.diagnostics | type) == "array"
+    then [.diagnostics[]? | select(diagnostic_name_is_valid | not)] | length
+    else null
+    end) as $invalid_diagnostic_names |
+  [
+    if .schema_version != 1 then "schema-version" else empty end,
+    if .status != "success" then "status" else empty end,
+    if $fidelity_is_well_shaped | not then "fidelity-shape" else empty end,
+    if $fidelity_is_well_shaped and $actual_fidelity.approximate != $fidelity.approximate
+      then "fidelity-approximate" else empty end,
+    if $fidelity_is_well_shaped and $actual_fidelity.unsupported != $fidelity.unsupported
+      then "fidelity-unsupported" else empty end,
+    if $fidelity_is_well_shaped and $actual_fidelity.invalid != $fidelity.invalid
+      then "fidelity-invalid" else empty end,
+    if $fidelity_is_well_shaped and $actual_fidelity.other != $fidelity.other
+      then "fidelity-other" else empty end,
+    if $invalid_diagnostic_names != 0 then "diagnostic-names" else empty end
+  ] as $failed_predicates |
+  {
+    failed_predicates: $failed_predicates,
+    fidelity_counters: (
+      if $fidelity_is_well_shaped then
+        reduce ["approximate", "unsupported", "invalid", "other"][] as $category
+          ({}; if $actual_fidelity[$category] != $fidelity[$category] then
+            .[$category] = {
+              expected: $fidelity[$category],
+              actual: $actual_fidelity[$category],
+            }
+          else . end)
+      else {} end
+    ),
+    invalid_diagnostic_names: $invalid_diagnostic_names,
+  };
+
 
 if (podman_acquisition_valid | not) then
   null
@@ -1082,6 +1128,9 @@ elif $emit_expected == "fidelity" then
   expected_success_fidelity
 elif $emit_expected == "delta" then
   diagnostic_delta
+elif $emit_expected == "mismatches" then
+  expected_diagnostics as $expected |
+  if $expected == null then null else success_contract_mismatches($expected) end
 elif $emit_expected == true then
   expected_diagnostics
 else

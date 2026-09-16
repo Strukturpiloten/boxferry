@@ -464,6 +464,140 @@ fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), Strin
 }
 
 #[test]
+fn supabase_success_contract_mismatch_summary_is_bounded_and_privacy_safe() -> Result<(), String> {
+    let root = repository_root();
+    let diagnostics =
+        generated_supabase_contract(&root, "compose", "podman", "storage", SupabaseContractMode::Diagnostics)?;
+    let fidelity = generated_supabase_contract(&root, "compose", "podman", "storage", SupabaseContractMode::Fidelity)?;
+    let mut fidelity = fidelity
+        .as_object()
+        .cloned()
+        .ok_or("generated Supabase fidelity must be an object")?;
+    fidelity.insert("exact".to_owned(), serde_json::json!(7));
+    let report = serde_json::json!({
+        "schema_version": 1,
+        "status": "success",
+        "fidelity": fidelity,
+        "diagnostics": diagnostics
+            .as_array()
+            .ok_or("generated Supabase diagnostics must be an array")?
+            .iter()
+            .map(supabase_contract_diagnostic)
+            .collect::<Vec<_>>(),
+    });
+    assert!(supabase_contract_mismatches(&root, "compose", "podman", "storage", &report)?.is_empty());
+
+    let cases = [
+        ("schema-version", serde_json::json!(2)),
+        ("status", serde_json::json!("private-status-value")),
+    ];
+    for (label, value) in cases {
+        let mut mutated = report.clone();
+        if label == "schema-version" {
+            mutated["schema_version"] = value;
+        } else {
+            mutated["status"] = value;
+        }
+        assert_eq!(
+            supabase_contract_mismatches(&root, "compose", "podman", "storage", &mutated)?,
+            vec![label],
+            "{label} mismatch label"
+        );
+    }
+    assert_supabase_fidelity_mismatch_summaries(&root, &report)?;
+    let mut empty_diagnostic_name = report.clone();
+    empty_diagnostic_name["diagnostics"][0]["name"] = serde_json::json!("");
+    assert_eq!(
+        supabase_contract_mismatches(&root, "compose", "podman", "storage", &empty_diagnostic_name,)?,
+        vec!["diagnostic-names"]
+    );
+    assert_eq!(
+        supabase_contract_mismatch_summary(&root, "compose", "podman", "storage", &empty_diagnostic_name,)?["invalid_diagnostic_names"],
+        serde_json::json!(1),
+        "empty diagnostic names retain only their bounded count"
+    );
+    let mut protected_diagnostic_name = report.clone();
+    protected_diagnostic_name["diagnostics"][0]["name"] = serde_json::json!({"secret": "private-diagnostic-value"});
+    let protected_name_summary =
+        supabase_contract_mismatch_summary(&root, "compose", "podman", "storage", &protected_diagnostic_name)?;
+    assert_eq!(protected_name_summary["invalid_diagnostic_names"], serde_json::json!(1));
+    assert!(
+        !protected_name_summary.to_string().contains("private-diagnostic-value"),
+        "mismatch summary exposed an arbitrary invalid diagnostic name"
+    );
+    let mut malformed_diagnostics = report;
+    malformed_diagnostics["diagnostics"] = serde_json::json!({"name": "private-diagnostic-value"});
+    assert_eq!(
+        supabase_contract_mismatches(&root, "compose", "podman", "storage", &malformed_diagnostics,)?,
+        vec!["diagnostic-names"]
+    );
+    let serialized = serde_json::to_string(&supabase_contract_mismatch_summary(
+        &root,
+        "compose",
+        "podman",
+        "storage",
+        &serde_json::json!({
+            "schema_version": 2,
+            "status": "private-status-value",
+            "fidelity": "private-fidelity-value",
+            "diagnostics": [{"name": {"secret": "private-diagnostic-value"}}],
+        }),
+    )?)
+    .map_err(|error| format!("failed to serialize bounded mismatch summary: {error}"))?;
+    assert!(
+        serialized.len() <= 4096,
+        "mismatch summary exceeded the existing output bound"
+    );
+    assert!(
+        !serialized.contains("private-status-value"),
+        "mismatch summary exposed an arbitrary report value"
+    );
+    assert!(
+        !serialized.contains("private-fidelity-value") && !serialized.contains("private-diagnostic-value"),
+        "mismatch summary exposed malformed protected values"
+    );
+    Ok(())
+}
+
+fn assert_supabase_fidelity_mismatch_summaries(root: &Path, report: &serde_json::Value) -> Result<(), String> {
+    let mut malformed_fidelity = report.clone();
+    malformed_fidelity["fidelity"] = serde_json::json!({"exact": 7});
+    assert_eq!(
+        supabase_contract_mismatches(root, "compose", "podman", "storage", &malformed_fidelity)?,
+        vec!["fidelity-shape"]
+    );
+    let mut non_object_fidelity = report.clone();
+    non_object_fidelity["fidelity"] = serde_json::json!("private-fidelity-value");
+    assert_eq!(
+        supabase_contract_mismatches(root, "compose", "podman", "storage", &non_object_fidelity)?,
+        vec!["fidelity-shape"]
+    );
+    for label in [
+        "fidelity-approximate",
+        "fidelity-unsupported",
+        "fidelity-invalid",
+        "fidelity-other",
+    ] {
+        let mut mutated = report.clone();
+        let category = label.strip_prefix("fidelity-").ok_or("invalid test label")?;
+        let expected = mutated["fidelity"][category].clone();
+        mutated["fidelity"][category] = serde_json::json!(999_999);
+        assert_eq!(
+            supabase_contract_mismatches(root, "compose", "podman", "storage", &mutated)?,
+            vec![label],
+            "{label} mismatch label"
+        );
+        let summary = supabase_contract_mismatch_summary(root, "compose", "podman", "storage", &mutated)?;
+        assert_eq!(
+            summary["fidelity_counters"][category],
+            serde_json::json!({"expected": expected, "actual": 999_999}),
+            "{category} mismatch retains only its reviewed integer counters"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 #[allow(
     clippy::too_many_lines,
     reason = "keeps the one live-conformance repository contract reviewable in one place"
@@ -660,6 +794,7 @@ enum SupabaseContractMode {
     Validate,
     Diagnostics,
     Fidelity,
+    Mismatches,
 }
 
 impl SupabaseContractMode {
@@ -668,6 +803,7 @@ impl SupabaseContractMode {
             Self::Validate => "false",
             Self::Diagnostics => "true",
             Self::Fidelity => "\"fidelity\"",
+            Self::Mismatches => "\"mismatches\"",
         }
     }
 }
@@ -794,6 +930,56 @@ fn supabase_contract_accepts_with_acquisition(
         ));
     }
     Ok(result.status.success())
+}
+
+fn supabase_contract_mismatch_summary(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    report: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let result = run_supabase_report_contract(
+        root,
+        input,
+        output,
+        selection,
+        SupabaseContractContext {
+            podman_acquisition: default_supabase_contract_acquisition(input),
+            include_system_network: false,
+        },
+        SupabaseContractMode::Mismatches,
+        Some(report),
+    )?;
+    if !result.status.success() {
+        return Err(format!(
+            "failed to produce bounded Supabase mismatch summary: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    serde_json::from_slice(&result.stdout)
+        .map_err(|error| format!("invalid bounded Supabase mismatch summary: {error}"))
+}
+
+fn supabase_contract_mismatches(
+    root: &Path,
+    input: &str,
+    output: &str,
+    selection: &str,
+    report: &serde_json::Value,
+) -> Result<Vec<String>, String> {
+    let summary = supabase_contract_mismatch_summary(root, input, output, selection, report)?;
+    summary["failed_predicates"]
+        .as_array()
+        .ok_or("bounded Supabase mismatch summary lacks failed predicate labels")?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or("bounded Supabase mismatch label is not a string".to_owned())
+        })
+        .collect()
 }
 
 fn supabase_contract_accepts_including_system_network(

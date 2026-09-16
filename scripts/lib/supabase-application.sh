@@ -2110,12 +2110,54 @@ supabase_assert_success_contract() {
     "${report}" > /dev/null; then
     return 0
   fi
-  printf 'Supabase route emitted a diagnostic multiset outside its exact contract: %s -> %s (%s, %s).\n' \
+  printf 'Supabase route failed its exact success contract: %s -> %s (%s, %s).\n' \
     "${input}" "${output}" "${selection}" "${report}" >&2
+  supabase_report_success_contract_mismatches \
+    "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
+    "${include_system_network}" "${podman_acquisition}"
   supabase_report_success_contract_delta \
     "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
     "${include_system_network}" "${podman_acquisition}"
   return 1
+}
+
+supabase_success_contract_mismatches() {
+  local input=$1 output=$2 selection=$3 report=$4 prefix=$5
+  local include_system_network=${6:-false}
+  local podman_acquisition=$7
+  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
+  jq --compact-output \
+    --arg input "${input}" \
+    --arg output "${output}" \
+    --arg selection "${selection}" \
+    --arg resource_prefix "${prefix}-supabase-" \
+    --arg podman_acquisition "${podman_acquisition}" \
+    --argjson include_system_network "${include_system_network}" \
+    --argjson emit_expected '"mismatches"' \
+    --from-file "$(supabase_fixture_root)/success-contract.jq" \
+    "${report}"
+}
+
+supabase_report_success_contract_mismatches() {
+  local input=$1 output=$2 selection=$3 report=$4 prefix=$5
+  local include_system_network=${6:-false}
+  local podman_acquisition=$7
+  local mismatches byte_count
+  if ! mismatches="$(
+    supabase_success_contract_mismatches \
+      "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
+      "${include_system_network}" "${podman_acquisition}"
+  )" || [[ -z "${mismatches}" ]]; then
+    printf '%s\n' 'Supabase success-contract mismatch summary unavailable.' >&2
+    return 0
+  fi
+  byte_count="$(LC_ALL=C printf '%s' "${mismatches}" | wc -c)"
+  if ((byte_count > SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES)); then
+    printf 'Supabase success-contract mismatch summary omitted: byte-limit=%d; observed-bytes=%d; truncated=true.\n' \
+      "${SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES}" "${byte_count}" >&2
+    return 0
+  fi
+  printf 'Supabase success-contract mismatch summary: %s\n' "${mismatches}" >&2
 }
 
 supabase_success_contract_delta() {
