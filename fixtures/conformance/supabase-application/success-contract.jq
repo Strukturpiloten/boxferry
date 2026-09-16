@@ -604,7 +604,12 @@ def generated_podman_network_subjects:
       "networks." + $resource_prefix + "backend.internal",
       "networks." + $resource_prefix + "backend.ipam_configs",
       "networks." + $resource_prefix + "backend.labels"
-    ]
+    ] +
+    if $include_system_network then
+      ["networks.podman.internal", "networks.podman.ipam_configs"]
+    else
+      []
+    end
   else
     null
   end;
