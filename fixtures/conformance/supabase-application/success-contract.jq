@@ -333,7 +333,12 @@ def compose_network_diagnostics:
   elif $input == "quadlet" then
     # Podman-origin generated Quadlet retains the managed backend's observed
     # subnet and gateway. The edge network remains an external name reference.
-    [tuple("BFC0007"; "networks." + $resource_prefix + "backend.ipam.config"; null)]
+    [tuple("BFC0007"; "networks." + $resource_prefix + "backend.ipam.config"; null)] +
+    if $include_system_network then
+      [tuple("BFC0007"; "networks.podman.ipam.config"; null)]
+    else
+      []
+    end
   else
     []
   end;

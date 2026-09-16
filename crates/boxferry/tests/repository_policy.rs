@@ -1041,6 +1041,74 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         &missing_system_network_loss,
     )?);
 
+    let all_quadlet_compose = run_supabase_report_contract(
+        &root,
+        "quadlet",
+        "compose",
+        "all",
+        true,
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    if !all_quadlet_compose.status.success() {
+        return Err(format!(
+            "failed to generate all Quadlet-to-Compose system-network contract: {}",
+            String::from_utf8_lossy(&all_quadlet_compose.stderr).trim()
+        ));
+    }
+    let all_quadlet_compose: serde_json::Value = serde_json::from_slice(&all_quadlet_compose.stdout)
+        .map_err(|error| format!("invalid all Quadlet-to-Compose system-network contract: {error}"))?;
+    let all_quadlet_compose = all_quadlet_compose
+        .as_array()
+        .ok_or("all Quadlet-to-Compose diagnostics must be an array")?;
+    assert_eq!(all_quadlet_compose.len(), 27);
+    let system_network_losses = all_quadlet_compose
+        .iter()
+        .filter(|diagnostic| diagnostic["subject"] == "networks.podman.ipam.config")
+        .map(|diagnostic| {
+            (
+                diagnostic["code"].as_str().unwrap_or_default(),
+                diagnostic["severity"].as_str().unwrap_or_default(),
+                diagnostic["decision"].as_str(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(system_network_losses, BTreeSet::from([("BFC0007", "warning", None)]));
+    let all_quadlet_compose_report = serde_json::json!({
+        "schema_version": 1,
+        "status": "success",
+        "fidelity": {"exact": 0, "approximate": 0, "unsupported": 27, "invalid": 0, "other": 0},
+        "diagnostics": all_quadlet_compose
+            .iter()
+            .map(supabase_contract_diagnostic)
+            .collect::<Vec<_>>(),
+    });
+    assert!(supabase_contract_accepts_including_system_network(
+        &root,
+        "quadlet",
+        "compose",
+        "all",
+        &all_quadlet_compose_report,
+    )?);
+    let mut missing_system_network_loss = all_quadlet_compose_report.clone();
+    missing_system_network_loss["diagnostics"]
+        .as_array_mut()
+        .ok_or("all Quadlet-to-Compose report diagnostics must be an array")?
+        .retain(|diagnostic| {
+            diagnostic["fields"].as_array().is_none_or(|fields| {
+                !fields
+                    .iter()
+                    .any(|field| field["name"] == "subject" && field["value"] == "networks.podman.ipam.config")
+            })
+        });
+    assert!(!supabase_contract_accepts_including_system_network(
+        &root,
+        "quadlet",
+        "compose",
+        "all",
+        &missing_system_network_loss,
+    )?);
+
     let reviewed_fidelity = [
         ("exact", "podman", "compose", 63, 1_346),
         ("exact", "podman", "quadlet", 63, 1_318),
