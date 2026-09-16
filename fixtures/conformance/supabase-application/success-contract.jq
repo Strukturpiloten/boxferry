@@ -587,7 +587,13 @@ def generated_podman_network_subjects:
       "networks." + $resource_prefix + "backend.internal",
       "networks." + $resource_prefix + "backend.labels"
     ] +
-    ["networks." + $resource_prefix + "edge.runtime_name"]
+    ["networks." + $resource_prefix + "edge.runtime_name"] +
+
+    if $include_system_network then
+      ["networks.podman.internal"]
+    else
+      []
+    end
   elif $input == "quadlet" then
     [
       "networks." + $resource_prefix + "backend.internal",

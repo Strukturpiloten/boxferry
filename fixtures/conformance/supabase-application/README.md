@@ -49,6 +49,8 @@ losses. Its loss-fidelity totals fix the `approximate`, `unsupported`, `invalid`
 therefore constrained only to a non-negative integer. Catalogue validation
 admits a complete positive example while rejecting an unseen `BFP0003` subject
 and a duplicate `BFP0007` diagnostic.
+Compose-to-Podman `all` selection additionally retains the system `podman` network's unsupported
+neutral `internal` state; narrower selections exclude that runtime-observed network.
 
 ## Independent application contract
 
