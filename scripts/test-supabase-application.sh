@@ -177,13 +177,13 @@ compose_environment="$(supabase_compose_environment test-prefix test-run env)"
 grep --fixed-strings --line-regexp --quiet \
   "BF_REALTIME_DB_KEY=${SUPABASE_REALTIME_DB_KEY}" <<< "${compose_environment}"
 invalid_realtime_key_output="${test_root}/invalid-realtime-key.output"
-if (
-  SUPABASE_REALTIME_DB_KEY=too-short
-  supabase_validate_catalogues
-) > "${invalid_realtime_key_output}" 2>&1; then
+valid_realtime_db_key=${SUPABASE_REALTIME_DB_KEY}
+SUPABASE_REALTIME_DB_KEY=too-short
+if supabase_validate_catalogues > "${invalid_realtime_key_output}" 2>&1; then
   printf '%s\n' 'Supabase catalogue accepted an invalid Realtime AES-128 key.' >&2
   exit 1
 fi
+SUPABASE_REALTIME_DB_KEY=${valid_realtime_db_key}
 grep --fixed-strings --quiet \
   'Supabase Realtime DB encryption key must be exactly 16 bytes for AES-128.' \
   "${invalid_realtime_key_output}"
@@ -2114,6 +2114,171 @@ read -r late_shell_pid late_sleep_pid < "${late_descendant_pids}"
 assert_process_gone "${late_root_pid}"
 assert_process_gone "${late_shell_pid}"
 assert_process_gone "${late_sleep_pid}"
+
+compose_failure_report_output="${test_root}/compose-failure-report.output"
+compose_failure_report_log="${test_root}/compose-failure-report.log"
+compose_boundary_output="${test_root}/compose-boundary.output"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  log=$2
+  boundary_output=$3
+  : > "${boundary_output}"
+  printf "raw-compose-prefix-marker-" > "${log}"
+  head -c "$((SUPABASE_DIAGNOSTIC_CAPTURE_BYTES + 512))" /dev/zero | tr "\\0" x >> "${log}"
+  printf "%s " "${SUPABASE_DB_PASSWORD: -7}" >> "${log}"
+  head -c 5000 /dev/zero | tr "\\0" x >> "${log}"
+  printf "%s %s %s %s %s %s %s %s %s %s %s terminal-compose-failure-cause-END" \
+    "${SUPABASE_DB_PASSWORD}" "${SUPABASE_JWT_SECRET}" "${SUPABASE_ANON_KEY}" \
+    "${SUPABASE_SERVICE_KEY}" "${SUPABASE_REALTIME_SECRET}" \
+    "${SUPABASE_POOLER_SECRET}" "${SUPABASE_REALTIME_DB_KEY}" \
+    "${SUPABASE_META_CRYPTO_KEY}" "${SUPABASE_VAULT_ENC_KEY}" \
+    "${SUPABASE_TEST_EMAIL}" "${SUPABASE_TEST_PASSWORD}" >> "${log}"
+  supabase_report_compose_failure initial-database "${log}"
+  for protected in \
+    "${SUPABASE_DB_PASSWORD}" "${SUPABASE_JWT_SECRET}" "${SUPABASE_ANON_KEY}" \
+    "${SUPABASE_SERVICE_KEY}" "${SUPABASE_REALTIME_SECRET}" \
+    "${SUPABASE_POOLER_SECRET}" "${SUPABASE_REALTIME_DB_KEY}" \
+    "${SUPABASE_META_CRYPTO_KEY}" "${SUPABASE_VAULT_ENC_KEY}" \
+    "${SUPABASE_TEST_EMAIL}" "${SUPABASE_TEST_PASSWORD}"; do
+    printf "\nleading-tail-boundary=%s\n" \
+      "$(supabase_redact_runtime_text "${protected:1}tail" tail)" >> "${boundary_output}"
+    printf "trailing-head-boundary=%s\n" \
+      "$(supabase_redact_runtime_text "head${protected:0:${#protected}-1}")" >> "${boundary_output}"
+  done
+' bash "${library}" "${compose_failure_report_log}" "${compose_boundary_output}" \
+  > "${compose_failure_report_output}" 2>&1
+grep --fixed-strings --quiet \
+  'Supabase Docker Compose failure evidence: stage=initial-database;' \
+  "${compose_failure_report_output}"
+grep --fixed-strings --quiet '[REDACTED]' "${compose_failure_report_output}"
+grep --fixed-strings --quiet 'terminal-compose-failure-cause-END' \
+  "${compose_failure_report_output}"
+[[ "$(grep --count --fixed-strings 'leading-tail-boundary=[REDACTED]tail' \
+  "${compose_boundary_output}")" == 11 ]]
+[[ "$(grep --count --fixed-strings 'trailing-head-boundary=head[REDACTED]' \
+  "${compose_boundary_output}")" == 11 ]]
+if grep --fixed-strings --quiet 'raw-compose-prefix-marker-' \
+  "${compose_failure_report_output}"; then
+  printf '%s\n' 'Compose failure diagnostics retained the raw leading provider output.' >&2
+  exit 1
+fi
+for protected_value in \
+  "${SUPABASE_DB_PASSWORD}" "${SUPABASE_JWT_SECRET}" "${SUPABASE_ANON_KEY}" \
+  "${SUPABASE_SERVICE_KEY}" "${SUPABASE_REALTIME_SECRET}" \
+  "${SUPABASE_POOLER_SECRET}" "${SUPABASE_REALTIME_DB_KEY}" \
+  "${SUPABASE_META_CRYPTO_KEY}" "${SUPABASE_VAULT_ENC_KEY}" \
+  "${SUPABASE_TEST_EMAIL}" "${SUPABASE_TEST_PASSWORD}"; do
+  if grep --fixed-strings --quiet -- "${protected_value}" \
+    "${compose_failure_report_output}" "${compose_boundary_output}"; then
+    printf '%s\n' 'Compose failure diagnostics leaked a protected-value canary.' >&2
+    exit 1
+  fi
+done
+[[ "$(wc -c < "${compose_failure_report_output}")" -le "$((SUPABASE_DIAGNOSTIC_OUTPUT_BYTES + 256))" ]]
+
+assert_compose_failure_stage() {
+  local failure_stage=$1 marker="${test_root}/compose-stage-${1}.marker"
+  if bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    current_case=$2
+    failure_stage=$3
+    marker=$4
+    supabase_report_compose_failure() { printf "stage:%s\\n" "$1" >> "${marker}"; }
+    supabase_assert_clean_prefix() { :; }
+    supabase_remote() { :; }
+    supabase_database_sql_contract() { :; }
+    supabase_wait_for() { shift 2; "$@"; }
+    supabase_start_compose_provider() {
+      printf "provider\\n" >> "${marker}"
+      [[ "${failure_stage}" == *full-graph ]] && return 41
+      return 0
+    }
+    supabase_peer_compose_project() {
+      printf "peer\\n" >> "${marker}"
+      [[ "${failure_stage}" == boundary-peer ]] && return 42
+      return 0
+    }
+    supabase_wait_application() { printf "application\\n" >> "${marker}"; }
+    supabase_enable_realtime_table() { printf "realtime\\n" >> "${marker}"; }
+    supabase_compose_project() {
+      printf "compose:%s\\n" "$*" >> "${marker}"
+      case "${failure_stage}:$*" in
+        recreation-stop:*" stop --timeout 30") return 43 ;;
+        recreation-remove:*" rm --force") return 44 ;;
+        recreation-database:*" up --detach db") return 45 ;;
+      esac
+    }
+    case "${failure_stage}" in
+      initial-full-graph)
+        supabase_start_compose_graph test-socket test-prefix test-run \
+          "${current_case}/database.log" "${current_case}/graph.log" ;;
+      boundary-peer)
+        supabase_provision_compose test-socket test-prefix test-run ;;
+      recreation-*)
+        supabase_recreate_application compose test-socket test-prefix test-run ;;
+    esac
+  ' bash "${library}" "${test_root}" "${failure_stage}" "${marker}"; then
+    printf 'Compose %s failure was unexpectedly accepted.\n' "${failure_stage}" >&2
+    exit 1
+  fi
+  grep --fixed-strings --quiet "stage:${failure_stage}" "${marker}"
+  if grep --fixed-strings --quiet -e application -e realtime "${marker}"; then
+    printf 'Compose %s failure continued into application readiness.\n' "${failure_stage}" >&2
+    exit 1
+  fi
+  if [[ "${failure_stage}" == recreation-stop || "${failure_stage}" == recreation-remove ]]; then
+    if grep --fixed-strings --quiet -- 'up --detach db' "${marker}"; then
+      printf 'Compose %s failure started graph recreation.\n' "${failure_stage}" >&2
+      exit 1
+    fi
+  fi
+}
+
+for compose_failure_stage in initial-full-graph boundary-peer recreation-stop \
+  recreation-remove recreation-database recreation-full-graph; do
+  assert_compose_failure_stage "${compose_failure_stage}"
+done
+
+initial_database_failure_output="${test_root}/initial-database-failure.output"
+initial_database_failure_marker="${test_root}/initial-database-failure.marker"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case=$2
+  marker=$3
+  supabase_assert_clean_prefix() { :; }
+  supabase_remote() { :; }
+  supabase_report_database_contract_failure() { :; }
+  supabase_report_database_failure_evidence() { :; }
+  supabase_wait_for() { printf "readiness-ran\\n" >> "${marker}"; return 1; }
+  supabase_start_compose_provider() { printf "provider-ran\\n" >> "${marker}"; return 1; }
+  supabase_peer_compose_project() { printf "peer-ran\\n" >> "${marker}"; return 1; }
+  supabase_compose_project() {
+    printf "compose:%s\\n" "$*" >> "${marker}"
+    if [[ " $* " == *" up --detach db "* ]]; then
+      printf "compose-exit-127\\n" >&2
+      return 127
+    fi
+    return 1
+  }
+  if supabase_provision_compose test-socket test-prefix test-run; then
+    printf "%s\n" "Initial Compose database failure was unexpectedly accepted." >&2
+    exit 1
+  fi
+' bash "${library}" "${test_root}" "${initial_database_failure_marker}" \
+  > "${initial_database_failure_output}" 2>&1
+grep --fixed-strings --quiet \
+  'Supabase Docker Compose failure evidence: stage=initial-database;' \
+  "${initial_database_failure_output}"
+grep --fixed-strings --quiet 'compose-exit-127' \
+  "${initial_database_failure_output}"
+if grep --fixed-strings --quiet -e readiness-ran -e provider-ran -e peer-ran \
+  "${initial_database_failure_marker}"; then
+  printf '%s\n' 'Initial Compose database failure continued into a later lifecycle stage.' >&2
+  exit 1
+fi
 
 cleanup_output="${test_root}/cleanup.output"
 cleanup_observation="${test_root}/cleanup-observation"

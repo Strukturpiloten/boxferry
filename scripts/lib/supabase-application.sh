@@ -517,28 +517,64 @@ supabase_wait_for() {
 }
 
 supabase_redact_runtime_text() {
-  local value=$1 protected fragment fragment_length
+  local value=$1 direction=${2:-head} protected fragment fragment_length
+  local leading_fragment="" trailing_fragment=""
+  local -i leading_length=0 trailing_length=0
   local LC_ALL=C
-  for protected in \
-    "${SUPABASE_DB_PASSWORD}" "${SUPABASE_JWT_SECRET}" "${SUPABASE_ANON_KEY}" \
-    "${SUPABASE_SERVICE_KEY}" "${SUPABASE_REALTIME_SECRET}" \
-    "${SUPABASE_POOLER_SECRET}" "${SUPABASE_REALTIME_DB_KEY}" \
-    "${SUPABASE_META_CRYPTO_KEY}" "${SUPABASE_VAULT_ENC_KEY}" \
-    "${SUPABASE_TEST_EMAIL}" "${SUPABASE_TEST_PASSWORD}"; do
+  local -a protected_values=(
+    "${SUPABASE_DB_PASSWORD}" "${SUPABASE_JWT_SECRET}" "${SUPABASE_ANON_KEY}"
+    "${SUPABASE_SERVICE_KEY}" "${SUPABASE_REALTIME_SECRET}"
+    "${SUPABASE_POOLER_SECRET}" "${SUPABASE_REALTIME_DB_KEY}"
+    "${SUPABASE_META_CRYPTO_KEY}" "${SUPABASE_VAULT_ENC_KEY}"
+    "${SUPABASE_TEST_EMAIL}" "${SUPABASE_TEST_PASSWORD}"
+  )
+  for protected in "${protected_values[@]}"; do
     value=${value//"${protected}"/[REDACTED]}
-    # A bounded raw capture can end partway through a protected value. Mask any
-    # protected prefix at the capture boundary before truncating
-    # the redacted diagnostic, or repeated replacements could move that raw
-    # suffix into the emitted output.
-    for ((fragment_length = ${#protected} - 1; fragment_length > 0; fragment_length--)); do
+  done
+  if [[ "${direction}" == tail ]]; then
+    # Select the longest leading boundary before mutating. Otherwise a short
+    # suffix from an earlier value can hide a longer fragment from a later one.
+    for protected in "${protected_values[@]}"; do
+      for ((fragment_length = ${#protected} - 1; fragment_length > leading_length; fragment_length--)); do
+        fragment=${protected: -fragment_length}
+        if [[ ${value} == "${fragment}"* ]]; then
+          leading_fragment=${fragment}
+          leading_length=${fragment_length}
+          break
+        fi
+      done
+    done
+    if ((leading_length > 0)); then
+      value="[REDACTED]${value#"${leading_fragment}"}"
+    fi
+  fi
+  # Select the longest trailing boundary before mutating for the same
+  # overlap-safe reason.
+  for protected in "${protected_values[@]}"; do
+    for ((fragment_length = ${#protected} - 1; fragment_length > trailing_length; fragment_length--)); do
       fragment=${protected:0:fragment_length}
       if [[ ${value} == *"${fragment}" ]]; then
-        value="${value%"${fragment}"}[REDACTED]"
+        trailing_fragment=${fragment}
+        trailing_length=${fragment_length}
         break
       fi
     done
   done
+  if ((trailing_length > 0)); then
+    value="${value%"${trailing_fragment}"}[REDACTED]"
+  fi
+  if [[ "${direction}" == tail && ${#value} -gt ${SUPABASE_DIAGNOSTIC_OUTPUT_BYTES} ]]; then
+    value=${value: -SUPABASE_DIAGNOSTIC_OUTPUT_BYTES}
+  fi
   printf '%.*s' "${SUPABASE_DIAGNOSTIC_OUTPUT_BYTES}" "${value}"
+}
+
+supabase_report_compose_failure() {
+  local stage=$1 log_path=$2 output
+
+  output="$(tail -c "${SUPABASE_DIAGNOSTIC_CAPTURE_BYTES}" "${log_path}" 2> /dev/null || true)"
+  printf 'Supabase Docker Compose failure evidence: stage=%s; bounded output: %s\n' \
+    "${stage}" "$(supabase_redact_runtime_text "${output}" tail)" >&2
 }
 
 supabase_report_database_failure_evidence() {
@@ -962,9 +998,10 @@ supabase_start_compose_provider() {
 }
 
 supabase_start_compose_graph() {
-  local socket=$1 prefix=$2 run=$3 database_log=$4 graph_log=$5
+  local socket=$1 prefix=$2 run=$3 database_log=$4 graph_log=$5 stage=${6:-initial}
   if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
     up --detach db > "${database_log}" 2>&1; then
+    supabase_report_compose_failure "${stage}-database" "${database_log}"
     supabase_report_database_contract_failure "${socket}" "${prefix}"
     supabase_report_database_failure_evidence "${socket}" "${prefix}"
     return 1
@@ -977,6 +1014,7 @@ supabase_start_compose_graph() {
   fi
   if ! supabase_start_compose_provider "${socket}" "${prefix}" "${run}" \
     "${graph_log}"; then
+    supabase_report_compose_failure "${stage}-full-graph" "${graph_log}"
     supabase_report_database_failure_evidence "${socket}" "${prefix}"
     return 1
   fi
@@ -994,7 +1032,11 @@ supabase_provision_compose() {
     return 1
   fi
   supabase_peer_compose_project "${socket}" "${prefix}" "${run}" \
-    up --detach --remove-orphans > "${current_case}/supabase-peer-compose.log" 2>&1
+    up --detach --remove-orphans > "${current_case}/supabase-peer-compose.log" 2>&1 || {
+    supabase_report_compose_failure boundary-peer \
+      "${current_case}/supabase-peer-compose.log"
+    return 1
+  }
 }
 
 supabase_run_healthcheck() {
@@ -2341,13 +2383,21 @@ supabase_remove_cli_application_containers() {
 supabase_recreate_application() {
   local mode=$1 socket=$2 prefix=$3 run=$4
   if [[ "${mode}" == compose ]]; then
-    supabase_compose_project "${socket}" "${prefix}" "${run}" \
-      stop --timeout 30 > "${current_case}/supabase-compose-stop.log" 2>&1
-    supabase_compose_project "${socket}" "${prefix}" "${run}" \
-      rm --force >> "${current_case}/supabase-compose-stop.log" 2>&1
+    if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
+      stop --timeout 30 > "${current_case}/supabase-compose-stop.log" 2>&1; then
+      supabase_report_compose_failure recreation-stop \
+        "${current_case}/supabase-compose-stop.log"
+      return 1
+    fi
+    if ! supabase_compose_project "${socket}" "${prefix}" "${run}" \
+      rm --force >> "${current_case}/supabase-compose-stop.log" 2>&1; then
+      supabase_report_compose_failure recreation-remove \
+        "${current_case}/supabase-compose-stop.log"
+      return 1
+    fi
     if ! supabase_start_compose_graph "${socket}" "${prefix}" "${run}" \
       "${current_case}/supabase-compose-recreate-db.log" \
-      "${current_case}/supabase-compose-recreate.log"; then
+      "${current_case}/supabase-compose-recreate.log" recreation; then
       return 1
     fi
   else
