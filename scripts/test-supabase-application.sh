@@ -61,6 +61,113 @@ assert b"test-prefix-supabase-deno-cache" not in arguments
 assert all(record[1] != b"volume" for record in records)
 PY
 
+cli_cleanup_argv="${test_root}/cli-cleanup.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  output=$2
+  containers_removed=0
+  volumes_removed=0
+  networks_removed=0
+  supabase_remote() {
+    printf "%s\0" "$@" >> "${output}"
+    printf "\0" >> "${output}"
+    case "$2" in
+      rm)
+        expected=(
+          test-prefix-supabase-boundary-peer
+          test-prefix-supabase-kong
+          test-prefix-supabase-studio
+          test-prefix-supabase-functions
+          test-prefix-supabase-supavisor
+          test-prefix-supabase-meta
+          test-prefix-supabase-storage
+          test-prefix-supabase-imgproxy
+          test-prefix-supabase-realtime
+          test-prefix-supabase-rest
+          test-prefix-supabase-auth
+          test-prefix-supabase-db
+        )
+        if [[ "$3" != --force || "$4" != --time || "$5" != 0 || "$6" != --ignore ||
+          "$#" != 18 || "${*:7}" != "${expected[*]}" ]]; then
+          return 125
+        fi
+        containers_removed=1
+        ;;
+      volume)
+        if [[ "${containers_removed}" != 1 || "$3" != rm || "$4" != --force ]]; then
+          return 125
+        fi
+        volumes_removed=1
+        ;;
+      network)
+        if [[ "${containers_removed}" != 1 || "${volumes_removed}" != 1 || "$3" != rm ]]; then
+          return 125
+        fi
+        networks_removed=$((networks_removed + 1))
+        ;;
+      *)
+        printf "Unexpected cleanup command: %s\n" "$2" >&2
+        return 1
+        ;;
+    esac
+  }
+  supabase_assert_clean_resources() {
+    [[ "${containers_removed}" == 1 && "${volumes_removed}" == 1 &&
+      "${networks_removed}" == 2 ]]
+  }
+  supabase_cleanup_mode cli test-socket test-prefix test-run
+' bash "${library}" "${cli_cleanup_argv}"
+python3 - "${cli_cleanup_argv}" << 'PY'
+import pathlib
+import sys
+
+records = [
+    record.split(b"\0")
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")
+    if record
+]
+dependent_first = [
+    f"test-prefix-supabase-{service}".encode()
+    for service in (
+        "kong",
+        "studio",
+        "functions",
+        "supavisor",
+        "meta",
+        "storage",
+        "imgproxy",
+        "realtime",
+        "rest",
+        "auth",
+        "db",
+    )
+]
+assert records == [
+    [
+        b"test-socket",
+        b"rm",
+        b"--force",
+        b"--time",
+        b"0",
+        b"--ignore",
+        b"test-prefix-supabase-boundary-peer",
+        *dependent_first,
+    ],
+    [
+        b"test-socket",
+        b"volume",
+        b"rm",
+        b"--force",
+        b"test-prefix-supabase-pgdata",
+        b"test-prefix-supabase-storage",
+        b"test-prefix-supabase-deno-cache",
+    ],
+    [b"test-socket", b"network", b"rm", b"test-prefix-supabase-backend"],
+    [b"test-socket", b"network", b"rm", b"test-prefix-supabase-edge"],
+]
+PY
+
 node --test \
   "$(supabase_fixture_root)/realtime-readiness.test.mjs" \
   "$(supabase_fixture_root)/realtime-websocket.test.mjs"
