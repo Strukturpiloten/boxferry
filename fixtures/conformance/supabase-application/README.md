@@ -39,7 +39,9 @@ offline evidence remains independent of the manual live gate and cannot satisfy 
 [`success-contract.jq`](success-contract.jq) builds an exact diagnostic tuple
 multiset for every successful live route and selection. Each tuple fixes the
 code, severity, subject, and decision. It includes Podman acquisition findings,
-promoted healthchecks, and Compose dependency and healthcheck losses.
+promoted healthchecks, and Quadlet-to-Compose dependency and healthcheck losses.
+Live Podman-to-Compose expects only acquired network IPAM losses; it never
+invents dependency, healthcheck, or unpromoted network metadata losses.
 There is no image-grammar approximation: generated Supabase Compose images are digest-only.
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
 Quadlet-to-Compose retains only its `BFC0007` dependency, healthcheck, and managed-backend IPAM

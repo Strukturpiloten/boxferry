@@ -321,10 +321,6 @@ def compose_network_diagnostics:
   if $input == "podman" then
     [tuple("BFC0007"; "networks." + $resource_prefix + "backend.ipam.config"; null)] +
     [tuple("BFC0007"; "networks." + $resource_prefix + "edge.ipam.config"; null)] +
-    [
-      tuple("BFC0007"; "networks." + $resource_prefix + "edge.internal"; null),
-      tuple("BFC0007"; "networks." + $resource_prefix + "edge.labels"; null)
-    ] +
     if $include_system_network then
       [tuple("BFC0007"; "networks.podman.ipam.config"; null)]
     else
@@ -348,7 +344,13 @@ def compose_output_diagnostics:
   if $input == "compose" then
     []
   else
-    compose_diagnostics + compose_healthcheck_diagnostics + compose_network_diagnostics
+    if $input == "podman" then
+      # Live Podman acquisition does not promote Compose-authored dependency or
+      # healthcheck fields. Do not invent target losses for absent source intent.
+      compose_network_diagnostics
+    else
+      compose_diagnostics + compose_healthcheck_diagnostics + compose_network_diagnostics
+    end
   end;
 
 def observed_podman_environment_fields:
@@ -918,12 +920,6 @@ def compose_output_outcomes:
   if $input == "podman" then
     # Native Podman evidence retains its independently reviewed accounting.
     [selected_services[] | "approximate"] +
-    compose_outcomes +
-    [
-      healthcheck_services[] |
-      select(. as $service | contains(selected_services; $service)) |
-      "unsupported"
-    ] +
     if $input == "podman" and $selection == "all" then
       ["unsupported"]
     else
