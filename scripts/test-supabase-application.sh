@@ -63,17 +63,20 @@ bash -c '
   supabase_assert_success_contract() { :; }
   supabase_assert_output_membership() { :; }
   supabase_assert_output_semantics() {
-    [[ "$#" == 7 ]]
-    printf "%s\t%s\t%s\t%s\n" "$1" "$2" "$3" "$7" >> "${argument_log}"
+    [[ "$#" == 8 ]]
+    printf "%s\t%s\t%s\t%s\t%s\n" \
+      "$1" "$2" "$3" "$7" "$8" >> "${argument_log}"
   }
   supabase_run_reimports cli test-prefix
 ' bash "${library}" "${test_root}/reimport-case" "${reimport_argument_log}"
 awk -F '\t' '
-  NF != 4 ||
+  NF != 5 ||
   $1 !~ /^(exact|storage|label|all)$/ ||
   $2 !~ /^(compose|quadlet)$/ ||
   $3 !~ /^(compose|quadlet|podman)$/ ||
-  $4 != "podman" { bad = 1 }
+  $4 != "podman" ||
+  ($2 == "compose" && $5 != "false") ||
+  ($2 == "quadlet" && $5 != "true") { bad = 1 }
   { seen[$2 "->" $3] = 1; count++ }
   END { exit bad || count != 24 || length(seen) != 6 }
 ' "${reimport_argument_log}"
@@ -564,6 +567,63 @@ assert records[3] == [
     "test-prefix-supabase-kong",
 ], records[3]
 PY
+
+dependency_order_root="${test_root}/dependency-order"
+mkdir -p -- "${dependency_order_root}/reversed" "${dependency_order_root}/retained"
+jq --null-input --arg prefix test-prefix \
+  --argjson names '["auth","db","functions","imgproxy","meta","realtime","rest","storage","studio","kong","supavisor"]' \
+  '{operations: [$names[] as $name | {
+    action: "start_container",
+    resource: {kind: "container", name: ($prefix + "-supabase-" + $name)}
+  }]}' > "${dependency_order_root}/reversed/podman.json"
+jq --null-input --arg prefix test-prefix \
+  --argjson names '["db","auth","functions","imgproxy","meta","realtime","rest","storage","studio","kong","supavisor"]' \
+  '{operations: [$names[] as $name | {
+    action: "start_container",
+    resource: {kind: "container", name: ($prefix + "-supabase-" + $name)}
+  }]}' > "${dependency_order_root}/retained/podman.json"
+if supabase_assert_podman_dependency_order exact \
+  "${dependency_order_root}/reversed" test-prefix > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase dependency-order assertion admitted a reversed retained plan.' >&2
+  exit 1
+fi
+supabase_assert_podman_dependency_order exact \
+  "${dependency_order_root}/retained" test-prefix
+
+[[ "$(supabase_reimport_dependency_order_required compose)" == false ]]
+[[ "$(supabase_reimport_dependency_order_required quadlet)" == true ]]
+if supabase_reimport_dependency_order_required unsupported > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase dependency expectation admitted an unsupported source.' >&2
+  exit 1
+fi
+
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  supabase_expected_output_projection() { :; }
+  supabase_podman_output_projection() { :; }
+  dependency_calls=0
+  supabase_assert_podman_dependency_order() {
+    dependency_calls=$((dependency_calls + 1))
+    return 1
+  }
+
+  if supabase_assert_output_graph all compose podman unused test-prefix podman; then
+    printf "%s\n" "Supabase graph assertion did not default to strict dependency order." >&2
+    exit 1
+  fi
+  [[ "${dependency_calls}" == 1 ]]
+
+  dependency_calls=0
+  supabase_assert_output_graph all compose podman unused test-prefix podman false
+  [[ "${dependency_calls}" == 0 ]]
+
+  if supabase_assert_output_graph all compose podman unused test-prefix podman typo \
+      > /dev/null 2>&1; then
+    printf "%s\n" "Supabase graph assertion admitted an invalid dependency expectation." >&2
+    exit 1
+  fi
+' bash "${library}"
 
 alias_output_root="${test_root}/alias-outputs"
 mkdir -p -- "${alias_output_root}/compose" "${alias_output_root}/quadlet" \
