@@ -1940,23 +1940,39 @@ supabase_assert_output_membership() {
 }
 
 supabase_assert_realtime_output_aliases() {
-  local output=$1 directory=$2 prefix=$3
+  local output=$1 directory=$2 prefix=$3 provisioner_mode=$4
   local service="${prefix}-supabase-realtime"
   local network="${prefix}-supabase-backend"
-  local -a aliases
+  local expected_aliases_json
+  local -a aliases expected_aliases
+
+  case "${provisioner_mode}" in
+    cli)
+      expected_aliases=("realtime-dev.supabase-realtime" "realtime")
+      ;;
+    compose)
+      expected_aliases=(
+        "${service}"
+        "realtime"
+        "realtime-dev.supabase-realtime"
+      )
+      ;;
+    *)
+      printf 'Unknown Supabase provisioner mode %s.\n' "${provisioner_mode}" >&2
+      return 2
+      ;;
+  esac
 
   case "${output}" in
     compose)
-      python3 - "${directory}/compose.yaml" "${service}" "${network}" << 'PY'
+      python3 - "${directory}/compose.yaml" "${service}" "${network}" \
+        "${expected_aliases[@]}" << 'PY'
 import sys
 
 import yaml
 
 document = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
-assert document["services"][sys.argv[2]]["networks"][sys.argv[3]]["aliases"] == [
-    "realtime-dev.supabase-realtime",
-    "realtime",
-]
+assert document["services"][sys.argv[2]]["networks"][sys.argv[3]]["aliases"] == sys.argv[4:]
 PY
       ;;
     quadlet)
@@ -1964,16 +1980,20 @@ PY
         awk -F= '$1 == "NetworkAlias" { print substr($0, length($1) + 2) }' \
           "${directory}/${service}.container"
       )
-      [[ "${aliases[*]}" == "realtime-dev.supabase-realtime realtime" ]]
+      [[ "${aliases[*]}" == "${expected_aliases[*]}" ]]
       ;;
     podman)
+      expected_aliases_json="$(
+        printf '%s\n' "${expected_aliases[@]}" |
+          jq --raw-input --slurp 'split("\n")[:-1]'
+      )"
       jq --exit-status \
         --arg service "${service}" \
-        --arg network "${network}" '
+        --arg network "${network}" \
+        --argjson expected_aliases "${expected_aliases_json}" '
           .operations[] |
           select(.resource.kind == "container" and .resource.name == $service and .action == "create") |
-          .libpod.body.json.Networks[$network].aliases ==
-            ["realtime-dev.supabase-realtime", "realtime"]
+          .libpod.body.json.Networks[$network].aliases == $expected_aliases
         ' "${directory}/podman.json" > /dev/null
       ;;
   esac
@@ -2038,6 +2058,7 @@ supabase_assert_output_semantics() {
   local include_system_network=${6:-false}
   local image_origin=${7:-${route_input}}
   local require_dependency_order=${8:-true}
+  local provisioner_mode=$9
   supabase_assert_output_graph \
     "${selection}" "${route_input}" "${output}" "${directory}" "${prefix}" \
     "${image_origin}" "${require_dependency_order}"
@@ -2057,7 +2078,8 @@ supabase_assert_output_semantics() {
       "${prefix}-supabase-edge"
     assert_resource_member "${output}" "${directory}" volume \
       "${prefix}-supabase-deno-cache"
-    supabase_assert_realtime_output_aliases "${output}" "${directory}" "${prefix}"
+    supabase_assert_realtime_output_aliases \
+      "${output}" "${directory}" "${prefix}" "${provisioner_mode}"
   fi
   case "${output}" in
     compose)
@@ -2679,7 +2701,8 @@ supabase_run_exports() {
       supabase_assert_output_membership \
         "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
       supabase_assert_output_semantics \
-        "${selection}" podman "${output}" "${directory}" "${prefix}" "${include_system_network}"
+        "${selection}" podman "${output}" "${directory}" "${prefix}" \
+        "${include_system_network}" podman true "${mode}"
     done
   done
 }
@@ -2747,7 +2770,7 @@ supabase_run_reimports() {
           "${selection}" "${output}" "${result}" "${prefix}" "${include_system_network}"
         supabase_assert_output_semantics \
           "${selection}" "${input}" "${output}" "${result}" "${prefix}" \
-          "${include_system_network}" podman "${require_dependency_order}"
+          "${include_system_network}" podman "${require_dependency_order}" "${mode}"
       done
     done
   done
