@@ -16,6 +16,43 @@ source "${library}"
 
 supabase_validate_catalogues
 
+contract_report="${test_root}/success-contract.report.json"
+contract_drift_report="${test_root}/success-contract-drift.report.json"
+contract_drift_output="${test_root}/success-contract-drift.output"
+supabase_success_contract_example_report podman podman storage contract \
+  > "${contract_report}"
+jq '
+  (
+    .diagnostics[] |
+    select(.code == "BFP0002") |
+    .fields[] |
+    select(
+      .name == "subject" and
+      .value == "container:contract-supabase-auth"
+    ) |
+    .value
+  ) = "network:podman"
+' "${contract_report}" > "${contract_drift_report}"
+if supabase_assert_success_contract podman podman storage \
+  "${contract_drift_report}" contract > "${contract_drift_output}" 2>&1; then
+  printf '%s\n' 'Supabase diagnostic tuple drift unexpectedly satisfied its exact contract.' >&2
+  exit 1
+fi
+grep --fixed-strings --quiet \
+  'Supabase route emitted a diagnostic multiset outside its exact contract:' \
+  "${contract_drift_output}"
+grep --fixed-strings --quiet \
+  '"subject":"container:contract-supabase-auth","decision":"omitted","count":1' \
+  "${contract_drift_output}"
+grep --fixed-strings --quiet \
+  '"subject":"network:podman","decision":"omitted","count":1' \
+  "${contract_drift_output}"
+if grep --fixed-strings --quiet -- "${SUPABASE_TEST_PASSWORD}" \
+  "${contract_drift_output}"; then
+  printf '%s\n' 'Supabase diagnostic contract failure output leaked a protected value.' >&2
+  exit 1
+fi
+
 cli_recreation_removal_argv="${test_root}/cli-recreation-removal.argv"
 bash -c '
   set -Eeuo pipefail

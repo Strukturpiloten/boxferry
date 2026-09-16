@@ -19,6 +19,7 @@ SUPABASE_CELL_TIMEOUT="90m"
 SUPABASE_CELL_KILL_AFTER="10s"
 SUPABASE_DIAGNOSTIC_CAPTURE_BYTES=8192
 SUPABASE_DIAGNOSTIC_OUTPUT_BYTES=4096
+SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES=4096
 SUPABASE_DB_PASSWORD="boxferry-public-supabase-db-password"
 SUPABASE_JWT_SECRET="boxferry-public-jwt-secret-at-least-thirty-two-characters"
 SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3MDQwNjcyMDAsImlzcyI6InN1cGFiYXNlIiwicm9sZSI6ImFub24ifQ.lGRwynjOirFYPqa-6IzEfCCIS_yNsl4riV9_TYukv0g"
@@ -2078,7 +2079,7 @@ supabase_assert_output_semantics() {
 supabase_assert_success_contract() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
-  jq --exit-status \
+  if jq --exit-status \
     --arg input "${input}" \
     --arg output "${output}" \
     --arg selection "${selection}" \
@@ -2086,11 +2087,50 @@ supabase_assert_success_contract() {
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected false \
     --from-file "$(supabase_fixture_root)/success-contract.jq" \
-    "${report}" > /dev/null || {
-    printf 'Supabase route emitted a diagnostic multiset outside its exact contract: %s -> %s (%s, %s).\n' \
-      "${input}" "${output}" "${selection}" "${report}" >&2
-    return 1
-  }
+    "${report}" > /dev/null; then
+    return 0
+  fi
+  printf 'Supabase route emitted a diagnostic multiset outside its exact contract: %s -> %s (%s, %s).\n' \
+    "${input}" "${output}" "${selection}" "${report}" >&2
+  supabase_report_success_contract_delta \
+    "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
+    "${include_system_network}"
+  return 1
+}
+
+supabase_success_contract_delta() {
+  local input=$1 output=$2 selection=$3 report=$4 prefix=$5
+  local include_system_network=${6:-false}
+  jq --compact-output \
+    --arg input "${input}" \
+    --arg output "${output}" \
+    --arg selection "${selection}" \
+    --arg resource_prefix "${prefix}-supabase-" \
+    --argjson include_system_network "${include_system_network}" \
+    --argjson emit_expected '"delta"' \
+    --from-file "$(supabase_fixture_root)/success-contract.jq" \
+    "${report}"
+}
+
+supabase_report_success_contract_delta() {
+  local input=$1 output=$2 selection=$3 report=$4 prefix=$5
+  local include_system_network=${6:-false}
+  local delta byte_count
+  if ! delta="$(
+    supabase_success_contract_delta \
+      "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
+      "${include_system_network}"
+  )" || [[ -z "${delta}" ]]; then
+    printf '%s\n' 'Supabase diagnostic contract delta unavailable.' >&2
+    return 0
+  fi
+  byte_count="$(LC_ALL=C printf '%s' "${delta}" | wc -c)"
+  if ((byte_count > SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES)); then
+    printf 'Supabase diagnostic contract delta omitted: byte-limit=%d; observed-bytes=%d; truncated=true.\n' \
+      "${SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES}" "${byte_count}" >&2
+    return 0
+  fi
+  printf 'Supabase diagnostic contract delta: %s\n' "${delta}" >&2
 }
 
 supabase_success_contract_example_report() {
@@ -2139,11 +2179,214 @@ supabase_success_contract_example_report() {
 
 supabase_validate_success_contract_examples() {
   local prefix=contract
-  local all_report
+  local all_report base_report drift_report duplicate_report redacted_report capped_report
+  local delta delta_again bounded_output unavailable_output
 
   supabase_assert_success_contract podman podman storage \
     <(supabase_success_contract_example_report podman podman storage "${prefix}") \
     "${prefix}"
+
+  base_report="$(
+    supabase_success_contract_example_report podman podman storage "${prefix}"
+  )"
+  delta="$(
+    supabase_success_contract_delta podman podman storage \
+      <(printf '%s\n' "${base_report}") "${prefix}"
+  )"
+  jq --exit-status '
+    .missing_total == 0 and
+    .unexpected_total == 0 and
+    .missing == [] and
+    .unexpected == [] and
+    .truncated == false and
+    .omitted_groups == 0 and
+    .group_limit_per_side == 6 and
+    .subject_byte_limit == 128
+  ' <<< "${delta}" > /dev/null || {
+    printf '%s\n' 'Supabase matching diagnostic contract emitted a non-empty delta.' >&2
+    return 1
+  }
+  drift_report="$(
+    jq '
+      (
+        .diagnostics[] |
+        select(.code == "BFP0002") |
+        .fields[] |
+        select(
+          .name == "subject" and
+          .value == "container:contract-supabase-auth"
+        ) |
+        .value
+      ) = "network:podman"
+    ' <<< "${base_report}"
+  )"
+  delta="$(
+    supabase_success_contract_delta podman podman storage \
+      <(printf '%s\n' "${drift_report}") "${prefix}"
+  )"
+  jq --exit-status '
+    .missing_total == 1 and
+    .unexpected_total == 1 and
+    .missing == [{
+      code: "BFP0002",
+      severity: "warning",
+      subject: "container:contract-supabase-auth",
+      decision: "omitted",
+      count: 1
+    }] and
+    .unexpected == [{
+      code: "BFP0002",
+      severity: "warning",
+      subject: "network:podman",
+      decision: "omitted",
+      count: 1
+    }] and
+    .truncated == false
+  ' <<< "${delta}" > /dev/null || {
+    printf '%s\n' 'Supabase diagnostic contract delta lost a literal tuple drift.' >&2
+    return 1
+  }
+  duplicate_report="$(
+    jq '
+      first(
+        .diagnostics[] |
+        select(.code == "BFP0002") |
+        select(
+          any(
+            .fields[];
+            .name == "subject" and
+            .value == "container:contract-supabase-auth"
+          )
+        )
+      ) as $duplicate |
+      .diagnostics += [$duplicate, $duplicate]
+    ' <<< "${base_report}"
+  )"
+  delta="$(
+    supabase_success_contract_delta podman podman storage \
+      <(printf '%s\n' "${duplicate_report}") "${prefix}"
+  )"
+  jq --exit-status '
+    .missing_total == 0 and
+    .unexpected_total == 2 and
+    .missing == [] and
+    .unexpected == [{
+      code: "BFP0002",
+      severity: "warning",
+      subject: "container:contract-supabase-auth",
+      decision: "omitted",
+      count: 2
+    }] and
+    .truncated == false
+  ' <<< "${delta}" > /dev/null || {
+    printf '%s\n' 'Supabase diagnostic contract delta collapsed duplicate occurrences.' >&2
+    return 1
+  }
+  redacted_report="$(
+    jq --arg protected "${SUPABASE_TEST_PASSWORD}" '
+      .diagnostics += [{
+        code: "BFP0007",
+        severity: "warning",
+        name: "redaction test",
+        fields: [
+          {
+            name: "subject",
+            value: ("services.contract-supabase-auth.environment." + $protected)
+          },
+          {name: "decision", value: "omitted"}
+        ]
+      }]
+    ' <<< "${base_report}"
+  )"
+  delta="$(
+    supabase_success_contract_delta podman podman storage \
+      <(printf '%s\n' "${redacted_report}") "${prefix}"
+  )"
+  jq --exit-status '
+    .missing_total == 0 and
+    .unexpected_total == 1 and
+    .unexpected == [{
+      code: "BFP0007",
+      severity: "warning",
+      subject: "[REDACTED-SUBJECT]",
+      decision: "omitted",
+      count: 1
+    }]
+  ' <<< "${delta}" > /dev/null || {
+    printf '%s\n' 'Supabase diagnostic contract delta did not redact an unsafe subject.' >&2
+    return 1
+  }
+  if grep --fixed-strings --quiet -- "${SUPABASE_TEST_PASSWORD}" <<< "${delta}"; then
+    printf '%s\n' 'Supabase diagnostic contract delta leaked a protected subject.' >&2
+    return 1
+  fi
+  capped_report="$(
+    jq '
+      .diagnostics += [
+        range(0; 10) as $index |
+        {
+          code: ("BFT" + (("0000" + ($index | tostring))[-4:])),
+          severity: "warning",
+          name: "tuple bound test",
+          fields: [
+            {name: "subject", value: "network:podman"},
+            {name: "decision", value: "omitted"}
+          ]
+        }
+      ]
+    ' <<< "${base_report}"
+  )"
+  delta="$(
+    supabase_success_contract_delta podman podman storage \
+      <(printf '%s\n' "${capped_report}") "${prefix}"
+  )"
+  delta_again="$(
+    supabase_success_contract_delta podman podman storage \
+      <(printf '%s\n' "${capped_report}") "${prefix}"
+  )"
+  [[ "${delta}" == "${delta_again}" ]] || {
+    printf '%s\n' 'Supabase diagnostic contract delta ordering was nondeterministic.' >&2
+    return 1
+  }
+  jq --exit-status '
+    .missing_total == 0 and
+    .unexpected_total == 10 and
+    (.unexpected | length) == 6 and
+    .truncated == true and
+    .omitted_groups == 4 and
+    all(.unexpected[]; .count == 1)
+  ' <<< "${delta}" > /dev/null || {
+    printf '%s\n' 'Supabase diagnostic contract delta exceeded its tuple bound.' >&2
+    return 1
+  }
+  [[ "$(LC_ALL=C printf '%s' "${delta}" | wc -c)" -le "${SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES}" ]] || {
+    printf '%s\n' 'Supabase diagnostic contract delta exceeded its byte bound.' >&2
+    return 1
+  }
+  bounded_output="$(
+    SUPABASE_DIAGNOSTIC_DELTA_OUTPUT_BYTES=32 \
+      supabase_report_success_contract_delta podman podman storage \
+      <(printf '%s\n' "${drift_report}") "${prefix}" 2>&1
+  )"
+  grep --extended-regexp --quiet \
+    '^Supabase diagnostic contract delta omitted: byte-limit=32; observed-bytes=[0-9]+; truncated=true\.$' \
+    <<< "${bounded_output}" || {
+    printf '%s\n' 'Supabase diagnostic contract delta byte-limit marker was incomplete.' >&2
+    return 1
+  }
+  if grep --fixed-strings --quiet -- "${SUPABASE_TEST_PASSWORD}" \
+    <<< "${bounded_output}"; then
+    printf '%s\n' 'Supabase bounded diagnostic delta leaked a protected subject.' >&2
+    return 1
+  fi
+  unavailable_output="$(
+    supabase_report_success_contract_delta podman podman storage \
+      <(printf '') "${prefix}" 2>&1
+  )"
+  [[ "${unavailable_output}" == 'Supabase diagnostic contract delta unavailable.' ]] || {
+    printf '%s\n' 'Supabase empty diagnostic delta lacked its unavailable marker.' >&2
+    return 1
+  }
 
   all_report="$(
     supabase_success_contract_example_report podman podman all "${prefix}" true
