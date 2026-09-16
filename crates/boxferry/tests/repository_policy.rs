@@ -1415,11 +1415,16 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             compose_creation_evidence_subjects, expected_compose_creation_evidence_subjects,
             "{selection} Compose acquisition must omit only application creation evidence"
         );
-        let (approximate, cli_unsupported, compose_unsupported) = if selection == "all" {
-            (67, 1_446, 1_419)
+        let (approximate, cli_unsupported, compose_unsupported): (usize, usize, usize) = if selection == "all" {
+            (67, 1_446, 1_408)
         } else {
-            (63, 1_346, 1_319)
+            (63, 1_346, 1_308)
         };
+        assert_eq!(
+            cli_unsupported - compose_unsupported,
+            16 + (application_creation_evidence_subjects.len() * 2),
+            "{selection} origin delta must be sixteen dependency outcomes plus two occurrences for each CLI-only creation-evidence record"
+        );
         let cli_authored_report = serde_json::json!({
             "schema_version": 1,
             "status": "success",
@@ -1470,6 +1475,19 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "compose",
             &compose_authored_report,
         )?);
+        let mut stale_compose_authored_report = compose_authored_report.clone();
+        stale_compose_authored_report["fidelity"]["unsupported"] = serde_json::json!(compose_unsupported + 11);
+        assert!(
+            !supabase_contract_accepts_with_acquisition(
+                &root,
+                "podman",
+                "compose",
+                selection,
+                "compose",
+                &stale_compose_authored_report,
+            )?,
+            "{selection} Compose-authored contract admitted the stale creation-evidence count"
+        );
         assert!(!supabase_contract_accepts_with_acquisition(
             &root,
             "podman",
@@ -1891,10 +1909,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         );
     }
     for (selection, approximate, unsupported) in [
-        ("exact", 63, 1_319),
-        ("storage", 63, 1_319),
-        ("label", 63, 1_319),
-        ("all", 67, 1_419),
+        ("exact", 63, 1_308),
+        ("storage", 63, 1_308),
+        ("label", 63, 1_308),
+        ("all", 67, 1_408),
     ] {
         let generated = generated_supabase_contract_with_acquisition(
             &root,
@@ -1929,9 +1947,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         None,
     )?;
     assert!(system_network_fidelity.status.success());
+    let system_network_fidelity: serde_json::Value = serde_json::from_slice(&system_network_fidelity.stdout)
+        .map_err(|error| format!("invalid system-network fidelity contract: {error}"))?;
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&system_network_fidelity.stdout)
-            .map_err(|error| format!("invalid system-network fidelity contract: {error}"))?,
+        system_network_fidelity,
         serde_json::json!({
             "approximate": 69,
             "unsupported": 1_452,
@@ -1952,15 +1971,28 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         None,
     )?;
     assert!(compose_authored_system_network_fidelity.status.success());
+    let compose_authored_system_network_fidelity: serde_json::Value =
+        serde_json::from_slice(&compose_authored_system_network_fidelity.stdout)
+            .map_err(|error| format!("invalid Compose-authored system-network fidelity contract: {error}"))?;
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&compose_authored_system_network_fidelity.stdout)
-            .map_err(|error| format!("invalid Compose-authored system-network fidelity contract: {error}"))?,
+        compose_authored_system_network_fidelity,
         serde_json::json!({
             "approximate": 69,
-            "unsupported": 1_425,
+            "unsupported": 1_414,
             "invalid": 0,
             "other": 0,
         })
+    );
+    let system_network_unsupported = system_network_fidelity["unsupported"]
+        .as_u64()
+        .ok_or("CLI-authored system-network unsupported fidelity must be an integer")?;
+    let compose_authored_system_network_unsupported = compose_authored_system_network_fidelity["unsupported"]
+        .as_u64()
+        .ok_or("Compose-authored system-network unsupported fidelity must be an integer")?;
+    assert_eq!(
+        system_network_unsupported - compose_authored_system_network_unsupported,
+        16 + (application_creation_evidence_subjects.len() as u64 * 2),
+        "system-network origin delta must retain the shared acquisition accounting"
     );
     let system_network_diagnostics = run_supabase_report_contract(
         &root,

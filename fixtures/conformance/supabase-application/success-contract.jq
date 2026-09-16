@@ -171,8 +171,8 @@ def podman_native_unsupported_occurrences:
   ([selected_services[] | image_native_field_occurrences[.] // 0] | sum_values) +
   ((selected_networks | length) * 5) +
   ((selected_volumes | length) * 3) +
-  (selected_services | length) +
-  selected_creation_evidence_count +
+  # Retained native creation evidence contributes two occurrence slots.
+  (selected_creation_evidence_count * 2) +
   selected_unusable_bind_mount_count +
   selected_image_label_count;
 

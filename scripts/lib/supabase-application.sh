@@ -2304,7 +2304,7 @@ supabase_validate_success_contract_examples() {
       select(.name == "subject" and ((.value // "") | endswith(".creation_evidence")))] |
       length) == 0 and
     .fidelity.approximate == 63 and
-    .fidelity.unsupported == 1319
+    .fidelity.unsupported == 1308
   ' <<< "${compose_compose_report}" > /dev/null || {
     printf '%s\n' 'Supabase Compose-authored Podman-to-Compose contract invented source intent.' >&2
     return 1
