@@ -14,6 +14,53 @@ repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
 source "${library}"
 
 supabase_validate_catalogues
+
+cli_recreation_removal_argv="${test_root}/cli-recreation-removal.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  output=$2
+  supabase_remote() {
+    printf "%s\0" "$@" >> "${output}"
+    printf "\0" >> "${output}"
+  }
+  supabase_remove_cli_application_containers test-socket test-prefix
+' bash "${library}" "${cli_recreation_removal_argv}"
+python3 - "${cli_recreation_removal_argv}" << 'PY'
+import pathlib
+import sys
+
+records = [
+    record.split(b"\0")
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")
+    if record
+]
+dependent_first = [
+    f"test-prefix-supabase-{service}".encode()
+    for service in (
+        "kong",
+        "studio",
+        "functions",
+        "supavisor",
+        "meta",
+        "storage",
+        "imgproxy",
+        "realtime",
+        "rest",
+        "auth",
+        "db",
+    )
+]
+assert records == [
+    [b"test-socket", b"stop", b"--time", b"30", *dependent_first],
+    [b"test-socket", b"rm", b"--force", *dependent_first],
+]
+arguments = {argument for record in records for argument in record}
+assert b"test-prefix-supabase-pgdata" not in arguments
+assert b"test-prefix-supabase-deno-cache" not in arguments
+assert all(record[1] != b"volume" for record in records)
+PY
+
 node --test \
   "$(supabase_fixture_root)/realtime-readiness.test.mjs" \
   "$(supabase_fixture_root)/realtime-websocket.test.mjs"

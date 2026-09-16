@@ -2329,10 +2329,14 @@ supabase_assert_report_privacy() {
 
 supabase_remove_cli_application_containers() {
   local socket=$1 prefix=$2
-  local -a containers
+  local -a containers dependent_first=()
+  local -i index
   mapfile -t containers < <(supabase_container_names "${prefix}")
-  supabase_remote "${socket}" stop --time 30 "${containers[@]}" > /dev/null
-  supabase_remote "${socket}" rm --force "${containers[@]}" > /dev/null
+  for ((index = ${#containers[@]} - 1; index >= 0; index--)); do
+    dependent_first+=("${containers[index]}")
+  done
+  supabase_remote "${socket}" stop --time 30 "${dependent_first[@]}" > /dev/null
+  supabase_remote "${socket}" rm --force "${dependent_first[@]}" > /dev/null
 }
 
 supabase_recreate_application() {
