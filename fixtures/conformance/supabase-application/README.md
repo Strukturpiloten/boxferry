@@ -49,11 +49,12 @@ tuple delta remains a separate aid for tuple drift; both reports use the same
 The contract receives the Podman acquisition origin explicitly. CLI-authored
 Podman-to-Compose retains the independently observed dependency, healthcheck,
 external-network metadata, and two network-IPAM losses. Compose-authored
-reacquisition promotes authored dependencies as portable source intent, omits
-the eleven application containers' unavailable creation evidence, and retains
+reacquisition promotes authored dependencies as portable source intent. Its
+eleven application containers have no recorded creation evidence, and the contract retains
 healthcheck, external-network metadata, and network-IPAM loss evidence. The
 independently acquired boundary peer retains creation evidence in the `all`
-selection for both origins. The harness
+selection for both origins. Both native occurrence slots are derived from that
+acquisition-specific retained evidence, so absent Compose-authored values contribute neither. The harness
 rejects unknown origins and Podman origins supplied for non-Podman inputs.
 There is no image-grammar approximation: generated Supabase Compose images are digest-only.
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
