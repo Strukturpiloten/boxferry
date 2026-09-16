@@ -752,6 +752,99 @@ def actual_diagnostics:
     }
   ];
 
+def diagnostic_delta_group_limit: 6;
+def diagnostic_delta_subject_byte_limit: 128;
+
+def diagnostic_delta_subject_is_safe($expected_subjects):
+  . as $subject |
+  ($subject | type) == "string" and
+  ($subject | utf8bytelength) <= diagnostic_delta_subject_byte_limit and
+  ($subject | test("^[A-Za-z0-9._:/@+\\[\\]-]+$")) and
+  (
+    contains($expected_subjects; $subject) or
+    $subject == "network:podman" or
+    $subject == "networks.podman.internal" or
+    $subject == "networks.podman.ipam_configs"
+  );
+
+def sanitize_diagnostic_delta_tuple($expected_subjects):
+  {
+    code: (
+      if (.code | type) == "string" and (.code | test("^BF[A-Z][0-9]{4}$"))
+      then .code
+      else "[REDACTED-CODE]"
+      end
+    ),
+    severity: (
+      if (.severity == "warning" or .severity == "error")
+      then .severity
+      else "[REDACTED-SEVERITY]"
+      end
+    ),
+    subject: (
+      if .subject == null
+      then null
+      elif (.subject | diagnostic_delta_subject_is_safe($expected_subjects))
+      then .subject
+      else "[REDACTED-SUBJECT]"
+      end
+    ),
+    decision: (
+      if .decision == null or
+        .decision == "omitted" or
+        .decision == "approximated" or
+        .decision == "not-promoted"
+      then .decision
+      else "[REDACTED-DECISION]"
+      end
+    ),
+  };
+
+def diagnostic_delta_groups:
+  sort_by(.code, .severity, .subject, .decision) |
+  group_by([.code, .severity, .subject, .decision]) |
+  map(.[0] + {count: length});
+
+def diagnostic_delta:
+  expected_diagnostics as $expected |
+  actual_diagnostics as $actual |
+  reduce $expected[] as $tuple (
+    {remaining: $actual, missing: []};
+    (.remaining | index($tuple)) as $match |
+    if $match == null
+    then .missing += [$tuple]
+    else .remaining |= del(.[$match])
+    end
+  ) |
+  . as $delta |
+  ($expected | map(.subject)) as $expected_subjects |
+  (
+    $delta.missing |
+    map(sanitize_diagnostic_delta_tuple($expected_subjects)) |
+    diagnostic_delta_groups
+  ) as $missing |
+  (
+    $delta.remaining |
+    map(sanitize_diagnostic_delta_tuple($expected_subjects)) |
+    diagnostic_delta_groups
+  ) as $unexpected |
+  {
+    missing_total: ($delta.missing | length),
+    unexpected_total: ($delta.remaining | length),
+    missing: $missing[:diagnostic_delta_group_limit],
+    unexpected: $unexpected[:diagnostic_delta_group_limit],
+    truncated: (
+      ($missing | length) > diagnostic_delta_group_limit or
+      ($unexpected | length) > diagnostic_delta_group_limit
+    ),
+    omitted_groups: (
+      ([($missing | length) - diagnostic_delta_group_limit, 0] | max) +
+      ([($unexpected | length) - diagnostic_delta_group_limit, 0] | max)
+    ),
+    group_limit_per_side: diagnostic_delta_group_limit,
+    subject_byte_limit: diagnostic_delta_subject_byte_limit,
+  };
+
 
 def import_service_outcomes($service):
   ["approximate"] + [
@@ -949,6 +1042,8 @@ def success_contract($expected):
 
 if $emit_expected == "fidelity" then
   expected_success_fidelity
+elif $emit_expected == "delta" then
+  diagnostic_delta
 elif $emit_expected == true then
   expected_diagnostics
 else
