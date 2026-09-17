@@ -311,6 +311,26 @@ if grep --fixed-strings --line-regexp --quiet \
   exit 1
 fi
 
+cli_dependency_projection="$(
+  supabase_expected_output_projection exact podman quadlet podman cli
+)"
+compose_dependency_projection="$(
+  supabase_expected_output_projection exact podman quadlet podman compose
+)"
+[[ "$(awk -F '\t' '$2 == "requires" { count++ } END { print count + 0 }' \
+  <<< "${cli_dependency_projection}")" == 16 ]]
+[[ "$(awk -F '\t' '$2 == "after" { count++ } END { print count + 0 }' \
+  <<< "${cli_dependency_projection}")" == 16 ]]
+[[ "$(awk 'END { print NR }' <<< "${cli_dependency_projection}")" == 59 ]]
+[[ "$(awk -F '\t' '$2 == "requires" || $2 == "after" { count++ } \
+  END { print count + 0 }' <<< "${compose_dependency_projection}")" == 0 ]]
+[[ "$(awk 'END { print NR }' <<< "${compose_dependency_projection}")" == 27 ]]
+if supabase_expected_output_projection exact podman quadlet podman unsupported \
+  > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase graph projection admitted an unsupported provisioner.' >&2
+  exit 1
+fi
+
 reimport_argument_log="${test_root}/reimport-semantics.tsv"
 bash -c '
   set -Eeuo pipefail
@@ -886,8 +906,15 @@ bash -c '
   [[ "${dependency_calls}" == 0 ]]
 
   if supabase_assert_output_graph all compose podman unused test-prefix podman typo \
-      > /dev/null 2>&1; then
+    > /dev/null 2>&1; then
     printf "%s\n" "Supabase graph assertion admitted an invalid dependency expectation." >&2
+    exit 1
+  fi
+
+  supabase_assert_output_graph all compose podman unused test-prefix podman false compose
+  if supabase_assert_output_graph all compose podman unused test-prefix podman false unsupported \
+    > /dev/null 2>&1; then
+    printf "%s\n" "Supabase graph assertion admitted an invalid provisioner mode." >&2
     exit 1
   fi
 ' bash "${library}"
