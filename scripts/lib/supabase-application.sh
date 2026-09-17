@@ -1239,7 +1239,7 @@ supabase_assert_database_state() {
 }
 
 supabase_assert_application_boundaries() {
-  local provisioner=$1 socket=$2 prefix=$3 service inspect_file
+  local provisioner=$1 socket=$2 prefix=$3 service inspect_file peer_inspect_file
   for service in db auth rest realtime imgproxy storage meta supavisor functions studio; do
     inspect_file="${current_case}/${prefix}-${service}.inspect.json"
     supabase_remote "${socket}" inspect "${prefix}-supabase-${service}" > "${inspect_file}"
@@ -1260,13 +1260,32 @@ supabase_assert_application_boundaries() {
     ' "${inspect_file}" > /dev/null
   supabase_remote "${socket}" network inspect "${prefix}-supabase-backend" |
     jq --exit-status '.[0].internal == true or .[0].Internal == true' > /dev/null
-  supabase_remote "${socket}" inspect "${prefix}-supabase-boundary-peer" |
-    jq --exit-status --arg edge "${prefix}-supabase-edge" \
-      --arg app "${prefix}-boundary-peer" '
+  peer_inspect_file="${current_case}/${prefix}-boundary-peer.inspect.json"
+  supabase_remote "${socket}" inspect "${prefix}-supabase-boundary-peer" > "${peer_inspect_file}"
+  jq --exit-status --arg edge "${prefix}-supabase-edge" \
+    --arg app "${prefix}-boundary-peer" '
         (.[0].NetworkSettings.Networks | has($edge)) and
         (.[0].NetworkSettings.Networks | length) == 1 and
         .[0].Config.Labels["io.boxferry.application"] == $app
-      ' > /dev/null
+      ' "${peer_inspect_file}" > /dev/null
+  case "${provisioner}" in
+    cli)
+      jq --exit-status '
+        .[0].Config.CreateCommand as $command |
+        ($command | type == "array" and length >= 2 and length <= 128) and
+        ($command | all(.[]; type == "string" and length <= 4096)) and
+        ($command[0] == "podman" or ($command[0] | endswith("/podman"))) and
+        $command[1] == "run"
+      ' "${peer_inspect_file}" > /dev/null
+      ;;
+    compose)
+      jq --exit-status '.[0].Config | has("CreateCommand") | not' \
+        "${peer_inspect_file}" > /dev/null
+      ;;
+    *)
+      return 1
+      ;;
+  esac
   supabase_assert_dependency_graph "${provisioner}" "${socket}" "${prefix}"
 }
 

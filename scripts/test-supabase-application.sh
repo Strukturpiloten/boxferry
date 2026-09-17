@@ -24,6 +24,7 @@ supabase_success_contract_example_report podman podman storage contract false cl
 
 supabase_contract_expected() {
   local input=$1 output=$2 acquisition=$3 provisioner=$4 selection=${5:-exact}
+  local include_system_network=${6:-false}
   jq --null-input \
     --arg input "${input}" \
     --arg output "${output}" \
@@ -31,13 +32,14 @@ supabase_contract_expected() {
     --arg resource_prefix contract-supabase- \
     --arg podman_acquisition "${acquisition}" \
     --arg provisioner_mode "${provisioner}" \
-    --argjson include_system_network false \
+    --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected true \
     --from-file "$(supabase_fixture_root)/success-contract.jq"
 }
 
 supabase_contract_fidelity() {
   local input=$1 output=$2 acquisition=$3 provisioner=$4 selection=${5:-exact}
+  local include_system_network=${6:-false}
   jq --null-input \
     --arg input "${input}" \
     --arg output "${output}" \
@@ -45,7 +47,7 @@ supabase_contract_fidelity() {
     --arg resource_prefix contract-supabase- \
     --arg podman_acquisition "${acquisition}" \
     --arg provisioner_mode "${provisioner}" \
-    --argjson include_system_network false \
+    --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected '"fidelity"' \
     --from-file "$(supabase_fixture_root)/success-contract.jq"
 }
@@ -82,11 +84,12 @@ assert_compose_provider_kong_losses() {
   cli_unsupported="$(supabase_contract_fidelity "${input}" podman "${cli_acquisition}" cli "${selection}" | jq -r .unsupported)"
   compose_unsupported="$(supabase_contract_fidelity "${input}" podman "${compose_acquisition}" compose "${selection}" | jq -r .unsupported)"
   if [[ "${input}" == podman ]]; then
-    # Native Compose acquisition has independent creation-evidence accounting;
-    # this exact reviewed counter includes only the two new Kong omissions.
+    # Native Compose acquisition has independent creation-evidence accounting.
+    # Its all selection excludes Compose boundary peer creation evidence;
+    # otherwise the reviewed difference is only the two Kong omissions.
     case "${selection}" in
       exact | storage | label) [[ "${compose_unsupported}" == 1507 ]] ;;
-      all) [[ "${compose_unsupported}" == 1621 ]] ;;
+      all) [[ "${compose_unsupported}" == 1619 ]] ;;
     esac || return 1
   else
     [[ "${compose_unsupported}" == "$((cli_unsupported + 2))" ]] || {
@@ -102,6 +105,122 @@ for selection in exact storage label all; do
   assert_compose_provider_kong_losses compose not-podman not-podman "${selection}"
   assert_compose_provider_kong_losses quadlet not-podman not-podman "${selection}"
 done
+
+assert_all_selection_creation_evidence_boundary() {
+  local cli compose
+  cli="$(supabase_contract_expected podman compose cli cli all true)"
+  compose="$(supabase_contract_expected podman compose compose compose all true)"
+
+  jq --exit-status '
+    [ .[]
+      | select(.code == "BFP0002" and (.subject | endswith(".creation_evidence")))
+      | .subject
+    ] | sort == [
+      "services.contract-supabase-auth.creation_evidence",
+      "services.contract-supabase-boundary-peer.creation_evidence",
+      "services.contract-supabase-db.creation_evidence",
+      "services.contract-supabase-functions.creation_evidence",
+      "services.contract-supabase-imgproxy.creation_evidence",
+      "services.contract-supabase-kong.creation_evidence",
+      "services.contract-supabase-meta.creation_evidence",
+      "services.contract-supabase-realtime.creation_evidence",
+      "services.contract-supabase-rest.creation_evidence",
+      "services.contract-supabase-storage.creation_evidence",
+      "services.contract-supabase-studio.creation_evidence",
+      "services.contract-supabase-supavisor.creation_evidence"
+    ]
+  ' <<< "${cli}" > /dev/null || {
+    printf '%s\n' 'CLI all-selection contract lost retained creation evidence.' >&2
+    return 1
+  }
+  jq --exit-status '
+    [ .[]
+      | select(.code == "BFP0002" and (.subject | endswith(".creation_evidence")))
+    ] | length == 0
+  ' <<< "${compose}" > /dev/null || {
+    printf '%s\n' 'Compose all-selection contract invented creation evidence.' >&2
+    return 1
+  }
+  [[ "$(supabase_contract_fidelity podman compose cli cli all true | jq -r .unsupported)" == 1452 ]] || {
+    printf '%s\n' 'CLI all-selection contract has unexpected unsupported fidelity.' >&2
+    return 1
+  }
+  [[ "$(supabase_contract_fidelity podman compose compose compose all true | jq -r .unsupported)" == 1412 ]] || {
+    printf '%s\n' 'Compose all-selection contract has unexpected unsupported fidelity.' >&2
+    return 1
+  }
+}
+
+assert_all_selection_creation_evidence_boundary
+
+assert_boundary_create_command_origin() {
+  local provisioner=$1 evidence=$2 expectation=$3 output
+  output="${test_root}/boundary-create-command-${provisioner}-${evidence}.output"
+  if bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    provisioner=$2
+    evidence=$3
+    current_case="$(mktemp -d)"
+    trap "rm -rf -- \"${current_case}\"" EXIT
+    supabase_assert_dependency_graph() { :; }
+    supabase_remote() {
+      case "$2:$3" in
+        network:inspect)
+          printf "%s\\n" "[{\"internal\":true}]"
+          ;;
+        inspect:test-prefix-supabase-boundary-peer)
+          case "${evidence}" in
+            cli)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"/usr/bin/podman\",\"run\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
+            missing-cli | compose)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"}},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
+            injected-compose)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"podman\",\"create\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
+            spoofed)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"echo\",\"podman\",\"run\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
+            *) return 2 ;;
+          esac
+          ;;
+        inspect:test-prefix-supabase-kong)
+          printf "%s\\n" "[{\"HostConfig\":{\"PortBindings\":{\"8000/tcp\":[{\"HostIp\":\"127.0.0.1\",\"HostPort\":\"18000\"}]}},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-backend\":{},\"test-prefix-supabase-edge\":{}}}}]"
+          ;;
+        inspect:*)
+          printf "%s\\n" "[{\"HostConfig\":{\"PortBindings\":{}},\"NetworkSettings\":{\"Ports\":{},\"Networks\":{\"test-prefix-supabase-backend\":{}}}}]"
+          ;;
+        *) return 2 ;;
+      esac
+    }
+    supabase_assert_application_boundaries "${provisioner}" test-socket test-prefix
+  ' bash "${library}" "${provisioner}" "${evidence}" > "${output}" 2>&1; then
+    [[ "${expectation}" == pass ]] || {
+      printf 'Supabase boundary CreateCommand %s/%s was unexpectedly accepted.\n' \
+        "${provisioner}" "${evidence}" >&2
+      return 1
+    }
+  else
+    [[ "${expectation}" == fail ]] || {
+      printf 'Supabase boundary CreateCommand %s/%s was unexpectedly rejected.\n' \
+        "${provisioner}" "${evidence}" >&2
+      return 1
+    }
+  fi
+  if grep --fixed-strings --quiet 'do-not-print-create-command' "${output}"; then
+    printf '%s\n' 'Supabase boundary CreateCommand value leaked into test output.' >&2
+    return 1
+  fi
+}
+
+assert_boundary_create_command_origin cli cli pass
+assert_boundary_create_command_origin cli missing-cli fail
+assert_boundary_create_command_origin cli spoofed fail
+assert_boundary_create_command_origin compose compose pass
+assert_boundary_create_command_origin compose injected-compose fail
+assert_boundary_create_command_origin unsupported compose fail
 
 for invalid_origin in \
   'podman cli compose' \

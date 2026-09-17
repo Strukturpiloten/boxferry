@@ -173,7 +173,7 @@ def selected_creation_evidence_count:
   if cli_podman_acquisition then
     selected_services | length
   else
-    [selected_services[] | select(. == "boundary-peer")] | length
+    0
   end;
 
 def podman_native_unsupported_occurrences:
@@ -237,7 +237,7 @@ def import_diagnostics:
   ] + [
     selected_services[] as $service |
     (["hostname"] +
-      if cli_podman_acquisition or $service == "boundary-peer" then
+      if cli_podman_acquisition then
         ["creation_evidence"]
       else
         []

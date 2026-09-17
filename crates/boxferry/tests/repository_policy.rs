@@ -1154,7 +1154,7 @@ fn supabase_provider_origin_controls_exact_kong_podman_losses() -> Result<(), St
                 // Native Compose acquisition has separately reviewed creation-evidence
                 // accounting. Its exact counter nevertheless includes only these two
                 // additional Kong environment omissions.
-                let expected = if selection == "all" { 1_621 } else { 1_507 };
+                let expected = if selection == "all" { 1_619 } else { 1_507 };
                 assert_eq!(compose_fidelity["unsupported"].as_u64(), Some(expected));
             } else {
                 assert_eq!(
@@ -1519,11 +1519,9 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             .filter(|subject| subject.ends_with(".creation_evidence"))
             .collect::<BTreeSet<_>>();
         let mut expected_cli_creation_evidence_subjects = application_creation_evidence_subjects.clone();
-        let mut expected_compose_creation_evidence_subjects = BTreeSet::new();
+        let expected_compose_creation_evidence_subjects = BTreeSet::new();
         if selection == "all" {
             expected_cli_creation_evidence_subjects
-                .insert("services.contract-supabase-boundary-peer.creation_evidence");
-            expected_compose_creation_evidence_subjects
                 .insert("services.contract-supabase-boundary-peer.creation_evidence");
         }
         assert_eq!(
@@ -1532,16 +1530,16 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         );
         assert_eq!(
             compose_creation_evidence_subjects, expected_compose_creation_evidence_subjects,
-            "{selection} Compose acquisition must omit only application creation evidence"
+            "{selection} Compose acquisition must omit all creation evidence"
         );
         let (approximate, cli_unsupported, compose_unsupported): (usize, usize, usize) = if selection == "all" {
-            (67, 1_446, 1_408)
+            (67, 1_446, 1_406)
         } else {
             (63, 1_346, 1_308)
         };
         assert_eq!(
             cli_unsupported - compose_unsupported,
-            16 + (application_creation_evidence_subjects.len() * 2),
+            16 + (expected_cli_creation_evidence_subjects.len() * 2),
             "{selection} origin delta must be sixteen dependency outcomes plus two occurrences for each CLI-only creation-evidence record"
         );
         let cli_authored_report = serde_json::json!({
@@ -1594,6 +1592,57 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "compose",
             &compose_authored_report,
         )?);
+        if selection == "all" {
+            let mut injected_compose_creation_evidence = compose_authored_report.clone();
+            injected_compose_creation_evidence["diagnostics"]
+                .as_array_mut()
+                .ok_or("Compose-authored all report diagnostics must be an array")?
+                .push(serde_json::json!({
+                    "code": "BFP0002",
+                    "severity": "warning",
+                    "name": "injected Compose creation evidence",
+                    "fields": [
+                        {"name": "subject", "value": "services.contract-supabase-boundary-peer.creation_evidence"},
+                        {"name": "decision", "value": "omitted"}
+                    ]
+                }));
+            assert!(
+                !supabase_contract_accepts_with_acquisition(
+                    &root,
+                    "podman",
+                    "compose",
+                    selection,
+                    "compose",
+                    &injected_compose_creation_evidence,
+                )?,
+                "all Compose-authored contract admitted injected boundary creation evidence"
+            );
+
+            let mut missing_cli_peer_evidence = cli_authored_report.clone();
+            missing_cli_peer_evidence["diagnostics"]
+                .as_array_mut()
+                .ok_or("CLI-authored all report diagnostics must be an array")?
+                .retain(|diagnostic| {
+                    diagnostic["fields"].as_array().is_none_or(|fields| {
+                        !fields.iter().any(|field| {
+                            field["name"] == "subject"
+                                && field["value"] == "services.contract-supabase-boundary-peer.creation_evidence"
+                        })
+                    })
+                });
+            missing_cli_peer_evidence["fidelity"]["unsupported"] = serde_json::json!(cli_unsupported - 2);
+            assert!(
+                !supabase_contract_accepts_with_acquisition(
+                    &root,
+                    "podman",
+                    "compose",
+                    selection,
+                    "cli",
+                    &missing_cli_peer_evidence,
+                )?,
+                "all CLI-authored contract admitted missing boundary creation evidence"
+            );
+        }
         let mut stale_compose_authored_report = compose_authored_report.clone();
         stale_compose_authored_report["fidelity"]["unsupported"] = serde_json::json!(compose_unsupported + 11);
         assert!(
@@ -2034,7 +2083,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("exact", 63, 1_308),
         ("storage", 63, 1_308),
         ("label", 63, 1_308),
-        ("all", 67, 1_408),
+        ("all", 67, 1_406),
     ] {
         let generated = generated_supabase_contract_with_acquisition(
             &root,
@@ -2102,7 +2151,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         compose_authored_system_network_fidelity,
         serde_json::json!({
             "approximate": 69,
-            "unsupported": 1_414,
+            "unsupported": 1_412,
             "invalid": 0,
             "other": 0,
         })
@@ -2115,7 +2164,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         .ok_or("Compose-authored system-network unsupported fidelity must be an integer")?;
     assert_eq!(
         system_network_unsupported - compose_authored_system_network_unsupported,
-        16 + (application_creation_evidence_subjects.len() as u64 * 2),
+        16 + ((application_creation_evidence_subjects.len() as u64 + 1) * 2),
         "system-network origin delta must retain the shared acquisition accounting"
     );
     let system_network_diagnostics = run_supabase_report_contract(
@@ -4181,6 +4230,11 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "supabase_assert_application_boundaries",
         ".[0].HostConfig.PortBindings == {}",
         ".[0].HostConfig.PortBindings[\"8000/tcp\"][0].HostIp == \"127.0.0.1\"",
+        ".[0].Config.CreateCommand as $command",
+        "length >= 2 and length <= 128",
+        "$command[0] == \"podman\" or ($command[0] | endswith(\"/podman\"))",
+        "$command[1] == \"run\"",
+        "has(\"CreateCommand\") | not",
         "supabase_assert_storage_ownership",
         ".Destination == \"/var/lib/storage\" and .RW == false",
         "supabase_expect_collision",

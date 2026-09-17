@@ -52,9 +52,12 @@ external-network metadata, and two network-IPAM losses. Compose-authored
 reacquisition promotes authored dependencies as portable source intent. Its
 eleven application containers have no recorded creation evidence, and the contract retains
 healthcheck, external-network metadata, and network-IPAM loss evidence. The
-independently acquired boundary peer retains creation evidence in the `all`
-selection for both origins. Both native occurrence slots are derived from that
-acquisition-specific retained evidence, so absent Compose-authored values contribute neither. The harness
+CLI-acquired Podman containers retain creation evidence in the `all` selection,
+including the boundary peer. The Compose-provisioned boundary peer has no
+retained native Podman creation evidence, so Compose acquisition contributes
+neither a creation-evidence diagnostic nor either native unsupported occurrence
+slot. Both native occurrence slots are derived only from CLI-acquisition
+evidence. The harness
 rejects unknown origins and Podman origins supplied for non-Podman inputs.
 There is no image-grammar approximation: generated Supabase Compose images are digest-only.
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
