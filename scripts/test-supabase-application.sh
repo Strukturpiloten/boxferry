@@ -174,11 +174,23 @@ assert_boundary_create_command_origin() {
             cli)
               printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"/usr/bin/podman\",\"run\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
               ;;
+            socket)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"/usr/bin/podman\",\"--url\",\"unix:///run/user/1000/podman/podman.sock\",\"run\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
             missing-cli | compose)
               printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"}},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
               ;;
             injected-compose)
               printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"podman\",\"create\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
+            socket-create)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"podman\",\"--url\",\"unix:///run/user/1000/podman/podman.sock\",\"create\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
+            non-unix-socket)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"podman\",\"--url\",\"tcp://127.0.0.1:8080\",\"run\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
+              ;;
+            url-equals)
+              printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"podman\",\"--url=unix:///run/user/1000/podman/podman.sock\",\"run\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
               ;;
             spoofed)
               printf "%s\\n" "[{\"Config\":{\"Labels\":{\"io.boxferry.application\":\"test-prefix-boundary-peer\"},\"CreateCommand\":[\"echo\",\"podman\",\"run\",\"do-not-print-create-command\"]},\"NetworkSettings\":{\"Networks\":{\"test-prefix-supabase-edge\":{}}}}]"
@@ -216,8 +228,12 @@ assert_boundary_create_command_origin() {
 }
 
 assert_boundary_create_command_origin cli cli pass
+assert_boundary_create_command_origin cli socket pass
 assert_boundary_create_command_origin cli missing-cli fail
 assert_boundary_create_command_origin cli spoofed fail
+assert_boundary_create_command_origin cli socket-create fail
+assert_boundary_create_command_origin cli non-unix-socket fail
+assert_boundary_create_command_origin cli url-equals fail
 assert_boundary_create_command_origin compose compose pass
 assert_boundary_create_command_origin compose injected-compose fail
 assert_boundary_create_command_origin unsupported compose fail

@@ -1275,7 +1275,15 @@ supabase_assert_application_boundaries() {
         ($command | type == "array" and length >= 2 and length <= 128) and
         ($command | all(.[]; type == "string" and length <= 4096)) and
         ($command[0] == "podman" or ($command[0] | endswith("/podman"))) and
-        $command[1] == "run"
+      (
+        $command[1] == "run" or
+        (
+          ($command | length >= 4) and
+          $command[1] == "--url" and
+          ($command[2] | startswith("unix://") and length > ("unix://" | length)) and
+          $command[3] == "run"
+        )
+      )
       ' "${peer_inspect_file}" > /dev/null
       ;;
     compose)
