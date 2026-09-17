@@ -1543,9 +1543,19 @@ supabase_selection_includes_system_network() {
 supabase_expected_output_projection() {
   local selection=$1 route_input=$2 output=$3
   local image_origin=${4:-${route_input}}
+  local provisioner_mode=${5:-cli}
   local service image_id networks dependencies mounts _proof image network mount
   local service_dependency
   local -a values
+
+  case "${provisioner_mode}" in
+    cli | compose) ;;
+    *)
+      printf 'Invalid Supabase provisioner mode for graph projection: %s.\n' \
+        "${provisioner_mode}" >&2
+      return 2
+      ;;
+  esac
 
   while IFS=$'\t' read -r service image_id networks dependencies mounts _proof; do
     [[ -z "${service}" || "${service}" == \#* ]] && continue
@@ -1570,7 +1580,8 @@ supabase_expected_output_projection() {
       done
     fi
 
-    if [[ "${output}" == quadlet && "${route_input}" != compose &&
+    if [[ "${provisioner_mode}" == cli && "${output}" == quadlet &&
+      "${route_input}" != compose &&
       "${dependencies}" != - ]]; then
       IFS=',' read -r -a values <<< "${dependencies}"
       for service_dependency in "${values[@]}"; do
@@ -1848,12 +1859,21 @@ supabase_assert_output_graph() {
   local selection=$1 route_input=$2 output=$3 directory=$4 prefix=$5
   local image_origin=${6:-${route_input}}
   local require_dependency_order=${7:-true}
+  local provisioner_mode=${8:-cli}
   local actual_projection
   case "${require_dependency_order}" in
     true | false) ;;
     *)
       printf 'Invalid Supabase dependency-order expectation: %s.\n' \
         "${require_dependency_order}" >&2
+      return 2
+      ;;
+  esac
+  case "${provisioner_mode}" in
+    cli | compose) ;;
+    *)
+      printf 'Invalid Supabase provisioner mode for graph assertion: %s.\n' \
+        "${provisioner_mode}" >&2
       return 2
       ;;
   esac
@@ -1865,7 +1885,8 @@ supabase_assert_output_graph() {
 
   diff --unified \
     <(supabase_expected_output_projection \
-      "${selection}" "${route_input}" "${output}" "${image_origin}" | LC_ALL=C sort) \
+      "${selection}" "${route_input}" "${output}" "${image_origin}" \
+      "${provisioner_mode}" | LC_ALL=C sort) \
     <("${actual_projection}" "${directory}" "${prefix}" | LC_ALL=C sort) || {
     printf 'Supabase %s-to-%s %s selection escaped its exact graph projection.\n' \
       "${route_input}" "${output}" "${selection}" >&2
@@ -2061,7 +2082,7 @@ supabase_assert_output_semantics() {
   local provisioner_mode=$9
   supabase_assert_output_graph \
     "${selection}" "${route_input}" "${output}" "${directory}" "${prefix}" \
-    "${image_origin}" "${require_dependency_order}"
+    "${image_origin}" "${require_dependency_order}" "${provisioner_mode}"
   supabase_assert_network_ownership \
     "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
   if [[ "${selection}" == exact || "${selection}" == storage ||
