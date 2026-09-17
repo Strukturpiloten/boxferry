@@ -811,6 +811,7 @@ impl SupabaseContractMode {
 #[derive(Clone, Copy)]
 struct SupabaseContractContext<'a> {
     podman_acquisition: &'a str,
+    provisioner_mode: &'a str,
     include_system_network: bool,
 }
 
@@ -834,6 +835,7 @@ fn run_supabase_report_contract(
         .args(["--arg", "selection", selection])
         .args(["--arg", "resource_prefix", "contract-supabase-"])
         .args(["--arg", "podman_acquisition", context.podman_acquisition])
+        .args(["--arg", "provisioner_mode", context.provisioner_mode])
         .args([
             "--argjson",
             "include_system_network",
@@ -868,6 +870,13 @@ fn run_supabase_report_contract(
 
 fn default_supabase_contract_acquisition(input: &str) -> &'static str {
     if input == "podman" { "cli" } else { "not-podman" }
+}
+
+fn default_supabase_contract_provisioner(podman_acquisition: &str) -> &'static str {
+    match podman_acquisition {
+        "compose" => "compose",
+        _ => "cli",
+    }
 }
 
 fn supabase_contract_diagnostic(tuple: &serde_json::Value) -> serde_json::Value {
@@ -918,6 +927,7 @@ fn supabase_contract_accepts_with_acquisition(
         selection,
         SupabaseContractContext {
             podman_acquisition,
+            provisioner_mode: default_supabase_contract_provisioner(podman_acquisition),
             include_system_network: false,
         },
         SupabaseContractMode::Validate,
@@ -946,6 +956,7 @@ fn supabase_contract_mismatch_summary(
         selection,
         SupabaseContractContext {
             podman_acquisition: default_supabase_contract_acquisition(input),
+            provisioner_mode: default_supabase_contract_provisioner(default_supabase_contract_acquisition(input)),
             include_system_network: false,
         },
         SupabaseContractMode::Mismatches,
@@ -1014,6 +1025,7 @@ fn supabase_contract_accepts_including_system_network_with_acquisition(
         selection,
         SupabaseContractContext {
             podman_acquisition,
+            provisioner_mode: default_supabase_contract_provisioner(podman_acquisition),
             include_system_network: true,
         },
         SupabaseContractMode::Validate,
@@ -1060,6 +1072,7 @@ fn generated_supabase_contract_with_acquisition(
         selection,
         SupabaseContractContext {
             podman_acquisition,
+            provisioner_mode: default_supabase_contract_provisioner(podman_acquisition),
             include_system_network: false,
         },
         mode,
@@ -1073,6 +1086,111 @@ fn generated_supabase_contract_with_acquisition(
     }
     serde_json::from_slice(&generated.stdout)
         .map_err(|error| format!("invalid generated {selection} {input}-to-{output} Supabase contract: {error}"))
+}
+
+#[test]
+fn supabase_provider_origin_controls_exact_kong_podman_losses() -> Result<(), String> {
+    let root = repository_root();
+    let kong_subjects = BTreeSet::from([
+        "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFER_SIZE".to_owned(),
+        "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFERS".to_owned(),
+    ]);
+
+    for selection in ["exact", "storage", "label", "all"] {
+        for (input, cli_acquisition, compose_acquisition) in [
+            ("podman", "cli", "compose"),
+            ("compose", "not-podman", "not-podman"),
+            ("quadlet", "not-podman", "not-podman"),
+        ] {
+            let expected = |podman_acquisition, provisioner_mode, mode| {
+                run_supabase_report_contract(
+                    &root,
+                    input,
+                    "podman",
+                    selection,
+                    SupabaseContractContext {
+                        podman_acquisition,
+                        provisioner_mode,
+                        include_system_network: false,
+                    },
+                    mode,
+                    None,
+                )
+            };
+            let cli_diagnostics = expected(cli_acquisition, "cli", SupabaseContractMode::Diagnostics)?;
+            let compose_diagnostics = expected(compose_acquisition, "compose", SupabaseContractMode::Diagnostics)?;
+            assert!(cli_diagnostics.status.success());
+            assert!(compose_diagnostics.status.success());
+            let subjects = |output: &Output| -> Result<BTreeSet<String>, String> {
+                let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout)
+                    .map_err(|error| format!("invalid Supabase diagnostics: {error}"))?;
+                Ok(diagnostics
+                    .as_array()
+                    .ok_or("Supabase diagnostics must be an array")?
+                    .iter()
+                    .filter(|diagnostic| diagnostic["code"] == "BFP0007")
+                    .filter_map(|diagnostic| diagnostic["subject"].as_str())
+                    .filter(|subject| subject.contains("services.contract-supabase-kong.environment."))
+                    .map(str::to_owned)
+                    .collect())
+            };
+            let cli_subjects = subjects(&cli_diagnostics)?;
+            let compose_subjects = subjects(&compose_diagnostics)?;
+            assert!(kong_subjects.is_disjoint(&cli_subjects));
+            assert!(kong_subjects.is_subset(&compose_subjects));
+            assert_eq!(
+                compose_subjects.difference(&cli_subjects).collect::<BTreeSet<_>>(),
+                kong_subjects.iter().collect::<BTreeSet<_>>()
+            );
+
+            let cli_fidelity: serde_json::Value =
+                serde_json::from_slice(&expected(cli_acquisition, "cli", SupabaseContractMode::Fidelity)?.stdout)
+                    .map_err(|error| format!("invalid CLI Supabase fidelity: {error}"))?;
+            let compose_fidelity: serde_json::Value = serde_json::from_slice(
+                &expected(compose_acquisition, "compose", SupabaseContractMode::Fidelity)?.stdout,
+            )
+            .map_err(|error| format!("invalid Compose Supabase fidelity: {error}"))?;
+            if input == "podman" {
+                // Native Compose acquisition has separately reviewed creation-evidence
+                // accounting. Its exact counter nevertheless includes only these two
+                // additional Kong environment omissions.
+                let expected = if selection == "all" { 1_621 } else { 1_507 };
+                assert_eq!(compose_fidelity["unsupported"].as_u64(), Some(expected));
+            } else {
+                assert_eq!(
+                    compose_fidelity["unsupported"].as_u64(),
+                    cli_fidelity["unsupported"].as_u64().map(|value| value + 2),
+                    "{input} Compose-provider Kong environment evidence adds exactly two omissions"
+                );
+            }
+        }
+    }
+
+    for (input, acquisition, provisioner) in [
+        ("podman", "cli", "compose"),
+        ("podman", "compose", "cli"),
+        ("podman", "unknown", "cli"),
+        ("compose", "cli", "cli"),
+        ("quadlet", "compose", "compose"),
+        ("compose", "not-podman", "unknown"),
+    ] {
+        let invalid = run_supabase_report_contract(
+            &root,
+            input,
+            "podman",
+            "exact",
+            SupabaseContractContext {
+                podman_acquisition: acquisition,
+                provisioner_mode: provisioner,
+                include_system_network: false,
+            },
+            SupabaseContractMode::Diagnostics,
+            None,
+        )?;
+        assert_eq!(invalid.status.code(), Some(1));
+        assert_eq!(invalid.stdout, b"null\n");
+    }
+    Ok(())
 }
 
 #[test]
@@ -1260,6 +1378,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
                 "storage",
                 SupabaseContractContext {
                     podman_acquisition,
+                    provisioner_mode: "cli",
                     include_system_network: false,
                 },
                 mode,
@@ -1636,6 +1755,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "all",
         SupabaseContractContext {
             podman_acquisition: "not-podman",
+            provisioner_mode: "cli",
             include_system_network: true,
         },
         SupabaseContractMode::Diagnostics,
@@ -1710,6 +1830,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "all",
         SupabaseContractContext {
             podman_acquisition: "not-podman",
+            provisioner_mode: "cli",
             include_system_network: true,
         },
         SupabaseContractMode::Diagnostics,
@@ -1781,6 +1902,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "all",
         SupabaseContractContext {
             podman_acquisition: "not-podman",
+            provisioner_mode: "cli",
             include_system_network: true,
         },
         SupabaseContractMode::Diagnostics,
@@ -1941,6 +2063,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "all",
         SupabaseContractContext {
             podman_acquisition: "cli",
+            provisioner_mode: "cli",
             include_system_network: true,
         },
         SupabaseContractMode::Fidelity,
@@ -1965,6 +2088,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "all",
         SupabaseContractContext {
             podman_acquisition: "compose",
+            provisioner_mode: "compose",
             include_system_network: true,
         },
         SupabaseContractMode::Fidelity,
@@ -2001,6 +2125,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "all",
         SupabaseContractContext {
             podman_acquisition: "cli",
+            provisioner_mode: "cli",
             include_system_network: true,
         },
         SupabaseContractMode::Diagnostics,
@@ -2026,6 +2151,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "all",
         SupabaseContractContext {
             podman_acquisition: "compose",
+            provisioner_mode: "compose",
             include_system_network: true,
         },
         SupabaseContractMode::Diagnostics,
@@ -2083,6 +2209,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "label",
         SupabaseContractContext {
             podman_acquisition: "cli",
+            provisioner_mode: "cli",
             include_system_network: false,
         },
         SupabaseContractMode::Diagnostics,
@@ -2129,6 +2256,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         "label",
         SupabaseContractContext {
             podman_acquisition: "cli",
+            provisioner_mode: "cli",
             include_system_network: false,
         },
         SupabaseContractMode::Fidelity,
@@ -4033,6 +4161,12 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "\"${image_origin}\" \"${require_dependency_order}\" \"${provisioner_mode}\"",
         "local provisioner_mode=$9",
         "\"${include_system_network}\" podman true \"${mode}\"",
+        "expected_podman_environment_fields",
+        "KONG_NGINX_PROXY_PROXY_BUFFER_SIZE",
+        "KONG_NGINX_PROXY_PROXY_BUFFERS",
+        "--arg provisioner_mode \"${provisioner_mode}\"",
+        "\"${include_system_network}\" \"${mode}\" \"${mode}\"",
+        "\"${include_system_network}\" not-podman \"${mode}\"",
         "jsonRequest(\"/auth/v1/signup\"",
         "jsonRequest(\"/auth/v1/token?grant_type=password\"",
         "new WebSocket(",

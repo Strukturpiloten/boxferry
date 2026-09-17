@@ -21,6 +21,101 @@ contract_drift_report="${test_root}/success-contract-drift.report.json"
 contract_drift_output="${test_root}/success-contract-drift.output"
 supabase_success_contract_example_report podman podman storage contract false cli \
   > "${contract_report}"
+
+supabase_contract_expected() {
+  local input=$1 output=$2 acquisition=$3 provisioner=$4 selection=${5:-exact}
+  jq --null-input \
+    --arg input "${input}" \
+    --arg output "${output}" \
+    --arg selection "${selection}" \
+    --arg resource_prefix contract-supabase- \
+    --arg podman_acquisition "${acquisition}" \
+    --arg provisioner_mode "${provisioner}" \
+    --argjson include_system_network false \
+    --argjson emit_expected true \
+    --from-file "$(supabase_fixture_root)/success-contract.jq"
+}
+
+supabase_contract_fidelity() {
+  local input=$1 output=$2 acquisition=$3 provisioner=$4 selection=${5:-exact}
+  jq --null-input \
+    --arg input "${input}" \
+    --arg output "${output}" \
+    --arg selection "${selection}" \
+    --arg resource_prefix contract-supabase- \
+    --arg podman_acquisition "${acquisition}" \
+    --arg provisioner_mode "${provisioner}" \
+    --argjson include_system_network false \
+    --argjson emit_expected '"fidelity"' \
+    --from-file "$(supabase_fixture_root)/success-contract.jq"
+}
+
+assert_compose_provider_kong_losses() {
+  local input=$1 cli_acquisition=$2 compose_acquisition=$3 selection=$4
+  local cli compose
+  cli="$(supabase_contract_expected "${input}" podman "${cli_acquisition}" cli "${selection}")"
+  compose="$(supabase_contract_expected "${input}" podman "${compose_acquisition}" compose "${selection}")"
+  jq --exit-status '
+    [ .[] | select(
+      .code == "BFP0007" and .decision == "omitted" and
+      (.subject == "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFER_SIZE" or
+       .subject == "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFERS")
+    ) ] | length == 0
+  ' <<< "${cli}" > /dev/null || {
+    printf '%s\n' 'CLI-origin Podman diagnostics unexpectedly include Compose Kong variables.' >&2
+    return 1
+  }
+  jq --exit-status '
+    [ .[] | select(
+      .code == "BFP0007" and .decision == "omitted" and
+      (.subject == "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFER_SIZE" or
+       .subject == "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFERS")
+    ) | .subject ] | sort == [
+      "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFERS",
+      "services.contract-supabase-kong.environment.KONG_NGINX_PROXY_PROXY_BUFFER_SIZE"
+    ]
+  ' <<< "${compose}" > /dev/null || {
+    printf '%s\n' 'Compose-origin Podman diagnostics lack exactly the two Kong variables.' >&2
+    return 1
+  }
+  local cli_unsupported compose_unsupported
+  cli_unsupported="$(supabase_contract_fidelity "${input}" podman "${cli_acquisition}" cli "${selection}" | jq -r .unsupported)"
+  compose_unsupported="$(supabase_contract_fidelity "${input}" podman "${compose_acquisition}" compose "${selection}" | jq -r .unsupported)"
+  if [[ "${input}" == podman ]]; then
+    # Native Compose acquisition has independent creation-evidence accounting;
+    # this exact reviewed counter includes only the two new Kong omissions.
+    case "${selection}" in
+      exact | storage | label) [[ "${compose_unsupported}" == 1507 ]] ;;
+      all) [[ "${compose_unsupported}" == 1621 ]] ;;
+    esac || return 1
+  else
+    [[ "${compose_unsupported}" == "$((cli_unsupported + 2))" ]] || {
+      printf '%s\n' 'Compose-origin Podman fidelity did not account for exactly two Kong variables.' >&2
+      return 1
+    }
+  fi
+}
+
+# The same provider evidence must survive direct acquisition and both generated-artifact reimports.
+for selection in exact storage label all; do
+  assert_compose_provider_kong_losses podman cli compose "${selection}"
+  assert_compose_provider_kong_losses compose not-podman not-podman "${selection}"
+  assert_compose_provider_kong_losses quadlet not-podman not-podman "${selection}"
+done
+
+for invalid_origin in \
+  'podman cli compose' \
+  'podman compose cli' \
+  'podman future cli' \
+  'compose cli cli' \
+  'quadlet compose compose'; do
+  read -r origin_input origin_acquisition origin_provisioner <<< "${invalid_origin}"
+  [[ "$(supabase_contract_expected \
+    "${origin_input}" podman "${origin_acquisition}" "${origin_provisioner}")" == null ]] || {
+    printf 'Supabase contract admitted invalid origin: %s.\n' "${invalid_origin}" >&2
+    exit 1
+  }
+done
 jq '
   (
     .diagnostics[] |
@@ -341,7 +436,8 @@ bash -c '
   timed_operation() { return 0; }
   assert_successful_conversion() { :; }
   supabase_assert_success_contract() {
-    [[ "$#" == 7 && "$1" =~ ^(compose|quadlet)$ && "$7" == not-podman ]]
+    [[ "$#" == 8 && "$1" =~ ^(compose|quadlet)$ && "$7" == not-podman &&
+      "$8" =~ ^(cli|compose)$ ]]
   }
   supabase_assert_output_membership() { :; }
   supabase_assert_output_semantics() {
@@ -587,6 +683,54 @@ for option, value in (
     index = studio.index(option)
     assert studio[index + 1] == value
 assert all(not argument.startswith(b'["CMD') for argument in studio)
+PY
+
+python3 - "${cli_services_argv}" \
+  "${repository_root}/fixtures/conformance/supabase-application/compose.yaml" << 'PY'
+import pathlib
+import sys
+
+records = [
+    record.split(b"\0")
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")
+    if record
+]
+kong = next(
+    record
+    for record in records
+    if b"--name" in record and b"test-prefix-supabase-kong" in record
+)
+cli_environment_keys = {
+    kong[index + 1].split(b"=", maxsplit=1)[0].decode()
+    for index, argument in enumerate(kong[:-1])
+    if argument == b"--env"
+}
+
+compose_environment_keys = set()
+in_kong = False
+in_environment = False
+for line in pathlib.Path(sys.argv[2]).read_text().splitlines():
+    stripped = line.strip()
+    indentation = len(line) - len(line.lstrip())
+    if indentation == 2 and stripped.endswith(":"):
+        in_kong = stripped == "kong:"
+        in_environment = False
+        continue
+    if in_kong and indentation == 4 and stripped == "environment:":
+        in_environment = True
+        continue
+    if in_kong and in_environment:
+        if indentation <= 4:
+            break
+        if indentation == 6 and ":" in stripped:
+            compose_environment_keys.add(stripped.split(":", maxsplit=1)[0])
+
+compose_only = {
+    "KONG_NGINX_PROXY_PROXY_BUFFER_SIZE",
+    "KONG_NGINX_PROXY_PROXY_BUFFERS",
+}
+assert compose_environment_keys - cli_environment_keys == compose_only
+assert cli_environment_keys - compose_environment_keys == set()
 PY
 
 published_api_transient_marker="${test_root}/published-api-transient.marker"

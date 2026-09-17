@@ -228,8 +228,9 @@ supabase_validate_catalogues() {
 	' "${fixture}/routes.tsv"
   while IFS=$'\t' read -r source target _outcome _evidence allowed_codes _contract; do
     [[ -z "${source}" || "${source}" == \#* ]] && continue
-    local generated_codes normalized_allowed_codes podman_acquisition
+    local generated_codes normalized_allowed_codes podman_acquisition provisioner_mode
     podman_acquisition=not-podman
+    provisioner_mode=cli
     [[ "${source}" == podman ]] && podman_acquisition=cli
     generated_codes="$(
       jq --null-input \
@@ -238,6 +239,7 @@ supabase_validate_catalogues() {
         --arg selection exact \
         --arg resource_prefix contract-supabase- \
         --arg podman_acquisition "${podman_acquisition}" \
+        --arg provisioner_mode "${provisioner_mode}" \
         --argjson include_system_network false \
         --argjson emit_expected true \
         --from-file "${fixture}/success-contract.jq" |
@@ -2122,15 +2124,22 @@ supabase_assert_output_semantics() {
   esac
 }
 
-supabase_validate_contract_acquisition() {
-  local input=$1 podman_acquisition=$2
-  case "${input}:${podman_acquisition}" in
-    podman:cli | podman:compose | compose:not-podman | quadlet:not-podman)
+supabase_validate_contract_origin() {
+  local input=$1 podman_acquisition=$2 provisioner_mode=$3
+  case "${provisioner_mode}" in
+    cli | compose) ;;
+    *)
+      printf 'Unsupported Supabase provisioner mode: %s.\n' "${provisioner_mode}" >&2
+      return 2
+      ;;
+  esac
+  case "${input}:${podman_acquisition}:${provisioner_mode}" in
+    podman:cli:cli | podman:compose:compose | compose:not-podman:* | quadlet:not-podman:*)
       return 0
       ;;
     *)
-      printf 'Unsupported Supabase acquisition contract: input=%s; origin=%s.\n' \
-        "${input}" "${podman_acquisition}" >&2
+      printf 'Unsupported Supabase origin contract: input=%s; acquisition=%s; provisioner=%s.\n' \
+        "${input}" "${podman_acquisition}" "${provisioner_mode}" >&2
       return 2
       ;;
   esac
@@ -2140,13 +2149,16 @@ supabase_assert_success_contract() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
   local podman_acquisition=$7
-  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
+  local provisioner_mode=${8:-${podman_acquisition}}
+  supabase_validate_contract_origin \
+    "${input}" "${podman_acquisition}" "${provisioner_mode}" || return
   if jq --exit-status \
     --arg input "${input}" \
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
     --arg podman_acquisition "${podman_acquisition}" \
+    --arg provisioner_mode "${provisioner_mode}" \
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected false \
     --from-file "$(supabase_fixture_root)/success-contract.jq" \
@@ -2157,10 +2169,10 @@ supabase_assert_success_contract() {
     "${input}" "${output}" "${selection}" "${report}" >&2
   supabase_report_success_contract_mismatches \
     "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
-    "${include_system_network}" "${podman_acquisition}"
+    "${include_system_network}" "${podman_acquisition}" "${provisioner_mode}"
   supabase_report_success_contract_delta \
     "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
-    "${include_system_network}" "${podman_acquisition}"
+    "${include_system_network}" "${podman_acquisition}" "${provisioner_mode}"
   return 1
 }
 
@@ -2168,13 +2180,16 @@ supabase_success_contract_mismatches() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
   local podman_acquisition=$7
-  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
+  local provisioner_mode=${8:-${podman_acquisition}}
+  supabase_validate_contract_origin \
+    "${input}" "${podman_acquisition}" "${provisioner_mode}" || return
   jq --compact-output \
     --arg input "${input}" \
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
     --arg podman_acquisition "${podman_acquisition}" \
+    --arg provisioner_mode "${provisioner_mode}" \
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected '"mismatches"' \
     --from-file "$(supabase_fixture_root)/success-contract.jq" \
@@ -2185,11 +2200,12 @@ supabase_report_success_contract_mismatches() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
   local podman_acquisition=$7
+  local provisioner_mode=${8:-${podman_acquisition}}
   local mismatches byte_count
   if ! mismatches="$(
     supabase_success_contract_mismatches \
       "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
-      "${include_system_network}" "${podman_acquisition}"
+      "${include_system_network}" "${podman_acquisition}" "${provisioner_mode}"
   )" || [[ -z "${mismatches}" ]]; then
     printf '%s\n' 'Supabase success-contract mismatch summary unavailable.' >&2
     return 0
@@ -2207,13 +2223,16 @@ supabase_success_contract_delta() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
   local podman_acquisition=$7
-  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
+  local provisioner_mode=${8:-${podman_acquisition}}
+  supabase_validate_contract_origin \
+    "${input}" "${podman_acquisition}" "${provisioner_mode}" || return
   jq --compact-output \
     --arg input "${input}" \
     --arg output "${output}" \
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
     --arg podman_acquisition "${podman_acquisition}" \
+    --arg provisioner_mode "${provisioner_mode}" \
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected '"delta"' \
     --from-file "$(supabase_fixture_root)/success-contract.jq" \
@@ -2224,11 +2243,12 @@ supabase_report_success_contract_delta() {
   local input=$1 output=$2 selection=$3 report=$4 prefix=$5
   local include_system_network=${6:-false}
   local podman_acquisition=$7
+  local provisioner_mode=${8:-${podman_acquisition}}
   local delta byte_count
   if ! delta="$(
     supabase_success_contract_delta \
       "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
-      "${include_system_network}" "${podman_acquisition}"
+      "${include_system_network}" "${podman_acquisition}" "${provisioner_mode}"
   )" || [[ -z "${delta}" ]]; then
     printf '%s\n' 'Supabase diagnostic contract delta unavailable.' >&2
     return 0
@@ -2246,8 +2266,10 @@ supabase_success_contract_example_report() {
   local input=$1 output=$2 selection=$3 prefix=$4
   local include_system_network=${5:-false}
   local podman_acquisition=$6
+  local provisioner_mode=${7:-${podman_acquisition}}
   local expected_fidelity
-  supabase_validate_contract_acquisition "${input}" "${podman_acquisition}" || return
+  supabase_validate_contract_origin \
+    "${input}" "${podman_acquisition}" "${provisioner_mode}" || return
   expected_fidelity="$(
     jq --null-input \
       --arg input "${input}" \
@@ -2255,6 +2277,7 @@ supabase_success_contract_example_report() {
       --arg selection "${selection}" \
       --arg resource_prefix "${prefix}-supabase-" \
       --arg podman_acquisition "${podman_acquisition}" \
+      --arg provisioner_mode "${provisioner_mode}" \
       --argjson include_system_network "${include_system_network}" \
       --argjson emit_expected '"fidelity"' \
       --from-file "$(supabase_fixture_root)/success-contract.jq"
@@ -2265,6 +2288,7 @@ supabase_success_contract_example_report() {
     --arg selection "${selection}" \
     --arg resource_prefix "${prefix}-supabase-" \
     --arg podman_acquisition "${podman_acquisition}" \
+    --arg provisioner_mode "${provisioner_mode}" \
     --argjson include_system_network "${include_system_network}" \
     --argjson emit_expected true \
     --from-file "$(supabase_fixture_root)/success-contract.jq" |
@@ -2718,7 +2742,7 @@ supabase_run_exports() {
         "${output}" "${selection}" "${directory}" "${report}" scenario-specific
       supabase_assert_success_contract \
         podman "${output}" "${selection}" "${report}" "${prefix}" \
-        "${include_system_network}" "${mode}"
+        "${include_system_network}" "${mode}" "${mode}"
       supabase_assert_output_membership \
         "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
       supabase_assert_output_semantics \
@@ -2786,7 +2810,7 @@ supabase_run_reimports() {
           "${output}" "${selection}" "${result}" "${report}" scenario-specific
         supabase_assert_success_contract \
           "${input}" "${output}" "${selection}" "${report}" "${prefix}" \
-          "${include_system_network}" not-podman
+          "${include_system_network}" not-podman "${mode}"
         supabase_assert_output_membership \
           "${selection}" "${output}" "${result}" "${prefix}" "${include_system_network}"
         supabase_assert_output_semantics \

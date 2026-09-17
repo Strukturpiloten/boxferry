@@ -8,6 +8,16 @@ def podman_acquisition_valid:
     $podman_acquisition == "not-podman"
   end;
 
+def provisioner_mode_valid:
+  $provisioner_mode == "cli" or $provisioner_mode == "compose";
+
+def acquisition_matches_provisioner:
+  if $input == "podman" then
+    $podman_acquisition == $provisioner_mode
+  else
+    $podman_acquisition == "not-podman"
+  end;
+
 def cli_podman_acquisition:
   $input == "podman" and $podman_acquisition == "cli";
 
@@ -619,6 +629,24 @@ def observed_podman_environment_fields:
     ]
   };
 
+# Docker Compose supplies these two Kong values while the native CLI provisioner
+# deliberately relies on Kong's image defaults.  Preserve that acquisition
+# evidence through direct Podman exports and generated-artifact reimports.
+def expected_podman_environment_fields:
+  observed_podman_environment_fields as $observed |
+  if $provisioner_mode == "compose" then
+    $observed + {
+      kong: (
+        $observed.kong + [
+          "KONG_NGINX_PROXY_PROXY_BUFFER_SIZE",
+          "KONG_NGINX_PROXY_PROXY_BUFFERS"
+        ]
+      )
+    }
+  else
+    $observed
+  end;
+
 # Generated Podman artifacts have route-specific exact network-loss subjects.
 
 def generated_podman_network_subjects:
@@ -657,7 +685,7 @@ def generated_podman_diagnostics($include_healthchecks):
     selected_volumes[] |
     tuple("BFP0007"; "volumes." + $resource_prefix + . + ".settings"; "omitted")
   ] + [
-    observed_podman_environment_fields | to_entries[] |
+    expected_podman_environment_fields | to_entries[] |
     .key as $service |
     select(contains(selected_services; $service)) |
     .value[] |
@@ -714,7 +742,7 @@ def podman_diagnostics:
     selected_volumes[] |
     tuple("BFP0007"; "volumes." + $resource_prefix + . + ".settings"; "omitted")
   ] + [
-    observed_podman_environment_fields | to_entries[] |
+    expected_podman_environment_fields | to_entries[] |
     .key as $service |
     select(contains(selected_services; $service)) |
     .value[] |
@@ -1122,7 +1150,7 @@ def success_contract_mismatches($expected):
   };
 
 
-if (podman_acquisition_valid | not) then
+if ((podman_acquisition_valid and provisioner_mode_valid and acquisition_matches_provisioner) | not) then
   null
 elif $emit_expected == "fidelity" then
   expected_success_fidelity
