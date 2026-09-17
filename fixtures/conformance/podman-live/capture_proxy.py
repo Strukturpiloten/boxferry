@@ -20,13 +20,15 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 MAX_REQUEST_HEADERS = 32 * 1024
 MAX_RESPONSE = 64 * 1024 * 1024
 SOCKET_TIMEOUT_SECONDS = 30
+PROXY_STARTUP_TIMEOUT_SECONDS = 6
 CASSETTE_NAME = "paperless-ngx-6.1.0-rootless.cassette.json"
 MANIFEST_NAME = "capture-manifest-6.1.0-rootless.json"
 CHECKSUM_NAME = "SHA256SUMS"
@@ -1018,10 +1020,27 @@ def emit_artifacts(output: OutputDirectory, cassette: bytes, manifest: bytes) ->
 
 
 class Proxy:
-    def __init__(self, listen: Path, upstream: Path) -> None:
+    def __init__(
+        self,
+        listen: Path,
+        upstream: Path,
+        *,
+        bound: threading.Event | None = None,
+        listen_permitted: threading.Event | None = None,
+    ) -> None:
         self.listen = listen
         self.upstream = upstream
         self.stop = threading.Event()
+        # A bound Unix-domain path is not yet a connectable listener.  Consumers
+        # must wait for this event, which is set only after listen() succeeds.
+        self.ready = threading.Event()
+        # This separate notification wakes startup waiters on either readiness,
+        # failure, or early thread exit without weakening the ready invariant.
+        self.state_changed = threading.Event()
+        # Test-only barriers make the bind/listen race reproducible without
+        # relying on scheduler delays.
+        self.bound = bound
+        self.listen_permitted = listen_permitted
         self.interactions: list[tuple[bytes, bytes]] = []
         self.failure: BaseException | None = None
 
@@ -1057,7 +1076,17 @@ class Proxy:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
                 listener.bind(str(self.listen))
                 os.chmod(self.listen, 0o600)
+                if self.bound is not None:
+                    self.bound.set()
+                while (
+                    self.listen_permitted is not None
+                    and not self.listen_permitted.is_set()
+                ):
+                    if self.stop.wait(0.1):
+                        return
                 listener.listen(4)
+                self.ready.set()
+                self.state_changed.set()
                 listener.settimeout(0.25)
                 while not self.stop.is_set():
                     try:
@@ -1071,9 +1100,14 @@ class Proxy:
             self.stop.set()
         finally:
             self.listen.unlink(missing_ok=True)
+            self.state_changed.set()
 
 
-def record(arguments: argparse.Namespace) -> None:
+def record(
+    arguments: argparse.Namespace,
+    *,
+    proxy_factory: Callable[[Path, Path], Proxy] = Proxy,
+) -> None:
     repository = arguments.repository.resolve(strict=True)
     upstream = arguments.upstream_socket.resolve(strict=True)
     if not stat.S_ISSOCK(upstream.stat().st_mode):
@@ -1081,7 +1115,7 @@ def record(arguments: argparse.Namespace) -> None:
     boxferry = arguments.boxferry_bin.resolve(strict=True)
     if not boxferry.is_file() or not os.access(boxferry, os.X_OK):
         raise CaptureError("BoxFerry capture binary is not executable")
-    proxy = Proxy(arguments.proxy_socket, upstream)
+    proxy = proxy_factory(arguments.proxy_socket, upstream)
     worker = threading.Thread(target=proxy.serve, name=f"{APPLICATION}-capture-proxy")
     worker.start()
     command = [
@@ -1104,12 +1138,18 @@ def record(arguments: argparse.Namespace) -> None:
         "json",
     ]
     try:
-        for _ in range(120):
-            if arguments.proxy_socket.exists() or proxy.failure:
-                break
-            proxy.stop.wait(0.05)
-        if proxy.failure or not arguments.proxy_socket.exists():
-            raise CaptureError("capture proxy failed to start") from proxy.failure
+        deadline = time.monotonic() + PROXY_STARTUP_TIMEOUT_SECONDS
+        while not proxy.ready.is_set():
+            if proxy.failure:
+                raise CaptureError("capture proxy failed to start") from proxy.failure
+            if not worker.is_alive():
+                raise CaptureError("capture proxy stopped before becoming ready")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CaptureError("capture proxy timed out before becoming ready")
+            proxy.state_changed.wait(remaining)
+        if proxy.failure or not worker.is_alive():
+            raise CaptureError("capture proxy failed after becoming ready") from proxy.failure
         completed = subprocess.run(
             command,
             cwd=repository,
@@ -1579,9 +1619,11 @@ def self_test() -> None:
         upstream_thread = threading.Thread(target=fake_upstream, daemon=True)
         upstream_thread.start()
         validator = root / "boxferry-stub"
+        validator_started = root / "validator-started"
         validator.write_text(
             "#!/usr/bin/env python3\n"
             "import socket, sys\n"
+            f"open({str(validator_started)!r}, 'x').close()\n"
             "path = sys.argv[sys.argv.index('--podman-socket') + 1]\n"
             "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:\n"
             f"    client.settimeout({SOCKET_TIMEOUT_SECONDS})\n"
@@ -1593,22 +1635,56 @@ def self_test() -> None:
         validator.chmod(0o700)
         record_output = root / "record-output"
         proxy_socket = root / "record-proxy.sock"
+        proxy_bound = threading.Event()
+        listen_permitted = threading.Event()
+
+        class DelayedProxy(Proxy):
+            def __init__(self, listen: Path, upstream: Path) -> None:
+                super().__init__(
+                    listen,
+                    upstream,
+                    bound=proxy_bound,
+                    listen_permitted=listen_permitted,
+                )
+
+        record_failure: list[BaseException] = []
+
+        def delayed_record() -> None:
+            try:
+                record(
+                    argparse.Namespace(
+                        repository=real_repository,
+                        output_directory=record_output,
+                        upstream_socket=upstream_socket,
+                        proxy_socket=proxy_socket,
+                        boxferry_bin=validator,
+                        prefix="self-test-paper",
+                    ),
+                    proxy_factory=DelayedProxy,
+                )
+            except BaseException as error:
+                record_failure.append(error)
+
         try:
             if not upstream_ready.wait(2):
                 raise AssertionError(
                     f"fake upstream failed to start: {upstream_failure!r}"
                 )
-            record(
-                argparse.Namespace(
-                    repository=real_repository,
-                    output_directory=record_output,
-                    upstream_socket=upstream_socket,
-                    proxy_socket=proxy_socket,
-                    boxferry_bin=validator,
-                    prefix="self-test-paper",
-                )
-            )
+            record_thread = threading.Thread(target=delayed_record, daemon=True)
+            record_thread.start()
+            if not proxy_bound.wait(2):
+                raise AssertionError("capture proxy did not bind during readiness test")
+            assert proxy_socket.exists()
+            assert not validator_started.exists()
+            assert record_thread.is_alive()
+            listen_permitted.set()
+            record_thread.join(SOCKET_TIMEOUT_SECONDS + 1)
+            if record_thread.is_alive():
+                raise AssertionError("record did not complete after proxy listen")
+            if record_failure:
+                raise record_failure[0]
         finally:
+            listen_permitted.set()
             upstream_stop.set()
             upstream_thread.join(3)
         assert not upstream_thread.is_alive()
