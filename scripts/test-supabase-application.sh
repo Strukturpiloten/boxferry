@@ -91,6 +91,12 @@ assert_compose_provider_kong_losses() {
       exact | storage | label) [[ "${compose_unsupported}" == 1507 ]] ;;
       all) [[ "${compose_unsupported}" == 1619 ]] ;;
     esac || return 1
+  elif [[ "${input}" == quadlet ]]; then
+    # Compose retains two Kong values, but lacks all sixteen native dependency losses.
+    [[ "${compose_unsupported}" == "$((cli_unsupported - 14))" ]] || {
+      printf '%s\n' 'Compose-origin Quadlet fidelity did not omit only native dependencies.' >&2
+      return 1
+    }
   else
     [[ "${compose_unsupported}" == "$((cli_unsupported + 2))" ]] || {
       printf '%s\n' 'Compose-origin Podman fidelity did not account for exactly two Kong variables.' >&2
@@ -105,6 +111,95 @@ for selection in exact storage label all; do
   assert_compose_provider_kong_losses compose not-podman not-podman "${selection}"
   assert_compose_provider_kong_losses quadlet not-podman not-podman "${selection}"
 done
+
+quadlet_cli_compose="$(supabase_contract_expected quadlet compose not-podman cli storage)"
+quadlet_compose_compose="$(supabase_contract_expected quadlet compose not-podman compose storage)"
+quadlet_cli_podman="$(supabase_contract_expected quadlet podman not-podman cli storage)"
+quadlet_compose_podman="$(supabase_contract_expected quadlet podman not-podman compose storage)"
+quadlet_cli_compose_dependency_subjects='[
+  "services.contract-supabase-auth.dependencies[0]",
+  "services.contract-supabase-functions.dependencies[0]",
+  "services.contract-supabase-kong.dependencies[0]",
+  "services.contract-supabase-kong.dependencies[1]",
+  "services.contract-supabase-kong.dependencies[2]",
+  "services.contract-supabase-kong.dependencies[3]",
+  "services.contract-supabase-kong.dependencies[4]",
+  "services.contract-supabase-kong.dependencies[5]",
+  "services.contract-supabase-meta.dependencies[0]",
+  "services.contract-supabase-realtime.dependencies[0]",
+  "services.contract-supabase-rest.dependencies[0]",
+  "services.contract-supabase-storage.dependencies[0]",
+  "services.contract-supabase-storage.dependencies[1]",
+  "services.contract-supabase-storage.dependencies[2]",
+  "services.contract-supabase-studio.dependencies[0]",
+  "services.contract-supabase-supavisor.dependencies[0]"
+]'
+jq --exit-status --argjson expected "${quadlet_cli_compose_dependency_subjects}" '
+  [.[] | select(.code == "BFC0007" and (.subject | contains(".dependencies["))) | .subject] |
+  sort == ($expected | sort)
+' <<< "${quadlet_cli_compose}" > /dev/null
+jq --exit-status '
+  [.[] | select(.subject | contains(".dependencies["))] | length == 0
+' <<< "${quadlet_compose_compose}" > /dev/null
+jq --exit-status '
+  [.[] | select(.code == "BFP0007" and (.subject | contains(".dependencies["))) | .subject] |
+  sort == [
+    "services.contract-supabase-auth.dependencies[0].options",
+    "services.contract-supabase-functions.dependencies[0].options",
+    "services.contract-supabase-kong.dependencies[0].options",
+    "services.contract-supabase-kong.dependencies[1].options",
+    "services.contract-supabase-kong.dependencies[2].options",
+    "services.contract-supabase-kong.dependencies[3].options",
+    "services.contract-supabase-kong.dependencies[4].options",
+    "services.contract-supabase-kong.dependencies[5].options",
+    "services.contract-supabase-meta.dependencies[0].options",
+    "services.contract-supabase-realtime.dependencies[0].options",
+    "services.contract-supabase-rest.dependencies[0].options",
+    "services.contract-supabase-storage.dependencies[0].options",
+    "services.contract-supabase-storage.dependencies[1].options",
+    "services.contract-supabase-storage.dependencies[2].options",
+    "services.contract-supabase-studio.dependencies[0].options",
+    "services.contract-supabase-supavisor.dependencies[0].options"
+  ]
+' <<< "${quadlet_cli_podman}" > /dev/null
+jq --exit-status '
+  [.[] | select(.subject | contains(".dependencies["))] | length == 0
+' <<< "${quadlet_compose_podman}" > /dev/null
+[[ "$(supabase_contract_fidelity quadlet compose not-podman cli storage | jq -r .unsupported)" == 26 ]]
+[[ "$(supabase_contract_fidelity quadlet compose not-podman compose storage | jq -r .unsupported)" == 10 ]]
+[[ "$(supabase_contract_fidelity quadlet podman not-podman cli storage | jq -r .unsupported)" == 223 ]]
+[[ "$(supabase_contract_fidelity quadlet podman not-podman compose storage | jq -r .unsupported)" == 209 ]]
+
+quadlet_cli_compose_report="$(
+  supabase_success_contract_example_report quadlet compose storage contract false not-podman cli
+)"
+if supabase_assert_success_contract quadlet compose storage \
+  <(jq 'del(.diagnostics[] | select(.fields[]? | .name == "subject" and (.value | contains(".dependencies["))))' \
+    <<< "${quadlet_cli_compose_report}") \
+  contract false not-podman cli > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase contract admitted missing CLI-origin Quadlet dependency diagnostics.' >&2
+  exit 1
+fi
+quadlet_compose_podman_report="$(
+  supabase_success_contract_example_report quadlet podman storage contract false not-podman compose
+)"
+if supabase_assert_success_contract quadlet podman storage \
+  <(jq '.diagnostics += [{
+    code: "BFP0007", severity: "warning", name: "counterexample", fields: [
+      {name: "subject", value: "services.contract-supabase-auth.dependencies[0].options"},
+      {name: "decision", value: "omitted"}
+    ]
+  }]' <<< "${quadlet_compose_podman_report}") \
+  contract false not-podman compose > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase contract admitted Compose-origin Quadlet dependency diagnostics.' >&2
+  exit 1
+fi
+if supabase_assert_success_contract quadlet compose storage \
+  <(jq '.fidelity.unsupported -= 1' <<< "${quadlet_cli_compose_report}") \
+  contract false not-podman cli > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase contract admitted Quadlet dependency fidelity drift.' >&2
+  exit 1
+fi
 
 assert_all_selection_creation_evidence_boundary() {
   local cli compose
@@ -298,11 +393,11 @@ assert_contract_predicate_failure() {
   fi
   mismatch="$(grep --fixed-strings 'Supabase success-contract mismatch summary: ' "${output}" |
     sed 's/^Supabase success-contract mismatch summary: //')"
-  jq --exit-status --arg label "${expected_label}" \
-    '.failed_predicates == [$label]' <<< "${mismatch}" > /dev/null
+  jq --exit-status --arg expected_label "${expected_label}" \
+    '.failed_predicates == [$expected_label]' <<< "${mismatch}" > /dev/null
   if [[ -n "${expected_counter}" ]]; then
     jq --exit-status --argjson expected_counter "${expected_counter}" \
-      '.fidelity_counters.unsupported == {expected: $expected_counter - 1, actual: $expected_counter}' \
+      '.fidelity_counters.unsupported == {expected: ($expected_counter - 1), actual: $expected_counter}' \
       <<< "${mismatch}" > /dev/null
   else
     jq --exit-status '.fidelity_counters == {}' <<< "${mismatch}" > /dev/null
@@ -590,8 +685,9 @@ awk -F '\t' '
   $3 !~ /^(compose|quadlet|podman)$/ ||
   $4 != "podman" ||
   $6 !~ /^(cli|compose)$/ ||
-  ($2 == "compose" && $5 != "false") ||
-  ($2 == "quadlet" && $5 != "true") { bad = 1 }
+    ($2 == "compose" && $5 != "false") ||
+    ($2 == "quadlet" && $6 == "cli" && $5 != "true") ||
+    ($2 == "quadlet" && $6 == "compose" && $5 != "false") { bad = 1 }
   { seen[$6 ":" $2 "->" $3] = 1; count[$6]++; total++ }
   END {
     exit bad || total != 48 || count["cli"] != 24 || count["compose"] != 24 ||
@@ -1156,9 +1252,11 @@ fi
 supabase_assert_podman_dependency_order exact \
   "${dependency_order_root}/retained" test-prefix
 
-[[ "$(supabase_reimport_dependency_order_required compose)" == false ]]
-[[ "$(supabase_reimport_dependency_order_required quadlet)" == true ]]
-if supabase_reimport_dependency_order_required unsupported > /dev/null 2>&1; then
+[[ "$(supabase_reimport_dependency_order_required compose cli)" == false ]]
+[[ "$(supabase_reimport_dependency_order_required compose compose)" == false ]]
+[[ "$(supabase_reimport_dependency_order_required quadlet cli)" == true ]]
+[[ "$(supabase_reimport_dependency_order_required quadlet compose)" == false ]]
+if supabase_reimport_dependency_order_required quadlet unsupported > /dev/null 2>&1; then
   printf '%s\n' 'Supabase dependency expectation admitted an unsupported source.' >&2
   exit 1
 fi

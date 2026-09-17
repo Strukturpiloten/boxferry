@@ -21,6 +21,11 @@ def acquisition_matches_provisioner:
 def cli_podman_acquisition:
   $input == "podman" and $podman_acquisition == "cli";
 
+# Generated Quadlet can carry only native Podman dependency observations.
+# Compose labels describe authored graph intent, but are not those observations.
+def quadlet_dependency_intent_retained:
+  $input == "quadlet" and $provisioner_mode == "cli";
+
 def tuple($code; $subject; $decision):
   {
     code: $code,
@@ -385,14 +390,15 @@ def compose_output_diagnostics:
       if cli_podman_acquisition then
         compose_diagnostics
       else
-        # Compose-provider reacquisition promotes authored dependencies as
-        # portable source intent.
+        # Compose-provider labels validate the authored graph, but acquisition
+        # does not invent native Podman Dependencies from them.
         []
       end +
       compose_healthcheck_diagnostics +
       compose_network_diagnostics
     else
-      compose_diagnostics + compose_healthcheck_diagnostics + compose_network_diagnostics
+      (if quadlet_dependency_intent_retained then compose_diagnostics else [] end) +
+      compose_healthcheck_diagnostics + compose_network_diagnostics
     end
   end;
 
@@ -713,19 +719,23 @@ def generated_podman_diagnostics($include_healthchecks):
   ));
 
 def quadlet_dependency_diagnostics:
-  [
-    dependencies | to_entries[] |
-    .key as $service |
-    .value as $candidates |
-    select(contains(selected_services; $service)) |
-    [$candidates[] | select(. as $dependency | contains(selected_services; $dependency))] |
-    to_entries[] |
-    tuple(
-      "BFP0007";
-      "services." + $resource_prefix + $service + ".dependencies[" + (.key | tostring) + "].options";
-      "omitted"
-    )
-  ];
+  if quadlet_dependency_intent_retained then
+    [
+      dependencies | to_entries[] |
+      .key as $service |
+      .value as $candidates |
+      select(contains(selected_services; $service)) |
+      [$candidates[] | select(. as $dependency | contains(selected_services; $dependency))] |
+      to_entries[] |
+      tuple(
+        "BFP0007";
+        "services." + $resource_prefix + $service + ".dependencies[" + (.key | tostring) + "].options";
+        "omitted"
+      )
+    ]
+  else
+    []
+  end;
 
 # Podman-origin and generated-artifact diagnostics remain separate exact contracts.
 
@@ -994,7 +1004,7 @@ def compose_output_outcomes:
       []
     end
   elif $input == "quadlet" then
-    compose_outcomes +
+    (if quadlet_dependency_intent_retained then compose_outcomes else [] end) +
     [
       healthcheck_services[] |
       select(. as $service | contains(selected_services; $service)) |

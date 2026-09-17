@@ -1156,6 +1156,13 @@ fn supabase_provider_origin_controls_exact_kong_podman_losses() -> Result<(), St
                 // additional Kong environment omissions.
                 let expected = if selection == "all" { 1_619 } else { 1_507 };
                 assert_eq!(compose_fidelity["unsupported"].as_u64(), Some(expected));
+            } else if input == "quadlet" {
+                // Compose origin drops 16 native dependencies and adds two Kong omissions.
+                assert_eq!(
+                    compose_fidelity["unsupported"].as_u64(),
+                    cli_fidelity["unsupported"].as_u64().map(|value| value - 14),
+                    "Quadlet provider provenance changes dependency and Kong evidence"
+                );
             } else {
                 assert_eq!(
                     compose_fidelity["unsupported"].as_u64(),
@@ -1187,8 +1194,7 @@ fn supabase_provider_origin_controls_exact_kong_podman_losses() -> Result<(), St
             SupabaseContractMode::Diagnostics,
             None,
         )?;
-        assert_eq!(invalid.status.code(), Some(1));
-        assert_eq!(invalid.stdout, b"null\n");
+        assert_eq!((invalid.status.code(), &*invalid.stdout), (Some(1), &b"null\n"[..]));
     }
     Ok(())
 }
@@ -1796,6 +1802,120 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "{selection} Quadlet-to-Compose must reject BFC0009"
         );
     }
+
+    let compose_origin_quadlet_compose = run_supabase_report_contract(
+        &root,
+        "quadlet",
+        "compose",
+        "storage",
+        SupabaseContractContext {
+            podman_acquisition: "not-podman",
+            provisioner_mode: "compose",
+            include_system_network: false,
+        },
+        SupabaseContractMode::Diagnostics,
+        None,
+    )?;
+    assert!(compose_origin_quadlet_compose.status.success());
+    let compose_origin_quadlet_compose: serde_json::Value =
+        serde_json::from_slice(&compose_origin_quadlet_compose.stdout)
+            .map_err(|error| format!("invalid Compose-origin Quadlet-to-Compose contract: {error}"))?;
+    let compose_origin_quadlet_compose = compose_origin_quadlet_compose
+        .as_array()
+        .ok_or("Compose-origin Quadlet-to-Compose diagnostics must be an array")?;
+    let compose_origin_quadlet_compose_subjects = compose_origin_quadlet_compose
+        .iter()
+        .map(|diagnostic| {
+            diagnostic["subject"]
+                .as_str()
+                .ok_or("Compose-origin Quadlet-to-Compose subject must be a string")
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    assert_eq!(
+        compose_origin_quadlet_compose_subjects,
+        BTreeSet::from([
+            "networks.contract-supabase-backend.ipam.config",
+            "services.contract-supabase-auth.healthcheck",
+            "services.contract-supabase-db.healthcheck",
+            "services.contract-supabase-functions.healthcheck",
+            "services.contract-supabase-imgproxy.healthcheck",
+            "services.contract-supabase-kong.healthcheck",
+            "services.contract-supabase-realtime.healthcheck",
+            "services.contract-supabase-rest.healthcheck",
+            "services.contract-supabase-storage.healthcheck",
+            "services.contract-supabase-studio.healthcheck",
+        ]),
+        "Compose-origin Quadlet-to-Compose must omit only absent native dependency evidence"
+    );
+    let compose_origin_quadlet_fidelity = run_supabase_report_contract(
+        &root,
+        "quadlet",
+        "compose",
+        "storage",
+        SupabaseContractContext {
+            podman_acquisition: "not-podman",
+            provisioner_mode: "compose",
+            include_system_network: false,
+        },
+        SupabaseContractMode::Fidelity,
+        None,
+    )?;
+    assert!(compose_origin_quadlet_fidelity.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&compose_origin_quadlet_fidelity.stdout)
+            .map_err(|error| format!("invalid Compose-origin Quadlet fidelity: {error}"))?,
+        serde_json::json!({
+            "approximate": 0,
+            "unsupported": 10,
+            "invalid": 0,
+            "other": 0,
+        })
+    );
+    let mut injected_compose_origin_dependency = serde_json::json!({
+        "schema_version": 1,
+        "status": "success",
+        "fidelity": {
+            "exact": 0,
+            "approximate": 0,
+            "unsupported": 10,
+            "invalid": 0,
+            "other": 0,
+        },
+        "diagnostics": compose_origin_quadlet_compose
+            .iter()
+            .map(supabase_contract_diagnostic)
+            .collect::<Vec<_>>(),
+    });
+    injected_compose_origin_dependency["diagnostics"]
+        .as_array_mut()
+        .ok_or("Compose-origin Quadlet-to-Compose report diagnostics must be an array")?
+        .push(serde_json::json!({
+            "code": "BFC0007",
+            "severity": "warning",
+            "name": "injected dependency loss",
+            "fields": [
+                {
+                    "name": "subject",
+                    "value": "services.contract-supabase-auth.dependencies[0]",
+                },
+                {"name": "decision", "value": null},
+            ],
+        }));
+    let rejected_compose_origin_dependency = run_supabase_report_contract(
+        &root,
+        "quadlet",
+        "compose",
+        "storage",
+        SupabaseContractContext {
+            podman_acquisition: "not-podman",
+            provisioner_mode: "compose",
+            include_system_network: false,
+        },
+        SupabaseContractMode::Validate,
+        Some(&injected_compose_origin_dependency),
+    )?;
+    assert_eq!(rejected_compose_origin_dependency.status.code(), Some(1));
+    assert_eq!(rejected_compose_origin_dependency.stdout, b"false\n");
 
     let all_compose_podman = run_supabase_report_contract(
         &root,
@@ -4283,6 +4403,50 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
             return Err(format!(
                 "Supabase direct-export dependency-order helper missing `{contract}`"
             ));
+        }
+    }
+
+    let reimport_dependency_order = runner
+        .split_once("supabase_reimport_dependency_order_required() {")
+        .and_then(|(_, following)| {
+            following
+                .split_once("\nsupabase_run_reimports() {")
+                .map(|(helper, _)| helper)
+        })
+        .ok_or("Supabase reimport dependency-order helper could not be isolated")?;
+    for contract in [
+        "case \"$1:$2\" in",
+        "compose:cli | compose:compose)",
+        "quadlet:cli)",
+        "CLI acquisition retained native Podman Dependencies in the Quadlet artifact.",
+        "quadlet:compose)",
+        "Compose labels are authored graph evidence, not Podman Dependencies.",
+        "Unsupported Supabase reimport dependency source/provisioner: %s/%s.\\n",
+    ] {
+        if !reimport_dependency_order.contains(contract) {
+            return Err(format!(
+                "Supabase reimport dependency-order helper missing `{contract}`"
+            ));
+        }
+    }
+    let reimport_invocation = "supabase_reimport_dependency_order_required \"${input}\" \"${mode}\"";
+    if reimport_dependency_order.contains(reimport_invocation) || !runner.contains(reimport_invocation) {
+        return Err("Supabase reimport dependency-order helper invocation is not isolated".to_owned());
+    }
+
+    let fixture_contract =
+        fs::read_to_string(repository_root().join("fixtures/conformance/supabase-application/success-contract.jq"))
+            .map_err(|error| format!("failed read Supabase success contract: {error}"))?;
+    for contract in [
+        "def quadlet_dependency_intent_retained:",
+        "$input == \"quadlet\" and $provisioner_mode == \"cli\";",
+        "if quadlet_dependency_intent_retained then compose_diagnostics else [] end",
+        "(if quadlet_dependency_intent_retained then compose_outcomes else [] end)",
+        "def quadlet_dependency_diagnostics:",
+        "if quadlet_dependency_intent_retained then",
+    ] {
+        if !fixture_contract.contains(contract) {
+            return Err(format!("Supabase Quadlet provenance contract missing `{contract}`"));
         }
     }
 

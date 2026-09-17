@@ -2802,16 +2802,22 @@ supabase_run_exports() {
 # Generated Compose and Quadlet artifacts use digest-only image references, so every reimport succeeds.
 
 supabase_reimport_dependency_order_required() {
-  case $1 in
-    compose)
+  case "$1:$2" in
+    compose:cli | compose:compose)
       # Compose generation reports neutral dependencies as an approved loss.
       printf '%s\n' false
       ;;
-    quadlet)
+    quadlet:cli)
+      # CLI acquisition retained native Podman Dependencies in the Quadlet artifact.
       printf '%s\n' true
       ;;
+    quadlet:compose)
+      # Compose labels are authored graph evidence, not Podman Dependencies.
+      printf '%s\n' false
+      ;;
     *)
-      printf 'Unsupported Supabase reimport dependency source: %s.\n' "$1" >&2
+      printf 'Unsupported Supabase reimport dependency source/provisioner: %s/%s.\n' \
+        "$1" "$2" >&2
       return 2
       ;;
   esac
@@ -2829,7 +2835,7 @@ supabase_run_reimports() {
       include_system_network=true
     fi
     for input in compose quadlet; do
-      require_dependency_order="$(supabase_reimport_dependency_order_required "${input}")"
+      require_dependency_order="$(supabase_reimport_dependency_order_required "${input}" "${mode}")"
       source="${current_case}/outputs/${mode}-${selection}-${input}"
       for output in compose quadlet podman; do
         result="${current_case}/reimports/${mode}-${selection}-${input}-to-${output}"
