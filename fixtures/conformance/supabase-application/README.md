@@ -49,9 +49,11 @@ tuple delta remains a separate aid for tuple drift; both reports use the same
 The contract receives the Podman acquisition origin explicitly. CLI-authored
 Podman-to-Compose retains the independently observed dependency, healthcheck,
 external-network metadata, and two network-IPAM losses. Compose-authored
-reacquisition promotes authored dependencies as portable source intent. Its
-eleven application containers have no recorded creation evidence, and the contract retains
-healthcheck, external-network metadata, and network-IPAM loss evidence. The
+reacquisition validates the authored graph from Compose labels, but those
+labels are not native Podman `Dependencies` and are not promoted through
+acquisition. Its eleven application containers have no recorded creation
+evidence, and the contract retains healthcheck, external-network metadata, and
+network-IPAM loss evidence. The
 CLI-acquired Podman containers retain creation evidence in the `all` selection,
 including the boundary peer. The Compose-provisioned boundary peer has no
 retained native Podman creation evidence, so Compose acquisition contributes
@@ -61,9 +63,14 @@ evidence. The harness
 rejects unknown origins and Podman origins supplied for non-Podman inputs.
 There is no image-grammar approximation: generated Supabase Compose images are digest-only.
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
-Quadlet-to-Compose retains only its `BFC0007` dependency, healthcheck, and managed-backend IPAM
-losses. Its loss-fidelity totals fix the `approximate`, `unsupported`, `invalid`, and
-`other` counts, including repeated native-finding occurrences. The silent
+CLI-origin generated Quadlet retains native Podman `Dependencies` evidence, so
+its reimports keep the reviewed dependency diagnostics and ordering assertion.
+Compose-origin generated Quadlet has no dependency evidence; Quadlet-to-Compose
+and Quadlet-to-Podman omit only those dependency diagnostics and do not require
+dependency order. Quadlet-to-Compose otherwise retains its `BFC0007`
+healthcheck and managed-backend IPAM losses. Its loss-fidelity totals fix the
+`approximate`, `unsupported`, `invalid`, and `other` counts, including repeated
+native-finding occurrences. The silent
 `exact` implementation counter has no independent semantic oracle and is
 therefore constrained only to a non-negative integer. Catalogue validation
 admits a complete positive example while rejecting an unseen `BFP0003` subject
