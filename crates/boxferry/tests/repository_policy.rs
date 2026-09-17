@@ -6273,6 +6273,7 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         "Update the GitHub CLI installed in the Dev Container",
         "Signal updates for the checksum-pinned Docker Compose provider",
         "Track reviewed live-application container images",
+        "Track reviewed live Podman matrix images",
         "Track the digest-pinned live workload probe image",
         "Require explicit revalidation for live application and workload images",
         "Require checksum review for the Docker Compose provider",
@@ -6737,6 +6738,122 @@ fn renovate_tracks_fixed_github_hosted_runners() -> Result<(), String> {
     ] {
         validate_workflow_renovate_pins("runner-example.yml", workflow)?;
     }
+    Ok(())
+}
+
+fn validate_live_podman_matrix_renovate_policy(renovate: &serde_json::Value) -> Result<(), String> {
+    let managers = renovate["customManagers"]
+        .as_array()
+        .ok_or_else(|| "Renovate customManagers must be an array".to_owned())?;
+    let manager = managers
+        .iter()
+        .find(|manager| manager["description"] == "Track reviewed live Podman matrix images")
+        .ok_or_else(|| "Renovate must track the live Podman matrix images".to_owned())?;
+    if manager["managerFilePatterns"] != serde_json::json!(["/^fixtures/conformance/podman-live/matrix\\.tsv$/"]) {
+        return Err("Renovate live Podman manager must target only matrix.tsv".to_owned());
+    }
+    if manager["matchStrings"]
+        != serde_json::json!([
+            r"(?:^|\n)[^#\s]+[ \t]+(?<depName>[^\s:@]+(?:/[^\s:@]+)+):(?<currentValue>[^@\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})(?:[ \t]|$)"
+        ])
+        || manager["datasourceTemplate"] != "docker"
+        || manager["versioningTemplate"] != "docker"
+    {
+        return Err("Renovate live Podman manager must extract every image tag and digest".to_owned());
+    }
+
+    let rules = renovate["packageRules"]
+        .as_array()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    let review_rule = rules
+        .iter()
+        .find(|rule| rule["description"] == "Require explicit revalidation for live application and workload images")
+        .ok_or_else(|| "Renovate must define the live-image review rule".to_owned())?;
+    let reviewed_files = review_rule["matchFileNames"]
+        .as_array()
+        .ok_or_else(|| "Renovate live-image review rule must list matched files".to_owned())?;
+    if !reviewed_files
+        .iter()
+        .any(|path| path == "fixtures/conformance/podman-live/matrix.tsv")
+        || review_rule["dependencyDashboardApproval"] != true
+        || review_rule["automerge"] != false
+    {
+        return Err("Renovate live Podman updates must require explicit review and revalidation".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn renovate_tracks_every_live_podman_matrix_image_under_manual_review() -> Result<(), String> {
+    let root = repository_root();
+    let path = root.join(".github/renovate.json");
+    let renovate = fs::read_to_string(&path).map_err(|error| format!("failed read {}: {error}", path.display()))?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&renovate).map_err(|error| format!("failed parse {}: {error}", path.display()))?;
+    validate_live_podman_matrix_renovate_policy(&renovate)?;
+
+    let matrix = fs::read_to_string(root.join("fixtures/conformance/podman-live/matrix.tsv"))
+        .map_err(|error| format!("failed read live Podman matrix: {error}"))?;
+    let mut image_count = 0;
+    for (index, line) in matrix.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let id = fields
+            .next()
+            .ok_or_else(|| format!("matrix row {} has no ID", index + 1))?;
+        let reference = fields
+            .next()
+            .ok_or_else(|| format!("matrix row {id} has no image reference"))?;
+        let (tagged_image, digest) = reference
+            .rsplit_once("@sha256:")
+            .ok_or_else(|| format!("matrix row {id} is not digest pinned"))?;
+        let (dependency, tag) = tagged_image
+            .rsplit_once(':')
+            .ok_or_else(|| format!("matrix row {id} has no image tag"))?;
+        if !dependency.contains('/')
+            || tag.is_empty()
+            || digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(format!(
+                "matrix row {id} does not match the Renovate-managed image contract"
+            ));
+        }
+        image_count += 1;
+    }
+    if image_count == 0 {
+        return Err("live Podman matrix must contain Renovate-managed images".to_owned());
+    }
+
+    let mut missing_manager = renovate.clone();
+    missing_manager["customManagers"]
+        .as_array_mut()
+        .ok_or_else(|| "validated customManagers array disappeared".to_owned())?
+        .retain(|manager| manager["description"] != "Track reviewed live Podman matrix images");
+    if validate_live_podman_matrix_renovate_policy(&missing_manager).is_ok() {
+        return Err("Renovate policy accepted an unmanaged live Podman matrix".to_owned());
+    }
+
+    let mut missing_review = renovate;
+    let review_rule = missing_review["packageRules"]
+        .as_array_mut()
+        .ok_or_else(|| "validated packageRules array disappeared".to_owned())?
+        .iter_mut()
+        .find(|rule| rule["description"] == "Require explicit revalidation for live application and workload images")
+        .ok_or_else(|| "validated live-image review rule disappeared".to_owned())?;
+    review_rule["matchFileNames"]
+        .as_array_mut()
+        .ok_or_else(|| "validated matchFileNames array disappeared".to_owned())?
+        .retain(|path| path != "fixtures/conformance/podman-live/matrix.tsv");
+    if validate_live_podman_matrix_renovate_policy(&missing_review).is_ok() {
+        return Err("Renovate policy accepted an automatically updated live Podman matrix".to_owned());
+    }
+
     Ok(())
 }
 
