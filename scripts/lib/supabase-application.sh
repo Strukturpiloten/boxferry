@@ -1315,6 +1315,7 @@ supabase_assert_dependency_graph() {
       compose)
         supabase_remote "${socket}" inspect "${prefix}-supabase-${service}" |
           jq --exit-status --arg expected "${dependencies}" '
+            ((.[0].Dependencies // []) == []) and
             ((.[0].Config.Labels["com.docker.compose.depends_on"] // "") |
               if $expected == "-" then . == ""
               else ([split(",")[] | split(":")[0]] | sort) == ($expected | split(",") | sort)
@@ -2697,8 +2698,27 @@ supabase_report_conversion_failure() {
   [[ -s "${report}" ]] && sed -n '1,240p' "${report}" >&2
 }
 
+supabase_direct_export_dependency_order_required() {
+  case $1 in
+    cli)
+      # The native CLI provisioner records Podman Dependencies evidence.
+      printf '%s\n' true
+      ;;
+    compose)
+      # Compose-created containers do not retain Podman Dependencies evidence.
+      printf '%s\n' false
+      ;;
+    *)
+      printf 'Unsupported Supabase direct-export provisioner mode: %s.\n' "$1" >&2
+      return 2
+      ;;
+  esac
+}
+
 supabase_run_exports() {
   local mode=$1 socket=$2 prefix=$3
+  local require_dependency_order
+  require_dependency_order="$(supabase_direct_export_dependency_order_required "${mode}")" || return
   local selection output directory report include_system_network
   local -a selection_arguments target_arguments
   mkdir -p -- "${current_case}/outputs"
@@ -2747,7 +2767,7 @@ supabase_run_exports() {
         "${selection}" "${output}" "${directory}" "${prefix}" "${include_system_network}"
       supabase_assert_output_semantics \
         "${selection}" podman "${output}" "${directory}" "${prefix}" \
-        "${include_system_network}" podman true "${mode}"
+        "${include_system_network}" podman "${require_dependency_order}" "${mode}"
     done
   done
 }

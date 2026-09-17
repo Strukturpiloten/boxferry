@@ -1063,6 +1063,78 @@ bash -c '
   fi
 ' bash "${library}"
 
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  fixture="$2"
+  mkdir -p -- "${fixture}"
+  printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" \
+    db image network - mount proof \
+    auth image network db mount proof > "${fixture}/graph.tsv"
+  supabase_fixture_root() { printf "%s\\n" "${fixture}"; }
+  dependency_evidence=empty
+  supabase_remote() {
+    local service dependencies labels
+    case "${3}" in
+      *-supabase-db) service=db ;;
+      *-supabase-auth) service=auth ;;
+      *) return 2 ;;
+    esac
+    dependencies="[]"
+    labels=""
+    if [[ "${service}" == auth ]]; then
+      labels="db:service_started"
+      case "${dependency_evidence}" in
+        nonempty) dependencies="[\"native-db\"]" ;;
+        partial) dependencies="[\"native-db\",\"native-extra\"]" ;;
+      esac
+    fi
+    printf "[{\"Dependencies\":%s,\"Config\":{\"Labels\":{\"com.docker.compose.depends_on\":\"%s\"}}}]\n" \
+      "${dependencies}" "${labels}"
+  }
+
+  supabase_assert_dependency_graph compose test-socket test-prefix
+  for dependency_evidence in nonempty partial; do
+    if supabase_assert_dependency_graph compose test-socket test-prefix >/dev/null 2>&1; then
+      printf "Compose dependency assertion admitted %s native Dependencies evidence.\\n" \
+        "${dependency_evidence}" >&2
+      exit 1
+    fi
+  done
+' bash "${library}" "${test_root}/compose-dependency-evidence"
+
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  current_case="$2"
+  forwarding_log="$3"
+  boxferry_operation() { :; }
+  assert_successful_conversion() { :; }
+  supabase_assert_success_contract() { :; }
+  supabase_assert_output_membership() { :; }
+  supabase_selection_includes_system_network() { return 1; }
+  supabase_assert_output_semantics() {
+    printf "%s\\t%s\\n" "$8" "$9" >> "${forwarding_log}"
+  }
+
+  [[ "$(supabase_direct_export_dependency_order_required cli)" == true ]]
+  [[ "$(supabase_direct_export_dependency_order_required compose)" == false ]]
+  if supabase_direct_export_dependency_order_required unsupported >/dev/null 2>&1; then
+    printf "%s\\n" "Supabase direct-export dependency mapping admitted invalid mode." >&2
+    exit 1
+  fi
+
+  supabase_run_exports cli unused test-prefix
+  supabase_run_exports compose unused test-prefix
+' bash "${library}" "${test_root}/direct-export-forwarding" \
+  "${test_root}/direct-export-forwarding.tsv"
+
+[[ "$(awk -F '\t' '$1 == "true" && $2 == "cli" { cli++ } $1 == "false" && $2 == "compose" { compose++ } END { print cli + 0, compose + 0 }' \
+  "${test_root}/direct-export-forwarding.tsv")" == '12 12' ]] || {
+  printf '%s\n' 'Supabase direct exporter did not forward provisioner-specific dependency ordering.' >&2
+  exit 1
+}
+
 alias_output_root="${test_root}/alias-outputs"
 mkdir -p -- "${alias_output_root}/compose" "${alias_output_root}/quadlet" \
   "${alias_output_root}/podman"
