@@ -108,6 +108,16 @@
     },
     {
       "customType": "regex",
+      "description": "Track reviewed live Podman matrix images",
+      "managerFilePatterns": ["/^fixtures/conformance/podman-live/matrix\\.tsv$/"],
+      "matchStrings": [
+        "(?:^|\\n)[^#\\s]+[ \\t]+(?<depName>[^\\s:@]+(?:/[^\\s:@]+)+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]{64})(?:[ \\t]|$)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
       "description": "Track the digest-pinned live workload probe image",
       "managerFilePatterns": ["/^scripts/podman-live-conformance\\.sh$/"],
       "matchStrings": [
@@ -194,6 +204,7 @@
       "matchDatasources": ["docker"],
       "matchFileNames": [
         "fixtures/conformance/*-application/images.tsv",
+        "fixtures/conformance/podman-live/matrix.tsv",
         "scripts/podman-live-conformance.sh"
       ],
       "dependencyDashboardApproval": true,
