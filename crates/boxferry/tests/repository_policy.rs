@@ -4160,7 +4160,8 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "\"${provisioner_mode}\" == cli && \"${output}\" == quadlet",
         "\"${image_origin}\" \"${require_dependency_order}\" \"${provisioner_mode}\"",
         "local provisioner_mode=$9",
-        "\"${include_system_network}\" podman true \"${mode}\"",
+        "require_dependency_order=\"$(supabase_direct_export_dependency_order_required \"${mode}\")\" || return",
+        "\"${include_system_network}\" podman \"${require_dependency_order}\" \"${mode}\"",
         "expected_podman_environment_fields",
         "KONG_NGINX_PROXY_PROXY_BUFFER_SIZE",
         "KONG_NGINX_PROXY_PROXY_BUFFERS",
@@ -4198,6 +4199,33 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
     ] {
         if !runner.contains(contract) {
             return Err(format!("Supabase live behavior contract is missing `{contract}`"));
+        }
+    }
+
+    let direct_export_dependency_order = runner
+        .split_once("supabase_direct_export_dependency_order_required() {")
+        .and_then(|(_, following)| {
+            following
+                .split_once("\nsupabase_run_exports() {")
+                .map(|(helper, _)| helper)
+        })
+        .ok_or("Supabase direct-export dependency-order helper could not be isolated")?;
+    for contract in [
+        "case $1 in",
+        "cli)",
+        "# The native CLI provisioner records Podman Dependencies evidence.",
+        "printf '%s\\n' true",
+        "compose)",
+        "# Compose-created containers do not retain Podman Dependencies evidence.",
+        "printf '%s\\n' false",
+        "*)",
+        "Unsupported Supabase direct-export provisioner mode: %s.\\n",
+        "return 2",
+    ] {
+        if !direct_export_dependency_order.contains(contract) {
+            return Err(format!(
+                "Supabase direct-export dependency-order helper missing `{contract}`"
+            ));
         }
     }
 
