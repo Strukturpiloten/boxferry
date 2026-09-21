@@ -64,9 +64,10 @@ tier fail. GPU behavior, virtual machines, SELinux enforcing runtime effects, an
 remain explicit non-success gaps in every document.
 
 GitHub runs the offline tier once through ordinary CI. Privileged tiers are manual, default-branch,
-same-repository jobs. A protected release does not rerun or infer pre-release success: it downloads a
-successful `pre-release` artifact for the exact release SHA and validates its content with the same
-helper before publication can begin.
+same-repository jobs. Historical policy had protected release download successful `pre-release`
+evidence for the exact release SHA. [ADR 0055](0055-parallel-readiness-and-local-quality-feedback.md)
+now supersedes that orchestration: Release invokes the reusable complete tier in its own run and
+validates only its fresh aggregate evidence before publication.
 
 Candidate Lens tasks clone only the catalogue's reviewed full 40-character commit into a temporary
 directory, verify the resolved revision, invoke the repositories' native `ci-application` and

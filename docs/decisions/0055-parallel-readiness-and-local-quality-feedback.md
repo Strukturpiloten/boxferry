@@ -58,8 +58,16 @@ The pre-release aggregate target and admission deadline is 1,200 seconds, exclud
 time. That target does not truncate a worker's preserved task deadline; a worker may finish and
 upload diagnostic evidence after the target, but the collector then refuses release evidence.
 Workflow job timeouts leave setup and evidence-upload margin beyond every inner task deadline.
-Only a complete successful aggregate artifact for the exact release SHA is release-acceptable.
-Focused task artifacts remain diagnostic.
+Only a complete successful aggregate artifact from the current Release run is
+release-acceptable. Its artifact identity includes the exact release SHA and run ID;
+the evidence retains the coordinator, worker, catalogue, and binary bindings above. Release invokes
+the same reusable workflow used for manual diagnosis, while focused and earlier-run artifacts remain
+diagnostic and cannot authorize publication. A validation-only Release invocation exercises this
+same contract without granting publication credentials or creating release state. Artifact names
+remain stable inside one GitHub run and each task upload replaces only its own prior-attempt
+artifact. Partial retries retain successful workers, replace retried workers, and still fail closed
+when a stale coordinator, missing task, or different candidate appears. Release also calls the
+ordinary reusable CI workflow instead of copying its deterministic tasks.
 
 ## Consequences
 

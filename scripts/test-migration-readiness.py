@@ -1021,17 +1021,32 @@ class MigrationReadinessTests(unittest.TestCase):
         self.assertIn(
             "github.ref_name == github.event.repository.default_branch", tiers
         )
+        self.assertIn("workflow_call:", tiers)
         for required in (
-            "--workflow migration-readiness.yml",
-            '--commit "${GITHUB_SHA}"',
-            "migration-readiness-pre-release-${{ github.sha }}",
+            "uses: ./.github/workflows/ci.yml",
+            "uses: ./.github/workflows/migration-readiness.yml",
+            "name: ${{ needs.migration-readiness.outputs.evidence_artifact }}",
             "--tier pre-release",
             '--revision "${GITHUB_SHA}"',
             "--require-aggregate",
             "--require-success",
-            "needs: [validate, semver, migration-readiness-evidence]",
+            "needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]",
+            "!inputs.validation_only",
         ):
             self.assertIn(required, release)
+        self.assertNotIn("gh run list", release)
+        self.assertNotIn("gh run download", release)
+        self.assertNotIn("GITHUB_RUN_ATTEMPT", tiers)
+        self.assertNotIn("github.run_attempt", tiers)
+        self.assertIn(
+            "migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-${{ matrix.task }}",
+            tiers,
+        )
+        self.assertIn(
+            "pattern: migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-*",
+            tiers,
+        )
+        self.assertGreaterEqual(tiers.count("overwrite: true"), 4)
 
     def test_collector_requires_every_bound_pre_release_worker(self) -> None:
         coordinator = "0a20a918-93bd-43a2-b346-8f7dd63b08be"
