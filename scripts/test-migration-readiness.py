@@ -124,6 +124,8 @@ class MigrationReadinessTests(unittest.TestCase):
                 "total_worker_wall_seconds": 60.0,
                 "timed_out": False,
                 "fresh": True,
+                "github_run_attempt": 1,
+                "attempt_timings": [],
                 "selection": {
                     "kind": "task" if task_id is not None else "tier",
                     "task": task_id,
@@ -1036,8 +1038,6 @@ class MigrationReadinessTests(unittest.TestCase):
             self.assertIn(required, release)
         self.assertNotIn("gh run list", release)
         self.assertNotIn("gh run download", release)
-        self.assertNotIn("GITHUB_RUN_ATTEMPT", tiers)
-        self.assertNotIn("github.run_attempt", tiers)
         self.assertIn(
             "migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-${{ matrix.task }}",
             tiers,
@@ -1098,6 +1098,79 @@ class MigrationReadinessTests(unittest.TestCase):
             with self.assertRaisesRegex(MODULE.ContractError, "every selected task"):
                 MODULE.collect(args)
 
+    def test_collector_excludes_inactive_failed_job_retry_wait(self) -> None:
+        """Retained workers and a later retried worker keep one active-time budget."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            coordinator, binary_sha256, revision, paths, documents = self.collector_fixture(root)
+            retried = False
+            retained_count = 0
+            retained_intervals = (
+                ("2026-09-10T14:59:00Z", "2026-09-10T15:04:08.348Z"),
+                ("2026-09-10T15:04:08.348Z", "2026-09-10T15:09:16.696Z"),
+                ("2026-09-10T15:09:16.696Z", "2026-09-10T15:14:25.045Z"),
+            )
+            for path, document in zip(paths, documents, strict=True):
+                task = document["tasks"][0]
+                if task["id"] == "supabase-application":
+                    task["started_at"] = "2026-09-10T15:37:00Z"
+                    task["finished_at"] = "2026-09-10T15:42:07.582Z"
+                    document["run"]["github_run_attempt"] = 2
+                    retried = True
+                else:
+                    task["started_at"], task["finished_at"] = retained_intervals[
+                        retained_count // 4
+                    ]
+                    retained_count += 1
+                document["run"]["started_at"] = task["started_at"]
+                document["run"]["finished_at"] = task["finished_at"]
+                MODULE.atomic_json(path, document)
+            self.assertTrue(retried)
+
+            output = root / "aggregate.json"
+            args = self.collect_args(
+                coordinator, binary_sha256, revision, paths, output
+            )
+            self.assertEqual(MODULE.collect(args), 0)
+            aggregate = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(aggregate["run"]["started_at"], "2026-09-10T14:59:00Z")
+            self.assertEqual(aggregate["run"]["finished_at"], "2026-09-10T15:42:07.582Z")
+            self.assertEqual(aggregate["run"]["wall_seconds"], 925.045)
+            self.assertEqual(
+                [item["active_wall_seconds"] for item in aggregate["run"]["attempt_timings"]],
+                [925.045, 307.582],
+            )
+            self.assertEqual(
+                aggregate["run"]["total_worker_wall_seconds"],
+                float(len(documents)),
+            )
+            MODULE.validate_evidence(aggregate, "pre-release", revision)
+
+            offset_aggregate = json.loads(json.dumps(aggregate))
+            first_attempt = offset_aggregate["run"]["attempt_timings"][0]
+            first_task = next(
+                task
+                for task in offset_aggregate["tasks"]
+                if task["id"] in first_attempt["task_ids"] and task["started_at"] == first_attempt["started_at"]
+            )
+            first_task["started_at"] = "2026-09-10T16:59:00+02:00"
+            first_task["finished_at"] = "2026-09-10T17:04:08.348+02:00"
+            first_attempt["started_at"] = first_task["started_at"]
+            self.assertEqual(
+                MODULE.validate_attempt_timings(offset_aggregate["run"], offset_aggregate["tasks"]),
+                925.045,
+            )
+
+            overlapping = json.loads(json.dumps(aggregate))
+            retry_timing = overlapping["run"]["attempt_timings"][1]
+            retry_task = next(task for task in overlapping["tasks"] if task["id"] == retry_timing["task_ids"][0])
+            retry_task["started_at"] = "2026-09-10T15:14:00Z"
+            retry_task["finished_at"] = "2026-09-10T15:19:07.582Z"
+            retry_timing["started_at"] = retry_task["started_at"]
+            retry_timing["finished_at"] = retry_task["finished_at"]
+            with self.assertRaisesRegex(MODULE.ContractError, "overlap or reverse"):
+                MODULE.validate_attempt_timings(overlapping["run"], overlapping["tasks"])
+
     def test_collector_rejects_invalid_worker_sets_and_bindings(self) -> None:
         def failed(documents: list[dict[str, object]]) -> None:
             document = documents[0]
@@ -1111,6 +1184,12 @@ class MigrationReadinessTests(unittest.TestCase):
             documents[0]["run"]["timed_out"] = True
             documents[0]["tasks"][0]["observed"]["exit_status"] = 124
             documents[0]["tasks"][0]["observed"]["timed_out"] = True
+
+        def missing_attempt(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"].pop("github_run_attempt")
+
+        def malformed_attempt(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"]["github_run_attempt"] = 0
 
         def wrong_coordinator(documents: list[dict[str, object]]) -> None:
             documents[0]["run"]["coordinator_id"] = "8b2cb4cf-7ec3-4ba2-b87e-d4eca327ca52"
@@ -1160,12 +1239,16 @@ class MigrationReadinessTests(unittest.TestCase):
 
         def aggregate_timeout(documents: list[dict[str, object]]) -> None:
             document = documents[-1]
+            document["run"]["started_at"] = "2026-09-10T12:00:00Z"
             document["run"]["finished_at"] = "2026-09-10T12:20:01Z"
+            document["tasks"][0]["started_at"] = "2026-09-10T12:00:00Z"
             document["tasks"][0]["finished_at"] = "2026-09-10T12:20:01Z"
 
         cases = [
             ("failed", failed, "successful worker evidence"),
             ("timed out", timed_out, "timed-out worker evidence"),
+            ("missing attempt", missing_attempt, "positive GitHub run attempt"),
+            ("malformed attempt", malformed_attempt, "minimum"),
             ("wrong coordinator", wrong_coordinator, "different coordinator"),
             ("wrong revision", wrong_revision, "revision is"),
             ("wrong catalogue", wrong_catalogue, "catalogue digest"),

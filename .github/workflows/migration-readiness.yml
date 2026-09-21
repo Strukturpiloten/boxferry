@@ -305,13 +305,14 @@ jobs:
               --task "${WORKER_ID}"
               --revision "${GITHUB_SHA}"
               --coordinator-id "${COORDINATOR_ID}"
-              --worker-id "${WORKER_ID}"
-              --evidence "${EVIDENCE_PATH}"
+            --worker-id "${WORKER_ID}"
+            --evidence "${EVIDENCE_PATH}"
           )
           if [[ "${PRIVILEGED}" == true ]]; then
             sudo env PATH="${PATH}" \
               CARGO_HOME="/home/runner/.cargo" \
               RUSTUP_HOME="/home/runner/.rustup" \
+              GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
               BOXFERRY_BIN="${BOXFERRY_BIN}" \
               BOXFERRY_COMPOSE_BIN="${BOXFERRY_COMPOSE_BIN}" \
               "${runner[@]}"
