@@ -15,27 +15,26 @@ Breaking pre-1.0 changes use `!`, a minor version, and concise migration notes.
 1. Merge release-worthy code after local and hosted gates pass.
 2. Review the release-plz PR, lockstep versions, internal requirements, and changelog.
 3. Merge the release PR.
-4. Run `migration-readiness.yml` with `pre-release` on that exact default-branch SHA and retain its
-   successful aggregate evidence artifact. Focused worker artifacts are diagnostic and never
-   release evidence. The catalogue aggregate deadline leaves a margin before the workflow
-   job timeout so failed or unfinished tasks can still be recorded and uploaded.
-5. Run the protected release workflow for that same SHA. Publication is blocked unless the shared
-   helper validates successful pre-release evidence whose embedded revision matches exactly.
-6. Verify crates.io packages, checksums, tag, GitHub release, and installation.
+4. Run `Release` on that exact default-branch SHA. It runs the complete deterministic and
+   pre-release validation contract before the protected publication job can begin.
+5. Verify crates.io packages, checksums, tag, GitHub release, and installation.
 
-## Planned automatic release validation
+Use `validation_only: true` to exercise the identical validation path without tags, GitHub
+releases, crate publication, release credentials, or another mutating publication step. Manually
+dispatched full and focused migration-readiness artifacts remain diagnostic only.
 
-[Issue #310](https://github.com/Strukturpiloten/boxferry/issues/310) tracks the agreed replacement
-for manual step 4 above; it is not implemented yet. Starting `Release` should automatically run
-the complete deterministic gate and full pre-release conformance for the immutable candidate,
-then publish only after every required job and aggregate evidence check succeeds. Earlier runs
-or focused artifacts must not substitute for that release attempt's complete evidence. Failure,
-timeout, cancellation, missing results, and unexpected skips must block publication.
+## Automatic release validation
 
-Use one reusable conformance definition for Release and manual diagnosis. Preserve the four-worker
-cap, exact-SHA/binary binding, budgets, privacy, cleanup, and explicit limitations. Supersede
-ADR 0047's manual orchestration when implementing this change; retain ADR 0055's scheduling and
-evidence contract.
+`Release` owns fresh current-run pre-release evidence. It runs the complete deterministic
+CI workflow and the complete conformance catalogue for the immutable candidate. CI, default-branch,
+and Release validation therefore share one deterministic task definition, including macOS
+portability and offline documentation links. Conformance uses the same reusable definition as
+manual diagnosis; the one-build/four-worker cap, exact-SHA/binary binding, budgets, privacy,
+cleanup, and explicit limitations remain unchanged. Failed, timed-out, cancelled, missing, or
+skipped prerequisites block the always-running release-validation result and publication.
+Historical or focused evidence cannot be substituted for the current Release run. Artifact names
+are stable within that run and replaced per task, so partial and complete retries cannot combine
+another run's evidence or deadlock on an earlier successful worker.
 
 [Issue #309](https://github.com/Strukturpiloten/boxferry/issues/309) coordinates common CI/release
 validation, including portability, and Renovate-aware adoption across all five repositories.

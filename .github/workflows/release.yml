@@ -3,6 +3,12 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      validation_only:
+        description: Run every release validation gate without creating tags, releases, or crate publications.
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -14,180 +20,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  validate:
-    name: Validate release
+  deterministic:
+    name: Complete deterministic validation
+    if: github.repository == 'Strukturpiloten/boxferry'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  release-metadata:
+    name: Validate release metadata
     if: github.repository == 'Strukturpiloten/boxferry'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
-      - name: Check out repository
+      - name: Check out exact release revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Install configured Rust toolchain
-        run: rustup show active-toolchain
-
-      - name: Install pinned Node.js toolchain
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          # renovate: datasource=node-version depName=node
-          node-version: 24.21.0
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install locked Node file-quality tools
-        run: |
-          npm ci --ignore-scripts
-          printf '%s\n' "${GITHUB_WORKSPACE}/node_modules/.bin" >> "${GITHUB_PATH}"
-      - name: Install checksum-pinned native file-quality tools
-        run: |
-          sudo bash scripts/install-file-tools.sh /usr/local/bin
-
-      - name: Check non-Rust file formatting and lint
-        run: bash scripts/check-files.sh --check
-
-      - name: Validate release metadata
+      - name: Validate release branch and metadata
         shell: bash
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-
           if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
             echo "Run releases from the default branch (${DEFAULT_BRANCH})." >&2
             exit 1
           fi
           bash scripts/validate-release-metadata.sh
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Check all targets
-        run: cargo ci-check
-      - name: Check facade feature boundaries
-        run: |
-          cargo ci-core
-          cargo ci-compose
-          cargo ci-podman
-          cargo ci-quadlet
-      - name: Check repository policies
-        run: cargo ci-policy
-      - name: Run Clippy
-        run: cargo ci-clippy
-      - name: Run tests
-        run: cargo ci-test
-      - name: Run documentation tests
-        run: cargo ci-doctest
-      - name: Build documentation
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo ci-doc
-
-      - name: Install LLVM coverage tools
-        run: rustup component add llvm-tools-preview
-      - name: Install pinned cargo-llvm-cov
-        # renovate: datasource=crate depName=cargo-llvm-cov
-        run: cargo install --locked --version 0.9.0 cargo-llvm-cov
-      - name: Clean coverage artifacts
-        run: cargo llvm-cov clean --locked
-      - name: Measure and enforce coarse coverage ratchet
-        run: >-
-          cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only
-          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82
-
-      - name: Read the workspace MSRV
-        id: msrv
-        shell: bash
-        run: |
-          msrv="$(
-            cargo metadata --locked --no-deps --format-version 1 |
-              jq -er '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("workspace packages must declare one common rust-version") end'
-          )"
-          printf 'version=%s\n' "${msrv}" >> "${GITHUB_OUTPUT}"
-      - name: Install minimum supported Rust
-        env:
-          RUST_MSRV: ${{ steps.msrv.outputs.version }}
-        run: rustup toolchain install "${RUST_MSRV}" --profile minimal
-      - name: Check all targets with the MSRV
-        env:
-          RUST_MSRV: ${{ steps.msrv.outputs.version }}
-        run: cargo "+${RUST_MSRV}" ci-check
-      - name: Check repository policies with the MSRV
-        env:
-          RUST_MSRV: ${{ steps.msrv.outputs.version }}
-        run: cargo "+${RUST_MSRV}" ci-policy
-
-      - name: Audit dependencies, licenses, bans, and sources
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check
-          arguments: --all-features
-
-  semver:
-    name: SemVer (${{ matrix.package }})
-    needs: validate
+  migration-readiness:
+    name: Fresh pre-release migration readiness
     if: github.repository == 'Strukturpiloten/boxferry'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - boxferry-model
-          - boxferry-engine
-          - boxferry-compose
-          - boxferry-podman
-          - boxferry-quadlet
-          - boxferry
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Check for a published baseline
-        id: baseline
-        shell: bash
-        env:
-          PACKAGE: ${{ matrix.package }}
-        run: |
-          set -euo pipefail
-          status="$(
-            curl --proto '=https' \
-              --tlsv1.2 \
-              --silent \
-              --show-error \
-              --user-agent 'BoxFerry release workflow (+https://github.com/Strukturpiloten/boxferry)' \
-              --retry 3 \
-              --retry-all-errors \
-              --connect-timeout 10 \
-              --max-time 60 \
-              --output /dev/null \
-              --write-out '%{http_code}' \
-              "https://crates.io/api/v1/crates/${PACKAGE}"
-          )"
-          case "${status}" in
-            200) echo 'published=true' >> "${GITHUB_OUTPUT}" ;;
-            404) echo 'published=false' >> "${GITHUB_OUTPUT}" ;;
-            *) echo "Unexpected crates.io response: HTTP ${status}." >&2; exit 1 ;;
-          esac
-
-      - name: Check public API compatibility
-        if: steps.baseline.outputs.published == 'true'
-        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
-        with:
-          package: ${{ matrix.package }}
-          feature-group: all-features
+    uses: ./.github/workflows/migration-readiness.yml
+    with:
+      tier: pre-release
+      task: ""
 
   migration-readiness-evidence:
     name: Exact-SHA migration-readiness evidence
-    needs: [validate, semver]
-    if: github.repository == 'Strukturpiloten/boxferry'
+    needs: [deterministic, release-metadata, migration-readiness]
+    if: >-
+      always() && github.repository == 'Strukturpiloten/boxferry' &&
+      needs.deterministic.result == 'success' && needs.release-metadata.result == 'success' &&
+      needs.migration-readiness.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -199,53 +80,59 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Download successful pre-release evidence for exact SHA
+      - name: Download current-run pre-release evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.migration-readiness.outputs.evidence_artifact }}
+          path: target/release-evidence
+      - name: Validate current-run aggregate evidence
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVIDENCE_NAME: migration-readiness-pre-release-${{ github.sha }}
         run: |
-          set -Eeuo pipefail
-          evidence_directory="$(mktemp -d "${RUNNER_TEMP}/boxferry-migration-evidence.XXXXXX")"
-          trap 'find "${evidence_directory}" -mindepth 1 -delete; rmdir "${evidence_directory}"' EXIT
-          mapfile -t run_ids < <(
-            gh run list \
-              --workflow migration-readiness.yml \
-              --commit "${GITHUB_SHA}" \
-              --event workflow_dispatch \
-              --status success \
-              --limit 100 \
-              --json databaseId \
-              --jq '.[].databaseId'
-          )
-          for run_id in "${run_ids[@]}"; do
-            if gh run download "${run_id}" --name "${EVIDENCE_NAME}" --dir "${evidence_directory}"; then
-              python3 scripts/migration-readiness.py validate-evidence \
-                --evidence "${evidence_directory}/evidence-v2.json" \
-                --tier pre-release \
-                --revision "${GITHUB_SHA}" \
-                --require-aggregate \
-                --require-success
-              install -D -m 0600 "${evidence_directory}/evidence-v2.json" \
-                target/release-evidence/evidence-v2.json
-              exit 0
-            fi
-          done
-          echo "No successful pre-release migration-readiness evidence exists for exact SHA ${GITHUB_SHA}." >&2
-          echo 'Run migration-readiness.yml with tier=pre-release on this default-branch revision first.' >&2
-          exit 1
+          set -euo pipefail
+          python3 scripts/migration-readiness.py validate-evidence \
+            --evidence target/release-evidence/evidence-v2.json \
+            --tier pre-release \
+            --revision "${GITHUB_SHA}" \
+            --require-aggregate \
+            --require-success
       - name: Upload release-gate evidence copy
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-migration-readiness-${{ github.sha }}
+          name: release-migration-readiness-${{ github.sha }}-${{ github.run_id }}
           path: target/release-evidence/evidence-v2.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 90
+
+  release-validation:
+    name: Release validation result
+    needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every validation prerequisite to succeed
+        shell: bash
+        env:
+          DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}
+          RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
+          READINESS_RESULT: ${{ needs.migration-readiness.result }}
+          EVIDENCE_RESULT: ${{ needs.migration-readiness-evidence.result }}
+        run: |
+          set -euo pipefail
+          for result in "${DETERMINISTIC_RESULT}" "${RELEASE_METADATA_RESULT}" \
+            "${READINESS_RESULT}" "${EVIDENCE_RESULT}"; do
+            if [[ "${result}" != success ]]; then
+              printf 'Release validation prerequisite did not succeed: %s\n' "${result}" >&2
+              exit 1
+            fi
+          done
 
   publish:
     name: Publish BoxFerry
-    needs: [validate, semver, migration-readiness-evidence]
-    if: github.repository == 'Strukturpiloten/boxferry'
+    needs: [deterministic, release-metadata, migration-readiness-evidence, release-validation]
+    if: github.repository == 'Strukturpiloten/boxferry' && !inputs.validation_only
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 90

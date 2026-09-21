@@ -357,10 +357,11 @@ fn migration_readiness_protects_focused_task_evidence() -> Result<(), String> {
     for required in [
         "task:\n        description: Optional exact task ID",
         "TASK: ${{ inputs.task }}",
-        "artifact=\"migration-readiness-focused-${TIER}-${GITHUB_SHA}-${TASK}\"",
+        "workflow_call:\n    inputs:\n      tier:",
+        "artifact=\"migration-readiness-focused-${TIER}-${GITHUB_SHA}-${GITHUB_RUN_ID}-${TASK}\"",
         "name: ${{ steps.selection.outputs.artifact }}",
         "(inputs.tier != 'pre-release' || inputs.task != '')",
-        "name: migration-readiness-pre-release-${{ github.sha }}",
+        "printf 'name=migration-readiness-pre-release-%s-%s\\n'",
     ] {
         if !workflow.contains(required) {
             return Err(format!(
@@ -393,6 +394,10 @@ fn migration_readiness_parallel_workers_are_bounded_and_exactly_bound() -> Resul
         "COORDINATOR_ID: ${{ needs.plan.outputs.coordinator }}",
         "WORKER_ID: ${{ matrix.task }}",
         "BOXFERRY_BINARY_SHA256: ${{ needs.build.outputs.binary_sha256 }}",
+        "printf 'name=migration-readiness-boxferry-%s-%s\\n'",
+        "migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-${{ matrix.task }}",
+        "migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-*",
+        "overwrite: true",
         "--coordinator-id \"${COORDINATOR_ID}\"",
         "--worker-id \"${WORKER_ID}\"",
         "--boxferry-binary-sha256 \"${BOXFERRY_BINARY_SHA256}\"",
@@ -452,14 +457,25 @@ fn ci_runs_once_per_pull_request_update_and_on_main_pushes() -> Result<(), Strin
     let workflow_path = repository_root().join(".github/workflows/ci.yml");
     let workflow = fs::read_to_string(&workflow_path)
         .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
-    let expected = "on:\n  push:\n    branches:\n      - main\n  pull_request:\n  workflow_dispatch:\n";
+    let expected = r"on:
+  workflow_call:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:";
     if !workflow.contains(expected) {
         return Err(
-            "CI must run for main pushes, pull requests, and manual dispatch without duplicate feature-branch push runs"
-                .to_owned(),
+            "CI must run for one pull-request event, main pushes, manual dispatch, and reusable calls".to_owned(),
         );
     }
-
+    for forbidden in ["types: [opened", "types: [synchronize", "branches-ignore:"] {
+        if workflow.contains(forbidden) {
+            return Err(format!(
+                "CI trigger must not narrow pull-request updates with `{forbidden}`"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -5438,22 +5454,24 @@ fn non_rust_file_runner_covers_owned_formats_without_recursive_workspace_globs()
 
     let ci_path = root.join(".github/workflows/ci.yml");
     let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    for required in [
+        "npm ci --ignore-scripts",
+        "bash scripts/install-file-tools.sh /usr/local/bin",
+        "bash scripts/check-files.sh --check",
+    ] {
+        if !ci.contains(required) {
+            return Err(format!(
+                "{} must enforce non-Rust file contract `{required}`",
+                ci_path.display()
+            ));
+        }
+    }
+
     let release_path = root.join(".github/workflows/release.yml");
     let release = fs::read_to_string(&release_path)
         .map_err(|error| format!("failed to read {}: {error}", release_path.display()))?;
-    for (path, workflow) in [(ci_path, ci), (release_path, release)] {
-        for required in [
-            "npm ci --ignore-scripts",
-            "bash scripts/install-file-tools.sh /usr/local/bin",
-            "bash scripts/check-files.sh --check",
-        ] {
-            if !workflow.contains(required) {
-                return Err(format!(
-                    "{} must enforce the non-Rust file contract `{required}`",
-                    path.display()
-                ));
-            }
-        }
+    if !release.contains("uses: ./.github/workflows/ci.yml") {
+        return Err("Release must consume the canonical reusable non-Rust file checks".to_owned());
     }
 
     let lock_path = root.join("package-lock.json");
@@ -5879,35 +5897,135 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
 }
 
 #[test]
-fn release_workflow_rechecks_coverage_and_msrv_contracts() -> Result<(), String> {
-    let dockerfile = fs::read_to_string(repository_root().join(".devcontainer/Dockerfile"))
-        .map_err(|error| format!("failed to read Dev Container Dockerfile: {error}"))?;
-    let expected_version = pinned_cargo_llvm_cov_version(&dockerfile, ".devcontainer/Dockerfile")?;
+fn release_workflow_reuses_the_complete_ci_contract() -> Result<(), String> {
+    let root = repository_root();
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    let release_path = root.join(".github/workflows/release.yml");
+    let release = fs::read_to_string(&release_path)
+        .map_err(|error| format!("failed to read {}: {error}", release_path.display()))?;
 
-    let workflow_path = repository_root().join(".github/workflows/release.yml");
-    let workflow = fs::read_to_string(&workflow_path)
-        .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
-
-    let workflow_version = pinned_cargo_llvm_cov_version(&workflow, ".github/workflows/release.yml")?;
-    if workflow_version != expected_version {
-        return Err(format!(
-            "release workflow pins cargo-llvm-cov {workflow_version}, but the Dev Container pins {expected_version}"
-        ));
+    for required in [
+        "workflow_call:",
+        "  coverage:\n    name: Coverage ratchet",
+        "  portability:\n    name: Portability (macOS)",
+        "lycheeverse/lychee-action@",
+        "  msrv:\n    name: MSRV",
+        "  dependencies:\n    name: Dependency and license policy",
+        "  semver:\n    name: SemVer (${{ matrix.package }})",
+        "  migration-readiness:\n    name: Offline migration readiness",
+        "name: migration-readiness-offline-${{ github.sha }}-${{ github.run_id }}",
+        "overwrite: true",
+        "  pr-gate:\n    name: PR gate\n    if: always()",
+    ] {
+        if !ci.contains(required) {
+            return Err(format!("reusable CI workflow missing complete gate `{required}`"));
+        }
     }
 
     for required in [
+        "  deterministic:\n    name: Complete deterministic validation",
+        "permissions:\n      contents: read\n    uses: ./.github/workflows/ci.yml",
+        "  release-metadata:\n    name: Validate release metadata",
         "bash scripts/validate-release-metadata.sh",
-        "rustup component add llvm-tools-preview",
-        "cargo llvm-cov clean --locked",
-        "cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
-        "- name: Read the workspace MSRV",
-        "rustup toolchain install \"${RUST_MSRV}\" --profile minimal",
-        "cargo \"+${RUST_MSRV}\" ci-check",
-        "cargo \"+${RUST_MSRV}\" ci-policy",
+        "needs: [deterministic, release-metadata, migration-readiness]",
+        "needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]",
+        "needs: [deterministic, release-metadata, migration-readiness-evidence, release-validation]",
     ] {
-        if !workflow.contains(required) {
-            return Err(format!("release workflow is missing validation guard `{required}`"));
+        if !release.contains(required) {
+            return Err(format!("release workflow missing shared validation guard `{required}`"));
         }
+    }
+    for duplicated in [
+        "cargo ci-test",
+        "cargo llvm-cov",
+        "runs-on: macos-14",
+        "cargo \"+${RUST_MSRV}\" ci-check",
+    ] {
+        if release.contains(duplicated) {
+            return Err(format!(
+                "release workflow duplicates reusable deterministic task `{duplicated}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn release_uses_fresh_reusable_readiness_evidence_and_validation_only_mode() -> Result<(), String> {
+    let root = repository_root();
+    let release_path = root.join(".github/workflows/release.yml");
+    let release = fs::read_to_string(&release_path)
+        .map_err(|error| format!("failed to read {}: {error}", release_path.display()))?;
+    let readiness_path = root.join(".github/workflows/migration-readiness.yml");
+    let readiness = fs::read_to_string(&readiness_path)
+        .map_err(|error| format!("failed to read {}: {error}", readiness_path.display()))?;
+
+    for required in [
+        "validation_only:",
+        "type: boolean",
+        "uses: ./.github/workflows/migration-readiness.yml",
+        "tier: pre-release",
+        "permissions:\n      contents: read\n    uses: ./.github/workflows/migration-readiness.yml",
+        "needs: [deterministic, release-metadata, migration-readiness]",
+        "always() && github.repository == 'Strukturpiloten/boxferry'",
+        "name: ${{ needs.migration-readiness.outputs.evidence_artifact }}",
+        "actions/download-artifact@",
+        "--require-aggregate",
+        "--require-success",
+        "release-validation:",
+        "needs: [deterministic, release-metadata, migration-readiness, migration-readiness-evidence]",
+        "if: always()",
+        "permissions: {}",
+        "DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}",
+        "RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}",
+        "READINESS_RESULT: ${{ needs.migration-readiness.result }}",
+        "EVIDENCE_RESULT: ${{ needs.migration-readiness-evidence.result }}",
+        "for result in \"${DETERMINISTIC_RESULT}\" \"${RELEASE_METADATA_RESULT}\" \\\n            \"${READINESS_RESULT}\" \"${EVIDENCE_RESULT}\"; do",
+        "if [[ \"${result}\" != success ]]",
+        "needs: [deterministic, release-metadata, migration-readiness-evidence, release-validation]",
+        "!inputs.validation_only",
+        "name: release-migration-readiness-${{ github.sha }}-${{ github.run_id }}",
+        "overwrite: true",
+    ] {
+        if !release.contains(required) {
+            return Err(format!("release workflow missing fresh-evidence contract `{required}`"));
+        }
+    }
+    for forbidden in ["gh run list", "gh run download", "--workflow migration-readiness.yml"] {
+        if release.contains(forbidden) {
+            return Err(format!("release workflow must not search a prior run: `{forbidden}`"));
+        }
+    }
+
+    for required in [
+        "evidence_artifact:",
+        "value: ${{ jobs.collect.outputs.artifact }}",
+        "migration-readiness-boxferry-%s-%s",
+        "migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-${{ matrix.task }}",
+        "pattern: migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-*",
+        "migration-readiness-pre-release-%s-%s",
+        "overwrite: true",
+    ] {
+        if !readiness.contains(required) {
+            return Err(format!("migration readiness missing retry-safe binding `{required}`"));
+        }
+    }
+    if readiness.contains("GITHUB_RUN_ATTEMPT") || readiness.contains("github.run_attempt") {
+        return Err("migration-readiness artifact keys must remain stable across partial reruns".to_owned());
+    }
+    if readiness.matches("overwrite: true").count() < 4 {
+        return Err("every rerunnable migration-readiness producer must replace its artifact".into());
+    }
+
+    let validation = release
+        .find("  release-validation:\n")
+        .ok_or("release workflow must contain an explicit validation aggregate")?;
+    let publish = release
+        .find("  publish:\n")
+        .ok_or("release workflow must contain publication")?;
+    if validation >= publish {
+        return Err("release validation aggregate must precede publication".to_owned());
     }
 
     Ok(())
@@ -6173,28 +6291,34 @@ fn release_plz_preparation_runs_only_for_reviewed_release_paths() -> Result<(), 
 }
 
 #[test]
-fn public_api_compatibility_runs_in_ci_and_release() -> Result<(), String> {
+fn public_api_compatibility_has_one_ci_owner_and_release_consumer() -> Result<(), String> {
     const ACTION: &str = "uses: obi1kenobi/cargo-semver-checks-action@";
-
-    for workflow_name in ["ci.yml", "release.yml"] {
-        let workflow_path = repository_root().join(".github/workflows").join(workflow_name);
-        let workflow = fs::read_to_string(&workflow_path)
-            .map_err(|error| format!("failed to read {}: {error}", workflow_path.display()))?;
-
-        if workflow.matches(ACTION).count() != 1
-            || !workflow.contains("package: ${{ matrix.package }}\n          feature-group: all-features")
-        {
-            return Err(format!(
-                "{workflow_name} must run the pinned SemVer check for the package matrix"
-            ));
+    let root = repository_root();
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    if ci.matches(ACTION).count() != 1 {
+        return Err("canonical CI must invoke cargo-semver-checks exactly once".to_owned());
+    }
+    for required in ["package: ${{ matrix.package }}", "feature-group: all-features"] {
+        if !ci.contains(required) {
+            return Err(format!("canonical CI SemVer job missing `{required}`"));
         }
-        for package in PUBLISHED_PACKAGES {
-            if !workflow.contains(&format!("          - {package}")) {
-                return Err(format!("{workflow_name} SemVer matrix is missing {package}"));
-            }
+    }
+    for package in PUBLISHED_PACKAGES {
+        if !ci.contains(&format!("          - {package}")) {
+            return Err(format!("canonical CI SemVer matrix missing {package}"));
         }
     }
 
+    let release_path = root.join(".github/workflows/release.yml");
+    let release = fs::read_to_string(&release_path)
+        .map_err(|error| format!("failed to read {}: {error}", release_path.display()))?;
+    if !release.contains("uses: ./.github/workflows/ci.yml") {
+        return Err("Release must consume canonical CI SemVer validation".to_owned());
+    }
+    if release.contains(ACTION) {
+        return Err("Release must not duplicate the canonical SemVer action".to_owned());
+    }
     Ok(())
 }
 
@@ -6912,17 +7036,21 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         }
     }
 
-    for workflow_name in ["ci.yml", "release.yml"] {
-        let workflow = fs::read_to_string(root.join(".github/workflows").join(workflow_name))
-            .map_err(|error| format!("failed to read {workflow_name}: {error}"))?;
-        for required in [
-            "renovate: datasource=crate depName=cargo-llvm-cov",
-            "renovate: datasource=node-version depName=node",
-        ] {
-            if !workflow.contains(required) {
-                return Err(format!("{workflow_name} is missing Renovate marker `{required}`"));
-            }
+    let ci_path = root.join(".github/workflows/ci.yml");
+    let ci = fs::read_to_string(&ci_path).map_err(|error| format!("failed to read {}: {error}", ci_path.display()))?;
+    for required in [
+        "renovate: datasource=crate depName=cargo-llvm-cov",
+        "renovate: datasource=node-version depName=node",
+    ] {
+        if !ci.contains(required) {
+            return Err(format!("canonical CI is missing Renovate marker `{required}`"));
         }
+    }
+    let release_path = root.join(".github/workflows/release.yml");
+    let release = fs::read_to_string(&release_path)
+        .map_err(|error| format!("failed to read {}: {error}", release_path.display()))?;
+    if !release.contains("uses: ./.github/workflows/ci.yml") {
+        return Err("Release must consume the canonical Renovate-owned CI pins".to_owned());
     }
 
     for entry in fs::read_dir(root.join(".github/workflows"))

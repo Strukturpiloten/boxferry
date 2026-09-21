@@ -2,6 +2,21 @@
 name: Migration readiness
 
 on:
+  workflow_call:
+    inputs:
+      tier:
+        description: Bounded catalogue tier checked-out at the caller's exact revision.
+        required: true
+        type: string
+      task:
+        description: Optional exact task ID. Focused evidence is diagnostic only.
+        required: false
+        default: ""
+        type: string
+    outputs:
+      evidence_artifact:
+        description: Exact complete aggregate artifact produced by this reusable invocation.
+        value: ${{ jobs.collect.outputs.artifact }}
   workflow_dispatch:
     inputs:
       tier:
@@ -61,9 +76,9 @@ jobs:
             exit 2
           fi
           if [[ -n "${TASK}" ]]; then
-            artifact="migration-readiness-focused-${TIER}-${GITHUB_SHA}-${TASK}"
+            artifact="migration-readiness-focused-${TIER}-${GITHUB_SHA}-${GITHUB_RUN_ID}-${TASK}"
           else
-            artifact="migration-readiness-${TIER}-${GITHUB_SHA}"
+            artifact="migration-readiness-${TIER}-${GITHUB_SHA}-${GITHUB_RUN_ID}"
           fi
           {
             printf 'privileged=%s\n' "$(jq -r 'all(.tasks[]; .privileged)' plan.json)"
@@ -150,6 +165,7 @@ jobs:
           name: ${{ steps.selection.outputs.artifact }}
           path: ${{ env.EVIDENCE_PATH }}
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   plan:
@@ -189,6 +205,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       binary_sha256: ${{ steps.binary.outputs.sha256 }}
+      artifact: ${{ steps.artifact.outputs.name }}
     steps:
       - name: Check out exact BoxFerry revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -207,12 +224,18 @@ jobs:
           printf '%s  %s\n' "${digest}" boxferry > target/migration-readiness/build/boxferry.sha256
           printf '%s\n' "${GITHUB_SHA}" > target/migration-readiness/build/revision
           printf 'sha256=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+      - id: artifact
+        name: Bind binary artifact to the current release run
+        run: |
+          printf 'name=migration-readiness-boxferry-%s-%s\n' \
+            "${GITHUB_SHA}" "${GITHUB_RUN_ID}" >> "${GITHUB_OUTPUT}"
       - name: Upload bound BoxFerry binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: migration-readiness-boxferry-${{ github.sha }}
+          name: ${{ steps.artifact.outputs.name }}
           path: target/migration-readiness/build
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   worker:
@@ -243,7 +266,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: migration-readiness-boxferry-${{ github.sha }}
+          name: ${{ needs.build.outputs.artifact }}
           path: target/migration-readiness/build
 
       - name: Verify bound BoxFerry binary
@@ -314,9 +337,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: migration-readiness-worker-${{ github.sha }}-${{ matrix.task }}
+          name: migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-${{ matrix.task }}
           path: ${{ env.EVIDENCE_PATH }}
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
 
   collect:
@@ -325,6 +349,8 @@ jobs:
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      artifact: ${{ steps.artifact.outputs.name }}
     env:
       BOXFERRY_BINARY_SHA256: ${{ needs.build.outputs.binary_sha256 }}
       COORDINATOR_ID: ${{ needs.plan.outputs.coordinator }}
@@ -338,7 +364,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: migration-readiness-worker-${{ github.sha }}-*
+          pattern: migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-*
           path: target/migration-readiness/workers
           merge-multiple: true
       - name: Reject incomplete, stale, duplicate, or failed worker evidence
@@ -362,10 +388,16 @@ jobs:
             --evidence target/migration-readiness/evidence-v2.json \
             --tier pre-release --revision "${GITHUB_SHA}" \
             --require-aggregate --require-success
+      - id: artifact
+        name: Bind aggregate artifact to the current release run
+        run: |
+          printf 'name=migration-readiness-pre-release-%s-%s\n' \
+            "${GITHUB_SHA}" "${GITHUB_RUN_ID}" >> "${GITHUB_OUTPUT}"
       - name: Upload complete aggregate evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: migration-readiness-pre-release-${{ github.sha }}
+          name: ${{ steps.artifact.outputs.name }}
           path: target/migration-readiness/evidence-v2.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
