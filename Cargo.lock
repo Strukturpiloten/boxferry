@@ -111,6 +111,7 @@ dependencies = [
  "futures",
  "podman-lens",
  "serde_json",
+ "yoke-derive",
 ]
 
 [[package]]

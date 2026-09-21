@@ -6648,6 +6648,52 @@ fn validate_release_plz_workflow(root: &Path, repository: &str) -> Result<(), St
 }
 
 #[test]
+fn yoke_derive_msrv_exclusion_is_owned_by_cargo_and_renovate() -> Result<(), String> {
+    let root = repository_root();
+    let manifest_path = root.join("crates/boxferry-podman/Cargo.toml");
+    let manifest = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+    let manifest: toml::Value =
+        toml::from_str(&manifest).map_err(|error| format!("failed to parse {}: {error}", manifest_path.display()))?;
+    if manifest["dev-dependencies"]["yoke-derive"].as_str() != Some("=0.8.2") {
+        return Err("boxferry-podman must constrain yoke-derive to the Rust 1.85-compatible release".to_owned());
+    }
+
+    let renovate_path = root.join(".github/renovate.json");
+    let renovate = fs::read_to_string(&renovate_path)
+        .map_err(|error| format!("failed to read {}: {error}", renovate_path.display()))?;
+    let renovate: serde_json::Value = serde_json::from_str(&renovate)
+        .map_err(|error| format!("failed to parse {}: {error}", renovate_path.display()))?;
+    let package_rules = renovate["packageRules"]
+        .as_array()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    let exclusion = package_rules.iter().find(|rule| {
+        rule["matchManagers"]
+            .as_array()
+            .is_some_and(|managers| managers.iter().any(|manager| manager == "cargo"))
+            && rule["matchPackageNames"]
+                .as_array()
+                .is_some_and(|packages| packages.iter().any(|package| package == "yoke-derive"))
+    });
+    if exclusion.and_then(|rule| rule["allowedVersions"].as_str()) != Some(r"!/^(0\.8\.3)$/") {
+        return Err("Renovate must exclude the yoke-derive release known to fail on Rust 1.85".to_owned());
+    }
+
+    let policy = fs::read_to_string(root.join("docs/dependency-policy.md"))
+        .map_err(|error| format!("failed to read dependency policy: {error}"))?;
+    for required in [
+        "exact development-only `yoke-derive` constraint",
+        "Remove both constraints only after a newer upstream release passes the unchanged MSRV gate",
+    ] {
+        if !policy.contains(required) {
+            return Err(format!("dependency policy missing `{required}`"));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String> {
     let root = repository_root();
     let renovate = fs::read_to_string(root.join(".github/renovate.json"))
