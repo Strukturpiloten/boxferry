@@ -292,6 +292,42 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  lockfile-release-age:
+    name: Lockfile release age
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Preserve the aggregate result outside pull requests
+        if: github.event_name != 'pull_request'
+        run: echo 'Lockfile release-age comparison applies to pull requests.'
+      - name: Check out the exact pull-request candidate and base history
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check out the shared lockfile policy
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/.github
+          # renovate: datasource=github-digest depName=Strukturpiloten/.github currentValue=main
+          ref: a9e003816709ccac55e761e5ef8a884d4359c853
+          path: .github/strukturpiloten-shared
+          persist-credentials: false
+      - name: Reject newly introduced dependencies younger than three days
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          python3 .github/strukturpiloten-shared/scripts/lockfile_release_age.py
+          --repository-root "${GITHUB_WORKSPACE}"
+          --base "${BASE_SHA}"
+          --head "${HEAD_SHA}"
+          --minimum-age-hours 72
+
   pr-gate:
     name: PR gate
     if: always()
@@ -307,6 +343,7 @@ jobs:
         coverage,
         portability,
         migration-readiness,
+        lockfile-release-age,
       ]
     runs-on: ubuntu-24.04
     steps:
@@ -323,6 +360,7 @@ jobs:
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           PORTABILITY_RESULT: ${{ needs.portability.result }}
           MIGRATION_READINESS_RESULT: ${{ needs.migration-readiness.result }}
+          LOCKFILE_RELEASE_AGE_RESULT: ${{ needs.lockfile-release-age.result }}
         run: |
           set -euo pipefail
           jobs=(
@@ -336,6 +374,7 @@ jobs:
             "Coverage ratchet|${COVERAGE_RESULT}"
             "macOS portability|${PORTABILITY_RESULT}"
             "Offline migration readiness|${MIGRATION_READINESS_RESULT}"
+            "Lockfile release age|${LOCKFILE_RELEASE_AGE_RESULT}"
           )
 
           {

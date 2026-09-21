@@ -15,15 +15,9 @@
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "timezone": "Europe/Berlin",
-  "dockerfile": {
-    "enabled": false
-  },
-  "docker-compose": {
-    "enabled": false
-  },
-  "quadlet": {
-    "enabled": false
-  },
+  "dockerfile": { "enabled": false },
+  "docker-compose": { "enabled": false },
+  "quadlet": { "enabled": false },
   "customManagers": [
     {
       "customType": "regex",
@@ -59,6 +53,15 @@
         "(?:^|\\n)\\s*runs-on:\\s*(?<depName>ubuntu|macos|windows)-(?<currentValue>[0-9]+(?:\\.[0-9]+)?(?:-[a-z0-9]+)*)\\s*(?:\\n|$)"
       ],
       "datasourceTemplate": "github-runners"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the immutable Strukturpiloten shared-policy commit",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": [
+        "(?<indentation>[ \\t]*)# renovate: datasource=github-digest depName=(?<depName>Strukturpiloten/\\.github) currentValue=(?<currentValue>main)\\n[ \\t]*ref:\\s*(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "autoReplaceStringTemplate": "{{{indentation}}}# renovate: datasource=github-digest depName={{{depName}}} currentValue={{{newValue}}}\n{{{indentation}}}ref: {{{newDigest}}}"
     },
     {
       "customType": "regex",
@@ -166,6 +169,14 @@
     {
       "description": "Automerge tested non-major dependency updates",
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": false
+    },
+    {
+      "description": "Automerge green-gated lock-file maintenance",
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "minimumReleaseAge": "0 days",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": false

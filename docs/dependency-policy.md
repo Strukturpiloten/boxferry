@@ -81,10 +81,12 @@ matrix are retained evidence rather than floating dependencies. Their recorded v
 through the owning evidence or version-boundary revalidation workflow. API contract dates and fixed
 support targets are likewise reviewed compatibility decisions, not update streams.
 
-Renovate proposes updates, but every proposal requires the normal tests and review. GitHub Actions
-remain SHA-pinned; downloaded release tools remain version-and-checksum pinned; release-plz remains
-preparation-only. Repository formatting tools never enter the published Rust graph or change the
-MSRV.
+Renovate's global three-day age governs direct updates, not lock maintenance. Lock maintenance sets
+Renovate's unsupported synthetic age status to zero; auto-merge instead requires the aggregate
+gate's shared 72-hour check of every introduced Cargo/npm registry version. The fail-closed guard has
+one Renovate-owned immutable commit. Checksum, image, runner, provider, and Dev Container updates
+remain manual. Actions stay SHA-pinned, release tools stay version/checksum-pinned, and release-plz
+only prepares. Formatting tools do not change the published graph or MSRV.
 
 Run `cargo deny check` and the complete repository gate after dependency changes. Local link
 checks are deterministic and offline; external URL checks run separately on a schedule or by
