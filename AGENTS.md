@@ -7,15 +7,16 @@ This file applies to the complete BoxFerry repository.
 Always read `README.md`, `docs/architecture.md`, and the
 [decision index](docs/decisions/). Then follow the task:
 
-| Task                      | Additional source                                 |
-| ------------------------- | ------------------------------------------------- |
-| Public API                | `docs/api-stability.md` and owning Rustdoc        |
-| Tests or fixtures         | `docs/testing.md` and `fixtures/README.md`        |
-| Dependency or tool        | `docs/dependency-policy.md`                       |
-| Platform behavior         | `docs/platform-support.md`                        |
-| Release                   | `docs/releasing.md`                               |
-| Public documentation      | `docs/README.md` and relevant `docs/public/` page |
-| Local setup or submission | `docs/development-environment.md`                 |
+| Task                      | Additional source                                   |
+| ------------------------- | --------------------------------------------------- |
+| Public API                | `docs/api-stability.md` and owning Rustdoc          |
+| Tests or fixtures         | `docs/testing.md` and `fixtures/README.md`          |
+| Dependency or tool        | `docs/dependency-policy.md`                         |
+| Workflows or shared tasks | `docs/releasing.md` and `docs/dependency-policy.md` |
+| Platform behavior         | `docs/platform-support.md`                          |
+| Release                   | `docs/releasing.md`                                 |
+| Public documentation      | `docs/README.md` and relevant `docs/public/` page   |
+| Local setup or submission | `docs/development-environment.md`                   |
 
 Read only the ADRs relevant to the task. If a change contradicts an accepted ADR, add or supersede
 the decision in the same change.
@@ -105,6 +106,25 @@ remains the primary agent's responsibility.
 The primary BoxFerry agent defines the shared contract before delegating. Agents may edit separate
 repository checkouts concurrently but never the same checkout. The primary agent reviews and
 verifies every final diff.
+
+## Workflow and Renovate changes
+
+Before changing workflows, task definitions, installers, or shared validation:
+
+- Identify the canonical definition and all local/CI/release consumers across BoxFerry,
+  ComposeLens, PodmanLens, QuadletLens, and the website. Record affected repositories and justified
+  no-change decisions in the issue or PR.
+- Reuse common scripts, actions, or workflows; keep repository-specific thresholds and native
+  conformance explicit. Shared test infrastructure must not create Lens product dependencies on
+  BoxFerry. Keep application suites in BoxFerry.
+- Review Renovate whenever a pin or definition is added, changed, moved, or removed. Update manager
+  ownership, paths, extraction, grouping, approvals, and regression expectations together; otherwise
+  explain why no configuration change is needed. Follow `docs/dependency-policy.md`.
+- Pin cross-repository actions/workflows immutably. Preserve least privilege, exact-candidate
+  evidence, failure propagation, resource budgets, privacy, and cleanup. Follow the current and
+  planned release contracts in `docs/releasing.md`; do not describe planned automation as delivered.
+- Validate every affected consumer and link coordinated PRs or outstanding follow-ups. A passing
+  check in one repository is not evidence that the shared rollout is complete.
 
 ## Agent roles and verification
 
