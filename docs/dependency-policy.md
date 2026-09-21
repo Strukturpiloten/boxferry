@@ -40,6 +40,11 @@ versioned, and explained where it is configured. Never add an exception only to 
 - ZIP and Jiff are CLI-only implementation details for privacy-safe diagnostic archives and local
   filenames. They do not enter no-default embedded builds. ZIP stays on the newest release line
   compatible with Rust 1.85.0; its Renovate ceiling moves only with an intentional MSRV review.
+- `boxferry-podman` carries an exact development-only `yoke-derive` constraint so Cargo lock-file
+  maintenance cannot select the upstream release that fails on Rust 1.85.0. The Cargo native
+  manager owns the manifest pin, and a matching Renovate exclusion suppresses known-broken proposals.
+  Remove both constraints only after a newer upstream release passes the unchanged MSRV gate;
+  never replace the constraint by making that gate optional.
 - ComposeLens and QuadletLens own their native document semantics.
 
 Review the relevant manifest and ADR for exact features and constraints.

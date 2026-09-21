@@ -21,6 +21,10 @@ serde_json = "1"
 
 [dev-dependencies]
 futures = "=0.3.34"
+# Cargo resolves this exact development constraint together with yoke's
+# transitive proc-macro dependency, keeping Rust 1.85 compatible. Remove it
+# after an upstream yoke-derive release newer than 0.8.3 passes the MSRV gate.
+yoke-derive = "=0.8.2"
 
 [lints]
 workspace = true

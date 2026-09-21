@@ -139,6 +139,12 @@
       "allowedVersions": "<8.0.0"
     },
     {
+      "description": "Exclude yoke-derive 0.8.3 while it fails the workspace MSRV",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["yoke-derive"],
+      "allowedVersions": "!/^(0\\.8\\.3)$/"
+    },
+    {
       "description": "Group repository Node development-tool updates",
       "matchManagers": ["npm"],
       "matchDepTypes": ["devDependencies"],
