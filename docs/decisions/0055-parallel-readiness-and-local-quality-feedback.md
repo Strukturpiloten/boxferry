@@ -69,6 +69,22 @@ artifact. Partial retries retain successful workers, replace retried workers, an
 when a stale coordinator, missing task, or different candidate appears. Release also calls the
 ordinary reusable CI workflow instead of copying its deterministic tasks.
 
+### Retry timing clarification
+
+Aggregate deadline accounting is the union of active worker task intervals, rather than the span
+from the earliest retained worker to the latest retried worker. Evidence still retains those
+earliest/latest boundaries and derives actual concurrency from the same intervals. Thus GitHub
+queue time and inactive waits between attempts do not consume the 1,200-second active-work budget;
+each worker deadline, resource observation, exact binding, and complete-fragment requirement remain
+unchanged.
+
+Worker fragments record the positive GitHub run attempt. The collector groups retained and retried
+fragments by that explicit identity and records each attempt's boundaries, active interval union,
+concurrency, and task IDs. Every attempt independently meets the 1,200-second admission budget;
+the aggregate's wall time is the longest attempt, not the sum across attempts. RFC 3339 offsets
+are compared as instants, and increasing attempt identities must have non-overlapping chronological
+intervals.
+
 ## Consequences
 
 - Small computers have a predictable format/lint path without misrepresenting test status.

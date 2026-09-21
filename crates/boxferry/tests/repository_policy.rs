@@ -6011,8 +6011,19 @@ fn release_uses_fresh_reusable_readiness_evidence_and_validation_only_mode() -> 
             return Err(format!("migration readiness missing retry-safe binding `{required}`"));
         }
     }
-    if readiness.contains("GITHUB_RUN_ATTEMPT") || readiness.contains("github.run_attempt") {
-        return Err("migration-readiness artifact keys must remain stable across partial reruns".to_owned());
+    let coordinator_argument = readiness
+        .find("--coordinator-id \"${COORDINATOR_ID}\"")
+        .ok_or_else(|| "coordinated readiness worker argument is missing".to_owned())?;
+    let attempt_forwarding = readiness
+        .find("GITHUB_RUN_ATTEMPT=\"${GITHUB_RUN_ATTEMPT}\"")
+        .ok_or_else(|| "privileged readiness workers must retain the GitHub run attempt across sudo".to_owned())?;
+    if readiness
+        .matches("GITHUB_RUN_ATTEMPT=\"${GITHUB_RUN_ATTEMPT}\"")
+        .count()
+        != 1
+        || attempt_forwarding < coordinator_argument
+    {
+        return Err("privileged readiness workers must retain the GitHub run attempt across sudo".to_owned());
     }
     if readiness.matches("overwrite: true").count() < 4 {
         return Err("every rerunnable migration-readiness producer must replace its artifact".into());

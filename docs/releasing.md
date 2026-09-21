@@ -36,6 +36,12 @@ Historical or focused evidence cannot be substituted for the current Release run
 are stable within that run and replaced per task, so partial and complete retries cannot combine
 another run's evidence or deadlock on an earlier successful worker.
 
+Aggregate deadline accounting uses active worker intervals, so a later retry cannot consume the
+execution budget solely through its inactive wait after retained successful jobs.
+Release evidence records each positive GitHub attempt separately; every attempt must independently
+meet the pre-release admission budget. Attempt intervals are parsed as RFC 3339 instants and must
+remain chronologically non-overlapping.
+
 [Issue #309](https://github.com/Strukturpiloten/boxferry/issues/309) coordinates common CI/release
 validation, including portability, and Renovate-aware adoption across all five repositories.
 Keep thresholds and native suites repository-specific. ComposeLens owns provider conformance,

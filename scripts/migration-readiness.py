@@ -213,6 +213,103 @@ def maximum_interval_overlap(tasks: list[dict[str, Any]]) -> int:
     return maximum
 
 
+def active_interval_seconds(tasks: list[dict[str, Any]]) -> float:
+    """Measure the union of worker execution intervals, excluding inactive retry gaps."""
+    intervals: list[tuple[dt.datetime, dt.datetime]] = []
+    for task in tasks:
+        started = parse_date_time(task["started_at"], f"$.tasks.{task['id']}.started_at")
+        finished = parse_date_time(task["finished_at"], f"$.tasks.{task['id']}.finished_at")
+        if finished <= started:
+            raise ContractError(f"evidence task {task['id']} has an empty or reversed interval")
+        intervals.append((started, finished))
+    if not intervals:
+        raise ContractError("evidence has no worker intervals")
+
+    active_seconds = 0.0
+    current_started, current_finished = min(intervals, key=lambda interval: interval[0])
+    for started, finished in sorted(intervals):
+        if started > current_finished:
+            active_seconds += (current_finished - current_started).total_seconds()
+            current_started, current_finished = started, finished
+        else:
+            current_finished = max(current_finished, finished)
+    active_seconds += (current_finished - current_started).total_seconds()
+    return round(active_seconds, 3)
+
+
+def validate_attempt_timings(run: dict[str, Any], tasks: list[dict[str, Any]]) -> float:
+    """Validate auditable per-attempt timing and return the longest active attempt."""
+    if run["evidence_kind"] == "worker":
+        attempt = run.get("github_run_attempt")
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+            raise ContractError("pre-release worker evidence lacks a positive GitHub run attempt")
+        if run.get("attempt_timings") != []:
+            raise ContractError("worker evidence must not claim aggregate attempt timing")
+        return run["wall_seconds"]
+    if run["evidence_kind"] != "aggregate":
+        if run.get("attempt_timings") != []:
+            raise ContractError("serial evidence must not claim GitHub attempt timing")
+        return run["wall_seconds"]
+    if run.get("github_run_attempt") is not None:
+        raise ContractError("aggregate evidence must not claim one GitHub run attempt")
+    timings = run.get("attempt_timings")
+    if not isinstance(timings, list) or not timings:
+        raise ContractError("aggregate evidence lacks per-attempt timing")
+    by_id = {task["id"]: task for task in tasks}
+    seen_ids: set[str] = set()
+    active_values: list[float] = []
+    previous_attempt = 0
+    previous_finished: dt.datetime | None = None
+    for timing in timings:
+        if not isinstance(timing, dict):
+            raise ContractError("aggregate attempt timing must be an object")
+        attempt = timing.get("attempt")
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt <= previous_attempt:
+            raise ContractError("aggregate attempt timings must have ordered positive attempts")
+        previous_attempt = attempt
+        task_ids = timing.get("task_ids")
+        if not isinstance(task_ids, list) or not task_ids or any(
+            not isinstance(task_id, str) for task_id in task_ids
+        ):
+            raise ContractError("aggregate attempt timing lacks task IDs")
+        if len(task_ids) != len(set(task_ids)) or any(task_id not in by_id for task_id in task_ids):
+            raise ContractError("aggregate attempt timing has unknown or duplicate task IDs")
+        if seen_ids.intersection(task_ids):
+            raise ContractError("aggregate attempt timing assigns a task more than once")
+        seen_ids.update(task_ids)
+        attempt_tasks = [by_id[task_id] for task_id in task_ids]
+        expected_active = active_interval_seconds(attempt_tasks)
+        expected_concurrency = maximum_interval_overlap(attempt_tasks)
+        expected_started = min(
+            attempt_tasks,
+            key=lambda task: parse_date_time(task["started_at"], f"task {task['id']} started_at"),
+        )["started_at"]
+        expected_finished = max(
+            attempt_tasks,
+            key=lambda task: parse_date_time(task["finished_at"], f"task {task['id']} finished_at"),
+        )["finished_at"]
+        expected_started_instant = parse_date_time(expected_started, f"attempt {attempt} started_at")
+        expected_finished_instant = parse_date_time(expected_finished, f"attempt {attempt} finished_at")
+        if previous_finished is not None and expected_started_instant < previous_finished:
+            raise ContractError("aggregate attempt timings overlap or reverse chronological order")
+        previous_finished = expected_finished_instant
+        if (
+            timing.get("started_at") != expected_started
+            or timing.get("finished_at") != expected_finished
+            or timing.get("active_wall_seconds") != expected_active
+            or timing.get("actual_concurrency") != expected_concurrency
+        ):
+            raise ContractError("aggregate attempt timing does not match its worker intervals")
+        if expected_active > run["tier_deadline_seconds"]:
+            raise ContractError("aggregate attempt timing exceeded the tier deadline")
+        if expected_concurrency > run["maximum_concurrency"]:
+            raise ContractError("aggregate attempt timing exceeded concurrency limit")
+        active_values.append(expected_active)
+    if seen_ids != set(by_id):
+        raise ContractError("aggregate attempt timings do not cover every worker task")
+    return max(active_values)
+
+
 def validate_complete_matrix_coverage(tasks: list[dict[str, Any]]) -> None:
     """Require all four exact shards to cover every reviewed row once."""
     shard_tasks = [task for task in tasks if MATRIX_SHARD_RE.fullmatch(task["id"])]
@@ -1430,9 +1527,6 @@ def validate_evidence_semantics(
         )
         if run_started != aggregate_started or run_finished != aggregate_finished:
             raise ContractError("aggregate run boundaries do not match worker task boundaries")
-        elapsed = round((aggregate_finished - aggregate_started).total_seconds(), 3)
-        if run["wall_seconds"] != elapsed:
-            raise ContractError("aggregate wall time does not match worker task intervals")
 
 
 def validate_evidence(
@@ -1548,6 +1642,9 @@ def validate_evidence(
     for name, expected in expected_run_fields.items():
         if run.get(name) != expected:
             raise ContractError(f"evidence run field {name} does not match the catalogue")
+    expected_wall_seconds = validate_attempt_timings(run, tasks)
+    if run["wall_seconds"] != expected_wall_seconds:
+        raise ContractError("evidence wall time does not match its attempt timing")
     try:
         uuid.UUID(run.get("id", ""))
     except (ValueError, AttributeError) as error:
@@ -1661,6 +1758,14 @@ def run(args: argparse.Namespace) -> int:
         raise ContractError(f"requested revision {revision} does not match checked-out HEAD {git_revision()}")
     revisions = catalogue_lens_revisions(catalogue)
     run_id = str(uuid.uuid4())
+    github_run_attempt: int | None = None
+    if args.coordinator_id is not None:
+        raw_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+        if re.fullmatch(r"[1-9][0-9]*", raw_attempt) is None:
+            raise ContractError(
+                "pre-release GitHub worker evidence requires positive GITHUB_RUN_ATTEMPT"
+            )
+        github_run_attempt = int(raw_attempt)
     started_at = now()
     run_started = time.monotonic()
     execution_deadline_seconds = (
@@ -1718,6 +1823,8 @@ def run(args: argparse.Namespace) -> int:
             "total_worker_wall_seconds": round(run_wall_seconds, 3),
             "timed_out": tier_timed_out,
             "fresh": True,
+            "github_run_attempt": github_run_attempt,
+            "attempt_timings": [],
             "selection": {
                 "kind": "task" if args.task is not None else "tier",
                 "task": args.task,
@@ -1733,6 +1840,8 @@ def run(args: argparse.Namespace) -> int:
         "tasks": results,
         "gaps": catalogue["gaps"],
     }
+    if github_run_attempt is None:
+        evidence["run"].pop("github_run_attempt")
     validate_evidence(
         evidence,
         tier["id"],
@@ -1814,6 +1923,43 @@ def collect(args: argparse.Namespace) -> int:
     ordered = [by_task[task_id] for task_id in expected_ids]
     tasks = [document["tasks"][0] for document in ordered]
     validate_complete_matrix_coverage(tasks)
+    attempt_tasks: dict[int, list[dict[str, Any]]] = {}
+    for document in ordered:
+        attempt = document["run"].get("github_run_attempt")
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+            raise ContractError("worker evidence lacks a positive GitHub run attempt")
+        attempt_tasks.setdefault(attempt, []).append(document["tasks"][0])
+
+    attempt_timings: list[dict[str, Any]] = []
+    for attempt, attempt_task_set in sorted(attempt_tasks.items()):
+        started_task = min(
+            attempt_task_set,
+            key=lambda task: parse_date_time(
+                task["started_at"], f"$.tasks.{task['id']}.started_at"
+            ),
+        )
+        finished_task = max(
+            attempt_task_set,
+            key=lambda task: parse_date_time(
+                task["finished_at"], f"$.tasks.{task['id']}.finished_at"
+            ),
+        )
+        active_wall_seconds = active_interval_seconds(attempt_task_set)
+        if active_wall_seconds > tier["tier-deadline-seconds"]:
+            raise ContractError("worker evidence exceeded the aggregate tier deadline for one attempt")
+        attempt_concurrency = maximum_interval_overlap(attempt_task_set)
+        if attempt_concurrency > tier["max-concurrency"]:
+            raise ContractError("worker evidence exceeded the aggregate concurrency limit for one attempt")
+        attempt_timings.append(
+            {
+                "attempt": attempt,
+                "started_at": started_task["started_at"],
+                "finished_at": finished_task["finished_at"],
+                "active_wall_seconds": active_wall_seconds,
+                "actual_concurrency": attempt_concurrency,
+                "task_ids": sorted(task["id"] for task in attempt_task_set),
+            }
+        )
     started_task = min(
         tasks,
         key=lambda task: parse_date_time(task["started_at"], f"$.tasks.{task['id']}.started_at"),
@@ -1824,15 +1970,7 @@ def collect(args: argparse.Namespace) -> int:
     )
     started_at = started_task["started_at"]
     finished_at = finished_task["finished_at"]
-    wall_seconds = round(
-        (
-            parse_date_time(finished_at, "aggregate.finished_at")
-            - parse_date_time(started_at, "aggregate.started_at")
-        ).total_seconds(),
-        3,
-    )
-    if wall_seconds > tier["tier-deadline-seconds"]:
-        raise ContractError("worker evidence exceeded the aggregate tier deadline")
+    wall_seconds = max(item["active_wall_seconds"] for item in attempt_timings)
     actual_concurrency = maximum_interval_overlap(tasks)
     if actual_concurrency > tier["max-concurrency"]:
         raise ContractError("worker evidence exceeded the aggregate concurrency limit")
@@ -1853,6 +1991,7 @@ def collect(args: argparse.Namespace) -> int:
             "wall_seconds": wall_seconds,
             "total_worker_wall_seconds": total_worker_wall_seconds,
             "timed_out": False,
+            "attempt_timings": attempt_timings,
             "selection": {"kind": "tier", "task": None},
             "worker_id": "aggregate",
             "evidence_kind": "aggregate",
@@ -1862,6 +2001,7 @@ def collect(args: argparse.Namespace) -> int:
         "tasks": tasks,
         "gaps": catalogue["gaps"],
     }
+    evidence["run"].pop("github_run_attempt", None)
     validate_evidence(evidence, args.tier, revision, catalogue_path=catalogue_path)
     atomic_json(pathlib.Path(args.evidence_output), evidence)
     return 0
