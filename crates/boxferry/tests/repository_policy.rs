@@ -5813,7 +5813,7 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: PR gate\n    if: always()",
-        "needs:\n      [\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        portability,\n        migration-readiness,\n      ]",
+        "needs:\n      [\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        portability,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
     ] {
         if !workflow.contains(required) {
             return Err(format!("CI workflow is missing contract `{required}`"));
@@ -5842,6 +5842,11 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
             "Offline migration readiness",
             "MIGRATION_READINESS_RESULT",
             "migration-readiness",
+        ),
+        (
+            "Lockfile release age",
+            "LOCKFILE_RELEASE_AGE_RESULT",
+            "lockfile-release-age",
         ),
     ] {
         let (job_name, result_variable, needs_job) = job;
@@ -6693,6 +6698,191 @@ fn yoke_derive_msrv_exclusion_is_owned_by_cargo_and_renovate() -> Result<(), Str
     Ok(())
 }
 
+fn validate_renovate_lock_maintenance(
+    renovate: &serde_json::Value,
+    package_rules: &[serde_json::Value],
+) -> Result<(), String> {
+    if renovate["minimumReleaseAge"] != "3 days" {
+        return Err("Renovate direct updates must retain the three-day minimum release age".to_owned());
+    }
+
+    let generic_matches = package_rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| rule["description"] == "Automerge tested non-major dependency updates")
+        .collect::<Vec<_>>();
+    if generic_matches.len() != 1 {
+        return Err("Renovate must define exactly one generic non-major automerge rule".to_owned());
+    }
+    let (generic_position, generic_rule) = generic_matches[0];
+    if generic_rule["matchUpdateTypes"] != serde_json::json!(["minor", "patch", "pin", "digest", "pinDigest"])
+        || generic_rule["automerge"] != true
+        || generic_rule["automergeType"] != "pr"
+        || generic_rule["platformAutomerge"] != false
+    {
+        return Err("Renovate generic automerge must cover only tested non-major updates".to_owned());
+    }
+
+    let lock_matches = package_rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| rule["description"] == "Automerge green-gated lock-file maintenance")
+        .collect::<Vec<_>>();
+    if lock_matches.len() != 1 {
+        return Err("Renovate must define exactly one lock-file maintenance rule".to_owned());
+    }
+    let (lock_position, lock_rule) = lock_matches[0];
+    if lock_rule["matchUpdateTypes"] != serde_json::json!(["lockFileMaintenance"])
+        || lock_rule["minimumReleaseAge"] != "0 days"
+        || lock_rule["automerge"] != true
+        || lock_rule["automergeType"] != "pr"
+        || lock_rule["platformAutomerge"] != false
+        || lock_position <= generic_position
+    {
+        return Err(
+            "Renovate lock-file maintenance must follow generic automerge and rely on the shared PR guard".to_owned(),
+        );
+    }
+
+    for description in [
+        "Review GitHub-hosted runner environment upgrades manually",
+        "Keep Dev Container feature versions current; the lock file owns digests",
+        "Require explicit revalidation for live application and workload images",
+        "Require checksum review for the Docker Compose provider",
+        "Require checksum review for downloaded file-quality tools",
+    ] {
+        let (position, rule) = package_rules
+            .iter()
+            .enumerate()
+            .find(|(_, rule)| rule["description"] == description)
+            .ok_or_else(|| format!("Renovate is missing sensitive manual rule `{description}`"))?;
+        if position <= generic_position || position <= lock_position || rule["automerge"] != false {
+            return Err(format!(
+                "Renovate sensitive rule `{description}` must follow both automerge rules and disable it explicitly"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_shared_lockfile_guard(renovate: &serde_json::Value, workflow: &str) -> Result<(), String> {
+    let shared_managers = renovate["customManagers"]
+        .as_array()
+        .ok_or_else(|| "Renovate customManagers must be an array".to_owned())?
+        .iter()
+        .filter(|manager| manager["description"] == "Track the immutable Strukturpiloten shared-policy commit")
+        .collect::<Vec<_>>();
+    if shared_managers.len() != 1 {
+        return Err("Renovate must own the shared-policy commit exactly once".to_owned());
+    }
+    let manager = shared_managers[0];
+    let manager_pattern = manager["matchStrings"]
+        .as_array()
+        .and_then(|patterns| (patterns.len() == 1).then(|| patterns[0].as_str()).flatten())
+        .ok_or_else(|| "shared-policy Renovate manager must have one match expression".to_owned())?;
+    let replacement_template = manager["autoReplaceStringTemplate"]
+        .as_str()
+        .ok_or_else(|| "shared-policy Renovate manager must have a replacement template".to_owned())?;
+    if manager["customType"] != "regex"
+        || manager["managerFilePatterns"] != serde_json::json!([r"/^\.github/workflows/.*\.ya?ml$/"])
+        || !manager_pattern.contains("datasource=github-digest")
+        || !manager_pattern.contains("currentValue=(?<currentValue>main)")
+        || !manager_pattern.contains("currentDigest>[a-f0-9]{40}")
+        || !replacement_template.contains("ref: {{{newDigest}}}")
+    {
+        return Err("Renovate shared-policy manager must update one immutable GitHub digest".to_owned());
+    }
+
+    let marker = "# renovate: datasource=github-digest depName=Strukturpiloten/.github currentValue=main";
+    if !replacement_template.contains('\n') || replacement_template.contains(r"\n") {
+        return Err("Renovate shared-policy replacement must contain a real YAML line break".to_owned());
+    }
+    let replacement_digest = "0123456789abcdef0123456789abcdef01234567";
+    let rendered_replacement = replacement_template
+        .replace("{{{indentation}}}", "        ")
+        .replace("{{{depName}}}", "Strukturpiloten/.github")
+        .replace("{{{newValue}}}", "main")
+        .replace("{{{newDigest}}}", replacement_digest);
+    let rendered_lines = rendered_replacement.lines().collect::<Vec<_>>();
+    if rendered_lines.len() != 2
+        || rendered_lines[0].trim() != marker
+        || rendered_lines[1].trim() != format!("ref: {replacement_digest}")
+        || !manager_pattern.contains("(?<indentation>[ \\t]*)")
+    {
+        return Err("Renovate shared-policy replacement must re-extract as one adjacent marker/ref pair".to_owned());
+    }
+    if workflow.matches(marker).count() != 1 {
+        return Err("CI must contain exactly one Renovate-owned shared-policy ref".to_owned());
+    }
+    let lines = workflow.lines().collect::<Vec<_>>();
+    let marker_line = lines
+        .iter()
+        .position(|line| line.trim() == marker)
+        .ok_or_else(|| "CI shared-policy Renovate marker is missing".to_owned())?;
+    let shared_ref = lines
+        .get(marker_line + 1)
+        .and_then(|line| line.trim().strip_prefix("ref: "))
+        .ok_or_else(|| "CI shared-policy marker must be adjacent to its ref".to_owned())?;
+    if shared_ref.len() != 40
+        || !shared_ref
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("CI shared-policy ref must be a full lowercase commit SHA".to_owned());
+    }
+
+    for required in [
+        "lockfile-release-age:\n    name: Lockfile release age",
+        "if: github.event_name != 'pull_request'",
+        "repository: Strukturpiloten/.github",
+        "ref: ${{ github.event.pull_request.head.sha }}",
+        "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+        "HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "python3 .github/strukturpiloten-shared/scripts/lockfile_release_age.py",
+        "--repository-root \"${GITHUB_WORKSPACE}\"",
+        "--base \"${BASE_SHA}\"",
+        "--head \"${HEAD_SHA}\"",
+        "--minimum-age-hours 72",
+        "LOCKFILE_RELEASE_AGE_RESULT: ${{ needs.lockfile-release-age.result }}",
+        "Lockfile release age|${LOCKFILE_RELEASE_AGE_RESULT}",
+    ] {
+        if !workflow.contains(required) {
+            return Err(format!("CI lockfile release-age contract is missing `{required}`"));
+        }
+    }
+    let job = workflow
+        .split_once("\n  lockfile-release-age:\n")
+        .and_then(|(_, remainder)| remainder.split_once("\n  pr-gate:\n"))
+        .map(|(job, _)| job)
+        .ok_or_else(|| "CI lockfile release-age job boundary is missing".to_owned())?;
+    let before_steps = job.split_once("\n    steps:\n").map_or(job, |(prefix, _)| prefix);
+    if before_steps.lines().any(|line| line.trim_start().starts_with("if:")) {
+        return Err("CI lockfile release-age job must not be skipped on main pushes".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_renovate_manager_coverage(package_rules: &[serde_json::Value]) -> Result<(), String> {
+    for manager in ["cargo", "npm", "github-actions", "devcontainer", "rust-toolchain"] {
+        if !package_rules.iter().any(|rule| {
+            rule["matchManagers"]
+                .as_array()
+                .is_some_and(|managers| managers.iter().any(|candidate| candidate == manager))
+        }) {
+            return Err(format!("Renovate configuration is missing manager `{manager}`"));
+        }
+    }
+    let release_age_rule = package_rules
+        .iter()
+        .find(|rule| rule["description"] == "Do not delay BoxFerry and Lens releases")
+        .ok_or_else(|| "Renovate release-age exception is missing".to_owned())?;
+    if release_age_rule["minimumReleaseAge"] != "0 days" {
+        return Err("Renovate must not delay coordinated BoxFerry and Lens releases".to_owned());
+    }
+    Ok(())
+}
+
 #[test]
 fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String> {
     let root = repository_root();
@@ -6710,15 +6900,8 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         "Track the digest-pinned live workload probe image",
         "Require explicit revalidation for live application and workload images",
         "Require checksum review for the Docker Compose provider",
-        r#""matchManagers": ["cargo"]"#,
-        r#""matchManagers": ["npm"]"#,
-        r#""matchManagers": ["github-actions"]"#,
-        r#""matchManagers": ["devcontainer"]"#,
-        r#""matchManagers": ["rust-toolchain"]"#,
         "Automerge tested non-major dependency updates",
         "Do not delay BoxFerry and Lens releases",
-        r#""minimumReleaseAge": "0 days""#,
-        r#""platformAutomerge": false"#,
         r#""boxferry-model""#,
         r#""compose-lens""#,
         r#""podman-lens""#,
@@ -6768,6 +6951,11 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
     let package_rules = renovate_value["packageRules"]
         .as_array()
         .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    validate_renovate_manager_coverage(package_rules)?;
+    let ci_workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .map_err(|error| format!("failed to read CI workflow: {error}"))?;
+    validate_renovate_lock_maintenance(&renovate_value, package_rules)?;
+    validate_shared_lockfile_guard(&renovate_value, &ci_workflow)?;
     for description in [
         "Require explicit revalidation for live application and workload images",
         "Require checksum review for the Docker Compose provider",
