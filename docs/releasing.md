@@ -23,6 +23,32 @@ Breaking pre-1.0 changes use `!`, a minor version, and concise migration notes.
    helper validates successful pre-release evidence whose embedded revision matches exactly.
 6. Verify crates.io packages, checksums, tag, GitHub release, and installation.
 
+## Planned automatic release validation
+
+[Issue #310](https://github.com/Strukturpiloten/boxferry/issues/310) tracks the agreed replacement
+for manual step 4 above; it is not implemented yet. Starting `Release` should automatically run
+the complete deterministic gate and full pre-release conformance for the immutable candidate,
+then publish only after every required job and aggregate evidence check succeeds. Earlier runs
+or focused artifacts must not substitute for that release attempt's complete evidence. Failure,
+timeout, cancellation, missing results, and unexpected skips must block publication.
+
+Use one reusable conformance definition for Release and manual diagnosis. Preserve the four-worker
+cap, exact-SHA/binary binding, budgets, privacy, cleanup, and explicit limitations. Supersede
+ADR 0047's manual orchestration when implementing this change; retain ADR 0055's scheduling and
+evidence contract.
+
+[Issue #309](https://github.com/Strukturpiloten/boxferry/issues/309) coordinates common CI/release
+validation, including portability, and Renovate-aware adoption across all five repositories.
+Keep thresholds and native suites repository-specific. ComposeLens owns provider conformance,
+PodmanLens owns API/replay conformance, and QuadletLens owns generator conformance; BoxFerry owns
+full application migrations. The website keeps its own check/build/deployment gate.
+
+Follow the [dependency-policy checklist](dependency-policy.md#workflow-changes-and-renovate-ownership)
+for every shared definition change. Updating or testing release workflows does not authorize an
+actual release or deployment.
+
+## Release notes
+
 Release notes come only from `CHANGELOG.md`. The PR gate runs its validator as a dedicated job
 required by the aggregate gate. Yank a version only when it is unsafe or unusable.
 

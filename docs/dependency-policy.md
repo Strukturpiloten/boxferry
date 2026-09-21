@@ -84,3 +84,25 @@ MSRV.
 Run `cargo deny check` and the complete repository gate after dependency changes. Local link
 checks are deterministic and offline; external URL checks run separately on a schedule or by
 manual request.
+
+### Workflow changes and Renovate ownership
+
+A task refactor is also a dependency-automation review, even when version numbers do not change.
+For every added, changed, moved, or removed operational pin:
+
+1. Identify its canonical source and affected local scripts, CI/release workflows, Dev Containers,
+   and cross-repository consumers. Record the impact in the issue or PR.
+2. Check native/custom manager ownership, file patterns, extraction expressions, versioning,
+   grouping, approval rules, and consumer reference updates. Remove obsolete matches; prove each
+   operational pin is extracted exactly once at its intended source.
+3. Keep full Action/reusable-workflow SHAs paired with exact release tags. Preserve reviewed
+   version/checksum and image release/digest pairs; never relax approvals to make an update merge.
+4. Validate Renovate configuration and exercise extraction/regression checks against the new
+   layout, including composite actions and shared scripts. Ensure immutable historical fixtures,
+   compatibility anchors, and intentionally invalid inputs remain outside update streams.
+5. Verify every affected consumer and link coordinated changes. If Renovate needs no edit, record
+   the extraction evidence and reason rather than assuming an existing regex still matches.
+
+Shared workflow ownership and consumer adoption are tracked in
+[issue #309](https://github.com/Strukturpiloten/boxferry/issues/309). Reuse validation logic without
+coupling the independently published Lens packages to BoxFerry.
