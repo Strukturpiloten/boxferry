@@ -6912,6 +6912,9 @@ fn validate_shared_lockfile_guard(renovate: &serde_json::Value, workflow: &str) 
         return Err("Renovate must own the shared-policy commit exactly once".to_owned());
     }
     let manager = shared_managers[0];
+    if manager["datasourceTemplate"] != "github-digest" {
+        return Err("Renovate shared-policy manager must declare the github-digest datasource".to_owned());
+    }
     let manager_pattern = manager["matchStrings"]
         .as_array()
         .and_then(|patterns| (patterns.len() == 1).then(|| patterns[0].as_str()).flatten())
