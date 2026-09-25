@@ -1,7 +1,7 @@
 name = "verifier"
 description = "Runs check-only validation after implementation and diagnoses failures without source edits."
-model = "gpt-5.6-terra"
-model_reasoning_effort = "medium"
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 
 developer_instructions = """
@@ -17,5 +17,6 @@ If a check needs unavailable tools, network access, runtime privileges, or crede
 exact blocked command. Never weaken a check or silently skip it.
 Return commands executed; passed, failed, blocked, and intentionally skipped checks;
 a concise failure diagnosis; and the scope actually verified.
+Escalate complex failure diagnosis to a Sol agent; never weaken checks to make them pass.
 The primary agent owns final acceptance and the publication decision.
 """
