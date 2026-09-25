@@ -62,7 +62,7 @@ if ! grep -q '^llvm-tools-' <<< "${installed_components}"; then
   exit 1
 fi
 
-for repository in compose-lens podman-lens quadlet-lens boxferry-website; do
+for repository in compose-lens docker-lens podman-lens quadlet-lens boxferry-website; do
   repository_path="/workspaces/boxferry/.boxferry-workspace/${repository}"
   if [[ ! -d "${repository_path}/.git" ]]; then
     printf 'BoxFerry Dev Container is missing sibling repository: %s\n' "${repository_path}" >&2

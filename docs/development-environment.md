@@ -1,7 +1,7 @@
 # Development environment
 
 Use the Dev Container. It provides the pinned Rust, Node, documentation, audit, and GitHub tools
-used by CI for the five-repository workspace.
+used by CI for the six-repository workspace, including the DockerLens checkout.
 
 ## Build the CLI
 

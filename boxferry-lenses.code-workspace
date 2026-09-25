@@ -9,6 +9,10 @@
       "path": ".boxferry-workspace/compose-lens",
     },
     {
+      "name": "DockerLens",
+      "path": ".boxferry-workspace/docker-lens",
+    },
+    {
       "name": "PodmanLens",
       "path": ".boxferry-workspace/podman-lens",
     },
