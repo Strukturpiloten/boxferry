@@ -115,21 +115,22 @@ responsibility, as do integration, final verification, Git writes, and GitHub re
 
 ## Workflow and Renovate changes
 
-For workflow, task, installer, or shared-validation changes:
-
-- Find the canonical definition and every local/CI/release consumer in BoxFerry, ComposeLens,
-  PodmanLens, QuadletLens, DockerLens, and the website; record affected repos and justified no-change
-  decisions in the issue/PR.
-- Reuse common scripts/actions/workflows; preserve repo-specific thresholds and native conformance.
-  Shared tests cannot give Lens products a BoxFerry dependency; BoxFerry owns application suites.
-- For added/changed/moved/removed pins or definitions, review Renovate manager ownership, paths,
-  extraction, grouping, approvals, and regression expectations together, or justify no config
-  change. Follow `docs/dependency-policy.md`.
-- Pin cross-repo actions/workflows immutably; preserve least privilege, exact-candidate evidence,
-  failure propagation, budgets, privacy, and cleanup. Follow current/planned release contracts in
-  `docs/releasing.md`; never describe planned automation as delivered.
-- Validate each affected consumer; link coordinated PRs/outstanding follow-ups. One repo passing
-  does not prove the shared rollout complete.
+- Align equivalent local/PR/main/release definitions across BoxFerry, ComposeLens, PodmanLens,
+  QuadletLens, DockerLens, and the website. Identify canonical definitions and all consumers;
+  coordinate updates, validate each consumer, and link justified differences/follow-ups.
+- Reuse shared scripts/actions/workflows; preserve native conformance and thresholds. BoxFerry
+  owns application suites; Lens products must not depend on it.
+- Added/changed software needs explicit versions and supported integrity records: image
+  version tags plus digests; Action/workflow full SHAs plus exact release-tag comments;
+  downloaded-tool versions plus verified checksums; package declarations plus lockfile integrity.
+  Document unavailable-integrity exceptions; never invent checksums or weaken reviewed pins.
+- Added/changed/moved/removed pins or definitions require same-change Renovate ownership,
+  paths/extraction, grouping, approvals, and regression review. Update configuration/consumers
+  together or document verified no-change evidence. Avoid duplicate managers; preserve historical
+  evidence and intentional fixtures. Follow `docs/dependency-policy.md`.
+- Preserve least privilege, exact-candidate evidence, failure propagation, budgets, privacy, and
+  cleanup. Follow `docs/releasing.md`; never claim planned automation is delivered. One passing
+  repository does not prove rollout completion. These rules grant no additional authority.
 
 ## Agent roles and verification
 
