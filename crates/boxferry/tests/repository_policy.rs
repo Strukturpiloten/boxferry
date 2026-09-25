@@ -5329,7 +5329,7 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
                 "./scripts/check-all.sh",
                 "hard gate against commit, push",
                 "primary agent runs this workflow",
-                "high reasoning effort",
+                "GPT-6 Astra with `xhigh` reasoning",
                 "Worker subagents",
                 "never execute the Git or GitHub",
                 "remains the primary agent's responsibility",
@@ -5341,7 +5341,7 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
                 "## Issue-to-PR contribution workflow",
                 "./scripts/check-all.sh",
                 "Either the local complete gate or all required GitHub checks",
-                "primary agent uses high reasoning effort",
+                "primary agent uses GPT-6 Astra with `xhigh` reasoning",
                 "Worker agents",
                 "never perform Git or GitHub writes",
                 "the primary agent's final responsibility",
@@ -7824,19 +7824,19 @@ fn agent_roles_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
     let root = repository_root();
     let config = fs::read_to_string(root.join(".codex/config.toml"))?;
     for required in [
-        "model = \"gpt-5.6-sol\"",
+        "model = \"gpt-6-astra\"",
         "model_reasoning_effort = \"xhigh\"",
-        "max_concurrent_threads_per_session = 3",
-        "default_subagent_model = \"gpt-5.6-terra\"",
+        "max_concurrent_threads_per_session = 9",
+        "default_subagent_model = \"gpt-6-sol\"",
         "default_subagent_reasoning_effort = \"medium\"",
     ] {
         assert!(config.contains(required), "missing agent default: {required}");
     }
     for (role, model, effort, sandbox) in [
-        ("implementation-worker", "gpt-5.6-terra", "high", "workspace-write"),
-        ("specification-researcher", "gpt-5.6-terra", "high", "read-only"),
-        ("reviewer", "gpt-5.6-sol", "high", "read-only"),
-        ("verifier", "gpt-5.6-terra", "medium", "workspace-write"),
+        ("implementation-worker", "gpt-6-sol", "high", "workspace-write"),
+        ("specification-researcher", "gpt-6-sol", "high", "read-only"),
+        ("reviewer", "gpt-6-sol", "high", "read-only"),
+        ("verifier", "gpt-6-luna", "high", "workspace-write"),
     ] {
         let text = fs::read_to_string(root.join(format!(".codex/agents/{role}.toml")))?;
         for (key, value) in [
@@ -7856,8 +7856,64 @@ fn agent_roles_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
     let verifier = fs::read_to_string(root.join(".codex/agents/verifier.toml"))?;
     assert!(verifier.contains("./scripts/check-all.sh --check"));
     assert!(verifier.contains("never run the default formatting gate"));
-    let instructions = fs::read_to_string(root.join("AGENTS.md"))?;
-    assert!(!instructions.contains("Sol") && !instructions.contains("Terra") && !instructions.contains("Astra"));
+    assert!(verifier.contains("Escalate complex failure diagnosis to a Sol agent"));
+    Ok(())
+}
+
+#[test]
+fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<dyn std::error::Error>> {
+    let instructions = fs::read_to_string(repository_root().join("AGENTS.md"))?;
+    let authorization = instructions
+        .split_once("## Workspace scope and standing GitHub authorization")
+        .ok_or("missing workspace authorization section")?
+        .1
+        .split("\n## ")
+        .next()
+        .ok_or("missing workspace authorization content")?;
+    let repositories = authorization
+        .lines()
+        .filter(|line| line.starts_with("- "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        repositories,
+        [
+            "- `Strukturpiloten/boxferry`",
+            "- `Strukturpiloten/compose-lens`",
+            "- `Strukturpiloten/podman-lens`",
+            "- `Strukturpiloten/quadlet-lens`",
+            "- `Strukturpiloten/boxferry-website`",
+            "- `Strukturpiloten/docker-lens`",
+        ]
+    );
+    let flattened = instructions.split_whitespace().collect::<Vec<_>>().join(" ");
+    for required in [
+        "The primary manager always uses `gpt-6-astra` with `xhigh` reasoning",
+        "up to nine concurrent subagents plus the primary manager",
+        "subject to the session's actual runtime limit",
+        "Nine is a ceiling, not a target or nine distinct roles",
+        "Do not create nested agents to evade the limit",
+        "Never run two writers in one checkout",
+        "at most one complete gate or heavy runtime suite at a time across this workspace",
+        "Do not work on or modify any repository outside this explicit allowlist",
+        "For user-requested work within this scope",
+        "may create issues, branches, commits, pushes, and pull requests and merge verified task-related pull requests without asking for renewed approval",
+        "does not authorize unrelated backlog work, implementation of discussion-only proposals",
+        "A later user instruction may narrow or revoke this permission",
+        "ready, mergeable, independently reviewed, and has every required check successful",
+        "exact-head safeguard; never bypass branch protection or use an administrator override",
+        "synchronize local `main` with `origin/main`",
+        "does not authorize releases, publication, deployment operations, or merging release/publication/deployment pull requests",
+        "Subagents remain within their assigned task and checkout and must not perform those writes",
+    ] {
+        assert!(flattened.contains(required), "missing workspace boundary: {required}");
+    }
+    for obsolete in [
+        "Use at most three subagents",
+        "does not authorize a merge",
+        "Merge only when the user explicitly authorizes",
+    ] {
+        assert!(!flattened.contains(obsolete), "obsolete authorization rule: {obsolete}");
+    }
     Ok(())
 }
 

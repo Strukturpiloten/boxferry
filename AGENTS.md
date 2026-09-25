@@ -1,157 +1,167 @@
 # Repository guidance for coding agents
 
-This file applies to the complete BoxFerry repository.
+Applies throughout BoxFerry.
 
 ## Read before changing code
 
-Always read `README.md`, `docs/architecture.md`, and the
-[decision index](docs/decisions/). Then follow the task:
+Read `README.md`, `docs/architecture.md`, and the [decision index](docs/decisions/). Read relevant
+ADRs; add or supersede any contradicted accepted ADR in the same change. Also read:
 
-| Task                      | Additional source                                   |
-| ------------------------- | --------------------------------------------------- |
-| Public API                | `docs/api-stability.md` and owning Rustdoc          |
-| Tests or fixtures         | `docs/testing.md` and `fixtures/README.md`          |
-| Dependency or tool        | `docs/dependency-policy.md`                         |
-| Workflows or shared tasks | `docs/releasing.md` and `docs/dependency-policy.md` |
-| Platform behavior         | `docs/platform-support.md`                          |
-| Release                   | `docs/releasing.md`                                 |
-| Public documentation      | `docs/README.md` and relevant `docs/public/` page   |
-| Local setup or submission | `docs/development-environment.md`                   |
-
-Read only the ADRs relevant to the task. If a change contradicts an accepted ADR, add or supersede
-the decision in the same change.
+- Public API: `docs/api-stability.md`, owning Rustdoc.
+- Tests/fixtures: `docs/testing.md`, `fixtures/README.md`.
+- Dependencies/tools: `docs/dependency-policy.md`.
+- Workflows/shared tasks: `docs/releasing.md`, `docs/dependency-policy.md`.
+- Platform behavior: `docs/platform-support.md`; releases: `docs/releasing.md`.
+- Public docs: `docs/README.md`, relevant `docs/public/` page.
+- Local setup/submission: `docs/development-environment.md`.
 
 ## Product boundaries
 
-- BoxFerry owns orchestration, the neutral model, semantic adapters, loss policy, diagnostics, and
-  the CLI.
-- ComposeLens, PodmanLens, and QuadletLens own their native formats.
-- Every input passes through an importer into the neutral model; every output comes from an
-  exporter. Same-format shortcuts are forbidden.
-- Podman acquisition is explicit and read-only. BoxFerry never applies output, invokes generated
-  commands, deploys infrastructure, or sends mutating runtime requests.
-- Docker and Kubernetes remain deferred. Do not add placeholder adapters.
-- Format libraries must not depend on BoxFerry.
+- BoxFerry owns orchestration, neutral model, semantic adapters, loss policy, diagnostics, CLI;
+  ComposeLens, PodmanLens, and QuadletLens own native formats and cannot depend on BoxFerry.
+- All inputs use an importer and the neutral model; all outputs use an exporter, including
+  same-format routes.
+- Podman acquisition is explicit, read-only. Never apply output, invoke generated commands, deploy,
+  or send mutating runtime requests.
+- Docker and Kubernetes remain deferred; do not add placeholder adapters.
 
-BoxFerry is implemented from scratch. External tools may be documented references or differential
-oracles, but source code must not be copied or mechanically translated. Record oracle version,
-command, provenance, license, and redistribution status.
+Implement from scratch. External tools may serve as documented references or differential oracles;
+never copy or mechanically translate source. Record oracle version, command, provenance, license,
+and redistribution status.
 
 ## Engineering rules
 
-- Put neutral types in `boxferry-model`, planning in `boxferry-engine`, mappings in their adapter
-  crates, and presentation or file writes in the facade.
-- Keep the facade usable without the CLI and keep native types out of the neutral model.
-- Never silently discard configuration. Every non-exact decision needs a structured outcome and
-  actionable diagnostic.
-- Treat input as fallible, retain source evidence, keep target versions explicit, and redact
-  protected values by default.
-- Add positive, failure, unsupported, and version-boundary tests with behavior changes.
-- Update machine capability evidence instead of duplicating it in prose.
-- Start repository-owned complete YAML documents with `---`; parser fixtures may omit it.
-- Pin GitHub Actions to a full commit SHA with the exact release tag in a comment.
+- Neutral types: `boxferry-model`; planning: `boxferry-engine`; mappings: adapter crates;
+  presentation/file writes: facade. Keep the facade CLI-independent and native types out of the
+  neutral model.
+- Never silently discard configuration: non-exact decisions need structured outcomes and actionable
+  diagnostics. Treat input as fallible; retain source evidence, explicit target versions, and default
+  redaction of protected values.
+- Test positive, failure, unsupported, and version-boundary behavior changes. Update machine
+  capability evidence rather than duplicating it in prose.
+- Start complete repository-owned YAML documents with `---` (parser fixtures exempt). Pin GitHub
+  Actions to full commit SHAs with exact release tags in comments.
 
 ## Verification
 
-The workspace uses Rust 2024 and supports Rust 1.85.0 and newer. Focused `ci-*` aliases live in
-`.cargo/config.toml`. Use `./scripts/format-lint.sh --fix` for bounded formatting and linting
-without tests. It is an iterative cleanliness aid, not validation evidence. Run `./scripts/check-all.sh`
-after the final edit; never weaken a lint or replace the complete gate
-with a focused command before publication.
+Rust 2024; MSRV 1.85.0. Focused `ci-*` aliases: `.cargo/config.toml`.
+`./scripts/format-lint.sh --fix` formats and lints without tests; it is not validation evidence.
+Run `./scripts/check-all.sh` after the final edit. Never weaken lints or substitute focused checks
+for the complete pre-publication gate.
 
 ## GitHub issue-to-PR workflow
 
-When the user authorizes Git and GitHub writes:
+For authorized Git/GitHub work:
 
-1. Inspect status and the complete diff; preserve unrelated work.
-2. Search for a duplicate, then create one focused issue when needed.
-3. Fetch `origin/main`, verify synchronization, and create
-   `TheRealBecks/issue<NUMBER>`.
-4. Complete and review the scoped change.
-5. Run `./scripts/format-lint.sh --fix`, then `./scripts/check-all.sh`. A failed or incomplete
-   complete run is a hard gate against commit, push,
-   and pull-request creation; a later edit invalidates the run.
-6. Stage explicit paths, run `git diff --cached --check`, review the staged diff, and create one
-   intentional commit.
-7. Push and open a ready pull request containing `Closes #<NUMBER>`.
-8. Read back the issue, commit, pull request, and required checks.
-9. After an authorized, verified merge, restore the primary checkout to synchronized `main`,
-   remove any temporary worktree with `git worktree remove <recorded-path>`, delete the verified
-   merged local issue branch with `git branch --delete --force TheRealBecks/issue<NUMBER>`, run
-   `git worktree prune --verbose`, and read back `git worktree list --porcelain` plus
-   `git status --short --branch`. Never leave `target/*-issue*` worktree registrations behind.
+1. Inspect status/full diff; preserve unrelated work. Check duplicates; create one focused issue
+   when needed.
+2. Fetch `origin/main`, verify synchronization, create `TheRealBecks/issue<NUMBER>`; complete and
+   review the scoped change.
+3. Run `./scripts/format-lint.sh --fix`, then `./scripts/check-all.sh`. Failure or incomplete
+   completion is a hard gate against commit, push, and pull-request creation; later edits invalidate
+   the run.
+4. Stage explicit paths; run `git diff --cached --check`, review staged diff, make one intentional
+   commit. Push and open a ready PR with `Closes #<NUMBER>`.
+5. Read back the issue, commit, PR, and required checks.
+6. After an authorized, verified merge, synchronize primary `main` with `origin/main`; remove
+   recorded worktrees via `git worktree remove <recorded-path>`, delete the verified merged branch
+   via `git branch --delete --force TheRealBecks/issue<NUMBER>`, run `git worktree prune --verbose`,
+   and read back `git worktree list --porcelain` and `git status --short --branch`. Leave no
+   `target/*-issue*` registrations.
 
-Opening and reading back the ready pull request is the default stopping point. Authorization to run
-the Git workflow or perform GitHub writes does not authorize a merge.
+## Workspace scope and standing GitHub authorization
 
-Merge only when the user explicitly authorizes merging the specific pull request or the scoped set
-of pull requests in the current request. Immediately before merging, read back the exact head
-commit and verify that the pull request is ready, mergeable, and has every required check
-successful. Never bypass branch protection, use an administrator override, or infer authority for
-an out-of-scope release, publication, or deployment pull request.
+The maintainer grants standing authorization for task-related Git and GitHub work only in these
+workspace repositories:
 
-Use the repository's normal merge method with an exact-head safeguard, then read back and report
-the merged state and merge commit.
+- `Strukturpiloten/boxferry`
+- `Strukturpiloten/compose-lens`
+- `Strukturpiloten/podman-lens`
+- `Strukturpiloten/quadlet-lens`
+- `Strukturpiloten/boxferry-website`
+- `Strukturpiloten/docker-lens`
 
-Use release-worthy Conventional Commit types only for product changes. Use `docs`, `test`,
-`ci`, `build`, `style`, or `chore` for non-release work.
+Do not work on or modify any repository outside this explicit allowlist, including its issues,
+pull requests, branches, settings, or workflows. An upstream documentation reference is not
+permission to operate on that upstream repository. A newly discovered checkout is not implicitly
+in scope.
 
-The primary agent runs this workflow with high reasoning effort. The primary agent owns integration, final
-verification, Git writes, and GitHub readback. Worker subagents may perform bounded research,
-editing, or read-only review but never execute the Git or GitHub write steps. The complete gate
-remains the primary agent's responsibility.
+For user-requested work within this scope, the primary agent may create issues, branches, commits,
+pushes, and pull requests and merge verified task-related pull requests without asking for renewed
+approval. This permission does not authorize unrelated backlog work, implementation of
+discussion-only proposals, or expansion of the requested product scope. A later user instruction
+may narrow or revoke this permission.
 
-## Multi-repository work
+Immediately before merging, read back the exact head commit and verify that the pull request is
+ready, mergeable, independently reviewed, and has every required check successful. Use the normal
+merge method with an exact-head safeguard; never bypass branch protection or use an administrator
+override. Read back the merged state and merge commit, synchronize local `main` with `origin/main`,
+and remove the task's recorded worktrees and verified merged local branches while preserving
+unrelated work.
 
-The primary BoxFerry agent defines the shared contract before delegating. Agents may edit separate
-repository checkouts concurrently but never the same checkout. The primary agent reviews and
-verifies every final diff.
+This standing permission does not authorize releases, publication, deployment operations, or
+merging release/publication/deployment pull requests; those require a separate explicit request.
+The primary agent owns all Git and GitHub writes. Subagents remain within their assigned task and
+checkout and must not perform those writes.
+
+Reserve release-worthy Conventional Commit types for product changes; use `docs`, `test`, `ci`,
+`build`, `style`, or `chore` for non-release work.
+
+The primary agent runs this workflow as GPT-6 Astra with `xhigh` reasoning, defines shared
+contracts before delegation, and reviews/verifies every final diff. Worker subagents may research,
+edit separate repository checkouts, or review bounded tasks but never execute the Git or GitHub
+write steps or share a writer checkout. The complete gate remains the primary agent's
+responsibility, as do integration, final verification, Git writes, and GitHub readback.
 
 ## Workflow and Renovate changes
 
-Before changing workflows, task definitions, installers, or shared validation:
+For workflow, task, installer, or shared-validation changes:
 
-- Identify the canonical definition and all local/CI/release consumers across BoxFerry,
-  ComposeLens, PodmanLens, QuadletLens, and the website. Record affected repositories and justified
-  no-change decisions in the issue or PR.
-- Reuse common scripts, actions, or workflows; keep repository-specific thresholds and native
-  conformance explicit. Shared test infrastructure must not create Lens product dependencies on
-  BoxFerry. Keep application suites in BoxFerry.
-- Review Renovate whenever a pin or definition is added, changed, moved, or removed. Update manager
-  ownership, paths, extraction, grouping, approvals, and regression expectations together; otherwise
-  explain why no configuration change is needed. Follow `docs/dependency-policy.md`.
-- Pin cross-repository actions/workflows immutably. Preserve least privilege, exact-candidate
-  evidence, failure propagation, resource budgets, privacy, and cleanup. Follow the current and
-  planned release contracts in `docs/releasing.md`; do not describe planned automation as delivered.
-- Validate every affected consumer and link coordinated PRs or outstanding follow-ups. A passing
-  check in one repository is not evidence that the shared rollout is complete.
+- Find the canonical definition and every local/CI/release consumer in BoxFerry, ComposeLens,
+  PodmanLens, QuadletLens, DockerLens, and the website; record affected repos and justified no-change
+  decisions in the issue/PR.
+- Reuse common scripts/actions/workflows; preserve repo-specific thresholds and native conformance.
+  Shared tests cannot give Lens products a BoxFerry dependency; BoxFerry owns application suites.
+- For added/changed/moved/removed pins or definitions, review Renovate manager ownership, paths,
+  extraction, grouping, approvals, and regression expectations together, or justify no config
+  change. Follow `docs/dependency-policy.md`.
+- Pin cross-repo actions/workflows immutably; preserve least privilege, exact-candidate evidence,
+  failure propagation, budgets, privacy, and cleanup. Follow current/planned release contracts in
+  `docs/releasing.md`; never describe planned automation as delivered.
+- Validate each affected consumer; link coordinated PRs/outstanding follow-ups. One repo passing
+  does not prove the shared rollout complete.
 
 ## Agent roles and verification
 
 Model defaults belong in [`.codex/config.toml`](.codex/config.toml); task-specific models and
-reasoning belong in [`.codex/agents/`](.codex/agents/). Use the repository's high-effort primary
-default for normal work; explicitly request `xhigh` for unusually difficult architecture or
-migration analysis. These are defaults, not permission grants.
+reasoning belong in [`.codex/agents/`](.codex/agents/). The primary manager always uses
+`gpt-6-astra` with `xhigh` reasoning. Implementation, specification research, and independent review
+use `gpt-6-sol` with `high` reasoning; check-only verification uses `gpt-6-luna` with `high`
+reasoning. Use Luna for bounded read-only exploration and Sol for difficult failure diagnosis.
+These model settings do not expand the workspace scope or grant additional permissions.
 
-- Delegate only when the user or applicable instructions request it, and assign a bounded task.
-- Use at most three subagents. Define the shared contract and file ownership before delegation.
-- Never run two writers in one checkout. Research and review remain read-only.
+- Delegate bounded tasks when independent work can usefully proceed in parallel. Define the shared
+  contract and explicit repository, checkout, and file ownership before delegation.
+- Use up to nine concurrent subagents plus the primary manager, subject to the session's actual
+  runtime limit. Nine is a ceiling, not a target or nine distinct roles: several subagents may use
+  the same role for independent tasks. Do not create nested agents to evade the limit.
+- Never run two writers in one checkout. Use separate assigned repositories or worktrees for
+  concurrent implementation. Research and review remain read-only.
 - The reviewer checks the original requirements and independent expected results, not just agreement
   between the implementation and its tests.
 - After writing finishes, the verifier runs `./scripts/check-all.sh --check`. It reports failures
   without formatting or editing tracked files; ignored build artifacts and caches are allowed.
-- Avoid concurrent full gates or heavy runtime tests. The primary agent owns integration, the final
+- Run at most one complete gate or heavy runtime suite at a time across this workspace. Agent
+  concurrency is not permission for competing builds. The primary owns integration, the final
   complete gate, and every authorized Git or GitHub write.
 
-The default `./scripts/check-all.sh` still formats before checking. `--check` runs the same
-complete gate without source formatting; it is not a reduced test tier. `./scripts/format-lint.sh`
-supports the same modes, defaults to `--fix`, limits Clippy to two jobs unless
-`BOXFERRY_LINT_JOBS` is set, and executes no tests. A later edit invalidates complete-gate results.
-No mode grants release, publication, or deployment authority.
+`./scripts/check-all.sh` formats by default; `--check` runs the same complete gate without source
+formatting. `./scripts/format-lint.sh` has the same modes, defaults to `--fix`, caps Clippy at two
+jobs unless `BOXFERRY_LINT_JOBS` is set, and runs no tests. Any edit invalidates complete-gate
+results. Neither mode grants release, publication, or deployment authority.
 
 ## Code discovery
 
-For code discovery, use an available codebase-memory graph first; otherwise use CodeGraph only if
-the repository already has a usable index. Do not create an index without user authorization.
-If neither graph is available or a query cannot answer the question, use `rg` and targeted reads.
-For string literals, configuration, scripts, and documentation, start with `rg` directly.
+For code discovery, try an available codebase-memory graph first, then CodeGraph only with an
+existing usable index; never create one without user authorization. If neither answers, use `rg`
+and targeted reads. For literals, configuration, scripts, and docs, start with `rg`.
