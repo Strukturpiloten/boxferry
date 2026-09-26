@@ -45,6 +45,13 @@
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
     {
+      "label": "BoxFerry: Fast offline CLI usability",
+      "type": "process",
+      "command": "${workspaceFolder}/scripts/check-cli-usability.sh",
+      "problemMatcher": "$rustc",
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
       "label": "BoxFerry: Format check",
       "type": "process",
       "command": "cargo",
