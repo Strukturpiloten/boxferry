@@ -17,8 +17,8 @@ Run the complete deterministic gate before every pull request:
 | Documentation | Every displayed command and its expected result         |
 | Conformance   | Reviewed external tools in explicit opt-in environments |
 
-Every behavior change needs a positive case and a relevant failure case. A mapping is incomplete
-until unsupported values and target-version boundaries are tested.
+Test positive, failure, unsupported, and version-boundary cases. For focused feedback, see
+[fast offline CLI testing](public/development/testing/index.md#fast-offline-cli-feedback).
 
 ## Independent migration scenarios
 
