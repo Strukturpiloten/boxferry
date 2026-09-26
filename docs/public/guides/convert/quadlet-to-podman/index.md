@@ -5,7 +5,7 @@ Quadlet generators, contact Podman, or execute the generated commands.
 
 ## Prerequisites
 
-- One or more related Quadlet files and an explicit application name.
+- One regular Quadlet unit, or an explicit `--application-name` for a document set.
 - The intended `unknown`, `rootless`, or `rootful` target context.
 - An absent or empty output directory.
 
@@ -26,7 +26,8 @@ is not a runtime inventory and cannot be imported as Podman input.
 
 ## Compatibility and loss
 
-Output defaults to the newest reviewed target, currently 6.1.0. `--podman-max-version VERSION`
+The example's explicit name overrides the filename-derived identity; multiple units need an
+explicit name. Output defaults to the newest reviewed target, currently 6.1.0. `--podman-max-version VERSION`
 selects the newest reviewed exact target not greater than that ceiling.
 `--podman-target-context unknown|rootless|rootful` is required, and BoxFerry never infers it from
 the source or development machine.

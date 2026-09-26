@@ -5,7 +5,7 @@ Use this route to reconstruct one canonical Compose document from a Quadlet docu
 ## Prerequisites
 
 - One or more related Quadlet files.
-- An explicit application name for the neutral model.
+- One regular Quadlet unit, or an explicit `--application-name` for a document set.
 - An absent or empty output directory.
 
 ## Convert
@@ -44,8 +44,10 @@ services:
     restart: "no"
 ```
 
-`--application-name` is required because a Quadlet file set has no Compose project name. The
-output targets the rolling Compose Specification, not an installed provider.
+The command uses an explicit name to override the default. With only `web.container`, omitting
+`--application-name` names the neutral application `web`; two or more files require an explicit
+name. The output targets the rolling Compose Specification, not an installed provider. BoxFerry
+does not run that provider or infer target-host paths, secrets, or environment files.
 
 ## Production checks
 

@@ -87,6 +87,15 @@ stderr-contains = ["BFC0105", "BFQ0014", "fix first:", "--env-file FILE"]
 absent = ["quadlet-error-output"]
 
 [[examples]]
+id = "quadlet-inferred-name-validate"
+pages = ["docs/public/guides/quadlet-input/index.md"]
+command = "boxferry validate quadlet compose --input-file web.container"
+args = ["validate", "quadlet", "compose", "--input-file", "web.container"]
+copy = ["web.container"]
+expected-exit = 0
+stdout-contains = ["command succeeded"]
+
+[[examples]]
 id = "quadlet-to-compose"
 pages = ["docs/public/guides/convert/quadlet-to-compose/index.md"]
 command = "boxferry convert quadlet compose --input-file web.container --application-name route-matrix --output-directory compose-output"

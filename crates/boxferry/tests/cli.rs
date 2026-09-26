@@ -4109,11 +4109,15 @@ fn quadlet_route_validates_without_writing_and_rejects_inapplicable_or_removed_o
         String::from_utf8_lossy(&validated.stderr)
     );
     assert!(!project.path().join("compose.yaml").exists());
-    let missing_project = boxferry_command()
+    let inferred_project = boxferry_command()
         .args(["validate", "quadlet", "compose", "--input-file", path_text(&input)?])
         .output()?;
-    assert_eq!(missing_project.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&missing_project.stderr).contains("--application-name"));
+    assert!(
+        inferred_project.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inferred_project.stderr)
+    );
+    assert!(!project.path().join("compose.yaml").exists());
     let irrelevant = boxferry_command()
         .args([
             "validate",
@@ -4438,8 +4442,6 @@ fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<()
             "compose",
             "--input-file",
             path_text(&input)?,
-            "--application-name",
-            "example",
             "--console-format",
             "json",
         ])
@@ -4447,6 +4449,7 @@ fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<()
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
     assert_eq!(report["status"], "success");
+    assert_eq!(report["application"], "web");
     let warning = report["diagnostics"]
         .as_array()
         .and_then(|diagnostics| {
@@ -4471,15 +4474,7 @@ fn quadlet_recoverable_native_diagnostics_are_reported_on_success() -> Result<()
     );
 
     let human = boxferry_command()
-        .args([
-            "validate",
-            "quadlet",
-            "compose",
-            "--input-file",
-            path_text(&input)?,
-            "--application-name",
-            "example",
-        ])
+        .args(["validate", "quadlet", "compose", "--input-file", path_text(&input)?])
         .output()?;
     assert!(human.status.success(), "{}", String::from_utf8_lossy(&human.stderr));
     let stderr = String::from_utf8(human.stderr)?;
