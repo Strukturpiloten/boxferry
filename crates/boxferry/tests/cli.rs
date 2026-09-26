@@ -13,7 +13,13 @@ use std::{
 };
 use zip::{CompressionMethod, ZipArchive};
 
+#[path = "support/podman_cassette.rs"]
+#[allow(dead_code)] // Shared cassette helper also serves tests that mutate responses.
+mod podman_cassette;
+use podman_cassette::{PodmanCassette, PodmanCassetteServer};
+
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+const PODMAN_PROJECT_CANARY: &str = "private-project-label-canary-333";
 
 #[test]
 fn quadlet_output_help_and_rejected_unknown_options_have_no_unused_systemd_selector() -> Result<(), Box<dyn Error>> {
@@ -1813,7 +1819,7 @@ fn assert_route_specific_help_contracts() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Box<dyn Error>> {
+fn podman_help_lists_exact_kinds_and_optional_selector_contract() -> Result<(), Box<dyn Error>> {
     let help = boxferry_command()
         .args(["validate", "podman", "quadlet", "--help"])
         .output()?;
@@ -1822,7 +1828,8 @@ fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Bo
     assert!(help.contains("Podman input:"));
     assert!(help.contains("--podman-socket <PATH>"));
     assert!(help.contains("--application-name <APPLICATION_NAME>"));
-    assert!(help.contains("--podman-resource <KIND=REFERENCE>"));
+    assert!(help.contains("--podman-resource <[KIND=]REFERENCE>"));
+    assert!(!help.contains("--podman-container"));
     assert!(help.contains("--podman-resource-prefix <KIND=PREFIX>"));
     for kind in ["container", "image", "network", "pod", "secret", "volume"] {
         assert!(help.contains(kind), "missing Podman resource kind {kind}");
@@ -1841,7 +1848,7 @@ fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Bo
     let podman_option_order = [
         "--podman-socket <PATH>",
         "--podman-all",
-        "--podman-resource <KIND=REFERENCE>",
+        "--podman-resource <[KIND=]REFERENCE>",
         "--podman-resource-prefix <KIND=PREFIX>",
         "--podman-label <NAME[=VALUE]>",
         "--application-name <APPLICATION_NAME>",
@@ -1859,16 +1866,6 @@ fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Bo
         .map(|option| podman_input_help.find(option).ok_or(*option))
         .collect::<Result<Vec<_>, _>>()?;
     assert!(podman_option_positions.windows(2).all(|pair| pair[0] < pair[1]));
-
-    let missing_selector = boxferry_command().args(["validate", "podman", "quadlet"]).output()?;
-    assert_eq!(missing_selector.status.code(), Some(2));
-    let error = String::from_utf8(missing_selector.stderr)?;
-    assert!(error.contains("--podman-all"));
-    assert!(error.contains("--podman-resource"));
-    assert!(error.contains("--podman-resource-prefix"));
-    assert!(error.contains("--podman-label"));
-    assert!(!error.contains("--podman-socket is required"));
-    assert!(!error.contains("--application-name is required"));
 
     let omitted_socket_and_name = boxferry_command()
         .args([
@@ -1916,6 +1913,203 @@ fn podman_help_lists_exact_kinds_and_one_of_selector_contract() -> Result<(), Bo
             "selector syntax must fail before socket discovery: {error}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn podman_omitted_selector_passes_cli_validation_and_reports_missing_socket() -> Result<(), Box<dyn Error>> {
+    let result = boxferry_command()
+        .args([
+            "validate",
+            "podman",
+            "quadlet",
+            "--podman-socket",
+            "/definitely-not-a-podman-socket",
+        ])
+        .output()?;
+    assert_eq!(result.status.code(), Some(1));
+    let error = String::from_utf8(result.stderr)?;
+    assert!(error.contains("BFP0001 podman-source-invalid"), "{error}");
+    assert!(error.contains("Podman local Unix socket") || error.contains("Podman read-only acquisition"));
+    assert!(!error.contains("--podman-socket is required"));
+    assert!(!error.contains("--application-name is required"));
+    Ok(())
+}
+
+#[test]
+fn podman_single_application_is_selected_without_a_selector_or_name() -> Result<(), Box<dyn Error>> {
+    let cassette = PodmanCassette::load(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/scenarios/podman-portable-intent/input-podman.cassette.json"),
+    )?;
+    let server = PodmanCassetteServer::start(cassette)?;
+    let result = boxferry_command()
+        .args(["validate", "podman", "compose", "--podman-socket"])
+        .arg(server.socket())
+        .args(["--loss-policy", "partial"])
+        .output()?;
+    server.finish()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let stdout = String::from_utf8(result.stdout)?;
+    assert!(
+        stdout.contains("Podman connection: explicit local Unix socket"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Podman selection: 1 root(s)"), "{stdout}");
+    assert!(stdout.contains("Podman boundaries:"), "{stdout}");
+    Ok(())
+}
+
+#[test]
+fn podman_multiple_applications_fail_closed_without_a_terminal_even_when_named() -> Result<(), Box<dyn Error>> {
+    let cassette = PodmanCassette::load(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"),
+    )?;
+    let server = PodmanCassetteServer::start(cassette)?;
+    let result = boxferry_command()
+        .args(["validate", "podman", "compose", "--podman-socket"])
+        .arg(server.socket())
+        .args(["--application-name", "not-a-selector", "--loss-policy", "partial"])
+        .output()?;
+    server.finish()?;
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8(result.stderr)?;
+    assert!(stderr.contains("distinct Podman applications"), "{stderr}");
+    assert!(stderr.contains("--podman-resource"), "{stderr}");
+    Ok(())
+}
+
+fn two_compose_containers_cassette() -> Result<PodmanCassette, Box<dyn Error>> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/scenarios/podman-portable-intent/input-podman.cassette.json");
+    let mut document: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+    let interactions = document["interactions"].as_array_mut().ok_or("cassette interactions")?;
+    let list = interactions
+        .iter_mut()
+        .find(|interaction| {
+            interaction["request"]["path"]
+                .as_str()
+                .is_some_and(|path| path.contains("/containers/json?"))
+        })
+        .ok_or("container list")?;
+    let containers = list["response"]["body"].as_array_mut().ok_or("container list body")?;
+    let mut second = containers.first().ok_or("first container")?.clone();
+    second["Id"] = serde_json::json!("c-sibling");
+    second["Names"] = serde_json::json!(["sibling-app"]);
+    containers.push(second);
+
+    let first = interactions
+        .iter()
+        .position(|interaction| interaction["request"]["path"] == "/v6.1.0/libpod/containers/c-portable/json")
+        .ok_or("container inspect")?;
+    interactions[first]["response"]["body"]["Config"]["Labels"] = serde_json::json!({
+        "com.docker.compose.project": PODMAN_PROJECT_CANARY,
+        "com.docker.compose.service": "web"
+    });
+    let mut sibling = interactions[first].clone();
+    sibling["request"]["path"] = serde_json::json!("/v6.1.0/libpod/containers/c-sibling/json");
+    sibling["response"]["body"]["Id"] = serde_json::json!("c-sibling");
+    sibling["response"]["body"]["Name"] = serde_json::json!("sibling-app");
+    sibling["response"]["body"]["Config"]["Labels"]["com.docker.compose.service"] = serde_json::json!("worker");
+    interactions.insert(first + 1, sibling);
+    Ok(serde_json::from_value(document)?)
+}
+
+#[test]
+fn podman_compose_labels_need_explicit_group_consent_and_preview_all_members() -> Result<(), Box<dyn Error>> {
+    let server = PodmanCassetteServer::start(two_compose_containers_cassette()?)?;
+    let ambiguous = boxferry_command()
+        .args(["validate", "podman", "compose", "--podman-socket"])
+        .arg(server.socket())
+        .args(["--loss-policy", "partial"])
+        .output()?;
+    server.finish()?;
+    assert_eq!(ambiguous.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&ambiguous.stderr).contains("distinct Podman applications"));
+
+    let project_selector = format!("com.docker.compose.project={PODMAN_PROJECT_CANARY}");
+    for selector in [
+        ["--podman-label", project_selector.as_str()],
+        ["--podman-resource", "portable-app"],
+    ] {
+        let server = PodmanCassetteServer::start(two_compose_containers_cassette()?)?;
+        let result = boxferry_command()
+            .args(["validate", "podman", "compose", "--podman-socket"])
+            .arg(server.socket())
+            .args(selector)
+            .args(["--loss-policy", "partial"])
+            .output()?;
+        server.finish()?;
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let preview = String::from_utf8(result.stdout)?;
+        assert!(preview.contains("member Container: portable-app"), "{preview}");
+        assert!(preview.contains("member Container: sibling-app"), "{preview}");
+    }
+    Ok(())
+}
+
+#[test]
+fn podman_project_label_never_becomes_default_name_or_report_material() -> Result<(), Box<dyn Error>> {
+    let project_selector = format!("com.docker.compose.project={PODMAN_PROJECT_CANARY}");
+    for json in [false, true] {
+        let directory = TemporaryOutput::new("podman-project-label-privacy");
+        fs::create_dir_all(directory.path())?;
+        let report = directory.path().join("report.json");
+        let server = PodmanCassetteServer::start(two_compose_containers_cassette()?)?;
+        let mut command = boxferry_command();
+        command
+            .args(["validate", "podman", "compose", "--podman-socket"])
+            .arg(server.socket())
+            .args(["--podman-label", project_selector.as_str(), "--loss-policy", "partial"])
+            .arg("--report-file")
+            .arg(&report)
+            .arg("--generate-error-report")
+            .arg("--error-report-directory")
+            .arg(directory.path());
+        if json {
+            command.args(["--console-format", "json"]);
+        }
+        let result = command.output()?;
+        server.finish()?;
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let console = format!(
+            "{}{}",
+            String::from_utf8(result.stdout)?,
+            String::from_utf8(result.stderr)?
+        );
+        let report_text = fs::read_to_string(&report)?;
+        let mut archive = ZipArchive::new(Cursor::new(fs::read(generated_error_report(directory.path())?)?))?;
+        let mut bundle_text = String::new();
+        for index in 0..archive.len() {
+            std::io::Read::read_to_string(&mut archive.by_index(index)?, &mut bundle_text)?;
+        }
+        for text in [&console, &report_text, &bundle_text] {
+            assert!(
+                !text.contains(PODMAN_PROJECT_CANARY),
+                "project label escaped into output"
+            );
+        }
+        assert!(report_text.contains("podman-import"), "{report_text}");
+    }
+    Ok(())
+}
+
+#[test]
+fn podman_selection_preview_names_stopped_shared_boundary() -> Result<(), Box<dyn Error>> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json");
+    let server = PodmanCassetteServer::start(PodmanCassette::load(&path)?)?;
+    let result = boxferry_command()
+        .args(["validate", "podman", "compose", "--podman-socket"])
+        .arg(server.socket())
+        .args(["--podman-resource", "container=c-observer", "--loss-policy", "partial"])
+        .output()?;
+    server.finish()?;
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let preview = String::from_utf8(result.stdout)?;
+    assert!(preview.contains("stopped at Network: app-net"), "{preview}");
+    assert!(!preview.contains("COMPLEX_PROTECTED_VALUE_NEVER_PRINT"), "{preview}");
     Ok(())
 }
 

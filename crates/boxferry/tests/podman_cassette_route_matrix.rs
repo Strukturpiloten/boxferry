@@ -342,7 +342,7 @@ fn blocked_podman_findings_name_the_subject_decision_and_native_rule() -> Result
     assert_eq!(result.status.code(), Some(2));
     let progress = String::from_utf8(result.stdout)?;
     assert!(
-        progress.contains("Podman input: acquiring the selected read-only inventory..."),
+        progress.contains("Podman input: acquiring a read-only inventory..."),
         "Podman acquisition remained silent: {progress}"
     );
     let diagnostics = String::from_utf8(result.stderr)?;
@@ -373,17 +373,24 @@ fn blocked_podman_findings_name_the_subject_decision_and_native_rule() -> Result
 }
 
 #[test]
-fn exact_prefix_and_label_selectors_infer_names_through_every_exporter() -> Result<(), Box<dyn Error>> {
+fn selectors_respect_name_provenance_through_every_exporter() -> Result<(), Box<dyn Error>> {
     let source = PodmanCassette::load(&fixture_directory().join("complex-6.1.0-rootless.cassette.json"))?;
     let root = TemporaryDirectory::new("podman-cassette-selector-inference")?;
 
-    for (case, arguments, expected_application) in [
-        ("exact", ["--podman-resource", "container=observer"], "observer"),
-        ("prefix", ["--podman-resource-prefix", "container=obs"], "obs"),
+    for (case, arguments, explicit_name, expected_application) in [
+        ("exact", ["--podman-resource", "container=observer"], None, "observer"),
+        ("prefix", ["--podman-resource-prefix", "container=obs"], None, "obs"),
         (
             "label",
             ["--podman-label", "org.example.complex.service=observer"],
-            "observer",
+            None,
+            "podman-import",
+        ),
+        (
+            "explicit-name",
+            ["--podman-resource", "container=observer"],
+            Some("chosen-application"),
+            "chosen-application",
         ),
     ] {
         for output in OUTPUTS {
@@ -395,7 +402,7 @@ fn exact_prefix_and_label_selectors_infer_names_through_every_exporter() -> Resu
                 &directory,
                 &arguments,
                 "partial",
-                None,
+                explicit_name,
             )?;
             assert_route_succeeded(&result, case, output)?;
             let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;

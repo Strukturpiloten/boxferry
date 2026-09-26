@@ -16,7 +16,7 @@ use std::{
     error::Error,
     fmt::Write as _,
     fs::{self, OpenOptions},
-    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, BufRead, Cursor, IsTerminal, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::ExitCode,
     str::FromStr,
@@ -35,8 +35,9 @@ use boxferry::compose::compose_lens::{
     source::SourceId as ComposeSourceId,
 };
 use boxferry::podman::podman_lens::{
-    AcquisitionOptions, DiscoveryRequest, LabelSelector, ResourceKind as PodmanResourceKind, ResourceSelector,
-    TargetExecutionContext, TransportLimits, UnixConnection,
+    AcquisitionOptions, DiscoveryRequest, GroupingEvidence, LabelSelector, ResourceGraph, ResourceIdentity,
+    ResourceKind as PodmanResourceKind, ResourceSelector, TargetExecutionContext, TransportLimits, UnixConnection,
+    acquire_inventory, discover,
     read_only_unix_transport::{ReadOnlyUnixTransport, ReadOnlyUnixTransportTimeouts},
 };
 use boxferry::report::{
@@ -48,9 +49,9 @@ use boxferry::{
     Application, COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter,
     ComposeFindingStage, ComposeImporter, ComposeSource, ConversionError, ConversionKind, Diagnostic, Identifier,
     ImportAdapter, ImportResult, LossPolicy, NativeFinding, NativeFindingLabelKind, PODMAN_TARGET, PlatformVersion,
-    PodmanExporter, PodmanImporter, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy, QuadletImporter,
-    QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES, ResourceOwnership,
-    RuleId, SourceId, TargetProfile, acquire_podman_source, convert_imported, find_rule, reviewed_podman_versions,
+    PodmanExporter, PodmanImporter, PodmanSource, QuadletDocumentInput, QuadletExporter, QuadletGroupingPolicy,
+    QuadletImporter, QuadletParseDiagnostic, QuadletParseDiagnosticOrigin, QuadletParseError, QuadletSource, RULES,
+    ResourceOwnership, RuleId, SourceId, TargetProfile, convert_imported, find_rule, reviewed_podman_versions,
 };
 use clap::{ArgGroup, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum, parser::ValueSource};
 use jiff::{Timestamp, Zoned, tz::TimeZone};
@@ -202,16 +203,16 @@ struct QuadletInputOptions {
 }
 
 #[derive(Debug, Args)]
-#[command(group = ArgGroup::new("podman_selector").required(true).multiple(true))]
+#[command(group = ArgGroup::new("podman_selector").multiple(true))]
 struct PodmanInputOptions {
     /// Local Podman Unix socket; defaults to the first available rootless, then rootful socket.
     #[arg(long, value_name = "PATH")]
     podman_socket: Option<PathBuf>,
-    /// Discover every eligible root in the acquired inventory.
+    /// Explicitly discover every eligible root in the acquired inventory.
     #[arg(long, group = "podman_selector")]
     podman_all: bool,
-    /// Exact resource root as `KIND=REFERENCE`; kinds: container, image, network, pod, secret, volume.
-    #[arg(long = "podman-resource", value_name = "KIND=REFERENCE", group = "podman_selector")]
+    /// Exact container name or ID, or KIND=REFERENCE for other resources; kinds: container, image, network, pod, secret, volume.
+    #[arg(long = "podman-resource", value_name = "[KIND=]REFERENCE", group = "podman_selector")]
     podman_resources: Vec<PodmanResourceInput>,
     /// Resource name prefix as `KIND=PREFIX`; kinds: container, image, network, pod, secret, volume.
     #[arg(
@@ -1337,7 +1338,11 @@ impl FromStr for PodmanResourceInput {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let (kind, reference) = parse_podman_resource(value, "--podman-resource")?;
+        let (kind, reference) = if value.contains('=') {
+            parse_podman_resource(value, "--podman-resource")?
+        } else {
+            (PodmanResourceKind::Container, value.to_owned())
+        };
         ResourceSelector::exact(kind, &reference).map_err(|_| {
             "--podman-resource requires a non-empty exact name or ID without whitespace, glob, or regular-expression syntax".to_owned()
         })?;
@@ -1377,10 +1382,9 @@ fn derive_podman_application_name(arguments: &GenericConversion) -> Result<Ident
         .filter(|reference| !looks_like_native_id(reference));
     let prefix =
         (arguments.podman_resource_prefixes.len() == 1).then(|| arguments.podman_resource_prefixes[0].prefix.as_str());
-    let label_value = (arguments.podman_labels.len() == 1)
-        .then(|| arguments.podman_labels[0].value.as_deref())
-        .flatten();
-    let derived = exact_name.or(prefix).or(label_value).unwrap_or("podman-import");
+    // Label values are ambient metadata, not authorization to copy a value into output names
+    // or reports. An operator who wants a project-derived name must set --application-name.
+    let derived = exact_name.or(prefix).unwrap_or("podman-import");
     Identifier::new(derived).or_else(|_| Identifier::new("podman-import"))
 }
 
@@ -1414,7 +1418,7 @@ fn resolve_podman_socket(explicit: Option<&Path>) -> io::Result<PathBuf> {
     {
         let uid = fs::metadata("/proc/self")?.uid();
         let candidates = local_podman_socket_candidates(uid);
-        first_local_podman_socket(&candidates).ok_or_else(|| {
+        first_local_podman_socket(&candidates)?.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 format!(
@@ -1435,14 +1439,289 @@ fn resolve_podman_socket(explicit: Option<&Path>) -> io::Result<PathBuf> {
 }
 
 #[cfg(unix)]
-fn first_local_podman_socket(candidates: &[PathBuf]) -> Option<PathBuf> {
-    candidates.iter().find_map(|candidate| {
-        fs::symlink_metadata(candidate)
-            .ok()
-            .filter(|metadata| !metadata.file_type().is_symlink() && metadata.file_type().is_socket())
-            .filter(|_| UnixStream::connect(candidate).is_ok())
-            .map(|_| candidate.clone())
-    })
+fn first_local_podman_socket(candidates: &[PathBuf]) -> io::Result<Option<PathBuf>> {
+    for candidate in candidates {
+        let metadata = match fs::symlink_metadata(candidate) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
+            continue;
+        }
+        UnixStream::connect(candidate).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "local Podman socket {} exists but is not connectable ({error}); resolve that service or choose another socket explicitly with --podman-socket PATH",
+                    candidate.display()
+                ),
+            )
+        })?;
+        return Ok(Some(candidate.clone()));
+    }
+    Ok(None)
+}
+
+/// Only native pod membership and container dependencies join an automatic choice.
+/// Compose ownership labels remain advisory and cannot silently enlarge the selection.
+fn automatic_podman_candidates(graph: &ResourceGraph) -> Vec<Vec<ResourceIdentity>> {
+    let mut remaining = graph
+        .groups()
+        .iter()
+        .flat_map(boxferry::podman::podman_lens::ResourceGroup::members)
+        .filter(|identity| matches!(identity.kind(), PodmanResourceKind::Container | PodmanResourceKind::Pod))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut adjacency = BTreeMap::<ResourceIdentity, BTreeSet<ResourceIdentity>>::new();
+    for edge in graph.grouping_edges() {
+        if !matches!(
+            edge.evidence(),
+            GroupingEvidence::PodMembership | GroupingEvidence::ContainerDependency
+        ) {
+            continue;
+        }
+        adjacency
+            .entry(edge.left().clone())
+            .or_default()
+            .insert(edge.right().clone());
+        adjacency
+            .entry(edge.right().clone())
+            .or_default()
+            .insert(edge.left().clone());
+    }
+    let mut candidates = Vec::new();
+    while let Some(first) = remaining.pop_first() {
+        let mut component = BTreeSet::from([first.clone()]);
+        let mut pending = vec![first];
+        while let Some(identity) = pending.pop() {
+            for neighbor in adjacency.get(&identity).into_iter().flatten() {
+                if remaining.remove(neighbor) {
+                    component.insert(neighbor.clone());
+                    pending.push(neighbor.clone());
+                }
+            }
+        }
+        candidates.push(component.into_iter().collect());
+    }
+    candidates
+}
+
+/// Complete, internally consistent Compose labels are an explicit *offer*, never an automatic
+/// ownership decision. Native components are included in full when a project edge touches them.
+fn advisory_podman_groups(
+    graph: &ResourceGraph,
+    native: &[Vec<ResourceIdentity>],
+) -> Vec<(String, Vec<ResourceIdentity>)> {
+    let mut projects = BTreeMap::<String, BTreeSet<ResourceIdentity>>::new();
+    for edge in graph.grouping_edges() {
+        if let GroupingEvidence::ComposeOwnership { project } = edge.evidence() {
+            let members = projects.entry(project.clone()).or_default();
+            members.insert(edge.left().clone());
+            members.insert(edge.right().clone());
+        }
+    }
+    projects
+        .into_iter()
+        .map(|(project, mut members)| {
+            for component in native {
+                if component.iter().any(|member| members.contains(member)) {
+                    members.extend(component.iter().cloned());
+                }
+            }
+            (project, members.into_iter().collect())
+        })
+        .collect()
+}
+
+fn automatic_podman_choice(candidates: &[Vec<ResourceIdentity>], answer: Option<&str>) -> io::Result<usize> {
+    match candidates.len() {
+        0 => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no container or pod application was found on this Podman connection; check the selected socket or use --podman-resource KIND=REFERENCE",
+        )),
+        1 if answer.is_none() => Ok(0),
+        count => match answer {
+            Some(answer) => answer
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|number| (1..=count).contains(number))
+                .map(|number| number - 1)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "invalid application choice; supply an exact --podman-resource container=NAME or pod=NAME",
+                    )
+                }),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{count} distinct Podman applications were found; supply --podman-resource container=NAME or pod=NAME (or explicitly use --podman-all)"
+                ),
+            )),
+        },
+    }
+}
+
+fn choose_automatic_podman_candidate(
+    arguments: &GenericConversion,
+    candidates: &[Vec<ResourceIdentity>],
+    advisory: &[(String, Vec<ResourceIdentity>)],
+) -> io::Result<(Vec<ResourceIdentity>, bool)> {
+    if candidates.len() <= 1 {
+        return automatic_podman_choice(candidates, None).map(|index| (candidates[index].clone(), false));
+    }
+    if arguments.presentation.quiet
+        || arguments.presentation.console_format.is_some()
+        || !io::stdin().is_terminal()
+        || !io::stderr().is_terminal()
+    {
+        return automatic_podman_choice(candidates, None).map(|index| (candidates[index].clone(), false));
+    }
+    // A native component that would be enlarged by advisory grouping is not an honest
+    // standalone choice under the current PodmanLens discovery contract.
+    let mut choices = candidates
+        .iter()
+        .filter(|component| {
+            !advisory.iter().any(|(_, group)| {
+                group.len() > component.len() && component.iter().all(|member| group.contains(member))
+            })
+        })
+        .map(|component| (component.clone(), None))
+        .collect::<Vec<_>>();
+    choices.extend(
+        advisory
+            .iter()
+            .map(|(project, members)| (members.clone(), Some(project.clone()))),
+    );
+    if !bounded_podman_choice_count(choices.len()) {
+        return automatic_podman_choice(candidates, None).map(|index| (candidates[index].clone(), false));
+    }
+    eprintln!("Choose one Podman application; Compose project groups require explicit consent:");
+    for (index, (component, project)) in choices.iter().enumerate() {
+        if project.is_some() {
+            let examples = component
+                .iter()
+                .take(2)
+                .map(podman_display_identity)
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "  {}. Compose-labelled group ({} members; advisory evidence; examples: {examples})",
+                index + 1,
+                component.len()
+            );
+            continue;
+        }
+        let label = component
+            .iter()
+            .find(|identity| identity.kind() == PodmanResourceKind::Pod)
+            .or_else(|| component.first())
+            .map_or("unnamed", |identity| identity.name().unwrap_or(identity.id()));
+        let safe_label = label
+            .chars()
+            .filter(char::is_ascii_graphic)
+            .take(80)
+            .collect::<String>();
+        eprintln!("  {}. {} ({} native members)", index + 1, safe_label, component.len());
+    }
+    eprint!("Choice [1-{}]: ", choices.len());
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    let bytes = io::BufReader::new(io::stdin().lock().take(32)).read_line(&mut answer)?;
+    if bytes == 32 && !answer.ends_with('\n') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "application choice is too long",
+        ));
+    }
+    let indexes = choices.iter().map(|(members, _)| members.clone()).collect::<Vec<_>>();
+    let index = automatic_podman_choice(&indexes, Some(&answer))?;
+    let (members, project) = choices.remove(index);
+    Ok((members, project.is_some()))
+}
+
+fn bounded_podman_choice_count(count: usize) -> bool {
+    (1..=20).contains(&count)
+}
+
+fn print_podman_selection(arguments: &GenericConversion, graph: &ResourceGraph) {
+    if arguments.presentation.quiet || arguments.presentation.console_format.is_some() {
+        return;
+    }
+    println!(
+        "Podman selection: {} root(s), {} discovered group(s), {} shared prerequisite(s)",
+        graph.resolved_roots().len(),
+        graph.groups().len(),
+        graph.shared_prerequisites().len()
+    );
+    for identity in graph.resolved_roots().iter().take(8) {
+        println!("  selected {}", podman_display_identity(identity));
+    }
+    if graph.resolved_roots().len() > 8 {
+        println!("  ... and {} more roots", graph.resolved_roots().len() - 8);
+    }
+    for group in graph.groups().iter().take(8) {
+        println!(
+            "  group {}: {} member(s), {} prerequisite(s)",
+            podman_display_identity(group.id()),
+            group.members().len(),
+            group.prerequisites().len()
+        );
+        for member in group.members().iter().take(8) {
+            println!("    member {}", podman_display_identity(member));
+        }
+        if group.members().len() > 8 {
+            println!("    ... and {} more members", group.members().len() - 8);
+        }
+        for prerequisite in group.prerequisites().iter().take(4) {
+            println!("    prerequisite {}", podman_display_identity(prerequisite));
+        }
+        if group.prerequisites().len() > 4 {
+            println!("    ... and {} more prerequisites", group.prerequisites().len() - 4);
+        }
+    }
+    if graph.groups().len() > 8 {
+        println!("  ... and {} more groups", graph.groups().len() - 8);
+    }
+    let stopped = graph
+        .explanations()
+        .iter()
+        .filter(|explanation| {
+            matches!(
+                explanation.kind(),
+                boxferry::podman::podman_lens::DiscoveryExplanationKind::StoppedSharedBoundary
+            )
+        })
+        .collect::<Vec<_>>();
+    println!(
+        "Podman boundaries: {} shared boundary/boundaries stopped; {} network override(s) requested. Review external resources before using output.",
+        stopped.len(),
+        arguments.podman_network_boundaries.len()
+    );
+    for explanation in stopped.iter().take(8) {
+        let related = explanation.related().map_or_else(String::new, |identity| {
+            format!(" (related {})", podman_display_identity(identity))
+        });
+        println!(
+            "  stopped at {}{related}",
+            podman_display_identity(explanation.resource())
+        );
+    }
+    if stopped.len() > 8 {
+        println!("  ... and {} more stopped boundaries", stopped.len() - 8);
+    }
+}
+
+fn podman_display_identity(identity: &ResourceIdentity) -> String {
+    let label = identity.name().unwrap_or(identity.id());
+    let safe_label = label
+        .chars()
+        .filter(char::is_ascii_graphic)
+        .take(80)
+        .collect::<String>();
+    format!("{:?}: {safe_label}", identity.kind())
 }
 
 #[derive(Clone, Debug)]
@@ -2508,17 +2787,6 @@ fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io
             }
         }
     }
-    if matches!(route.input, InputType::Podman)
-        && !arguments.podman_all
-        && arguments.podman_resources.is_empty()
-        && arguments.podman_resource_prefixes.is_empty()
-        && arguments.podman_labels.is_empty()
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Podman input requires --podman-all, --podman-resource, --podman-resource-prefix, or --podman-label",
-        ));
-    }
     if arguments.include_podman_snapshot && !matches!(route.input, InputType::Podman) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -2586,16 +2854,6 @@ async fn generic_podman_convert(
 > {
     let discovered = Vec::new();
     let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
-    let application_name = derive_podman_application_name(arguments).map_err(|error| {
-        post_discovery_failure(
-            FailedStage::InputDiscovery,
-            RuleId::PodmanSourceInvalid,
-            "Podman application name is invalid",
-            &error,
-            &aliases,
-            &discovered,
-        )
-    })?;
     let socket = resolve_podman_socket(arguments.podman_socket.as_deref()).map_err(|error| {
         post_discovery_failure(
             FailedStage::InputDiscovery,
@@ -2606,13 +2864,17 @@ async fn generic_podman_convert(
             &discovered,
         )
     })?;
-    if arguments.podman_socket.is_none()
-        && arguments.presentation.verbose
-        && !arguments.presentation.quiet
-        && !matches!(arguments.presentation.console_format, Some(ConsoleFormat::Json))
-    {
-        println!("selected local Podman socket: {}", socket.display());
-    }
+    let context = if arguments.podman_socket.is_some() {
+        "explicit local Unix socket"
+    } else if socket == Path::new("/run/podman/podman.sock") {
+        "rootful local service"
+    } else {
+        "rootless local service"
+    };
+    print_human_progress(
+        arguments,
+        &format!("Podman connection: {context} ({})", socket.display()),
+    );
     aliases.add_path(&socket, "<podman-socket>");
     let connection = UnixConnection::new(&socket).map_err(|error| {
         post_discovery_failure(
@@ -2703,36 +2965,152 @@ async fn generic_podman_convert(
             )
         })?;
     }
-    let promotion = boxferry::PodmanPromotionPolicy::conservative()
-        .with_effective_bind_mounts(arguments.promote_podman_effective_bind_mounts)
-        .with_portable_effective_settings(arguments.promote_podman_portable_effective_settings)
-        .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
-        .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
-    print_human_progress(arguments, "Podman input: acquiring the selected read-only inventory...");
-    let source = acquire_podman_source(
-        application_name.clone(),
-        &transport,
-        if arguments.promote_podman_portable_effective_settings
-            && arguments.environment_values == EnvironmentValuePolicy::Include
-        {
-            AcquisitionOptions::include_environment_values()
-        } else {
-            AcquisitionOptions::redacted()
-        },
-        &request,
-        promotion,
-    )
-    .await
-    .map_err(|error| {
+    let acquisition = if arguments.promote_podman_portable_effective_settings
+        && arguments.environment_values == EnvironmentValuePolicy::Include
+    {
+        AcquisitionOptions::include_environment_values()
+    } else {
+        AcquisitionOptions::redacted()
+    };
+    print_human_progress(arguments, "Podman input: acquiring a read-only inventory...");
+    let inventory = acquire_inventory(&transport, acquisition).await.map_err(|error| {
         post_discovery_failure(
             FailedStage::InputDiscovery,
             RuleId::PodmanSourceInvalid,
-            "Podman read-only acquisition or discovery failed",
+            "Podman read-only acquisition failed",
             &error,
             &aliases,
             &discovered,
         )
     })?;
+    let automatic = !arguments.podman_all
+        && arguments.podman_resources.is_empty()
+        && arguments.podman_resource_prefixes.is_empty()
+        && arguments.podman_labels.is_empty();
+    let mut inferred_name = None;
+    let mut automatic_members = None;
+    if automatic {
+        let mut all = DiscoveryRequest::new();
+        all.select_all();
+        let possibilities = discover(&inventory, &all).map_err(|error| {
+            post_discovery_failure(
+                FailedStage::InputDiscovery,
+                RuleId::PodmanSourceInvalid,
+                "Podman application discovery failed",
+                &error,
+                &aliases,
+                &discovered,
+            )
+        })?;
+        let candidates = automatic_podman_candidates(&possibilities);
+        let advisory = advisory_podman_groups(&possibilities, &candidates);
+        let (selected, advisory_group) =
+            choose_automatic_podman_candidate(arguments, &candidates, &advisory).map_err(|error| {
+                post_discovery_failure(
+                    FailedStage::InputDiscovery,
+                    RuleId::PodmanSourceInvalid,
+                    "Podman application selection needs attention",
+                    &error,
+                    &aliases,
+                    &discovered,
+                )
+            })?;
+        automatic_members = Some(selected.iter().cloned().collect::<BTreeSet<_>>());
+        inferred_name = (!advisory_group)
+            .then(|| {
+                selected
+                    .iter()
+                    .find(|identity| identity.kind() == PodmanResourceKind::Pod)
+                    .or_else(|| selected.first())
+                    .and_then(ResourceIdentity::name)
+                    .map(str::to_owned)
+            })
+            .flatten();
+        for identity in &selected {
+            request.add_root(
+                ResourceSelector::exact(identity.kind(), identity.id()).map_err(|error| {
+                    post_discovery_failure(
+                        FailedStage::InputDiscovery,
+                        RuleId::PodmanSourceInvalid,
+                        "Podman automatically selected resource is invalid",
+                        &error,
+                        &aliases,
+                        &discovered,
+                    )
+                })?,
+            );
+        }
+    }
+    let application_name = arguments
+        .application_name
+        .as_deref()
+        .or(inferred_name.as_deref())
+        .map_or_else(|| derive_podman_application_name(arguments), Identifier::new)
+        .map_err(|error| {
+            post_discovery_failure(
+                FailedStage::InputDiscovery,
+                RuleId::PodmanSourceInvalid,
+                "Podman application name is invalid",
+                &error,
+                &aliases,
+                &discovered,
+            )
+        })?;
+    let promotion = boxferry::PodmanPromotionPolicy::conservative()
+        .with_effective_bind_mounts(arguments.promote_podman_effective_bind_mounts)
+        .with_portable_effective_settings(arguments.promote_podman_portable_effective_settings)
+        .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
+        .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
+    let graph = discover(&inventory, &request).map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::PodmanSourceInvalid,
+            "Podman resource discovery failed",
+            &error,
+            &aliases,
+            &discovered,
+        )
+    })?;
+    if let Some(expected) = &automatic_members {
+        let enlarged = graph
+            .groups()
+            .iter()
+            .flat_map(boxferry::podman::podman_lens::ResourceGroup::members)
+            .any(|identity| {
+                matches!(identity.kind(), PodmanResourceKind::Container | PodmanResourceKind::Pod)
+                    && !expected.contains(identity)
+            });
+        if enlarged {
+            let error = io::Error::new(
+                io::ErrorKind::InvalidData,
+                "advisory grouping would enlarge the automatic Podman application; review exact native roots or explicitly use --podman-all",
+            );
+            return Err(post_discovery_failure(
+                FailedStage::InputDiscovery,
+                RuleId::PodmanSourceInvalid,
+                "Podman automatic selection crossed an untrusted grouping boundary",
+                &error,
+                &aliases,
+                &discovered,
+            ));
+        }
+    }
+    if graph.resolved_roots().is_empty() {
+        let error = io::Error::new(
+            io::ErrorKind::NotFound,
+            "no Podman resource matched the requested selection; check the exact name or ID and selected socket",
+        );
+        return Err(post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::PodmanSourceInvalid,
+            "Podman selection matched no resources",
+            &error,
+            &aliases,
+            &discovered,
+        ));
+    }
+    print_podman_selection(arguments, &graph);
+    let source = PodmanSource::new(application_name.clone(), inventory, graph).with_promotion_policy(promotion);
     let support_evidence = arguments.include_podman_snapshot.then(|| {
         print_support_bundle_progress(arguments, "preparing the bounded redacted Podman snapshot");
         podman_support_evidence(&source)
@@ -2767,14 +3145,14 @@ async fn generic_podman_convert(
     })
 }
 
-fn podman_support_evidence(source: &boxferry::PodmanSource) -> PodmanSupportEvidence {
+fn podman_support_evidence(source: &PodmanSource) -> PodmanSupportEvidence {
     match try_podman_support_evidence(source) {
         Ok(evidence) => evidence,
         Err(error) => PodmanSupportEvidence::omitted(&error),
     }
 }
 
-fn try_podman_support_evidence(source: &boxferry::PodmanSource) -> io::Result<PodmanSupportEvidence> {
+fn try_podman_support_evidence(source: &PodmanSource) -> io::Result<PodmanSupportEvidence> {
     let inventory = serialize_bounded_json("podman-inventory-v1.json", &source.redacted_inventory_snapshot())?;
     let inventory_value: serde_json::Value = serde_json::from_slice(&inventory).map_err(io::Error::other)?;
     let mut findings = Vec::new();
@@ -5687,6 +6065,44 @@ mod tests {
         project::{ProjectValue, build_project_view},
     };
     use boxferry::{Provenance, Service, ServiceGroup, Sourced};
+
+    #[test]
+    fn automatic_podman_choice_never_expands_ambiguous_or_empty_selection() {
+        assert!(matches!(
+            automatic_podman_choice(&[], None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound
+        ));
+        assert!(matches!(automatic_podman_choice(&[vec![]], None), Ok(0)));
+        assert!(matches!(automatic_podman_choice(&[vec![]], Some("1\n")), Ok(0)));
+        for answer in ["", "\n", "0", "2", "yes", "1 2"] {
+            assert!(automatic_podman_choice(&[vec![]], Some(answer)).is_err(), "{answer:?}");
+        }
+        let two = [vec![], vec![]];
+        assert!(matches!(
+            automatic_podman_choice(&two, None),
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput
+        ));
+        assert!(matches!(automatic_podman_choice(&two, Some("2\n")), Ok(1)));
+        for answer in ["", "0", "3", "all", "1 2"] {
+            assert!(automatic_podman_choice(&two, Some(answer)).is_err(), "{answer:?}");
+        }
+        assert!(bounded_podman_choice_count(1));
+        assert!(bounded_podman_choice_count(2));
+        assert!(bounded_podman_choice_count(20));
+        assert!(!bounded_podman_choice_count(0));
+        assert!(!bounded_podman_choice_count(21));
+    }
+
+    #[test]
+    fn bare_podman_resource_is_an_exact_container_not_a_name_or_label_group() -> Result<(), Box<dyn Error>> {
+        let bare: PodmanResourceInput = "web".parse()?;
+        assert_eq!(bare.kind, PodmanResourceKind::Container);
+        assert_eq!(bare.reference, "web");
+        let explicit: PodmanResourceInput = "pod=web".parse()?;
+        assert_eq!(explicit.kind, PodmanResourceKind::Pod);
+        assert!("web*".parse::<PodmanResourceInput>().is_err());
+        Ok(())
+    }
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     fn fixed_error_report_time() -> io::Result<Zoned> {
@@ -5751,13 +6167,7 @@ mod tests {
             "unknown",
         ])?;
         podman.podman_all = false;
-        let Err(error) = validate_route(&podman, &[]) else {
-            return Err(io::Error::other("Podman input without a selector was accepted").into());
-        };
-        assert_eq!(
-            error.to_string(),
-            "Podman input requires --podman-all, --podman-resource, --podman-resource-prefix, or --podman-label"
-        );
+        validate_route(&podman, &[])?;
         Ok(())
     }
 
@@ -6096,7 +6506,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn stale_rootless_socket_falls_back_to_a_connectable_rootful_candidate() -> io::Result<()> {
+    fn stale_rootless_socket_does_not_silently_fall_back_to_rootful() -> io::Result<()> {
         use std::os::unix::net::UnixListener;
 
         let directory = loop {
@@ -6118,15 +6528,16 @@ mod tests {
         let listener = UnixListener::bind(&active)?;
         fs::write(&regular, "not a socket")?;
 
+        assert!(first_local_podman_socket(&[regular.clone(), stale.clone(), active.clone()]).is_err());
+        fs::remove_file(&stale)?;
         assert_eq!(
-            first_local_podman_socket(&[regular.clone(), stale.clone(), active.clone()]),
+            first_local_podman_socket(&[regular.clone(), active.clone()])?,
             Some(active.clone())
         );
 
         drop(listener);
-        assert_eq!(first_local_podman_socket(std::slice::from_ref(&active)), None);
+        assert!(first_local_podman_socket(std::slice::from_ref(&active)).is_err());
         fs::remove_file(regular)?;
-        fs::remove_file(stale)?;
         fs::remove_file(active)?;
         fs::remove_dir(directory)
     }
@@ -6295,7 +6706,7 @@ mod tests {
         fs::remove_dir(path)
     }
     #[test]
-    fn podman_input_requires_explicit_selector() {
+    fn podman_input_accepts_automatic_or_explicit_selector() {
         let missing = Cli::try_parse_from([
             "boxferry",
             "validate",
@@ -6306,7 +6717,7 @@ mod tests {
             "--application-name",
             "example",
         ]);
-        assert!(missing.is_err());
+        assert!(missing.is_ok());
 
         let selected = Cli::try_parse_from([
             "boxferry",
@@ -6330,6 +6741,16 @@ mod tests {
             "container=example",
         ]);
         assert!(exact_resource.is_ok());
+
+        let wrong_kind_alias = Cli::try_parse_from([
+            "boxferry",
+            "validate",
+            "podman",
+            "compose",
+            "--podman-container",
+            "pod=web",
+        ]);
+        assert!(wrong_kind_alias.is_err());
 
         let prefix = Cli::try_parse_from([
             "boxferry",
@@ -6379,7 +6800,7 @@ mod tests {
             (vec!["--podman-resource-prefix", "container=web-"], "web-"),
             (
                 vec!["--podman-label", "io.example.application=production"],
-                "production",
+                "podman-import",
             ),
             (vec!["--podman-label", "io.example.application"], "podman-import"),
             (vec!["--podman-all"], "podman-import"),

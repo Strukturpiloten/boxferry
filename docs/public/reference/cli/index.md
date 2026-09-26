@@ -39,7 +39,7 @@ Use route-specific `--help`; it shows only applicable options.
 | `--env NAME`                                   | Interpolated Compose  | Authorize one sensitive process value.                                                                                                                 |
 | `--podman-socket PATH`                         | Podman input          | Override local rootless-first socket discovery.                                                                                                        |
 | `--podman-all`                                 | Podman input          | Select all eligible application roots.                                                                                                                 |
-| `--podman-resource KIND=REFERENCE`             | Podman input          | Add an exact resource root; kinds: container, image, network, pod, secret, volume.                                                                     |
+| `--podman-resource [KIND=]REFERENCE`           | Podman input          | Add an exact resource root; bare references select containers; kinds: container, image, network, pod, secret, volume.                                  |
 | `--podman-resource-prefix KIND=PREFIX`         | Podman input          | Add a literal name-prefix root using the same kinds.                                                                                                   |
 | `--podman-label NAME[=VALUE]`                  | Podman input          | Add a label root; repeat as needed.                                                                                                                    |
 | `--podman-network-boundary NAME_OR_ID`         | Podman input          | Authorize one explicit network crossing; repeatable.                                                                                                   |
@@ -63,14 +63,18 @@ container addresses and local-resolution facts remain structured, non-actionable
 than portable-intent losses.
 
 BoxFerry does not read an implicit `.env` file or the complete process environment.
-Podman input requires one selector form: `--podman-all`, `--podman-resource`,
-`--podman-resource-prefix`, or `--podman-label`.
+Podman input with no selector chooses the only native-evidenced container/pod application. Multiple
+applications require a bounded terminal choice, including explicit consent for any complete
+Compose-project group offered, or an explicit selector; noninteractive ambiguity
+and an empty inventory fail without selecting all. Only `--podman-all` requests every eligible root.
 Without `--podman-socket`, it checks only `/run/user/<current-uid>/podman/podman.sock` and then
 `/run/podman/podman.sock`. Without `--application-name`, it derives a neutral name from the only
-non-ID exact resource, only literal prefix, or one exact label value; otherwise it uses
-`podman-import`. Exact selectors reject globs, regular expressions, and partial IDs. Prefix
-selectors match literal names only. Acquisition is bounded and read-only; BoxFerry never invokes
-the `podman` executable.
+non-ID exact resource or only literal prefix; otherwise it uses `podman-import`. An automatically
+selected native application uses its native name when valid, but advisory Compose label values
+never supply output names. Naming never selects resources. Exact selectors reject globs, regular
+expressions, and partial IDs. Prefix
+selectors match literal names only. Human output identifies the selected endpoint and graph before
+artifacts. Acquisition is bounded and read-only; BoxFerry never invokes the `podman` executable.
 
 ## Output options
 

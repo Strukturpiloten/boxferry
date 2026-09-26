@@ -6,17 +6,30 @@ local service sockets, in this order: `/run/user/<current-uid>/podman/podman.soc
 `/run/podman/podman.sock`. It never reads Podman connection configuration, contacts a remote host,
 or scans arbitrary paths.
 
-Every Podman input route requires at least one root selector:
+With no selector, BoxFerry reads the local inventory and identifies applications from native pod
+membership and container dependencies. One application is selected automatically. If there are
+several, an interactive terminal offers at most 20 numbered choices, including a complete
+Compose-project group only with explicit consent; noninteractive use fails with an actionable error
+and selects nothing. An empty inventory also fails. Complete Compose ownership labels are advisory
+and never join applications for an automatic choice. A custom or remote socket
+must be supplied explicitly; BoxFerry never starts a service or escalates privileges.
+
+For exact control, choose a selector:
 
 - `--podman-all`;
-- repeatable `--podman-resource KIND=REFERENCE`; or
+- repeatable `--podman-resource REFERENCE` (container) or `KIND=REFERENCE`; or
 - repeatable `--podman-resource-prefix KIND=PREFIX`; or
 - repeatable `--podman-label NAME[=VALUE]`.
 
 `KIND` is one of `container`, `image`, `network`, `pod`, `secret`, or `volume`. An exact selector
 accepts one native name, complete ID, or image alias. A prefix selector accepts one literal name
 prefix. Selector forms may be combined, and repeatable forms may be supplied more than once to add
-roots. Globs, regular expressions, and partial IDs are rejected.
+roots. Globs, regular expressions, and partial IDs are rejected. `--podman-all` is the only way to
+request every eligible root; neither an ambiguous choice nor `--application-name` implies it.
+
+For a noninteractive Compose project migration,
+`--podman-label com.docker.compose.project=PROJECT` explicitly authorizes that label selection.
+Review the printed members: consistent labels remain advisory evidence.
 
 <!-- boxferry-example: podman-input-prefix -->
 
@@ -24,13 +37,15 @@ roots. Globs, regular expressions, and partial IDs are rejected.
 boxferry validate podman compose --podman-socket /run/user/1000/podman/podman.sock --podman-resource-prefix container=obs --loss-policy partial
 ```
 
-`--application-name NAME` is optional. Without it, BoxFerry uses the only non-ID exact resource
-name, the only prefix, or the value from one exact `NAME=VALUE` label selector. Ambiguous selectors,
-full IDs, name-only labels, and `--podman-all` use `podman-import`. Set an explicit name when output
-names must remain stable.
+`--application-name NAME` controls output naming only, never application selection. Without it,
+BoxFerry uses the selected native pod or container name when available. An explicitly selected
+container or prefix may also provide a neutral name. Label values never supply output names;
+otherwise the name is `podman-import`. Set `--application-name` when output names must remain stable.
 
-For a conventional local service, omit both `--podman-socket` and `--application-name`. Keep the
-socket override for nonstandard paths and remote integrations supplied by an embedding caller.
+For a conventional local service, omit both `--podman-socket` and `--application-name`. Human output
+shows the selected rootless or rootful endpoint, selected graph, and stopped shared boundaries before
+artifacts are written. Keep the socket override for nonstandard paths; the CLI never probes remote
+connection configuration.
 
 Add repeatable `--podman-network-boundary NAME_OR_ID` only when discovery may cross that named
 network boundary. The selected inventory and discovered resource graph pass through
