@@ -19,6 +19,8 @@ source "${script_directory}/lib/podman-live-outer-storage.sh"
 engine=podman
 image=$1
 run_id="bf342-$(date -u +%Y%m%dt%H%M%Sz)-$$-${RANDOM}"
+printf 'Native storage probe host=%s rootless=%s image=%s\n' \
+  "$(podman --version)" "$(podman info --format '{{.Host.Security.Rootless}}')" "${image}"
 declare -a outer_containers=()
 baseline_volumes="$(timeout --signal=TERM --kill-after=10s 30s \
   "${engine}" volume ls --format '{{.Name}}' | sort)"

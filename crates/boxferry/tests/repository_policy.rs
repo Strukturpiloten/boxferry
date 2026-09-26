@@ -4766,6 +4766,49 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     if !hosted.contains("sudo apt-get install --yes libcap2-bin podman") {
         return Err("hosted Podman workflow must install the capability inspection tool".to_owned());
     }
+    validate_live_cleanup_workflow(hosted)?;
+    Ok(())
+}
+
+fn validate_live_cleanup_workflow(hosted: &str) -> Result<(), String> {
+    let cleanup_job = hosted
+        .split("\n  cleanup-regression:\n")
+        .nth(1)
+        .and_then(|remainder| remainder.split("\n  application:\n").next())
+        .ok_or("hosted cleanup job must precede the application job")?;
+    if !cleanup_job.contains("run: chmod +x target/debug/boxferry") {
+        return Err("hosted cleanup job must restore downloaded binary permissions".to_owned());
+    }
+    for required in [
+        "- cleanup-regression",
+        "expected_sha:",
+        "admit-cleanup:",
+        "[[ \"${GITHUB_REPOSITORY}\" == Strukturpiloten/boxferry ]]",
+        "[[ \"${EXPECTED_SHA}\" == \"${GITHUB_SHA}\" ]]",
+        "needs.matrix.outputs.profile != 'cleanup-regression'",
+        "needs: [admit-cleanup, build-boxferry]",
+        "if: github.event_name == 'workflow_dispatch' && inputs.profile == 'cleanup-regression'",
+        "ref: ${{ github.sha }}",
+        "[[ \"$(git rev-parse HEAD)\" == \"${EXPECTED_SHA}\" ]]",
+        "bash scripts/test-podman-live-outer-storage-hosted.sh",
+    ] {
+        if !hosted.contains(required) {
+            return Err(format!("hosted cleanup workflow is missing `{required}`"));
+        }
+    }
+    let probe = fs::read_to_string(repository_root().join("scripts/test-podman-live-outer-storage-hosted.sh"))
+        .map_err(|error| format!("failed to read hosted storage probe: {error}"))?;
+    for required in [
+        "fixtures/conformance/podman-live/matrix.tsv",
+        "for iteration in 1 2; do",
+        "--profile smoke --matrix-cell \"${cell}\" --engine podman",
+        "sudo podman volume ls",
+        "test-podman-live-outer-storage-native.sh",
+    ] {
+        if !probe.contains(required) {
+            return Err(format!("hosted storage probe is missing `{required}`"));
+        }
+    }
     Ok(())
 }
 

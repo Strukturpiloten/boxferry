@@ -40,3 +40,16 @@ make a future explicit recovery tool possible, but this runner does not silently
 resources at startup. A volume manager that creates an object despite a failed create command
 without preserving its requested label cannot be safely identified; such a failure requires
 manual evidence review. Historical storage remains untouched.
+
+## Exact-candidate hosted evidence
+
+The manual `cleanup-regression` dispatch is a bounded check for changes to the outer storage
+lifecycle. Supply the reviewed branch with `--ref` and its 40-character commit as `expected_sha`;
+admission refuses a different event commit. On disposable hosted runners it repeats each reviewed
+6.1 rootful/rootless nested smoke cell twice on one rootful host store, checking that volume
+identities and run-owned containers/volumes return to baseline after each repetition. It also runs
+the image-volume removal probe in both rootful and rootless host Podman stores. Logs identify host
+version and mode, image digest, binary digest, run ID, and attempt. Pull request events cannot
+trigger this privileged job; it neither publishes nor deploys and cannot replace the complete
+release gate. The probe cannot establish trap cleanup after SIGKILL or power loss and does not
+touch historical unlabelled volumes.
