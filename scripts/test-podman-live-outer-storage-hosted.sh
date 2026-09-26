@@ -32,6 +32,15 @@ image="$(awk -F '\t' -v selected="${cell}" '$1 == selected { print $2 }' \
 sha256sum "${binary}"
 printf 'Exact candidate: %s; hosted run: %s/%s; reviewed image: %s\n' \
   "${GITHUB_SHA:-local}" "${GITHUB_RUN_ID:-local}" "${GITHUB_RUN_ATTEMPT:-1}" "${image}"
+if [[ "${cell}" == podman-6.1-rootless ]]; then
+  # Prove the user store before privileged Podman can touch the runner's
+  # default /run/user/<uid>/crun directory.
+  rootless_mode="$(podman info --format '{{.Host.Security.Rootless}}')"
+  printf 'Rootless host Podman: %s; rootless=%s\n' "$(podman --version)" "${rootless_mode}"
+  [[ "${rootless_mode}" == true ]]
+  podman pull "${image}"
+  bash scripts/test-podman-live-outer-storage-native.sh "${image}"
+fi
 rootful_mode="$(sudo podman info --format '{{.Host.Security.Rootless}}')"
 printf 'Rootful host Podman: %s; rootless=%s\n' "$(sudo podman --version)" "${rootful_mode}"
 [[ "${rootful_mode}" == false ]]
@@ -56,10 +65,3 @@ for iteration in 1 2; do
 done
 
 sudo bash scripts/test-podman-live-outer-storage-native.sh "${image}"
-if [[ "${cell}" == podman-6.1-rootless ]]; then
-  rootless_mode="$(podman info --format '{{.Host.Security.Rootless}}')"
-  printf 'Rootless host Podman: %s; rootless=%s\n' "$(podman --version)" "${rootless_mode}"
-  [[ "${rootless_mode}" == true ]]
-  podman pull "${image}"
-  bash scripts/test-podman-live-outer-storage-native.sh "${image}"
-fi

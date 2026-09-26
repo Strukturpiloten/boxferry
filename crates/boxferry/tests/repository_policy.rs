@@ -4809,6 +4809,11 @@ fn validate_live_cleanup_workflow(hosted: &str) -> Result<(), String> {
             return Err(format!("hosted storage probe is missing `{required}`"));
         }
     }
+    let rootless_probe = probe.find("rootless_mode=").ok_or("missing rootless host probe")?;
+    let privileged_probe = probe.find("rootful_mode=").ok_or("missing privileged host probe")?;
+    if rootless_probe >= privileged_probe {
+        return Err("rootless host probe must run before privileged Podman changes runner runtime state".to_owned());
+    }
     Ok(())
 }
 
