@@ -38,7 +38,7 @@ pull or start images.
 <!-- boxferry-example: compose-to-quadlet -->
 
 ```console
-boxferry convert compose quadlet --input-file compose.yaml --output-directory quadlet-output
+boxferry convert compose quadlet --output-directory quadlet-output
 ```
 
 Success ends with:
@@ -55,6 +55,8 @@ quadlet-output/
 ```
 
 BoxFerry never starts the unit. Review the generated file before installing it.
+With no input selector, BoxFerry reads the sole conventional Compose file in the current directory
+and reports which file it selected. This imports an authored definition, not a deployed service.
 
 ## Next
 

@@ -57,6 +57,16 @@ unsupported omissions and exporter approximations still need an explicit loss-po
 | `--promote-podman-effective-named-volumes`      | Podman input          | Promote effective named volumes to desired state.                                                                                                      |
 | `--promote-podman-effective-named-networks`     | Podman input          | Promote effective named networks to desired state.                                                                                                     |
 
+With neither document selector, Compose `convert` and `validate` search only the current directory
+for exactly one regular, non-symlink `compose.yaml`, `compose.yml`, `podman-compose.yaml`,
+`podman-compose.yml`, `docker-compose.yaml`, or `docker-compose.yml`. Missing, colliding,
+unreadable, and non-regular candidates fail without an implicit choice. The selected document is
+shown in human output and aliased in JSON reports. Explicit file order remains deterministic;
+`--input-directory` selects the first regular file in the filename order above and reports ignored
+candidates. `--project-directory` does not change the
+search root. Compose input imports authored files, not deployed services; no `.env`, override,
+parent directory, or child directory is added implicitly.
+
 The portable-effective settings flag also covers typed network-internal, subnet, gateway,
 lease-range, IPv6-subnet, and standalone-container effective attachment-alias observations. Alias
 promotion additionally requires named-network promotion; runtime container-ID aliases never become

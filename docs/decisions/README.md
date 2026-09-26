@@ -56,6 +56,7 @@ active table; superseded records are history and are read only when that history
 | [0059](0059-podman-cli-evidence-based-application-selection.md) | Evidence-based local Podman application selection and bounded chooser |
 | [0060](0060-portable-podman-cli-import-policy.md) | Portable CLI reconstruction with separate source and target fidelity decisions |
 | [0061](0061-compose-interpolation-input-authorization.md) | Compose interpolation implied by supplied values and explicit process fallback |
+| [0062](0062-unambiguous-compose-cli-document-discovery.md) | Unambiguous current-directory Compose document discovery |
 
 ## Superseded history
 

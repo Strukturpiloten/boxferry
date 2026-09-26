@@ -7,6 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Discover a sole conventional Compose document from the current directory on `convert` and
+  `validate` when no input selector is supplied; reject collisions and unsafe candidates, and
+  report the selected document without reading `.env` ([#337](https://github.com/Strukturpiloten/boxferry/issues/337)).
+
 - [**breaking**] Reconstruct reviewed portable Podman application settings and named-resource
   relationships by default at the CLI, with `--podman-import-policy conservative` for evidence-only
   import. Keep exact loss policy and separate privacy authorization; report source reconstruction

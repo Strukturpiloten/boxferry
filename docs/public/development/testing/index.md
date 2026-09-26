@@ -38,6 +38,12 @@ ambiguous Quadlet inputs and unsupported Podman targets, exact-policy refusal ve
 approximation, and Compose interpolation implied by `--env-file`/`--env` with later-file and
 explicit-assignment precedence. Explicit same-host bind promotion checks each source, target,
 and read-only mode as one association rather than independent substring presence.
+The minimal Compose journeys also exercise current-directory discovery on `validate` and `convert`
+for Compose, Quadlet, and Podman output. They compare planned and written decisions, verify the
+selected input is reported without leaking its absolute path or an implicit `.env` value, and
+reject no-match and ambiguous modern/legacy filenames without writing output. Explicit
+`--input-file` remains the deterministic escape hatch. Podman output still needs an explicit
+target context until its separate default-alignment work lands.
 
 Measured on 2026-09-26 with Rust 1.98.1 on a 16-thread Linux host (62 GiB RAM),
 two Cargo jobs and one test thread: a fresh worktree-local target completed in
@@ -49,8 +55,8 @@ to bind local Unix sockets; a restricted sandbox can deny that operation.
 
 This command gives fast feedback while changing CLI behavior. It does not replace
 `./scripts/check-all.sh`, native conformance, or release validation. Extend the suite when
-the approved Quadlet target-default (#335), Compose discovery (#337), or Quadlet identity
-inference (#338) behavior lands; do not assert those pending contracts as current behavior.
+the approved Quadlet target-default (#335) or Quadlet identity inference (#338) behavior lands;
+do not assert those pending contracts as current behavior.
 
 ## Test layers
 

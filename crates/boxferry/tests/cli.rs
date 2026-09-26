@@ -256,6 +256,259 @@ fn generic_discovery_reports_ignored_candidates_in_verbose_mode() -> Result<(), 
 }
 
 #[test]
+fn compose_implicit_discovery_works_for_convert_and_validate_on_every_output_route() -> Result<(), Box<dyn Error>> {
+    let help = boxferry_command()
+        .args(["convert", "compose", "quadlet", "--help"])
+        .output()?;
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("searches the current directory"));
+
+    let project = TemporaryOutput::new("implicit-compose-routes");
+    fs::create_dir_all(project.path())?;
+    let selected = project.path().join("compose.yaml");
+    fs::write(
+        &selected,
+        "name: discovered\nservices:\n  web:\n    image: example.invalid/web:1\n",
+    )?;
+    fs::write(project.path().join(".env"), "PRIVATE_CANARY=do-not-read-this-value\n")?;
+    for output_type in ["compose", "quadlet", "podman"] {
+        let mut validation_command = boxferry_command();
+        validation_command
+            .current_dir(project.path())
+            .args(["validate", "compose", output_type]);
+        if output_type == "podman" {
+            validation_command.args(["--podman-target-context", "unknown"]);
+        }
+        let validation = validation_command.args(["--console-format", "json"]).output()?;
+        assert!(
+            validation.status.success(),
+            "{output_type}: {}",
+            String::from_utf8_lossy(&validation.stderr)
+        );
+        assert!(validation.stderr.is_empty());
+        let report: serde_json::Value = serde_json::from_slice(&validation.stdout)?;
+        assert_eq!(report["inputs"][0]["alias"], "<input-1>");
+        assert_eq!(report["inputs"][0]["kind"], "discovered");
+        assert_eq!(report["discovery"][0]["selected"], "<input-1>");
+        assert_eq!(report["inputs"].as_array().map(Vec::len), Some(1));
+        let json = String::from_utf8(validation.stdout)?;
+        assert!(!json.contains(path_text(project.path())?));
+        assert!(!json.contains("do-not-read-this-value"));
+
+        let output = project.path().join(format!("output-{output_type}"));
+        let mut conversion_command = boxferry_command();
+        conversion_command
+            .current_dir(project.path())
+            .args(["convert", "compose", output_type]);
+        if output_type == "podman" {
+            conversion_command.args(["--podman-target-context", "unknown"]);
+        }
+        let conversion = conversion_command
+            .args(["--output-directory", path_text(&output)?])
+            .output()?;
+        assert!(
+            conversion.status.success(),
+            "{output_type}: {}",
+            String::from_utf8_lossy(&conversion.stderr)
+        );
+        let stdout = String::from_utf8(conversion.stdout)?;
+        assert!(stdout.contains(&format!("input: {}", selected.display())));
+        assert!(!stdout.contains("do-not-read-this-value"));
+        assert!(
+            fs::read_dir(&output)?.next().is_some(),
+            "{output_type} produced no artifact"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn compose_implicit_discovery_rejects_collisions_and_preserves_explicit_selection() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("implicit-compose-collision");
+    fs::create_dir_all(project.path())?;
+    let selected = project.path().join("compose.yaml");
+    fs::write(
+        &selected,
+        "name: selected\nservices:\n  web:\n    image: example.invalid/web:1\n",
+    )?;
+    fs::write(
+        project.path().join("compose.yml"),
+        "name: other\nservices:\n  other:\n    image: example.invalid/other:1\n",
+    )?;
+    let output = project.path().join("blocked-output");
+    let implicit = boxferry_command()
+        .current_dir(project.path())
+        .args([
+            "convert",
+            "compose",
+            "quadlet",
+            "--output-directory",
+            path_text(&output)?,
+        ])
+        .output()?;
+    assert_eq!(implicit.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&implicit.stderr).contains("multiple conventional Compose files"));
+    assert!(!output.exists());
+    let json_failure = boxferry_command()
+        .current_dir(project.path())
+        .args(["validate", "compose", "quadlet", "--console-format", "json"])
+        .output()?;
+    assert_eq!(json_failure.status.code(), Some(1));
+    assert!(json_failure.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&json_failure.stdout)?;
+    assert_eq!(report["failed_stage"], "input-discovery");
+    assert!(!String::from_utf8(json_failure.stdout)?.contains(path_text(project.path())?));
+
+    let explicit = boxferry_command()
+        .current_dir(project.path())
+        .args([
+            "validate",
+            "compose",
+            "quadlet",
+            "--input-file",
+            "compose.yaml",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        explicit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&explicit.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&explicit.stdout)?;
+    assert_eq!(report["inputs"][0]["kind"], "file");
+    assert!(report["discovery"].as_array().is_some_and(Vec::is_empty));
+
+    let explicit_directory = boxferry_command()
+        .current_dir(project.path())
+        .args([
+            "validate",
+            "compose",
+            "quadlet",
+            "--input-directory",
+            ".",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        explicit_directory.status.success(),
+        "{}",
+        String::from_utf8_lossy(&explicit_directory.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&explicit_directory.stdout)?;
+    assert_eq!(report["discovery"][0]["ignored"].as_array().map(Vec::len), Some(1));
+
+    fs::remove_file(project.path().join("compose.yml"))?;
+    fs::write(
+        project.path().join("docker-compose.yaml"),
+        "name: legacy\nservices:\n  legacy:\n    image: example.invalid/legacy:1\n",
+    )?;
+    let legacy_collision = boxferry_command()
+        .current_dir(project.path())
+        .args(["validate", "compose", "compose"])
+        .output()?;
+    assert_eq!(legacy_collision.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&legacy_collision.stderr).contains("multiple conventional Compose files"));
+    Ok(())
+}
+
+#[test]
+fn compose_implicit_discovery_does_not_expand_search_or_overwrite_output() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("implicit-compose-boundaries");
+    fs::create_dir_all(project.path())?;
+    fs::create_dir(project.path().join("child"))?;
+    fs::write(
+        project.path().join("child/compose.yaml"),
+        "services:\n  web:\n    image: example.invalid/web:1\n",
+    )?;
+    fs::write(project.path().join(".env"), "CANARY=private\n")?;
+    let no_match = boxferry_command()
+        .current_dir(project.path())
+        .args(["validate", "compose", "compose", "--project-directory", "child"])
+        .output()?;
+    assert_eq!(no_match.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&no_match.stderr).contains("no conventional Compose file"));
+
+    fs::write(
+        project.path().join("compose.yaml"),
+        "services:\n  web:\n    image: example.invalid/web:1\n",
+    )?;
+    fs::remove_file(project.path().join("child/compose.yaml"))?;
+    let no_parent_search = boxferry_command()
+        .current_dir(project.path().join("child"))
+        .args(["validate", "compose", "compose"])
+        .output()?;
+    assert_eq!(no_parent_search.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&no_parent_search.stderr).contains("no conventional Compose file"));
+
+    let output = project.path().join("existing-output");
+    fs::create_dir(&output)?;
+    fs::write(output.join("keep.txt"), "user data")?;
+    let blocked = boxferry_command()
+        .current_dir(project.path())
+        .args([
+            "convert",
+            "compose",
+            "compose",
+            "--output-directory",
+            path_text(&output)?,
+        ])
+        .output()?;
+    assert!(!blocked.status.success());
+    assert_eq!(fs::read_to_string(output.join("keep.txt"))?, "user data");
+    assert!(!output.join("compose.yaml").exists());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn compose_implicit_discovery_rejects_symlinks_nonregular_and_unreadable_content() -> Result<(), Box<dyn Error>> {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let project = TemporaryOutput::new("implicit-compose-unsafe");
+    fs::create_dir_all(project.path())?;
+    let real = project.path().join("authored.yaml");
+    fs::write(&real, "services:\n  web:\n    image: example.invalid/web:1\n")?;
+    let conventional = project.path().join("compose.yaml");
+    symlink(&real, &conventional)?;
+    let run = || -> Result<Output, Box<dyn Error>> {
+        Ok(boxferry_command()
+            .current_dir(project.path())
+            .args(["validate", "compose", "compose"])
+            .output()?)
+    };
+    let linked = run()?;
+    assert_eq!(linked.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&linked.stderr).contains("non-symlink"));
+
+    fs::remove_file(&conventional)?;
+    fs::create_dir(&conventional)?;
+    let directory = run()?;
+    assert_eq!(directory.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&directory.stderr).contains("regular"));
+
+    fs::remove_dir(&conventional)?;
+    fs::write(&conventional, [0xff, 0xfe])?;
+    let invalid_utf8 = run()?;
+    assert_eq!(invalid_utf8.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&invalid_utf8.stdout).contains("stage: input read failed"));
+
+    fs::write(&conventional, "services:\n  web:\n    image: example.invalid/web:1\n")?;
+    fs::set_permissions(&conventional, fs::Permissions::from_mode(0o000))?;
+    let os_denies_open = fs::File::open(&conventional).is_err();
+    let inaccessible = run()?;
+    fs::set_permissions(&conventional, fs::Permissions::from_mode(0o600))?;
+    if os_denies_open {
+        assert_eq!(inaccessible.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&inaccessible.stderr).contains("could not be opened"));
+    }
+    // Privileged test runners can bypass mode bits; the injected-open unit test covers that path.
+    Ok(())
+}
+
+#[test]
 fn generic_convert_handles_a_large_repository_owned_offline_scenario() -> Result<(), Box<dyn Error>> {
     let project = TemporaryOutput::new("large-offline-project");
     let output = TemporaryOutput::new("large-offline-output");
@@ -2819,9 +3072,16 @@ fn rules_and_explain_expose_one_sorted_machine_readable_catalogue() -> Result<()
 #[test]
 fn generic_input_and_interpolation_argument_failures_are_fail_closed() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
-    let missing_input = boxferry_command().args(["validate", "compose", "quadlet"]).output()?;
+    let empty_project = TemporaryOutput::new("missing-compose-input");
+    fs::create_dir_all(empty_project.path())?;
+    let missing_input = boxferry_command()
+        .current_dir(empty_project.path())
+        .args(["validate", "compose", "quadlet"])
+        .output()?;
     assert_eq!(missing_input.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&missing_input.stderr).contains("at least one --input-file"));
+    let missing_error = String::from_utf8_lossy(&missing_input.stderr);
+    assert!(missing_error.contains("no conventional Compose file in the current directory"));
+    assert!(missing_error.contains("use --input-file or --input-directory"));
     let missing_env_file = boxferry_command()
         .args([
             "validate",

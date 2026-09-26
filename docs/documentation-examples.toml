@@ -59,8 +59,8 @@ pages = [
   "docs/public/getting-started/index.md",
   "docs/public/guides/convert/compose-to-quadlet/index.md",
 ]
-command = "boxferry convert compose quadlet --input-file compose.yaml --output-directory quadlet-output"
-args = ["convert", "compose", "quadlet", "--input-file", "compose.yaml", "--output-directory", "quadlet-output"]
+command = "boxferry convert compose quadlet --output-directory quadlet-output"
+args = ["convert", "compose", "quadlet", "--output-directory", "quadlet-output"]
 copy = ["compose.yaml"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]

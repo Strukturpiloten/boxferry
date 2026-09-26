@@ -3,7 +3,7 @@
 #[cfg(target_os = "windows")]
 compile_error!("the native Windows BoxFerry CLI is unsupported; install and run BoxFerry inside WSL2");
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::fs::MetadataExt;
 #[cfg(unix)]
 use std::os::unix::{
@@ -68,6 +68,10 @@ const CONVENTIONAL_COMPOSE_FILES: [&str; 6] = [
     "docker-compose.yaml",
     "docker-compose.yml",
 ];
+#[cfg(target_os = "linux")]
+const COMPOSE_DISCOVERY_OPEN_FLAGS: i32 = 0o404_000; // O_NOFOLLOW | O_NONBLOCK
+#[cfg(target_os = "macos")]
+const COMPOSE_DISCOVERY_OPEN_FLAGS: i32 = 0x104; // O_NOFOLLOW | O_NONBLOCK
 const QUADLET_EXTENSIONS: [&str; 6] = ["container", "pod", "network", "volume", "build", "image"];
 const MAX_README_BYTES: usize = 128 * 1024;
 const MAX_PODMAN_SNAPSHOT_JSON_BYTES: usize = 32 * 1024 * 1024;
@@ -147,7 +151,7 @@ struct ExplainCommand {
 
 #[derive(Debug, Args)]
 struct InputDocuments {
-    /// Explicit input document in input order; repeat as needed.
+    /// Explicit input document in input order; repeat as needed. Compose input otherwise searches the current directory.
     #[arg(long = "input-file", value_name = "FILE")]
     input_files: Vec<PathBuf>,
     /// Route-specific input directory expanded at this position.
@@ -2461,7 +2465,7 @@ fn capability_json(route: RouteSpec, minimum: &str, maximum: &str, podman_maximu
     }
 }
 
-fn generic_input_order(matches: &clap::ArgMatches) -> io::Result<Vec<OrderedInput>> {
+fn generic_input_order(matches: &clap::ArgMatches, input_type: InputType) -> io::Result<Vec<OrderedInput>> {
     let subcommand = deepest_command_matches(matches);
     let files = subcommand.get_many::<PathBuf>("input_files").into_iter().flatten();
     let file_indices = subcommand.indices_of("input_files").into_iter().flatten();
@@ -2481,6 +2485,9 @@ fn generic_input_order(matches: &clap::ArgMatches) -> io::Result<Vec<OrderedInpu
         .collect();
     inputs.sort_by_key(|(index, _)| *index);
     if inputs.is_empty() {
+        if input_type == InputType::Compose {
+            return Ok(vec![OrderedInput::ImplicitCompose]);
+        }
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "at least one --input-file or --input-directory is required",
@@ -2492,6 +2499,7 @@ fn generic_input_order(matches: &clap::ArgMatches) -> io::Result<Vec<OrderedInpu
 enum OrderedInput {
     File(PathBuf),
     Directory(PathBuf),
+    ImplicitCompose,
 }
 
 #[derive(Debug)]
@@ -2611,7 +2619,10 @@ fn resolved_report_context(resolved: &[ResolvedInput]) -> (Vec<ReportInput>, Vec
             } else {
                 format!("<input-{}>", index + 1)
             },
-            kind: if matches!(input, ResolvedInput::Discovered { .. }) {
+            kind: if matches!(
+                input,
+                ResolvedInput::Discovered { .. } | ResolvedInput::ImplicitCompose { .. }
+            ) {
                 "discovered".into()
             } else {
                 "file".into()
@@ -2622,14 +2633,16 @@ fn resolved_report_context(resolved: &[ResolvedInput]) -> (Vec<ReportInput>, Vec
         .iter()
         .enumerate()
         .filter_map(|(index, input)| match input {
-            ResolvedInput::Discovered { ignored, .. } => Some(DiscoveryDecision {
-                selected: format!("<input-{}>", index + 1),
-                ignored: ignored
-                    .iter()
-                    .enumerate()
-                    .map(|(ignored_index, _)| format!("<input-{}-ignored-{}>", index + 1, ignored_index + 1))
-                    .collect(),
-            }),
+            ResolvedInput::Discovered { ignored, .. } | ResolvedInput::ImplicitCompose { ignored, .. } => {
+                Some(DiscoveryDecision {
+                    selected: format!("<input-{}>", index + 1),
+                    ignored: ignored
+                        .iter()
+                        .enumerate()
+                        .map(|(ignored_index, _)| format!("<input-{}-ignored-{}>", index + 1, ignored_index + 1))
+                        .collect(),
+                })
+            }
             _ => None,
         })
         .collect();
@@ -2697,8 +2710,17 @@ fn generic_compose_convert(
         )
         .into());
     }
-    let discovered = resolve_compose_inputs(ordered)?;
     let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
+    let discovered = resolve_compose_inputs(ordered).map_err(|error| {
+        post_discovery_failure(
+            FailedStage::InputDiscovery,
+            RuleId::OrchestrationFailed,
+            "Compose input selection failed",
+            &error,
+            &aliases,
+            &[],
+        )
+    })?;
     aliases.add_inputs(&discovered);
     let project_root = resolve_project_root(arguments.project_directory.as_deref(), &discovered).map_err(|error| {
         post_discovery_failure(
@@ -3853,7 +3875,7 @@ async fn run_generic(
     let ordered = if arguments.input_type == InputType::Podman {
         Ok(Vec::new())
     } else {
-        generic_input_order(matches).map_err(Box::<dyn Error>::from)
+        generic_input_order(matches, arguments.input_type).map_err(Box::<dyn Error>::from)
     };
     let result = match ordered {
         Ok(ordered) => generic_convert(arguments, ordered, output_directory, validate_only).await,
@@ -4453,8 +4475,12 @@ fn resolve_compose_inputs(ordered: Vec<OrderedInput>) -> io::Result<Vec<Resolved
             }
             OrderedInput::File(path) => ResolvedInput::File(resolve_regular_file(&path)?),
             OrderedInput::Directory(path) => discover_compose_directory(&path)?,
+            OrderedInput::ImplicitCompose => discover_implicit_compose()?,
         };
-        if let Some(path) = input.path() {
+        if let Some(path) = input
+            .path()
+            .filter(|_| !matches!(&input, ResolvedInput::ImplicitCompose { .. }))
+        {
             let canonical = fs::canonicalize(path)?;
             if !seen.insert(canonical) {
                 return Err(io::Error::new(
@@ -4491,6 +4517,12 @@ fn resolve_quadlet_inputs(ordered: Vec<OrderedInput>) -> io::Result<Vec<Resolved
                 resolved.push(ResolvedInput::File(path));
             }
             OrderedInput::Directory(path) => resolved.extend(discover_quadlet_directory(&path)?),
+            OrderedInput::ImplicitCompose => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "implicit Compose input is not a Quadlet input",
+                ));
+            }
         }
     }
     for input in &resolved {
@@ -4569,7 +4601,16 @@ fn is_supported_quadlet_path(path: &Path) -> bool {
 #[derive(Clone, Debug)]
 enum ResolvedInput {
     File(PathBuf),
-    Discovered { selected: PathBuf, ignored: Vec<PathBuf> },
+    Discovered {
+        selected: PathBuf,
+        ignored: Vec<PathBuf>,
+    },
+    ImplicitCompose {
+        selected: PathBuf,
+        directory: PathBuf,
+        ignored: Vec<PathBuf>,
+        opened: Arc<fs::File>,
+    },
     Stdin,
 }
 
@@ -4577,7 +4618,7 @@ impl ResolvedInput {
     fn path(&self) -> Option<&Path> {
         match self {
             Self::File(path) => Some(path),
-            Self::Discovered { selected, .. } => Some(selected),
+            Self::Discovered { selected, .. } | Self::ImplicitCompose { selected, .. } => Some(selected),
             Self::Stdin => None,
         }
     }
@@ -4587,8 +4628,15 @@ impl ResolvedInput {
     }
     fn ignored(&self) -> &[PathBuf] {
         match self {
-            Self::Discovered { ignored, .. } => ignored,
+            Self::Discovered { ignored, .. } | Self::ImplicitCompose { ignored, .. } => ignored,
             _ => &[],
+        }
+    }
+    fn source_directory(&self) -> io::Result<Option<PathBuf>> {
+        match self {
+            Self::File(path) | Self::Discovered { selected: path, .. } => absolute_parent(path).map(Some),
+            Self::ImplicitCompose { directory, .. } => Ok(Some(directory.clone())),
+            Self::Stdin => Ok(None),
         }
     }
     fn read(&self, project_root: &Path) -> io::Result<(String, PathBuf, String)> {
@@ -4603,6 +4651,17 @@ impl ResolvedInput {
                 absolute_parent(path)?,
                 fs::read_to_string(path)?,
             )),
+            Self::ImplicitCompose {
+                selected,
+                directory,
+                opened,
+                ..
+            } => {
+                let mut text = String::new();
+                let mut reader = opened.as_ref();
+                reader.read_to_string(&mut text)?;
+                Ok((selected.display().to_string(), directory.clone(), text))
+            }
         }
     }
 }
@@ -4652,6 +4711,95 @@ fn discover_compose_directory(directory: &Path) -> io::Result<ResolvedInput> {
     })
 }
 
+fn discover_implicit_compose() -> io::Result<ResolvedInput> {
+    discover_implicit_compose_in(&env::current_dir()?, open_implicit_compose)
+}
+
+fn discover_implicit_compose_in<Open>(directory: &Path, open: Open) -> io::Result<ResolvedInput>
+where
+    Open: FnOnce(&Path, &fs::Metadata) -> io::Result<fs::File>,
+{
+    let mut candidates = Vec::new();
+    for name in CONVENTIONAL_COMPOSE_FILES {
+        let candidate = directory.join(name);
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                candidates.push((candidate, metadata));
+            }
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("conventional Compose candidate {name} is not a regular non-symlink file"),
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if candidates.len() > 1 {
+        let names = candidates
+            .iter()
+            .filter_map(|(path, _)| path.file_name().and_then(|name| name.to_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "multiple conventional Compose files in the current directory ({names}); select inputs with --input-file or --input-directory"
+            ),
+        ));
+    }
+    let (selected, metadata) = candidates.into_iter().next().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "no conventional Compose file in the current directory; use --input-file or --input-directory",
+        )
+    })?;
+    // Keep this verified handle until reading; a pathname reopened later could have become a symlink.
+    let opened = open(&selected, &metadata).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "conventional Compose file {} could not be opened: {error}",
+                selected
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("<non-UTF-8>")
+            ),
+        )
+    })?;
+    Ok(ResolvedInput::ImplicitCompose {
+        selected,
+        directory: directory.to_path_buf(),
+        ignored: Vec::new(),
+        opened: Arc::new(opened),
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn open_implicit_compose(path: &Path, discovered: &fs::Metadata) -> io::Result<fs::File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(COMPOSE_DISCOVERY_OPEN_FLAGS)
+        .open(path)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() || opened.dev() != discovered.dev() || opened.ino() != discovered.ino() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "conventional Compose candidate changed during discovery",
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn open_implicit_compose(_path: &Path, _discovered: &fs::Metadata) -> io::Result<fs::File> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "automatic Compose discovery is unavailable on this platform; use --input-file",
+    ))
+}
+
 fn resolve_project_root(explicit: Option<&Path>, inputs: &[ResolvedInput]) -> io::Result<PathBuf> {
     if explicit.is_none() && inputs.iter().any(|input| matches!(input, ResolvedInput::Stdin)) {
         return Err(io::Error::new(
@@ -4672,9 +4820,9 @@ fn resolve_project_root(explicit: Option<&Path>, inputs: &[ResolvedInput]) -> io
         }
         None => inputs
             .first()
-            .and_then(ResolvedInput::path)
-            .map(absolute_parent)
+            .map(ResolvedInput::source_directory)
             .transpose()?
+            .flatten()
             .ok_or_else(|| io::Error::other("no resolved input directory")),
     }
 }
@@ -6119,6 +6267,78 @@ mod tests {
         project::{ProjectValue, build_project_view},
     };
     use boxferry::{Provenance, Service, ServiceGroup, Sourced};
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    struct ComposeDiscoveryTestDirectory(PathBuf);
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl ComposeDiscoveryTestDirectory {
+        fn new() -> io::Result<Self> {
+            let path = env::temp_dir().join(format!(
+                "boxferry-compose-discovery-{}-{}",
+                std::process::id(),
+                SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path)?;
+            Ok(Self(path))
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    impl Drop for ComposeDiscoveryTestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn implicit_compose_discovery_retains_opened_file_after_symlink_replacement() -> io::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = ComposeDiscoveryTestDirectory::new()?;
+        let current = root.0.join("current");
+        fs::create_dir(&current)?;
+        let selected = current.join("compose.yaml");
+        fs::write(&selected, "name: selected\nservices: {}\n")?;
+        let outside = root.0.join("outside.yaml");
+        fs::write(&outside, "name: outside\nservices: {}\n")?;
+        let resolved = discover_implicit_compose_in(&current, open_implicit_compose)?;
+        fs::rename(&selected, current.join("retained.yaml"))?;
+        symlink(&outside, &selected)?;
+        let (_, origin, contents) = resolved.read(&current)?;
+        assert_eq!(origin, current);
+        assert_eq!(resolve_project_root(None, std::slice::from_ref(&resolved))?, current);
+        assert!(contents.contains("name: selected"));
+        assert!(!contents.contains("name: outside"));
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn implicit_compose_discovery_rejects_replaced_symlink_and_injected_open_denial() -> io::Result<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = ComposeDiscoveryTestDirectory::new()?;
+        let current = root.0.join("current");
+        fs::create_dir(&current)?;
+        let selected = current.join("compose.yaml");
+        fs::write(&selected, "name: selected\nservices: {}\n")?;
+        let denied = discover_implicit_compose_in(&current, |_, _| {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "test open denied"))
+        });
+        assert!(matches!(denied, Err(error) if error.kind() == io::ErrorKind::PermissionDenied));
+
+        let outside = root.0.join("outside.yaml");
+        fs::write(&outside, "name: outside\nservices: {}\n")?;
+        let replaced = discover_implicit_compose_in(&current, |path, metadata| {
+            fs::remove_file(path)?;
+            symlink(&outside, path)?;
+            open_implicit_compose(path, metadata)
+        });
+        assert!(replaced.is_err());
+        Ok(())
+    }
 
     #[test]
     fn automatic_podman_choice_never_expands_ambiguous_or_empty_selection() {

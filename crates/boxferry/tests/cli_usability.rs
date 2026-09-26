@@ -24,6 +24,182 @@ static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 const FORMATS: [&str; 3] = ["compose", "podman", "quadlet"];
 
 #[test]
+fn minimal_compose_discovery_preserves_one_authored_service_across_all_outputs() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("implicit-compose")?;
+    fs::write(
+        scratch.path().join("compose.yaml"),
+        "name: discovered\nservices:\n  web:\n    image: example.invalid/web:1\n",
+    )?;
+    fs::write(scratch.path().join(".env"), "PRIVATE_CANARY=not-an-input\n")?;
+
+    for output in FORMATS {
+        let mut validation = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+        validation
+            .current_dir(scratch.path())
+            .args(["validate", "compose", output]);
+        if output == "podman" {
+            validation.args(["--podman-target-context", "unknown"]);
+        }
+        let validation = validation.args(["--console-format", "json"]).output()?;
+        assert_eq!(
+            validation.status.code(),
+            Some(0),
+            "{output}: {}",
+            String::from_utf8_lossy(&validation.stdout)
+        );
+        assert!(validation.stderr.is_empty(), "{output}");
+        let planned: serde_json::Value = serde_json::from_slice(&validation.stdout)?;
+        assert_implicit_compose_report(&planned, scratch.path(), output)?;
+
+        let destination = scratch.path().join(format!("generated-{output}"));
+        let mut conversion = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+        conversion
+            .current_dir(scratch.path())
+            .args(["convert", "compose", output]);
+        if output == "podman" {
+            conversion.args(["--podman-target-context", "unknown"]);
+        }
+        let conversion = conversion
+            .arg("--output-directory")
+            .arg(&destination)
+            .args(["--console-format", "json"])
+            .output()?;
+        assert_eq!(
+            conversion.status.code(),
+            Some(0),
+            "{output}: {}",
+            String::from_utf8_lossy(&conversion.stdout)
+        );
+        assert!(conversion.stderr.is_empty(), "{output}");
+        let converted: serde_json::Value = serde_json::from_slice(&conversion.stdout)?;
+        assert_implicit_compose_report(&converted, scratch.path(), output)?;
+        assert_eq!(
+            planned["fidelity"], converted["fidelity"],
+            "{output}: validation changed fidelity"
+        );
+        assert_eq!(
+            planned["diagnostics"], converted["diagnostics"],
+            "{output}: validation changed findings"
+        );
+        let artifacts = artifact_names(&destination)?;
+        assert_eq!(artifacts, expected_artifacts("compose", output), "{output}");
+        let written = match output {
+            "compose" => fs::read_to_string(destination.join("compose.yaml"))?,
+            "quadlet" => fs::read_to_string(destination.join("web.container"))?,
+            "podman" => fs::read_to_string(destination.join("podman.json"))?,
+            _ => unreachable!("finite output formats"),
+        };
+        assert!(
+            written.contains("example.invalid/web:1"),
+            "{output}: authored image disappeared"
+        );
+        assert!(
+            !written.contains("not-an-input"),
+            "{output}: implicit .env value leaked"
+        );
+    }
+    Ok(())
+}
+
+fn assert_implicit_compose_report(report: &serde_json::Value, root: &Path, output: &str) -> Result<(), Box<dyn Error>> {
+    assert_eq!(report["status"], "success", "{output}");
+    assert_eq!(report["source_type"], "compose", "{output}");
+    assert_eq!(report["target_type"], output, "{output}");
+    assert_eq!(report["application"], "discovered", "{output}");
+    assert_eq!(
+        report["inputs"],
+        serde_json::json!([{ "alias": "<input-1>", "kind": "discovered" }])
+    );
+    assert_eq!(report["discovery"][0]["selected"], "<input-1>");
+    assert_eq!(report["discovery"].as_array().map(Vec::len), Some(1));
+    let encoded = serde_json::to_string(report)?;
+    assert!(
+        !encoded.contains(&root.display().to_string()),
+        "{output}: source path leaked"
+    );
+    assert!(
+        !encoded.contains("not-an-input"),
+        "{output}: implicit .env value leaked"
+    );
+    Ok(())
+}
+
+#[test]
+fn minimal_compose_discovery_fails_closed_on_no_match_and_ambiguity() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("implicit-compose-failure")?;
+    fs::create_dir(scratch.path().join("child"))?;
+    fs::write(
+        scratch.path().join("child/compose.yaml"),
+        "services:\n  hidden:\n    image: example.invalid/hidden:1\n",
+    )?;
+    fs::write(scratch.path().join(".env"), "PRIVATE_CANARY=not-an-input\n")?;
+    let destination = scratch.path().join("generated");
+    let no_match = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .current_dir(scratch.path())
+        .args(["convert", "compose", "compose", "--output-directory"])
+        .arg(&destination)
+        .args(["--console-format", "json"])
+        .output()?;
+    assert_eq!(no_match.status.code(), Some(1));
+    assert!(no_match.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&no_match.stdout)?;
+    assert_eq!(report["failed_stage"], "input-discovery");
+    assert_eq!(report["primary_diagnostic_code"], "BFO1000");
+    assert!(
+        report["diagnostics"][0]["fields"]
+            .to_string()
+            .contains("no conventional Compose file")
+    );
+    assert!(!destination.exists());
+
+    fs::write(
+        scratch.path().join("compose.yaml"),
+        "name: chosen\nservices:\n  web:\n    image: example.invalid/web:1\n",
+    )?;
+    fs::write(
+        scratch.path().join("docker-compose.yml"),
+        "name: other\nservices:\n  other:\n    image: example.invalid/other:1\n",
+    )?;
+    let ambiguous = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .current_dir(scratch.path())
+        .args(["validate", "compose", "quadlet", "--console-format", "json"])
+        .output()?;
+    assert_eq!(ambiguous.status.code(), Some(1));
+    assert!(ambiguous.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&ambiguous.stdout)?;
+    assert_eq!(report["failed_stage"], "input-discovery");
+    assert_eq!(report["primary_diagnostic_code"], "BFO1000");
+    let reason = report["diagnostics"][0]["fields"].to_string();
+    assert!(reason.contains("multiple conventional Compose files"));
+    assert!(reason.contains("compose.yaml") && reason.contains("docker-compose.yml"));
+    assert!(!reason.contains(&scratch.path().display().to_string()));
+    assert!(!destination.exists());
+
+    let explicit = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .current_dir(scratch.path())
+        .args([
+            "validate",
+            "compose",
+            "compose",
+            "--input-file",
+            "compose.yaml",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(
+        explicit.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&explicit.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&explicit.stdout)?;
+    assert_eq!(report["inputs"][0]["kind"], "file");
+    assert_eq!(report["application"], "chosen");
+    Ok(())
+}
+
+#[test]
 fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), Box<dyn Error>> {
     let scratch = Scratch::new("route-forms")?;
     let mut forms = BTreeSet::new();

@@ -25,7 +25,7 @@ services:
 <!-- boxferry-example: compose-to-quadlet -->
 
 ```console
-boxferry convert compose quadlet --input-file compose.yaml --output-directory quadlet-output
+boxferry convert compose quadlet --output-directory quadlet-output
 ```
 
 The result is:
