@@ -1,6 +1,6 @@
 # renovate: datasource=docker depName=docker.io/library/node
 # release: 24.21.0-bookworm-slim
-FROM docker.io/library/node@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node_toolchain
+FROM docker.io/library/node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node_toolchain
 
 # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
 # release: 0.12.5
