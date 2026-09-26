@@ -1,7 +1,5 @@
 # Repository guidance for coding agents
 
-Applies throughout BoxFerry.
-
 ## Read before changing code
 
 Read `README.md`, `docs/architecture.md`, and the [decision index](docs/decisions/). Read relevant
@@ -11,7 +9,7 @@ ADRs; add or supersede any contradicted accepted ADR in the same change. Also re
 - Tests/fixtures: `docs/testing.md`, `fixtures/README.md`.
 - Dependencies/tools: `docs/dependency-policy.md`.
 - Workflows/shared tasks: `docs/releasing.md`, `docs/dependency-policy.md`.
-- Platform behavior: `docs/platform-support.md`; releases: `docs/releasing.md`.
+- Platform behavior: `docs/platform-support.md`.
 - Public docs: `docs/README.md`, relevant `docs/public/` page.
 - Local setup/submission: `docs/development-environment.md`.
 
@@ -25,9 +23,8 @@ ADRs; add or supersede any contradicted accepted ADR in the same change. Also re
   or send mutating runtime requests.
 - Docker and Kubernetes remain deferred; do not add placeholder adapters.
 
-Implement from scratch. External tools may serve as documented references or differential oracles;
-never copy or mechanically translate source. Record oracle version, command, provenance, license,
-and redistribution status.
+Implement from scratch; never copy or mechanically translate oracle source. Record external oracle
+version, command, provenance, license, and redistribution status.
 
 ## Engineering rules
 
@@ -107,7 +104,7 @@ checkout and must not perform those writes.
 Reserve release-worthy Conventional Commit types for product changes; use `docs`, `test`, `ci`,
 `build`, `style`, or `chore` for non-release work.
 
-The primary agent runs this workflow as GPT-6 Astra with `xhigh` reasoning, defines shared
+The primary agent runs this workflow as GPT-6 Sol with `xhigh` reasoning, defines shared
 contracts before delegation, and reviews/verifies every final diff. Worker subagents may research,
 edit separate repository checkouts, or review bounded tasks but never execute the Git or GitHub
 write steps or share a writer checkout. The complete gate remains the primary agent's
@@ -136,10 +133,10 @@ responsibility, as do integration, final verification, Git writes, and GitHub re
 
 Model defaults belong in [`.codex/config.toml`](.codex/config.toml); task-specific models and
 reasoning belong in [`.codex/agents/`](.codex/agents/). The primary manager always uses
-`gpt-6-astra` with `xhigh` reasoning. Implementation, specification research, and independent review
+`gpt-6-sol` with `xhigh` reasoning. Implementation, specification research, and independent review
 use `gpt-6-sol` with `high` reasoning; check-only verification uses `gpt-6-luna` with `high`
-reasoning. Use Luna for bounded read-only exploration and Sol for difficult failure diagnosis.
-These model settings do not expand the workspace scope or grant additional permissions.
+reasoning. Use Luna for bounded read-only exploration and Sol for difficult failure diagnosis;
+reserve Astra at `xhigh` for particularly difficult architectural questions.
 
 - Delegate bounded tasks when independent work can usefully proceed in parallel. Define the shared
   contract and explicit repository, checkout, and file ownership before delegation.
@@ -161,8 +158,11 @@ formatting. `./scripts/format-lint.sh` has the same modes, defaults to `--fix`, 
 jobs unless `BOXFERRY_LINT_JOBS` is set, and runs no tests. Any edit invalidates complete-gate
 results. Neither mode grants release, publication, or deployment authority.
 
+`scripts/validation-plan.py` provides change-aware development feedback, not publication proof.
+The `PR gate` verifies selected jobs and planned skips; agent pre-PR, main, dispatch, and Release
+validation remain complete.
+
 ## Code discovery
 
-For code discovery, try an available codebase-memory graph first, then CodeGraph only with an
-existing usable index; never create one without user authorization. If neither answers, use `rg`
-and targeted reads. For literals, configuration, scripts, and docs, start with `rg`.
+For code discovery, try codebase-memory, then an existing CodeGraph index. Never create an index
+without authorization. Fall back to `rg` and targeted reads; use `rg` first for literals and config.

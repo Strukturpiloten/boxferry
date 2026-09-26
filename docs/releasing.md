@@ -27,8 +27,12 @@ dispatched full and focused migration-readiness artifacts remain diagnostic only
 
 `Release` owns fresh current-run pre-release evidence. It runs the complete deterministic
 CI workflow and the complete conformance catalogue for the immutable candidate. CI, default-branch,
-and Release validation therefore share one deterministic task definition, including macOS
-portability and offline documentation links. Conformance uses the same reusable definition as
+and Release validation therefore share one complete Linux task definition, including offline
+documentation links. Ordinary pull requests may use a narrower
+change-aware plan, but every `main` push, manual CI
+dispatch, and `Release` invocation selects all deterministic jobs. A narrow PR result cannot
+authorize publication; the always-running `PR gate` rejects unexpected skips and missing results.
+Conformance uses the same reusable definition as
 manual diagnosis; the one-build/four-worker cap, exact-SHA/binary binding, budgets, privacy,
 cleanup, and explicit limitations remain unchanged. Failed, timed-out, cancelled, missing, or
 skipped prerequisites block the always-running release-validation result and publication.
@@ -43,7 +47,7 @@ meet the pre-release admission budget. Attempt intervals are parsed as RFC 3339 
 remain chronologically non-overlapping.
 
 [Issue #309](https://github.com/Strukturpiloten/boxferry/issues/309) coordinates common CI/release
-validation, including portability, and Renovate-aware adoption across all five repositories.
+validation and Renovate-aware adoption across all five repositories.
 Keep thresholds and native suites repository-specific. ComposeLens owns provider conformance,
 PodmanLens owns API/replay conformance, and QuadletLens owns generator conformance; BoxFerry owns
 full application migrations. The website keeps its own check/build/deployment gate.

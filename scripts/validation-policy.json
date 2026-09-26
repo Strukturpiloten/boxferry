@@ -1,0 +1,46 @@
+{
+  "schema": 2,
+  "repository": "Strukturpiloten/boxferry",
+  "jobs": [
+    "rust",
+    "msrv",
+    "dependencies",
+    "documentation",
+    "release-metadata",
+    "semver-release-type",
+    "semver",
+    "coverage",
+    "migration-readiness",
+    "lockfile-release-age"
+  ],
+  "profile_jobs": {
+    "prose": ["documentation", "lockfile-release-age"],
+    "executable-docs": ["documentation", "lockfile-release-age"]
+  },
+  "public_documentation_root": "docs/public/",
+  "full_documentation_roots": ["docs/public/development/"],
+  "executable_documentation_roots": [],
+  "executable_documentation_paths": ["docs/public/reference/diagnostics/rules.json"],
+  "documentation_examples_manifest": "docs/documentation-examples.toml",
+  "local_commands": {
+    "prose": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"]
+    ],
+    "executable-docs": [
+      ["bash", "scripts/check-files.sh", "--check"],
+      ["lychee", "--config", "lychee.toml", "--root-dir", ".", "--offline", "./**/*.md"],
+      [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "boxferry",
+        "--all-features",
+        "--test",
+        "documentation_examples"
+      ]
+    ],
+    "full": [["bash", "scripts/check-all.sh", "--check"]]
+  }
+}

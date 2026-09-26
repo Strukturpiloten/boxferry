@@ -57,7 +57,8 @@ can select exact provider-aware targets through the library API.
 - Linux is supported.
 - Windows users run the Linux CLI in WSL2.
 - Native Windows containers and Windows path semantics are not supported.
-- macOS CI checks deterministic POSIX behavior; it is not a native Quadlet runtime claim.
+- Linux CI validates deterministic and native behavior. macOS client-side compatibility is
+  intended but unverified; no macOS runner or native Quadlet runtime claim is made.
 
 ## Scope
 
