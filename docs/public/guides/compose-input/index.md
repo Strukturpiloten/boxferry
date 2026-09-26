@@ -1,7 +1,17 @@
 # Compose input
 
-Use Compose input when application intent lives in one or more Compose files. Repeat
-`--input-file` to control merge order, or use `--input-directory` to discover input files.
+Use Compose input when application intent lives in one or more authored Compose files. With no
+input selector, BoxFerry reads the sole conventional Compose file in the current directory and
+reports which document was selected. It never reads a deployed service through this route.
+Repeat `--input-file` to control merge order, or use `--input-directory` to select its
+highest-priority conventional file explicitly.
+
+The automatic filename set is `compose.yaml`, `compose.yml`, `podman-compose.yaml`,
+`podman-compose.yml`, `docker-compose.yaml`, and `docker-compose.yml`. If more than one exists,
+choose with explicit `--input-file` arguments; no override is added automatically. A missing,
+symlinked, non-regular, or unreadable candidate fails rather than broadening the search. Discovery
+never searches parent or child directories. `--project-directory` changes path resolution after
+selection, not this current-directory search.
 
 - [Compose output](../convert/compose-to-compose/) merges, imports into the neutral model, and
   writes canonical Compose.
