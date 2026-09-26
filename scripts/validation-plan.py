@@ -24,7 +24,8 @@ from typing import Any
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 FENCE = re.compile(rb"(?m)^[ \t]*(?:```|~~~)")
-INDENTED_CODE = re.compile(rb"(?m)^(?: {4,}|\t)[ \t]*\S")
+# CommonMark tabs advance to the next four-column stop, including after 1-3 spaces.
+INDENTED_CODE = re.compile(rb"(?m)^(?: {4,}| {0,3}\t)[ \t]*\S")
 INLINE_CODE = re.compile(rb"`[^`\r\n]+`|<(?:code|pre)\b", re.IGNORECASE)
 MAX_DIFF_BYTES = 2_000_000
 MAX_PATHS = 5_000
