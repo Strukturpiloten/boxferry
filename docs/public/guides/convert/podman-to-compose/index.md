@@ -8,20 +8,21 @@ acquisition is read-only; the generated Compose document describes portable desi
 - Read-only input configured as described in [Podman input](../../podman-input/). A conventional
   local socket and neutral application name are derived unless you override them.
 - At least one exact, prefix, or label selector, or `--podman-all`.
-- A decision about whether effective named volumes and networks are portable desired state.
+- Review named-resource ownership and any target prerequisites reported by the default portable
+  import policy.
 
 See [Podman input](../../podman-input/) before selecting a shared production environment.
 
 ## Convert one bounded workload
 
-The example selects one container from a larger reviewed cassette environment. The promotion flags
-explicitly authorize effective named volumes and networks to become portable desired state; omit
-either flag when that promotion is not intended.
+The example selects one container from a larger reviewed cassette environment. The default
+portable import policy retains reviewed named-resource relationships. `--loss-policy partial`
+is needed here for the cassette's separate unsupported fields, not for source reconstruction.
 
 <!-- boxferry-example: podman-to-compose -->
 
 ```console
-boxferry convert podman compose --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory compose-output
+boxferry convert podman compose --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --loss-policy partial --output-directory compose-output
 ```
 
 The result is:
@@ -31,22 +32,21 @@ compose-output/
 └── compose.yaml
 ```
 
-Runtime-effective, runtime-assigned, and locally resolved observations do not automatically become
-portable desired state. Add `--promote-podman-portable-effective-settings` to explicitly retain the
-reviewed environment, published-port, restart, normal-health, DNS, and standalone-container
-effective network-alias subset; reports remain redacted. Aliases additionally require named-network
-promotion, runtime container-ID aliases remain evidence only, and pod-member networking remains
-pod-scoped evidence. Every other required decision or unsupported field stays visible through the
-normal diagnostic and loss-policy contract.
+The default portable policy reconstructs only reviewed effective fields. It keeps environment
+values withheld, and reports remain redacted. Runtime container-ID aliases and addresses remain
+evidence only; pod-member networking remains pod-scoped evidence. Select
+`--podman-import-policy conservative` to retain effective fields as evidence until individually
+authorized. Every unsupported field and exporter approximation remains under the normal
+diagnostic and loss-policy contract.
 
 Use `--promote-podman-effective-bind-mounts` only for a target that deliberately reuses the same
 absolute host paths. The flag preserves source, destination, and read-only state; it does not claim
 that the paths or their contents were migrated.
 
 A configured local image spelling remains the service image; `image_builds` stays empty because local
-availability is not a build recipe or registry provenance. A promoted named network needs both the
-named-network and portable-effective settings authorizations before its typed internal, subnet,
-gateway, lease-range, inferred IPv6, and attachment-alias intent is emitted. Driver, IPAM-driver, and standalone
+availability is not a build recipe or registry provenance. The portable policy can retain a typed
+network's internal, subnet, gateway, lease-range, inferred IPv6, and attachment-alias intent, but
+those uncertain source decisions remain visible as non-exact where appropriate. Driver, IPAM-driver, and standalone
 IPv6 observations currently have no automatic promotion. Newly generated environment mappings are
 key-sorted only after duplicate and last-wins semantics have been resolved by PodmanLens.
 

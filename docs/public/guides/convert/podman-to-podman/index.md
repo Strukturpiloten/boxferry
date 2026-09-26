@@ -7,14 +7,14 @@ Podman-to-Podman is not passthrough, runtime cloning, or deployment.
 
 - Read-only input configured as described in [Podman input](../../podman-input/).
 - The intended maximum Podman version and `unknown`, `rootless`, or `rootful` target context.
-- Explicit promotion decisions for runtime-effective named resources.
+- Review the portable import policy and any named-resource lifecycle inference.
 
 ## Convert
 
 <!-- boxferry-example: podman-to-podman -->
 
 ```console
-boxferry convert podman podman --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --podman-target-context rootless --output-directory podman-output
+boxferry convert podman podman --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --loss-policy partial --podman-target-context rootless --output-directory podman-output
 ```
 
 Authorized output contains:

@@ -54,6 +54,7 @@ active table; superseded records are history and are read only when that history
 | [0057](0057-run-owned-podman-live-storage.md) | Exact run-owned outer Podman storage and fail-closed cleanup |
 | [0058](0058-separate-sensitive-value-artifact-authorization.md) | Separate environment-value artifact authorization from Podman portability |
 | [0059](0059-podman-cli-evidence-based-application-selection.md) | Evidence-based local Podman application selection and bounded chooser |
+| [0060](0060-portable-podman-cli-import-policy.md) | Portable CLI reconstruction with separate source and target fidelity decisions |
 
 ## Superseded history
 

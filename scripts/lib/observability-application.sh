@@ -1124,6 +1124,9 @@ observability_write_expected_diagnostics() {
     $1 == "BFP0002" {
       print $1 "\t" qualify($2) "\twarning\tomitted\tpartial"
     }
+    $1 == "BFP0009" {
+      print $1 "\t" qualify($2) "\tnote\treconstructed\t"
+    }
   ' "${diagnostics}" >> "${destination}"
 
   awk -F '\t' -v prefix="${resource_prefix}" -v live="${live_bindings}" '
@@ -1161,6 +1164,9 @@ observability_write_expected_diagnostics() {
       if ($1 == "BFP0007") {
         decision = "omitted"
         policy = "partial"
+      } else if ($2 ~ /^(networks|volumes)\..*\.ownership$/ && $3 == "approximate") {
+        decision = "inferred-application-ownership"
+        policy = "approximate"
       } else if ($3 == "approximate") {
         decision = "approximated"
         policy = "approximate"
@@ -1224,7 +1230,7 @@ observability_assert_reviewed_diagnostics() {
        ($diagnostic | field("subject"; true)),
        $diagnostic.severity,
        ($diagnostic | field("decision"; ($diagnostic.code | startswith("BFP")))),
-       ($diagnostic | field("required_loss_policy"; ($diagnostic.code | startswith("BFP"))))]
+       ($diagnostic | field("required_loss_policy"; ($diagnostic.code | startswith("BFP") and . != "BFP0009")))]
     | @tsv
   ' "${report}" > "${observed}" || return
   sort --output="${expected}" "${expected}" || return

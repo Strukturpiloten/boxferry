@@ -24,6 +24,18 @@ impl PodmanPromotionPolicy {
         Self { enabled: 0 }
     }
 
+    /// Reconstructs the reviewed portable application subset from effective observations.
+    ///
+    /// This does not authorize host bind paths, runtime-assigned values, sensitive environment
+    /// values, unsupported native fields, or a non-exact target conversion. The CLI uses this
+    /// policy for ordinary local application imports; the library default stays conservative.
+    #[must_use]
+    pub const fn portable_application() -> Self {
+        Self {
+            enabled: EFFECTIVE_NAMED_VOLUME_MOUNTS | EFFECTIVE_NAMED_NETWORKS | PORTABLE_EFFECTIVE_SETTINGS,
+        }
+    }
+
     /// Authorizes or rejects host-local bind-mount promotion.
     #[must_use]
     pub const fn with_effective_bind_mounts(mut self, enabled: bool) -> Self {

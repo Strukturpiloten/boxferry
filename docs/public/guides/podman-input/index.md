@@ -51,6 +51,17 @@ Add repeatable `--podman-network-boundary NAME_OR_ID` only when discovery may cr
 network boundary. The selected inventory and discovered resource graph pass through
 `PodmanImporter` into the same neutral application model used by every route.
 
+Podman input uses `--podman-import-policy portable` by default. It reconstructs reviewed
+effective published ports, restart and normal health behavior, named-volume mounts, and
+named-network relationships without three separate promotion switches. A `BFP0009` note
+identifies each reviewed reconstruction and states that inspection cannot distinguish an
+original authored choice from a runtime default. It does not authorize a target exporter to
+approximate behavior or omit unsupported intent: `--loss-policy exact` remains the default.
+Select `--podman-import-policy conservative` to keep effective values as evidence, then enable
+only the particular promotion families you have reviewed. Expert promotion switches are
+redundant under the portable preset. JSON reports record the selected policy and effective
+promotion choices; human output retains the field diagnostics.
+
 Choose the output:
 
 - [Compose output](../convert/podman-to-compose/) writes one canonical Compose document.
@@ -61,19 +72,20 @@ Choose the output:
 
 - **Network borders:** discovery does not cross a named network unless
   `--podman-network-boundary NAME_OR_ID` explicitly allows it.
-- **Shared volumes:** effective named volumes remain runtime evidence unless
-  `--promote-podman-effective-named-volumes` authorizes portable desired state.
-- **Shared networks:** use `--promote-podman-effective-named-networks` only after confirming the
-  target should recreate that network intent.
+- **Shared volumes and networks:** the portable preset retains reviewed named relationships.
+  Shared prerequisites and stopped shared boundaries remain external. A new target volume does
+  not contain the source data. In conservative mode, the named-resource promotion switches
+  authorize their families individually.
 - **Bind mounts:** `--promote-podman-effective-bind-mounts` preserves absolute host sources,
   container destinations, and read-only state. It explicitly assumes those paths are valid on
   the target. Non-default native options, propagation, and subpaths remain diagnostic findings.
-- **Portable effective settings:** `--promote-podman-portable-effective-settings` authorizes the
-  reviewed environment names, published-port, restart, normal-health, DNS, and standalone-container
-  effective network-alias subset. It does not acquire environment values. Values stay withheld
+- **Portable effective settings:** the portable preset enables the reviewed environment names,
+  published-port, restart, normal-health, DNS, and standalone-container network-alias subset.
+  `--promote-podman-portable-effective-settings` enables the same family in conservative mode.
+  It does not acquire environment values. Values stay withheld
   unless `--environment-values include` separately authorizes their acquisition and inclusion in
-  Compose or Quadlet artifacts. Alias promotion also requires
-  `--promote-podman-effective-named-networks`; runtime container-ID aliases remain evidence only,
+  Compose or Quadlet artifacts. Alias promotion also requires named-network promotion (already
+  included by the portable preset); runtime container-ID aliases remain evidence only,
   and pod-member networking remains pod-scoped evidence. Reports and snapshots stay redacted.
 - **Network definition settings:** the portable-effective flag also promotes typed network-internal,
   subnet, gateway, and lease-range observations. Inclusive lease endpoints become the supported
@@ -99,8 +111,8 @@ Choose the output:
   output may report `PLN0048` against `source.portability` until the operator supplies a portable
   source.
 
-Configured values are mapped directly when the neutral meaning is exact. Effective values remain
-evidence unless an explicit promotion flag covers that field. Runtime-assigned ports and addresses,
+Configured values are mapped directly when the neutral meaning is exact. Effective values outside
+the reviewed portable preset remain evidence or a non-exact decision. Runtime-assigned ports and addresses,
 static IP/MAC observations, bind paths, opaque network options, startup healthchecks, logging,
 security, namespaces, and resource controls are never included by the portable-settings flag.
 
@@ -113,13 +125,13 @@ unexpected:
 boxferry validate podman compose --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --loss-policy partial --generate-error-report --include-podman-snapshot --error-report-directory reports
 ```
 
-After reviewing the diagnostics and redacted snapshots, authorize only the portable families you
-accept:
+After reviewing the diagnostics and redacted snapshots, authorize same-host bind paths only when
+the target deliberately reuses them. The other portable families are already enabled:
 
 <!-- boxferry-example: podman-portable-effective-settings -->
 
 ```console
-boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-effective-bind-mounts --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output
+boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-effective-bind-mounts --loss-policy partial --output-directory quadlet-portable-output
 ```
 
 Podman deployment-v1 JSON is output intent, not an acquired inventory snapshot, and cannot be used

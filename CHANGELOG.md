@@ -7,6 +7,11 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- [**breaking**] Reconstruct reviewed portable Podman application settings and named-resource
+  relationships by default at the CLI, with `--podman-import-policy conservative` for evidence-only
+  import. Keep exact loss policy and separate privacy authorization; report source reconstruction
+  separately from target conversion loss ([#332](https://github.com/Strukturpiloten/boxferry/issues/332)).
+
 - [**breaking**] Select one unambiguous local Podman application without a selector, offer bounded
   terminal choices for ambiguous inventories, and show the chosen connection and graph before
   output. Compose-label groups require explicit consent; label values no longer determine the

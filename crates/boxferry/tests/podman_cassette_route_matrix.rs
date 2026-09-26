@@ -780,7 +780,15 @@ fn assert_podman_diagnostic_context(report: &serde_json::Value) -> Result<(), Bo
         diagnostic["code"].as_str().is_some_and(|code| {
             matches!(
                 code,
-                "BFP0001" | "BFP0002" | "BFP0003" | "BFP0004" | "BFP0005" | "BFP0006" | "BFP0007" | "BFP0008"
+                "BFP0001"
+                    | "BFP0002"
+                    | "BFP0003"
+                    | "BFP0004"
+                    | "BFP0005"
+                    | "BFP0006"
+                    | "BFP0007"
+                    | "BFP0008"
+                    | "BFP0009"
             )
         })
     }) {
