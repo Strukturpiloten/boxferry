@@ -161,7 +161,21 @@ if grep --fixed-strings --quiet -- "progress_run 'release run-owned host image" 
   exit 1
 fi
 [[ "$(grep --fixed-strings --count -- 'release_run_owned_host_image "${image}"' "${runner}")" -ge 2 ]]
-grep --fixed-strings --quiet -- '"${profile}" != smoke && "${cleanup_failed}" == true && "${status}" == 0' "${runner}"
+grep --fixed-strings --quiet -- '"${cleanup_failed}" == true && "${status}" == 0' "${runner}"
+grep --fixed-strings --quiet -- 'if ! release_outer "${outer}"; then' "${runner}"
+[[ "$(grep --fixed-strings --count -- 'prepare_outer_storage "${outer}" "${image}"' "${runner}")" == 3 ]]
+[[ "$(grep --fixed-strings --count -- '--image-volume=ignore' "${runner}")" == 3 ]]
+storage_helper="${script_directory}/lib/podman-live-outer-storage.sh"
+grep --fixed-strings --quiet -- 'verify_outer_storage_volume_ownership "${volume}" "${outer}"' "${storage_helper}"
+grep --fixed-strings --quiet -- '"${engine}" volume rm -- "${volume}"' "${storage_helper}"
+if grep --fixed-strings --quiet -- 'volume rm --force' "${storage_helper}"; then
+  printf '%s\n' 'Run-owned volume cleanup must not force-remove another user.' >&2
+  exit 1
+fi
+if grep --fixed-strings --quiet -- '"${engine}" rm --force --ignore -- "${outer}"' "${runner}"; then
+  printf '%s\n' 'Outer removal bypasses the exact storage cleanup helper.' >&2
+  exit 1
+fi
 
 # Limited rootless cells mount before their explicit outer removal. Their
 # release must remain after both operations.

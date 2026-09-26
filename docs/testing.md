@@ -85,11 +85,13 @@ cell reports reviewed and observed versions, API and package revisions, distribu
 architecture, root mode, lane, transport, and resource-coverage level. Artifacts are removed
 after success unless `--retain-artifacts` is selected.
 
+See [ADR 0057](decisions/0057-run-owned-podman-live-storage.md) for run-owned storage cleanup.
+
 The runner creates production-shaped test applications with stopped and running containers,
 health states, pods, standalone services, aliases, volumes, bind and tmpfs mounts, labels,
 environment evidence, runtime policy, and conditional secrets. It exercises every selector
 and exporter plus glob rejection, socket discovery, reimports, deterministic output, strict
-loss policy, and redaction. A process-unique `bf65-` prefix bounds cleanup. Generated commands
+loss policy, and redaction. Exact run labels and identities bound cleanup. Generated commands
 run only in the disposable apply/reacquire target; BoxFerry itself remains non-executing.
 
 The 48-cell complete matrix currently has 43 full cells and five reviewed UBI/openSUSE
@@ -107,8 +109,8 @@ BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" 
 ```
 
 Smoke covers Podman 3.0.1 through 6.1 across both root modes. GitHub runs the cells in
-parallel with a 10-minute limit per cell. The matrix contains 97 numbered checks; checks that
-do not vary by Podman version run once on 6.1 rootful.
+parallel with a 10-minute limit per cell. The matrix has 97 checks; version-independent checks
+run once on 6.1 rootful.
 
 The manual pre-release tier runs the 18-stage, 60-minute `application` profile on
 `podman-6.1-rootless`; ordinary pull requests do not repeat the expensive live applications. It
