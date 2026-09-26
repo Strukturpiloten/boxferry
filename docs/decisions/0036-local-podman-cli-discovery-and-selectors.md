@@ -1,6 +1,6 @@
 # ADR 0036: Local Podman CLI discovery and exact selection
 
-- Status: accepted
+- Status: superseded by [ADR 0059](0059-podman-cli-evidence-based-application-selection.md)
 - Date: 2026-08-24
 - Amends: [ADR 0021](0021-automatic-local-error-report-names.md) and
   [ADR 0034](0034-podman-lens-adapter-boundary.md)

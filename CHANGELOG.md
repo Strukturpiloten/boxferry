@@ -7,6 +7,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- [**breaking**] Select one unambiguous local Podman application without a selector, offer bounded
+  terminal choices for ambiguous inventories, and show the chosen connection and graph before
+  output. Compose-label groups require explicit consent; label values no longer determine the
+  default output name, so use `--application-name` when that name matters
+  ([#333](https://github.com/Strukturpiloten/boxferry/issues/333)).
+
 - [**breaking**] Withhold literal environment values from generated artifacts by default, require explicit `--environment-values include` for Compose and Quadlet output, and separate Podman value acquisition from effective-setting promotion. Protected inline Podman output remains blocked until PodmanLens provides a safe renderer ([#334](https://github.com/Strukturpiloten/boxferry/issues/334)).
 
 - Add bounded Immich 3.1.0 CPU-only migration acceptance with deterministic PNG upload,

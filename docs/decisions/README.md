@@ -31,7 +31,6 @@ active table; superseded records are history and are read only when that history
 | [0033](0033-universal-neutral-model-pipeline.md)                      | Universal neutral pipeline and nonexecuting Podman-first direction           |
 | [0034](0034-podman-lens-adapter-boundary.md)                          | PodmanLens adapter and inert output boundary                                 |
 | [0035](0035-explicit-podman-command-artifact.md)                      | Explicit Podman command artifact and safety contract                         |
-| [0036](0036-local-podman-cli-discovery-and-selectors.md)              | Deterministic local Podman CLI discovery and exact selectors                 |
 | [0037](0037-finite-podman-input-and-live-conformance.md)              | Finite legacy Podman input, diagnostic snapshots, and live conformance       |
 | [0038](0038-bounded-human-diagnostic-presentation.md)                 | Bounded human diagnostics with complete structured evidence                  |
 | [0040](0040-quadlet-native-value-decoder-boundary.md)                 | QuadletLens-owned native values and BoxFerry-owned neutral meaning           |
@@ -54,6 +53,7 @@ active table; superseded records are history and are read only when that history
 | [0056](0056-change-aware-development-validation.md) | Change-aware local and PR plans with a complete release override |
 | [0057](0057-run-owned-podman-live-storage.md) | Exact run-owned outer Podman storage and fail-closed cleanup |
 | [0058](0058-separate-sensitive-value-artifact-authorization.md) | Separate environment-value artifact authorization from Podman portability |
+| [0059](0059-podman-cli-evidence-based-application-selection.md) | Evidence-based local Podman application selection and bounded chooser |
 
 ## Superseded history
 
@@ -73,6 +73,7 @@ active table; superseded records are history and are read only when that history
 | [0017](0017-n-to-n-adapter-matrix.md)                       | Earlier adapter matrix            |
 | [0023](0023-windows-local-time-zone-database.md)            | Native Windows time-zone database |
 | [0030](0030-native-compose-same-format-canonicalization.md) | Same-format Compose shortcut      |
+| [0036](0036-local-podman-cli-discovery-and-selectors.md)    | Mandatory Podman selector policy  |
 
 ## Status and changes
 
