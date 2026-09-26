@@ -32,6 +32,7 @@ protected-values = ["hello quoted command", "hello native world"]
 
 [extensions.scenarios.exports.compose]
 loss-policy = "partial"
+include-environment-values = true
 diagnostic-codes = ["BFC0007", "BFQ1003", "BFQ1003"]
 artifact-values = ["hello quoted command", "hello native world"]
 
@@ -41,6 +42,7 @@ expected = "expected-compose.yaml"
 
 [extensions.scenarios.exports.quadlet]
 loss-policy = "partial"
+include-environment-values = true
 diagnostic-codes = ["BFQ0003", "BFQ1003", "BFQ1003"]
 podman-minimum = "5.4.0"
 podman-maximum = "6.0.2"

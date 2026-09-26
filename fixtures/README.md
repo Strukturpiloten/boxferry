@@ -45,50 +45,21 @@ The repository-policy suite validates these rules.
 
 ## Live conformance matrix
 
-`conformance/podman-live/matrix.tsv` is a reviewed inventory for the opt-in live
-runner, not a deterministic parser fixture. Each row pins one trusted nested-Podman image
-and records its version, distribution, root mode, and lane. `scenarios.tsv` inventories
-routes; `limitations.tsv` records reviewed image-level coverage exceptions. The runner
-validates all three catalogues before pulling anything.
+`conformance/podman-live/matrix.tsv` is the reviewed digest-pinned inventory;
+`scenarios.tsv` defines routes and `limitations.tsv` records justified gaps.
+The runner validates all three before pulling. Of 48 installed-build cells,
+43 exercise live resources; five UBI/openSUSE rootless cells prove only a
+`newuidmap` failure. The nine-cell smoke spans Podman 3.0.1–6.1 and both root
+modes. See the [live-catalogue guide](conformance/podman-live/) for admission,
+replacement, and `smoke`/`full` evidence rules.
 
-All 48 installed-build cells are digest-pinned. Forty-three execute the complete live-resource
-suite. Five UBI/openSUSE rootless images prove a specific `newuidmap` helper failure and make
-no resource-coverage claim. Delete those limitation rows when corrected images initialize
-nested rootless Podman. The [live-catalogue guide](conformance/podman-live/) defines replacement
-revalidation and admission. The nine-cell smoke profile spans the finite 3.0.1 through 6.1 parser
-boundaries and both root modes; version-independent policy checks run once on 6.1 rootful.
-Evidence is labelled `smoke` or `full`.
-
-The external apply/reacquire case executes generated commands only inside a fresh disposable
-6.1 target. A checked-in target drop-in disables unavailable nested firewall rules, so the case
-proves planning, isolated network membership, and reacquisition rather than host NAT.
-BoxFerry remains read-only and non-executing.
-
-`conformance/nextcloud-application/` independently provisions its reviewed four-image topology by
-native CLI and Compose through an isolated rootless 6.1 socket. Named Redis data is included in
-selector, persistence, and cleanup checks.
-
-`conformance/forgejo-application/` loads reviewed Forgejo, PostgreSQL, and Git-client images into
-Arch rootful and 6.1 rootless targets. Native CLI and Compose prove HTTP/SSH Git operations, private
-database networking, peer exclusion, collision refusal, and persistent volumes. Rootless uses the
-no-firewall drop-in; Arch retains stock Netavark with `nft`. Generated SSH keys remain prefix-scoped.
-
-Retained live logs and artifacts require human privacy review before sharing. Never commit raw
-live output.
-
-`conformance/paperless-ngx-application/` is bounded to Podman 6.1 rootless. Five immutable images
-provide Paperless-ngx, PostgreSQL, Valkey, Gotenberg, and Tika; Docker Compose 5.5.0 is pinned.
-Generated PDF, DOCX, and ODT documents prove ingestion, search, retrieval, office-to-PDF conversion,
-database/cache use, private networking, storage, and recreation persistence. Exports are inspected
-but never executed. Public canaries are forbidden from BoxFerry reports. The runner bounds resources,
-collision refusal, cleanup, and repository trust. One reviewed sanitizer-v3 cassette supplements,
-but cannot replace, authored semantics.
-
-`conformance/immich-application/` proves bounded CPU-only Immich 3.1.0 media processing and
-persistence on Podman 6.1 rootless. Its reviewed sanitizer-v3 capture is supplementary acquisition
-replay evidence only; the authored cassette remains authoritative.
-
-`conformance/supabase-application/` is the bounded eleven-service pre-release acceptance fixture.
+External apply/reacquire executes generated commands only inside a disposable
+6.1 target with a no-firewall drop-in; it does not prove host NAT. BoxFerry
+itself never executes output. The Nextcloud, Forgejo, Paperless-ngx, Immich,
+and Supabase suites under `conformance/` each document their own topology,
+application checks, privacy, and cleanup. Captured sanitizer-v3 cassettes
+supplement authored semantics; they never replace them. Human-review retained
+live logs and artifacts before sharing; never commit raw output.
 
 ## Migration scenario contracts
 
@@ -101,6 +72,38 @@ boundaries, required mounts/environment/ports, prerequisites, approved loss
 tuples (`rule`, `subject`, `decision`, `version-scope`), and exact diagnostics.
 Podman scenarios declare cassette/promotion metadata, bind/network expectations, reimport
 evidence, and loss counts.
+
+Route artifact authorization is explicit. `environment-values = "include"` on an
+`[[evidence]]` route permits the CLI to retain literal environment values only for a
+privacy-reviewed, repository-authored input and a Compose or Quadlet output.
+An authored Podman cassette also needs its own `include-environment-values = true`
+and portable effective-setting promotion before its routes may authorize inclusion.
+Omission means the CLI default, `withhold`; neither expected neutral values nor a
+manifest-wide privacy review grants artifact inclusion by itself. Podman output
+remains withheld while its protected-value renderer contract is unavailable in the
+published dependency. The scenario runner always checks that declared protected
+values stay out of reports and console output, including when artifact inclusion
+is authorized.
+
+For reviewed authored Podman-to-Podman routes, the native library expectation
+retains the included-value acquisition contract while the CLI exercises its
+default withheld-value contract. `cli-withheld-diagnostics-delta-file` names the
+small exact diagnostic difference: `-BFP0003|services.<service>.environment`
+removes the richer observation summary and
+`+BFP0002|services.<service>.environment.<name>` asserts a required value by
+name. The validator requires one addition for every independently required
+environment assignment and one removal per affected service; all other
+diagnostics remain exactly as reviewed in `diagnostics-file`. This delta does
+not authorize protected values in a Podman output artifact.
+
+`cli-withheld-losses-delta-file` records the corresponding independently
+reviewed loss changes for those Podman routes. Each tab-separated row prefixes
+the rule with `+` or `-`, followed by subject, decision, version scope, and
+count; additions and removals are checked against `allowed-losses-file`.
+The runner replays redacted acquisition to verify the exact loss tuples and
+checks the CLI report's aggregate fidelity counts and policy. CLI JSON does not
+expose per-subject loss tuples, so the replay and exact diagnostics provide
+that evidence without claiming direct tuple visibility in the report.
 
 Every capability-derived importer/exporter pair has an independent outcome
 (`migration-success`, `expected-rejection`, `unsupported-environment`, or
@@ -132,20 +135,16 @@ external provider, generator or running application. See
 
 ## Route scenarios
 
-Every positive adapter or conversion case declares one or more
-`extensions.scenarios`. A scenario names its input, source files, and one expectation for every
-exporter reported by `boxferry capabilities`. Export expectations define loss policy,
-diagnostics, exact artifacts, and relevant target bounds.
+Every positive adapter or conversion case declares `extensions.scenarios`
+with input, sources, and an expectation for each `boxferry capabilities`
+exporter: loss policy, diagnostics, artifacts, and target bounds. Compose may
+define interpolation; Quadlet may select application grouping or Podman bounds.
+Protected values are report-redacted and appear in artifacts only when
+authorized. `normalize-project-root = true` replaces only the fixture root
+with `<project>`.
 
-Compose scenarios may provide explicit interpolation values. Quadlet scenarios name an
-application and may select grouping or Podman bounds. Protected values never appear in reports but
-may remain in explicitly authorized artifacts. `normalize-project-root = true` replaces only the
-fixture checkout root with `<project>`.
-
-The corpus runner tests stricter blocking policies, complete artifact and diagnostic sequences,
-redaction, and applicable re-import or deterministic-output contracts. Expected artifacts are
-never inferred as native input.
-
-`real-world/corpus.toml` is a separate pinned-remote contract. Its opt-in test retrieves upstream
-Compose files without vendoring them. See [testing](../docs/testing.md) and the
+The runner checks stricter policies, artifact/diagnostic sequences, redaction,
+and reimport or deterministic output; expected artifacts never become native
+input. `real-world/corpus.toml` is the opt-in pinned upstream Compose contract.
+See [testing](../docs/testing.md) and the
 [application test map](../crates/boxferry/tests/README.md).

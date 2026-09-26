@@ -7,6 +7,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- [**breaking**] Withhold literal environment values from generated artifacts by default, require explicit `--environment-values include` for Compose and Quadlet output, and separate Podman value acquisition from effective-setting promotion. Protected inline Podman output remains blocked until PodmanLens provides a safe renderer ([#334](https://github.com/Strukturpiloten/boxferry/issues/334)).
+
 - Add bounded Immich 3.1.0 CPU-only migration acceptance with deterministic PNG upload,
   metadata and derivative processing, persistence, privacy, resource-budget evidence, and an
   independently reviewed sanitizer-v3 native acquisition replay

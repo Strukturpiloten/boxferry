@@ -42,8 +42,15 @@ const EXPECTED_SCENARIO_IDS: [&str; 11] = [
 #[derive(Debug, Deserialize)]
 struct FixtureManifest {
     id: String,
+    secrets_reviewed: bool,
     files: BTreeSet<String>,
+    provenance: FixtureProvenance,
     extensions: Extensions,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureProvenance {
+    source: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +79,8 @@ struct Scenario {
 #[serde(rename_all = "kebab-case")]
 struct ExportExpectation {
     loss_policy: String,
+    #[serde(default)]
+    include_environment_values: bool,
     #[serde(default)]
     diagnostic_codes: Vec<String>,
     #[serde(default)]
@@ -161,6 +170,16 @@ fn every_positive_importer_fixture_covers_every_registered_exporter() -> Result<
                 .collect::<Vec<_>>();
 
             for (output, expectation) in &scenario.exports {
+                assert_eq!(
+                    validate_value_inclusion(
+                        expectation.include_environment_values,
+                        manifest.secrets_reviewed,
+                        &manifest.provenance.source,
+                        output,
+                    ),
+                    Ok(()),
+                    "{scenario_name} -> {output} has unauthorized value inclusion"
+                );
                 assert!(
                     !expectation.artifacts.is_empty(),
                     "{scenario_name} -> {output} has no artifact expectations"
@@ -365,6 +384,43 @@ fn every_positive_importer_fixture_covers_every_registered_exporter() -> Result<
     Ok(())
 }
 
+fn validate_value_inclusion(
+    include: bool,
+    secrets_reviewed: bool,
+    provenance_source: &str,
+    output: &str,
+) -> Result<(), &'static str> {
+    if !include {
+        return Ok(());
+    }
+    if !secrets_reviewed || provenance_source != "authored" {
+        return Err("value inclusion requires a privacy-reviewed authored fixture");
+    }
+    if output == "podman" {
+        return Err("Podman output cannot safely render protected environment values");
+    }
+    Ok(())
+}
+
+#[test]
+fn value_inclusion_requires_reviewed_authored_non_podman_output() {
+    assert!(validate_value_inclusion(true, true, "authored", "compose").is_ok());
+    assert!(validate_value_inclusion(true, true, "authored", "quadlet").is_ok());
+    assert_eq!(
+        validate_value_inclusion(true, false, "authored", "compose"),
+        Err("value inclusion requires a privacy-reviewed authored fixture")
+    );
+    assert_eq!(
+        validate_value_inclusion(true, true, "external", "quadlet"),
+        Err("value inclusion requires a privacy-reviewed authored fixture")
+    );
+    assert_eq!(
+        validate_value_inclusion(true, true, "authored", "podman"),
+        Err("Podman output cannot safely render protected environment values")
+    );
+    assert!(validate_value_inclusion(false, false, "external", "podman").is_ok());
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_conversion(
     input: &str,
@@ -391,6 +447,13 @@ fn execute_conversion(
         for assignment in &scenario.environment {
             command.arg(format!("--env={assignment}"));
         }
+    }
+    if expectation.include_environment_values {
+        assert!(
+            output != "podman",
+            "Podman output cannot safely render protected environment values"
+        );
+        command.args(["--environment-values", "include"]);
     }
     if output == "quadlet" {
         if let Some(minimum) = expectation.podman_minimum.as_deref() {

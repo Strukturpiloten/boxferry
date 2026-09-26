@@ -602,6 +602,17 @@ impl<'a> Mapping<'a> {
                 EnvironmentValue::Literal(value) if !value.is_sensitive() => {
                     DeploymentEnvironmentValue::Public(PublicEnvironmentValue::new(value.expose())?)
                 }
+                EnvironmentValue::Required => {
+                    self.unsupported(
+                        format!(
+                            "services.{}.environment.{}",
+                            service.name().as_str(),
+                            environment.value().name().as_str()
+                        ),
+                        "environment value was withheld; supply this named value on the target before use",
+                    );
+                    continue;
+                }
                 EnvironmentValue::Literal(_) | EnvironmentValue::Host | EnvironmentValue::Unset => {
                     self.unsupported(format!("services.{}.environment.{}", service.name().as_str(), environment.value().name().as_str()), "environment value requires external or sensitive-input planning not available from the neutral field");
                     continue;

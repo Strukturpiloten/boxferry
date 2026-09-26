@@ -79,6 +79,7 @@ required-networks = [{ name = "scenario-net", ownership = "application", interna
 [[evidence]]
 input = "podman"
 exporter = "compose"
+environment-values = "include"
 loss-policy = "partial"
 target-implementation = "compose-specification"
 target-minimum = "1.0.0"
@@ -129,6 +130,7 @@ unavailable-prerequisites = []
 [[evidence]]
 input = "podman"
 exporter = "quadlet"
+environment-values = "include"
 loss-policy = "partial"
 target-implementation = "podman"
 target-minimum = "6.1.0"
@@ -182,6 +184,8 @@ unavailable-prerequisites = []
 [[evidence]]
 input = "podman"
 exporter = "podman"
+cli-withheld-diagnostics-delta-file = "expected.podman-podman.withheld-diagnostics.delta"
+cli-withheld-losses-delta-file = "expected.podman-podman.withheld-losses.delta"
 loss-policy = "partial"
 target-implementation = "podman"
 target-minimum = "6.1.0"

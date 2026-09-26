@@ -1320,15 +1320,52 @@ target-minimum = "1.0.0"
 target-maximum = "1.0.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependency and healthcheck semantics."
+reason = "Compose output withholds environment assignments; reimport also cannot reconstruct reviewed dependency and healthcheck semantics."
 artifacts-file = "expected.compose.artifacts"
 diagnostics-file = "expected.compose.diagnostics"
 reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
 allowed-losses-file = "expected.compose.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependency and healthcheck semantics." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose lacks withheld environment assignments and cannot reconstruct reviewed dependency and healthcheck semantics." }
 reimport-semantic-gaps = [
+  "environment:appwrite:_APP_CONSOLE_URL_SCHEME",
+  "environment:appwrite-console:VITE_CONSOLE_PROFILE",
+  "environment:appwrite-console:APPWRITE_ENDPOINT_SAME_ORIGIN",
+  "environment:appwrite-console:VITE_GROWTH_ENDPOINT",
+  "environment:appwrite-realtime:_APP_POOL_ADAPTER",
+  "environment:appwrite-worker-webhooks:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-webhooks:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-webhooks:_APP_CONSOLE_URL_SCHEME",
+  "environment:appwrite-worker-deletes:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-deletes:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-databases:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-databases:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-builds:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-builds:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-builds:_APP_CONSOLE_URL_SCHEME",
+  "environment:appwrite-worker-jobs:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-jobs:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-screenshots:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-screenshots:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-certificates:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-certificates:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-functions:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-functions:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-mails:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-mails:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-messaging:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-messaging:_APP_WORKER_MAX_COROUTINES",
+  "environment:appwrite-worker-migrations:_APP_WORKERS_NUM",
+  "environment:appwrite-worker-migrations:_APP_WORKER_MAX_COROUTINES",
+  "environment:openruntimes-executor:OPR_EXECUTOR_RUNTIME_VERSIONS",
+  "environment:openruntimes-executor:OPR_EXECUTOR_CONNECTION_BUILD_CACHE_STORAGE",
+  "environment:orchestrator-jobs:ORCHESTRATOR_BACKEND",
+  "environment:orchestrator-jobs:ORCHESTRATOR_NETWORK",
+  "environment:orchestrator-jobs:ARTIFACT_ENDPOINT",
+  "environment:orchestrator-jobs:JOB_SIDECAR_IMAGE",
+  "environment:mariadb:MARIADB_AUTO_UPGRADE",
+  "environment:mongodb:MONGO_INITDB_ROOT_USERNAME",
   "dependency:appwrite-realtime:${_APP_DB_HOST:-postgresql}",
   "dependency:appwrite-realtime:appwrite-embedding",
   "dependency:appwrite-realtime:redis",

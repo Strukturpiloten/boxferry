@@ -57,6 +57,7 @@ expected-diagnostics = ["BFQ1003|<global>", "BFQ1003|<global>"]
 [[evidence]]
 input = "quadlet"
 exporter = "compose"
+environment-values = "include"
 target-implementation = "compose-specification"
 target-minimum = "1.0.0"
 target-maximum = "1.0.0"
@@ -83,6 +84,7 @@ allowed-losses = [
 [[evidence]]
 input = "quadlet"
 exporter = "quadlet"
+environment-values = "include"
 target-implementation = "podman"
 target-minimum = "5.4.0"
 target-maximum = "6.1.0"

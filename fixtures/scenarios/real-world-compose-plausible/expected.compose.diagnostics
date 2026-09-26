@@ -4,3 +4,8 @@ BFC0007|services.plausible.dependencies[0]
 BFC0007|services.plausible.dependencies[1]
 BFC0105|services.plausible.environment.BASE_URL
 BFC0105|services.plausible.environment.SECRET_KEY_BASE
+BFC0007|services.plausible.environment.BASE_URL
+BFC0007|services.plausible.environment.SECRET_KEY_BASE
+BFC0007|services.plausible.environment.TMPDIR
+BFC0007|services.plausible_db.environment.POSTGRES_PASSWORD
+BFC0007|services.plausible_events_db.environment.CLICKHOUSE_SKIP_USER_SETUP

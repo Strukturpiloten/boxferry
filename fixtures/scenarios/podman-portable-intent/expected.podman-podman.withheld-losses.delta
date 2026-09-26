@@ -1,0 +1,4 @@
+-BFP0003	services.portable-app.environment	approximate	podman@6.1.0..6.1.0	1
++BFP0002	services.portable-app.environment.ZETA	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.portable-app.environment.ALPHA	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.portable-app.environment.EMPTY	unsupported	podman@6.1.0..6.1.0	1

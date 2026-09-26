@@ -9,7 +9,9 @@ project identity.
 - [Quadlet output](../convert/quadlet-to-quadlet/) validates and writes canonical Quadlet files.
 
 Compose interpolation options do not apply to Quadlet input. `Environment=` values are workload
-environment. `EnvironmentFile=` paths remain target-host dependencies and can require an
+environment and are withheld from generated artifacts by default. Use
+`--environment-values include` explicitly for Compose or Quadlet artifacts after review.
+`EnvironmentFile=` paths remain target-host dependencies and can require an
 approximation when another output format cannot preserve systemd or Podman loading behavior.
 
 Before moving files between hosts, review bind-mount paths, secret references, network unit

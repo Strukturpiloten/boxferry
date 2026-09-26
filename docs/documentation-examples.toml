@@ -36,8 +36,8 @@ expected-files = [{ actual = "compose-output/compose.yaml", fixture = "expected-
 [[examples]]
 id = "compose-to-compose-interpolate"
 pages = ["docs/public/guides/convert/compose-to-compose/index.md"]
-command = "boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --output-directory compose-interpolated-output"
-args = ["convert", "compose", "compose", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--output-directory", "compose-interpolated-output"]
+command = "boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --output-directory compose-interpolated-output"
+args = ["convert", "compose", "compose", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--environment-values", "include", "--output-directory", "compose-interpolated-output"]
 copy = ["compose-interpolation.yaml", "variables.env"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
@@ -69,8 +69,8 @@ expected-files = [{ actual = "quadlet-output/web.container", fixture = "expected
 [[examples]]
 id = "compose-to-quadlet-interpolate"
 pages = ["docs/public/guides/convert/compose-to-quadlet/index.md"]
-command = "boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --loss-policy approximate --output-directory quadlet-interpolated-output"
-args = ["convert", "compose", "quadlet", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--loss-policy", "approximate", "--output-directory", "quadlet-interpolated-output"]
+command = "boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --loss-policy approximate --output-directory quadlet-interpolated-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--environment-values", "include", "--loss-policy", "approximate", "--output-directory", "quadlet-interpolated-output"]
 copy = ["compose-interpolation.yaml", "variables.env"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]

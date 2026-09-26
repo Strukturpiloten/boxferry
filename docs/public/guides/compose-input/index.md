@@ -26,6 +26,10 @@ Do not confuse interpolation input with a service-level Compose `env_file:` decl
 `--env-file` resolves `${NAME}` while converting; `env_file:` tells the target workload where to
 load container environment at runtime and may require target-specific approximation.
 
+These interpolation inputs do not authorize copied service environment values in generated files.
+Use `--environment-values include` only when the target Compose or Quadlet artifact must contain
+them; the default withholds each named value and reports the target prerequisite.
+
 ## Before production conversion
 
 - Set `--project-directory` when bind mounts or service `env_file:` paths are relative to another

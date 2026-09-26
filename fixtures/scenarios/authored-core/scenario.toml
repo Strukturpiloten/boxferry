@@ -51,6 +51,7 @@ expected-diagnostics = []
 [[evidence]]
 input = "compose"
 exporter = "compose"
+environment-values = "include"
 loss-policy = "partial"
 target-implementation = "compose-specification"
 target-minimum = "1.0.0"
@@ -64,6 +65,7 @@ reimport = { state = "passed" }
 [[evidence]]
 input = "compose"
 exporter = "quadlet"
+environment-values = "include"
 loss-policy = "partial"
 target-implementation = "podman"
 target-minimum = "5.4.0"

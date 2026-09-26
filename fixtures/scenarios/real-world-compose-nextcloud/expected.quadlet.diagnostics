@@ -12,3 +12,9 @@ BFQ0009|services.proxy.restart_policy
 BFQ0009|services.letsencrypt-companion.restart_policy
 BFQ0010|services.db.env_file[0]
 BFQ0010|services.app.env_file[0]
+BFQ0003|services.app.environment.POSTGRES_HOST
+BFQ0003|services.app.environment.REDIS_HOST
+BFQ0003|services.letsencrypt-companion.environment.DEFAULT_EMAIL
+BFQ0003|services.web.environment.LETSENCRYPT_EMAIL
+BFQ0003|services.web.environment.LETSENCRYPT_HOST
+BFQ0003|services.web.environment.VIRTUAL_HOST

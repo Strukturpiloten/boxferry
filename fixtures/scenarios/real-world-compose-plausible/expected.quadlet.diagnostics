@@ -33,3 +33,6 @@ BFQ0003|services.plausible.environment.TOTP_VAULT_KEY
 BFQ0009|services.plausible_db.restart_policy
 BFQ0009|services.plausible_events_db.restart_policy
 BFQ0009|services.plausible.restart_policy
+BFQ0003|services.plausible.environment.TMPDIR
+BFQ0003|services.plausible_db.environment.POSTGRES_PASSWORD
+BFQ0003|services.plausible_events_db.environment.CLICKHOUSE_SKIP_USER_SETUP

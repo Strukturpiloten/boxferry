@@ -1,2 +1,8 @@
 BFC0007|services.webserver.dependencies[0]
 BFC0007|services.webserver.dependencies[1]
+BFC0007|services.db.environment.POSTGRES_DB
+BFC0007|services.db.environment.POSTGRES_PASSWORD
+BFC0007|services.db.environment.POSTGRES_USER
+BFC0007|services.webserver.environment.PAPERLESS_DBENGINE
+BFC0007|services.webserver.environment.PAPERLESS_DBHOST
+BFC0007|services.webserver.environment.PAPERLESS_REDIS

@@ -1,0 +1,13 @@
+-BFP0003	services.database.environment	approximate	podman@6.1.0..6.1.0	1
+-BFP0003	services.immich-server.environment	approximate	podman@6.1.0..6.1.0	1
++BFP0002	services.database.environment.POSTGRES_DB	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.database.environment.POSTGRES_INITDB_ARGS	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.database.environment.POSTGRES_PASSWORD	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.database.environment.POSTGRES_USER	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.immich-server.environment.DB_DATABASE_NAME	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.immich-server.environment.DB_HOSTNAME	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.immich-server.environment.DB_PASSWORD	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.immich-server.environment.DB_USERNAME	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.immich-server.environment.IMMICH_MACHINE_LEARNING_URL	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.immich-server.environment.REDIS_HOSTNAME	unsupported	podman@6.1.0..6.1.0	1
++BFP0002	services.immich-server.environment.TZ	unsupported	podman@6.1.0..6.1.0	1

@@ -200,6 +200,10 @@ impl<T> Sourced<T> {
         &self.value
     }
 
+    pub(crate) fn value_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+
     /// Returns all origins in discovery order.
     #[must_use]
     pub fn origins(&self) -> &[Provenance] {

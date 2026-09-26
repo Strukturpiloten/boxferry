@@ -67,10 +67,12 @@ Override one value on the command line:
 <!-- boxferry-example: compose-to-compose-interpolate -->
 
 ```console
-boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --output-directory compose-interpolated-output
+boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --output-directory compose-interpolated-output
 ```
 
-The rendered service contains image tag `2026.08.24`, `LOG_LEVEL=warning`, and `restart: always`.
+The explicit `--environment-values include` lets the rendered service contain `LOG_LEVEL=warning`;
+without it this value is withheld as a named target prerequisite. The service also contains image
+tag `2026.08.24` and `restart: always`.
 Later `--env-file` inputs win over earlier files; `--env NAME=VALUE` wins over all files.
 
 For a sensitive process value, prefer `--env NAME`. It authorizes only that named variable and

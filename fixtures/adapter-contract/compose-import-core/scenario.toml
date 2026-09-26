@@ -50,6 +50,7 @@ expected-diagnostics = []
 [[evidence]]
 input = "compose"
 exporter = "compose"
+environment-values = "include"
 target-implementation = "compose-specification"
 target-minimum = "1.0.0"
 target-maximum = "1.0.0"
@@ -76,6 +77,7 @@ allowed-losses = [
 [[evidence]]
 input = "compose"
 exporter = "quadlet"
+environment-values = "include"
 target-implementation = "podman"
 target-minimum = "5.4.0"
 target-maximum = "6.1.0"

@@ -1085,11 +1085,16 @@ fn redacted_acquisition_never_promotes_environment_values() -> Result<(), Box<dy
         .first()
         .ok_or("legacy service")?
         .value();
-    assert!(service.environment().is_empty());
+    assert_eq!(service.environment().len(), 1);
+    assert_eq!(service.environment()[0].value().name().as_str(), "APP_SECRET");
+    assert!(matches!(
+        service.environment()[0].value().value(),
+        EnvironmentValue::Required
+    ));
     assert!(result.diagnostics().iter().any(|diagnostic| {
         diagnostic.code().as_str() == "BFP0002"
             && diagnostic.fields().iter().any(|field| {
-                field.name() == "reason" && field.value().redacted().contains("environment value remained redacted")
+                field.name() == "reason" && field.value().redacted().contains("environment value was withheld")
             })
     }));
     assert!(!serde_json::to_string(&source.redacted_inventory_snapshot())?.contains(SECRET));

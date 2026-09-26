@@ -131,15 +131,15 @@ target-minimum = "1.0.0"
 target-maximum = "1.0.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies and healthcheck."
+reason = "Compose output withholds environment assignments; reimport also cannot reconstruct reviewed dependencies and healthcheck."
 artifacts-file = "expected.compose.artifacts"
 diagnostics-file = "expected.compose.diagnostics"
 reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
 allowed-losses-file = "expected.compose.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies and healthcheck." }
-reimport-semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:redis", "healthcheck:redis"]
+reimport = { state = "known-migration-gap", reason = "Generated Compose lacks a withheld environment assignment and cannot reconstruct reviewed dependencies and healthcheck." }
+reimport-semantic-gaps = ["dependency:immich-server:database", "dependency:immich-server:redis", "environment:database:POSTGRES_INITDB_ARGS", "healthcheck:redis"]
 
 [[evidence]]
 input = "compose"

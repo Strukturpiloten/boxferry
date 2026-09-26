@@ -34,7 +34,7 @@ use support::{
     Dimension, DimensionState, NativeInput, Outcome, PodmanCassette, PodmanCassetteServer, RouteExpectation,
     RouteObservation, ScenarioManifest, diagnostic_facts, load_loss_expectations, load_string_expectations,
     observe_prerequisites, validate_diagnostics, validate_evidence, validate_exporter_coverage, validate_losses,
-    validate_manifest, validate_neutral_application,
+    validate_manifest, validate_neutral_application, validate_withheld_reimport,
 };
 
 const OFFLINE: &str = "Offline authored fixture; no runtime operation is claimed.";
@@ -400,6 +400,203 @@ fn authored_scenarios_execute_every_exporter_and_record_independent_evidence() -
     Ok(())
 }
 
+#[test]
+fn scenario_artifact_environment_inclusion_requires_explicit_reviewed_route() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/authored-core");
+    let manifest = read_manifest(&fixture)?;
+    validate_manifest(&manifest, &fixture)?;
+    let source = fixture.join("input-compose.yaml");
+    let included_output = TemporaryDirectory::new("scenario-included-environment")?;
+    let included_report = convert_cli(
+        &manifest,
+        std::slice::from_ref(&source),
+        &manifest.evidence[0],
+        included_output.path(),
+    )?;
+    assert_eq!(included_report["status"], "success");
+    assert!(!report_diagnostic_facts(&included_report)?.contains(&"BFC0007|services.app.environment.APP_MODE".into()));
+    let included_artifact = fs::read_to_string(included_output.path().join("compose.yaml"))?;
+    assert!(included_artifact.contains("APP_MODE") && included_artifact.contains("migration"));
+
+    let protected_fixture = repository_root().join("fixtures/scenarios/forgejo-application");
+    let protected_manifest = read_manifest(&protected_fixture)?;
+    let protected_output = TemporaryDirectory::new("scenario-included-protected-canary")?;
+    let protected_report = convert_cli(
+        &protected_manifest,
+        &[protected_fixture.join("compose.yaml")],
+        &protected_manifest.evidence[0],
+        protected_output.path(),
+    )?;
+    assert_eq!(protected_report["status"], "success");
+    let artifact = fs::read_to_string(protected_output.path().join("compose.yaml"))?;
+    for canary in &protected_manifest.protected_values {
+        assert!(
+            artifact.contains(canary),
+            "explicitly authorized fake canary was withheld"
+        );
+    }
+
+    let mut withheld = read_manifest(&fixture)?;
+    withheld.evidence[0].set_environment_values_for_test(false);
+    validate_manifest(&withheld, &fixture)?;
+    let output = TemporaryDirectory::new("scenario-withheld-environment")?;
+    let report = convert_cli(
+        &withheld,
+        std::slice::from_ref(&source),
+        &withheld.evidence[0],
+        output.path(),
+    )?;
+    assert_eq!(report["status"], "success");
+    assert!(report_diagnostic_facts(&report)?.contains(&"BFC0007|services.app.environment.APP_MODE".into()));
+    assert!(!fs::read_to_string(output.path().join("compose.yaml"))?.contains("migration"));
+
+    let mut unreviewed = read_manifest(&fixture)?;
+    unreviewed.provenance.source = "external".into();
+    assert!(
+        validate_manifest(&unreviewed, &fixture)
+            .err()
+            .is_some_and(|error| error.contains("reviewed authored input with value acquisition"))
+    );
+
+    let mut podman_output = read_manifest(&fixture)?;
+    podman_output.evidence[2].set_environment_values_for_test(true);
+    assert!(
+        validate_manifest(&podman_output, &fixture)
+            .err()
+            .is_some_and(|error| error.contains("reviewed authored input with value acquisition"))
+    );
+
+    validate_podman_value_route_mutations()?;
+    Ok(())
+}
+
+fn validate_podman_value_route_mutations() -> Result<(), Box<dyn Error>> {
+    let podman_input_fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
+    let mut podman_input = read_manifest(&podman_input_fixture)?;
+    podman_input
+        .native_inputs
+        .iter_mut()
+        .find(|input| input.id == "podman")
+        .and_then(|input| input.podman.as_mut())
+        .ok_or("missing authored Podman acquisition policy")?
+        .include_environment_values = false;
+    assert!(
+        validate_manifest(&podman_input, &podman_input_fixture)
+            .err()
+            .is_some_and(|error| error.contains("reviewed authored input with value acquisition"))
+    );
+
+    let mut unpromoted = read_manifest(&podman_input_fixture)?;
+    unpromoted
+        .native_inputs
+        .iter_mut()
+        .find(|input| input.id == "podman")
+        .and_then(|input| input.podman.as_mut())
+        .ok_or("missing authored Podman promotion policy")?
+        .promotion_policy
+        .portable_effective_settings = false;
+    assert!(
+        validate_manifest(&unpromoted, &podman_input_fixture)
+            .err()
+            .is_some_and(|error| error.contains("reviewed authored input with value acquisition"))
+    );
+
+    let withheld_podman_route = read_manifest(&podman_input_fixture)?;
+    let route = withheld_podman_route
+        .evidence
+        .iter()
+        .find(|route| route.input == "podman" && route.exporter == "podman")
+        .ok_or("missing withheld Podman-to-Podman route")?;
+    let expected = route.cli_diagnostics(&withheld_podman_route, &podman_input_fixture)?;
+    assert!(expected.contains(&"BFP0002|services.app.environment.POSTGRES_PASSWORD".into()));
+    assert!(!expected.contains(&"BFP0003|services.app.environment".into()));
+    let mut incomplete = read_manifest(&podman_input_fixture)?;
+    incomplete.semantics.required_environment.pop();
+    assert!(
+        validate_manifest(&incomplete, &podman_input_fixture)
+            .err()
+            .is_some_and(|error| error.contains("withheld diagnostic delta must cover every"))
+    );
+    Ok(())
+}
+
+#[test]
+fn authored_podman_value_routes_have_complete_withholding_contracts() -> Result<(), Box<dyn Error>> {
+    let registrations = registered_scenarios(&repository_root())?;
+    let mut reviewed = 0;
+    for registration in registrations {
+        let manifest = read_manifest_file(&registration.manifest)?;
+        if manifest.provenance.source != "authored"
+            || !manifest.native_inputs.iter().any(|input| {
+                input.importer == "podman"
+                    && input
+                        .podman
+                        .as_ref()
+                        .is_some_and(|podman| podman.include_environment_values)
+            })
+        {
+            continue;
+        }
+        validate_manifest(&manifest, &registration.manifest).map_err(|error| format!("{}: {error}", manifest.id))?;
+        reviewed += 1;
+    }
+    assert_eq!(reviewed, 8, "reviewed authored Podman value corpus changed");
+    Ok(())
+}
+
+#[test]
+fn reviewed_podman_cassette_requires_route_authorization_for_compose_values() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
+    let manifest = read_manifest(&fixture)?;
+    validate_manifest(&manifest, &fixture)?;
+    let source = fixture.join("input-podman.cassette.json");
+    let route = manifest
+        .evidence
+        .iter()
+        .find(|route| route.input == "podman" && route.exporter == "compose")
+        .ok_or("missing Podman-to-Compose scenario route")?;
+    assert!(route.includes_environment_values());
+
+    let included_output = TemporaryDirectory::new("scenario-podman-included-environment")?;
+    let included_report = convert_cli(&manifest, std::slice::from_ref(&source), route, included_output.path())?;
+    assert_eq!(included_report["status"], "success");
+    let expected = load_string_expectations(
+        &route.diagnostics,
+        route.diagnostics_file.as_deref(),
+        &fixture,
+        "reviewed Podman-to-Compose diagnostics",
+    )?;
+    validate_diagnostics(&expected, &report_diagnostic_facts(&included_report)?)?;
+    let included_artifact = fs::read_to_string(included_output.path().join("compose.yaml"))?;
+    assert!(included_artifact.contains("boxferry-test-db-password-not-secret"));
+
+    let mut withheld = read_manifest(&fixture)?;
+    let withheld_route_index = withheld
+        .evidence
+        .iter()
+        .position(|route| route.input == "podman" && route.exporter == "compose")
+        .ok_or("missing Podman-to-Compose scenario route")?;
+    withheld.evidence[withheld_route_index].set_environment_values_for_test(false);
+    validate_manifest(&withheld, &fixture)?;
+    let withheld_output = TemporaryDirectory::new("scenario-podman-withheld-environment")?;
+    let withheld_report = convert_cli(
+        &withheld,
+        std::slice::from_ref(&source),
+        &withheld.evidence[withheld_route_index],
+        withheld_output.path(),
+    )?;
+    assert_eq!(withheld_report["status"], "success");
+    assert!(
+        report_diagnostic_facts(&withheld_report)?
+            .contains(&"BFC0007|services.app.environment.POSTGRES_PASSWORD".into())
+    );
+    assert!(
+        !fs::read_to_string(withheld_output.path().join("compose.yaml"))?
+            .contains("boxferry-test-db-password-not-secret")
+    );
+    Ok(())
+}
+
 fn run_import_rejection(
     manifest: &ScenarioManifest,
     route: &RouteExpectation,
@@ -438,18 +635,8 @@ fn run_route(
         fixture,
         "route artifacts",
     )?;
-    let expected_diagnostics = load_string_expectations(
-        &route.diagnostics,
-        route.diagnostics_file.as_deref(),
-        fixture,
-        "route diagnostics",
-    )?;
-    let expected_losses = load_loss_expectations(
-        &route.allowed_losses,
-        route.allowed_losses_file.as_deref(),
-        fixture,
-        "route losses",
-    )?;
+    let expected_diagnostics = route.cli_diagnostics(manifest, fixture)?;
+    let expected_losses = route.cli_losses(fixture)?;
     let missing = observe_prerequisites(manifest, fixture)?;
     validate_diagnostics(&route.unavailable_prerequisites, &missing)?;
     if !missing.is_empty() {
@@ -460,6 +647,7 @@ fn run_route(
         return Ok(validate_evidence(route, &unavailable_observation())?);
     }
     let target = route.target()?;
+    let cli_imported = imported.clone();
     match route.exporter.as_str() {
         "compose" => validate_result(
             route,
@@ -478,10 +666,16 @@ fn run_route(
         )?,
         _ => return Err("registered exporter has no scenario runner".into()),
     }
+    if route.cli_withheld_diagnostics_delta_file.is_some() {
+        validate_cli_policy_losses(manifest, route, sources, cli_imported, &target, &expected_losses)?;
+    }
     let output = TemporaryDirectory::new(&route.exporter)?;
     let report = convert_cli(manifest, sources, route, output.path())?;
     let diagnostics = report_diagnostic_facts(&report)?;
     validate_diagnostics(&expected_diagnostics, &diagnostics)?;
+    if route.cli_withheld_losses_delta_file.is_some() {
+        validate_cli_loss_aggregate(&expected_losses, route, &report)?;
+    }
     let mut artifacts = fs::read_dir(output.path())?
         .map(|entry| {
             entry?
@@ -510,6 +704,175 @@ fn run_route(
         reimport,
     };
     validate_evidence(route, &observation)?;
+    Ok(())
+}
+
+fn validate_cli_policy_losses(
+    manifest: &ScenarioManifest,
+    route: &RouteExpectation,
+    sources: &[PathBuf],
+    imported: ImportResult,
+    target: &boxferry::TargetProfile,
+    expected: &[support::LossTuple],
+) -> Result<(), Box<dyn Error>> {
+    let imported = if route.includes_environment_values() {
+        imported
+    } else {
+        let imported = if manifest
+            .native_inputs
+            .iter()
+            .any(|input| input.id == route.input && input.importer == "podman")
+        {
+            import_podman_cassette_with_environment_values(
+                manifest,
+                &route.input,
+                PodmanCassette::load(sources.first().ok_or("missing Podman cassette")?)?,
+                false,
+            )?
+        } else {
+            imported
+        };
+        let (mut application, outcomes, diagnostics) = imported.into_parts();
+        if let Some(application) = &mut application {
+            application.withhold_literal_environment_values();
+        }
+        ImportResult::new(application, outcomes, diagnostics)
+    };
+    match route.exporter.as_str() {
+        "compose" => validate_losses(
+            expected,
+            convert_imported(imported, &ComposeExporter::new()?, target, route.policy()?)?.outcomes(),
+            &route.version_scope(),
+        )?,
+        "quadlet" => validate_losses(
+            expected,
+            convert_imported(imported, &quadlet_exporter(route)?, target, route.policy()?)?.outcomes(),
+            &route.version_scope(),
+        )?,
+        "podman" => validate_losses(
+            expected,
+            convert_imported(imported, &PodmanExporter::new()?, target, route.policy()?)?.outcomes(),
+            &route.version_scope(),
+        )?,
+        _ => return Err("registered exporter has no CLI policy runner".into()),
+    }
+    Ok(())
+}
+
+fn validate_cli_loss_aggregate(
+    expected: &[support::LossTuple],
+    route: &RouteExpectation,
+    report: &serde_json::Value,
+) -> Result<(), String> {
+    let mut approximate = 0usize;
+    let mut unsupported = 0usize;
+    let mut invalid = 0usize;
+    for loss in expected {
+        match loss.decision.as_str() {
+            "approximate" => approximate += loss.count,
+            "unsupported" => unsupported += loss.count,
+            "invalid" => invalid += loss.count,
+            other => return Err(format!("unrecognized expected CLI loss decision {other}")),
+        }
+    }
+    let fidelity = report["fidelity"]
+        .as_object()
+        .ok_or("CLI report lacks fidelity counts")?;
+    for (name, expected_count) in [
+        ("approximate", approximate),
+        ("unsupported", unsupported),
+        ("invalid", invalid),
+        ("other", 0),
+    ] {
+        let actual = fidelity
+            .get(name)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| format!("CLI report lacks fidelity {name}"))?;
+        if actual != expected_count as u64 {
+            return Err(format!(
+                "CLI fidelity {name} differs: expected {expected_count}, observed {actual}"
+            ));
+        }
+    }
+    let policy = report["choices"]
+        .as_array()
+        .ok_or("CLI report lacks choices")?
+        .iter()
+        .find(|choice| choice["name"] == "loss_policy")
+        .and_then(|choice| choice["value"].as_str())
+        .ok_or("CLI report lacks loss policy choice")?;
+    if policy != route.loss_policy {
+        return Err(format!(
+            "CLI loss policy differs: expected {}, observed {policy}",
+            route.loss_policy
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn cli_loss_delta_and_report_reject_wrong_decision_count_and_policy() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
+    let manifest = read_manifest(&fixture)?;
+    let route = manifest
+        .evidence
+        .iter()
+        .find(|route| route.input == "podman" && route.exporter == "podman")
+        .ok_or("missing Podman withholding route")?;
+    let expected = route.cli_losses(&fixture)?;
+    assert!(expected.iter().all(|loss| loss.subject != "services.app.environment"));
+
+    let sandbox = TemporaryDirectory::new("cli-loss-delta-mutations")?;
+    fs::write(
+        sandbox.path().join("expected.podman-podman.losses.tsv"),
+        fs::read(fixture.join("expected.podman-podman.losses.tsv"))?,
+    )?;
+    let original = fs::read_to_string(fixture.join("expected.podman-podman.withheld-losses.delta"))?;
+    let first = original.lines().next().ok_or("empty authored loss delta")?;
+    for mutation in [
+        first.replacen("\tapproximate\t", "\tunsupported\t", 1),
+        first.replace("\t1", "\t2"),
+        first.trim_start_matches('-').to_owned(),
+    ] {
+        fs::write(
+            sandbox.path().join("expected.podman-podman.withheld-losses.delta"),
+            mutation,
+        )?;
+        let error = route
+            .cli_losses(sandbox.path())
+            .err()
+            .ok_or("invalid CLI loss delta accepted")?;
+        assert!(
+            error.contains("absent from reviewed library evidence") || error.contains("needs + or -"),
+            "unexpected loss mutation result: {error}"
+        );
+    }
+
+    let report = serde_json::json!({
+        "fidelity": {"approximate": 0, "unsupported": 0, "invalid": 0, "other": 0},
+        "choices": [{"name": "loss_policy", "value": "exact"}]
+    });
+    let error = validate_cli_loss_aggregate(&[], route, &report)
+        .err()
+        .ok_or("wrong CLI loss policy accepted")?;
+    assert!(error.contains("CLI loss policy differs"));
+    let error = validate_cli_loss_aggregate(
+        &[support::LossTuple {
+            rule: "BFP0003".into(),
+            subject: "services.app.environment".into(),
+            decision: "approximate".into(),
+            version_scope: route.version_scope(),
+            count: 1,
+        }],
+        route,
+        &serde_json::json!({
+            "fidelity": {"approximate": 0, "unsupported": 0, "invalid": 0, "other": 0},
+            "choices": [{"name": "loss_policy", "value": "partial"}]
+        }),
+    )
+    .err()
+    .ok_or("wrong CLI loss count accepted")?;
+    assert!(error.contains("CLI fidelity approximate differs"));
     Ok(())
 }
 
@@ -604,13 +967,16 @@ fn observability_assert_reimport_routes(exports: &ObservabilityLiveExports) -> R
         &[exports.compose_output.path().join("compose.yaml")],
         compose_quadlet.path(),
     )?;
-    assert!(
-        compose_quadlet_report["diagnostics"]
-            .as_array()
-            .is_some_and(Vec::is_empty),
-        "the expected-empty reimport route unexpectedly emitted diagnostics"
-    );
     assert_observability_diagnostic_match("compose-quadlet", "compose", "quadlet", &compose_quadlet_report, true)?;
+    let mut missing_withholding = compose_quadlet_report.clone();
+    missing_withholding["diagnostics"] = serde_json::json!([]);
+    assert_observability_diagnostic_match(
+        "compose-quadlet-missing-withholding",
+        "compose",
+        "quadlet",
+        &missing_withholding,
+        false,
+    )?;
     Ok(())
 }
 
@@ -1457,12 +1823,22 @@ fn observe_native_output(
                 &expected_reimport_diagnostics,
                 &diagnostic_facts(reimport.diagnostics()),
             )?;
-            validate_neutral_application(
-                manifest,
-                reimport.application().ok_or("Compose reimport failed")?,
-                &route.environment_order,
-                &route.reimport_semantic_gaps,
-            )?;
+            let reimported = reimport.application().ok_or("Compose reimport failed")?;
+            if route.includes_environment_values() {
+                validate_neutral_application(
+                    manifest,
+                    reimported,
+                    &route.environment_order,
+                    &route.reimport_semantic_gaps,
+                )?;
+            } else {
+                validate_withheld_reimport(
+                    manifest,
+                    reimported,
+                    &route.environment_order,
+                    &route.reimport_semantic_gaps,
+                )?;
+            }
             let reimport = if route.reimport_semantic_gaps.is_empty() {
                 Dimension::passed()
             } else {
@@ -1509,12 +1885,22 @@ fn observe_native_output(
                 &expected_reimport_diagnostics,
                 &diagnostic_facts(reimport.diagnostics()),
             )?;
-            validate_neutral_application(
-                manifest,
-                reimport.application().ok_or("Quadlet reimport failed")?,
-                &route.environment_order,
-                &route.reimport_semantic_gaps,
-            )?;
+            let reimported = reimport.application().ok_or("Quadlet reimport failed")?;
+            if route.includes_environment_values() {
+                validate_neutral_application(
+                    manifest,
+                    reimported,
+                    &route.environment_order,
+                    &route.reimport_semantic_gaps,
+                )?;
+            } else {
+                validate_withheld_reimport(
+                    manifest,
+                    reimported,
+                    &route.environment_order,
+                    &route.reimport_semantic_gaps,
+                )?;
+            }
             let reimport = if route.reimport_semantic_gaps.is_empty() {
                 Dimension::passed()
             } else {
@@ -2839,6 +3225,71 @@ fn six_independent_mutations_fail_for_their_own_reason() -> Result<(), Box<dyn E
     Ok(())
 }
 
+#[test]
+fn withheld_reimport_requires_absence_without_weakening_source_assertions() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/scenarios/authored-core");
+    let manifest = read_manifest(&fixture)?;
+    let source = fs::read_to_string(fixture.join("input-compose.yaml"))?;
+    let expected_gap = ["environment:app:APP_MODE".to_owned()];
+
+    let original = import_compose(&source, &manifest.application.name)?;
+    let original = original.application().ok_or("original Compose import")?;
+    validate_neutral_application(&manifest, original, &[], &[])?;
+    let error = validate_withheld_reimport(&manifest, original, &[], &expected_gap)
+        .err()
+        .ok_or("default-withheld validation accepted an original literal")?;
+    assert!(error.contains("literal environment assignment app:APP_MODE"));
+
+    let absent = source.replace("    environment:\n      APP_MODE: migration\n", "");
+    assert_ne!(absent, source);
+    let imported = import_compose(&absent, &manifest.application.name)?;
+    let imported = imported.application().ok_or("Compose import without environment")?;
+    validate_withheld_reimport(&manifest, imported, &[], &expected_gap)?;
+    let error = validate_neutral_application(&manifest, imported, &[], &[])
+        .err()
+        .ok_or("source validation accepted a missing literal")?;
+    assert!(error.contains("required environment app:APP_MODE changed"));
+
+    let present_without_literal = source.replace("APP_MODE: migration", "APP_MODE:");
+    let imported = import_compose(&present_without_literal, &manifest.application.name)?;
+    let error = validate_withheld_reimport(
+        &manifest,
+        imported
+            .application()
+            .ok_or("Compose import with valueless assignment")?,
+        &[],
+        &expected_gap,
+    )
+    .err()
+    .ok_or("default-withheld validation accepted a valueless assignment")?;
+    assert!(error.contains("withheld environment app:APP_MODE remains assigned"));
+
+    let empty_value = source.replace("APP_MODE: migration", "APP_MODE: ''");
+    let imported = import_compose(&empty_value, &manifest.application.name)?;
+    let error = validate_withheld_reimport(
+        &manifest,
+        imported.application().ok_or("Compose import with empty literal")?,
+        &[],
+        &expected_gap,
+    )
+    .err()
+    .ok_or("default-withheld validation accepted an empty literal")?;
+    assert!(error.contains("literal environment assignment app:APP_MODE"));
+
+    let unrelated_literal = absent.replace("  database:\n", "  database:\n    environment:\n      LEAK: visible\n");
+    let imported = import_compose(&unrelated_literal, &manifest.application.name)?;
+    let error = validate_withheld_reimport(
+        &manifest,
+        imported.application().ok_or("Compose import with unrelated literal")?,
+        &[],
+        &expected_gap,
+    )
+    .err()
+    .ok_or("default-withheld validation accepted an unrelated literal")?;
+    assert!(error.contains("literal environment assignment database:LEAK"));
+    Ok(())
+}
+
 fn assert_paperless_semantic_omissions(root: &Path) -> Result<(), Box<dyn Error>> {
     for (scenario, name, needle, expected) in [
         (
@@ -3525,6 +3976,22 @@ fn import_podman_cassette(
     input_id: &str,
     cassette: PodmanCassette,
 ) -> Result<ImportResult, Box<dyn Error>> {
+    let include_values = manifest
+        .native_inputs
+        .iter()
+        .find(|input| input.id == input_id)
+        .and_then(|input| input.podman.as_ref())
+        .ok_or("missing Podman input metadata")?
+        .include_environment_values;
+    import_podman_cassette_with_environment_values(manifest, input_id, cassette, include_values)
+}
+
+fn import_podman_cassette_with_environment_values(
+    manifest: &ScenarioManifest,
+    input_id: &str,
+    cassette: PodmanCassette,
+    include_values: bool,
+) -> Result<ImportResult, Box<dyn Error>> {
     let input = manifest
         .native_inputs
         .iter()
@@ -3545,7 +4012,7 @@ fn import_podman_cassette(
     )?;
     let request = podman_discovery_request(manifest, input_id)?;
     let policy = podman_promotion_policy(manifest, input_id)?;
-    let acquisition = if podman.include_environment_values {
+    let acquisition = if include_values {
         AcquisitionOptions::include_environment_values()
     } else {
         AcquisitionOptions::redacted()
@@ -3636,6 +4103,9 @@ fn convert_cli(
     let report_path = report_directory.path().join("report.json");
     let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
     command.args(["convert", &input.importer, &route.exporter]);
+    if route.includes_environment_values() {
+        command.args(["--environment-values", "include"]);
+    }
     let mut server = None;
     match input.importer.as_str() {
         "compose" => {
