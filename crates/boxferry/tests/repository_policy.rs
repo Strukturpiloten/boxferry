@@ -636,6 +636,7 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
     for module in [
         "scenario-contract.sh",
         "scenario-validators.sh",
+        "podman-live-outer-storage.sh",
         "nextcloud-application.sh",
         "forgejo-application.sh",
         "paperless-application.sh",
@@ -3183,7 +3184,11 @@ fn validate_live_runner(runner: &str, matrix: &str) -> Result<(), String> {
         "wait_for_workload_completion",
         "selected-container-id",
         "smoke-baseline.json",
-        "remove previous apply target",
+        "release_outer \"${apply_target_outer}\"",
+        "prepare_outer_storage \"${outer}\" \"${image}\"",
+        "--image-volume=ignore",
+        "verify_outer_storage_volume_ownership",
+        "volume rm -- \"${volume}\"",
         "timed_operation 5m 'pull digest-pinned workload image'",
         "podman load --input /boxferry-workload.tar",
         "--privileged",
@@ -3461,7 +3466,7 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         &runner[cleanup..],
         "Podman limitation-revalidation EXIT cleanup",
         &[
-            "container exists \"${outer}\"",
+            "if ! release_outer \"${outer}\"; then",
             "mark_revalidation_result cleanup.baseline_removed",
             "mark_revalidation_result cleanup.replacement_removed",
             "mark_revalidation_result cleanup.apply_target_removed",
@@ -4760,6 +4765,54 @@ fn validate_live_workflow(hosted: &str) -> Result<(), String> {
     }
     if !hosted.contains("sudo apt-get install --yes libcap2-bin podman") {
         return Err("hosted Podman workflow must install the capability inspection tool".to_owned());
+    }
+    validate_live_cleanup_workflow(hosted)?;
+    Ok(())
+}
+
+fn validate_live_cleanup_workflow(hosted: &str) -> Result<(), String> {
+    let cleanup_job = hosted
+        .split("\n  cleanup-regression:\n")
+        .nth(1)
+        .and_then(|remainder| remainder.split("\n  application:\n").next())
+        .ok_or("hosted cleanup job must precede the application job")?;
+    if !cleanup_job.contains("run: chmod +x target/debug/boxferry") {
+        return Err("hosted cleanup job must restore downloaded binary permissions".to_owned());
+    }
+    for required in [
+        "- cleanup-regression",
+        "expected_sha:",
+        "admit-cleanup:",
+        "[[ \"${GITHUB_REPOSITORY}\" == Strukturpiloten/boxferry ]]",
+        "[[ \"${EXPECTED_SHA}\" == \"${GITHUB_SHA}\" ]]",
+        "needs.matrix.outputs.profile != 'cleanup-regression'",
+        "needs: [admit-cleanup, build-boxferry]",
+        "if: github.event_name == 'workflow_dispatch' && inputs.profile == 'cleanup-regression'",
+        "ref: ${{ github.sha }}",
+        "[[ \"$(git rev-parse HEAD)\" == \"${EXPECTED_SHA}\" ]]",
+        "bash scripts/test-podman-live-outer-storage-hosted.sh",
+    ] {
+        if !hosted.contains(required) {
+            return Err(format!("hosted cleanup workflow is missing `{required}`"));
+        }
+    }
+    let probe = fs::read_to_string(repository_root().join("scripts/test-podman-live-outer-storage-hosted.sh"))
+        .map_err(|error| format!("failed to read hosted storage probe: {error}"))?;
+    for required in [
+        "fixtures/conformance/podman-live/matrix.tsv",
+        "for iteration in 1 2; do",
+        "--profile smoke --matrix-cell \"${cell}\" --engine podman",
+        "sudo podman volume ls",
+        "test-podman-live-outer-storage-native.sh",
+    ] {
+        if !probe.contains(required) {
+            return Err(format!("hosted storage probe is missing `{required}`"));
+        }
+    }
+    let rootless_probe = probe.find("rootless_mode=").ok_or("missing rootless host probe")?;
+    let privileged_probe = probe.find("rootful_mode=").ok_or("missing privileged host probe")?;
+    if rootless_probe >= privileged_probe {
+        return Err("rootless host probe must run before privileged Podman changes runner runtime state".to_owned());
     }
     Ok(())
 }

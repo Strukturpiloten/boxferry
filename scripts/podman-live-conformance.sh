@@ -15,6 +15,8 @@ source "${script_directory}/lib/scenario-contract.sh"
 source "${script_directory}/lib/scenario-validators.sh"
 # shellcheck source=scripts/lib/timed-operation.sh
 source "${script_directory}/lib/timed-operation.sh"
+# shellcheck source=scripts/lib/podman-live-outer-storage.sh
+source "${script_directory}/lib/podman-live-outer-storage.sh"
 # shellcheck source=scripts/lib/nextcloud-application.sh
 source "${script_directory}/lib/nextcloud-application.sh"
 # shellcheck source=scripts/lib/forgejo-application.sh
@@ -504,6 +506,7 @@ chmod 0700 "${artifact_root}"
 chmod 0700 "${runtime_root}"
 
 declare -a outer_containers=()
+outer_generation=0
 declare -a discovery_directories=()
 declare -a fault_proxy_pids=()
 declare -a fault_proxy_sockets=()
@@ -805,37 +808,17 @@ trap progress_fail ERR
 
 cleanup() {
   local status=$?
-  local outer directory image pid socket existence_status
+  ignore_outer_cleanup_signals
+  local outer directory image pid socket
   local cleanup_failed=false
   local baseline_removed=false replacement_removed=false apply_target_removed=false
   for outer in "${outer_containers[@]}"; do
-    if ! timeout --signal=TERM --kill-after=10s 30s \
-      "${engine}" rm --force --ignore -- "${outer}" > /dev/null 2>&1; then
-      [[ "${profile}" == limitation-revalidation ]] && cleanup_failed=true
-    fi
-    if [[ "${profile}" == limitation-revalidation ]]; then
-      if timeout --signal=TERM --kill-after=10s 30s \
-        "${engine}" container exists "${outer}" > /dev/null 2>&1; then
-        cleanup_failed=true
-      else
-        existence_status=$?
-        if ((existence_status == 1)); then
-          if [[ -n "${revalidation_baseline_outer}" &&
-            "${outer}" == "${revalidation_baseline_outer}" ]]; then
-            baseline_removed=true
-          fi
-          if [[ -n "${revalidation_candidate_outer}" &&
-            "${outer}" == "${revalidation_candidate_outer}" ]]; then
-            replacement_removed=true
-          fi
-          if [[ -n "${revalidation_apply_target_outer}" &&
-            "${outer}" == "${revalidation_apply_target_outer}" ]]; then
-            apply_target_removed=true
-          fi
-        else
-          cleanup_failed=true
-        fi
-      fi
+    if ! release_outer "${outer}"; then
+      cleanup_failed=true
+    elif [[ "${profile}" == limitation-revalidation ]]; then
+      if [[ "${outer}" == "${revalidation_baseline_outer}" ]]; then baseline_removed=true; fi
+      if [[ "${outer}" == "${revalidation_candidate_outer}" ]]; then replacement_removed=true; fi
+      if [[ "${outer}" == "${revalidation_apply_target_outer}" ]]; then apply_target_removed=true; fi
     fi
   done
   if [[ "${profile}" == limitation-revalidation ]]; then
@@ -906,7 +889,7 @@ cleanup() {
     revalidation_failure_code="cleanup-failed"
     status=1
   fi
-  if [[ "${profile}" != smoke && "${cleanup_failed}" == true && "${status}" == 0 ]]; then
+  if [[ "${cleanup_failed}" == true && "${status}" == 0 ]]; then
     status=1
   fi
   if [[ "${profile}" == limitation-revalidation && ! -f "${revalidation_evidence}" ]]; then
@@ -963,6 +946,10 @@ cleanup() {
   exit "${status}"
 }
 trap cleanup EXIT
+if [[ "${profile}" != limitation-revalidation ]]; then
+  trap 'printf "Live conformance interrupted by INT.\n" >&2; exit 130' INT
+  trap 'printf "Live conformance interrupted by TERM.\n" >&2; exit 143' TERM
+fi
 
 if [[ "${profile}" == limitation-revalidation ]]; then
   repository_commit="$(git -C "${repository_root}" rev-parse --verify HEAD)"
@@ -1470,19 +1457,23 @@ start_outer_runtime() {
       ;;
   esac
   outer_digest="$(printf '%s' "${id}" | sha256sum)"
-  local outer="${run_id:0:36}-${outer_digest:0:16}"
+  outer_generation=$((outer_generation + 1))
+  local outer="${run_id:0:32}-${outer_digest:0:12}-${outer_generation}"
   mkdir -p -- "${socket_directory}"
   chmod 0777 "${socket_directory}"
   prepare_workload_archive
   prepare_matrix_image "${id}" "${image}"
   outer_containers+=("${outer}")
+  prepare_outer_storage "${outer}" "${image}"
   # The caller starts the API only after resource creation and matching-version CLI assertions.
   # This avoids concurrent nested CLI/API storage access and a second long-lived exec session;
   # both have deadlocked nondeterministically on GitHub-hosted outer Podman engines.
   # shellcheck disable=SC2016 # ${...} expands in the nested shell, not this script.
   startup_substep 'create detached outer container (deadline 90s)' \
     timeout --signal=TERM --kill-after=10s 90s \
-    "${engine}" run --detach --rm --name "${outer}" --stop-timeout 1 --privileged --device /dev/fuse \
+    "${engine}" run --detach --rm --name "${outer}" \
+    --label "io.boxferry.live.run=${run_id}" --image-volume=ignore \
+    "${outer_storage_mount_args[@]}" --stop-timeout 1 --privileged --device /dev/fuse \
     --security-opt label=disable --volume "${socket_directory}:/boxferry-socket:Z" \
     --volume "${nested_archive}:/boxferry-workload.tar:ro" \
     --env "BF_SOCKET=/boxferry-socket/podman.sock" "${image}" /bin/sh -ceu '
@@ -1656,7 +1647,7 @@ should_run_external_apply() {
 
 start_apply_target() {
   if [[ -n "${apply_target_outer}" ]]; then
-    engine_operation 'remove previous apply target' rm --force --ignore "${apply_target_outer}" > /dev/null
+    release_outer "${apply_target_outer}"
     apply_target_outer=""
     apply_target_socket=""
   fi
@@ -1769,8 +1760,7 @@ run_external_apply_reacquire() {
       return 1
     fi
   done
-  engine_operation 'remove disposable applied target outer container' \
-    rm --force --ignore -- "${apply_target_outer}" > /dev/null
+  release_outer "${apply_target_outer}"
   apply_target_outer=""
   apply_target_socket=""
 }
@@ -1982,8 +1972,7 @@ podman_socket() {
 
 start_clean_acquisition_outer() {
   local id=$1 image=$2 mode=$3 socket_directory=$4 scope=$5
-  engine_operation 'remove runtime-observation outer container' \
-    rm --force --ignore -- "${started_outer}" > /dev/null
+  release_outer "${started_outer}"
   rm -f -- "${socket_directory}/podman.sock" "${socket_directory}/bootstrap.log" \
     "${socket_directory}/runtime-evidence.tsv" "${socket_directory}/runtime-evidence.ready" \
     "${socket_directory}/runtime-canaries.log" "${socket_directory}/selected-container-id" \
@@ -2128,8 +2117,7 @@ run_discovery() {
     --output-directory "${current_case}/outputs/discovery-compose" --console-format json \
     > "${current_case}/outputs/discovery-compose.report.json"
   [[ -s "${current_case}/outputs/discovery-compose/compose.yaml" ]]
-  engine_operation 'remove socket-discovery container' \
-    rm --force --ignore -- "${outer}" > /dev/null
+  release_outer "${outer}"
   rm -f -- "${uid_socket_directory}/podman.sock" "${uid_socket_directory}/bootstrap.log" \
     "${uid_socket_directory}/runtime-evidence.tsv" \
     "${uid_socket_directory}/runtime-evidence.ready" \
@@ -2158,8 +2146,7 @@ should_run_discovery() {
 
 remove_outer() {
   local outer=$1
-  timeout --signal=TERM --kill-after=10s 30s \
-    "${engine}" rm --force --ignore -- "${outer}" > /dev/null
+  release_outer "${outer}"
 }
 
 verify_revalidation_candidate_provenance() {
@@ -2491,9 +2478,12 @@ run_limited_cell() {
   outer="${run_id:0:36}-${outer_digest:0:16}"
   progress_begin 'start limitation-probe container'
   outer_containers+=("${outer}")
+  prepare_outer_storage "${outer}" "${image}"
   startup_substep 'create limitation-probe container (deadline 90s)' \
     timeout --signal=TERM --kill-after=10s 90s \
-    "${engine}" run --detach --rm --name "${outer}" --stop-timeout 1 --privileged --device /dev/fuse \
+    "${engine}" run --detach --rm --name "${outer}" \
+    --label "io.boxferry.live.run=${run_id}" --image-volume=ignore \
+    "${outer_storage_mount_args[@]}" --stop-timeout 1 --privileged --device /dev/fuse \
     --security-opt label=disable "${image}" /bin/sh -ceu \
     'trap "exit 0" INT TERM; while :; do sleep 3600; done' \
     > "${current_case}/outer.id"
@@ -2585,8 +2575,11 @@ run_revalidation_baseline_collision() {
   outer_digest="$(printf '%s' "revalidation-baseline-${id}" | sha256sum)"
   outer="${run_id:0:32}-baseline-${outer_digest:0:12}"
   outer_containers+=("${outer}")
+  prepare_outer_storage "${outer}" "${image}"
   timed_operation 90s 'start historical limitation container' \
-    "${engine}" run --detach --rm --name "${outer}" --stop-timeout 1 \
+    "${engine}" run --detach --rm --name "${outer}" \
+    --label "io.boxferry.live.run=${run_id}" --image-volume=ignore \
+    "${outer_storage_mount_args[@]}" --stop-timeout 1 \
     --privileged --device /dev/fuse --security-opt label=disable \
     --volume "${baseline_socket_namespace}:/boxferry-socket:Z" \
     "${image}" /bin/sh -ceu 'trap "exit 0" INT TERM; sleep 3600' \

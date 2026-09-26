@@ -52,6 +52,7 @@ active table; superseded records are history and are read only when that history
 | [0054](0054-typed-podman-network-alias-promotion.md) | Explicit typed Podman network-alias promotion |
 | [0055](0055-parallel-readiness-and-local-quality-feedback.md) | Parallel exact-SHA readiness and lightweight local quality feedback |
 | [0056](0056-change-aware-development-validation.md) | Change-aware local and PR plans with a complete release override |
+| [0057](0057-run-owned-podman-live-storage.md) | Exact run-owned outer Podman storage and fail-closed cleanup |
 
 ## Superseded history
 
