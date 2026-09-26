@@ -1148,6 +1148,11 @@ impl<'a> Mapping<'a> {
                     }
                     Err(error) => self.generation_error(&subject, &error, environment.origins()),
                 },
+                EnvironmentValue::Required => self.unsupported(
+                    &subject,
+                    "environment value was withheld; supply this named value on the target before use",
+                    environment.origins(),
+                ),
                 EnvironmentValue::Host => match GeneratedEnvironment::host(environment.value().name().as_str()) {
                     Ok(value) => {
                         generated.add_environment(value);

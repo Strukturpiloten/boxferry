@@ -1,0 +1,13 @@
+-BFP0003|services.database.environment
+-BFP0003|services.immich-server.environment
++BFP0002|services.database.environment.POSTGRES_DB
++BFP0002|services.database.environment.POSTGRES_INITDB_ARGS
++BFP0002|services.database.environment.POSTGRES_PASSWORD
++BFP0002|services.database.environment.POSTGRES_USER
++BFP0002|services.immich-server.environment.DB_DATABASE_NAME
++BFP0002|services.immich-server.environment.DB_HOSTNAME
++BFP0002|services.immich-server.environment.DB_PASSWORD
++BFP0002|services.immich-server.environment.DB_USERNAME
++BFP0002|services.immich-server.environment.IMMICH_MACHINE_LEARNING_URL
++BFP0002|services.immich-server.environment.REDIS_HOSTNAME
++BFP0002|services.immich-server.environment.TZ

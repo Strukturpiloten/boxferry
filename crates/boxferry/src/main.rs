@@ -243,7 +243,7 @@ struct PodmanInputOptions {
 struct PodmanPromotionOptions {
     #[command(flatten)]
     bind_mounts: PodmanBindMountPromotionOption,
-    /// Promote reviewed effective environment, ports, restart, health, DNS, and network aliases.
+    /// Promote reviewed effective environment names, ports, restart, health, DNS, and network aliases.
     #[arg(long)]
     promote_podman_portable_effective_settings: bool,
     /// Promote effective named-volume mounts into portable neutral intent.
@@ -312,6 +312,9 @@ struct ConversionPolicyOptions {
     /// Authorization for documented non-exact conversion outcomes.
     #[arg(long, value_enum, default_value_t = CliLossPolicy::Exact)]
     loss_policy: CliLossPolicy,
+    /// Withhold environment values from artifacts, or explicitly include them (Compose/Quadlet).
+    #[arg(long, value_enum, default_value_t = EnvironmentValuePolicy::Withhold)]
+    environment_values: EnvironmentValuePolicy,
 }
 
 #[derive(Debug, Args)]
@@ -786,6 +789,7 @@ struct GenericConversion {
     pod_name: Option<String>,
     output_layout: OutputLayout,
     loss_policy: CliLossPolicy,
+    environment_values: EnvironmentValuePolicy,
 }
 
 impl ConversionInput {
@@ -1225,6 +1229,7 @@ impl GenericConversion {
             pod_name,
             output_layout,
             loss_policy: policy.loss_policy,
+            environment_values: policy.environment_values,
         }
     }
 }
@@ -1251,6 +1256,12 @@ enum CliLossPolicy {
     Exact,
     Approximate,
     Partial,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum EnvironmentValuePolicy {
+    Withhold,
+    Include,
 }
 
 impl From<CliLossPolicy> for LossPolicy {
@@ -1703,6 +1714,10 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
         value: format!("{:?}", arguments.loss_policy).to_lowercase(),
     });
     report.choices.push(ReportChoice {
+        name: "environment_values".into(),
+        value: format!("{:?}", arguments.environment_values).to_lowercase(),
+    });
+    report.choices.push(ReportChoice {
         name: "output_layout".into(),
         value: format!("{:?}", arguments.output_layout).to_lowercase(),
     });
@@ -1807,6 +1822,7 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("pod_name", "--pod-name"),
         ("output_layout", "--output-layout"),
         ("loss_policy", "--loss-policy"),
+        ("environment_values", "--environment-values"),
         ("report_file", "--report-file"),
         ("generate_error_report", "--generate-error-report"),
         ("include_podman_snapshot", "--include-podman-snapshot"),
@@ -2696,7 +2712,9 @@ async fn generic_podman_convert(
     let source = acquire_podman_source(
         application_name.clone(),
         &transport,
-        if arguments.promote_podman_portable_effective_settings {
+        if arguments.promote_podman_portable_effective_settings
+            && arguments.environment_values == EnvironmentValuePolicy::Include
+        {
             AcquisitionOptions::include_environment_values()
         } else {
             AcquisitionOptions::redacted()
@@ -3003,6 +3021,37 @@ fn export_imported(
     aliases: &ReportAliases,
     discovered: &[ResolvedInput],
 ) -> Result<(RenderedConversion, VersionBounds), Box<dyn Error>> {
+    let imported = if arguments.environment_values == EnvironmentValuePolicy::Withhold {
+        let (mut application, outcomes, diagnostics) = imported.into_parts();
+        if let Some(application) = &mut application {
+            application.withhold_literal_environment_values();
+        }
+        ImportResult::new(application, outcomes, diagnostics)
+    } else {
+        imported
+    };
+    if output == OutputType::Podman
+        && arguments.environment_values == EnvironmentValuePolicy::Include
+        && imported.application().is_some_and(|application| {
+            application.services().iter().any(|service| {
+                service.value().environment().iter().any(|environment| {
+                    matches!(environment.value().value(), boxferry::EnvironmentValue::Literal(value) if value.is_sensitive())
+                })
+            })
+        })
+    {
+        return Err(post_discovery_failure(
+            FailedStage::Conversion,
+            RuleId::PodmanOutputUnsupported,
+            "Podman artifact cannot safely include a protected environment value",
+            &io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the current PodmanLens renderer cannot safely emit protected inline values; use --environment-values withhold or select a Compose/Quadlet target",
+            ),
+            aliases,
+            discovered,
+        ));
+    }
     match output {
         OutputType::Compose => {
             let target = TargetProfile::new(
@@ -3299,7 +3348,11 @@ fn finish_document_conversion(
             .collect();
         if !validate_only {
             let directory = output_directory.ok_or_else(|| io::Error::other("missing convert output directory"))?;
-            if let Err(error) = write_rendered_output(directory, output) {
+            if let Err(error) = write_rendered_output(
+                directory,
+                output,
+                arguments.environment_values == EnvironmentValuePolicy::Include,
+            ) {
                 report.diagnostics.push(output_write_diagnostic(&error, &aliases));
                 report.events.push("output-write-failed".into());
                 report.status = ReportStatus::Failure;
@@ -5558,8 +5611,16 @@ fn absolute_parent(path: &Path) -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other(format!("input path has no parent: {}", path.display())))
 }
 
-fn prepare_output_directory(directory: &Path) -> io::Result<bool> {
-    match fs::create_dir(directory) {
+fn prepare_output_directory(directory: &Path, private: bool) -> io::Result<bool> {
+    #[cfg(unix)]
+    let create_result = if private {
+        fs::DirBuilder::new().mode(0o700).create(directory)
+    } else {
+        fs::create_dir(directory)
+    };
+    #[cfg(not(unix))]
+    let create_result = fs::create_dir(directory);
+    match create_result {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
             let metadata = fs::symlink_metadata(directory)?;
@@ -5590,12 +5651,18 @@ fn cleanup_output_write(directory: &Path, created_directory: bool, created_files
     }
 }
 
-fn write_rendered_output(directory: &Path, files: &[RenderedFile]) -> io::Result<()> {
-    let created_directory = prepare_output_directory(directory)?;
+fn write_rendered_output(directory: &Path, files: &[RenderedFile], private: bool) -> io::Result<()> {
+    let created_directory = prepare_output_directory(directory, private)?;
     let mut created = Vec::with_capacity(files.len());
     for file in files {
         let path = directory.join(&file.name);
-        let mut destination = match OpenOptions::new().write(true).create_new(true).open(&path) {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if private {
+            options.mode(0o600);
+        }
+        let mut destination = match options.open(&path) {
             Ok(destination) => destination,
             Err(error) => {
                 cleanup_output_write(directory, created_directory, &created);
@@ -6117,6 +6184,7 @@ mod tests {
             pod_name: None,
             output_layout: OutputLayout::Files,
             loss_policy: CliLossPolicy::Exact,
+            environment_values: EnvironmentValuePolicy::Withhold,
         };
         let environment = generic_interpolation_environment(&arguments)?.ok_or("interpolation environment missing")?;
         for name in ["FILE_VALUE", "LITERAL_VALUE", "PATH"] {

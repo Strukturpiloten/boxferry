@@ -1,0 +1,2 @@
+-BFP0003	services.grafana.environment	approximate	podman@6.1.0..6.1.0	1
++BFP0002	services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD	unsupported	podman@6.1.0..6.1.0	1

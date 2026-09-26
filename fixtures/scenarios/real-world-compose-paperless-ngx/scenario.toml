@@ -132,14 +132,14 @@ target-minimum = "1.0.0"
 target-maximum = "1.0.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies."
+reason = "Compose output withholds environment assignments; reimport cannot reconstruct the reviewed dependencies."
 artifacts-file = "expected.compose.artifacts"
 diagnostics-file = "expected.compose.diagnostics"
 allowed-losses-file = "expected.compose.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies." }
-reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db"]
+reimport = { state = "known-migration-gap", reason = "Generated Compose lacks withheld environment assignments and cannot reconstruct the reviewed dependencies." }
+reimport-semantic-gaps = ["environment:db:POSTGRES_DB", "environment:db:POSTGRES_USER", "environment:db:POSTGRES_PASSWORD", "environment:webserver:PAPERLESS_REDIS", "environment:webserver:PAPERLESS_DBHOST", "environment:webserver:PAPERLESS_DBENGINE", "dependency:webserver:broker", "dependency:webserver:db"]
 
 [[evidence]]
 input = "compose"
@@ -149,7 +149,7 @@ target-minimum = "5.4.0"
 target-maximum = "6.1.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Quadlet output is emitted, but reimport cannot reconstruct the reviewed dependencies and restart policies."
+reason = "Quadlet output withholds environment assignments; reimport cannot reconstruct the reviewed dependencies and restart policies."
 artifacts-file = "expected.quadlet.artifacts"
 diagnostics-file = "expected.quadlet.diagnostics"
 reimport-diagnostics-file = "expected.quadlet.reimport.diagnostics"
@@ -157,8 +157,8 @@ allowed-losses-file = "expected.quadlet.losses.tsv"
 reimport-allowed-losses-file = "expected.quadlet.reimport.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed dependencies and restart policies." }
-reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:db", "restart:broker", "restart:db", "restart:webserver"]
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet lacks withheld environment assignments and cannot reconstruct the reviewed dependencies and restart policies." }
+reimport-semantic-gaps = ["environment:db:POSTGRES_DB", "environment:db:POSTGRES_USER", "environment:db:POSTGRES_PASSWORD", "environment:webserver:PAPERLESS_REDIS", "environment:webserver:PAPERLESS_DBHOST", "environment:webserver:PAPERLESS_DBENGINE", "dependency:webserver:broker", "dependency:webserver:db", "restart:broker", "restart:db", "restart:webserver"]
 
 [[evidence]]
 input = "compose"

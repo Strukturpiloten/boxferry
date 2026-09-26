@@ -1920,6 +1920,8 @@ impl Healthcheck {
 pub enum EnvironmentValue {
     /// A literal plain or sensitive value.
     Literal(ProtectedString),
+    /// A named value withheld from this migration artifact; the target operator must supply it.
+    Required,
     /// Resolve the value from an explicit caller-provided host environment provider.
     Host,
     /// Ensure the variable is absent.
@@ -3945,6 +3947,20 @@ impl Application {
         &self.services
     }
 
+    /// Withholds all literal service environment values while retaining their names and origins.
+    ///
+    /// This is an artifact authorization boundary, independent of conversion fidelity. An
+    /// exporter must report each required value as an unsupported target prerequisite.
+    pub fn withhold_literal_environment_values(&mut self) {
+        for service in &mut self.services {
+            for environment in &mut service.value_mut().environment {
+                if matches!(environment.value().value(), EnvironmentValue::Literal(_)) {
+                    environment.value_mut().value = EnvironmentValue::Required;
+                }
+            }
+        }
+    }
+
     /// Adds a uniquely named structural service group.
     ///
     /// Every referenced service must already exist in the application, and one service may belong
@@ -4148,15 +4164,46 @@ fn validate_no_nul(kind: &'static str, value: &str) -> Result<(), ModelError> {
 mod tests {
     use super::{
         Annotation, Application, ArtifactDependency, ArtifactDependencyNode, Command, Config, ConfigMaterial, Device,
-        Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, ExposedPort, GroupExitPolicy,
-        HealthcheckDuration, HealthcheckRetries, HostAddress, HostAddressKind, HostMapping, Identifier,
-        KernelParameter, Logging, LoggingOption, MetadataLabel, ModelError, Mount, MountSource, Network,
-        NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Protocol, PullPolicy, ReloadAction, ResourceGrant,
-        ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret, SecretMaterial, SecurityOption,
-        Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup, ServiceGroupRuntime, StartupNotification,
-        StopTimeout, Volume, VolumeImageSource,
+        Entrypoint, EnvironmentFile, EnvironmentFileFormat, EnvironmentFileSyntax, EnvironmentValue,
+        EnvironmentVariable, ExposedPort, GroupExitPolicy, HealthcheckDuration, HealthcheckRetries, HostAddress,
+        HostAddressKind, HostMapping, Identifier, KernelParameter, Logging, LoggingOption, MetadataLabel, ModelError,
+        Mount, MountSource, Network, NetworkAttachment, NetworkDriverOption, NetworkIpamConfig, Protocol, PullPolicy,
+        ReloadAction, ResourceGrant, ResourceGrantSyntax, ResourceLimit, ResourceOwnership, RestartPolicy, Secret,
+        SecretMaterial, SecurityOption, Service, ServiceDependency, ServiceDependencyCondition, ServiceGroup,
+        ServiceGroupRuntime, StartupNotification, StopTimeout, Volume, VolumeImageSource,
     };
     use crate::{ImageAcquisition, ImageBuild, ImageReference, ProtectedString, Sourced};
+
+    #[test]
+    fn withholding_environment_values_keeps_names_and_provenance_without_value_bytes() -> Result<(), String> {
+        let mut application = Application::new(id("application")?);
+        let mut service = Service::new(id("web")?);
+        let origin =
+            crate::Provenance::source(crate::SourceId::new("compose.yaml").map_err(|error| error.to_string())?);
+        service.add_environment(Sourced::from_source(
+            EnvironmentVariable::new(
+                id("MODE")?,
+                EnvironmentValue::Literal(ProtectedString::sensitive("benign-name-private-canary")),
+            ),
+            origin.clone(),
+        ));
+        service.add_environment(Sourced::generated(EnvironmentVariable::new(
+            id("FROM_HOST")?,
+            EnvironmentValue::Host,
+        )));
+        application
+            .add_service(Sourced::generated(service))
+            .map_err(|error| error.to_string())?;
+
+        application.withhold_literal_environment_values();
+        let environment = application.services()[0].value().environment();
+        assert_eq!(environment[0].value().name().as_str(), "MODE");
+        assert_eq!(environment[0].origins(), &[origin]);
+        assert!(matches!(environment[0].value().value(), EnvironmentValue::Required));
+        assert!(matches!(environment[1].value().value(), EnvironmentValue::Host));
+        assert!(!format!("{application:?}").contains("benign-name-private-canary"));
+        Ok(())
+    }
 
     #[test]
     fn preserves_service_order_and_rejects_duplicate_names() -> Result<(), String> {

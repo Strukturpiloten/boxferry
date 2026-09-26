@@ -65,10 +65,12 @@ level for this deployment:
 <!-- boxferry-example: compose-to-quadlet-interpolate -->
 
 ```console
-boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --loss-policy approximate --output-directory quadlet-interpolated-output
+boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --loss-policy approximate --output-directory quadlet-interpolated-output
 ```
 
-`--env-file` values are applied in order. Later `--env` values win. Sensitive values should use
+`--env-file` values are applied in order. Later `--env` values win. The explicit
+`--environment-values include` authorizes `LOG_LEVEL` in the generated unit; without it the
+value is withheld and reported as a target prerequisite. Sensitive values should use
 `--env NAME`, which reads only that authorized process variable and redacts it from reports.
 This example explicitly accepts `BFQ0009`: systemd approximates the Compose runtime restart policy.
 

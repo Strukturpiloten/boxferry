@@ -46,6 +46,9 @@ impl PodmanPromotionPolicy {
     }
 
     /// Authorizes or rejects the reviewed portable effective-settings subset.
+    ///
+    /// This does not authorize environment-value acquisition. An embedding caller must select
+    /// `PodmanLens` acquisition options separately; redacted entries remain named prerequisites.
     #[must_use]
     pub const fn with_portable_effective_settings(mut self, enabled: bool) -> Self {
         self.set(PORTABLE_EFFECTIVE_SETTINGS, enabled);

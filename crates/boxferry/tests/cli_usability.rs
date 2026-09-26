@@ -150,6 +150,9 @@ fn reviewed_core_fixture_checks_representative_structure_and_selected_losses() -
             .args(["--loss-policy", "partial", "--output-directory"])
             .arg(&destination)
             .args(["--console-format", "json"]);
+        if output != "podman" {
+            command.args(["--environment-values", "include"]);
+        }
         if output == "podman" {
             command.args(["--podman-target-context", "unknown"]);
         }
@@ -295,6 +298,8 @@ fn run_route(verb: &str, input: &str, output: &str, destination: &Path) -> Resul
 
     if input == "podman" {
         command.args(["--loss-policy", "partial"]);
+    } else if output != "podman" {
+        command.args(["--environment-values", "include"]);
     }
     if output == "podman" {
         command.args(["--podman-target-context", "unknown"]);

@@ -53,6 +53,7 @@ active table; superseded records are history and are read only when that history
 | [0055](0055-parallel-readiness-and-local-quality-feedback.md) | Parallel exact-SHA readiness and lightweight local quality feedback |
 | [0056](0056-change-aware-development-validation.md) | Change-aware local and PR plans with a complete release override |
 | [0057](0057-run-owned-podman-live-storage.md) | Exact run-owned outer Podman storage and fail-closed cleanup |
+| [0058](0058-separate-sensitive-value-artifact-authorization.md) | Separate environment-value artifact authorization from Podman portability |
 
 ## Superseded history
 

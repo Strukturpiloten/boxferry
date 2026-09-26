@@ -44,3 +44,13 @@ BFQ0009|services.meilisearch.restart_policy
 BFQ0009|services.vectordb.restart_policy
 BFQ0009|services.rag_api.restart_policy
 BFQ0010|services.rag_api.env_file[0]
+BFQ0003|services.api.environment.HOST
+BFQ0003|services.api.environment.MONGO_URI
+BFQ0003|services.api.environment.MEILI_HOST
+BFQ0003|services.admin-panel.environment.PORT
+BFQ0003|services.meilisearch.environment.MEILI_HOST
+BFQ0003|services.meilisearch.environment.MEILI_NO_ANALYTICS
+BFQ0003|services.vectordb.environment.POSTGRES_DB
+BFQ0003|services.vectordb.environment.POSTGRES_USER
+BFQ0003|services.vectordb.environment.POSTGRES_PASSWORD
+BFQ0003|services.rag_api.environment.DB_HOST

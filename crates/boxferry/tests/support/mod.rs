@@ -21,5 +21,5 @@ pub(crate) use scenarios::{
     Dimension, DimensionState, LossTuple, NativeInput, Outcome, PodmanPlanExpectation, RouteExpectation,
     RouteObservation, ScenarioManifest, diagnostic_facts, load_loss_expectations, load_string_expectations,
     observe_prerequisites, validate_diagnostics, validate_evidence, validate_exporter_coverage, validate_losses,
-    validate_manifest, validate_neutral_application, validate_prerequisites,
+    validate_manifest, validate_neutral_application, validate_prerequisites, validate_withheld_reimport,
 };

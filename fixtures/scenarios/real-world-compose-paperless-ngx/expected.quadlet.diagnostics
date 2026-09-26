@@ -2,3 +2,9 @@ BFQ0009|services.broker.restart_policy
 BFQ0009|services.db.restart_policy
 BFQ0009|services.webserver.restart_policy
 BFQ0010|services.webserver.env_file[0]
+BFQ0003|services.db.environment.POSTGRES_DB
+BFQ0003|services.db.environment.POSTGRES_PASSWORD
+BFQ0003|services.db.environment.POSTGRES_USER
+BFQ0003|services.webserver.environment.PAPERLESS_DBENGINE
+BFQ0003|services.webserver.environment.PAPERLESS_DBHOST
+BFQ0003|services.webserver.environment.PAPERLESS_REDIS

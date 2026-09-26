@@ -6,6 +6,8 @@ script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd -- "${script_directory}/.." && pwd -P)"
 # shellcheck source=scripts/lib/observability-application.sh
 source "${script_directory}/lib/observability-application.sh"
+# shellcheck source=scripts/lib/scenario-validators.sh
+source "${script_directory}/lib/scenario-validators.sh"
 
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "${test_root}"' EXIT
@@ -17,6 +19,47 @@ assert_absent() {
     return 1
   fi
 }
+
+withheld_directory="${test_root}/default-withheld"
+mkdir -p -- "${withheld_directory}"
+printf '%s\n' 'services:' '  bf-private-observability-grafana:' \
+  '    environment:' '      GF_SECURITY_ADMIN_PASSWORD: <withheld>' \
+  > "${withheld_directory}/compose.yaml"
+printf '%s\n' '[Container]' 'Image=example.invalid/grafana:1' \
+  > "${withheld_directory}/bf-private-observability-grafana.container"
+withheld_report="${test_root}/default-withheld.report.json"
+jq --null-input \
+  --arg subject 'services.bf-private-observability-grafana.environment.GF_SECURITY_ADMIN_PASSWORD' \
+  '{status: "success", exit_category: "success", output_artifacts: [{name: "compose.yaml"}],
+    diagnostics: [{code: "BFP0002", severity: "warning",
+      fields: [{name: "subject", value: $subject}]}]}' > "${withheld_report}"
+observability_assert_default_withholding \
+  compose "${withheld_directory}" "${withheld_report}" bf-private
+observability_assert_default_withholding \
+  quadlet "${withheld_directory}" "${withheld_report}" bf-private
+missing_grafana_directory="${test_root}/default-withheld-missing-grafana"
+mkdir -p -- "${missing_grafana_directory}"
+printf '%s\n' 'services:' '  unrelated: {}' \
+  > "${missing_grafana_directory}/compose.yaml"
+if observability_assert_default_withholding \
+  compose "${missing_grafana_directory}" "${withheld_report}" bf-private \
+  > /dev/null 2>&1; then
+  printf '%s\n' 'Default withholding accepted an export missing Grafana.' >&2
+  exit 1
+fi
+jq '.diagnostics = []' "${withheld_report}" > "${test_root}/missing-withholding.report.json"
+if observability_assert_default_withholding \
+  compose "${withheld_directory}" "${test_root}/missing-withholding.report.json" bf-private \
+  > /dev/null 2>&1; then
+  printf '%s\n' 'Default withholding passed without a named diagnostic.' >&2
+  exit 1
+fi
+printf '%s\n' "${OBSERVABILITY_ADMIN_PASSWORD}" >> "${withheld_directory}/compose.yaml"
+if observability_assert_default_withholding \
+  compose "${withheld_directory}" "${withheld_report}" bf-private > /dev/null 2>&1; then
+  printf '%s\n' 'Default withholding accepted a retained password canary.' >&2
+  exit 1
+fi
 
 observability_validate_alloy_scrape_timing \
   "${repository_root}/fixtures/conformance/observability-application/config.alloy"
@@ -323,6 +366,7 @@ reimport_count=0
 declare -A export_seen=() reimport_seen=()
 boxferry_operation() {
   local description=$1 operation_label mode selection target output directory='' argument
+  local include_values=false
   shift
   read -r operation_label mode selection target <<< "${description}"
   [[ "${operation_label}" == Observability && "${mode}" == "${export_mode}" ]]
@@ -331,7 +375,8 @@ boxferry_operation() {
   case "${description}" in
     "Observability ${export_mode} exact Podman-to-${output}" | \
       "Observability ${export_mode} label Podman-to-${output}" | \
-      "Observability ${export_mode} all Podman-to-${output}") ;;
+      "Observability ${export_mode} all Podman-to-${output}" | \
+      "Observability ${export_mode} default-withheld Podman-to-${output}") ;;
     *)
       printf 'Unexpected modeled observability export operation: %s\n' "${description}" >&2
       return 1
@@ -343,16 +388,37 @@ boxferry_operation() {
     if [[ "${argument}" == --output-directory ]]; then
       directory=${1:?output directory argument is required}
       shift
-      break
+    elif [[ "${argument}" == --environment-values ]]; then
+      [[ "${1:-}" == include ]]
+      include_values=true
+      shift
     fi
   done
+  if [[ "${selection}" == default-withheld || "${output}" == podman ]]; then
+    [[ "${include_values}" == false ]]
+  else
+    [[ "${include_values}" == true ]]
+  fi
   [[ -n "${directory}" ]]
   [[ -d "$(dirname -- "${directory}")" ]]
   [[ ! -e "${directory}" ]]
   mkdir -- "${directory}"
+  if [[ "${selection}" == default-withheld ]]; then
+    if [[ "${output}" == compose ]]; then
+      printf '%s\n' 'services:' '  bf-private-observability-grafana:' \
+        > "${directory}/compose.yaml"
+    else
+      printf '%s\n' '[Container]' 'Image=example.invalid/grafana:1' \
+        > "${directory}/bf-private-observability-grafana.container"
+    fi
+  fi
   export_seen["${mode}-${selection}-${output}"]=$((export_seen["${mode}-${selection}-${output}"] + 1))
   ((export_operation_count += 1))
-  printf '%s\n' '{"schema_version":1,"status":"success","exit_category":"success","diagnostics":[],"fidelity":{"invalid":0},"output_artifacts":["generated"]}'
+  if [[ "${selection}" == default-withheld ]]; then
+    printf '%s\n' '{"schema_version":1,"status":"success","exit_category":"success","diagnostics":[{"code":"BFP0002","severity":"warning","fields":[{"name":"subject","value":"services.bf-private-observability-grafana.environment.GF_SECURITY_ADMIN_PASSWORD"}]}],"fidelity":{"invalid":0},"output_artifacts":["generated"]}'
+  else
+    printf '%s\n' '{"schema_version":1,"status":"success","exit_category":"success","diagnostics":[],"fidelity":{"invalid":0},"output_artifacts":["generated"]}'
+  fi
 }
 observability_assert_output_membership() { :; }
 observability_assert_output_semantics() { :; }
@@ -371,9 +437,12 @@ for export_mode in cli compose; do
   current_case="${test_root}/modeled-${export_mode}-exports"
   observability_run_exports "${export_mode}" /tmp/observability.sock bf-private
 done
-[[ "${export_operation_count}" == 18 ]]
+[[ "${export_operation_count}" == 22 ]]
 [[ "${reimport_count}" == 6 ]]
 for mode in cli compose; do
+  for output in compose quadlet; do
+    [[ "${export_seen["${mode}-default-withheld-${output}"]}" == 1 ]]
+  done
   for selection in exact label all; do
     [[ "${reimport_seen["${mode}-${selection}"]}" == 1 ]]
     for output in compose quadlet podman; do

@@ -37,6 +37,7 @@ sources = ["compose.yaml", "compose.override.yaml"]
 
 [extensions.scenarios.exports.compose]
 loss-policy = "partial"
+include-environment-values = true
 diagnostic-codes = ["BFC0007", "BFC0009", "BFC0009"]
 fixed-diagnostic-codes = ["BFC0009", "BFC0009"]
 
@@ -46,6 +47,7 @@ expected = "expected-matrix-compose.yaml"
 
 [extensions.scenarios.exports.quadlet]
 loss-policy = "partial"
+include-environment-values = true
 diagnostic-codes = ["BFQ0003", "BFQ0003"]
 normalize-project-root = true
 podman-minimum = "5.4.0"

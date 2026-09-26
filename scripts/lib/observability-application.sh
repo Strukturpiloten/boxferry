@@ -1064,7 +1064,17 @@ observability_write_expected_diagnostics() {
   esac
   case "${route}" in
     podman-compose | podman-quadlet | podman-podman | compose-podman | quadlet-podman) ;;
-    compose-compose | compose-quadlet | quadlet-compose | quadlet-quadlet)
+    compose-quadlet)
+      : > "${destination}"
+      # The CLI reimport starts from a default-withheld Podman export, unlike
+      # the explicitly included authored Compose scenario.
+      if [[ "${mode}" == cli ]]; then
+        printf 'BFQ0003\tservices.grafana.environment.GF_SECURITY_ADMIN_PASSWORD\twarning\t\t\n' \
+          > "${destination}"
+      fi
+      return
+      ;;
+    compose-compose | quadlet-compose | quadlet-quadlet)
       : > "${destination}"
       return
       ;;
@@ -1394,6 +1404,25 @@ observability_assert_output_semantics() {
   grep --recursive --fixed-strings --quiet -- \
     '--storage.tsdb.retention.time=24h' "${directory}"
 }
+
+observability_assert_default_withholding() {
+  local output=$1 directory=$2 report=$3 prefix=$4
+  local subject="services.${prefix}-observability-grafana.environment.GF_SECURITY_ADMIN_PASSWORD"
+  [[ "${output}" == compose || "${output}" == quadlet ]] || return 2
+  jq --exit-status --arg subject "${subject}" '
+    .status == "success" and .exit_category == "success" and
+    ([.diagnostics[]? | select(.code == "BFP0002" and .severity == "warning" and
+      any(.fields[]?; .name == "subject" and .value == $subject))] | length) == 1 and
+    (.output_artifacts | length > 0)
+  ' "${report}" > /dev/null || return
+  assert_named_member "${output}" "${directory}" grafana \
+    "${prefix}-observability-grafana" || return
+  if grep --recursive --fixed-strings --quiet \
+    "${OBSERVABILITY_ADMIN_PASSWORD}" "${directory}" "${report}"; then
+    printf 'Default Podman-to-%s export retained the Grafana password canary.\n' "${output}" >&2
+    return 1
+  fi
+}
 observability_report_conversion_failure() {
   local report=$1
   if [[ -s "${report}" ]]; then
@@ -1436,6 +1465,7 @@ observability_run_reimports() {
         done < <(find "${source}/${input}" -maxdepth 1 -type f -print0 | sort -z)
       fi
       [[ "${output}" == podman ]] && command+=(--podman-target-context rootless)
+      [[ "${output}" != podman ]] && command+=(--environment-values include)
       command+=(--output-directory "${result}" --console-format json)
       timed_operation 90s \
         "Observability ${mode} ${selection} ${input}-to-${output} reimport" \
@@ -1458,7 +1488,7 @@ observability_run_reimports() {
 }
 
 observability_run_exports() {
-  local mode=$1 socket=$2 prefix=$3 selection output directory report
+  local mode=$1 socket=$2 prefix=$3 selection output directory report withheld_directory withheld_report
   local -a selection_arguments=()
   for selection in exact label all; do
     case "${selection}" in
@@ -1483,6 +1513,31 @@ observability_run_exports() {
       fi
       local -a target_arguments=()
       [[ "${output}" == podman ]] && target_arguments+=(--podman-target-context rootless)
+      if [[ "${selection}" == exact && "${output}" != podman ]]; then
+        withheld_directory="${current_case}/outputs/${mode}-withheld/${output}"
+        withheld_report="${withheld_directory}.report.json"
+        if [[ -e "${withheld_directory}" ]]; then
+          printf 'Default-withheld export target already exists: %s\n' "${withheld_directory}" >&2
+          return 1
+        fi
+        mkdir -p -- "${current_case}/outputs/${mode}-withheld"
+        if ! boxferry_operation "Observability ${mode} default-withheld Podman-to-${output}" \
+          convert podman "${output}" --podman-socket "${socket}" \
+          --application-name "${prefix}-observability" --loss-policy partial \
+          --promote-podman-effective-named-volumes \
+          --promote-podman-effective-named-networks \
+          --promote-podman-portable-effective-settings \
+          --output-directory "${withheld_directory}" --console-format json \
+          "${selection_arguments[@]}" > "${withheld_report}"; then
+          observability_report_conversion_failure "${withheld_report}"
+          return 1
+        fi
+        observability_assert_default_withholding \
+          "${output}" "${withheld_directory}" "${withheld_report}" "${prefix}"
+        observability_assert_output_membership exact "${output}" \
+          "${withheld_directory}" "${prefix}"
+      fi
+      [[ "${output}" != podman ]] && target_arguments+=(--environment-values include)
       if ! boxferry_operation "Observability ${mode} ${selection} Podman-to-${output}" \
         convert podman "${output}" --podman-socket "${socket}" \
         --application-name "${prefix}-observability" --loss-policy partial \

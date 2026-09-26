@@ -3907,6 +3907,9 @@ impl<'a> Mapping<'a> {
         let subject = format!("{service_subject}.environment.{name}");
         let EnvironmentValue::Literal(value) = environment.value().value() else {
             let reason = match environment.value().value() {
+                EnvironmentValue::Required => {
+                    "environment value was withheld; supply this named value on the target before use"
+                }
                 EnvironmentValue::Host => "host environment resolution requires an explicit value provider",
                 EnvironmentValue::Unset => "ensuring an image variable is absent requires a target-specific fallback",
                 _ => "unknown environment value form",

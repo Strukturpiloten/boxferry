@@ -176,6 +176,8 @@ impl Dimension {
 pub(crate) struct RouteExpectation {
     pub input: String,
     pub exporter: String,
+    #[serde(default)]
+    environment_values: ArtifactEnvironmentValues,
     pub target_implementation: String,
     pub loss_policy: String,
     pub target_minimum: String,
@@ -191,6 +193,8 @@ pub(crate) struct RouteExpectation {
     #[serde(default)]
     pub diagnostics: Vec<String>,
     pub diagnostics_file: Option<String>,
+    pub cli_withheld_diagnostics_delta_file: Option<String>,
+    pub cli_withheld_losses_delta_file: Option<String>,
     #[serde(default)]
     pub reimport_diagnostics: Vec<String>,
     pub reimport_diagnostics_file: Option<String>,
@@ -214,6 +218,14 @@ pub(crate) struct RouteExpectation {
     pub podman_plan: Option<PodmanPlanExpectation>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ArtifactEnvironmentValues {
+    #[default]
+    Withhold,
+    Include,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) struct PodmanPlanExpectation {
@@ -232,6 +244,159 @@ pub(crate) struct ImageOperationExpectation {
 }
 
 impl RouteExpectation {
+    pub(crate) fn cli_losses(&self, directory: &Path) -> Result<Vec<LossTuple>, String> {
+        let mut expected = load_loss_expectations(
+            &self.allowed_losses,
+            self.allowed_losses_file.as_deref(),
+            directory,
+            "route losses",
+        )?;
+        let Some(file) = self.cli_withheld_losses_delta_file.as_deref() else {
+            return Ok(expected);
+        };
+        let rows = load_string_expectations(&[], Some(file), directory, "CLI withheld losses delta")?;
+        let mut removed = BTreeSet::new();
+        let mut added = BTreeSet::new();
+        for (index, row) in rows.iter().enumerate() {
+            let (operation, tuple) = if let Some(tuple) = row.strip_prefix('-') {
+                ('-', tuple)
+            } else if let Some(tuple) = row.strip_prefix('+') {
+                ('+', tuple)
+            } else {
+                return Err(format!("CLI withheld losses delta row {} needs + or -", index + 1));
+            };
+            let fields = tuple.split('\t').collect::<Vec<_>>();
+            if fields.len() != 5 {
+                return Err(format!(
+                    "CLI withheld losses delta row {} needs five tab-separated fields",
+                    index + 1
+                ));
+            }
+            let count = fields[4]
+                .parse::<usize>()
+                .map_err(|_| format!("CLI withheld losses delta row {} has invalid count", index + 1))?;
+            if count == 0 || !matches!(fields[2], "approximate" | "unsupported" | "invalid") {
+                return Err(format!(
+                    "CLI withheld losses delta row {} has invalid decision or count",
+                    index + 1
+                ));
+            }
+            let tuple = LossTuple {
+                rule: fields[0].to_owned(),
+                subject: fields[1].to_owned(),
+                decision: fields[2].to_owned(),
+                version_scope: fields[3].to_owned(),
+                count,
+            };
+            if tuple.version_scope != self.version_scope() {
+                return Err("CLI withheld loss delta has wrong version scope".into());
+            }
+            match operation {
+                '-' => {
+                    if !removed.insert(tuple.clone()) {
+                        return Err("duplicate CLI withheld loss removal".into());
+                    }
+                    let position = expected
+                        .iter()
+                        .position(|entry| entry == &tuple)
+                        .ok_or("CLI withheld loss removal absent from reviewed library evidence")?;
+                    expected.remove(position);
+                }
+                '+' => {
+                    if !added.insert(tuple.clone()) || expected.contains(&tuple) {
+                        return Err("duplicate CLI withheld loss addition".into());
+                    }
+                    expected.push(tuple);
+                }
+                _ => unreachable!(),
+            }
+        }
+        Ok(expected)
+    }
+
+    pub(crate) fn cli_diagnostics(&self, manifest: &ScenarioManifest, directory: &Path) -> Result<Vec<String>, String> {
+        let mut expected = load_string_expectations(
+            &self.diagnostics,
+            self.diagnostics_file.as_deref(),
+            directory,
+            "route diagnostics",
+        )?;
+        let Some(delta_file) = self.cli_withheld_diagnostics_delta_file.as_deref() else {
+            return Ok(expected);
+        };
+        let delta = load_string_expectations(&[], Some(delta_file), directory, "CLI withheld diagnostics delta")?;
+        let mut removed = BTreeSet::new();
+        let mut added = BTreeSet::new();
+        for row in delta {
+            let (operation, fact) = if let Some(fact) = row.strip_prefix('-') {
+                ('-', fact)
+            } else if let Some(fact) = row.strip_prefix('+') {
+                ('+', fact)
+            } else {
+                return Err("unreviewed withheld diagnostic delta operation".into());
+            };
+            match operation {
+                '-' if fact.starts_with("BFP0003|services.") && fact.ends_with(".environment") => {
+                    if !removed.insert(fact.to_owned()) {
+                        return Err("duplicate withheld diagnostic removal".into());
+                    }
+                    let index = expected
+                        .iter()
+                        .position(|entry| entry == fact)
+                        .ok_or("withheld diagnostic removal was absent from reviewed library evidence")?;
+                    expected.remove(index);
+                }
+                '+' if fact.starts_with("BFP0002|services.") && fact.contains(".environment.") => {
+                    if !added.insert(fact.to_owned()) || expected.iter().any(|entry| entry == fact) {
+                        return Err("duplicate withheld diagnostic addition".into());
+                    }
+                    expected.push(fact.to_owned());
+                }
+                _ => return Err("unreviewed withheld diagnostic delta operation".into()),
+            }
+        }
+        let required = manifest
+            .semantics
+            .required_environment
+            .iter()
+            .map(|assignment| {
+                let (service, assignment) = assignment.split_once(':').ok_or("invalid required environment")?;
+                let (name, _) = assignment.split_once('=').ok_or("invalid required environment")?;
+                Ok(format!("BFP0002|services.{service}.environment.{name}"))
+            })
+            .collect::<Result<BTreeSet<_>, String>>()?;
+        let required_services = required
+            .iter()
+            .map(|fact| {
+                let subject = fact
+                    .strip_prefix("BFP0002|")
+                    .ok_or("invalid withheld environment fact")?;
+                let (service, _) = subject
+                    .split_once(".environment.")
+                    .ok_or("invalid withheld environment fact")?;
+                Ok(format!("BFP0003|{service}.environment"))
+            })
+            .collect::<Result<BTreeSet<_>, String>>()?;
+        if added != required || removed != required_services {
+            return Err(
+                "withheld diagnostic delta must cover every independently required environment assignment".into(),
+            );
+        }
+        Ok(expected)
+    }
+
+    pub(crate) fn includes_environment_values(&self) -> bool {
+        self.environment_values == ArtifactEnvironmentValues::Include
+    }
+
+    pub(crate) fn set_environment_values_for_test(&mut self, include: bool) {
+        self.environment_values = if include {
+            ArtifactEnvironmentValues::Include
+        } else {
+            ArtifactEnvironmentValues::Withhold
+        };
+    }
+
     pub(crate) fn policy(&self) -> Result<LossPolicy, String> {
         match self.loss_policy.as_str() {
             "exact" => Ok(LossPolicy::ExactOnly),
@@ -700,6 +865,37 @@ fn validate_routes(manifest: &ScenarioManifest, directory: &Path) -> Result<(), 
             .iter()
             .find(|input| input.id == route.input)
             .ok_or("route references an unknown scenario input")?;
+        let reviewed_value_source = match input.importer.as_str() {
+            "compose" | "quadlet" => true,
+            "podman" => input.podman.as_ref().is_some_and(|podman| {
+                podman.include_environment_values && podman.promotion_policy.portable_effective_settings
+            }),
+            _ => false,
+        };
+        if route.environment_values == ArtifactEnvironmentValues::Include
+            && (manifest.provenance.source != "authored"
+                || !manifest.provenance.privacy_reviewed
+                || !reviewed_value_source
+                || !matches!(route.exporter.as_str(), "compose" | "quadlet"))
+        {
+            return Err(
+                "environment-value inclusion requires a reviewed authored input with value acquisition and Compose/Quadlet output"
+                    .into(),
+            );
+        }
+        let withheld_podman_values = input.importer == "podman"
+            && route.exporter == "podman"
+            && !route.includes_environment_values()
+            && input.podman.as_ref().is_some_and(|podman| {
+                podman.include_environment_values && podman.promotion_policy.portable_effective_settings
+            })
+            && !manifest.semantics.required_environment.is_empty();
+        if withheld_podman_values != route.cli_withheld_diagnostics_delta_file.is_some() {
+            return Err("reviewed Podman-to-Podman withholding requires its exact CLI diagnostic delta".into());
+        }
+        if withheld_podman_values != route.cli_withheld_losses_delta_file.is_some() {
+            return Err("reviewed Podman-to-Podman withholding requires its exact CLI loss delta".into());
+        }
         if input.outcome == Outcome::ExpectedRejection && route.outcome != Outcome::ExpectedRejection {
             return Err("rejected scenario input requires rejection from every exporter route".into());
         }
@@ -738,6 +934,9 @@ fn validate_routes(manifest: &ScenarioManifest, directory: &Path) -> Result<(), 
             directory,
             &format!("{label} diagnostics"),
         )?;
+        if withheld_podman_values {
+            route.cli_diagnostics(manifest, directory)?;
+        }
         let reimport_diagnostics = load_string_expectations(
             &route.reimport_diagnostics,
             route.reimport_diagnostics_file.as_deref(),
@@ -750,6 +949,7 @@ fn validate_routes(manifest: &ScenarioManifest, directory: &Path) -> Result<(), 
             directory,
             &format!("{label} losses"),
         )?;
+        route.cli_losses(directory)?;
         let reimport_losses = load_loss_expectations(
             &route.reimport_allowed_losses,
             route.reimport_allowed_losses_file.as_deref(),
@@ -1090,7 +1290,28 @@ pub(crate) fn validate_neutral_application(
     environment_order: &[String],
     expected_gaps: &[String],
 ) -> Result<(), String> {
-    let gaps = validate_neutral_application_collecting_gaps(manifest, application, environment_order)?;
+    let gaps = validate_neutral_application_collecting_gaps(manifest, application, environment_order, false)?;
+    validate_diagnostics(expected_gaps, &gaps)
+}
+
+pub(crate) fn validate_withheld_reimport(
+    manifest: &ScenarioManifest,
+    application: &Application,
+    environment_order: &[String],
+    expected_gaps: &[String],
+) -> Result<(), String> {
+    for service in application.services() {
+        for environment in service.value().environment() {
+            if matches!(environment.value().value(), EnvironmentValue::Literal(_)) {
+                return Err(format!(
+                    "literal environment assignment {}:{} remains in withheld reimport",
+                    service.value().name().as_str(),
+                    environment.value().name().as_str()
+                ));
+            }
+        }
+    }
+    let gaps = validate_neutral_application_collecting_gaps(manifest, application, environment_order, true)?;
     validate_diagnostics(expected_gaps, &gaps)
 }
 
@@ -1098,11 +1319,17 @@ fn validate_neutral_application_collecting_gaps(
     manifest: &ScenarioManifest,
     application: &Application,
     environment_order: &[String],
+    withhold_environment: bool,
 ) -> Result<Vec<String>, String> {
     let mut gaps = validate_resources(manifest, application)?;
     validate_images(manifest, application)?;
     validate_volume_boundaries(manifest, application)?;
-    gaps.extend(validate_service_settings(manifest, application, environment_order)?);
+    gaps.extend(validate_service_settings(
+        manifest,
+        application,
+        environment_order,
+        withhold_environment,
+    )?);
     Ok(gaps)
 }
 
@@ -1347,6 +1574,7 @@ fn validate_service_settings(
     manifest: &ScenarioManifest,
     application: &Application,
     environment_order: &[String],
+    withhold_environment: bool,
 ) -> Result<Vec<String>, String> {
     let mut semantic_gaps = Vec::new();
     for requirement in &manifest.semantics.required_mounts {
@@ -1390,7 +1618,16 @@ fn validate_service_settings(
         let (service_name, assignment) = requirement.split_once(':').ok_or("invalid environment assertion")?;
         let (name, expected) = assignment.split_once('=').ok_or("invalid environment assignment")?;
         let service = service(application, service_name)?;
-        if !service.environment().iter().any(|environment| {
+        if withhold_environment {
+            if service
+                .environment()
+                .iter()
+                .any(|environment| environment.value().name().as_str() == name)
+            {
+                return Err(format!("withheld environment {service_name}:{name} remains assigned"));
+            }
+            semantic_gaps.push(format!("environment:{service_name}:{name}"));
+        } else if !service.environment().iter().any(|environment| {
             environment.value().name().as_str() == name
                 && matches!(environment.value().value(), EnvironmentValue::Literal(value) if value.expose() == expected)
         }) {

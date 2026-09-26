@@ -163,15 +163,14 @@ target-minimum = "1.0.0"
 target-maximum = "1.0.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies."
+reason = "Compose output withholds environment assignments; reimport cannot reconstruct the reviewed dependencies."
 artifacts-file = "expected.compose.artifacts"
 diagnostics-file = "expected.compose.diagnostics"
-reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
 allowed-losses-file = "expected.compose.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies." }
-reimport-semantic-gaps = ["dependency:admin-panel:api", "dependency:api:mongodb", "dependency:api:rag_api", "dependency:rag_api:vectordb"]
+reimport = { state = "known-migration-gap", reason = "Generated Compose lacks withheld environment assignments and cannot reconstruct the reviewed dependencies." }
+reimport-semantic-gaps = ["environment:api:HOST", "environment:api:MONGO_URI", "environment:api:MEILI_HOST", "environment:admin-panel:PORT", "environment:meilisearch:MEILI_HOST", "environment:meilisearch:MEILI_NO_ANALYTICS", "environment:vectordb:POSTGRES_DB", "environment:vectordb:POSTGRES_USER", "environment:vectordb:POSTGRES_PASSWORD", "environment:rag_api:DB_HOST", "dependency:admin-panel:api", "dependency:api:mongodb", "dependency:api:rag_api", "dependency:rag_api:vectordb"]
 
 [[evidence]]
 input = "compose"
@@ -181,7 +180,7 @@ target-minimum = "5.4.0"
 target-maximum = "6.1.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Quadlet output is emitted, but reimport cannot reconstruct the reviewed command and dependencies."
+reason = "Quadlet output withholds environment assignments; reimport cannot reconstruct the reviewed command and dependencies."
 artifacts-file = "expected.quadlet.artifacts"
 diagnostics-file = "expected.quadlet.diagnostics"
 reimport-diagnostics-file = "expected.quadlet.reimport.diagnostics"
@@ -189,8 +188,8 @@ allowed-losses-file = "expected.quadlet.losses.tsv"
 reimport-allowed-losses-file = "expected.quadlet.reimport.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed command and dependencies." }
-reimport-semantic-gaps = ["command:mongodb", "dependency:admin-panel:api", "dependency:api:mongodb", "dependency:api:rag_api", "dependency:rag_api:vectordb"]
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet lacks withheld environment assignments and cannot reconstruct the reviewed command and dependencies." }
+reimport-semantic-gaps = ["environment:api:HOST", "environment:api:MONGO_URI", "environment:api:MEILI_HOST", "environment:admin-panel:PORT", "environment:meilisearch:MEILI_HOST", "environment:meilisearch:MEILI_NO_ANALYTICS", "environment:vectordb:POSTGRES_DB", "environment:vectordb:POSTGRES_USER", "environment:vectordb:POSTGRES_PASSWORD", "environment:rag_api:DB_HOST", "command:mongodb", "dependency:admin-panel:api", "dependency:api:mongodb", "dependency:api:rag_api", "dependency:rag_api:vectordb"]
 
 [[evidence]]
 input = "compose"

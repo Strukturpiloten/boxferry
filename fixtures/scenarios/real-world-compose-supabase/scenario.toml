@@ -296,15 +296,71 @@ target-minimum = "1.0.0"
 target-maximum = "1.0.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Compose output is emitted, but reimport cannot reconstruct the reviewed dependencies and healthchecks."
+reason = "Compose output withholds environment assignments; reimport cannot reconstruct the reviewed dependencies and healthchecks."
 artifacts-file = "expected.compose.artifacts"
 diagnostics-file = "expected.compose.diagnostics"
-reimport-diagnostics-file = "expected.compose.reimport.diagnostics"
 allowed-losses-file = "expected.compose.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Compose cannot reconstruct the reviewed dependencies and healthchecks." }
+reimport = { state = "known-migration-gap", reason = "Generated Compose lacks withheld environment assignments and cannot reconstruct the reviewed dependencies and healthchecks." }
 reimport-semantic-gaps = [
+  "environment:studio:HOSTNAME",
+  "environment:studio:STUDIO_PG_META_URL",
+  "environment:studio:POSTGRES_USER_READ_WRITE",
+  "environment:studio:SUPABASE_URL",
+  "environment:studio:ENABLED_FEATURES_LOGS_ALL",
+  "environment:studio:SNIPPETS_MANAGEMENT_FOLDER",
+  "environment:studio:EDGE_FUNCTIONS_MANAGEMENT_FOLDER",
+  "environment:kong:KONG_DATABASE",
+  "environment:kong:KONG_DECLARATIVE_CONFIG",
+  "environment:kong:KONG_ROUTER_FLAVOR",
+  "environment:kong:KONG_DNS_ORDER",
+  "environment:kong:KONG_DNS_NOT_FOUND_TTL",
+  "environment:kong:KONG_DNS_VALID_TTL",
+  "environment:kong:KONG_PLUGINS",
+  "environment:kong:KONG_NGINX_PROXY_PROXY_BUFFER_SIZE",
+  "environment:kong:KONG_NGINX_PROXY_PROXY_BUFFERS",
+  "environment:kong:KONG_PROXY_ACCESS_LOG",
+  "environment:auth:GOTRUE_API_HOST",
+  "environment:auth:GOTRUE_API_PORT",
+  "environment:auth:GOTRUE_DB_DRIVER",
+  "environment:auth:GOTRUE_JWT_ADMIN_ROLES",
+  "environment:auth:GOTRUE_JWT_AUD",
+  "environment:auth:GOTRUE_JWT_DEFAULT_GROUP_NAME",
+  "environment:rest:PGRST_DB_ANON_ROLE",
+  "environment:rest:PGRST_ADMIN_SERVER_PORT",
+  "environment:rest:PGRST_ADMIN_SERVER_HOST",
+  "environment:rest:PGRST_DB_USE_LEGACY_GUCS",
+  "environment:realtime:PORT",
+  "environment:realtime:DB_USER",
+  "environment:realtime:DB_AFTER_CONNECT_QUERY",
+  "environment:realtime:ERL_AFLAGS",
+  "environment:realtime:DNS_NODES",
+  "environment:realtime:RLIMIT_NOFILE",
+  "environment:realtime:APP_NAME",
+  "environment:realtime:SEED_SELF_HOST",
+  "environment:realtime:RUN_JANITOR",
+  "environment:realtime:DISABLE_HEALTHCHECK_LOGGING",
+  "environment:storage:POSTGREST_URL",
+  "environment:storage:REQUEST_ALLOW_X_FORWARDED_PATH",
+  "environment:storage:FILE_SIZE_LIMIT",
+  "environment:storage:STORAGE_BACKEND",
+  "environment:storage:FILE_STORAGE_BACKEND_PATH",
+  "environment:storage:ENABLE_IMAGE_TRANSFORMATION",
+  "environment:storage:IMGPROXY_URL",
+  "environment:imgproxy:IMGPROXY_BIND",
+  "environment:imgproxy:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:imgproxy:IMGPROXY_USE_ETAG",
+  "environment:imgproxy:IMGPROXY_MAX_SRC_RESOLUTION",
+  "environment:meta:PG_META_PORT",
+  "environment:meta:PG_META_DB_USER",
+  "environment:functions:SUPABASE_URL",
+  "environment:db:POSTGRES_HOST",
+  "environment:supavisor:PORT",
+  "environment:supavisor:CLUSTER_POSTGRES",
+  "environment:supavisor:REGION",
+  "environment:supavisor:ERL_AFLAGS",
+  "environment:supavisor:POOLER_POOL_MODE",
   "dependency:auth:db",
   "dependency:functions:kong",
   "dependency:kong:studio",
@@ -335,7 +391,7 @@ target-minimum = "5.4.0"
 target-maximum = "6.1.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Quadlet output is emitted, but reimport cannot reconstruct the reviewed command, dependencies, and restart policies."
+reason = "Quadlet output withholds environment assignments; reimport cannot reconstruct the reviewed command, dependencies, and restart policies."
 artifacts-file = "expected.quadlet.artifacts"
 diagnostics-file = "expected.quadlet.diagnostics"
 reimport-diagnostics-file = "expected.quadlet.reimport.diagnostics"
@@ -343,8 +399,65 @@ allowed-losses-file = "expected.quadlet.losses.tsv"
 reimport-allowed-losses-file = "expected.quadlet.reimport.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
-reimport = { state = "known-migration-gap", reason = "Generated Quadlet cannot reconstruct the reviewed command, dependencies, and restart policies." }
+reimport = { state = "known-migration-gap", reason = "Generated Quadlet lacks withheld environment assignments and cannot reconstruct the reviewed command, dependencies, and restart policies." }
 reimport-semantic-gaps = [
+  "environment:studio:HOSTNAME",
+  "environment:studio:STUDIO_PG_META_URL",
+  "environment:studio:POSTGRES_USER_READ_WRITE",
+  "environment:studio:SUPABASE_URL",
+  "environment:studio:ENABLED_FEATURES_LOGS_ALL",
+  "environment:studio:SNIPPETS_MANAGEMENT_FOLDER",
+  "environment:studio:EDGE_FUNCTIONS_MANAGEMENT_FOLDER",
+  "environment:kong:KONG_DATABASE",
+  "environment:kong:KONG_DECLARATIVE_CONFIG",
+  "environment:kong:KONG_ROUTER_FLAVOR",
+  "environment:kong:KONG_DNS_ORDER",
+  "environment:kong:KONG_DNS_NOT_FOUND_TTL",
+  "environment:kong:KONG_DNS_VALID_TTL",
+  "environment:kong:KONG_PLUGINS",
+  "environment:kong:KONG_NGINX_PROXY_PROXY_BUFFER_SIZE",
+  "environment:kong:KONG_NGINX_PROXY_PROXY_BUFFERS",
+  "environment:kong:KONG_PROXY_ACCESS_LOG",
+  "environment:auth:GOTRUE_API_HOST",
+  "environment:auth:GOTRUE_API_PORT",
+  "environment:auth:GOTRUE_DB_DRIVER",
+  "environment:auth:GOTRUE_JWT_ADMIN_ROLES",
+  "environment:auth:GOTRUE_JWT_AUD",
+  "environment:auth:GOTRUE_JWT_DEFAULT_GROUP_NAME",
+  "environment:rest:PGRST_DB_ANON_ROLE",
+  "environment:rest:PGRST_ADMIN_SERVER_PORT",
+  "environment:rest:PGRST_ADMIN_SERVER_HOST",
+  "environment:rest:PGRST_DB_USE_LEGACY_GUCS",
+  "environment:realtime:PORT",
+  "environment:realtime:DB_USER",
+  "environment:realtime:DB_AFTER_CONNECT_QUERY",
+  "environment:realtime:ERL_AFLAGS",
+  "environment:realtime:DNS_NODES",
+  "environment:realtime:RLIMIT_NOFILE",
+  "environment:realtime:APP_NAME",
+  "environment:realtime:SEED_SELF_HOST",
+  "environment:realtime:RUN_JANITOR",
+  "environment:realtime:DISABLE_HEALTHCHECK_LOGGING",
+  "environment:storage:POSTGREST_URL",
+  "environment:storage:REQUEST_ALLOW_X_FORWARDED_PATH",
+  "environment:storage:FILE_SIZE_LIMIT",
+  "environment:storage:STORAGE_BACKEND",
+  "environment:storage:FILE_STORAGE_BACKEND_PATH",
+  "environment:storage:ENABLE_IMAGE_TRANSFORMATION",
+  "environment:storage:IMGPROXY_URL",
+  "environment:imgproxy:IMGPROXY_BIND",
+  "environment:imgproxy:IMGPROXY_LOCAL_FILESYSTEM_ROOT",
+  "environment:imgproxy:IMGPROXY_USE_ETAG",
+  "environment:imgproxy:IMGPROXY_MAX_SRC_RESOLUTION",
+  "environment:meta:PG_META_PORT",
+  "environment:meta:PG_META_DB_USER",
+  "environment:functions:SUPABASE_URL",
+  "environment:db:POSTGRES_HOST",
+  "environment:supavisor:PORT",
+  "environment:supavisor:CLUSTER_POSTGRES",
+  "environment:supavisor:REGION",
+  "environment:supavisor:ERL_AFLAGS",
+  "environment:supavisor:POOLER_POOL_MODE",
   "command:supavisor",
   "dependency:auth:db",
   "dependency:functions:kong",

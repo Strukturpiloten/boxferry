@@ -15,3 +15,9 @@ BFC0007|services.letsencrypt-companion.mounts[3]
 BFC0007|services.web.dependencies[0]
 BFC0007|services.web.mounts[1]
 BFC0008|services.proxy.image
+BFC0007|services.app.environment.POSTGRES_HOST
+BFC0007|services.app.environment.REDIS_HOST
+BFC0007|services.letsencrypt-companion.environment.DEFAULT_EMAIL
+BFC0007|services.web.environment.LETSENCRYPT_EMAIL
+BFC0007|services.web.environment.LETSENCRYPT_HOST
+BFC0007|services.web.environment.VIRTUAL_HOST

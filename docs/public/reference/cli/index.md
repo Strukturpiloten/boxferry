@@ -24,29 +24,29 @@ Use route-specific `--help`; it shows only applicable options.
 
 ## Input options
 
-| Option                                         | Applies to            | Purpose                                                                                                                                       |
-| ---------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--input-file FILE`                            | Compose/Quadlet input | Add one document in input order; repeat as needed.                                                                                            |
-| `--input-directory DIR`                        | Compose/Quadlet input | Add discovered documents at this position.                                                                                                    |
-| `--application-name NAME`                      | Quadlet/Podman input  | Set the neutral application name (optional for Podman).                                                                                       |
-| `--project-name NAME`                          | Compose input         | Supply a fallback project name.                                                                                                               |
-| `--project-directory DIR`                      | Compose input         | Resolve project-relative paths from this directory.                                                                                           |
-| `--profile NAME`                               | Compose input         | Activate one profile; repeat as needed.                                                                                                       |
-| `--all-profiles`                               | Compose input         | Activate every declared profile.                                                                                                              |
-| `--interpolate`                                | Compose input         | Enable explicit interpolation.                                                                                                                |
-| `--env-file FILE`                              | Interpolated Compose  | Add assignments; later files win.                                                                                                             |
-| `--env NAME=VALUE`                             | Interpolated Compose  | Add a literal value.                                                                                                                          |
-| `--env NAME`                                   | Interpolated Compose  | Authorize one sensitive process value.                                                                                                        |
-| `--podman-socket PATH`                         | Podman input          | Override local rootless-first socket discovery.                                                                                               |
-| `--podman-all`                                 | Podman input          | Select all eligible application roots.                                                                                                        |
-| `--podman-resource KIND=REFERENCE`             | Podman input          | Add an exact resource root; kinds: container, image, network, pod, secret, volume.                                                            |
-| `--podman-resource-prefix KIND=PREFIX`         | Podman input          | Add a literal name-prefix root using the same kinds.                                                                                          |
-| `--podman-label NAME[=VALUE]`                  | Podman input          | Add a label root; repeat as needed.                                                                                                           |
-| `--podman-network-boundary NAME_OR_ID`         | Podman input          | Authorize one explicit network crossing; repeatable.                                                                                          |
-| `--promote-podman-effective-bind-mounts`       | Podman input          | Promote absolute host bind paths for a reviewed target that uses the same paths.                                                              |
-| `--promote-podman-portable-effective-settings` | Podman input          | Promote reviewed effective environment, ports, restart, normal health, DNS, and network aliases; authorize sensitive environment acquisition. |
-| `--promote-podman-effective-named-volumes`     | Podman input          | Promote effective named volumes to desired state.                                                                                             |
-| `--promote-podman-effective-named-networks`    | Podman input          | Promote effective named networks to desired state.                                                                                            |
+| Option                                         | Applies to            | Purpose                                                                                                                                                |
+| ---------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--input-file FILE`                            | Compose/Quadlet input | Add one document in input order; repeat as needed.                                                                                                     |
+| `--input-directory DIR`                        | Compose/Quadlet input | Add discovered documents at this position.                                                                                                             |
+| `--application-name NAME`                      | Quadlet/Podman input  | Set the neutral application name (optional for Podman).                                                                                                |
+| `--project-name NAME`                          | Compose input         | Supply a fallback project name.                                                                                                                        |
+| `--project-directory DIR`                      | Compose input         | Resolve project-relative paths from this directory.                                                                                                    |
+| `--profile NAME`                               | Compose input         | Activate one profile; repeat as needed.                                                                                                                |
+| `--all-profiles`                               | Compose input         | Activate every declared profile.                                                                                                                       |
+| `--interpolate`                                | Compose input         | Enable explicit interpolation.                                                                                                                         |
+| `--env-file FILE`                              | Interpolated Compose  | Add assignments; later files win.                                                                                                                      |
+| `--env NAME=VALUE`                             | Interpolated Compose  | Add a literal value.                                                                                                                                   |
+| `--env NAME`                                   | Interpolated Compose  | Authorize one sensitive process value.                                                                                                                 |
+| `--podman-socket PATH`                         | Podman input          | Override local rootless-first socket discovery.                                                                                                        |
+| `--podman-all`                                 | Podman input          | Select all eligible application roots.                                                                                                                 |
+| `--podman-resource KIND=REFERENCE`             | Podman input          | Add an exact resource root; kinds: container, image, network, pod, secret, volume.                                                                     |
+| `--podman-resource-prefix KIND=PREFIX`         | Podman input          | Add a literal name-prefix root using the same kinds.                                                                                                   |
+| `--podman-label NAME[=VALUE]`                  | Podman input          | Add a label root; repeat as needed.                                                                                                                    |
+| `--podman-network-boundary NAME_OR_ID`         | Podman input          | Authorize one explicit network crossing; repeatable.                                                                                                   |
+| `--promote-podman-effective-bind-mounts`       | Podman input          | Promote absolute host bind paths for a reviewed target that uses the same paths.                                                                       |
+| `--promote-podman-portable-effective-settings` | Podman input          | Promote reviewed effective environment names, ports, restart, normal health, DNS, and network aliases; never authorizes environment-value acquisition. |
+| `--promote-podman-effective-named-volumes`     | Podman input          | Promote effective named volumes to desired state.                                                                                                      |
+| `--promote-podman-effective-named-networks`    | Podman input          | Promote effective named networks to desired state.                                                                                                     |
 
 The portable-effective settings flag also covers typed network-internal, subnet, gateway,
 lease-range, IPv6-subnet, and standalone-container effective attachment-alias observations. Alias
@@ -94,20 +94,36 @@ never inferred from the source or development machine.
 
 ## Policy and reports
 
-| Option                                      | Purpose                                                 |
-| ------------------------------------------- | ------------------------------------------------------- |
-| `--loss-policy exact\|approximate\|partial` | Authorize documented non-exact output.                  |
-| `--console-format json`                     | Emit one machine-readable report.                       |
-| `--report-file FILE`                        | Write a create-new JSON report.                         |
-| `--generate-error-report`                   | Create a local ZIP support bundle.                      |
-| `--error-report-directory DIR`              | Select or create its direct destination directory.      |
-| `--include-podman-snapshot`                 | Add always-redacted Podman evidence to a generated ZIP. |
-| `--verbose`                                 | Add discovery detail and expand diagnostic occurrences. |
-| `--quiet`                                   | Suppress progress and success text.                     |
+| Option                                      | Purpose                                                                                          |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `--loss-policy exact\|approximate\|partial` | Authorize documented non-exact output.                                                           |
+| `--environment-values withhold\|include`    | Withhold environment values by default; explicitly include them in Compose or Quadlet artifacts. |
+| `--console-format json`                     | Emit one machine-readable report.                                                                |
+| `--report-file FILE`                        | Write a create-new JSON report.                                                                  |
+| `--generate-error-report`                   | Create a local ZIP support bundle.                                                               |
+| `--error-report-directory DIR`              | Select or create its direct destination directory.                                               |
+| `--include-podman-snapshot`                 | Add always-redacted Podman evidence to a generated ZIP.                                          |
+| `--verbose`                                 | Add discovery detail and expand diagnostic occurrences.                                          |
+| `--quiet`                                   | Suppress progress and success text.                                                              |
 
 Default human output groups repeated occurrences by actionable reason. It prints affected counts
 and bounded subject/path samples. `--verbose` also expands every diagnostic occurrence;
 `--console-format json` emits the complete structured report.
+
+By default, a literal environment value becomes a named required value in the neutral model. All
+three exporters omit it and report `services.<service>.environment.<NAME>` as a target prerequisite.
+Exact and approximate loss policies block output; `partial` can write an artifact missing that
+assignment, which needs review and an explicit value before use. `validate` makes the same planning
+decision without writing files. `--environment-values include` explicitly authorizes environment
+values in Compose and Quadlet output files; BoxFerry creates these files with owner-only permissions
+on Unix. Podman input acquires environment values only when both this option and
+`--promote-podman-portable-effective-settings` are selected. Current PodmanLens cannot safely render
+protected inline values, so Podman output with `include` fails before writing if such a value is
+present. Diagnostic text, JSON console output, report files and support ZIPs remain redacted in
+either mode. Source environment-file references and host bind paths remain separate prerequisites;
+BoxFerry does not read their contents or migrate application data. Generated artifacts can still
+contain authored command, health-check, image, and path text; review all output before sharing or
+running it. The environment-value switch does not authorize or redact those distinct fields.
 
 ## Exit status
 

@@ -200,6 +200,7 @@ required-volume-mounts = [
 [[evidence]]
 input = "compose"
 exporter = "compose"
+environment-values = "include"
 target-implementation = "compose-specification"
 target-minimum = "1.0.0"
 target-maximum = "1.0.0"
@@ -218,6 +219,7 @@ reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:d
 [[evidence]]
 input = "compose"
 exporter = "quadlet"
+environment-values = "include"
 target-implementation = "podman"
 target-minimum = "6.1.0"
 target-maximum = "6.1.0"
@@ -280,6 +282,7 @@ podman-plan = { creatable-resources = ["container:broker", "container:db", "cont
 [[evidence]]
 input = "quadlet"
 exporter = "compose"
+environment-values = "include"
 target-implementation = "compose-specification"
 target-minimum = "1.0.0"
 target-maximum = "1.0.0"
@@ -298,6 +301,7 @@ reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:d
 [[evidence]]
 input = "quadlet"
 exporter = "quadlet"
+environment-values = "include"
 target-implementation = "podman"
 target-minimum = "6.1.0"
 target-maximum = "6.1.0"
@@ -360,6 +364,7 @@ podman-plan = { creatable-resources = ["container:broker", "container:db", "cont
 [[evidence]]
 input = "podman"
 exporter = "compose"
+environment-values = "include"
 target-implementation = "compose-specification"
 target-minimum = "1.0.0"
 target-maximum = "1.0.0"
@@ -378,6 +383,7 @@ reimport-semantic-gaps = ["dependency:webserver:broker", "dependency:webserver:d
 [[evidence]]
 input = "podman"
 exporter = "quadlet"
+environment-values = "include"
 target-implementation = "podman"
 target-minimum = "6.1.0"
 target-maximum = "6.1.0"
@@ -395,6 +401,8 @@ reimport-semantic-gaps = []
 [[evidence]]
 input = "podman"
 exporter = "podman"
+cli-withheld-diagnostics-delta-file = "expected.podman-podman.withheld-diagnostics.delta"
+cli-withheld-losses-delta-file = "expected.podman-podman.withheld-losses.delta"
 target-implementation = "podman"
 target-minimum = "6.1.0"
 target-maximum = "6.1.0"

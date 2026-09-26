@@ -512,22 +512,28 @@ impl<'a> Mapping<'a> {
                 );
                 continue;
             };
-            let ProtectedEnvironmentValue::AuthorizedOpaque(value) = entry.value() else {
-                self.unsupported(
-                    &entry_subject,
-                    "environment value remained redacted during acquisition and cannot be promoted",
-                );
-                continue;
+            let variable = match entry.value() {
+                ProtectedEnvironmentValue::AuthorizedOpaque(value) => value.expose(|value| {
+                    EnvironmentVariable::new(name, EnvironmentValue::Literal(ProtectedString::sensitive(value)))
+                }),
+                ProtectedEnvironmentValue::Redacted => {
+                    self.unsupported(
+                        &entry_subject,
+                        "environment value was withheld; supply this named value on the target before use",
+                    );
+                    EnvironmentVariable::new(name, EnvironmentValue::Required)
+                }
+                _ => {
+                    self.unsupported(&entry_subject, "future protected environment value is not reviewed");
+                    continue;
+                }
             };
-            let variable = value.expose(|value| {
-                EnvironmentVariable::new(name, EnvironmentValue::Literal(ProtectedString::sensitive(value)))
-            });
             service.add_environment(if promoted {
                 self.decision_sourced(variable)
             } else {
                 self.sourced(variable)
             });
-            retained += 1;
+            retained += usize::from(matches!(entry.value(), ProtectedEnvironmentValue::AuthorizedOpaque(_)));
         }
 
         if promoted && retained > 0 {

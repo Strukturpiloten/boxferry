@@ -37,6 +37,7 @@ protected-values = ["explicit-secret"]
 
 [extensions.scenarios.exports.compose]
 loss-policy = "exact"
+include-environment-values = true
 artifact-values = ["explicit-secret"]
 
 [[extensions.scenarios.exports.compose.artifacts]]
@@ -45,6 +46,7 @@ expected = "expected-matrix-compose.yaml"
 
 [extensions.scenarios.exports.quadlet]
 loss-policy = "exact"
+include-environment-values = true
 podman-minimum = "5.4.0"
 podman-maximum = "6.0.2"
 artifact-values = ["explicit-secret"]

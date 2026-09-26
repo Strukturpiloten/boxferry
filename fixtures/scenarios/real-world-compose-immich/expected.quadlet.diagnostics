@@ -8,6 +8,7 @@ BFC0105|services.database.environment.POSTGRES_USER
 BFC0105|services.database.environment.POSTGRES_DB
 BFC0105|services.database.volumes[0]
 BFQ0003|services.database.environment.POSTGRES_DB
+BFQ0003|services.database.environment.POSTGRES_INITDB_ARGS
 BFQ0003|services.database.environment.POSTGRES_PASSWORD
 BFQ0003|services.database.environment.POSTGRES_USER
 BFQ0009|services.redis.restart_policy
