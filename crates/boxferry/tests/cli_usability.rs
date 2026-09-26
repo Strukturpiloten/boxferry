@@ -10,7 +10,7 @@
 mod podman_cassette;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fs,
     path::{Path, PathBuf},
@@ -27,6 +27,7 @@ const FORMATS: [&str; 3] = ["compose", "podman", "quadlet"];
 fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), Box<dyn Error>> {
     let scratch = Scratch::new("route-forms")?;
     let mut forms = BTreeSet::new();
+    let mut validation_evidence = BTreeMap::new();
 
     for input in FORMATS {
         for output in FORMATS {
@@ -57,40 +58,23 @@ fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), 
                 assert!(report["failed_stage"].is_null(), "{label}");
                 assert_structured_diagnostics(&report, &label)?;
                 assert_expected_diagnostics(&report, input, output, &label)?;
-                if input == "podman" {
-                    assert!(report["choices"].as_array().is_some_and(|choices| {
-                        choices
-                            .iter()
-                            .any(|choice| choice["name"] == "podman_import_policy" && choice["value"] == "portable")
-                    }));
-                    for name in [
-                        "promote_portable_effective_settings",
-                        "promote_effective_named_volumes",
-                        "promote_effective_named_networks",
-                    ] {
-                        assert!(
-                            report["choices"].as_array().is_some_and(|choices| {
-                                choices
-                                    .iter()
-                                    .any(|choice| choice["name"] == name && choice["value"] == "true")
-                            }),
-                            "{label}: {name} not enabled by portable preset"
-                        );
-                    }
+                let route = format!("{input}-{output}");
+                let semantic_evidence = (
+                    report["fidelity"].clone(),
+                    diagnostic_codes_and_subjects(&report)?,
+                    report["choices"].clone(),
+                );
+                if verb == "validate" {
+                    assert!(validation_evidence.insert(route, semantic_evidence).is_none());
+                } else {
                     assert_eq!(
-                        report["choices"][0]["value"], "partial",
-                        "{label}: unrelated fixture omissions need partial"
+                        validation_evidence.get(&route),
+                        Some(&semantic_evidence),
+                        "{label}: conversion changed the validation decision"
                     );
-                    let options = report["invocation"]["provided_option_names"].as_array();
-                    assert!(
-                        options.is_some_and(|options| options.iter().all(|option| {
-                            !option
-                                .as_str()
-                                .is_some_and(|name| name.starts_with("--promote-podman-"))
-                        })),
-                        "{label}: portable import required a promotion flag"
-                    );
-                    assert_no_private_canaries(&result.stdout, &label);
+                }
+                if input == "podman" {
+                    assert_portable_podman_choices(&report, &result, &label);
                 }
 
                 let artifacts = report["output_artifacts"]
@@ -124,6 +108,338 @@ fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), 
         }
     }
     assert_eq!(forms.len(), 18);
+    assert_eq!(validation_evidence.len(), 9);
+    Ok(())
+}
+
+fn assert_portable_podman_choices(report: &serde_json::Value, result: &Output, label: &str) {
+    assert!(report["choices"].as_array().is_some_and(|choices| {
+        choices
+            .iter()
+            .any(|choice| choice["name"] == "podman_import_policy" && choice["value"] == "portable")
+    }));
+    for name in [
+        "promote_portable_effective_settings",
+        "promote_effective_named_volumes",
+        "promote_effective_named_networks",
+    ] {
+        assert!(
+            report["choices"].as_array().is_some_and(|choices| {
+                choices
+                    .iter()
+                    .any(|choice| choice["name"] == name && choice["value"] == "true")
+            }),
+            "{label}: {name} not enabled by portable preset"
+        );
+    }
+    assert_eq!(
+        report["choices"][0]["value"], "partial",
+        "{label}: unrelated fixture omissions need partial"
+    );
+    let options = report["invocation"]["provided_option_names"].as_array();
+    assert!(
+        options.is_some_and(|options| options.iter().all(|option| {
+            !option
+                .as_str()
+                .is_some_and(|name| name.starts_with("--promote-podman-"))
+        })),
+        "{label}: portable import required a promotion flag"
+    );
+    assert_no_private_canaries(&result.stdout, label);
+}
+
+#[test]
+fn portable_podman_import_does_not_silently_relax_exact_loss_policy() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("podman-exact-loss")?;
+    let destination = scratch.path().join("blocked");
+    let server = PodmanCassetteServer::start(PodmanCassette::load(&podman_fixture())?)?;
+    let result = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["convert", "podman", "compose", "--podman-socket"])
+        .arg(server.socket())
+        .args([
+            "--podman-resource",
+            "container=portable-app",
+            "--console-format",
+            "json",
+        ])
+        .arg("--output-directory")
+        .arg(&destination)
+        .output()?;
+    server.finish()?;
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stderr.is_empty());
+    assert_no_private_canaries(&result.stdout, "exact Podman policy");
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(report["status"], "blocked");
+    assert_eq!(report["output_artifacts"], serde_json::json!([]));
+    assert!(
+        report["fidelity"]["unsupported"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert_expected_diagnostics(&report, "podman", "compose", "exact Podman policy")?;
+    assert!(!destination.exists(), "an exact-policy refusal wrote output");
+    Ok(())
+}
+
+#[test]
+fn explicit_same_host_bind_promotion_retains_both_authored_paths_in_document_outputs() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("reviewed-podman-binds")?;
+    // The cassette records two host-local binds. The route matrix deliberately
+    // keeps the ordinary CLI default, which requires a separate same-host choice.
+    for output in ["compose", "quadlet"] {
+        let destination = scratch.path().join(output);
+        let server = PodmanCassetteServer::start(PodmanCassette::load(&podman_fixture())?)?;
+        let result = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args(["convert", "podman", output, "--podman-socket"])
+            .arg(server.socket())
+            .args([
+                "--podman-resource",
+                "container=portable-app",
+                "--promote-podman-effective-bind-mounts",
+                "--loss-policy",
+                "partial",
+                "--console-format",
+                "json",
+            ])
+            .arg("--output-directory")
+            .arg(&destination)
+            .output()?;
+        server.finish()?;
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{output}: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        assert_no_private_canaries(&result.stdout, output);
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+        assert!(report["choices"].as_array().is_some_and(|choices| {
+            choices
+                .iter()
+                .any(|choice| choice["name"] == "promote_effective_bind_mounts" && choice["value"] == "true")
+        }));
+        let artifact = fs::read_to_string(destination.join(if output == "compose" {
+            "compose.yaml"
+        } else {
+            "portable-app.container"
+        }))?;
+        for (source, target, mode) in [
+            ("/srv/boxferry-scenario/private", "/etc/boxferry-scenario", "ro"),
+            ("/srv/boxferry-scenario/shared", "/srv/boxferry-scenario", "rw"),
+        ] {
+            if output == "compose" {
+                let binding = format!("      - {source}:{target}:");
+                let line = artifact
+                    .lines()
+                    .find(|line| line.starts_with(&binding))
+                    .ok_or_else(|| format!("{output}: missing associated bind {binding}"))?;
+                let options = line.strip_prefix(&binding).ok_or("Compose bind options")?;
+                assert_eq!(
+                    options.split(',').any(|option| option == "ro"),
+                    mode == "ro",
+                    "{output}: wrong bind mode for {source}: {line}"
+                );
+            } else {
+                let binding = format!("Volume={source}:{target}:");
+                let line = artifact
+                    .lines()
+                    .find(|line| line.starts_with(&binding))
+                    .ok_or_else(|| format!("{output}: missing associated bind {binding}"))?;
+                let options = line.strip_prefix(&binding).ok_or("Quadlet bind options")?;
+                assert_eq!(
+                    options.split(',').any(|option| option == "ro"),
+                    mode == "ro",
+                    "{output}: wrong bind mode for {source}: {line}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn compose_values_imply_interpolation_and_obey_explicit_precedence() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("compose-interpolation")?;
+    let input = scratch.path().join("compose.yaml");
+    let first = scratch.path().join("first.env");
+    let second = scratch.path().join("second.env");
+    fs::write(
+        &input,
+        "name: interpolation\nservices:\n  web:\n    image: example.invalid/web:${TAG}\n",
+    )?;
+    fs::write(&first, "TAG=first\n")?;
+    fs::write(&second, "TAG=second\n")?;
+
+    for (label, explicit, expected) in [
+        ("later-file", None, "second"),
+        ("explicit-env", Some("TAG=chosen"), "chosen"),
+    ] {
+        let destination = scratch.path().join(label);
+        let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+        command
+            .args(["convert", "compose", "compose", "--input-file"])
+            .arg(&input)
+            .arg("--env-file")
+            .arg(&first)
+            .arg("--env-file")
+            .arg(&second);
+        if let Some(value) = explicit {
+            command.args(["--env", value]);
+        }
+        let result = command
+            .arg("--output-directory")
+            .arg(&destination)
+            .args(["--console-format", "json"])
+            .env("TAG", "ambient")
+            .output()?;
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{label}: {}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+        assert_eq!(report["status"], "success");
+        let artifact = fs::read_to_string(destination.join("compose.yaml"))?;
+        assert!(
+            artifact.contains(&format!("image: example.invalid/web:{expected}\n")),
+            "{label}: {artifact}"
+        );
+        assert!(
+            !artifact.contains("ambient"),
+            "{label}: process fallback overrode supplied values"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn focused_help_and_error_paths_keep_canonical_defaults_and_fail_closed() -> Result<(), Box<dyn Error>> {
+    let help = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["help", "validate", "podman", "compose"])
+        .output()?;
+    assert!(help.status.success());
+    let text = String::from_utf8(help.stdout)?;
+    for (option, next_option, expected) in [
+        (
+            "--podman-import-policy <IMPORT_POLICY>",
+            "--promote-podman-effective-bind-mounts",
+            "[default: portable]",
+        ),
+        (
+            "--loss-policy <LOSS_POLICY>",
+            "--environment-values",
+            "[default: exact]",
+        ),
+        (
+            "--environment-values <ENVIRONMENT_VALUES>",
+            "Diagnostics and reports:",
+            "[default: withhold]",
+        ),
+    ] {
+        let section = text
+            .split_once(option)
+            .and_then(|(_, after)| after.split_once(next_option))
+            .map(|(section, _)| section)
+            .ok_or_else(|| format!("missing help option {option}"))?;
+        assert!(section.contains(expected), "{option}: missing {expected}");
+        if option == "--loss-policy <LOSS_POLICY>" {
+            assert!(section.contains("[possible values: exact, approximate, partial]"));
+        }
+    }
+    assert!(text.contains("--podman-resource"));
+
+    let scratch = Scratch::new("error-paths")?;
+    let input = scratch.path().join("compose.yaml");
+    fs::write(
+        &input,
+        "name: limits\nservices:\n  web:\n    image: example.invalid/web:1\n    restart: unless-stopped\n",
+    )?;
+    let exact = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "compose", "quadlet", "--input-file"])
+        .arg(&input)
+        .args(["--console-format", "json"])
+        .output()?;
+    assert_eq!(exact.status.code(), Some(2));
+    let exact_report: serde_json::Value = serde_json::from_slice(&exact.stdout)?;
+    assert_eq!(exact_report["status"], "blocked");
+    assert_diagnostic_subject(&exact_report, "BFQ0009", "services.web.restart_policy")?;
+    let approximate = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "compose", "quadlet", "--input-file"])
+        .arg(&input)
+        .args(["--loss-policy", "approximate", "--console-format", "json"])
+        .output()?;
+    assert_eq!(approximate.status.code(), Some(0));
+    let approximate_report: serde_json::Value = serde_json::from_slice(&approximate.stdout)?;
+    assert_eq!(approximate_report["status"], "success");
+    assert_diagnostic_subject(&approximate_report, "BFQ0009", "services.web.restart_policy")?;
+
+    assert_unsupported_podman_target(&input)?;
+    assert_ambiguous_quadlet_inputs(scratch.path())?;
+    Ok(())
+}
+
+fn assert_unsupported_podman_target(input: &Path) -> Result<(), Box<dyn Error>> {
+    let unsupported = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "compose", "podman", "--input-file"])
+        .arg(input)
+        .args([
+            "--podman-target-context",
+            "rootful",
+            "--podman-max-version",
+            "5.0",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(unsupported.status.code(), Some(1));
+    let unsupported_report: serde_json::Value = serde_json::from_slice(&unsupported.stdout)?;
+    assert_eq!(unsupported_report["status"], "failure");
+    assert_eq!(unsupported_report["failed_stage"], "conversion");
+    assert_eq!(unsupported_report["primary_diagnostic_code"], "BFP0006");
+    assert_eq!(unsupported_report["output_artifacts"], serde_json::json!([]));
+    assert!(
+        unsupported_report["diagnostics"][0]["fields"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|field| {
+                field["name"] == "reason"
+                    && field["value"]
+                        .as_str()
+                        .is_some_and(|reason| reason.contains("below the oldest reviewed Podman target"))
+            }))
+    );
+    Ok(())
+}
+
+fn assert_ambiguous_quadlet_inputs(scratch: &Path) -> Result<(), Box<dyn Error>> {
+    let first_directory = scratch.join("first");
+    let second_directory = scratch.join("second");
+    fs::create_dir(&first_directory)?;
+    fs::create_dir(&second_directory)?;
+    for directory in [&first_directory, &second_directory] {
+        fs::write(
+            directory.join("web.container"),
+            "[Container]\nImage=example.invalid/web:1\n",
+        )?;
+    }
+    let ambiguous = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "quadlet", "compose", "--input-directory"])
+        .arg(&first_directory)
+        .arg("--input-directory")
+        .arg(&second_directory)
+        .args(["--application-name", "ambiguous", "--console-format", "json"])
+        .output()?;
+    assert_eq!(ambiguous.status.code(), Some(1));
+    let ambiguous_report: serde_json::Value = serde_json::from_slice(&ambiguous.stdout)?;
+    assert_eq!(ambiguous_report["status"], "failure");
+    assert_eq!(ambiguous_report["failed_stage"], "input-discovery");
+    assert_eq!(ambiguous_report["primary_diagnostic_code"], "BFO1000");
+    assert_eq!(
+        ambiguous_report["diagnostics"][0]["summary"],
+        "duplicate Quadlet unit basename"
+    );
+    assert_eq!(ambiguous_report["output_artifacts"], serde_json::json!([]));
     Ok(())
 }
 
@@ -402,6 +718,22 @@ fn assert_diagnostic_subject(report: &serde_json::Value, code: &str, subject: &s
     Ok(())
 }
 
+fn diagnostic_codes_and_subjects(report: &serde_json::Value) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+    let diagnostics = report["diagnostics"].as_array().ok_or("missing diagnostics")?;
+    diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let code = diagnostic["code"].as_str().ok_or("diagnostic has no code")?;
+            let subject = diagnostic["fields"]
+                .as_array()
+                .and_then(|fields| fields.iter().find(|field| field["name"] == "subject"))
+                .and_then(|field| field["value"].as_str())
+                .unwrap_or("");
+            Ok((code.to_owned(), subject.to_owned()))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()
+}
+
 fn run_route(verb: &str, input: &str, output: &str, destination: &Path) -> Result<Output, Box<dyn Error>> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
     command.args([verb, input, output]);
@@ -487,11 +819,53 @@ fn assert_expected_diagnostics(
             codes.contains("BFP0002"),
             "{label}: missing known native-evidence warning"
         );
+        for subject in ["services.portable-app.mounts[0]", "services.portable-app.mounts[1]"] {
+            assert_diagnostic_subject(report, "BFP0003", subject)?;
+            assert_diagnostic_field(
+                report,
+                "BFP0003",
+                subject,
+                "available_promotion",
+                "--promote-podman-effective-bind-mounts",
+            )?;
+        }
+        assert_diagnostic_subject(report, "BFP0009", "services.portable-app.networks")?;
+        if output == "podman" {
+            for subject in ["networks.scenario-net.internal", "networks.scenario-net.ipam_configs"] {
+                assert_diagnostic_subject(report, "BFP0007", subject)?;
+            }
+        }
     } else if output == "podman" {
         assert!(codes.contains("BFP0007"), "{label}: missing target-context warning");
+        assert_diagnostic_subject(report, "BFP0007", "services.web.runtime_name")?;
     } else {
         assert!(codes.is_empty(), "{label}: clean document route raised {codes:?}");
     }
+    Ok(())
+}
+
+fn assert_diagnostic_field(
+    report: &serde_json::Value,
+    code: &str,
+    subject: &str,
+    name: &str,
+    value: &str,
+) -> Result<(), Box<dyn Error>> {
+    let diagnostics = report["diagnostics"].as_array().ok_or("diagnostics array")?;
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["code"] == code
+                && diagnostic["fields"].as_array().is_some_and(|fields| {
+                    fields
+                        .iter()
+                        .any(|field| field["name"] == "subject" && field["value"] == subject)
+                        && fields
+                            .iter()
+                            .any(|field| field["name"] == name && field["value"] == value)
+                })
+        }),
+        "missing {code} {subject} field {name}={value}"
+    );
     Ok(())
 }
 
@@ -513,6 +887,29 @@ fn assert_artifact_intent(directory: &Path, input: &str, output: &str) -> Result
             let yaml = fs::read_to_string(directory.join("compose.yaml"))?;
             assert!(yaml.contains(image), "{input} -> compose lost reviewed image");
             assert!(yaml.contains(if input == "podman" { "portable-app:" } else { "web:" }));
+            if input == "podman" {
+                let (service, networks) = yaml
+                    .split_once("\nnetworks:\n")
+                    .ok_or("Podman Compose network section")?;
+                assert!(
+                    service.contains("scenario-net"),
+                    "Podman -> Compose lost service network attachment"
+                );
+                assert!(
+                    networks.contains("  scenario-net:"),
+                    "Podman -> Compose lost named network"
+                );
+                assert_no_unpromoted_bind_sources(yaml.as_bytes(), "Podman -> Compose");
+            } else {
+                assert!(
+                    yaml.contains("    container_name: web-runtime\n"),
+                    "{input} -> Compose lost authored runtime name"
+                );
+                assert!(
+                    yaml.contains("    restart: \"no\"\n"),
+                    "{input} -> Compose lost authored restart policy"
+                );
+            }
         }
         "quadlet" => {
             let unit = if input == "podman" {
@@ -525,22 +922,86 @@ fn assert_artifact_intent(directory: &Path, input: &str, output: &str) -> Result
                 text.contains(&format!("Image={image}")),
                 "{input} -> quadlet lost reviewed image"
             );
+            if input == "podman" {
+                assert!(text.lines().any(|line| line == "Network=scenario-net.network"));
+                assert_no_unpromoted_bind_sources(text.as_bytes(), "Podman -> Quadlet");
+                let network = fs::read_to_string(directory.join("scenario-net.network"))?;
+                assert!(network.starts_with("[Network]\n"));
+                assert!(network.lines().any(|line| line == "Internal=true"));
+            } else {
+                assert!(
+                    text.lines().any(|line| line == "ContainerName=web-runtime"),
+                    "{input} -> Quadlet lost authored runtime name"
+                );
+                assert!(
+                    text.contains("\n[Service]\nRestart=no\n"),
+                    "{input} -> Quadlet lost authored restart policy"
+                );
+            }
         }
         "podman" => {
-            let plan: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("podman.json"))?)?;
-            assert_eq!(plan["schema_version"], 1);
-            assert!(plan["connection"].is_null());
-            assert!(
-                plan["operations"]
-                    .as_array()
-                    .is_some_and(|operations| !operations.is_empty())
-            );
-            let review = fs::read_to_string(directory.join("podman-commands.sh"))?;
-            assert!(review.contains(image), "{input} -> podman lost reviewed image");
+            assert_podman_artifact(directory, input, image)?;
         }
         _ => return Err(format!("unsupported output format: {output}").into()),
     }
     Ok(())
+}
+
+fn assert_podman_artifact(directory: &Path, input: &str, image: &str) -> Result<(), Box<dyn Error>> {
+    let plan: serde_json::Value = serde_json::from_slice(&fs::read(directory.join("podman.json"))?)?;
+    assert_eq!(plan["schema_version"], 1);
+    assert!(plan["connection"].is_null());
+    assert!(
+        plan["operations"]
+            .as_array()
+            .is_some_and(|operations| !operations.is_empty())
+    );
+    let operations = plan["operations"].as_array().ok_or("Podman operations")?;
+    let create = operations
+        .iter()
+        .find(|operation| operation["action"] == "create" && operation["resource"]["kind"] == "container")
+        .ok_or("Podman container create operation")?;
+    assert_eq!(create["libpod"]["body"]["json"]["image"], image);
+    if input == "podman" {
+        assert_eq!(create["resource"]["name"], "portable-app");
+        // A separately planned network does not prove that the
+        // container joins it. The reviewed Libpod create body does.
+        assert!(
+            create["libpod"]["body"]["json"]["Networks"]
+                .get("scenario-net")
+                .is_some(),
+            "Podman -> Podman lost the container's scenario-net attachment"
+        );
+        assert!(
+            operations
+                .iter()
+                .any(|operation| operation["resource"]["kind"] == "network"
+                    && operation["resource"]["name"] == "scenario-net")
+        );
+        assert_no_unpromoted_bind_sources(&fs::read(directory.join("podman.json"))?, "Podman -> Podman plan");
+    } else {
+        assert_eq!(
+            create["resource"]["name"], "web",
+            "authored runtime-name loss must be explicit"
+        );
+        assert_eq!(create["libpod"]["body"]["json"]["restart_policy"], "no");
+    }
+    let review = fs::read_to_string(directory.join("podman-commands.sh"))?;
+    assert!(review.contains(image), "{input} -> podman lost reviewed image");
+    if input == "podman" {
+        assert_no_unpromoted_bind_sources(review.as_bytes(), "Podman -> Podman script");
+    }
+    Ok(())
+}
+
+fn assert_no_unpromoted_bind_sources(bytes: &[u8], label: &str) {
+    let text = String::from_utf8_lossy(bytes);
+    for source in ["/srv/boxferry-scenario/private", "/srv/boxferry-scenario/shared"] {
+        assert!(
+            !text.contains(source),
+            "{label}: host-local source {source} crossed the default same-host boundary"
+        );
+    }
 }
 
 fn expected_artifacts(input: &str, output: &str) -> BTreeSet<String> {

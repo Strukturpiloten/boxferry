@@ -18,6 +18,40 @@ pull request:
 It formats and lints repository files, tests all Rust targets and feature boundaries, checks the
 MSRV, audits dependencies, builds documentation, verifies coverage floors, and checks local links.
 
+## Fast offline CLI feedback
+
+Run `./scripts/check-cli-usability.sh` or the VS Code task **BoxFerry: Fast offline CLI usability**.
+It uses at most two Cargo build jobs by default and runs the CLI integration tests on one test
+thread. The authored route matrix exercises both `validate` and `convert` for all nine
+Compose/Podman/Quadlet source-target pairs, checks that their semantic decisions agree, and
+inspects planned and written artifacts against independent fixture intent. Authored runtime
+names and restart behavior must survive document targets; Podman output must report its
+runtime-name loss. The Podman cassette proves named network attachment and reports that
+host-local bind sources need explicit same-host promotion; an additional case exercises
+that opt-in for document targets. A separate reviewed scenario checks ports, mounts,
+environment, runtime identity, restart policy, and selected subject-level diagnostics. The
+same focused command also runs privacy tests for withheld and explicitly included values.
+Podman input uses a local read-only cassette; no container runtime is required.
+
+Focused usability cases also check the displayed portable/exact/withhold defaults, refusal of
+ambiguous Quadlet inputs and unsupported Podman targets, exact-policy refusal versus reviewed
+approximation, and Compose interpolation implied by `--env-file`/`--env` with later-file and
+explicit-assignment precedence. Explicit same-host bind promotion checks each source, target,
+and read-only mode as one association rather than independent substring presence.
+
+Measured on 2026-09-26 with Rust 1.98.1 on a 16-thread Linux host (62 GiB RAM),
+two Cargo jobs and one test thread: a fresh worktree-local target completed in
+35.58 s, with 683,696 KiB maximum single-process RSS and 1.1 GiB build output;
+an unchanged warm rerun completed in 3.57 s with 51,380 KiB maximum
+single-process RSS. These are observed bounds for this machine, not a small-PC
+guarantee or aggregate memory measurement. The cassette tests require permission
+to bind local Unix sockets; a restricted sandbox can deny that operation.
+
+This command gives fast feedback while changing CLI behavior. It does not replace
+`./scripts/check-all.sh`, native conformance, or release validation. Extend the suite when
+the approved Quadlet target-default (#335), Compose discovery (#337), or Quadlet identity
+inference (#338) behavior lands; do not assert those pending contracts as current behavior.
+
 ## Test layers
 
 | Layer         | Protects                                                                                      |
