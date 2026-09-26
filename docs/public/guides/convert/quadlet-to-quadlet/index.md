@@ -5,7 +5,7 @@ is not a byte-preserving formatter.
 
 ## Prerequisites
 
-- One or more related Quadlet files and an explicit application name.
+- One regular Quadlet unit, or an explicit `--application-name` for a document set.
 - The complete target Podman version range.
 - An absent or empty output directory.
 
@@ -35,8 +35,10 @@ quadlet-output/
 └── web.container
 ```
 
-The default target covers Podman 5.4.0 through 6.1.0. Every emitted key must work across the whole
-selected range.
+The explicit name overrides the `web` identity inferred from a sole `web.container`; multiple
+units need an explicit name. The default target covers Podman 5.4.0 through 6.1.0. Every emitted
+key must work across the whole selected range. Select a different target range explicitly when
+needed; the source filename and development host do not select it.
 
 Same-format conversion does not preserve native-only values silently. `EnvironmentFile=` paths,
 bind mounts, secret references, pod grouping, and systemd relationships still pass through the

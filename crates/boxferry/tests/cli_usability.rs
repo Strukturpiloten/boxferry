@@ -24,6 +24,127 @@ static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 const FORMATS: [&str; 3] = ["compose", "podman", "quadlet"];
 
 #[test]
+fn single_quadlet_unit_infers_application_for_validation_and_every_exporter() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("single-quadlet-identity")?;
+    let input = scratch.path().join("web.container");
+    fs::write(&input, "[Container]\nImage=example.invalid/web:1\n")?;
+
+    for output in FORMATS {
+        for verb in ["validate", "convert"] {
+            let destination = scratch.path().join(format!("{verb}-{output}"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+            command.args([verb, "quadlet", output, "--input-file"]).arg(&input);
+            if output == "podman" {
+                command.args(["--podman-target-context", "unknown"]);
+            }
+            if verb == "convert" {
+                command.arg("--output-directory").arg(&destination);
+            }
+            let result = command.args(["--console-format", "json"]).output()?;
+            assert_eq!(
+                result.status.code(),
+                Some(0),
+                "{verb} quadlet {output}: {}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            assert!(result.stderr.is_empty());
+            let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+            assert_eq!(report["application"], "web", "{verb} quadlet {output}");
+            assert_eq!(report["status"], "success");
+            assert_eq!(report["source_type"], "quadlet");
+            assert_eq!(report["target_type"], output);
+            if verb == "validate" {
+                assert!(!destination.exists());
+            } else {
+                assert_eq!(artifact_names(&destination)?, expected_artifacts("quadlet", output));
+            }
+        }
+    }
+
+    let existing = scratch.path().join("convert-compose/compose.yaml");
+    let original = fs::read(&existing)?;
+    let no_clobber = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["convert", "quadlet", "compose", "--input-file"])
+        .arg(&input)
+        .arg("--output-directory")
+        .arg(scratch.path().join("convert-compose"))
+        .output()?;
+    assert!(!no_clobber.status.success());
+    assert_eq!(fs::read(&existing)?, original);
+
+    let from_directory = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "quadlet", "compose", "--input-directory"])
+        .arg(scratch.path())
+        .args(["--console-format", "json"])
+        .output()?;
+    assert_eq!(from_directory.status.code(), Some(0));
+    let report: serde_json::Value = serde_json::from_slice(&from_directory.stdout)?;
+    assert_eq!(report["application"], "web");
+    assert_eq!(report["inputs"][0]["kind"], "discovered");
+
+    let override_name = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "quadlet", "compose", "--input-file"])
+        .arg(&input)
+        .args(["--application-name", "chosen-app", "--console-format", "json"])
+        .output()?;
+    assert_eq!(override_name.status.code(), Some(0));
+    let report: serde_json::Value = serde_json::from_slice(&override_name.stdout)?;
+    assert_eq!(report["application"], "chosen-app");
+    Ok(())
+}
+
+#[test]
+fn multiple_quadlet_units_require_explicit_neutral_application_identity() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("quadlet-identity-ambiguity")?;
+    fs::write(
+        scratch.path().join("first.container"),
+        "[Container]\nImage=example.invalid/first:1\n",
+    )?;
+    fs::write(
+        scratch.path().join("second.container"),
+        "[Container]\nImage=example.invalid/second:1\n",
+    )?;
+    let destination = scratch.path().join("blocked");
+    let missing_name = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["convert", "quadlet", "compose", "--input-directory"])
+        .arg(scratch.path())
+        .arg("--output-directory")
+        .arg(&destination)
+        .args(["--console-format", "json"])
+        .output()?;
+    assert_eq!(missing_name.status.code(), Some(1));
+    assert!(!destination.exists());
+    let report: serde_json::Value = serde_json::from_slice(&missing_name.stdout)?;
+    assert_eq!(report["status"], "failure");
+    assert_eq!(report["failed_stage"], "input-discovery");
+    assert_eq!(report["primary_diagnostic_code"], "BFO1000");
+    assert!(report["diagnostics"][0]["fields"].as_array().is_some_and(|fields| {
+        fields.iter().any(|field| {
+            field["name"] == "reason"
+                && field["value"]
+                    .as_str()
+                    .is_some_and(|value| value.contains("multiple Quadlet unit files need --application-name"))
+        })
+    }));
+    assert_eq!(report["output_artifacts"], serde_json::json!([]));
+
+    let explicit = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "quadlet", "compose", "--input-directory"])
+        .arg(scratch.path())
+        .args(["--application-name", "chosen-app", "--console-format", "json"])
+        .output()?;
+    assert_eq!(
+        explicit.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&explicit.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&explicit.stdout)?;
+    assert_eq!(report["application"], "chosen-app");
+    Ok(())
+}
+
+#[test]
 fn minimal_compose_discovery_preserves_one_authored_service_across_all_outputs() -> Result<(), Box<dyn Error>> {
     let scratch = Scratch::new("implicit-compose")?;
     fs::write(

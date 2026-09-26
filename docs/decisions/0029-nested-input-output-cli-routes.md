@@ -10,6 +10,8 @@
   [ADR 0030](0030-native-compose-same-format-canonicalization.md)
 - Decision 5 restored for every route by:
   [ADR 0033](0033-universal-neutral-model-pipeline.md)
+- Decision 4's unconditional Quadlet application-name requirement superseded by:
+  [ADR 0063](0063-sole-quadlet-unit-application-identity.md)
 
 ## Context
 

@@ -7,6 +7,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Infer the neutral application name from one Quadlet unit filename on `convert` and `validate`;
+  require `--application-name` for multiple units while retaining explicit overrides ([#338](https://github.com/Strukturpiloten/boxferry/issues/338)).
+
 - Discover a sole conventional Compose document from the current directory on `convert` and
   `validate` when no input selector is supplied; reject collisions and unsafe candidates, and
   report the selected document without reading `.env` ([#337](https://github.com/Strukturpiloten/boxferry/issues/337)).

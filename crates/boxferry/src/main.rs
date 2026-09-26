@@ -200,9 +200,9 @@ struct ComposeInputOptions {
 
 #[derive(Debug, Args)]
 struct QuadletInputOptions {
-    /// Neutral application name assigned to the Quadlet input document set.
+    /// Neutral application name; inferred from a sole Quadlet unit filename when omitted.
     #[arg(long)]
-    application_name: String,
+    application_name: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1128,7 +1128,7 @@ impl GenericConversion {
             ),
             InputRouteOptions::Quadlet(input) => (
                 None,
-                Some(input.application_name),
+                input.application_name,
                 false,
                 Vec::new(),
                 Vec::new(),
@@ -2802,13 +2802,9 @@ fn validate_route(arguments: &GenericConversion, ordered: &[OrderedInput]) -> io
     match route.input {
         InputType::Compose => {}
         InputType::Quadlet => {
-            let name = arguments.application_name.as_deref().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "--application-name is required for Quadlet input",
-                )
-            })?;
-            Identifier::new(name).map_err(io::Error::other)?;
+            if let Some(name) = arguments.application_name.as_deref() {
+                Identifier::new(name).map_err(io::Error::other)?;
+            }
             if ordered
                 .iter()
                 .any(|input| matches!(input, OrderedInput::File(path) if path == Path::new("-")))
@@ -2859,7 +2855,18 @@ fn generic_quadlet_convert(
     let discovered = resolve_quadlet_inputs(ordered)?;
     let mut aliases = ReportAliases::for_invocation(arguments, output_directory);
     aliases.add_inputs(&discovered);
-    let (application_name, source) = load_quadlet_source(arguments, &discovered, &aliases)?;
+    let application_name = resolve_quadlet_application_name(arguments.application_name.as_deref(), &discovered)
+        .map_err(|error| {
+            post_discovery_failure(
+                FailedStage::InputDiscovery,
+                RuleId::OrchestrationFailed,
+                "Quadlet application identity could not be inferred",
+                &error,
+                &aliases,
+                &discovered,
+            )
+        })?;
+    let source = load_quadlet_source(&application_name, &discovered, &aliases)?;
     let imported = QuadletImporter::new()?.import(&source);
     let (conversion, resolved_versions) =
         export_imported(arguments, route.output, imported, None, &[], &aliases, &discovered)?;
@@ -3617,16 +3624,10 @@ fn should_preserve_imported_quadlet_group(application: &Application) -> bool {
 }
 
 fn load_quadlet_source(
-    arguments: &GenericConversion,
+    application_name: &Identifier,
     discovered: &[ResolvedInput],
     aliases: &ReportAliases,
-) -> Result<(Identifier, QuadletSource), Box<dyn Error>> {
-    let application_name = Identifier::new(
-        arguments
-            .application_name
-            .as_deref()
-            .ok_or_else(|| io::Error::other("missing application name"))?,
-    )?;
+) -> Result<QuadletSource, Box<dyn Error>> {
     let mut documents = Vec::with_capacity(discovered.len());
     for (index, input) in discovered.iter().enumerate() {
         let path = input
@@ -3659,7 +3660,41 @@ fn load_quadlet_source(
     }
     let parsed = QuadletSource::parse(application_name.clone(), documents)
         .map_err(|error| Box::new(quadlet_source_failure(&error, aliases, discovered)) as Box<dyn Error>)?;
-    Ok((application_name, parsed.into_source()))
+    Ok(parsed.into_source())
+}
+
+fn resolve_quadlet_application_name(explicit: Option<&str>, discovered: &[ResolvedInput]) -> io::Result<Identifier> {
+    if let Some(name) = explicit {
+        return Identifier::new(name).map_err(io::Error::other);
+    }
+    if discovered.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Quadlet input needs --input-file or --input-directory",
+        ));
+    }
+    let [input] = discovered else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "multiple Quadlet unit files need --application-name to assign one neutral application identity",
+        ));
+    };
+    let stem = input
+        .path()
+        .and_then(Path::file_stem)
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Quadlet unit filename cannot name an application; pass --application-name",
+            )
+        })?;
+    Identifier::new(stem).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Quadlet unit filename cannot name an application; pass --application-name",
+        )
+    })
 }
 
 fn quadlet_source_failure(

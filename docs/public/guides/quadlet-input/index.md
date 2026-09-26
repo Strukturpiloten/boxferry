@@ -1,8 +1,22 @@
 # Quadlet input
 
-Use Quadlet input for an explicitly selected document set. Repeat `--input-file`, or use
-`--input-directory`; always provide `--application-name` because the files do not define a Compose
-project identity.
+Use Quadlet input for explicitly selected files. Repeat `--input-file`, or use `--input-directory`.
+For one resolved regular unit file, BoxFerry uses its filename without the extension as the neutral
+application name: `web.container` becomes `web`. For two or more files, supply
+`--application-name NAME`; native relationships do not prove application ownership. An explicit
+name also overrides the single-file default.
+
+For a sole `web.container`, the shortest validation command is:
+
+<!-- boxferry-example: quadlet-inferred-name-validate -->
+
+```console
+boxferry validate quadlet compose --input-file web.container
+```
+
+If separately selected paths have the same unit basename, input resolution rejects the collision
+even with an explicit application name. Select one unit or rename a colliding unit before combining
+the files; a shared basename is not evidence that two files form one application.
 
 - [Compose output](../convert/quadlet-to-compose/) reconstructs one canonical Compose document.
 - [Podman output](../convert/quadlet-to-podman/) writes a reviewable plan and command script.
