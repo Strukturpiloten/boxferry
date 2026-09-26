@@ -57,13 +57,15 @@ done
 run_gate() {
   local label=$1
   shift
+  local mock_repository="${CHECK_ALL_TEST_REPOSITORY_ROOT:-${test_root}/repository}"
+  local mock_target="${CHECK_ALL_TEST_TARGET_DIR:-${mock_repository}/target}"
   : > "${test_root}/${label}.commands"
   PATH="${test_root}/bin:${PATH}" \
     CHECK_ALL_TEST_LOG="${test_root}/${label}.commands" \
-    CARGO_TARGET_DIR="${test_root}/target" \
+    CARGO_TARGET_DIR="${mock_target}" \
     BOXFERRY_SEMVER_RELEASE_TYPE="" PODMAN_LENS_SEMVER_CHECK=0 \
     BOXFERRY_WEBSITE_SOURCE_MODE=local \
-    "${bash_executable}" "${test_root}/repository/scripts/check-all.sh" "$@" \
+    "${bash_executable}" "${mock_repository}/scripts/check-all.sh" "$@" \
     > "${test_root}/${label}.output" 2>&1
 }
 
@@ -78,9 +80,22 @@ export BOXFERRY_WEBSITE_FORMAT_MODE=fix
 run_gate default
 run_gate fix --fix
 run_gate check --check
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/30\]' "${test_root}/default.output")" == 30 ]]
-grep --fixed-strings --quiet -- '[30/30] Check published API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 30 steps.' ]]
+
+# A target owned by the former worktree must not be reused after relocation.
+mkdir -p "${test_root}/relocated/scripts"
+cp -- "${script_directory}/check-all.sh" "${test_root}/relocated/scripts/check-all.sh"
+status=0
+CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
+  CHECK_ALL_TEST_TARGET_DIR="${test_root}/repository/target" \
+  run_gate relocated --check || status=$?
+[[ "${status}" == 2 && ! -s "${test_root}/relocated.commands" ]]
+grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
+  "${test_root}/relocated.output"
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/31\]' "${test_root}/default.output")" == 31 ]]
+grep --fixed-strings --quiet -- '[31/31] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 31 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/30\]' "${test_root}/default.output" || true)" == 0 ]]
+[[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 30 steps.' "${test_root}/default.output" || true)" == 0 ]]
 [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/29\]' "${test_root}/default.output" || true)" == 0 ]]
 [[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 29 steps.' "${test_root}/default.output" || true)" == 0 ]]
 diff -u "${test_root}/default.commands" "${test_root}/fix.commands"

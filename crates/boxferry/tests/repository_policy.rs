@@ -5329,7 +5329,7 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
                 "./scripts/check-all.sh",
                 "hard gate against commit, push",
                 "primary agent runs this workflow",
-                "GPT-6 Astra with `xhigh` reasoning",
+                "GPT-6 Sol with `xhigh` reasoning",
                 "Worker subagents",
                 "never execute the Git or GitHub",
                 "remains the primary agent's responsibility",
@@ -5340,8 +5340,8 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
             &[
                 "## Issue-to-PR contribution workflow",
                 "./scripts/check-all.sh",
-                "Either the local complete gate or all required GitHub checks",
-                "primary agent uses GPT-6 Astra with `xhigh` reasoning",
+                "selected GitHub checks and fail-closed `PR gate`",
+                "primary agent uses GPT-6 Sol with `xhigh` reasoning",
                 "Worker agents",
                 "never perform Git or GitHub writes",
                 "the primary agent's final responsibility",
@@ -5810,7 +5810,7 @@ fn devcontainer_uses_cargo_default_workspace_target_directory() -> Result<(), St
 }
 
 #[test]
-fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<(), String> {
+fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(), String> {
     let dockerfile = fs::read_to_string(repository_root().join(".devcontainer/Dockerfile"))
         .map_err(|error| format!("failed to read Dev Container Dockerfile: {error}"))?;
     let expected_version = pinned_cargo_llvm_cov_version(&dockerfile, ".devcontainer/Dockerfile")?;
@@ -5827,77 +5827,65 @@ fn ci_workflow_enforces_coverage_portability_and_pr_gate_contract() -> Result<()
     }
 
     for required in [
+        "  validation-plan:\n    name: Validation plan",
+        "--policy-root .validation-base",
+        "First rollout: never execute a PR-head classifier without trusted base policy.",
+        "First-rollout complete validation: every required job succeeded",
+        "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py",
+        "cargo test --locked --package boxferry --all-features --test documentation_examples",
         "  coverage:\n    name: Coverage ratchet",
         "rustup component add llvm-tools-preview",
         "cargo llvm-cov clean --locked",
         "cargo llvm-cov --locked --no-clean --workspace --all-features --all-targets --summary-only\n          --fail-under-regions 82 --fail-under-functions 87 --fail-under-lines 82",
-        "  portability:\n    name: Portability (macOS)",
-        "runs-on: macos-14",
         "run: cargo ci-check",
         "run: cargo ci-test",
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
         "  pr-gate:\n    name: PR gate\n    if: always()",
-        "needs:\n      [\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        portability,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
+        "needs:\n      [\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
+        "PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}",
+        "NEEDS_JSON: ${{ toJSON(needs) }}",
     ] {
         if !workflow.contains(required) {
             return Err(format!("CI workflow is missing contract `{required}`"));
         }
     }
 
-    for job in [
-        ("Rust quality", "RUST_RESULT", "rust"),
-        ("MSRV", "MSRV_RESULT", "msrv"),
-        ("Dependency and license policy", "DEPENDENCIES_RESULT", "dependencies"),
-        ("Documentation", "DOCUMENTATION_RESULT", "documentation"),
-        (
-            "Release metadata and changelog",
-            "RELEASE_METADATA_RESULT",
-            "release-metadata",
-        ),
-        (
-            "SemVer release type",
-            "SEMVER_RELEASE_TYPE_RESULT",
-            "semver-release-type",
-        ),
-        ("SemVer", "SEMVER_RESULT", "semver"),
-        ("Coverage ratchet", "COVERAGE_RESULT", "coverage"),
-        ("macOS portability", "PORTABILITY_RESULT", "portability"),
-        (
-            "Offline migration readiness",
-            "MIGRATION_READINESS_RESULT",
-            "migration-readiness",
-        ),
-        (
-            "Lockfile release age",
-            "LOCKFILE_RELEASE_AGE_RESULT",
-            "lockfile-release-age",
-        ),
+    for selector in [
+        "rust",
+        "msrv",
+        "dependencies",
+        "documentation",
+        "release_metadata",
+        "semver_release_type",
+        "semver",
+        "coverage",
+        "migration_readiness",
+        "lockfile_release_age",
     ] {
-        let (job_name, result_variable, needs_job) = job;
-        let required = format!("{result_variable}: ${{{{ needs.{needs_job}.result }}}}");
-        if !workflow.contains(&required) {
-            return Err(format!("PR gate does not expose a result variable for `{job_name}`"));
+        let output = format!("select_{selector}: ${{{{ steps.plan.outputs.select_{selector} }}}}");
+        let condition = format!("if: needs.validation-plan.outputs.select_{selector} == 'true'");
+        if !workflow.contains(&output) || !workflow.contains(&condition) {
+            return Err(format!("CI is missing fail-closed plan wiring for `{selector}`"));
         }
     }
-
+    let planner = fs::read_to_string(repository_root().join("scripts/validation-plan.py"))
+        .map_err(|error| format!("failed to read validation planner: {error}"))?;
     for required in [
-        "printf '| Job | Result |\\n'",
-        "printf \"| %s | \\`%s\\` |\\n\" \"${name}\" \"${result}\" >> \"${GITHUB_STEP_SUMMARY}\"",
-        "::error title=Required PR job did not succeed::${name} concluded ${result}.",
-        "Required PR job did not succeed: ${name} concluded ${result}.",
-        "if (( failures != 0 )); then",
-        "One or more required PR jobs did not succeed; see the result table and annotations above.",
+        "if jobs[job] and result != \"success\"",
+        "elif not jobs[job] and result not in {\"skipped\", \"success\"}",
+        "validation plan is not bound to the exact PR comparison",
+        "non-PR validation must be complete at the tested revision",
     ] {
-        if !workflow.contains(required) {
-            return Err(format!("PR gate is missing actionable failure diagnostic `{required}`"));
+        if !planner.contains(required) {
+            return Err(format!("validation gate is missing `{required}`"));
         }
-    }
-    if workflow.contains("test \"${{ needs.") {
-        return Err("PR gate must not use opaque success test predicates".to_owned());
     }
     if workflow.contains("windows-") {
         return Err("CI must not claim unsupported native Windows portability".to_owned());
+    }
+    if workflow.contains("macos-") {
+        return Err("CI validation must not require a macOS runner".to_owned());
     }
 
     Ok(())
@@ -5914,8 +5902,9 @@ fn release_workflow_reuses_the_complete_ci_contract() -> Result<(), String> {
 
     for required in [
         "workflow_call:",
+        "  validation-plan:\n    name: Validation plan",
+        "python3 scripts/validation-plan.py plan --event \"${EVENT_NAME}\"",
         "  coverage:\n    name: Coverage ratchet",
-        "  portability:\n    name: Portability (macOS)",
         "lycheeverse/lychee-action@",
         "  msrv:\n    name: MSRV",
         "  dependencies:\n    name: Dependency and license policy",
@@ -6120,7 +6109,7 @@ fn release_metadata_and_changelog_validation_is_shared() -> Result<(), String> {
         ),
         (
             ".github/workflows/ci.yml",
-            "  release-metadata:\n    name: Release metadata and changelog\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - name: Check out repository with release history",
+            "  release-metadata:\n    name: Release metadata and changelog\n    needs: validation-plan\n    if: needs.validation-plan.outputs.select_release_metadata == 'true'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - name: Check out repository with release history",
         ),
         (
             ".github/workflows/release.yml",
@@ -6199,7 +6188,8 @@ fn platform_support_contract_requires_wsl_for_windows_cli() -> Result<(), String
     for required in [
         "The BoxFerry CLI is supported on Linux.",
         "Windows users must install and run the Linux CLI inside",
-        "Such compilation is incidental unless that platform appears in the supported CI",
+        "Such compilation is incidental unless that platform appears in the supported Linux CI",
+        "no macOS runner",
     ] {
         if !platform_support.contains(required) {
             return Err(format!("platform documentation is missing contract `{required}`"));
@@ -6367,7 +6357,7 @@ fn intentional_public_break_semver_path_is_explicit_and_narrow() -> Result<(), S
         "'^(feat|fix|perf|refactor|revert)(\\([^)]+\\))?!: .+$'",
         "printf 'release_type=major\\n' >> \"${GITHUB_OUTPUT}\"",
         "printf 'release_type=\\n' >> \"${GITHUB_OUTPUT}\"",
-        "needs: semver-release-type",
+        "needs: [validation-plan, semver-release-type]",
         "release-type: ${{ needs.semver-release-type.outputs.release_type }}",
     ] {
         if !ci.contains(required) {
@@ -6989,8 +6979,9 @@ fn validate_shared_lockfile_guard(renovate: &serde_json::Value, workflow: &str) 
         "--base \"${BASE_SHA}\"",
         "--head \"${HEAD_SHA}\"",
         "--minimum-age-hours 72",
-        "LOCKFILE_RELEASE_AGE_RESULT: ${{ needs.lockfile-release-age.result }}",
-        "Lockfile release age|${LOCKFILE_RELEASE_AGE_RESULT}",
+        "select_lockfile_release_age: ${{ steps.plan.outputs.select_lockfile_release_age }}",
+        "if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'",
+        "NEEDS_JSON: ${{ toJSON(needs) }}",
     ] {
         if !workflow.contains(required) {
             return Err(format!("CI lockfile release-age contract is missing `{required}`"));
@@ -7002,8 +6993,8 @@ fn validate_shared_lockfile_guard(renovate: &serde_json::Value, workflow: &str) 
         .map(|(job, _)| job)
         .ok_or_else(|| "CI lockfile release-age job boundary is missing".to_owned())?;
     let before_steps = job.split_once("\n    steps:\n").map_or(job, |(prefix, _)| prefix);
-    if before_steps.lines().any(|line| line.trim_start().starts_with("if:")) {
-        return Err("CI lockfile release-age job must not be skipped on main pushes".to_owned());
+    if !before_steps.contains("if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'") {
+        return Err("CI lockfile release-age job must follow the fail-closed full-main plan".to_owned());
     }
     Ok(())
 }
@@ -7831,7 +7822,7 @@ fn agent_roles_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
     let root = repository_root();
     let config = fs::read_to_string(root.join(".codex/config.toml"))?;
     for required in [
-        "model = \"gpt-6-astra\"",
+        "model = \"gpt-6-sol\"",
         "model_reasoning_effort = \"xhigh\"",
         "max_concurrent_threads_per_session = 9",
         "default_subagent_model = \"gpt-6-sol\"",
@@ -7894,7 +7885,7 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
     );
     let flattened = instructions.split_whitespace().collect::<Vec<_>>().join(" ");
     for required in [
-        "The primary manager always uses `gpt-6-astra` with `xhigh` reasoning",
+        "The primary manager always uses `gpt-6-sol` with `xhigh` reasoning",
         "up to nine concurrent subagents plus the primary manager",
         "subject to the session's actual runtime limit",
         "Nine is a ceiling, not a target or nine distinct roles",
@@ -7924,7 +7915,7 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
     Ok(())
 }
 
-// The full shell gate targets the Linux Dev Container, not the macOS portability lane.
+// The full shell gate targets the Linux Dev Container; there is no macOS runner.
 // Keep configuration assertions above platform-independent.
 #[cfg(target_os = "linux")]
 #[test]

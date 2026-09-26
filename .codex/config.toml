@@ -1,5 +1,5 @@
-# Workspace defaults; keep primary-session overrides aligned with Astra/xhigh.
-model = "gpt-6-astra"
+# Workspace defaults; keep primary-session overrides aligned with Sol/xhigh.
+model = "gpt-6-sol"
 model_reasoning_effort = "xhigh"
 
 [agents]

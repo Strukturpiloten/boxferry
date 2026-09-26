@@ -4,10 +4,10 @@
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Linux    | The BoxFerry CLI is supported on Linux.                                                                                                                     |
 | Windows  | Windows users must install and run the Linux CLI inside WSL2. Native Windows binaries, Windows containers, and Windows host-path semantics are unsupported. |
-| macOS    | CI checks deterministic POSIX behavior; native systemd, Quadlet, and container-runtime behavior is not claimed.                                             |
+| macOS    | Client-side compatibility is intended but unverified; no macOS runner, native systemd, Quadlet, or container-runtime behavior is claimed.                   |
 
 Component crates may compile elsewhere.
-Such compilation is incidental unless that platform appears in the supported CI matrix.
+Such compilation is incidental unless that platform appears in the supported Linux CI matrix.
 
 Podman limitation revalidation runs nested distribution userspace on an Ubuntu GitHub-hosted amd64
 runner. It establishes exact Podman/API/package behavior for the candidate image, not an independent
