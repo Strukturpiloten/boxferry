@@ -93,6 +93,30 @@ class ValidationPlanTests(unittest.TestCase):
         head = self.commit("indented command")
         self.assertEqual(self.plan(self.base, head)["profile"], "executable-docs")
 
+    def test_tab_indented_examples_in_edited_and_new_pages(self) -> None:
+        path = "docs/public/concepts/index.md"
+        for spaces in range(4):
+            with self.subTest(edited_page_spaces=spaces):
+                write(self.root, path, "# Concepts\n\nOrdinary prose.\n")
+                prose_head = self.commit("restore prose")
+                write(self.root, path, f"# Concepts\n\n{' ' * spaces}\tboxferry convert --help\n")
+                example_head = self.commit("edit tab-indented example")
+                self.assertEqual(self.plan(prose_head, example_head)["profile"], "executable-docs")
+
+        before_new_page = git(self.root, "rev-parse", "HEAD")
+        write(self.root, "docs/public/concepts/new.md", "# New page\n\n  \tboxferry convert --help\n")
+        new_page_head = self.commit("add tab-indented example")
+        self.assertEqual(self.plan(before_new_page, new_page_head)["profile"], "executable-docs")
+
+    def test_one_to_three_spaces_without_tab_remain_prose(self) -> None:
+        for spaces in range(1, 4):
+            with self.subTest(spaces=spaces):
+                path = f"docs/public/concepts/prose-{spaces}.md"
+                before_new_page = git(self.root, "rev-parse", "HEAD")
+                write(self.root, path, f"# Prose\n\n{' ' * spaces}Ordinary prose.\n")
+                head = self.commit("add indented prose")
+                self.assertEqual(self.plan(before_new_page, head)["profile"], "prose")
+
     def test_policy_rejects_executable_documentation_downgrades(self) -> None:
         policy = copy.deepcopy(POLICY)
         policy["profile_jobs"]["executable-docs"] = ["documentation"]
