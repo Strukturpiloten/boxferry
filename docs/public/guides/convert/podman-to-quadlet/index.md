@@ -6,7 +6,7 @@ read-only and every resource crosses the neutral application model.
 ## Prerequisites
 
 - Read-only input configured as described in [Podman input](../../podman-input/).
-- At least one resource or label selector, or `--podman-all`.
+- A bounded application selection (automatic when unambiguous, or an explicit selector).
 - A target Podman version range and Quadlet grouping decision.
 
 ## Convert
@@ -14,7 +14,7 @@ read-only and every resource crosses the neutral application model.
 <!-- boxferry-example: podman-to-quadlet -->
 
 ```console
-boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-output
+boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --loss-policy partial --output-directory quadlet-output
 ```
 
 The bounded example writes `quadlet-output/observer.container`. Generated Quadlet files can be
@@ -25,16 +25,15 @@ imported again for semantic-equivalence and fixed-point checks.
 Quadlet output retains its explicit minimum and maximum Podman version range and grouping policy.
 Source runtime versions never become the target range implicitly.
 
-Runtime-effective, runtime-assigned, and locally resolved observations remain governed by explicit
-promotion and loss policy. The two promotion flags in the example authorize only effective named
-volumes and networks; they do not promote arbitrary runtime-local state. Add
-`--promote-podman-portable-effective-settings` only after reviewing environment, published-port,
-restart, normal-health, DNS, and standalone-container effective network-alias evidence. Alias
-promotion also requires named-network promotion; runtime container-ID aliases remain evidence only,
-and pod-member networking remains pod-scoped evidence. The flag allows sensitive environment
-acquisition, but diagnostic reports and snapshots remain redacted.
+The default portable import policy retains reviewed effective settings and named relationships;
+it does not promote arbitrary runtime-local state. `--loss-policy partial` in this example accepts
+separate unsupported fields. Exact remains the default and blocks actual exporter approximations.
+Use `--podman-import-policy conservative` to leave effective observations as evidence until the
+individual promotion switches are selected. Runtime container-ID aliases remain evidence only,
+and pod-member networking remains pod-scoped evidence. Environment values remain withheld unless
+`--environment-values include` separately authorizes them; reports and snapshots stay redacted.
 
-The portable-effective flag also promotes typed network-internal, subnet, gateway, lease-range, and attachment-alias
+The portable preset also promotes typed network-internal, subnet, gateway, lease-range, and attachment-alias
 observations. Lease endpoints become Quadlet's supported `<start-IP>-<end-IP>` `IPRange` form. An
 IPv6 subnet enables `IPv6=true`, so an application-owned `.network` unit carries these settings
 instead of remaining empty. Driver, DNS, IPAM-driver, interface, and standalone IPv6 flags remain

@@ -305,6 +305,14 @@
       "owner": "Podman adapter"
     },
     {
+      "code": "BFP0009",
+      "default_severity": "note",
+      "description": "Reviewed effective Podman state was reconstructed as portable application intent without a known behavior change.",
+      "help": "Review the named field and target prerequisites; the original authored versus default choice cannot be recovered from inspection.",
+      "name": "podman-state-reconstructed",
+      "owner": "Podman adapter"
+    },
+    {
       "code": "BFQ0001",
       "default_severity": "error",
       "description": "The requested Quadlet target or Podman range is invalid.",

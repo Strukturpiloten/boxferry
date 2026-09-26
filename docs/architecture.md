@@ -54,10 +54,16 @@ resolved, unavailable, malformed, version-inapplicable, not applicable, or unmod
 `boxferry-podman` must handle that state before reading a value:
 
 - configured values may become neutral intent when the semantics match;
-- effective values require an explicit promotion policy;
+- effective values require a reviewed promotion policy; the CLI's portable preset covers only
+  the bounded application subset, while embedded callers remain conservative by default;
 - runtime-assigned and locally resolved values remain evidence unless the caller authorizes them;
 - unavailable, malformed, ambiguous, and unmodelled data produce structured outcomes;
 - redacted data never becomes an empty value or reconstructed secret.
+
+The CLI's reviewed source-snapshot reconstruction and target-exporter fidelity are separate
+decisions. Exact source reconstruction carries an informational per-field diagnostic and both
+observation and conversion-decision provenance; semantic adjustments and inferred named-resource
+ownership remain non-exact. See [ADR 0060](decisions/0060-portable-podman-cli-import-policy.md).
 
 The adapter preserves Podman resource identity for correlation, rejects normalized-name
 collisions, and starts inspected ownership as uncertain. Pod networking belongs to the neutral
@@ -72,8 +78,10 @@ development host.
 PodmanLens also owns bounded decoding of optional creation evidence and native mount relabel values.
 BoxFerry uses those hints only to corroborate typed configured inspect fields. They never create
 neutral image builds, mounts, commands, or environment. Effective named resources and portable
-settings require their independent promotion flags; absolute bind sources remain reviewed same-host
-evidence. See [ADR 0042](decisions/0042-bounded-podman-creation-evidence-and-intent-promotion.md).
+settings need reviewed promotion: the CLI portable preset enables their bounded application subset,
+while embedded callers and the conservative CLI mode require independent choices. Absolute bind
+sources remain reviewed same-host evidence. See
+[ADR 0042](decisions/0042-bounded-podman-creation-evidence-and-intent-promotion.md).
 
 ## Output boundary
 

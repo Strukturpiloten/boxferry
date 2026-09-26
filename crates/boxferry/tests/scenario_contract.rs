@@ -4145,7 +4145,8 @@ fn convert_cli(
             command
                 .arg("--podman-socket")
                 .arg(cassette_server.socket())
-                .args(["--application-name", &podman.application]);
+                .args(["--application-name", &podman.application])
+                .args(["--podman-import-policy", "conservative"]);
             if podman.all {
                 command.arg("--podman-all");
             } else {

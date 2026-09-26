@@ -800,13 +800,67 @@ fn explicit_named_volume_promotion_accepts_configured_mount_identity() -> Result
         Some(SelinuxRelabel::Shared)
     );
     assert!(result.diagnostics().iter().any(|diagnostic| {
-        diagnostic.code().as_str() == "BFP0003" && diagnostic.summary().contains("portable named-volume mount promoted")
+        diagnostic.code().as_str() == "BFP0009"
+            && diagnostic
+                .summary()
+                .contains("named-volume mount relationship reconstructed")
     }));
     assert!(!result.diagnostics().iter().any(|diagnostic| {
         diagnostic
             .fields()
             .iter()
             .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.mounts[0].options")
+    }));
+    Ok(())
+}
+
+#[test]
+fn portable_preset_and_equivalent_granular_policy_reconstruct_the_same_observed_relationships()
+-> Result<(), Box<dyn Error>> {
+    let source = legacy_source(
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":""},"HostConfig":{"RestartPolicy":{"Name":"always"}},"NetworkSettings":{"Networks":{"legacy-net":{"NetworkID":"legacy-net"}}},"Mounts":[{"Type":"volume","Name":"legacy-data","Destination":"/data","RW":true}]}"#,
+    )?;
+    let granular = PodmanPromotionPolicy::conservative()
+        .with_portable_effective_settings(true)
+        .with_effective_named_volume_mounts(true)
+        .with_effective_named_networks(true);
+    let importer = PodmanImporter::new()?;
+    let preset = importer.import(
+        &source
+            .clone()
+            .with_promotion_policy(PodmanPromotionPolicy::portable_application()),
+    );
+    let explicit = importer.import(&source.with_promotion_policy(granular));
+    let decisions = |result: &boxferry_engine::ImportResult| {
+        result
+            .outcomes()
+            .iter()
+            .map(|outcome| (outcome.subject().to_owned(), outcome.kind()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(decisions(&preset), decisions(&explicit));
+    assert!(preset.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.restart_policy"
+            && outcome.kind() == ConversionKind::Exact
+            && outcome.origins().len() == 2
+    }));
+    assert!(preset.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.mounts[0]"
+            && outcome.kind() == ConversionKind::Exact
+            && outcome.origins().len() == 2
+    }));
+    assert!(preset.outcomes().iter().any(|outcome| {
+        outcome.subject() == "networks.legacy-net.ownership" && outcome.kind() == ConversionKind::Approximate
+    }));
+    assert!(preset.outcomes().iter().any(|outcome| {
+        outcome.subject() == "volumes.legacy-data.ownership" && outcome.kind() == ConversionKind::Approximate
+    }));
+    assert!(preset.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0009"
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "decision" && field.value().redacted() == "reconstructed")
     }));
     Ok(())
 }
@@ -879,6 +933,9 @@ fn combined_promotion_flags_model_network_ipam_and_keep_effective_empty_dns_unmo
     assert_eq!(application.networks().len(), 1);
     let network = application.networks()[0].value();
     assert_eq!(network.ownership(), ResourceOwnership::Application);
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "networks.legacy-net.ownership" && outcome.kind() == ConversionKind::Approximate
+    }));
     assert_eq!(network.internal().map(|value| *value.value()), Some(true));
     assert_eq!(network.ipv6().map(|value| *value.value()), Some(true));
     let ipam = network.ipam_configs().ok_or("promoted network IPAM")?;
@@ -1066,6 +1123,56 @@ fn portable_effective_promotion_retains_reviewed_settings_and_redacts_evidence()
     assert!(!inventory_snapshot.contains(SECRET));
     assert!(!graph_snapshot.contains(SECRET));
     assert!(!format!("{source:?}").contains(SECRET));
+    Ok(())
+}
+
+#[test]
+fn partially_decoded_effective_healthcheck_is_not_exactly_reconstructed() -> Result<(), Box<dyn Error>> {
+    let source = legacy_source(
+        r#"{"Id":"c-web","Name":"web","ImageName":"example.invalid/legacy:1","Pod":"","Config":{"Entrypoint":"","Healthcheck":{"Test":["CMD","/bin/check"],"Interval":-1,"Retries":3}},"HostConfig":{"RestartPolicy":{"Name":""}},"NetworkSettings":{"Networks":{}},"Mounts":[]}"#,
+    )?
+    .with_promotion_policy(PodmanPromotionPolicy::conservative().with_portable_effective_settings(true));
+    let result = PodmanImporter::new()?.import(&source);
+    let healthcheck = result
+        .application()
+        .ok_or("legacy application")?
+        .services()
+        .first()
+        .ok_or("legacy service")?
+        .value()
+        .healthcheck()
+        .ok_or("retained healthcheck")?
+        .value();
+    assert!(matches!(
+        healthcheck.command().map(boxferry_model::Sourced::value),
+        Some(HealthcheckCommand::Exec(arguments)) if arguments.len() == 1 && arguments[0].expose() == "/bin/check"
+    ));
+    assert_eq!(healthcheck.retries().map(|value| value.value().as_str()), Some("3"));
+    assert!(healthcheck.interval().is_none());
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.healthcheck.interval" && outcome.kind() != ConversionKind::Exact
+    }));
+    assert!(result.outcomes().iter().any(|outcome| {
+        outcome.subject() == "services.web.healthcheck" && outcome.kind() == ConversionKind::Approximate
+    }));
+    assert!(result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0003"
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.healthcheck")
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "available_promotion" && field.value().redacted() == "none")
+    }));
+    assert!(!result.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0009"
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().redacted() == "services.web.healthcheck")
+    }));
     Ok(())
 }
 

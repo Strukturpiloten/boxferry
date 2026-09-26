@@ -165,8 +165,8 @@ podman-socket-placeholder = "/run/user/1000/podman/podman.sock"
 [[examples]]
 id = "podman-to-compose"
 pages = ["docs/public/guides/convert/podman-to-compose/index.md"]
-command = "boxferry convert podman compose --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory compose-output"
-args = ["convert", "podman", "compose", "--podman-socket", "/run/user/1000/podman/podman.sock", "--application-name", "complex", "--podman-resource", "container=c-observer", "--promote-podman-effective-named-volumes", "--promote-podman-effective-named-networks", "--loss-policy", "partial", "--output-directory", "compose-output"]
+command = "boxferry convert podman compose --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --loss-policy partial --output-directory compose-output"
+args = ["convert", "podman", "compose", "--podman-socket", "/run/user/1000/podman/podman.sock", "--application-name", "complex", "--podman-resource", "container=c-observer", "--loss-policy", "partial", "--output-directory", "compose-output"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
 podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"
@@ -179,8 +179,8 @@ artifact-contains = [
 [[examples]]
 id = "podman-to-quadlet"
 pages = ["docs/public/guides/convert/podman-to-quadlet/index.md"]
-command = "boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-output"
-args = ["convert", "podman", "quadlet", "--podman-socket", "/run/user/1000/podman/podman.sock", "--application-name", "complex", "--podman-resource", "container=c-observer", "--promote-podman-effective-named-volumes", "--promote-podman-effective-named-networks", "--loss-policy", "partial", "--output-directory", "quadlet-output"]
+command = "boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --loss-policy partial --output-directory quadlet-output"
+args = ["convert", "podman", "quadlet", "--podman-socket", "/run/user/1000/podman/podman.sock", "--application-name", "complex", "--podman-resource", "container=c-observer", "--loss-policy", "partial", "--output-directory", "quadlet-output"]
 expected-exit = 0
 stdout-contains = ["command succeeded"]
 podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"
@@ -192,8 +192,8 @@ artifact-contains = [
 [[examples]]
 id = "podman-to-podman"
 pages = ["docs/public/guides/convert/podman-to-podman/index.md"]
-command = "boxferry convert podman podman --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --podman-target-context rootless --output-directory podman-output"
-args = ["convert", "podman", "podman", "--podman-socket", "/run/user/1000/podman/podman.sock", "--application-name", "complex", "--podman-resource", "container=c-observer", "--promote-podman-effective-named-volumes", "--promote-podman-effective-named-networks", "--loss-policy", "partial", "--podman-target-context", "rootless", "--output-directory", "podman-output"]
+command = "boxferry convert podman podman --podman-socket /run/user/1000/podman/podman.sock --application-name complex --podman-resource container=c-observer --loss-policy partial --podman-target-context rootless --output-directory podman-output"
+args = ["convert", "podman", "podman", "--podman-socket", "/run/user/1000/podman/podman.sock", "--application-name", "complex", "--podman-resource", "container=c-observer", "--loss-policy", "partial", "--podman-target-context", "rootless", "--output-directory", "podman-output"]
 expected-exit = 0
 stdout-contains = ["command succeeded"]
 podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"
@@ -253,8 +253,8 @@ generated-files = [{ directory = "reports", prefix = "boxferry-error-report-", s
 [[examples]]
 id = "podman-portable-effective-settings"
 pages = ["docs/public/guides/podman-input/index.md"]
-command = "boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-effective-bind-mounts --promote-podman-portable-effective-settings --promote-podman-effective-named-volumes --promote-podman-effective-named-networks --loss-policy partial --output-directory quadlet-portable-output"
-args = ["convert", "podman", "quadlet", "--podman-socket", "/run/user/1000/podman/podman.sock", "--podman-resource", "container=c-observer", "--promote-podman-effective-bind-mounts", "--promote-podman-portable-effective-settings", "--promote-podman-effective-named-volumes", "--promote-podman-effective-named-networks", "--loss-policy", "partial", "--output-directory", "quadlet-portable-output"]
+command = "boxferry convert podman quadlet --podman-socket /run/user/1000/podman/podman.sock --podman-resource container=c-observer --promote-podman-effective-bind-mounts --loss-policy partial --output-directory quadlet-portable-output"
+args = ["convert", "podman", "quadlet", "--podman-socket", "/run/user/1000/podman/podman.sock", "--podman-resource", "container=c-observer", "--promote-podman-effective-bind-mounts", "--loss-policy", "partial", "--output-directory", "quadlet-portable-output"]
 expected-exit = 0
 stdout-contains = ["command succeeded"]
 podman-cassette = "fixtures/differential/podman-lens-complex-corpus/complex-6.1.0-rootless.cassette.json"

@@ -234,6 +234,9 @@ struct PodmanInputOptions {
         value_parser = parse_podman_network_boundary
     )]
     podman_network_boundaries: Vec<String>,
+    /// Reconstruct reviewed portable application intent, or retain effective values as evidence.
+    #[arg(long = "podman-import-policy", value_enum, default_value_t = PodmanImportPolicy::Portable)]
+    import_policy: PodmanImportPolicy,
     #[command(flatten)]
     promotion: PodmanPromotionOptions,
     #[command(flatten)]
@@ -773,6 +776,7 @@ struct GenericConversion {
     podman_resource_prefixes: Vec<PodmanResourcePrefixInput>,
     podman_labels: Vec<PodmanLabelInput>,
     podman_network_boundaries: Vec<String>,
+    podman_import_policy: PodmanImportPolicy,
     promote_podman_effective_bind_mounts: bool,
     promote_podman_portable_effective_settings: bool,
     promote_podman_effective_named_volumes: bool,
@@ -1091,6 +1095,7 @@ impl GenericConversion {
             podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
+            podman_import_policy,
             promote_podman_effective_bind_mounts,
             promote_podman_portable_effective_settings,
             promote_podman_effective_named_volumes,
@@ -1111,6 +1116,7 @@ impl GenericConversion {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                PodmanImportPolicy::Conservative,
                 false,
                 false,
                 false,
@@ -1131,32 +1137,37 @@ impl GenericConversion {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                PodmanImportPolicy::Conservative,
                 false,
                 false,
                 false,
                 false,
                 false,
             ),
-            InputRouteOptions::Podman(input) => (
-                None,
-                input.application_name,
-                false,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                false,
-                input.podman_socket,
-                input.podman_all,
-                input.podman_resources,
-                input.podman_resource_prefixes,
-                input.podman_labels,
-                input.podman_network_boundaries,
-                input.promotion.bind_mounts.promote_podman_effective_bind_mounts,
-                input.promotion.promote_podman_portable_effective_settings,
-                input.promotion.promote_podman_effective_named_volumes,
-                input.promotion.promote_podman_effective_named_networks,
-                input.support.include_podman_snapshot,
-            ),
+            InputRouteOptions::Podman(input) => {
+                let portable = input.import_policy == PodmanImportPolicy::Portable;
+                (
+                    None,
+                    input.application_name,
+                    false,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    false,
+                    input.podman_socket,
+                    input.podman_all,
+                    input.podman_resources,
+                    input.podman_resource_prefixes,
+                    input.podman_labels,
+                    input.podman_network_boundaries,
+                    input.import_policy,
+                    input.promotion.bind_mounts.promote_podman_effective_bind_mounts,
+                    portable || input.promotion.promote_podman_portable_effective_settings,
+                    portable || input.promotion.promote_podman_effective_named_volumes,
+                    portable || input.promotion.promote_podman_effective_named_networks,
+                    input.support.include_podman_snapshot,
+                )
+            }
         };
         let (
             podman_minimum_version,
@@ -1213,6 +1224,7 @@ impl GenericConversion {
             podman_resource_prefixes,
             podman_labels,
             podman_network_boundaries,
+            podman_import_policy,
             promote_podman_effective_bind_mounts,
             promote_podman_portable_effective_settings,
             promote_podman_effective_named_volumes,
@@ -1252,11 +1264,17 @@ enum OutputLayout {
     Files,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum CliLossPolicy {
     Exact,
     Approximate,
     Partial,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum PodmanImportPolicy {
+    Portable,
+    Conservative,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -2012,6 +2030,10 @@ fn new_report(arguments: &GenericConversion, route: RouteSpec) -> ConversionRepo
         InputType::Quadlet => {}
         InputType::Podman => {
             report.choices.push(ReportChoice {
+                name: "podman_import_policy".into(),
+                value: format!("{:?}", arguments.podman_import_policy).to_lowercase(),
+            });
+            report.choices.push(ReportChoice {
                 name: "podman_acquisition".into(),
                 value: "explicit-read-only-unix".into(),
             });
@@ -2078,6 +2100,7 @@ fn sanitized_invocation(matches: &clap::ArgMatches, command_kind: &str) -> Sanit
         ("podman_resource_prefixes", "--podman-resource-prefix"),
         ("podman_labels", "--podman-label"),
         ("podman_network_boundaries", "--podman-network-boundary"),
+        ("import_policy", "--podman-import-policy"),
         (
             "promote_podman_effective_bind_mounts",
             "--promote-podman-effective-bind-mounts",
@@ -3056,11 +3079,14 @@ async fn generic_podman_convert(
                 &discovered,
             )
         })?;
-    let promotion = boxferry::PodmanPromotionPolicy::conservative()
-        .with_effective_bind_mounts(arguments.promote_podman_effective_bind_mounts)
-        .with_portable_effective_settings(arguments.promote_podman_portable_effective_settings)
-        .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
-        .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
+    let promotion = match arguments.podman_import_policy {
+        PodmanImportPolicy::Portable => boxferry::PodmanPromotionPolicy::portable_application(),
+        PodmanImportPolicy::Conservative => boxferry::PodmanPromotionPolicy::conservative(),
+    }
+    .with_effective_bind_mounts(arguments.promote_podman_effective_bind_mounts)
+    .with_portable_effective_settings(arguments.promote_podman_portable_effective_settings)
+    .with_effective_named_volume_mounts(arguments.promote_podman_effective_named_volumes)
+    .with_effective_named_networks(arguments.promote_podman_effective_named_networks);
     let graph = discover(&inventory, &request).map_err(|error| {
         post_discovery_failure(
             FailedStage::InputDiscovery,
@@ -6572,6 +6598,7 @@ mod tests {
             podman_resource_prefixes: Vec::new(),
             podman_labels: Vec::new(),
             podman_network_boundaries: Vec::new(),
+            podman_import_policy: PodmanImportPolicy::Conservative,
             promote_podman_effective_bind_mounts: false,
             promote_podman_portable_effective_settings: false,
             promote_podman_effective_named_volumes: false,
@@ -6837,12 +6864,49 @@ mod tests {
     }
 
     #[test]
-    fn portable_effective_podman_promotion_is_explicit_and_reported() -> Result<(), Box<dyn Error>> {
+    fn podman_import_policy_defaults_portable_and_conservative_retains_explicit_overrides() -> Result<(), Box<dyn Error>>
+    {
+        let ordinary = parse_validation(&["boxferry", "validate", "podman", "compose"])?;
+        assert_eq!(ordinary.podman_import_policy, PodmanImportPolicy::Portable);
+        assert!(ordinary.promote_podman_portable_effective_settings);
+        assert!(ordinary.promote_podman_effective_named_volumes);
+        assert!(ordinary.promote_podman_effective_named_networks);
+        assert!(!ordinary.promote_podman_effective_bind_mounts);
+        assert_eq!(ordinary.loss_policy, CliLossPolicy::Exact);
+        let report = new_report(&ordinary, route::find(InputType::Podman, OutputType::Compose));
+        assert!(
+            report
+                .choices
+                .iter()
+                .any(|choice| choice.name == "podman_import_policy" && choice.value == "portable")
+        );
+        assert!(
+            report
+                .choices
+                .iter()
+                .any(|choice| choice.name == "loss_policy" && choice.value == "exact")
+        );
+
+        let conservative = parse_validation(&[
+            "boxferry",
+            "validate",
+            "podman",
+            "quadlet",
+            "--podman-import-policy",
+            "conservative",
+        ])?;
+        assert_eq!(conservative.podman_import_policy, PodmanImportPolicy::Conservative);
+        assert!(!conservative.promote_podman_portable_effective_settings);
+        assert!(!conservative.promote_podman_effective_named_volumes);
+        assert!(!conservative.promote_podman_effective_named_networks);
+
         let arguments = parse_validation(&[
             "boxferry",
             "validate",
             "podman",
             "quadlet",
+            "--podman-import-policy",
+            "conservative",
             "--podman-resource",
             "container=web",
             "--promote-podman-effective-bind-mounts",
@@ -6864,6 +6928,28 @@ mod tests {
                 .choices
                 .iter()
                 .any(|choice| { choice.name == "promote_portable_effective_settings" && choice.value == "true" })
+        );
+        let redundant = parse_validation(&[
+            "boxferry",
+            "validate",
+            "podman",
+            "quadlet",
+            "--promote-podman-portable-effective-settings",
+        ])?;
+        assert_eq!(redundant.podman_import_policy, PodmanImportPolicy::Portable);
+        assert!(redundant.promote_podman_portable_effective_settings);
+        assert!(redundant.promote_podman_effective_named_volumes);
+        assert!(redundant.promote_podman_effective_named_networks);
+        assert!(
+            Cli::try_parse_from([
+                "boxferry",
+                "validate",
+                "podman",
+                "compose",
+                "--podman-import-policy",
+                "unsafe",
+            ])
+            .is_err()
         );
         Ok(())
     }

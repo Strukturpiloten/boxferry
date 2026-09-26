@@ -58,6 +58,38 @@ fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), 
                 assert_structured_diagnostics(&report, &label)?;
                 assert_expected_diagnostics(&report, input, output, &label)?;
                 if input == "podman" {
+                    assert!(report["choices"].as_array().is_some_and(|choices| {
+                        choices
+                            .iter()
+                            .any(|choice| choice["name"] == "podman_import_policy" && choice["value"] == "portable")
+                    }));
+                    for name in [
+                        "promote_portable_effective_settings",
+                        "promote_effective_named_volumes",
+                        "promote_effective_named_networks",
+                    ] {
+                        assert!(
+                            report["choices"].as_array().is_some_and(|choices| {
+                                choices
+                                    .iter()
+                                    .any(|choice| choice["name"] == name && choice["value"] == "true")
+                            }),
+                            "{label}: {name} not enabled by portable preset"
+                        );
+                    }
+                    assert_eq!(
+                        report["choices"][0]["value"], "partial",
+                        "{label}: unrelated fixture omissions need partial"
+                    );
+                    let options = report["invocation"]["provided_option_names"].as_array();
+                    assert!(
+                        options.is_some_and(|options| options.iter().all(|option| {
+                            !option
+                                .as_str()
+                                .is_some_and(|name| name.starts_with("--promote-podman-"))
+                        })),
+                        "{label}: portable import required a promotion flag"
+                    );
                     assert_no_private_canaries(&result.stdout, &label);
                 }
 
@@ -92,6 +124,107 @@ fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), 
         }
     }
     assert_eq!(forms.len(), 18);
+    Ok(())
+}
+
+#[test]
+fn ordinary_podman_application_needs_no_selector_or_promotion_switch_for_each_exporter() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("podman-minimum-options")?;
+    for output in FORMATS {
+        for verb in ["validate", "convert"] {
+            for format in ["json", "human"] {
+                let server = PodmanCassetteServer::start(PodmanCassette::load(&podman_fixture())?)?;
+                let destination = scratch.path().join(format!("{verb}-{output}-{format}"));
+                let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+                command.args([verb, "podman", output, "--podman-socket"]);
+                command.arg(server.socket()).args(["--loss-policy", "partial"]);
+                if output == "podman" {
+                    command.args(["--podman-target-context", "rootful"]);
+                }
+                if verb == "convert" {
+                    command.arg("--output-directory").arg(&destination);
+                }
+                if format == "json" {
+                    command.args(["--console-format", "json"]);
+                }
+                let result = command.output()?;
+                server.finish()?;
+                assert_eq!(
+                    result.status.code(),
+                    Some(0),
+                    "{verb} -> {output} {format}: {}",
+                    String::from_utf8_lossy(&result.stdout)
+                );
+                assert_no_private_canaries(&result.stdout, format);
+                assert_no_private_canaries(&result.stderr, format);
+                if format == "json" {
+                    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+                    assert_eq!(report["status"], "success");
+                    assert_eq!(report["application"], "portable-app");
+                    assert!(report["choices"].as_array().is_some_and(|choices| {
+                        choices
+                            .iter()
+                            .any(|choice| choice["name"] == "podman_import_policy" && choice["value"] == "portable")
+                    }));
+                    assert!(report["diagnostics"].as_array().is_some_and(|diagnostics| {
+                        diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFP0009")
+                    }));
+                } else {
+                    let stdout = String::from_utf8_lossy(&result.stdout);
+                    assert!(stdout.contains("Podman input:"), "{verb} -> {output}: {stdout}");
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    assert!(stderr.contains("BFP0009"), "{verb} -> {output}: {stderr}");
+                }
+                if verb == "validate" {
+                    assert!(!destination.exists());
+                } else {
+                    assert!(!artifact_names(&destination)?.is_empty());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn conservative_podman_import_retains_effective_state_as_evidence() -> Result<(), Box<dyn Error>> {
+    let server = PodmanCassetteServer::start(PodmanCassette::load(&podman_fixture())?)?;
+    let result = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args(["validate", "podman", "compose", "--podman-socket"])
+        .arg(server.socket())
+        .args([
+            "--podman-import-policy",
+            "conservative",
+            "--loss-policy",
+            "partial",
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    server.finish()?;
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&result.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert!(report["choices"].as_array().is_some_and(|choices| {
+        choices
+            .iter()
+            .any(|choice| choice["name"] == "podman_import_policy" && choice["value"] == "conservative")
+    }));
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| { diagnostics.iter().any(|diagnostic| diagnostic["code"] == "BFP0003") })
+    );
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| { diagnostics.iter().all(|diagnostic| diagnostic["code"] != "BFP0009") })
+    );
+    assert_no_private_canaries(&result.stdout, "conservative import");
     Ok(())
 }
 
@@ -413,7 +546,7 @@ fn assert_artifact_intent(directory: &Path, input: &str, output: &str) -> Result
 fn expected_artifacts(input: &str, output: &str) -> BTreeSet<String> {
     let names = match output {
         "compose" => BTreeSet::from(["compose.yaml"]),
-        "quadlet" if input == "podman" => BTreeSet::from(["portable-app.container"]),
+        "quadlet" if input == "podman" => BTreeSet::from(["portable-app.container", "scenario-net.network"]),
         "quadlet" => BTreeSet::from(["web.container"]),
         "podman" => BTreeSet::from(["podman-commands.sh", "podman.json"]),
         _ => unreachable!("the route matrix contains only supported formats"),

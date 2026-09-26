@@ -39,6 +39,7 @@ pub struct PodmanImporter {
     unsupported: DiagnosticCode,
     invalid: DiagnosticCode,
     policy: DiagnosticCode,
+    reconstructed: DiagnosticCode,
     identity: DiagnosticCode,
     secret: DiagnosticCode,
 }
@@ -54,6 +55,7 @@ impl PodmanImporter {
             unsupported: DiagnosticCode::new("BFP0002")?,
             invalid: DiagnosticCode::new("BFP0001")?,
             policy: DiagnosticCode::new("BFP0003")?,
+            reconstructed: DiagnosticCode::new("BFP0009")?,
             identity: DiagnosticCode::new("BFP0004")?,
             secret: DiagnosticCode::new("BFP0005")?,
         })
@@ -151,6 +153,9 @@ impl<'a> Mapping<'a> {
             observation.header().identity(),
             self.source.promotion_policy().promotes_effective_named_networks(),
         );
+        if ownership == ResourceOwnership::Application {
+            self.inferred_ownership(format!("{subject}.ownership"));
+        }
         let mut network = Network::new(name, ownership);
         self.map_network_labels(&subject, details.labels(), &mut network);
         self.map_network_internal(&subject, details.internal(), &mut network);
@@ -329,6 +334,9 @@ impl<'a> Mapping<'a> {
             observation.header().identity(),
             self.source.promotion_policy().promotes_effective_named_volume_mounts(),
         );
+        if ownership == ResourceOwnership::Application {
+            self.inferred_ownership(format!("{subject}.ownership"));
+        }
         let mut volume = Volume::new(name, ownership);
         self.map_volume_labels(&subject, details.labels(), &mut volume);
         self.observation_only(
@@ -598,11 +606,18 @@ impl<'a> Mapping<'a> {
             self.sourced(policy)
         });
         if promoted {
-            self.approximate_with_flag(
-                field_subject,
-                "effective restart policy was explicitly promoted as portable intent",
-                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
-            );
+            if matches!(name, NativeRestartPolicyName::OnFailure) && retry_count.is_none() {
+                self.approximate_with_flag(
+                    field_subject,
+                    "effective on-failure retry limit is not known to be complete",
+                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                );
+            } else {
+                self.reconstructed(
+                    field_subject,
+                    "effective restart behavior reconstructed from reviewed native state",
+                );
+            }
         }
     }
 
@@ -624,6 +639,8 @@ impl<'a> Mapping<'a> {
         };
         let mut healthcheck = Healthcheck::new();
         let mut retained = false;
+        let mut shell_command = false;
+        let child_outcomes_start = self.outcomes.len();
 
         if let Some((command, _)) = self.portable_setting(
             native.command(),
@@ -637,6 +654,7 @@ impl<'a> Mapping<'a> {
                     retained = true;
                 }
                 NativeHealthCommand::Shell(command) => {
+                    shell_command = true;
                     let command = command.expose(|arguments| arguments.join(" "));
                     healthcheck.set_command(
                         self.portable_sourced(HealthcheckCommand::Shell(ProtectedString::sensitive(command)), promoted),
@@ -704,12 +722,28 @@ impl<'a> Mapping<'a> {
                 self.sourced(healthcheck)
             });
             if promoted {
-                self.approximate_with_flag(
-                    field_subject,
-                    "effective normal healthcheck was explicitly promoted as portable intent",
-                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
-                );
+                self.record_healthcheck_decision(field_subject, shell_command, child_outcomes_start);
             }
+        }
+    }
+
+    fn record_healthcheck_decision(&mut self, subject: String, shell_command: bool, child_outcomes_start: usize) {
+        let partially_retained = self.outcomes[child_outcomes_start..]
+            .iter()
+            .any(|outcome| outcome.kind() != ConversionKind::Exact);
+        if partially_retained {
+            self.partially_retained_healthcheck(subject);
+        } else if shell_command {
+            self.approximate_with_flag(
+                subject,
+                "effective shell health command was normalized and needs target review",
+                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+            );
+        } else {
+            self.reconstructed(
+                subject,
+                "effective normal health behavior reconstructed from reviewed native state",
+            );
         }
     }
 
@@ -1394,11 +1428,7 @@ impl<'a> Mapping<'a> {
                         continue;
                     }
                     service.add_mount(self.decision_sourced(mapped));
-                    self.approximate_with_flag(
-                        mount_subject,
-                        "portable named-volume mount promoted by explicit BoxFerry policy",
-                        "--promote-podman-effective-named-volumes",
-                    );
+                    self.reconstructed(mount_subject, "effective named-volume mount relationship reconstructed");
                 }
                 Err(error) => self.model_error(mount_subject, &error),
             }
@@ -1795,6 +1825,7 @@ impl<'a> Mapping<'a> {
             return;
         };
         let mut promoted_any = collection_promoted;
+        let mut complete = true;
         for (index, binding) in bindings.iter().enumerate() {
             let binding_subject = format!("{field_subject}[{index}]");
             let host_port = self
@@ -1806,6 +1837,7 @@ impl<'a> Mapping<'a> {
                 )
                 .map(|(value, promoted)| (*value, promoted));
             if binding.host_port().is_observed() && host_port.is_none() {
+                complete = false;
                 continue;
             }
             let host_ip = self
@@ -1817,6 +1849,7 @@ impl<'a> Mapping<'a> {
                 )
                 .map(|(value, promoted)| (value.to_string(), promoted));
             if binding.host_ip().is_observed() && host_ip.is_none() {
+                complete = false;
                 continue;
             }
             let promoted = collection_promoted
@@ -1828,6 +1861,7 @@ impl<'a> Mapping<'a> {
                 NativePortProtocol::Udp => Protocol::Udp,
                 NativePortProtocol::Sctp => Protocol::Sctp,
                 _ => {
+                    complete = false;
                     self.unsupported(
                         &binding_subject,
                         "native port protocol is not reviewed for neutral promotion",
@@ -1842,15 +1876,25 @@ impl<'a> Mapping<'a> {
                 protocol,
             ) {
                 Ok(port) => service.add_port(self.portable_sourced(port, promoted)),
-                Err(error) => self.model_error(binding_subject, &error),
+                Err(error) => {
+                    complete = false;
+                    self.model_error(binding_subject, &error);
+                }
             }
         }
         if promoted_any {
-            self.approximate_with_flag(
-                field_subject,
-                "effective published ports were explicitly promoted as portable intent",
-                PORTABLE_EFFECTIVE_SETTINGS_FLAG,
-            );
+            if complete {
+                self.reconstructed(
+                    field_subject,
+                    "effective published-port behavior reconstructed from reviewed bindings",
+                );
+            } else {
+                self.approximate_with_flag(
+                    field_subject,
+                    "some effective published-port bindings could not be reconstructed",
+                    PORTABLE_EFFECTIVE_SETTINGS_FLAG,
+                );
+            }
         }
     }
 
@@ -1893,10 +1937,9 @@ impl<'a> Mapping<'a> {
             let alias_subject = format!("{field_subject}.{}.aliases", name.as_str());
             let aliases = self.map_effective_network_aliases(&alias_subject, networking.value(), reference.reference());
             service.add_network(self.decision_sourced(NeutralNetworkAttachment::new(name, aliases)));
-            self.approximate_with_flag(
+            self.reconstructed(
                 &field_subject,
-                "effective named network promoted without runtime-assigned addresses",
-                "--promote-podman-effective-named-networks",
+                "effective named-network attachment relationship reconstructed",
             );
         }
     }
@@ -2874,6 +2917,90 @@ impl<'a> Mapping<'a> {
         self.push_loss(subject, ConversionKind::Approximate, self.importer.policy.clone());
     }
 
+    fn partially_retained_healthcheck(&mut self, subject: String) {
+        const SUMMARY: &str = "only part of the effective health behavior was retained";
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.policy.clone(),
+                Severity::Warning,
+                SUMMARY,
+                &subject,
+                SUMMARY,
+                "approximated",
+                Some("approximate"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain("none"),
+            ))
+            .with_field(DiagnosticField::new(
+                "observation_origin",
+                DiagnosticValue::plain("effective"),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain(
+                    "Review retained health fields against the target and repair or author omitted fields separately.",
+                ),
+            )),
+        );
+        self.push_loss(subject, ConversionKind::Approximate, self.importer.policy.clone());
+    }
+
+    fn reconstructed(&mut self, subject: impl Into<String>, summary: &'static str) {
+        let subject = subject.into();
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.reconstructed.clone(),
+                Severity::Note,
+                summary,
+                &subject,
+                "reviewed effective snapshot retained without a known behavior change; original authored/default distinction is unavailable",
+                "reconstructed",
+                None,
+            )
+            .with_field(DiagnosticField::new(
+                "observation_origin",
+                DiagnosticValue::plain("effective"),
+            ))
+            .with_field(DiagnosticField::new(
+                "source_intent_certainty",
+                DiagnosticValue::plain("observed-state-only"),
+            )),
+        );
+        self.outcomes.push(
+            ConversionOutcome::exact(subject)
+                .with_origin(self.origin.clone())
+                .with_origin(Provenance::conversion_decision(self.origin.source_id().clone())),
+        );
+    }
+
+    fn inferred_ownership(&mut self, subject: String) {
+        const REASON: &str = "effective use proves the named resource exists, not which application owns its lifecycle";
+        self.diagnostics.push(
+            diagnostic_with_context(
+                self.importer.policy.clone(),
+                Severity::Warning,
+                "application-managed lifecycle inferred for a named Podman resource",
+                &subject,
+                REASON,
+                "inferred-application-ownership",
+                Some("approximate"),
+            )
+            .with_field(DiagnosticField::new(
+                "available_promotion",
+                DiagnosticValue::plain("none"),
+            ))
+            .with_field(DiagnosticField::new(
+                "remediation",
+                DiagnosticValue::plain(
+                    "Confirm that the target should create and own this resource, or select an explicit external-resource boundary.",
+                ),
+            )),
+        );
+        self.push_loss(subject, ConversionKind::Approximate, self.importer.policy.clone());
+    }
+
     fn promotion_required(&mut self, subject: impl Into<String>, summary: &'static str) {
         let subject = subject.into();
         self.diagnostics.push(
@@ -3063,7 +3190,9 @@ impl<'a> Mapping<'a> {
     }
 
     fn decision_sourced<T>(&self, value: T) -> Sourced<T> {
-        Sourced::from_source(value, Provenance::conversion_decision(self.origin.source_id().clone()))
+        let mut sourced = self.sourced(value);
+        sourced.add_origin(Provenance::conversion_decision(self.origin.source_id().clone()));
+        sourced
     }
 }
 
