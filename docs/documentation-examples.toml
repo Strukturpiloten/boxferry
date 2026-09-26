@@ -36,8 +36,8 @@ expected-files = [{ actual = "compose-output/compose.yaml", fixture = "expected-
 [[examples]]
 id = "compose-to-compose-interpolate"
 pages = ["docs/public/guides/convert/compose-to-compose/index.md"]
-command = "boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --output-directory compose-interpolated-output"
-args = ["convert", "compose", "compose", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--environment-values", "include", "--output-directory", "compose-interpolated-output"]
+command = "boxferry convert compose compose --input-file compose-interpolation.yaml --env-file variables.env --env LOG_LEVEL=warning --environment-values include --output-directory compose-interpolated-output"
+args = ["convert", "compose", "compose", "--input-file", "compose-interpolation.yaml", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--environment-values", "include", "--output-directory", "compose-interpolated-output"]
 copy = ["compose-interpolation.yaml", "variables.env"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
@@ -69,8 +69,8 @@ expected-files = [{ actual = "quadlet-output/web.container", fixture = "expected
 [[examples]]
 id = "compose-to-quadlet-interpolate"
 pages = ["docs/public/guides/convert/compose-to-quadlet/index.md"]
-command = "boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --loss-policy approximate --output-directory quadlet-interpolated-output"
-args = ["convert", "compose", "quadlet", "--input-file", "compose-interpolation.yaml", "--interpolate", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--environment-values", "include", "--loss-policy", "approximate", "--output-directory", "quadlet-interpolated-output"]
+command = "boxferry convert compose quadlet --input-file compose-interpolation.yaml --env-file variables.env --env LOG_LEVEL=warning --environment-values include --loss-policy approximate --output-directory quadlet-interpolated-output"
+args = ["convert", "compose", "quadlet", "--input-file", "compose-interpolation.yaml", "--env-file", "variables.env", "--env", "LOG_LEVEL=warning", "--environment-values", "include", "--loss-policy", "approximate", "--output-directory", "quadlet-interpolated-output"]
 copy = ["compose-interpolation.yaml", "variables.env"]
 expected-exit = 0
 stdout-contains = ["command succeeded", "wrote 1 file"]
@@ -83,7 +83,7 @@ command = "boxferry convert compose quadlet --input-file compose-unresolved.yaml
 args = ["convert", "compose", "quadlet", "--input-file", "compose-unresolved.yaml", "--output-directory", "quadlet-error-output"]
 copy = ["compose-unresolved.yaml"]
 expected-exit = 1
-stderr-contains = ["BFC0105", "BFQ0014", "fix first:", "--interpolate"]
+stderr-contains = ["BFC0105", "BFQ0014", "fix first:", "--env-file FILE"]
 absent = ["quadlet-error-output"]
 
 [[examples]]
@@ -237,7 +237,7 @@ pages = ["docs/public/reference/diagnostics/index.md"]
 command = "boxferry explain BFQ0014"
 args = ["explain", "BFQ0014"]
 expected-exit = 0
-stdout-contains = ["BFQ0014", "quadlet-unresolved-source-variable", "--interpolate"]
+stdout-contains = ["BFQ0014", "quadlet-unresolved-source-variable", "--env-file FILE"]
 
 [[examples]]
 id = "error-report"

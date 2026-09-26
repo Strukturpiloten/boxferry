@@ -269,7 +269,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "compose-unresolved-variable",
         Warning,
         "A Compose variable expression remains unresolved at the adapter boundary.",
-        "Use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE; partial authorization applies only when the affected intent can be omitted."
+        "Provide missing values with --env-file FILE or --env NAME=VALUE; --interpolate also permits process-variable fallback. Partial authorization applies only when the affected intent can be omitted."
     ),
     rule!(
         ComposeNativeError,
@@ -581,7 +581,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "quadlet-unresolved-source-variable",
         Error,
         "A source variable expression cannot be emitted as a Quadlet value.",
-        "Resolve source variables before conversion; for Compose input, use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE."
+        "Resolve source variables before conversion; for Compose input, supply --env-file FILE or --env NAME=VALUE, or use --interpolate for process-variable fallback."
     ),
     rule!(
         QuadletSourceInvalid,

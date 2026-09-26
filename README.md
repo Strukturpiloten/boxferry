@@ -38,7 +38,8 @@ The output directory may be absent or empty. BoxFerry refuses to overwrite an ex
 - BoxFerry never executes generated commands or units. A user who runs the command script performs
   real Podman operations.
 - Runtime mutation and infrastructure deployment are outside the product.
-- Environment interpolation is opt-in; BoxFerry reads no implicit `.env` file.
+- Compose interpolation starts with `--env`, `--env-file`, or `--interpolate`; BoxFerry reads no
+  implicit `.env` file.
 - Secrets are redacted from diagnostics and reports by default.
 
 ## Choose the next document

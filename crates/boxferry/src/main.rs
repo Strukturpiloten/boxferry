@@ -28,7 +28,7 @@ use std::{
 
 use boxferry::compose::compose_lens::{
     diagnostic::Diagnostic as ComposeDiagnostic,
-    interpolation::MapEnvironment,
+    interpolation::{EnvironmentProvider, EnvironmentValue, MapEnvironment},
     loader::{DocumentInput, DocumentOrigin, LoadedProject, ProjectInterpolation},
     merge::{MergeResult, MergedProject, merge_project},
     profiles::{ProfileRequest, ProfileSelection, select_profiles},
@@ -172,19 +172,18 @@ struct ComposeInputOptions {
     /// Fallback Compose project name when the input does not declare one.
     #[arg(long)]
     project_name: Option<String>,
-    /// Interpolate Compose input using explicitly supplied variables.
+    /// Interpolate Compose input using process variables as a fallback.
     #[arg(long)]
     interpolate: bool,
     /// Compose interpolation assignments; later files override earlier files.
-    #[arg(long = "env-file", value_name = "FILE", requires = "interpolate")]
+    #[arg(long = "env-file", value_name = "FILE")]
     env_files: Vec<PathBuf>,
     /// Compose interpolation NAME=VALUE or authorized process NAME.
     #[arg(
         long = "env",
         value_name = "NAME[=VALUE]",
         num_args = 0..=1,
-        default_missing_value = "",
-        requires = "interpolate"
+        default_missing_value = ""
     )]
     environment: Vec<EnvironmentInput>,
     /// Active Compose profile; repeat to activate more than one.
@@ -4182,7 +4181,7 @@ struct ComposeConversion<'a> {
     fallback_name: &'a str,
     profiles: &'a [String],
     all_profiles: bool,
-    interpolation: Option<&'a MapEnvironment>,
+    interpolation: Option<&'a ComposeInterpolationEnvironment>,
 }
 
 struct LoadedComposeSource {
@@ -4270,8 +4269,7 @@ fn load_compose_source(
         .project()
         .ok_or_else(|| io::Error::other("Compose merge produced no project"))?
         .clone();
-    let request = compose_profile_request(conversion);
-    let selection = select_profiles(&project, &request);
+    let selection = select_profiles(&project, &compose_profile_request(conversion));
     if !selection.is_valid() {
         let mut diagnostics = compose_diagnostics(
             merged.diagnostics(),
@@ -4310,8 +4308,16 @@ fn load_compose_source(
     let application = boxferry::compose::compose_lens::project::build_project_view(&project, Some(&selection))
         .view()
         .and_then(|view| view.name())
-        .and_then(|name| Identifier::new(name.value().clone()).ok())
-        .map_or_else(|| conversion.fallback_name.to_owned(), |name| name.as_str().to_owned());
+        .and_then(|name| {
+            if name.is_sensitive() {
+                Some("<redacted>".to_owned())
+            } else {
+                Identifier::new(name.value().clone())
+                    .ok()
+                    .map(|name| name.as_str().to_owned())
+            }
+        })
+        .unwrap_or_else(|| conversion.fallback_name.to_owned());
     let source = compose_source(
         project,
         conversion.fallback_name,
@@ -4681,28 +4687,50 @@ fn derive_project_name(project_root: &Path) -> String {
         .to_owned()
 }
 
-fn generic_interpolation_environment(arguments: &GenericConversion) -> Result<Option<MapEnvironment>, Box<dyn Error>> {
-    if !arguments.interpolate {
+struct ComposeInterpolationEnvironment {
+    explicit: MapEnvironment,
+    process_fallback: bool,
+}
+
+impl EnvironmentProvider for ComposeInterpolationEnvironment {
+    fn get(&self, name: &str) -> Option<EnvironmentValue> {
+        self.explicit.get(name).or_else(|| {
+            if self.process_fallback {
+                env::var(name).ok().map(EnvironmentValue::sensitive)
+            } else {
+                None
+            }
+        })
+    }
+}
+
+fn generic_interpolation_environment(
+    arguments: &GenericConversion,
+) -> Result<Option<ComposeInterpolationEnvironment>, Box<dyn Error>> {
+    if !arguments.interpolate && arguments.env_files.is_empty() && arguments.environment.is_empty() {
         return Ok(None);
     }
-    let mut environment = MapEnvironment::new();
+    let mut explicit = MapEnvironment::new();
     for path in &arguments.env_files {
         for (name, value) in parse_environment_file(path)? {
-            let _ = environment.insert_sensitive(name, value);
+            let _ = explicit.insert_sensitive(name, value);
         }
     }
     for input in &arguments.environment {
         match input {
             EnvironmentInput::Literal(assignment) => {
-                let _ = environment.insert_sensitive(assignment.name.clone(), assignment.value.clone());
+                let _ = explicit.insert_sensitive(assignment.name.clone(), assignment.value.clone());
             }
             EnvironmentInput::Process(name) => {
                 let value = env::var(name).map_err(|error| authorized_environment_error(name, &error))?;
-                let _ = environment.insert_sensitive(name.clone(), value);
+                let _ = explicit.insert_sensitive(name.clone(), value);
             }
         }
     }
-    Ok(Some(environment))
+    Ok(Some(ComposeInterpolationEnvironment {
+        explicit,
+        process_fallback: arguments.interpolate,
+    }))
 }
 
 fn parse_environment_file(path: &Path) -> io::Result<Vec<(String, String)>> {

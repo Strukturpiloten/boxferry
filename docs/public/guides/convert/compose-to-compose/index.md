@@ -67,7 +67,7 @@ Override one value on the command line:
 <!-- boxferry-example: compose-to-compose-interpolate -->
 
 ```console
-boxferry convert compose compose --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --output-directory compose-interpolated-output
+boxferry convert compose compose --input-file compose-interpolation.yaml --env-file variables.env --env LOG_LEVEL=warning --environment-values include --output-directory compose-interpolated-output
 ```
 
 The explicit `--environment-values include` lets the rendered service contain `LOG_LEVEL=warning`;

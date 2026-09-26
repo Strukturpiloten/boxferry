@@ -64,7 +64,10 @@ fn compose_import_failure_preserves_every_diagnostic_in_human_and_json_output() 
         "{stderr}"
     );
     assert!(stderr.contains("(2 findings)"), "{stderr}");
-    assert!(stderr.contains("Use --interpolate"), "{stderr}");
+    assert!(
+        stderr.contains("Provide missing values with --env-file FILE"),
+        "{stderr}"
+    );
     assert!(stderr.contains("variable: FIRST"), "{stderr}");
     assert!(stderr.contains("variable: SECOND"), "{stderr}");
     assert_eq!(
@@ -145,7 +148,10 @@ fn unresolved_compose_environment_variables_are_paired_with_target_findings() ->
     for variable in ["DB_PASSWORD", "DB_USERNAME", "DB_DATABASE_NAME"] {
         assert!(stderr.contains(&format!("variable: {variable}")), "{stderr}");
     }
-    assert!(stderr.contains("Use --interpolate"), "{stderr}");
+    assert!(
+        stderr.contains("Provide missing values with --env-file FILE"),
+        "{stderr}"
+    );
 
     let partial = boxferry_command()
         .args(common)
@@ -540,6 +546,31 @@ fn generic_environment_files_and_explicit_inputs_have_documented_precedence_with
     )?;
     fs::write(&first, "TAG=first-secret\n")?;
     fs::write(&second, "TAG=second-secret\n")?;
+    let file_only_output = TemporaryOutput::new("environment-file-precedence-output");
+    let file_only = boxferry_command()
+        .args([
+            "convert",
+            "compose",
+            "quadlet",
+            "--input-file",
+            path_text(&compose)?,
+            "--env-file",
+            path_text(&first)?,
+            "--env-file",
+            path_text(&second)?,
+            "--output-directory",
+            path_text(file_only_output.path())?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert!(
+        file_only.status.success(),
+        "{}",
+        String::from_utf8_lossy(&file_only.stderr)
+    );
+    assert!(fs::read_to_string(file_only_output.path().join("app.container"))?.contains("app:second-secret"));
+    assert!(!String::from_utf8_lossy(&file_only.stdout).contains("second-secret"));
     let result = boxferry_command()
         .args([
             "convert",
@@ -547,7 +578,6 @@ fn generic_environment_files_and_explicit_inputs_have_documented_precedence_with
             "quadlet",
             "--input-file",
             path_text(&compose)?,
-            "--interpolate",
             "--env-file",
             path_text(&first)?,
             "--env-file",
@@ -563,6 +593,142 @@ fn generic_environment_files_and_explicit_inputs_have_documented_precedence_with
     assert!(fs::read_to_string(output.path().join("app.container"))?.contains("app:final-secret"));
     assert!(!String::from_utf8_lossy(&result.stdout).contains("final-secret"));
     assert!(!String::from_utf8_lossy(&result.stderr).contains("final-secret"));
+    Ok(())
+}
+
+#[test]
+fn compose_interpolation_is_implied_by_supplied_values_and_process_fallback_is_explicit() -> Result<(), Box<dyn Error>>
+{
+    let project = TemporaryOutput::new("interpolation-modes");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    let empty = project.path().join("empty.env");
+    fs::write(
+        &compose,
+        "name: interpolation-modes\nservices:\n  app:\n    image: example.invalid/app:${TAG:-fallback}\n    command: [echo, 'literal-$$TAG']\n",
+    )?;
+    fs::write(project.path().join(".env"), "TAG=implicit-canary\n")?;
+    fs::write(&empty, "# deliberately empty\n")?;
+    let empty_text = path_text(&empty)?.to_owned();
+    let cases = [
+        ("unset", vec![], "${TAG:-fallback}"),
+        ("empty-file", vec!["--env-file".to_owned(), empty_text], "app:fallback"),
+        (
+            "literal",
+            vec!["--env=TAG=literal-canary".to_owned()],
+            "app:literal-canary",
+        ),
+        ("named-process", vec!["--env=TAG".to_owned()], "app:ambient-canary"),
+        (
+            "process-fallback",
+            vec!["--interpolate".to_owned()],
+            "app:ambient-canary",
+        ),
+        ("process-default", vec!["--interpolate".to_owned()], "app:fallback"),
+        (
+            "explicit-over-fallback",
+            vec!["--interpolate".to_owned(), "--env=TAG=literal-canary".to_owned()],
+            "app:literal-canary",
+        ),
+    ];
+    for (name, options, expected) in cases {
+        let output = project.path().join(format!("output-{name}"));
+        let mut command = boxferry_command();
+        command
+            .args(["convert", "compose", "compose", "--input-file", path_text(&compose)?])
+            .args(options)
+            .args(["--output-directory", path_text(&output)?, "--console-format", "json"]);
+        if name == "process-default" {
+            command.env_remove("TAG");
+        } else {
+            command.env("TAG", "ambient-canary");
+        }
+        let result = command.output()?;
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let document = fs::read_to_string(output.join("compose.yaml"))?;
+        assert!(document.contains(expected), "{name}: {document}");
+        assert!(document.contains("literal-$$TAG"), "{name}: {document}");
+        assert!(!document.contains("implicit-canary"), "{name}: {document}");
+        if matches!(name, "unset" | "empty-file" | "process-default") {
+            assert!(!document.contains("ambient-canary"), "{name}: {document}");
+        }
+        let report = String::from_utf8(result.stdout)?;
+        for secret in ["ambient-canary", "literal-canary", "implicit-canary"] {
+            assert!(!report.contains(secret), "{name}: {report}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn implicit_interpolation_reaches_every_compose_input_route_without_publishing_sensitive_name()
+-> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("implicit-interpolation-routes");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    let environment = project.path().join("values.env");
+    fs::write(
+        &compose,
+        "name: ${APP_NAME}\nservices:\n  app:\n    image: example.invalid/app:${TAG}\n",
+    )?;
+    fs::write(&environment, "APP_NAME=private-app-canary\nTAG=private-tag-canary\n")?;
+
+    for target in ["compose", "podman", "quadlet"] {
+        for action in ["validate", "convert"] {
+            for json in [false, true] {
+                let case = format!("{target}-{action}-{json}");
+                let output = project.path().join(format!("output-{case}"));
+                let report_file = project.path().join(format!("report-{case}.json"));
+                let mut command = boxferry_command();
+                command.args([
+                    action,
+                    "compose",
+                    target,
+                    "--input-file",
+                    path_text(&compose)?,
+                    "--env-file",
+                    path_text(&environment)?,
+                ]);
+                if target == "podman" {
+                    command.args(["--podman-target-context", "rootless"]);
+                }
+                if action == "convert" {
+                    command.args(["--output-directory", path_text(&output)?]);
+                }
+                if json {
+                    command.args(["--console-format", "json", "--report-file", path_text(&report_file)?]);
+                }
+                let result = command.output()?;
+                assert!(
+                    result.status.success(),
+                    "{case}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                let stdout = String::from_utf8(result.stdout)?;
+                let stderr = String::from_utf8(result.stderr)?;
+                for canary in ["private-app-canary", "private-tag-canary"] {
+                    assert!(!stdout.contains(canary), "{case} stdout leaked {canary}: {stdout}");
+                    assert!(!stderr.contains(canary), "{case} stderr leaked {canary}: {stderr}");
+                }
+                if json {
+                    let report: serde_json::Value = serde_json::from_str(&stdout)?;
+                    assert_eq!(report["application"], "<redacted>", "{case}: {stdout}");
+                    let file = fs::read_to_string(&report_file)?;
+                    assert!(!file.contains("private-app-canary"), "{case}: {file}");
+                    assert!(!file.contains("private-tag-canary"), "{case}: {file}");
+                } else {
+                    assert!(stdout.contains("<redacted>"), "{case}: {stdout}");
+                }
+                if action == "convert" {
+                    assert!(output.is_dir(), "{case}: missing output");
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -822,7 +988,7 @@ fn repeated_human_rules_hoist_shared_context_and_list_only_finding_evidence() ->
 }
 
 #[test]
-fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_outputs() -> Result<(), Box<dyn Error>> {
+fn implied_interpolation_values_are_redacted_in_failed_json_report_and_bundle_outputs() -> Result<(), Box<dyn Error>> {
     let project = TemporaryOutput::new("interpolation-failure-canaries");
     let output = TemporaryOutput::new("interpolation-failure-output");
     let report_directory = TemporaryOutput::new("interpolation-failure-report");
@@ -835,23 +1001,25 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
     let report = report_directory.path().join("result.json");
     fs::write(
         &compose,
-        "name: canaries\nservices:\n  app:\n    image: example.invalid/${FILE_VALUE}-${LITERAL_VALUE}-${PROCESS_VALUE}\n",
+        "name: ${APP_NAME}\nservices:\n  app:\n    image: example.invalid/${FILE_VALUE}-${LITERAL_VALUE}-${PROCESS_VALUE}\n",
     )?;
-    fs::write(&environment, "FILE_VALUE=file-value-canary\n")?;
+    fs::write(
+        &environment,
+        "APP_NAME=private-app-canary\nFILE_VALUE=file-value-canary\n",
+    )?;
     let result = boxferry_command()
-        .env("BOXFERRY_TEST_PROCESS_VALUE", "process-value-canary")
+        .env("PROCESS_VALUE", "process-value-canary")
         .args([
             "convert",
             "compose",
             "quadlet",
             "--input-file",
             path_text(&compose)?,
-            "--interpolate",
             "--env-file",
             path_text(&environment)?,
             "--env=LITERAL_VALUE=literal-value-canary",
             "--env",
-            "BOXFERRY_TEST_PROCESS_VALUE",
+            "PROCESS_VALUE",
             "--output-directory",
             path_text(output.path())?,
             "--report-file",
@@ -872,17 +1040,135 @@ fn generic_interpolation_values_are_redacted_in_failed_json_report_and_bundle_ou
     for index in 0..archive.len() {
         std::io::Read::read_to_string(&mut archive.by_index(index)?, &mut bundled)?;
     }
-    for canary in ["file-value-canary", "literal-value-canary", "process-value-canary"] {
+    for canary in [
+        "private-app-canary",
+        "file-value-canary",
+        "literal-value-canary",
+        "process-value-canary",
+    ] {
         assert!(!json.contains(canary), "console leaked {canary}");
         assert!(!file.contains(canary), "report file leaked {canary}");
         assert!(!bundled.contains(canary), "support bundle leaked {canary}");
     }
     let value: serde_json::Value = serde_json::from_str(&json)?;
+    assert_eq!(value["application"], "<redacted>");
     assert_eq!(value["failed_stage"], "output-write");
     assert!(
         value["diagnostics"]
             .as_array()
             .is_some_and(|items| items.iter().any(|item| item["code"] == "BFO2001"))
+    );
+    Ok(())
+}
+
+fn assert_canaries_absent(surface: &str, text: &str, canaries: &[&str]) {
+    for canary in canaries {
+        assert!(!text.contains(canary), "{surface} leaked {canary}: {text}");
+    }
+}
+
+#[test]
+fn standalone_process_interpolation_redacts_application_identity_in_all_presentations() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("process-interpolation-privacy");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    fs::write(
+        &compose,
+        "name: ${BOXFERRY_TEST_APP_NAME_336}\nservices:\n  app:\n    image: example.invalid/app:${BOXFERRY_TEST_TAG_336}\n",
+    )?;
+    let canaries = ["private-fallback-app-canary", "private-fallback-tag-canary"];
+
+    for action in ["validate", "convert"] {
+        for json in [false, true] {
+            let case = format!("{action}-{json}");
+            let output = project.path().join(format!("output-{case}"));
+            let report_file = project.path().join(format!("report-{case}.json"));
+            let mut command = boxferry_command();
+            command
+                .env("BOXFERRY_TEST_APP_NAME_336", canaries[0])
+                .env("BOXFERRY_TEST_TAG_336", canaries[1])
+                .args([
+                    action,
+                    "compose",
+                    "compose",
+                    "--input-file",
+                    path_text(&compose)?,
+                    "--interpolate",
+                ]);
+            if action == "convert" {
+                command.args(["--output-directory", path_text(&output)?]);
+            }
+            if json {
+                command.args(["--console-format", "json", "--report-file", path_text(&report_file)?]);
+            }
+            let result = command.output()?;
+            assert!(
+                result.status.success(),
+                "{case}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let stdout = String::from_utf8(result.stdout)?;
+            let stderr = String::from_utf8(result.stderr)?;
+            assert_canaries_absent(&format!("{case} stdout"), &stdout, &canaries);
+            assert_canaries_absent(&format!("{case} stderr"), &stderr, &canaries);
+            if json {
+                let report: serde_json::Value = serde_json::from_str(&stdout)?;
+                assert_eq!(report["application"], "<redacted>", "{case}: {stdout}");
+                let file = fs::read_to_string(&report_file)?;
+                assert_canaries_absent(&format!("{case} report"), &file, &canaries);
+            } else {
+                assert!(stdout.contains("<redacted>"), "{case}: {stdout}");
+            }
+        }
+    }
+
+    let blocked_output = project.path().join("blocked-output");
+    let report_directory = project.path().join("failure-report");
+    fs::create_dir_all(&blocked_output)?;
+    fs::write(blocked_output.join("sentinel"), "keep")?;
+    fs::create_dir_all(&report_directory)?;
+    let report_file = report_directory.join("result.json");
+    let failed = boxferry_command()
+        .env("BOXFERRY_TEST_APP_NAME_336", canaries[0])
+        .env("BOXFERRY_TEST_TAG_336", canaries[1])
+        .args([
+            "convert",
+            "compose",
+            "compose",
+            "--input-file",
+            path_text(&compose)?,
+            "--interpolate",
+            "--output-directory",
+            path_text(&blocked_output)?,
+            "--report-file",
+            path_text(&report_file)?,
+            "--generate-error-report",
+            "--error-report-directory",
+            path_text(&report_directory)?,
+            "--console-format",
+            "json",
+        ])
+        .output()?;
+    assert_eq!(failed.status.code(), Some(1));
+    let console = String::from_utf8(failed.stdout)?;
+    let stderr = String::from_utf8(failed.stderr)?;
+    let report = fs::read_to_string(report_file)?;
+    let mut archive = ZipArchive::new(Cursor::new(fs::read(generated_error_report(&report_directory)?)?))?;
+    let mut bundle = String::new();
+    for index in 0..archive.len() {
+        std::io::Read::read_to_string(&mut archive.by_index(index)?, &mut bundle)?;
+    }
+    for (surface, text) in [
+        ("console", console.as_str()),
+        ("stderr", stderr.as_str()),
+        ("report", report.as_str()),
+        ("bundle", bundle.as_str()),
+    ] {
+        assert_canaries_absent(surface, text, &canaries);
+    }
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&console)?["application"],
+        "<redacted>"
     );
     Ok(())
 }
@@ -1247,7 +1533,7 @@ fn loss_policy_never_authorizes_unresolved_image_variables_and_help_resolves_the
         );
         assert!(stderr.contains("subject: services.application.image"), "{stderr}");
         assert!(stderr.contains("variable: IMAGE_VERSION"), "{stderr}");
-        assert!(stderr.contains("use --interpolate"), "{stderr}");
+        assert!(stderr.contains("--env-file FILE or --env NAME=VALUE"), "{stderr}");
         assert!(
             stderr.contains(&format!(
                 "invalid findings always block output and cannot be authorized by --loss-policy {policy}"
@@ -2536,7 +2822,7 @@ fn generic_input_and_interpolation_argument_failures_are_fail_closed() -> Result
     let missing_input = boxferry_command().args(["validate", "compose", "quadlet"]).output()?;
     assert_eq!(missing_input.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&missing_input.stderr).contains("at least one --input-file"));
-    let env_file_without_interpolation = boxferry_command()
+    let missing_env_file = boxferry_command()
         .args([
             "validate",
             "compose",
@@ -2547,8 +2833,21 @@ fn generic_input_and_interpolation_argument_failures_are_fail_closed() -> Result
             "values.env",
         ])
         .output()?;
-    assert_eq!(env_file_without_interpolation.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&env_file_without_interpolation.stderr).contains("--interpolate"));
+    assert_eq!(missing_env_file.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing_env_file.stderr).contains("BFO1004"));
+    let missing_process = boxferry_command()
+        .args([
+            "validate",
+            "compose",
+            "quadlet",
+            "--input-file",
+            path_text(&fixture)?,
+            "--env=BOXFERRY_TEST_MISSING_336",
+        ])
+        .env_remove("BOXFERRY_TEST_MISSING_336")
+        .output()?;
+    assert_eq!(missing_process.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing_process.stderr).contains("BOXFERRY_TEST_MISSING_336"));
     for environment in ["", "1INVALID", "INVALID-NAME"] {
         let invalid_environment = boxferry_command()
             .args([
@@ -2557,7 +2856,6 @@ fn generic_input_and_interpolation_argument_failures_are_fail_closed() -> Result
                 "quadlet",
                 "--input-file",
                 path_text(&fixture)?,
-                "--interpolate",
                 &format!("--env={environment}"),
             ])
             .output()?;

@@ -5,6 +5,7 @@
 - Supersedes: [ADR 0029](0029-nested-input-output-cli-routes.md) decision 5 for the
   Compose-to-Compose route only
 - Superseded by: [ADR 0033](0033-universal-neutral-model-pipeline.md)
+- Interpolation option wording in decision 2 amended by: [ADR 0061](0061-compose-interpolation-input-authorization.md)
 
 ## Context
 
