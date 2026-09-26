@@ -8,9 +8,9 @@ Use Compose input when application intent lives in one or more Compose files. Re
 - [Podman output](../convert/compose-to-podman/) writes a reviewable plan and command script.
 - [Quadlet output](../convert/compose-to-quadlet/) converts the application to Quadlet files.
 
-## Production values without ambient state
+## Production values and interpolation
 
-Interpolation is opt-in. Add `--interpolate`, then provide non-secret deployment values through an
+Supplying `--env-file` or `--env` enables interpolation. Provide deployment values through an
 explicit file:
 
 ```dotenv
@@ -18,9 +18,18 @@ IMAGE_TAG=2026.08.24
 RESTART_POLICY=always
 ```
 
-Add one deployment override with `--env LOG_LEVEL=warning`. For a sensitive process value, use
-`--env REGISTRY_TOKEN`; BoxFerry reads only that named variable and redacts it from reports. It
-never reads an implicit `.env` file or imports the complete process environment.
+Add one deployment override with `--env LOG_LEVEL=warning`. Later files override earlier files,
+and `--env` overrides the files. For a sensitive process value, use `--env REGISTRY_TOKEN`;
+BoxFerry reads only that named variable and redacts it from reports. A missing named process
+variable is an error.
+
+Use `--interpolate` alone to resolve referenced variables from the process environment. When
+combined with `--env-file` or `--env`, explicit values take precedence and process values are a
+fallback. Process variables are looked up only as expressions request them. Without any of these
+options, expressions remain literal. BoxFerry never reads an implicit `.env` file.
+
+If interpolation supplies the top-level Compose `name`, generated artifacts retain that
+application identity, while console and diagnostic reports show `<redacted>` for its name.
 
 Do not confuse interpolation input with a service-level Compose `env_file:` declaration.
 `--env-file` resolves `${NAME}` while converting; `env_file:` tells the target workload where to

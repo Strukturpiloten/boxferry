@@ -41,10 +41,10 @@ unsupported omissions and exporter approximations still need an explicit loss-po
 | `--project-directory DIR`                       | Compose input         | Resolve project-relative paths from this directory.                                                                                                    |
 | `--profile NAME`                                | Compose input         | Activate one profile; repeat as needed.                                                                                                                |
 | `--all-profiles`                                | Compose input         | Activate every declared profile.                                                                                                                       |
-| `--interpolate`                                 | Compose input         | Enable explicit interpolation.                                                                                                                         |
-| `--env-file FILE`                               | Interpolated Compose  | Add assignments; later files win.                                                                                                                      |
-| `--env NAME=VALUE`                              | Interpolated Compose  | Add a literal value.                                                                                                                                   |
-| `--env NAME`                                    | Interpolated Compose  | Authorize one sensitive process value.                                                                                                                 |
+| `--interpolate`                                 | Compose input         | Enable interpolation with lazy process-variable fallback.                                                                                              |
+| `--env-file FILE`                               | Interpolated Compose  | Enable interpolation and add assignments; later files win.                                                                                             |
+| `--env NAME=VALUE`                              | Interpolated Compose  | Enable interpolation and add a literal value.                                                                                                          |
+| `--env NAME`                                    | Interpolated Compose  | Enable interpolation and authorize one sensitive process value.                                                                                        |
 | `--podman-socket PATH`                          | Podman input          | Override local rootless-first socket discovery.                                                                                                        |
 | `--podman-all`                                  | Podman input          | Select all eligible application roots.                                                                                                                 |
 | `--podman-resource [KIND=]REFERENCE`            | Podman input          | Add an exact resource root; bare references select containers; kinds: container, image, network, pod, secret, volume.                                  |
@@ -73,7 +73,11 @@ path contents. Untyped configuration fields remain actionable omissions with
 container addresses and local-resolution facts remain structured, non-actionable evidence rather
 than portable-intent losses.
 
-BoxFerry does not read an implicit `.env` file or the complete process environment.
+BoxFerry does not read an implicit `.env` file. `--env` and `--env-file` activate interpolation
+without `--interpolate`. The standalone `--interpolate` option looks up only process variables
+referenced by input expressions; explicit `--env` and `--env-file` values take precedence. Without
+`--interpolate`, those explicit options do not authorize any other process-variable lookup.
+
 Podman input with no selector chooses the only native-evidenced container/pod application. Multiple
 applications require a bounded terminal choice, including explicit consent for any complete
 Compose-project group offered, or an explicit selector; noninteractive ambiguity

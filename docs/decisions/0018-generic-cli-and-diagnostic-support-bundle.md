@@ -7,6 +7,7 @@
 - Amended by: [ADR 0025](0025-empty-output-directories-and-final-human-status.md)
 - Amended by: [ADR 0026](0026-typed-diagnostic-rule-catalogue.md)
 - Amended by: [ADR 0038](0038-bounded-human-diagnostic-presentation.md)
+- Interpolation decision 4 amended by: [ADR 0061](0061-compose-interpolation-input-authorization.md)
 
 ## Context
 

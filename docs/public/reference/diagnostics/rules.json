@@ -108,7 +108,7 @@
       "code": "BFC0105",
       "default_severity": "warning",
       "description": "A Compose variable expression remains unresolved at the adapter boundary.",
-      "help": "Use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE; partial authorization applies only when the affected intent can be omitted.",
+      "help": "Provide missing values with --env-file FILE or --env NAME=VALUE; --interpolate also permits process-variable fallback. Partial authorization applies only when the affected intent can be omitted.",
       "name": "compose-unresolved-variable",
       "owner": "Compose adapter"
     },
@@ -420,7 +420,7 @@
       "code": "BFQ0014",
       "default_severity": "error",
       "description": "A source variable expression cannot be emitted as a Quadlet value.",
-      "help": "Resolve source variables before conversion; for Compose input, use --interpolate and provide missing values with --env-file FILE or --env NAME=VALUE.",
+      "help": "Resolve source variables before conversion; for Compose input, supply --env-file FILE or --env NAME=VALUE, or use --interpolate for process-variable fallback.",
       "name": "quadlet-unresolved-source-variable",
       "owner": "Quadlet adapter"
     },

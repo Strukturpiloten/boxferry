@@ -65,7 +65,7 @@ level for this deployment:
 <!-- boxferry-example: compose-to-quadlet-interpolate -->
 
 ```console
-boxferry convert compose quadlet --input-file compose-interpolation.yaml --interpolate --env-file variables.env --env LOG_LEVEL=warning --environment-values include --loss-policy approximate --output-directory quadlet-interpolated-output
+boxferry convert compose quadlet --input-file compose-interpolation.yaml --env-file variables.env --env LOG_LEVEL=warning --environment-values include --loss-policy approximate --output-directory quadlet-interpolated-output
 ```
 
 `--env-file` values are applied in order. Later `--env` values win. The explicit
@@ -97,7 +97,8 @@ boxferry convert compose quadlet --input-file compose-unresolved.yaml --output-d
 
 [`BFC0105`](../../../reference/diagnostics/) identifies the Compose variable.
 [`BFQ0014`](../../../reference/diagnostics/) blocks the unusable Quadlet value and
-appears in `fix first`. Add `--interpolate` and provide the missing value.
+appears in `fix first`. Provide the value with `--env` or `--env-file`, or
+use `--interpolate` to select a process-environment fallback.
 
 ## Output policy
 
