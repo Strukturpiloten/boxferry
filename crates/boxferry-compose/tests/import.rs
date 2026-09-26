@@ -2115,6 +2115,9 @@ fn released_compose_lens_typed_families_result() -> Result<boxferry_engine::Impo
         "    label_file: labels.txt\n    external_links: [external:alias]\n    links: [db:database]\n",
         "    storage_opt: {size: 1G}\n    models: {embedder: {endpoint_var: MODEL_URL}}\n    gpus: all\n",
         "    develop:\n      watch:\n        - action: sync\n          path: '.'\n          target: /src\n",
+        "    deploy:\n      replicas: 3\n      placement: {constraints: ['node.role == worker']}\n",
+        "      update_config: {parallelism: 2, order: start-first}\n",
+        "      rollback_config: {parallelism: 1, order: stop-first}\n",
         "    cpu_count: 1\n    cpu_percent: 50\n    cpu_period: 100000\n    cpu_quota: 50000\n",
         "    cpu_rt_period: 100000\n    cpu_rt_runtime: 50000\n    cpu_shares: 1024\n",
         "    cpus: '0.5'\n    cpuset: '0-1'\n    device_cgroup_rules: ['c 1:3 mr']\n",
@@ -2156,6 +2159,7 @@ fn assert_unsupported_service_fields(result: &boxferry_engine::ImportResult) {
         "models",
         "gpus",
         "develop",
+        "deploy",
         "cpu_count",
         "cpu_percent",
         "cpu_period",
@@ -2186,6 +2190,20 @@ fn assert_unsupported_service_fields(result: &boxferry_engine::ImportResult) {
             result.outcomes()
         );
     }
+    let deploy = result
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == "services.app.deploy")
+        .collect::<Vec<_>>();
+    assert_eq!(deploy.len(), 1, "deploy must be reported as one whole-object decision");
+    assert_eq!(deploy[0].kind(), ConversionKind::Unsupported);
+    assert_eq!(deploy[0].origins()[0].source_id().as_str(), "lens-020.compose.yaml");
+    assert!(
+        !result
+            .outcomes()
+            .iter()
+            .any(|outcome| outcome.subject().starts_with("services.app.deploy."))
+    );
 }
 
 fn assert_unsupported_application_fields(result: &boxferry_engine::ImportResult) -> Result<(), Box<dyn Error>> {

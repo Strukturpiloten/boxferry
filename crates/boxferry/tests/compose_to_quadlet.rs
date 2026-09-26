@@ -25,6 +25,62 @@ const SECURITY_OPTION_SOURCE_ID: u32 = 99;
 const IMAGE_BUILD_SOURCE_ID: u32 = 100;
 
 #[test]
+fn typed_compose_deploy_requires_explicit_partial_authorization() -> Result<(), Box<dyn Error>> {
+    let source_id = ComposeSourceId::new(101);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        source_id,
+        DocumentOrigin::new("deploy.compose.yaml", "deploy.compose.yaml"),
+        concat!(
+            "services:\n  web:\n    image: example.invalid/web:1\n",
+            "    deploy:\n      replicas: 3\n      placement: {constraints: ['node.role == worker']}\n",
+            "      update_config: {parallelism: 2, order: start-first}\n",
+            "      rollback_config: {parallelism: 1, order: stop-first}\n",
+        ),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    assert!(merged.is_valid(), "{:#?}", merged.diagnostics());
+    let project = merged.project().ok_or("merged project expected")?.clone();
+    let selection = select_profiles(&project, &ProfileRequest::new());
+    let source = ComposeSource::new(project, Identifier::new("deploy")?)?
+        .with_source_id(source_id, SourceId::new("deploy.compose.yaml")?)
+        .with_profile_selection(selection);
+    let target = TargetProfile::new(
+        "podman",
+        PlatformVersion::new(5, 4, 0),
+        Some(PlatformVersion::new(6, 0, 2)),
+    )?;
+
+    let strict = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::ExactOnly,
+    )?;
+    assert!(strict.is_blocked());
+    assert!(strict.output().is_none());
+
+    let partial = convert(
+        &ComposeImporter::new()?,
+        &source,
+        &QuadletExporter::new()?,
+        &target,
+        LossPolicy::AllowPartial,
+    )?;
+    assert!(!partial.is_blocked(), "{:#?}", partial.diagnostics());
+    assert!(partial.output().is_some());
+    let deploy = partial
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == "services.web.deploy")
+        .collect::<Vec<_>>();
+    assert_eq!(deploy.len(), 1);
+    assert_eq!(deploy[0].kind(), ConversionKind::Unsupported);
+    assert_eq!(deploy[0].origins()[0].source_id().as_str(), "deploy.compose.yaml");
+    Ok(())
+}
+
+#[test]
 fn public_compose_to_quadlet_route_emits_validated_image_build_artifacts() -> Result<(), Box<dyn Error>> {
     let source_id = ComposeSourceId::new(IMAGE_BUILD_SOURCE_ID);
     let loaded = LoadedProject::load([DocumentInput::new(

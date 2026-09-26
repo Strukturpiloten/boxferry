@@ -3774,6 +3774,7 @@ impl<'a> Mapping<'a> {
         report!(models, "models");
         report!(gpus, "gpus");
         report!(develop, "develop");
+        report!(deploy, "deploy");
         report!(cpu_count, "cpu_count");
         report!(cpu_percent, "cpu_percent");
         report!(cpu_period, "cpu_period");
