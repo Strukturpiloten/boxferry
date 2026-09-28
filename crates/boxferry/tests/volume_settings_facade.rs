@@ -138,7 +138,7 @@ fn facade_preserves_all_typed_volume_settings_at_their_podman_floors() -> Result
         &adapter,
         &source,
         &QuadletExporter::new()?,
-        &podman_target(6, 1, 1, 6, 1, 1)?,
+        &podman_target(6, 1, 3, 6, 1, 3)?,
         LossPolicy::AllowPartial,
     )?;
     assert!(beyond_ceiling.is_blocked());

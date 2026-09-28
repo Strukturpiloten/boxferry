@@ -90,7 +90,10 @@ label selectors agree, while all uses separately reviewed boundary-peer deltas.
 reviewed rootless Podman 6.1.0 nested image:
 `ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e`.
 They apply the `podman-lens` 0.2.4 acquisition and promotion evidence to both independently provisioned
-topologies: direct Podman CLI and Docker Compose 5.5.0. The templates retain native image, network,
+topologies: direct Podman CLI and Docker Compose 5.5.0. These tuples retain their original provenance.
+The active lane comes from [`../podman-live/matrix.tsv`](../podman-live/matrix.tsv); changing that lane
+requires rerunning both provisioners against these independent expectations, not relabelling history.
+The templates retain native image, network,
 creation-evidence, runtime, mount, and volume findings; no conversion report is read to construct an
 expectation. The failed focused pre-release run at
 `ff840133a1d8ddef9bdf3c532179b6751e464064` is only a cross-check.

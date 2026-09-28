@@ -165,6 +165,11 @@ grep --fixed-strings --quiet -- '"${cleanup_failed}" == true && "${status}" == 0
 grep --fixed-strings --quiet -- 'if ! release_outer "${outer}"; then' "${runner}"
 [[ "$(grep --fixed-strings --count -- 'prepare_outer_storage "${outer}" "${image}"' "${runner}")" == 3 ]]
 [[ "$(grep --fixed-strings --count -- '--image-volume=ignore' "${runner}")" == 3 ]]
+
+# Every already-privileged disposable launch must select its own AppArmor
+# context instead of inheriting a named host caller profile. This does not
+# change host policy or weaken the inner workload's declared root mode.
+[[ "$(grep --fixed-strings --count -- '--security-opt apparmor=unconfined' "${runner}")" == 3 ]]
 storage_helper="${script_directory}/lib/podman-live-outer-storage.sh"
 grep --fixed-strings --quiet -- 'verify_outer_storage_volume_ownership "${volume}" "${outer}"' "${storage_helper}"
 grep --fixed-strings --quiet -- '"${engine}" volume rm -- "${volume}"' "${storage_helper}"

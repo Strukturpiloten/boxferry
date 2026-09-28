@@ -118,6 +118,50 @@ fn run_bounded_command(command: &mut Command, timeout: Duration, description: &s
 }
 
 #[test]
+fn reviewed_podman_live_projection_losses_are_bounded() -> Result<(), String> {
+    let output = run_bounded_command(
+        Command::new("python3")
+            .arg("scripts/test-podman-live-projections.py")
+            .current_dir(repository_root()),
+        Duration::from_secs(5),
+        "reviewed Podman live projection regression",
+    )?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
+}
+
+#[test]
+fn compose_network_assertions_accept_aliases_but_require_exact_membership() -> Result<(), String> {
+    let output = run_bounded_command(
+        Command::new("bash")
+            .args([
+                "-c",
+                r#"set -euo pipefail
+source scripts/lib/scenario-validators.sh
+for attachment in '      private: {}' $'      private:\n        aliases:\n          - api'; do
+  printf '  api:\n    networks:\n%s\n' "$attachment" |
+    assert_compose_network_attachment private /dev/stdin
+done
+for invalid in \
+  $'  api:\n    networks:\n      private-other: {}' \
+  $'  api:\n    labels:\n      private: {}' \
+  $'  api:\n    networks:\n      edge:\n        aliases:\n          - private' \
+  $'  api:\n    networks:\n      edge: {}\n    labels:\n      private: {}'; do
+  if printf '%s\n' "$invalid" | assert_compose_network_attachment private /dev/stdin; then
+    exit 1
+  fi
+done
+"#,
+            ])
+            .current_dir(repository_root()),
+        Duration::from_secs(5),
+        "Compose network attachment assertion regression",
+    )?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
+}
+
+#[test]
 fn bounded_repository_policy_children_are_killed_and_reaped() -> Result<(), String> {
     let Err(error) = run_bounded_command(
         Command::new("python3").args(["-c", "import os, time; print(os.getpid(), flush=True); time.sleep(60)"]),
@@ -3504,7 +3548,7 @@ fn validate_live_target_contracts(runner: &str) -> Result<(), String> {
     for apply_target_contract in [
         "'$1 == \"podman-6.1-rootful\" { print; exit }'",
         "\"${id}\" == podman-6.1-rootful",
-        "\"${declared_version}\" == 6.1.0",
+        "\"${declared_version}\" == 6.1.2",
     ] {
         if !runner.contains(apply_target_contract) {
             return Err(format!(
@@ -4220,10 +4264,10 @@ fn validate_live_observability_application_cell(runner: &str) -> Result<(), Stri
     reason = "keeps the complete Supabase live contract auditable in one place"
 )]
 fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result<(), String> {
-    let exact_cell = "podman-6.1-rootless\tghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e\t6.1.0\tupstream-source\trootless\tcontainer\tamd64";
+    let exact_cell = "podman-6.1-rootless\tghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.2@sha256:04684652923ba6d4f046dbb9f4a764ef7b30c8e890883b840e10c702dd2482ed\t6.1.2\tupstream-source\trootless\tcontainer\tamd64";
     if !matrix.lines().any(|line| line == exact_cell) {
         return Err(
-            "Supabase application target must remain the exact reviewed Podman 6.1.0 rootless amd64 cell".to_owned(),
+            "Supabase application target must remain the exact reviewed Podman 6.1.2 rootless amd64 cell".to_owned(),
         );
     }
     for contract in [

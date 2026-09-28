@@ -1,7 +1,7 @@
 # Dependency and license policy
 
-Use this guide when a change adds, removes, pins, or enables a dependency. Exact versions belong in
-the manifest, lock file, workflow, or installer that uses them—not in this page.
+Review dependency additions, removals, pins and features here. Versions belong in their
+manifest, lockfile, workflow or installer.
 
 ## Sources of truth
 
@@ -70,6 +70,8 @@ and every Compose or Quadlet document is fixture input. Their native managers ar
 cannot duplicate Dev Container proposals or treat intentionally invalid fixture registries as live
 dependencies. Curated application `images.tsv` catalogues remain visible through their explicit
 manager.
+
+Lens conformance release refs use approval-gated `github-tags` extraction.
 
 Checksum-bearing provider and live-image proposals require Dependency Dashboard approval and never
 auto-merge. Review the new release asset or platform manifest digest, provenance, license, resource

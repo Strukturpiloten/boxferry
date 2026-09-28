@@ -703,6 +703,7 @@ immich_run_exports() {
       report="${directory}.report.json"
       target_arguments=()
       [[ "${output}" == podman ]] && target_arguments+=(--podman-target-context rootless)
+      [[ "${output}" != podman ]] && target_arguments+=(--environment-values include)
       if ! boxferry_operation "Immich ${mode} ${selection} Podman-to-${output}" \
         convert podman "${output}" --podman-socket "${socket}" \
         --application-name "${prefix}-immich" --loss-policy partial \

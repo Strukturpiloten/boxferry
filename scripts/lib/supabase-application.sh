@@ -2104,6 +2104,50 @@ PY
   esac
 }
 
+supabase_assert_direct_export_environment() {
+  local output=$1 directory=$2 prefix=$3
+  local db="${prefix}-supabase-db"
+  case "${output}" in
+    compose)
+      awk -v db="${db}" -v assignment="      - POSTGRES_PASSWORD=${SUPABASE_DB_PASSWORD}" '
+        $0 == "services:" { services = 1; next }
+        services && /^[^ ]/ { services = selected = environment = 0 }
+        services && /^  [^ ].*:$/ {
+          selected = ($0 == "  " db ":" || $0 == "  db:")
+          environment = 0
+        }
+        selected && $0 == "    environment:" { environment = 1; next }
+        selected && environment && /^    [^ ]/ { environment = 0 }
+        selected && environment && $0 == assignment { matches++ }
+        END { exit matches != 1 }
+      ' "${directory}/compose.yaml"
+      ;;
+    quadlet)
+      local unit="${directory}/${db}.container"
+      [[ -f "${unit}" ]] || unit="${directory}/db.container"
+      awk -v assignment="Environment=POSTGRES_PASSWORD=${SUPABASE_DB_PASSWORD}" '
+        /^\[/ { container = ($0 == "[Container]") }
+        container && $0 == assignment { matches++ }
+        END { exit matches != 1 }
+      ' "${unit}"
+      ;;
+    podman)
+      jq --exit-status --arg db "${db}" '
+        [.operations[] | select(.action == "create" and .resource.kind == "container" and
+          (.resource.name == $db or .resource.name == "db"))] as $database |
+        ($database | length) == 1 and all($database[];
+          ((.libpod.body.json.env // {}) | has("POSTGRES_PASSWORD") | not) and
+          all((.cli.argv // [])[]; contains("POSTGRES_PASSWORD") | not))
+      ' "${directory}/podman.json" > /dev/null || return
+      if grep --recursive --fixed-strings --quiet -- "${SUPABASE_DB_PASSWORD}" "${directory}"; then
+        printf 'Supabase Podman output retained a withheld fixture environment value.\n' >&2
+        return 1
+      fi
+      ;;
+    *) return 2 ;;
+  esac
+}
+
 supabase_assert_output_semantics() {
   local selection=$1 route_input=$2 output=$3 directory=$4 prefix=$5
   local include_system_network=${6:-false}
@@ -2774,6 +2818,7 @@ supabase_run_exports() {
       target_arguments=()
       [[ "${output}" == podman ]] &&
         target_arguments+=(--podman-target-context rootless)
+      [[ "${output}" != podman ]] && target_arguments+=(--environment-values include)
       if ! boxferry_operation "Supabase ${mode} ${selection} Podman-to-${output}" \
         convert podman "${output}" --podman-socket "${socket}" \
         --application-name "${prefix}-supabase" --loss-policy partial \
@@ -2795,6 +2840,7 @@ supabase_run_exports() {
       supabase_assert_output_semantics \
         "${selection}" podman "${output}" "${directory}" "${prefix}" \
         "${include_system_network}" podman "${require_dependency_order}" "${mode}"
+      supabase_assert_direct_export_environment "${output}" "${directory}" "${prefix}"
     done
   done
 }

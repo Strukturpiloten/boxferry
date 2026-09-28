@@ -7,6 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Consume PodmanLens 0.2.5 and QuadletLens 0.2.4; refresh active upstream Podman test lanes to
+  5.8.7 and 6.1.2 in both root modes, while retaining historical captures and the separate
+  exact Podman rendering boundary ([#340](https://github.com/Strukturpiloten/boxferry/issues/340)).
+
 - Infer the neutral application name from one Quadlet unit filename on `convert` and `validate`;
   require `--application-name` for multiple units while retaining explicit overrides ([#338](https://github.com/Strukturpiloten/boxferry/issues/338)).
 

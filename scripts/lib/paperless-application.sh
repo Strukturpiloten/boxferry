@@ -1004,6 +1004,7 @@ paperless_run_exports() {
       report="${directory}.report.json"
       local -a target_arguments=()
       [[ "${output}" == podman ]] && target_arguments+=(--podman-target-context rootless)
+      [[ "${output}" != podman ]] && target_arguments+=(--environment-values include)
       if ! boxferry_operation "Paperless ${mode} ${selection} Podman-to-${output}" \
         convert podman "${output}" --podman-socket "${socket}" \
         --application-name "${prefix}-paperless" --loss-policy partial \

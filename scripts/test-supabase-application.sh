@@ -1349,6 +1349,12 @@ bash -c '
   supabase_assert_output_semantics() {
     printf "%s\\t%s\\n" "$8" "$9" >> "${forwarding_log}"
   }
+  environment_assertions=0
+  supabase_assert_direct_export_environment() {
+    [[ "$#" == 3 && "$1" =~ ^(compose|quadlet|podman)$ &&
+      "$2" == "${current_case}/outputs/"* && "$3" == test-prefix ]]
+    environment_assertions=$((environment_assertions + 1))
+  }
 
   [[ "$(supabase_direct_export_dependency_order_required cli)" == true ]]
   [[ "$(supabase_direct_export_dependency_order_required compose)" == false ]]
@@ -1359,6 +1365,7 @@ bash -c '
 
   supabase_run_exports cli unused test-prefix
   supabase_run_exports compose unused test-prefix
+  [[ "${environment_assertions}" == 24 ]]
 ' bash "${library}" "${test_root}/direct-export-forwarding" \
   "${test_root}/direct-export-forwarding.tsv"
 

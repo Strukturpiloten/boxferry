@@ -668,9 +668,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "podman-lens"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ee6794aa1245ddba8b5b0c49fcfa4a4df8b79ae80ff0b73769f0888cf42526b"
+checksum = "535c36d3b1a04a96d8018040eb559623a1251d18de88f0599f6328b4802e0d9b"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -718,9 +718,9 @@ dependencies = [
 
 [[package]]
 name = "quadlet-lens"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d030a28d73c8e000a609e6e5d60502f0b0a8eb9d399dd84777c0f6ab62aa91c"
+checksum = "8e20d20438525a54f8f531e66b29ecededa33e2393d8613fde8e0215e7d8dcb4"
 dependencies = [
  "serde",
  "serde_json",

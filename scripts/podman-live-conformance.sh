@@ -1468,13 +1468,17 @@ start_outer_runtime() {
   # The caller starts the API only after resource creation and matching-version CLI assertions.
   # This avoids concurrent nested CLI/API storage access and a second long-lived exec session;
   # both have deadlocked nondeterministically on GitHub-hosted outer Podman engines.
+  # Set AppArmor explicitly even with --privileged: otherwise a named unconfined
+  # caller profile (for example VS Code) can survive into the service and be
+  # denied permission to terminate pasta by the host's pasta receive-signal rule.
   # shellcheck disable=SC2016 # ${...} expands in the nested shell, not this script.
   startup_substep 'create detached outer container (deadline 90s)' \
     timeout --signal=TERM --kill-after=10s 90s \
     "${engine}" run --detach --rm --name "${outer}" \
     --label "io.boxferry.live.run=${run_id}" --image-volume=ignore \
     "${outer_storage_mount_args[@]}" --stop-timeout 1 --privileged --device /dev/fuse \
-    --security-opt label=disable --volume "${socket_directory}:/boxferry-socket:Z" \
+    --security-opt label=disable --security-opt apparmor=unconfined \
+    --volume "${socket_directory}:/boxferry-socket:Z" \
     --volume "${nested_archive}:/boxferry-workload.tar:ro" \
     --env "BF_SOCKET=/boxferry-socket/podman.sock" "${image}" /bin/sh -ceu '
       trap "exit 0" INT TERM
@@ -1656,7 +1660,7 @@ start_apply_target() {
   IFS=$'\t' read -r id image declared_version distribution mode lane architecture < <(
     awk -F '\t' '$1 == "podman-6.1-rootful" { print; exit }' "${matrix_path}"
   )
-  [[ "${id}" == podman-6.1-rootful && "${declared_version}" == 6.1.0 && "${mode}" == rootful && "${lane}" == container ]] || {
+  [[ "${id}" == podman-6.1-rootful && "${declared_version}" == 6.1.2 && "${mode}" == rootful && "${lane}" == container ]] || {
     printf '%s\n' 'Reviewed Podman 6.1 rootful apply target is missing from the matrix.' >&2
     return 1
   }
@@ -2484,7 +2488,7 @@ run_limited_cell() {
     "${engine}" run --detach --rm --name "${outer}" \
     --label "io.boxferry.live.run=${run_id}" --image-volume=ignore \
     "${outer_storage_mount_args[@]}" --stop-timeout 1 --privileged --device /dev/fuse \
-    --security-opt label=disable "${image}" /bin/sh -ceu \
+    --security-opt label=disable --security-opt apparmor=unconfined "${image}" /bin/sh -ceu \
     'trap "exit 0" INT TERM; while :; do sleep 3600; done' \
     > "${current_case}/outer.id"
   progress_pass
@@ -2580,7 +2584,7 @@ run_revalidation_baseline_collision() {
     "${engine}" run --detach --rm --name "${outer}" \
     --label "io.boxferry.live.run=${run_id}" --image-volume=ignore \
     "${outer_storage_mount_args[@]}" --stop-timeout 1 \
-    --privileged --device /dev/fuse --security-opt label=disable \
+    --privileged --device /dev/fuse --security-opt label=disable --security-opt apparmor=unconfined \
     --volume "${baseline_socket_namespace}:/boxferry-socket:Z" \
     "${image}" /bin/sh -ceu 'trap "exit 0" INT TERM; sleep 3600' \
     > "${baseline_case}/outer.id"
