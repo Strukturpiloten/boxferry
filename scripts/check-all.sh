@@ -10,7 +10,7 @@ cd -- "${repository_root}"
 
 current_step="preflight"
 step=0
-readonly total_steps=32
+readonly total_steps=33
 
 fail() {
   printf 'BoxFerry local validation failed: %s\n' "$1" >&2
@@ -180,6 +180,7 @@ run_step "Test validation-plan contracts" env PYTHONDONTWRITEBYTECODE=1 python3 
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
 run_step "Test Podman live cleanup collections" bash scripts/test-podman-live-cleanup.sh
 run_step "Test Podman live outer storage ownership" bash scripts/test-podman-live-outer-storage.sh
+run_step "Test Forgejo application probe contracts" bash scripts/test-forgejo-application-probes.sh
 run_step "Test observability Grafana network topology" bash scripts/test-observability-grafana-network.sh
 run_step "Test observability application contracts" bash scripts/test-observability-application.sh
 run_step "Test Supabase application timeout boundary" bash scripts/test-supabase-application.sh

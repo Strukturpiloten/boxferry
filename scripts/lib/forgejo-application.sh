@@ -5,6 +5,8 @@
 
 # shellcheck source=scripts/lib/compose-provider.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+# shellcheck source=scripts/lib/forgejo-application-probes.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/forgejo-application-probes.sh" || return 1
 
 readonly FORGEJO_ADMIN_USER="boxferry-live"
 readonly FORGEJO_ADMIN_PASSWORD="boxferry-public-admin-canary"
@@ -369,40 +371,61 @@ forgejo_provision_compose() {
 
 forgejo_wait_application() {
   local socket=$1 prefix=$2
-  forgejo_wait_for 180 'application health endpoint' \
-    forgejo_remote "${socket}" exec "${prefix}-forge-app" \
-    wget --quiet --output-document=- http://127.0.0.1:3000/api/healthz
+  forgejo_probe_wait_application forgejo_wait_for forgejo_podman_probe_health \
+    "${socket}" "${prefix}-forge-app" http://127.0.0.1:3000/api/healthz
+}
+
+forgejo_podman_probe_health() {
+  local socket=$1 app=$2 endpoint=$3
+  forgejo_remote "${socket}" exec "${app}" \
+    wget --quiet --output-document=- "${endpoint}"
 }
 
 forgejo_create_admin() {
   local socket=$1 prefix=$2
+  forgejo_probe_create_admin forgejo_podman_probe_admin "${socket}" "${prefix}-forge-app" \
+    "${FORGEJO_ADMIN_USER}" "${FORGEJO_ADMIN_PASSWORD}"
+}
+
+forgejo_podman_probe_admin() {
+  local socket=$1 app=$2 username=$3 password=$4
   forgejo_remote "${socket}" exec --user 1000:1000 \
-    "${prefix}-forge-app" forgejo admin user create \
-    --username "${FORGEJO_ADMIN_USER}" \
-    --password "${FORGEJO_ADMIN_PASSWORD}" \
+    "${app}" forgejo admin user create \
+    --username "${username}" --password "${password}" \
     --email boxferry@example.invalid --admin --must-change-password=false \
     > /dev/null
 }
 
 forgejo_git_probe() {
   local socket=$1 prefix=$2 mode=$3
+  forgejo_probe_git forgejo_podman_probe_git "${socket}" "${prefix}" "${mode}" \
+    "${FORGEJO_ADMIN_USER}" "${FORGEJO_ADMIN_PASSWORD}" \
+    "${FORGEJO_HTTP_PORT}" "${FORGEJO_SSH_PORT}"
+}
+
+forgejo_podman_probe_git() {
+  local socket=$1 prefix=$2 mode=$3 username=$4 password=$5 http_port=$6 ssh_port=$7
   local fixture_root="/tmp/boxferry-fixture/${prefix}"
   forgejo_remote "${socket}" run --rm --pull=never --network host \
     --volume "${fixture_root}:/fixture:rw" \
-    --env "BF_FORGEJO_USER=${FORGEJO_ADMIN_USER}" \
-    --env "BF_FORGEJO_PASSWORD=${FORGEJO_ADMIN_PASSWORD}" \
-    --env "BF_HTTP_PORT=${FORGEJO_HTTP_PORT}" \
-    --env "BF_SSH_PORT=${FORGEJO_SSH_PORT}" \
+    --env "BF_FORGEJO_USER=${username}" \
+    --env "BF_FORGEJO_PASSWORD=${password}" \
+    --env "BF_HTTP_PORT=${http_port}" \
+    --env "BF_SSH_PORT=${ssh_port}" \
     --entrypoint /bin/sh "$(forgejo_image_reference git-client)" \
     /fixture/git-probe.sh "${mode}"
 }
 
 forgejo_assert_database() {
   local socket=$1 prefix=$2
-  forgejo_remote "${socket}" exec --env "PGPASSWORD=${FORGEJO_DB_PASSWORD}" \
-    "${prefix}-forge-db" psql -U forgejo -d forgejo -Atc \
-    "SELECT count(*) FROM repository WHERE lower_name = 'migration-baseline';" |
-    awk '$1 == 1 { found = 1 } END { exit !found }'
+  forgejo_probe_assert_database forgejo_podman_probe_query "${socket}" "${prefix}-forge-db" \
+    "${FORGEJO_DB_PASSWORD}"
+}
+
+forgejo_podman_probe_query() {
+  local socket=$1 database=$2 password=$3 query=$4
+  forgejo_remote "${socket}" exec --env "PGPASSWORD=${password}" \
+    "${database}" psql -U forgejo -d forgejo -Atc "${query}"
 }
 
 forgejo_assert_application_boundaries() {

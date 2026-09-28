@@ -91,9 +91,9 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 [[ "${status}" == 2 && ! -s "${test_root}/relocated.commands" ]]
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/32\]' "${test_root}/default.output")" == 32 ]]
-grep --fixed-strings --quiet -- '[32/32] Check published API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 32 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/33\]' "${test_root}/default.output")" == 33 ]]
+grep --fixed-strings --quiet -- '[33/33] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 33 steps.' ]]
 [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/31\]' "${test_root}/default.output" || true)" == 0 ]]
 [[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 31 steps.' "${test_root}/default.output" || true)" == 0 ]]
 diff -u "${test_root}/default.commands" "${test_root}/fix.commands"

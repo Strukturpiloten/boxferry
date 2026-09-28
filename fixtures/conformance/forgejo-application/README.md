@@ -14,3 +14,9 @@ The host verifies every immutable image digest, builds one archive, and loads it
 the nested API. Nested provisioning uses only local `registry.invalid` tags with `--pull=never`.
 Forgejo 16.0.3 is GPL-3.0-or-later, PostgreSQL uses the PostgreSQL license, `alpine/git` is
 Apache-2.0, and Docker Compose 5.5.0 is Apache-2.0. BoxFerry redistributes none of them.
+
+The source-only `scripts/lib/forgejo-application-probes.sh` holds the application behavior
+contract: health readiness, administrator creation, Git seed/verify, and the exact repository
+count query. The Podman harness supplies runtime callbacks and retains port, network, volume,
+provisioning, and cleanup assertions. `scripts/test-forgejo-application-probes.sh` checks the
+callbacks offline with injected failures; it does not establish a live Docker runtime claim.
