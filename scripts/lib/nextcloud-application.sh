@@ -5,6 +5,8 @@
 
 # shellcheck source=scripts/lib/compose-provider.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+# shellcheck source=scripts/lib/nextcloud-application-probes.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/nextcloud-application-probes.sh" || return 1
 
 readonly NEXTCLOUD_ADMIN_PASSWORD="boxferry-public-admin-canary"
 readonly NEXTCLOUD_DB_PASSWORD="boxferry-public-database-canary"
@@ -390,19 +392,30 @@ nextcloud_wait_application() {
     exec "${prefix}-cloud-frontend" wget -T 30 --quiet --spider http://127.0.0.1:8080/status.php
   nextcloud_wait_for 180 'edge proxy response' nextcloud_remote "${socket}" \
     exec "${prefix}-shared-proxy" wget -T 30 --quiet --spider http://127.0.0.1:8080/status.php
-  nextcloud_remote "${socket}" exec --user www-data "${prefix}-cloud-app" \
-    php occ status --output=json | jq --exit-status \
-    '.installed == true and .maintenance == false and .needsDbUpgrade == false and .versionstring == "32.0.10"' > /dev/null
-  nextcloud_remote "${socket}" exec "${prefix}-shared-proxy" \
-    wget -T 30 --quiet --output-document=- http://127.0.0.1:8080/status.php | jq --exit-status \
-    '.installed == true and .maintenance == false and .needsDbUpgrade == false and .versionstring == "32.0.10"' > /dev/null
+  nextcloud_probe_assert_status nextcloud_podman_probe_status "${socket}" "${prefix}"
+}
+
+nextcloud_podman_probe_status() {
+  local socket=$1 prefix=$2 source=$3
+  if [[ "${source}" == app ]]; then
+    nextcloud_remote "${socket}" exec --user www-data "${prefix}-cloud-app" \
+      php occ status --output=json
+  else
+    nextcloud_remote "${socket}" exec "${prefix}-shared-proxy" \
+      wget -T 30 --quiet --output-document=- http://127.0.0.1:8080/status.php
+  fi
 }
 
 nextcloud_webdav_round_trip() {
   local socket=$1 prefix=$2 phase=$3
   local upload=${4:-true}
+  nextcloud_probe_webdav_round_trip nextcloud_podman_probe_webdav \
+    "${socket}" "${prefix}" "${phase}" "${upload}"
+}
+
+nextcloud_podman_probe_webdav() {
+  local socket=$1 prefix=$2 payload=$3 upload=$4
   local fixture_root="/tmp/boxferry-fixture/${prefix}"
-  local payload="boxferry-nextcloud-${phase}-payload"
   nextcloud_remote "${socket}" run --rm --pull=never \
     --network "${prefix}-shared-edge" \
     --volume "${fixture_root}/webdav-probe.php:/boxferry-webdav-probe.php:ro" \
@@ -413,18 +426,9 @@ nextcloud_webdav_round_trip() {
 
 nextcloud_assert_database_cache_and_shared_state() {
   local socket=$1 prefix=$2
-  nextcloud_remote "${socket}" exec --env "PGPASSWORD=${NEXTCLOUD_DB_PASSWORD}" \
-    "${prefix}-cloud-db" psql -U boxferry -d nextcloud -Atc \
-    "SELECT count(*) FROM oc_filecache WHERE path LIKE '%boxferry-live.txt';" |
-    awk '$1 >= 1 { found = 1 } END { exit !found }'
-  [[ "$(nextcloud_remote "${socket}" exec --user www-data "${prefix}-cloud-app" \
-    php occ config:system:get redis host)" == cache ]]
-  nextcloud_remote "${socket}" exec "${prefix}-cloud-cache" redis-cli \
-    -a "${NEXTCLOUD_REDIS_PASSWORD}" INFO stats |
-    awk -F: '
- /^keyspace_hits:/ || /^keyspace_misses:/ { gsub(/\r/, "", $2); total += $2 }
- END { exit total > 0 ? 0 : 1 }
- '
+  nextcloud_probe_assert_database_cache nextcloud_podman_probe_file_rows \
+    nextcloud_podman_probe_cache_host nextcloud_podman_probe_cache_stats \
+    "${socket}" "${prefix}"
   nextcloud_remote "${socket}" inspect "${prefix}-cloud-cache" |
     jq --exit-status --arg volume "${prefix}-cloud-redis" \
       'any(.[0].Mounts[]?; .Name == $volume and .Destination == "/data")' > /dev/null
@@ -436,6 +440,25 @@ nextcloud_assert_database_cache_and_shared_state() {
     jq --exit-status --arg volume "${prefix}-cloud-nextcloud" '
  any(.[0].Mounts[]?; .Name == $volume and .Destination == "/var/www/html")
  ' > /dev/null
+}
+
+nextcloud_podman_probe_file_rows() {
+  local socket=$1 prefix=$2
+  nextcloud_remote "${socket}" exec --env "PGPASSWORD=${NEXTCLOUD_DB_PASSWORD}" \
+    "${prefix}-cloud-db" psql -U boxferry -d nextcloud -Atc \
+    "SELECT count(*) FROM oc_filecache WHERE path LIKE '%boxferry-live.txt';"
+}
+
+nextcloud_podman_probe_cache_host() {
+  local socket=$1 prefix=$2
+  nextcloud_remote "${socket}" exec --user www-data "${prefix}-cloud-app" \
+    php occ config:system:get redis host
+}
+
+nextcloud_podman_probe_cache_stats() {
+  local socket=$1 prefix=$2
+  nextcloud_remote "${socket}" exec "${prefix}-cloud-cache" redis-cli \
+    -a "${NEXTCLOUD_REDIS_PASSWORD}" INFO stats
 }
 
 nextcloud_assert_publication_and_networks() {

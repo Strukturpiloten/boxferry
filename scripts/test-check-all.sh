@@ -94,6 +94,8 @@ grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' 
 [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/33\]' "${test_root}/default.output")" == 33 ]]
 grep --fixed-strings --quiet -- '[33/33] Check published API compatibility' "${test_root}/default.output"
 [[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 33 steps.' ]]
+assert_contains default "bash scripts/test-application-probes.sh"
+assert_contains check "bash scripts/test-application-probes.sh"
 [[ "$(grep --extended-regexp --count '^\[[0-9]{2}/31\]' "${test_root}/default.output" || true)" == 0 ]]
 [[ "$(grep --fixed-strings --count 'BoxFerry local validation passed all 31 steps.' "${test_root}/default.output" || true)" == 0 ]]
 diff -u "${test_root}/default.commands" "${test_root}/fix.commands"
