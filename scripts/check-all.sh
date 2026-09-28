@@ -180,7 +180,7 @@ run_step "Test validation-plan contracts" env PYTHONDONTWRITEBYTECODE=1 python3 
 run_step "Test release metadata policy" bash scripts/test-release-metadata.sh
 run_step "Test Podman live cleanup collections" bash scripts/test-podman-live-cleanup.sh
 run_step "Test Podman live outer storage ownership" bash scripts/test-podman-live-outer-storage.sh
-run_step "Test Forgejo application probe contracts" bash scripts/test-forgejo-application-probes.sh
+run_step "Test application probe contracts" bash scripts/test-application-probes.sh
 run_step "Test observability Grafana network topology" bash scripts/test-observability-grafana-network.sh
 run_step "Test observability application contracts" bash scripts/test-observability-application.sh
 run_step "Test Supabase application timeout boundary" bash scripts/test-supabase-application.sh

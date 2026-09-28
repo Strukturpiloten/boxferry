@@ -287,6 +287,7 @@ class ValidationPlanTests(unittest.TestCase):
 
     def test_first_rollout_never_executes_candidate_classifier_or_accepts_a_skip(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("run: bash scripts/test-application-probes.sh", workflow)
         self.assertNotIn("scripts/validation-plan.py plan --force-full", workflow)
         self.assertNotIn("needs.validation-plan.outputs.profile", workflow)
         self.assertIn("if: fromJSON(needs.validation-plan.outputs.plan).profile == 'executable-docs'", workflow)

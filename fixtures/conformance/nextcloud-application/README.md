@@ -1,5 +1,11 @@
 # Nextcloud application conformance
 
+`scripts/lib/nextcloud-application-probes.sh` owns reusable status, WebDAV payload,
+database-row, and cache-activity assertions. Its Podman adapter retains probe
+placement, network topology, mounted files, lifecycle, and cleanup. The offline
+`scripts/test-nextcloud-application-probes.sh` checks positive and negative cases;
+this refactor adds no Docker runtime evidence.
+
 This fixture drives the opt-in `application` profile of the live Podman runner. It is a
 repository-authored, production-shaped test topology and contains no deployment data. The
 credentials in the harness are public canaries used only inside a disposable nested Podman

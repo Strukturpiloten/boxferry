@@ -219,6 +219,8 @@ jobs:
         run: bash scripts/check-files.sh --check
       - name: Test validation-plan regressions
         run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-validation-plan.py
+      - name: Test application probe contracts
+        run: bash scripts/test-application-probes.sh
       - name: Test executable documentation without duplicating the full Rust suite
         if: fromJSON(needs.validation-plan.outputs.plan).profile == 'executable-docs'
         run: cargo test --locked --package boxferry --all-features --test documentation_examples

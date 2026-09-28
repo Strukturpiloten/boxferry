@@ -653,6 +653,18 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
                 .map_err(|error| format!("failed to read live scenario module: {error}"))?,
         );
     }
+    for application in ["forgejo", "nextcloud", "paperless", "immich"] {
+        let adapter = fs::read_to_string(root.join("scripts/lib").join(format!("{application}-application.sh")))
+            .map_err(|error| format!("failed to read {application} application adapter: {error}"))?;
+        let helper = format!("{application}-application-probes.sh");
+        if !adapter.contains(&format!("/{helper}")) {
+            return Err(format!("{application} adapter must source its probe helper"));
+        }
+        runner_contract.push_str(
+            &fs::read_to_string(root.join("scripts/lib").join(helper))
+                .map_err(|error| format!("failed to read {application} probe helper: {error}"))?,
+        );
+    }
     for fixture in [
         "compose.yaml",
         "frontend.conf",

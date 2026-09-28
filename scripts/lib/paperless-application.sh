@@ -4,6 +4,10 @@
 
 # shellcheck source=scripts/lib/compose-provider.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+# shellcheck source=scripts/lib/paperless-application-probes.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/paperless-application-probes.sh" || return 1
+# shellcheck source=scripts/lib/application-export-privacy.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/application-export-privacy.sh" || return 1
 
 readonly PAPERLESS_ADMIN_USER="boxferry-admin"
 readonly PAPERLESS_ADMIN_PASSWORD="boxferry-public-admin-canary"
@@ -448,7 +452,7 @@ paperless_provision_compose() {
 
 paperless_wait_application() {
   local socket=$1 prefix=$2
-  paperless_probe "${socket}" "${prefix}" ready
+  paperless_probe_wait_application paperless_probe "${socket}" "${prefix}"
 }
 
 paperless_probe() {
@@ -474,34 +478,25 @@ paperless_valkey_lpush_calls() {
 
 paperless_ingest_phase() {
   local socket=$1 prefix=$2 phase=$3
-  local before after
-  before="$(paperless_valkey_lpush_calls "${socket}" "${prefix}")"
-  before="${before:-0}"
-  [[ "${before}" =~ ^[0-9]+$ ]]
-  paperless_probe "${socket}" "${prefix}" ingest \
-    --phase "${phase}" --state /fixture/probe-state.json \
-    --work-dir "/fixture/generated-${phase}"
-  after="$(paperless_valkey_lpush_calls "${socket}" "${prefix}")"
-  after="${after:-0}"
-  [[ "${after}" =~ ^[0-9]+$ && "${after}" -gt "${before}" ]] || {
-    printf 'Valkey LPUSH calls did not increase during %s ingestion: %s -> %s.\n' \
-      "${phase}" "${before}" "${after}" >&2
-    return 1
-  }
+  paperless_probe_ingest_phase paperless_probe paperless_valkey_lpush_calls \
+    "${socket}" "${prefix}" "${phase}"
 }
 
 paperless_verify_documents() {
   local socket=$1 prefix=$2
-  paperless_probe "${socket}" "${prefix}" verify \
-    --state /fixture/probe-state.json
+  paperless_probe_verify_documents paperless_probe "${socket}" "${prefix}"
 }
 
 paperless_assert_database() {
   local socket=$1 prefix=$2 expected=$3
-  paperless_remote "${socket}" exec --env "PGPASSWORD=${PAPERLESS_DB_PASSWORD}" \
-    "${prefix}-paper-db" psql -U paperless -d paperless -Atc \
-    "SELECT count(*) FROM documents_document WHERE title LIKE 'BoxFerry migration %';" |
-    awk -v expected="${expected}" '$1 == expected { found = 1 } END { exit !found }'
+  paperless_probe_assert_database paperless_podman_probe_query \
+    "${socket}" "${prefix}-paper-db" "${PAPERLESS_DB_PASSWORD}" "${expected}"
+}
+
+paperless_podman_probe_query() {
+  local socket=$1 database=$2 password=$3 query=$4
+  paperless_remote "${socket}" exec --env "PGPASSWORD=${password}" \
+    "${database}" psql -U paperless -d paperless -Atc "${query}"
 }
 
 paperless_assert_application_boundaries() {
@@ -990,7 +985,7 @@ paperless_report_conversion_failure() {
 
 paperless_run_exports() {
   local mode=$1 socket=$2 prefix=$3
-  local selection output directory report
+  local selection output directory report withheld_directory withheld_report
   local -a selection_arguments=()
   mkdir -p -- "${current_case}/outputs"
   for selection in exact label all; do
@@ -1004,13 +999,36 @@ paperless_run_exports() {
       report="${directory}.report.json"
       local -a target_arguments=()
       [[ "${output}" == podman ]] && target_arguments+=(--podman-target-context rootless)
+      local -a conversion_arguments=(
+        convert podman "${output}" --podman-socket "${socket}"
+        --application-name "${prefix}-paperless" --loss-policy partial
+        --promote-podman-effective-named-volumes --promote-podman-effective-named-networks
+        --promote-podman-portable-effective-settings
+        "${selection_arguments[@]}"
+      )
+      if [[ "${selection}" == exact && "${output}" != podman ]]; then
+        withheld_directory="${current_case}/outputs/${mode}-default-withheld-${output}"
+        withheld_report="${withheld_directory}.report.json"
+        if ! boxferry_operation "Paperless ${mode} default-withheld Podman-to-${output}" \
+          "${conversion_arguments[@]}" --output-directory "${withheld_directory}" \
+          --console-format json > "${withheld_report}"; then
+          paperless_report_conversion_failure "${withheld_report}"
+          return 1
+        fi
+        application_assert_default_withholding \
+          "${withheld_directory}" "${withheld_report}" \
+          "services.${prefix}-paper-web.environment.PAPERLESS_DBPASS" \
+          "${PAPERLESS_ADMIN_PASSWORD}" "${PAPERLESS_DB_PASSWORD}" "${PAPERLESS_SECRET_KEY}"
+        paperless_assert_output_membership \
+          "${selection}" "${output}" "${withheld_directory}" "${prefix}"
+      fi
+      # Value-present acceptance uses explicit consent for synthetic fixture values.
+      # Podman retains its separate protected-inline-value omission contract.
+      [[ "${output}" != podman ]] && target_arguments+=(--environment-values include)
       if ! boxferry_operation "Paperless ${mode} ${selection} Podman-to-${output}" \
-        convert podman "${output}" --podman-socket "${socket}" \
-        --application-name "${prefix}-paperless" --loss-policy partial \
-        --promote-podman-effective-named-volumes --promote-podman-effective-named-networks \
-        --promote-podman-portable-effective-settings \
+        "${conversion_arguments[@]}" \
         --output-directory "${directory}" --console-format json \
-        "${target_arguments[@]}" "${selection_arguments[@]}" > "${report}"; then
+        "${target_arguments[@]}" > "${report}"; then
         paperless_report_conversion_failure "${report}"
         return 1
       fi
