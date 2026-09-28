@@ -588,6 +588,41 @@ class MigrationReadinessTests(unittest.TestCase):
                 task_id="forgejo-root-modes",
             )
 
+    def test_reviewed_pr_application_tasks_bind_focused_success_to_exact_head(self) -> None:
+        for task_id in (
+            "nextcloud-application",
+            "paperless-application",
+            "immich-application",
+        ):
+            with self.subTest(task=task_id):
+                evidence, revision = self.evidence_fixture(
+                    tier_id="pre-release", task_id=task_id
+                )
+                MODULE.validate_evidence(evidence, "pre-release", revision, task_id=task_id)
+                with self.assertRaisesRegex(MODULE.ContractError, "revision"):
+                    MODULE.validate_evidence(
+                        evidence, "pre-release", "2" * 40, task_id=task_id
+                    )
+                with self.assertRaisesRegex(MODULE.ContractError, "does not match"):
+                    MODULE.validate_evidence(
+                        evidence, "pre-release", revision,
+                        task_id="forgejo-root-modes",
+                    )
+                failed, _ = self.evidence_fixture(
+                    tier_id="pre-release", task_id=task_id, state="failed"
+                )
+                MODULE.validate_evidence(failed, "pre-release", revision, task_id=task_id)
+                with tempfile.TemporaryDirectory() as directory:
+                    path = pathlib.Path(directory) / "focused.json"
+                    path.write_text(json.dumps(failed), encoding="utf-8")
+                    args = MODULE.parser().parse_args([
+                        "validate-evidence", "--evidence", str(path),
+                        "--tier", "pre-release", "--task", task_id,
+                        "--revision", revision, "--require-success",
+                    ])
+                    with self.assertRaisesRegex(MODULE.ContractError, "does not prove"):
+                        MODULE.validate(args)
+
     def test_sampler_retains_peaks_and_deduplicates_filesystems(self) -> None:
         mebibyte = 1024 * 1024
         memory_values = iter([8000, 7800, 7400])

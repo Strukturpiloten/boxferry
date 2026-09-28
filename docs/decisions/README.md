@@ -58,6 +58,7 @@ active table; superseded records are history and are read only when that history
 | [0061](0061-compose-interpolation-input-authorization.md) | Compose interpolation implied by supplied values and explicit process fallback |
 | [0062](0062-unambiguous-compose-cli-document-discovery.md) | Unambiguous current-directory Compose document discovery |
 | [0063](0063-sole-quadlet-unit-application-identity.md) | Sole-unit Quadlet application identity and explicit names for document sets |
+| [0065](0065-trusted-reviewed-pr-application-validation.md) | Trusted exact-head reviewed-PR application diagnostics |
 
 ## Superseded history
 
