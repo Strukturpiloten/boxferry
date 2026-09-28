@@ -248,7 +248,9 @@ def validate_attempt_timings(run: dict[str, Any], tasks: list[dict[str, Any]]) -
         return run["wall_seconds"]
     if run["evidence_kind"] != "aggregate":
         if run.get("attempt_timings") != []:
-            raise ContractError("serial evidence must not claim GitHub attempt timing")
+            raise ContractError("local or serial evidence must not claim GitHub attempt timing")
+        if run["evidence_kind"] == "local" and run.get("github_run_attempt") is not None:
+            raise ContractError("local evidence must not claim a GitHub run attempt")
         return run["wall_seconds"]
     if run.get("github_run_attempt") is not None:
         raise ContractError("aggregate evidence must not claim one GitHub run attempt")
@@ -1388,7 +1390,7 @@ def validate_evidence_semantics(
     if run_finished < run_started:
         raise ContractError("evidence run chronology is reversed")
     if (
-        run["evidence_kind"] != "worker"
+        run["evidence_kind"] not in {"local", "worker"}
         and run["wall_seconds"] > run["tier_deadline_seconds"]
         and not run["timed_out"]
     ):
@@ -1544,7 +1546,7 @@ def validate_evidence(
     run = value.get("run")
     if not isinstance(run, dict) or not SHA_RE.fullmatch(run.get("revision", "")):
         raise ContractError("evidence lacks an exact run revision")
-    if run.get("evidence_kind") not in {"serial", "worker", "aggregate"}:
+    if run.get("evidence_kind") not in {"serial", "local", "worker", "aggregate"}:
         raise ContractError("evidence has an invalid execution kind")
     if not re.fullmatch(r"[0-9a-f]{64}", run.get("catalogue_sha256", "")):
         raise ContractError("evidence lacks a catalogue digest")
@@ -1573,7 +1575,7 @@ def validate_evidence(
         all(task["state"] == "passed" for task in tasks)
         and not run["timed_out"]
         and (
-            run["evidence_kind"] == "worker"
+            run["evidence_kind"] in {"local", "worker"}
             or run["wall_seconds"] <= run["tier_deadline_seconds"]
         )
     )
@@ -1600,11 +1602,15 @@ def validate_evidence(
             raise ContractError("serial evidence must bind a full tier to worker_id serial")
         if run.get("coordinator_id") != run.get("id"):
             raise ContractError("serial evidence must own its coordinator identity")
-    elif evidence_kind == "worker":
+    elif evidence_kind in {"local", "worker"}:
         if selection["kind"] != "task" or run.get("worker_id") != selected_task_id:
-            raise ContractError("worker evidence must bind worker_id to its selected task")
+            raise ContractError("focused evidence must bind worker_id to its selected task")
         if len(tasks) != 1:
-            raise ContractError("worker evidence must contain exactly one task")
+            raise ContractError("focused evidence must contain exactly one task")
+        if evidence_kind == "local" and run.get("coordinator_id") != run.get("id"):
+            raise ContractError("local evidence must own its coordinator identity")
+        if evidence_kind == "worker" and run.get("coordinator_id") == run.get("id"):
+            raise ContractError("worker evidence must bind a separate coordinator identity")
     else:
         if selection["kind"] != "tier" or run.get("worker_id") != "aggregate":
             raise ContractError("aggregate evidence must bind a full tier to worker_id aggregate")
@@ -1751,6 +1757,10 @@ def run(args: argparse.Namespace) -> int:
             "complete pre-release execution requires the parallel GitHub coordinator; "
             "select one --task for focused local reproduction"
         )
+    if args.coordinator_id is not None and args.task is None:
+        raise ContractError("--coordinator-id requires --task")
+    if args.worker_id is not None and args.worker_id != args.task:
+        raise ContractError("--worker-id must match the selected --task")
     revision = args.revision or git_revision()
     if not SHA_RE.fullmatch(revision):
         raise ContractError("--revision must be a full lowercase 40-character Git SHA")
@@ -1758,14 +1768,26 @@ def run(args: argparse.Namespace) -> int:
         raise ContractError(f"requested revision {revision} does not match checked-out HEAD {git_revision()}")
     revisions = catalogue_lens_revisions(catalogue)
     run_id = str(uuid.uuid4())
+    if args.worker_id is not None and args.coordinator_id is None:
+        raise ContractError("--worker-id requires --coordinator-id")
     github_run_attempt: int | None = None
     if args.coordinator_id is not None:
+        try:
+            if str(uuid.UUID(args.coordinator_id)) != args.coordinator_id:
+                raise ValueError("non-canonical UUID")
+        except ValueError as error:
+            raise ContractError("--coordinator-id must be a canonical UUID") from error
+        if args.coordinator_id == run_id:
+            raise ContractError("worker coordinator must differ from run id")
         raw_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
         if re.fullmatch(r"[1-9][0-9]*", raw_attempt) is None:
             raise ContractError(
                 "pre-release GitHub worker evidence requires positive GITHUB_RUN_ATTEMPT"
             )
         github_run_attempt = int(raw_attempt)
+    evidence_kind = (
+        "serial" if args.task is None else "worker" if args.coordinator_id is not None else "local"
+    )
     started_at = now()
     run_started = time.monotonic()
     execution_deadline_seconds = (
@@ -1833,7 +1855,7 @@ def run(args: argparse.Namespace) -> int:
             "catalogue_sha256": catalogue_digest(pathlib.Path(args.catalogue)),
             "boxferry_binary_sha256": configured_boxferry_binary_digest(),
             "worker_id": args.worker_id or (args.task or "serial"),
-            "evidence_kind": "worker" if args.task is not None else "serial",
+            "evidence_kind": evidence_kind,
             "lens_revisions": revisions,
         },
         "manual_prerequisites": tier["manual-prerequisites"],

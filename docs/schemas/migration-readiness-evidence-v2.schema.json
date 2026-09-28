@@ -95,7 +95,7 @@
           "pattern": "^[0-9a-f]{64}$"
         },
         "worker_id": { "type": "string", "minLength": 1 },
-        "evidence_kind": { "type": "string", "enum": ["serial", "worker", "aggregate"] },
+        "evidence_kind": { "type": "string", "enum": ["serial", "local", "worker", "aggregate"] },
         "lens_revisions": {
           "type": "object",
           "additionalProperties": false,

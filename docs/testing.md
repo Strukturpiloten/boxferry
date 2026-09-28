@@ -43,6 +43,7 @@ measured wall/RSS/disk/concurrency budgets, sources, targets, approved losses, a
 Pre-release evidence v2 collects isolated workers under one four-runner cap. Four shards cover all
 48 Podman cells and five limitations. Its 1,200-second aggregate deadline preserves task safety
 budgets; failure is never success, including Release validation.
+Local `--task` evidence records outcomes, not release approval.
 
 ## Fixture route corpus
 

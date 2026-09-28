@@ -110,7 +110,10 @@ class MigrationReadinessTests(unittest.TestCase):
             "schema_version": 2,
             "outcome": "passed" if state == "passed" else "failed",
             "run": {
-                "id": "0a20a918-93bd-43a2-b346-8f7dd63b08be",
+                "id": (
+                    "8b2cb4cf-7ec3-4ba2-b87e-d4eca327ca52"
+                    if task_id is not None else "0a20a918-93bd-43a2-b346-8f7dd63b08be"
+                ),
                 "tier": tier_id,
                 "revision": revision,
                 "started_at": "2026-09-10T12:00:00Z",
@@ -162,6 +165,7 @@ class MigrationReadinessTests(unittest.TestCase):
             document["tasks"][0]["started_at"] = started_at
             document["tasks"][0]["finished_at"] = finished_at
             document["run"].update(
+                id=f"8b2cb4cf-7ec3-4ba2-b87e-{index + 1:012x}",
                 started_at=started_at,
                 finished_at=finished_at,
                 coordinator_id=coordinator,
@@ -968,6 +972,82 @@ class MigrationReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.ContractError, "parallel GitHub coordinator"):
             MODULE.run(args)
 
+    def test_hosted_worker_identity_rejected_before_execution(self) -> None:
+        task_id = "nextcloud-application"
+        base = ["run", "--tier", "pre-release", "--task", task_id]
+        cases = (
+            (["--worker-id", task_id], "requires --coordinator-id"),
+            (["--worker-id", "forgejo-root-modes"], "must match the selected --task"),
+            (["--coordinator-id", "not-a-uuid"], "canonical UUID"),
+            (["--coordinator-id", "0a20a918-93bd-43a2-b346-8f7dd63b08be"], "positive GITHUB_RUN_ATTEMPT"),
+        )
+        for arguments, pattern in cases:
+            with (
+                self.subTest(arguments=arguments),
+                mock.patch.object(MODULE, "git_revision", return_value="1" * 40),
+                mock.patch.object(MODULE, "run_task") as execute,
+                mock.patch.dict(MODULE.os.environ, {"GITHUB_RUN_ATTEMPT": ""}),
+            ):
+                args = MODULE.parser().parse_args([*base, *arguments])
+                with self.assertRaisesRegex(MODULE.ContractError, pattern):
+                    MODULE.run(args)
+                execute.assert_not_called()
+
+    def test_focused_local_run_serializes_success_and_failure(self) -> None:
+        task_id = "nextcloud-application"
+        for state, expected_status in (("passed", 0), ("failed", 1)):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as temporary:
+                template, revision = self.evidence_fixture(
+                    tier_id="pre-release", task_id=task_id, state=state
+                )
+                task = copy.deepcopy(template["tasks"][0])
+                if state == "failed":
+                    task["observed"]["exit_status"] = 1
+                output = pathlib.Path(temporary) / "local-evidence.json"
+                args = MODULE.parser().parse_args(
+                    ["run", "--tier", "pre-release", "--task", task_id,
+                     "--revision", revision, "--evidence", str(output)]
+                )
+                with (
+                    mock.patch.object(MODULE, "git_revision", return_value=revision),
+                    mock.patch.object(MODULE, "run_task", return_value=(task, 3)),
+                    mock.patch.object(MODULE, "now", side_effect=[
+                        "2026-09-10T12:00:00Z", "2026-09-10T12:00:00Z",
+                        "2026-09-10T12:01:00Z", "2026-09-10T12:01:00Z"
+                    ]),
+                    mock.patch.object(MODULE.time, "monotonic", side_effect=[100.0, 160.0]),
+                    mock.patch.object(MODULE, "configured_boxferry_binary_digest", return_value="a" * 64),
+                    mock.patch.dict(MODULE.os.environ, {"GITHUB_RUN_ATTEMPT": "7"}),
+                ):
+                    self.assertEqual(MODULE.run(args), expected_status)
+                evidence = json.loads(output.read_text(encoding="utf-8"))
+                self.assertEqual(evidence["outcome"], state)
+                self.assertEqual(evidence["run"]["evidence_kind"], "local")
+                self.assertEqual(evidence["run"]["coordinator_id"], evidence["run"]["id"])
+                self.assertEqual(evidence["run"]["boxferry_binary_sha256"], "a" * 64)
+                self.assertNotIn("github_run_attempt", evidence["run"])
+                self.assertEqual(evidence["tasks"][0]["state"], state)
+                MODULE.validate_evidence(evidence, "pre-release", revision, task_id=task_id)
+
+    def test_focused_identity_rejects_hosted_claims(self) -> None:
+        task_id = "nextcloud-application"
+        evidence, revision = self.evidence_fixture(tier_id="pre-release", task_id=task_id)
+        evidence["run"]["evidence_kind"] = "local"
+        evidence["run"]["coordinator_id"] = evidence["run"]["id"]
+        evidence["run"].pop("github_run_attempt")
+        MODULE.validate_evidence(evidence, "pre-release", revision, task_id=task_id)
+        for label, mutate, pattern in (
+            ("local claims attempt", lambda run: run.update(github_run_attempt=1), "local evidence must not claim"),
+            ("local claims coordinator", lambda run: run.update(coordinator_id="0a20a918-93bd-43a2-b346-8f7dd63b08be"), "local evidence must own"),
+            ("worker claims local identity", lambda run: run.update(evidence_kind="worker", github_run_attempt=1), "separate coordinator"),
+            ("worker lacks attempt", lambda run: run.update(evidence_kind="worker", coordinator_id="0a20a918-93bd-43a2-b346-8f7dd63b08be"), "positive GitHub run attempt"),
+        ):
+            with self.subTest(label=label):
+                changed = copy.deepcopy(evidence)
+                mutate(changed["run"])
+                with self.assertRaisesRegex(MODULE.ContractError, pattern):
+                    MODULE.validate_evidence(changed, "pre-release", revision, task_id=task_id)
+
     def test_run_rejects_abbreviated_revision_before_execution(self) -> None:
         output = subprocess.run(
             [
@@ -1188,6 +1268,11 @@ class MigrationReadinessTests(unittest.TestCase):
         def missing_attempt(documents: list[dict[str, object]]) -> None:
             documents[0]["run"].pop("github_run_attempt")
 
+        def local_fragment(documents: list[dict[str, object]]) -> None:
+            documents[0]["run"]["evidence_kind"] = "local"
+            documents[0]["run"].pop("github_run_attempt")
+            documents[0]["run"]["coordinator_id"] = documents[0]["run"]["id"]
+
         def malformed_attempt(documents: list[dict[str, object]]) -> None:
             documents[0]["run"]["github_run_attempt"] = 0
 
@@ -1247,6 +1332,7 @@ class MigrationReadinessTests(unittest.TestCase):
         cases = [
             ("failed", failed, "successful worker evidence"),
             ("timed out", timed_out, "timed-out worker evidence"),
+            ("local fragment", local_fragment, "not a single worker evidence"),
             ("missing attempt", missing_attempt, "positive GitHub run attempt"),
             ("malformed attempt", malformed_attempt, "minimum"),
             ("wrong coordinator", wrong_coordinator, "different coordinator"),
