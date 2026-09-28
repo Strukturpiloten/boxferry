@@ -19,11 +19,15 @@ sudo env BOXFERRY_BIN="$PWD/target/debug/boxferry" BOXFERRY_COMPOSE_BIN="$PWD/ta
 Local pre-release runs must select exactly one task for focused reproduction. A complete
 pre-release run is parallel aggregate evidence produced only by the GitHub workflow; the runner
 rejects an unfiltered serial pre-release invocation.
+Focused local runs write `evidence_kind: local`, bind the selected task and checked-out revision,
+and retain catalogue, configured binary digest, budgets, outcome, and explicit gaps. They do not
+claim a GitHub attempt or hosted coordinator. `validate-evidence --task TASK` can inspect this
+diagnostic evidence; the hosted collector rejects it, even when the local task passes.
 
 Serial `offline` and `trusted-live` runs each have an independent wall deadline below the enclosing
 GitHub job timeout. Their runner caps every task to the smaller of its own deadline and the tier
 time remaining, then writes failed and `not-run` evidence when the tier is exhausted. A focused
-pre-release worker retains its reviewed task deadline; the collector separately applies the
+pre-release task retains its reviewed task deadline; the collector separately applies the
 aggregate pre-release admission deadline. Workflow setup time and evidence upload remain outside
 the catalogue budget with a deliberate job-timeout margin.
 
