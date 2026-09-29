@@ -51,19 +51,15 @@ Review the relevant manifest and ADR for exact features and constraints.
 
 ## Automation
 
-Every operational software pin used by CI, the Dev Container, or a live harness has one Renovate
-owner. Canonical fixed GitHub-hosted `ubuntu-*`, `macos-*`, and `windows-*` workflow labels belong
-to the Renovate `github-runners` regex manager, including numeric architecture or size suffixes.
-Those prefixes are reserved for Renovate-owned hosted labels, which use an unquoted and unanchored
-scalar so extraction stays explicit. Dynamic matrix expressions and self-hosted forms remain
-visibly distinct. Grouped runner proposals never auto-merge: review hosted environment release
-notes and every affected workflow before merging. Native managers own Cargo, npm, Rust toolchains,
-Dev Container features, and
-GitHub Actions. Explicit regex managers own downloaded CLI versions, atomic Dev Container base
-image release/digest pairs, the checksum-pinned Docker Compose provider, actively executed
-application images, and the live workload probe image. The shared
-`scripts/lib/compose-provider.sh` file is the canonical Compose provider version and checksum;
-workflows call its installer rather than duplicating release URLs.
+Every operational pin has exactly one Renovate owner. The `github-runners` regex manager owns
+fixed `ubuntu-*`, `macos-*`, and `windows-*` labels, including numeric architecture/size suffixes.
+These reserved hosted labels must be unquoted, unanchored scalars; dynamic matrices and self-hosted
+forms stay distinct. Runner groups never auto-merge: review release notes and every affected
+workflow. Native managers own Cargo, npm, Rust toolchains, Dev Container features, and Actions.
+Regex managers own downloaded tools, atomic Dev Container image version/digest pairs,
+checksum-pinned Compose providers, active application images, and live probe images.
+Workflows call the canonical version/checksum installer `scripts/lib/compose-provider.sh`;
+never duplicate its release URLs.
 
 The repository-owned Dockerfile is already managed atomically by its release/digest regex manager,
 and every Compose or Quadlet document is fixture input. Their native managers are disabled so they
@@ -77,6 +73,12 @@ Checksum-bearing provider and live-image proposals require Dependency Dashboard 
 auto-merge. Review the new release asset or platform manifest digest, provenance, license, resource
 budget, and live behavior before updating the corresponding catalogues. Semantic policy tests may
 assert action identity and immutable-pin shape, but must not embed a Renovate-owned action revision.
+
+The application dispatcher's canonical `ADMISSION_REVISION` pins DockerLens #42's reviewed merge
+commit: unreleased infrastructure, not a package release. No helper tag or downloadable checksum
+exists; invent neither. One `github-digest` manager owns this pin; a later rule requires Dashboard
+approval and disables automerge. Review producer/consumer together: both actors' permissions,
+exact-head admission, privacy, and fail-closed cases.
 
 Captured cassettes, generated expectations, historical observations, and the Podman compatibility
 matrix are retained evidence rather than floating dependencies. Their recorded versions change only

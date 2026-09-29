@@ -135,8 +135,9 @@ class ReviewedRestartLossTests(unittest.TestCase):
 
 class ApplicationExportPrivacyTests(unittest.TestCase):
     INCLUDE = '[[ "${output}" != podman ]] && target_arguments+=(--environment-values include)'
+    WITHHOLD_EXACT = 'if [[ "${selection}" == exact && "${output}" != podman ]]; then'
 
-    def run_exports(self, application, mutation=None):
+    def run_exports(self, application, mutation=None, withhold_mutation=None):
         helper = ROOT / "scripts/lib" / f"{application}-application.sh"
         source = helper.read_text(encoding="utf-8")
         function = re.search(
@@ -145,6 +146,9 @@ class ApplicationExportPrivacyTests(unittest.TestCase):
         self.assertIn(self.INCLUDE, function)
         if mutation is not None:
             function = function.replace(self.INCLUDE, mutation)
+        if withhold_mutation is not None:
+            self.assertIn(self.WITHHOLD_EXACT, function)
+            function = function.replace(self.WITHHOLD_EXACT, withhold_mutation)
         shell = r'''
 set -euo pipefail
 repository_root=$1
@@ -156,8 +160,23 @@ for assertion in assert_output_membership assert_output_semantics assert_success
   eval "${application}_${assertion}() { :; }"
 done
 assert_successful_conversion() { :; }
+application_assert_default_withholding() {
+  local directory=$1 report=$2 subject=$3 output
+  [[ "${application}" != supabase && "${report}" == "${directory}.report.json" ]] || return 93
+  case "${directory}" in
+    *-default-withheld-compose) output=compose ;;
+    *-default-withheld-quadlet) output=quadlet ;;
+    *) return 94 ;;
+  esac
+  case "${application}:${subject}" in
+    paperless:services.contract-paper-web.environment.PAPERLESS_DBPASS|\
+    immich:services.contract-immich-server.environment.DB_PASSWORD) ;;
+    *) return 94 ;;
+  esac
+  printf 'assert:%s\n' "${output}" >> "${current_case}/calls"
+}
 boxferry_operation() {
-  local output=$4 includes=0
+  local description=$1 output=$4 includes=0 event
   while (( $# )); do
     if [[ "$1" == --environment-values ]]; then
       [[ "${2:-}" == include ]] || return 95
@@ -165,12 +184,17 @@ boxferry_operation() {
     fi
     shift
   done
-  if [[ "$output" == podman ]]; then
+  if [[ "${description}" == *' default-withheld Podman-to-'* ]]; then
+    [[ "${application}" != supabase && "${output}" != podman && "${includes}" == 0 ]] || return 98
+    event="withheld:${output}"
+  elif [[ "$output" == podman ]]; then
     [[ "$includes" == 0 ]] || return 96
+    event=podman
   else
     [[ "$includes" == 1 ]] || return 97
+    event="included:${output}"
   fi
-  printf '%s\n' "$output" >> "${current_case}/calls"
+  printf '%s\n' "${event}" >> "${current_case}/calls"
   printf '%s\n' '{"schema_version":1,"status":"success","exit_category":"success","diagnostics":[],"fidelity":{"invalid":0},"output_artifacts":[{"name":"stub"}]}'
 }
 "${application}_run_exports" cli /nonexistent-test-socket contract
@@ -184,13 +208,22 @@ boxferry_operation() {
             calls = Path(temporary) / "calls"
             return result, calls.read_text().splitlines() if calls.exists() else []
 
-    def test_every_selection_explicitly_includes_only_safe_output_values(self):
+    @staticmethod
+    def expected_calls(application):
+        normal = ["included:compose", "included:quadlet", "podman"]
+        if application == "supabase":
+            return normal * 4
+        return [
+            "withheld:compose", "assert:compose", "included:compose",
+            "withheld:quadlet", "assert:quadlet", "included:quadlet", "podman",
+        ] + normal * 2
+
+    def test_every_selection_checks_default_withholding_and_explicit_inclusion(self):
         for application in ("paperless", "immich", "supabase"):
             with self.subTest(application=application):
                 result, calls = self.run_exports(application)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                selections = 4 if application == "supabase" else 3
-                self.assertEqual(calls, ["compose", "quadlet", "podman"] * selections)
+                self.assertEqual(calls, self.expected_calls(application))
 
     def test_missing_opt_in_or_including_podman_values_is_rejected(self):
         for application in ("paperless", "immich", "supabase"):
@@ -198,6 +231,13 @@ boxferry_operation() {
                 with self.subTest(application=application, mutation=mutation):
                     result, _ = self.run_exports(application, mutation)
                     self.assertNotEqual(result.returncode, 0)
+
+    def test_missing_default_withholding_is_rejected(self):
+        for application in ("paperless", "immich"):
+            with self.subTest(application=application):
+                result, calls = self.run_exports(application, withhold_mutation="if false; then")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotEqual(calls, self.expected_calls(application))
 
 
 class SupabaseEnvironmentArtifactTests(unittest.TestCase):

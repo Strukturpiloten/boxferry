@@ -66,6 +66,16 @@
     },
     {
       "customType": "regex",
+      "description": "Track the immutable DockerLens application admission commit",
+      "managerFilePatterns": ["/^\\.github/workflows/reviewed-application-validation\\.yml$/"],
+      "matchStrings": [
+        "(?<indentation>[ \\t]*)# renovate: datasource=github-digest depName=(?<depName>Strukturpiloten/docker-lens) currentValue=(?<currentValue>main)\\n[ \\t]*ADMISSION_REVISION:\\s*(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "datasourceTemplate": "github-digest",
+      "autoReplaceStringTemplate": "{{{indentation}}}# renovate: datasource=github-digest depName={{{depName}}} currentValue={{{newValue}}}\n{{{indentation}}}ADMISSION_REVISION: {{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
       "description": "Update the Dev Container base release and digest together",
       "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
       "matchStrings": [
@@ -198,6 +208,17 @@
       "automerge": false,
       "prBodyNotes": [
         "Review the hosted image release notes and verify every workflow's operating-system environment before merging."
+      ]
+    },
+    {
+      "description": "Require explicit security review for the DockerLens application admission pin",
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["Strukturpiloten/docker-lens"],
+      "matchFileNames": [".github/workflows/reviewed-application-validation.yml"],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "Review the shared admission helper, both actors' permission checks, exact-head enforcement, and BoxFerry application evidence before accepting this infrastructure change."
       ]
     },
     {

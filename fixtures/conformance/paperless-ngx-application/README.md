@@ -1,5 +1,11 @@
 # Paperless-ngx application conformance
 
+`scripts/lib/paperless-application-probes.sh` owns reusable readiness, document
+ingestion/retrieval, Valkey activity, and exact three/six-row database assertions.
+The Podman adapter retains probe placement, topology, volumes, lifecycle, and
+cleanup. `scripts/test-paperless-application-probes.sh` checks the semantic
+contract offline; this refactor adds no Docker runtime evidence.
+
 This harness-owned fixture drives the opt-in `paperless-application` live profile. It is separate
 from the authored offline migration scenarios. The profile independently provisions the same
 five-service Paperless-ngx topology with native Podman commands and the standalone Docker Compose

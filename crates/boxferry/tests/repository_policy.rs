@@ -697,6 +697,18 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
                 .map_err(|error| format!("failed to read live scenario module: {error}"))?,
         );
     }
+    for application in ["forgejo", "nextcloud", "paperless", "immich"] {
+        let adapter = fs::read_to_string(root.join("scripts/lib").join(format!("{application}-application.sh")))
+            .map_err(|error| format!("failed to read {application} application adapter: {error}"))?;
+        let helper = format!("{application}-application-probes.sh");
+        if !adapter.contains(&format!("/{helper}")) {
+            return Err(format!("{application} adapter must source its probe helper"));
+        }
+        runner_contract.push_str(
+            &fs::read_to_string(root.join("scripts/lib").join(helper))
+                .map_err(|error| format!("failed to read {application} probe helper: {error}"))?,
+        );
+    }
     for fixture in [
         "compose.yaml",
         "frontend.conf",
@@ -7529,6 +7541,456 @@ fn renovate_policy_rejects_unmanaged_workflow_pin_counterexamples() -> Result<()
         }
     }
 
+    Ok(())
+}
+
+fn reviewed_application_sections(workflow: &str) -> Result<(&str, &str, &str), String> {
+    let (_, jobs) = workflow
+        .split_once("\n  admission:\n")
+        .ok_or_else(|| "reviewed application workflow has no admission job".to_owned())?;
+    let (admission, jobs) = jobs
+        .split_once("\n  application:\n")
+        .ok_or_else(|| "reviewed application workflow has no application job".to_owned())?;
+    let (application, aggregate) = jobs
+        .split_once("\n  aggregate:\n")
+        .ok_or_else(|| "reviewed application workflow has no final aggregate".to_owned())?;
+    Ok((admission, application, aggregate))
+}
+
+fn validate_reviewed_application_workflow(workflow: &str) -> Result<(), String> {
+    if !workflow.starts_with("---\n")
+        || !workflow.contains("on:\n  workflow_dispatch:\n")
+        || workflow.contains("pull_request_target:")
+        || workflow.contains("\n  pull_request:\n")
+        || !workflow.contains("github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'")
+        || !workflow.contains("pull-requests: read")
+        || workflow.matches("\n          - ").count() != 3
+    {
+        return Err("reviewed application dispatch must run only from trusted main".to_owned());
+    }
+    for choice in ["nextcloud-application", "paperless-application", "immich-application"] {
+        if workflow.matches(&format!("          - {choice}\n")).count() != 1 {
+            return Err(format!(
+                "reviewed application task choice `{choice}` is missing or duplicated"
+            ));
+        }
+    }
+    for input in ["pr_number:", "expected_sha:", "task:"] {
+        if !workflow.contains(&format!("      {input}\n")) {
+            return Err(format!("reviewed application input `{input}` is missing"));
+        }
+    }
+    let (admission, application, aggregate) = reviewed_application_sections(workflow)?;
+    for (name, job) in [
+        ("admission", admission),
+        ("application", application),
+        ("aggregate", aggregate),
+    ] {
+        for required in [
+            "repository: Strukturpiloten/docker-lens",
+            "ref: ${{ env.ADMISSION_REVISION }}",
+            "path: admission",
+            "persist-credentials: false",
+            "EXPECTED_REPOSITORY: Strukturpiloten/boxferry",
+            "PR_NUMBER: ${{ inputs.pr_number }}",
+            "EXPECTED_SHA: ${{ inputs.expected_sha }}",
+            "GITHUB_TOKEN: ${{ github.token }}",
+            "test \"$(git -C admission rev-parse HEAD)\" = \"${ADMISSION_REVISION}\"",
+            "python3 admission/scripts/native-dispatch-admission.py",
+        ] {
+            if !job.contains(required) {
+                return Err(format!("{name} lacks trusted admission contract `{required}`"));
+            }
+        }
+    }
+    validate_reviewed_application_execution(application)?;
+    validate_reviewed_application_upload(application)?;
+    validate_reviewed_application_aggregate(aggregate)?;
+    if workflow.contains("secrets.") || workflow.contains("target/podman-live") || workflow.contains("**/*.json") {
+        return Err("reviewed application workflow must not expose publication secrets or raw captures".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_reviewed_application_execution(application: &str) -> Result<(), String> {
+    let recheck = application
+        .find("python3 admission/scripts/native-dispatch-admission.py")
+        .ok_or_else(|| "application recheck is missing".to_owned())?;
+    let checkout = application
+        .find("name: Check out exact reviewed candidate separately")
+        .ok_or_else(|| "candidate checkout is missing".to_owned())?;
+    if recheck >= checkout {
+        return Err("candidate checkout must follow fresh trusted admission".to_owned());
+    }
+    for required in [
+        "ref: ${{ inputs.expected_sha }}",
+        "path: candidate",
+        "ref: ${{ github.sha }}",
+        "path: trusted",
+        "test \"$(git rev-parse HEAD)\" = \"${EXPECTED_SHA}\"",
+        "test \"$(git -C ../trusted rev-parse HEAD)\" = \"${GITHUB_SHA}\"",
+        "cmp -s ../trusted/fixtures/conformance/migration-readiness/tiers.toml",
+        "cmp -s ../trusted/scripts/migration-readiness.py scripts/migration-readiness.py",
+        "cmp -s ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json",
+        "docs/schemas/migration-readiness-evidence-v2.schema.json",
+        "nextcloud-application|paperless-application|immich-application",
+        "(.tasks | length) == 1",
+        "cargo build --locked --package boxferry --bin boxferry --features podman",
+        "boxferry_install_compose_provider target/tools/docker-compose",
+        "python3 scripts/migration-readiness.py run",
+        "--tier pre-release --task \"${TASK}\"",
+        "--revision \"${EXPECTED_SHA}\" --evidence \"${EVIDENCE_PATH}\"",
+        "--task \"${TASK}\" --revision \"${EXPECTED_SHA}\"",
+        "if: always() && steps.plan.outcome == 'success' && steps.validate.outcome == 'success'",
+        "path: evidence-stage/reviewed-application.json",
+        "name: reviewed-application-${{ inputs.task }}-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+        "if-no-files-found: error",
+        "test \"${EXECUTION_OUTCOME}\" = success",
+        "test \"${EVIDENCE_OUTCOME}\" = success",
+    ] {
+        if !application.contains(required) {
+            return Err(format!("reviewed application execution lacks `{required}`"));
+        }
+    }
+    let trusted_budget = application
+        .find("cmp -s ../trusted/scripts/migration-readiness.py scripts/migration-readiness.py")
+        .ok_or_else(|| "trusted runner comparison is missing".to_owned())?;
+    let trusted_schema = application
+        .find("cmp -s ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json")
+        .ok_or_else(|| "trusted evidence schema comparison is missing".to_owned())?;
+    let candidate_plan = application
+        .find("python3 scripts/migration-readiness.py plan")
+        .ok_or_else(|| "candidate task plan is missing".to_owned())?;
+    if trusted_budget >= candidate_plan || trusted_schema >= candidate_plan {
+        return Err("trusted runner and schema preflight must precede candidate script execution".to_owned());
+    }
+    if !application[trusted_schema..candidate_plan]
+        .contains("            docs/schemas/migration-readiness-evidence-v2.schema.json")
+    {
+        return Err("candidate evidence schema must be the comparison operand".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_reviewed_application_upload(application: &str) -> Result<(), String> {
+    let validation = application
+        .find("name: Validate exact-head sanitized evidence")
+        .ok_or_else(|| "candidate structural evidence validation is missing".to_owned())?;
+    let upload = application
+        .find("name: Upload only bounded diagnostic JSON evidence")
+        .ok_or_else(|| "bounded evidence upload is missing".to_owned())?;
+    if validation >= upload {
+        return Err("structural evidence validation must precede upload".to_owned());
+    }
+    let pre_upload = &application[validation..upload];
+    let regular_file = pre_upload
+        .find("test -f \"${EVIDENCE_PATH}\"")
+        .ok_or_else(|| "pre-upload evidence regular-file check is missing".to_owned())?;
+    let no_symlink = pre_upload
+        .find("test ! -L \"${EVIDENCE_PATH}\"")
+        .ok_or_else(|| "pre-upload evidence symlink rejection is missing".to_owned())?;
+    let byte_bound = pre_upload
+        .find("test \"$(stat -c '%s' \"${EVIDENCE_PATH}\")\" -le 131072")
+        .ok_or_else(|| "pre-upload evidence byte bound is missing".to_owned())?;
+    let staging = pre_upload
+        .find("install -m 0600 -- \"${EVIDENCE_PATH}\" ../evidence-stage/reviewed-application.json")
+        .ok_or_else(|| "bounded evidence staging is missing".to_owned())?;
+    let staged_bound = pre_upload
+        .find("test \"$(stat -c '%s' ../evidence-stage/reviewed-application.json)\" -le 131072")
+        .ok_or_else(|| "staged evidence byte bound is missing".to_owned())?;
+    let trusted_validation = pre_upload
+        .find("python3 ../trusted/scripts/migration-readiness.py validate-evidence")
+        .ok_or_else(|| "trusted structural evidence validator is missing".to_owned())?;
+    if regular_file >= byte_bound
+        || no_symlink >= byte_bound
+        || byte_bound >= staging
+        || staging >= staged_bound
+        || staged_bound >= trusted_validation
+        || !pre_upload.contains("test -f ../evidence-stage/reviewed-application.json")
+        || !pre_upload.contains("test ! -L ../evidence-stage/reviewed-application.json")
+        || !pre_upload.contains("--evidence ../evidence-stage/reviewed-application.json --tier pre-release")
+        || pre_upload.contains("--require-success")
+        || pre_upload.contains("python3 scripts/migration-readiness.py validate-evidence")
+    {
+        return Err("only bounded evidence may reach trusted structural validation before upload".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_reviewed_application_aggregate(aggregate: &str) -> Result<(), String> {
+    for required in [
+        "needs: [admission, application]",
+        "if: always() && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'",
+        "test \"${ADMISSION_RESULT}\" = success",
+        "test \"${APPLICATION_RESULT}\" = success",
+        "ref: ${{ github.sha }}",
+        "path: trusted",
+        "python3 trusted/scripts/migration-readiness.py validate-evidence",
+        "--evidence evidence/reviewed-application.json --tier pre-release",
+        "--task \"${TASK}\" --revision \"${EXPECTED_SHA}\" --require-success",
+    ] {
+        if !aggregate.contains(required) {
+            return Err(format!("final reviewed application aggregate lacks `{required}`"));
+        }
+    }
+    Ok(())
+}
+
+fn admission_pin_extractions(pattern: &str, workflow: &str) -> Result<Vec<String>, String> {
+    let script = "import json,re,sys\npattern=sys.argv[1].replace('(?<','(?P<')\nprint(json.dumps([match.group('currentDigest') for match in re.finditer(pattern,sys.argv[2])]))";
+    let output = run_bounded_command(
+        Command::new("python3").args(["-c", script, pattern, workflow]),
+        Duration::from_secs(5),
+        "reviewed application Renovate extraction",
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "Renovate extraction failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("invalid extraction result: {error}"))
+}
+
+fn validate_reviewed_application_renovate(renovate: &serde_json::Value, workflow: &str) -> Result<(), String> {
+    let managers = renovate["customManagers"]
+        .as_array()
+        .ok_or_else(|| "Renovate customManagers must be an array".to_owned())?;
+    let owners = managers
+        .iter()
+        .filter(|manager| manager["description"] == "Track the immutable DockerLens application admission commit")
+        .collect::<Vec<_>>();
+    if owners.len() != 1
+        || managers
+            .iter()
+            .filter(|manager| manager.to_string().contains("ADMISSION_REVISION"))
+            .count()
+            != 1
+    {
+        return Err("DockerLens admission pin needs exactly one custom manager".to_owned());
+    }
+    let owner = owners[0];
+    let pattern = owner["matchStrings"]
+        .as_array()
+        .and_then(|values| (values.len() == 1).then(|| values[0].as_str()).flatten())
+        .ok_or_else(|| "DockerLens admission manager needs one extraction pattern".to_owned())?;
+    if owner["customType"] != "regex"
+        || owner["datasourceTemplate"] != "github-digest"
+        || owner["managerFilePatterns"]
+            != serde_json::json!([r"/^\.github/workflows/reviewed-application-validation\.yml$/"])
+    {
+        return Err("DockerLens admission manager has the wrong ownership scope".to_owned());
+    }
+    let pins = admission_pin_extractions(pattern, workflow)?;
+    if pins.len() != 1
+        || workflow
+            .matches("# renovate: datasource=github-digest depName=Strukturpiloten/docker-lens currentValue=main")
+            .count()
+            != 1
+        || !workflow.contains(&format!("ADMISSION_REVISION: {}", pins[0]))
+    {
+        return Err("DockerLens admission pin must extract exactly once".to_owned());
+    }
+    let replacement = owner["autoReplaceStringTemplate"]
+        .as_str()
+        .ok_or_else(|| "DockerLens admission manager lacks atomic replacement".to_owned())?;
+    let new_digest = "0123456789abcdef0123456789abcdef01234567";
+    let rendered = replacement
+        .replace("{{{indentation}}}", "  ")
+        .replace("{{{depName}}}", "Strukturpiloten/docker-lens")
+        .replace("{{{newValue}}}", "main")
+        .replace("{{{newDigest}}}", new_digest);
+    let replacement_pins = admission_pin_extractions(pattern, &rendered)?;
+    if replacement_pins.len() != 1 || replacement_pins[0] != new_digest {
+        return Err("DockerLens admission replacement must re-extract one adjacent pin".to_owned());
+    }
+    let rules = renovate["packageRules"]
+        .as_array()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    let generic = rules
+        .iter()
+        .position(|rule| rule["description"] == "Automerge tested non-major dependency updates");
+    let lock = rules
+        .iter()
+        .position(|rule| rule["description"] == "Automerge green-gated lock-file maintenance");
+    let review = rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| {
+            rule["description"] == "Require explicit security review for the DockerLens application admission pin"
+        })
+        .collect::<Vec<_>>();
+    if review.len() != 1 {
+        return Err("DockerLens admission pin requires one manual review rule".to_owned());
+    }
+    let (position, rule) = review[0];
+    if generic.is_none_or(|index| position <= index)
+        || lock.is_none_or(|index| position <= index)
+        || rule["matchDatasources"] != serde_json::json!(["github-digest"])
+        || rule["matchPackageNames"] != serde_json::json!(["Strukturpiloten/docker-lens"])
+        || rule["matchFileNames"] != serde_json::json!([".github/workflows/reviewed-application-validation.yml"])
+        || rule["dependencyDashboardApproval"] != true
+        || rule["automerge"] != false
+    {
+        return Err("DockerLens admission updates must require post-automerge-rule dashboard approval".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn reviewed_application_dispatch_is_exact_head_and_fail_closed() -> Result<(), String> {
+    let root = repository_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/reviewed-application-validation.yml"))
+        .map_err(|error| format!("failed to read reviewed application workflow: {error}"))?;
+    validate_reviewed_application_workflow(&workflow)?;
+    for (failure, mutated) in [
+        (
+            "PR target event",
+            workflow.replace("on:\n  workflow_dispatch:\n", "on:\n  pull_request_target:\n"),
+        ),
+        (
+            "missing pre-execution admission",
+            workflow.replacen("python3 admission/scripts/native-dispatch-admission.py", "true", 2),
+        ),
+        (
+            "candidate head not verified",
+            workflow.replace("test \"$(git rev-parse HEAD)\" = \"${EXPECTED_SHA}\"", "true"),
+        ),
+        (
+            "unbounded task choice",
+            workflow.replace("nextcloud-application|paperless-application|immich-application", "*"),
+        ),
+        (
+            "candidate-controlled budget",
+            workflow.replace(
+                "cmp -s ../trusted/scripts/migration-readiness.py scripts/migration-readiness.py",
+                "true",
+            ),
+        ),
+    ] {
+        if validate_reviewed_application_workflow(&mutated).is_ok() {
+            return Err(format!("reviewed application policy accepted {failure}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn reviewed_application_evidence_rejects_unsafe_artifact_counterexamples() -> Result<(), String> {
+    let root = repository_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/reviewed-application-validation.yml"))
+        .map_err(|error| format!("failed to read reviewed application workflow: {error}"))?;
+    validate_reviewed_application_workflow(&workflow)?;
+    for (failure, mutated) in [
+        (
+            "candidate-controlled evidence schema",
+            workflow.replace(
+                "cmp -s ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json",
+                "true",
+            ),
+        ),
+        (
+            "wrong evidence schema comparison operand",
+            workflow.replace(
+                "            docs/schemas/migration-readiness-evidence-v2.schema.json",
+                "            ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json",
+            ),
+        ),
+        (
+            "candidate-controlled pre-upload validator",
+            workflow.replace(
+                "python3 ../trusted/scripts/migration-readiness.py validate-evidence",
+                "python3 scripts/migration-readiness.py validate-evidence",
+            ),
+        ),
+        (
+            "trusted validator reads candidate evidence instead of staged evidence",
+            workflow.replace(
+                "--evidence ../evidence-stage/reviewed-application.json --tier pre-release",
+                "--evidence \"${EVIDENCE_PATH}\" --tier pre-release",
+            ),
+        ),
+        (
+            "unbounded pre-upload evidence",
+            workflow.replace("test \"$(stat -c '%s' \"${EVIDENCE_PATH}\")\" -le 131072", "true"),
+        ),
+        (
+            "unbounded staged evidence",
+            workflow.replace(
+                "test \"$(stat -c '%s' ../evidence-stage/reviewed-application.json)\" -le 131072",
+                "true",
+            ),
+        ),
+        (
+            "candidate evidence uploaded instead of staged evidence",
+            workflow.replace(
+                "path: evidence-stage/reviewed-application.json",
+                "path: candidate/${{ env.EVIDENCE_PATH }}",
+            ),
+        ),
+        (
+            "skipped aggregate",
+            workflow.replace(
+                "if: always() && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'",
+                "if: success()",
+            ),
+        ),
+        (
+            "unsanitized artifact",
+            workflow.replace(
+                "path: evidence-stage/reviewed-application.json",
+                "path: candidate/target/podman-live",
+            ),
+        ),
+        (
+            "upload of rejected evidence",
+            workflow.replace(
+                "if: always() && steps.plan.outcome == 'success' && steps.validate.outcome == 'success'",
+                "if: always() && steps.plan.outcome == 'success'",
+            ),
+        ),
+        (
+            "missing final recheck",
+            workflow.replacen("python3 admission/scripts/native-dispatch-admission.py", "true", 3),
+        ),
+    ] {
+        if validate_reviewed_application_workflow(&mutated).is_ok() {
+            return Err(format!("reviewed application policy accepted {failure}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn renovate_owns_reviewed_application_admission_pin_once() -> Result<(), String> {
+    let root = repository_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/reviewed-application-validation.yml"))
+        .map_err(|error| format!("failed to read reviewed application workflow: {error}"))?;
+    let renovate = fs::read_to_string(root.join(".github/renovate.json"))
+        .map_err(|error| format!("failed to read Renovate configuration: {error}"))?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&renovate).map_err(|error| format!("failed to parse Renovate configuration: {error}"))?;
+    validate_reviewed_application_renovate(&renovate, &workflow)?;
+
+    let duplicated = format!(
+        "{workflow}\n  # renovate: datasource=github-digest depName=Strukturpiloten/docker-lens currentValue=main\n  ADMISSION_REVISION: 0123456789abcdef0123456789abcdef01234567\n"
+    );
+    if validate_reviewed_application_renovate(&renovate, &duplicated).is_ok() {
+        return Err("Renovate accepted a duplicate DockerLens admission pin".to_owned());
+    }
+    let mut automatic = renovate.clone();
+    let rule = automatic["packageRules"]
+        .as_array_mut()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?
+        .iter_mut()
+        .find(|rule| {
+            rule["description"] == "Require explicit security review for the DockerLens application admission pin"
+        })
+        .ok_or_else(|| "DockerLens security review rule missing".to_owned())?;
+    rule["automerge"] = serde_json::json!(true);
+    if validate_reviewed_application_renovate(&automatic, &workflow).is_ok() {
+        return Err("Renovate accepted automatic admission-pin updates".to_owned());
+    }
     Ok(())
 }
 

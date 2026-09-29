@@ -1,5 +1,11 @@
 # Immich application conformance
 
+`scripts/lib/immich-application-probes.sh` owns reusable media ingest/retrieval,
+Valkey activity, ML-exclusion callback ordering, and asset/job/extension checks.
+The Podman adapter retains probe placement, topology, volumes, lifecycle, and
+cleanup. `scripts/test-immich-application-probes.sh` checks the semantic contract
+offline; this refactor adds no Docker runtime evidence.
+
 This harness-owned fixture drives the opt-in `immich-application` live profile. It is independent
 of the authored offline migration scenario. The profile provisions the same four-service,
 CPU-only Immich 3.1.0 topology with native Podman commands and the standalone Docker Compose 5.5.0
