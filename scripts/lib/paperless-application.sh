@@ -983,6 +983,125 @@ paperless_report_conversion_failure() {
     "${report}" >&2
 }
 
+# The broker password is also an authored Valkey command argument. Check its
+# location structurally so the default-withheld environment contract does not
+# mistake that command for a leaked environment assignment.
+paperless_assert_withheld_broker_command() {
+  local directory=$1 report=$2 output=$3 prefix=$4
+  python3 - "${directory}" "${report}" "${output}" "${prefix}" "${PAPERLESS_REDIS_PASSWORD}" << 'PY'
+import pathlib
+import json
+import shlex
+import sys
+
+directory, report, output, prefix, canary = sys.argv[1:]
+broker = f"{prefix}-paper-broker"
+root = pathlib.Path(directory)
+
+
+def reject(message):
+    raise SystemExit(f"Default-withheld Paperless broker check failed: {message}")
+
+
+if canary in pathlib.Path(report).read_text(encoding="utf-8"):
+    reject("report retained broker value")
+
+seen = {"command": 0, "healthcheck": 0}
+
+
+def command_tokens(value):
+    if isinstance(value, list) and all(isinstance(token, str) for token in value):
+        return value
+    if isinstance(value, str):
+        return shlex.split(value)
+    reject("broker command has unexpected shape")
+
+
+def require_password_argument(value, kind):
+    tokens = command_tokens(value)
+    executable, option = ("valkey-server", "--requirepass") if kind == "command" else ("valkey-cli", "-a")
+    if kind == "healthcheck" and tokens and tokens[0] in ("CMD", "CMD-SHELL"):
+        tokens = tokens[1:]
+        if len(tokens) == 1:
+            tokens = shlex.split(tokens[0])
+    if not tokens or tokens[0] != executable or tokens.count(canary) != 1:
+        reject("broker value is not in the authored command")
+    if not any(tokens[index:index + 2] == [option, canary] for index in range(len(tokens) - 1)):
+        reject("broker value is not the password argument")
+    seen[kind] += 1
+    if seen[kind] != 1:
+        reject("broker command is duplicated")
+
+
+if output == "compose":
+    import yaml
+
+    files = list(root.rglob("*"))
+    for path in files:
+        if not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8")
+        file_allowed = 0
+        document = yaml.safe_load(content)
+        if not isinstance(document, dict):
+            reject("unexpected Compose artifact")
+        services = document.get("services", {})
+        if not isinstance(services, dict):
+            reject("invalid Compose services")
+        for name, service in services.items():
+            if not isinstance(service, dict):
+                reject("invalid Compose service")
+            for key in ("command", "healthcheck"):
+                value = service.get(key)
+                if value is None or canary not in str(value):
+                    continue
+                if name not in ("broker", broker) and service.get("container_name") != broker:
+                    reject("broker value appeared in another service")
+                if key == "healthcheck":
+                    if not isinstance(value, dict) or "test" not in value:
+                        reject("broker value appeared outside healthcheck test")
+                    if canary in str({k: v for k, v in value.items() if k != "test"}):
+                        reject("broker value appeared outside healthcheck test")
+                    value = value["test"]
+                kind = "command" if key == "command" else "healthcheck"
+                require_password_argument(value, kind)
+                file_allowed += 1
+            remaining = {key: value for key, value in service.items() if key not in ("command", "healthcheck")}
+            if canary in str(remaining):
+                reject("broker value appeared outside broker commands")
+        if canary in str({key: value for key, value in document.items() if key != "services"}):
+            reject("broker value appeared outside services")
+        if content.count(canary) != file_allowed:
+            reject("broker value appeared outside parsed commands")
+elif output == "quadlet":
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8")
+        is_broker = path.name in ("broker.container", f"{broker}.container") or f"ContainerName={broker}" in content.splitlines()
+        section = None
+        for line in content.splitlines():
+            if line.startswith("[") and line.endswith("]"):
+                section = line
+            if canary not in line:
+                continue
+            key, separator, value = line.partition("=")
+            if not is_broker or section != "[Container]" or not separator:
+                reject("broker value appeared outside broker container")
+            if value.count(canary) != 1:
+                reject("broker value repeated in command")
+            if key not in ("Exec", "HealthCmd"):
+                reject("broker value appeared outside authored command")
+            parsed = json.loads(value) if value.startswith("[") else value
+            require_password_argument(parsed, "command" if key == "Exec" else "healthcheck")
+else:
+    reject("unexpected output format")
+
+if seen != {"command": 1, "healthcheck": 1}:
+    reject("authored broker command or healthcheck missing")
+PY
+}
+
 paperless_run_exports() {
   local mode=$1 socket=$2 prefix=$3
   local selection output directory report withheld_directory withheld_report
@@ -1019,7 +1138,9 @@ paperless_run_exports() {
           "${withheld_directory}" "${withheld_report}" \
           "services.${prefix}-paper-web.environment.PAPERLESS_DBPASS" \
           "${PAPERLESS_ADMIN_PASSWORD}" "${PAPERLESS_DB_PASSWORD}" \
-          "${PAPERLESS_REDIS_PASSWORD}" "${PAPERLESS_SECRET_KEY}" || return $?
+          "${PAPERLESS_SECRET_KEY}" || return $?
+        paperless_assert_withheld_broker_command \
+          "${withheld_directory}" "${withheld_report}" "${output}" "${prefix}" || return $?
         paperless_assert_output_membership \
           "${selection}" "${output}" "${withheld_directory}" "${prefix}" || return $?
       fi

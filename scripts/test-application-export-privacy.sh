@@ -95,6 +95,95 @@ if application_assert_default_withholding \
 fi
 rm -- "${directory}/broker-leak.txt"
 
+# Only the authored broker command and healthcheck may retain this canary.
+broker_directory="${test_root}/broker-export"
+mkdir -p -- "${broker_directory}"
+printf '%s\n' \
+  'services:' \
+  '  fixture-paper-broker:' \
+  '    container_name: fixture-paper-broker' \
+  "    command: [valkey-server, --requirepass, ${PAPERLESS_REDIS_PASSWORD}]" \
+  '    healthcheck:' \
+  "      test: [CMD, valkey-cli, -a, ${PAPERLESS_REDIS_PASSWORD}, ping]" \
+  '  fixture-paper-web:' \
+  '    environment: {}' > "${broker_directory}/compose.yaml"
+paperless_assert_withheld_broker_command \
+  "${broker_directory}" "${report}" compose fixture
+cp -- "${broker_directory}/compose.yaml" "${test_root}/valid-broker-compose.yaml"
+for mutation in missing-command missing-health misplaced-command misplaced-health; do
+  cp -- "${test_root}/valid-broker-compose.yaml" "${broker_directory}/compose.yaml"
+  case "${mutation}" in
+    missing-command) sed -i '/^    command:/d' "${broker_directory}/compose.yaml" ;;
+    missing-health) sed -i '/^    healthcheck:/,+1d' "${broker_directory}/compose.yaml" ;;
+    misplaced-command)
+      sed -i "s/--requirepass, ${PAPERLESS_REDIS_PASSWORD}/${PAPERLESS_REDIS_PASSWORD}, --requirepass/" \
+        "${broker_directory}/compose.yaml"
+      ;;
+    misplaced-health)
+      sed -i "s/-a, ${PAPERLESS_REDIS_PASSWORD}/${PAPERLESS_REDIS_PASSWORD}, -a/" \
+        "${broker_directory}/compose.yaml"
+      ;;
+  esac
+  if paperless_assert_withheld_broker_command \
+    "${broker_directory}" "${report}" compose fixture > /dev/null 2>&1; then
+    printf 'Paperless broker check accepted %s in Compose.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+cp -- "${test_root}/valid-broker-compose.yaml" "${broker_directory}/compose.yaml"
+printf '    environment: {PAPERLESS_REDIS: %s}\n' "${PAPERLESS_REDIS_PASSWORD}" \
+  >> "${broker_directory}/compose.yaml"
+if paperless_assert_withheld_broker_command \
+  "${broker_directory}" "${report}" compose fixture > /dev/null 2>&1; then
+  printf 'Paperless broker check accepted a leaked Compose environment value.\n' >&2
+  exit 1
+fi
+printf '%s\n' \
+  '[Container]' \
+  'ContainerName=fixture-paper-broker' \
+  "Exec=valkey-server --requirepass ${PAPERLESS_REDIS_PASSWORD}" \
+  "HealthCmd=[\"CMD\",\"valkey-cli\",\"-a\",\"${PAPERLESS_REDIS_PASSWORD}\",\"ping\"]" \
+  > "${broker_directory}/fixture-paper-broker.container"
+rm -- "${broker_directory}/compose.yaml"
+paperless_assert_withheld_broker_command \
+  "${broker_directory}" "${report}" quadlet fixture
+cp -- "${broker_directory}/fixture-paper-broker.container" \
+  "${test_root}/valid-broker-quadlet.container"
+for mutation in missing-command missing-health misplaced-command misplaced-health; do
+  cp -- "${test_root}/valid-broker-quadlet.container" \
+    "${broker_directory}/fixture-paper-broker.container"
+  case "${mutation}" in
+    missing-command)
+      sed -i '/^Exec=/d' "${broker_directory}/fixture-paper-broker.container"
+      ;;
+    missing-health)
+      sed -i '/^HealthCmd=/d' "${broker_directory}/fixture-paper-broker.container"
+      ;;
+    misplaced-command)
+      sed -i "s/--requirepass ${PAPERLESS_REDIS_PASSWORD}/${PAPERLESS_REDIS_PASSWORD} --requirepass/" \
+        "${broker_directory}/fixture-paper-broker.container"
+      ;;
+    misplaced-health)
+      sed -i "s/\\\"-a\\\",\\\"${PAPERLESS_REDIS_PASSWORD}\\\"/\\\"${PAPERLESS_REDIS_PASSWORD}\\\",\\\"-a\\\"/" \
+        "${broker_directory}/fixture-paper-broker.container"
+      ;;
+  esac
+  if paperless_assert_withheld_broker_command \
+    "${broker_directory}" "${report}" quadlet fixture > /dev/null 2>&1; then
+    printf 'Paperless broker check accepted %s in Quadlet.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+cp -- "${test_root}/valid-broker-quadlet.container" \
+  "${broker_directory}/fixture-paper-broker.container"
+printf 'Environment=PAPERLESS_REDIS=%s\n' "${PAPERLESS_REDIS_PASSWORD}" \
+  >> "${broker_directory}/fixture-paper-broker.container"
+if paperless_assert_withheld_broker_command \
+  "${broker_directory}" "${report}" quadlet fixture > /dev/null 2>&1; then
+  printf 'Paperless broker check accepted a leaked Quadlet environment value.\n' >&2
+  exit 1
+fi
+
 # A failed early member must survive a caller's conditional/errexit-disabled context.
 member_calls=0
 resource_calls=0
@@ -123,14 +212,14 @@ application_assert_default_withholding() {
   local subject=$3
   shift 3
   if [[ "${subject}" == *paper-web* ]]; then
-    [[ $# == 4 && "$1" == "${PAPERLESS_ADMIN_PASSWORD}" &&
+    [[ $# == 3 && "$1" == "${PAPERLESS_ADMIN_PASSWORD}" &&
       "$2" == "${PAPERLESS_DB_PASSWORD}" &&
-      "$3" == "${PAPERLESS_REDIS_PASSWORD}" &&
-      "$4" == "${PAPERLESS_SECRET_KEY}" ]]
+      "$3" == "${PAPERLESS_SECRET_KEY}" ]]
   else
     [[ $# == 1 && "$1" == "${IMMICH_DB_PASSWORD}" ]]
   fi
 }
+paperless_assert_withheld_broker_command() { :; }
 calls=0
 withheld_calls=0
 included_calls=0

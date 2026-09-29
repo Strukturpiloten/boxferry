@@ -175,6 +175,16 @@ application_assert_default_withholding() {
   esac
   printf 'assert:%s\n' "${output}" >> "${current_case}/calls"
 }
+paperless_assert_withheld_broker_command() {
+  local directory=$1 report=$2 output=$3 prefix=$4
+  [[ "${application}" == paperless && "${report}" == "${directory}.report.json" &&
+    "${prefix}" == contract ]] || return 99
+  case "${directory}:${output}" in
+    *-default-withheld-compose:compose|*-default-withheld-quadlet:quadlet) ;;
+    *) return 99 ;;
+  esac
+  printf 'broker:%s\n' "${output}" >> "${current_case}/calls"
+}
 boxferry_operation() {
   local description=$1 output=$4 includes=0 event
   while (( $# )); do
@@ -213,9 +223,12 @@ boxferry_operation() {
         normal = ["included:compose", "included:quadlet", "podman"]
         if application == "supabase":
             return normal * 4
+        broker_compose = ["broker:compose"] if application == "paperless" else []
+        broker_quadlet = ["broker:quadlet"] if application == "paperless" else []
         return [
-            "withheld:compose", "assert:compose", "included:compose",
-            "withheld:quadlet", "assert:quadlet", "included:quadlet", "podman",
+            "withheld:compose", "assert:compose", *broker_compose, "included:compose",
+            "withheld:quadlet", "assert:quadlet", *broker_quadlet,
+            "included:quadlet", "podman",
         ] + normal * 2
 
     def test_every_selection_checks_default_withholding_and_explicit_inclusion(self):
