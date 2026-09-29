@@ -58,27 +58,28 @@ active table; superseded records are history and are read only when that history
 | [0061](0061-compose-interpolation-input-authorization.md) | Compose interpolation implied by supplied values and explicit process fallback |
 | [0062](0062-unambiguous-compose-cli-document-discovery.md) | Unambiguous current-directory Compose document discovery |
 | [0063](0063-sole-quadlet-unit-application-identity.md) | Sole-unit Quadlet application identity and explicit names for document sets |
-| [0065](0065-trusted-reviewed-pr-application-validation.md) | Trusted exact-head reviewed-PR application diagnostics |
+| [0066](0066-metadata-only-reviewed-pr-catalogue-admission.md) | Trusted reviewed-PR application diagnostics and metadata-only catalogue admission |
 
 ## Superseded history
 
-| ADR                                                         | Replaced decision                 |
-| ----------------------------------------------------------- | --------------------------------- |
-| [0003](0003-explicit-runtime-observation-provenance.md)     | Runtime observation provenance    |
-| [0005](0005-shared-runtime-observation-layer.md)            | Shared runtime observation layer  |
-| [0006](0006-finite-podman-inspect-decoder.md)               | In-repository Podman inspection   |
-| [0007](0007-finite-podman-relationship-expansion.md)        | In-repository Podman discovery    |
-| [0008](0008-isolated-podman-runtime-conformance.md)         | In-repository Podman conformance  |
-| [0009](0009-versioned-docker-inspection.md)                 | Docker inspection                 |
-| [0010](0010-isolated-docker-runtime-conformance.md)         | Docker conformance                |
-| [0012](0012-explicit-runtime-lifecycle-resolution.md)       | Runtime lifecycle resolution      |
-| [0014](0014-runtime-regular-health-observations.md)         | Runtime health observations       |
-| [0015](0015-runtime-container-restart-policy.md)            | Runtime restart observations      |
-| [0016](0016-runtime-metadata-label-reconstruction.md)       | Runtime label reconstruction      |
-| [0017](0017-n-to-n-adapter-matrix.md)                       | Earlier adapter matrix            |
-| [0023](0023-windows-local-time-zone-database.md)            | Native Windows time-zone database |
-| [0030](0030-native-compose-same-format-canonicalization.md) | Same-format Compose shortcut      |
-| [0036](0036-local-podman-cli-discovery-and-selectors.md)    | Mandatory Podman selector policy  |
+| ADR                                                         | Replaced decision                                                |
+| ----------------------------------------------------------- | ---------------------------------------------------------------- |
+| [0003](0003-explicit-runtime-observation-provenance.md)     | Runtime observation provenance                                   |
+| [0005](0005-shared-runtime-observation-layer.md)            | Shared runtime observation layer                                 |
+| [0006](0006-finite-podman-inspect-decoder.md)               | In-repository Podman inspection                                  |
+| [0007](0007-finite-podman-relationship-expansion.md)        | In-repository Podman discovery                                   |
+| [0008](0008-isolated-podman-runtime-conformance.md)         | In-repository Podman conformance                                 |
+| [0009](0009-versioned-docker-inspection.md)                 | Docker inspection                                                |
+| [0010](0010-isolated-docker-runtime-conformance.md)         | Docker conformance                                               |
+| [0012](0012-explicit-runtime-lifecycle-resolution.md)       | Runtime lifecycle resolution                                     |
+| [0014](0014-runtime-regular-health-observations.md)         | Runtime health observations                                      |
+| [0015](0015-runtime-container-restart-policy.md)            | Runtime restart observations                                     |
+| [0016](0016-runtime-metadata-label-reconstruction.md)       | Runtime label reconstruction                                     |
+| [0017](0017-n-to-n-adapter-matrix.md)                       | Earlier adapter matrix                                           |
+| [0023](0023-windows-local-time-zone-database.md)            | Native Windows time-zone database                                |
+| [0030](0030-native-compose-same-format-canonicalization.md) | Same-format Compose shortcut                                     |
+| [0036](0036-local-podman-cli-discovery-and-selectors.md)    | Mandatory Podman selector policy                                 |
+| [0065](0065-trusted-reviewed-pr-application-validation.md)  | Byte-identical catalogue requirement for reviewed-PR diagnostics |
 
 ## Status and changes
 

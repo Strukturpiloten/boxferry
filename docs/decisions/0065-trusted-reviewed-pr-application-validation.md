@@ -1,6 +1,6 @@
 # ADR 0065: Trusted exact-head application diagnostics for reviewed pull requests
 
-- Status: accepted
+- Status: superseded by [ADR 0066](0066-metadata-only-reviewed-pr-catalogue-admission.md)
 - Date: 2026-09-29
 - Builds on: [ADR 0047](0047-bounded-migration-readiness-tiers.md),
   [ADR 0055](0055-parallel-readiness-and-local-quality-feedback.md), and
