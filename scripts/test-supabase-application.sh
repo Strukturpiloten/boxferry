@@ -52,6 +52,53 @@ supabase_contract_fidelity() {
     --from-file "$(supabase_fixture_root)/success-contract.jq"
 }
 
+for acquisition in cli compose; do
+  podman_diagnostics="$(supabase_contract_expected podman compose "${acquisition}" "${acquisition}" storage)"
+  jq --exit-status --arg acquisition "${acquisition}" '
+    [ .[] | select(.code == "BFP0009") ] as $notes |
+    all($notes[]; .severity == "note" and .decision == "reconstructed") and
+    ([$notes[] | select(.subject | endswith(".networks"))] | length) == 12 and
+    ([$notes[] | select(.subject | endswith(".restart_policy"))] | length) == 11 and
+    ([$notes[] | select(.subject | endswith(".port_bindings"))] | length) == 0 and
+    ([$notes[] | select(.subject | contains(".mounts[")) | .subject] | sort) == [
+      "services.contract-supabase-db.mounts[0]",
+      "services.contract-supabase-functions.mounts[0]",
+      "services.contract-supabase-imgproxy.mounts[0]",
+      "services.contract-supabase-storage.mounts[0]"
+    ] and
+    ([$notes[] | select(.subject | endswith(".healthcheck")) | .subject] | sort) == (
+      if $acquisition == "cli" then
+        ["services.contract-supabase-rest.healthcheck"]
+      else
+        ["auth", "imgproxy", "kong", "rest", "storage"] |
+        map("services.contract-supabase-" + . + ".healthcheck")
+      end
+    ) and
+    ([.[] | select(.code == "BFP0003" and .decision == "inferred-application-ownership") |
+      select(.subject | endswith(".ownership")) | .subject] | sort) == [
+      "networks.contract-supabase-backend.ownership",
+      "volumes.contract-supabase-deno-cache.ownership",
+      "volumes.contract-supabase-pgdata.ownership",
+      "volumes.contract-supabase-storage.ownership"
+    ] and
+    ([$notes[] | select(.subject == "networks.contract-supabase-edge.ownership")] | length) == 0
+  ' <<< "${podman_diagnostics}" > /dev/null
+done
+
+all_podman_diagnostics="$(supabase_contract_expected podman compose cli cli all true)"
+jq --exit-status '
+  ([.[] | select(.code == "BFP0003" and .decision == "inferred-application-ownership" and
+    .subject == "networks.podman.ownership")] | length) == 1 and
+  ([.[] | select(.code == "BFP0003" and .subject == "networks.contract-supabase-edge.ownership")] | length) == 0
+' <<< "${all_podman_diagnostics}" > /dev/null
+
+if supabase_assert_success_contract podman podman storage \
+  <(jq '(.diagnostics[] | select(.code == "BFP0009") | .severity) = "warning"' "${contract_report}") \
+  contract false cli > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase contract admitted reconstruction notes with warning severity.' >&2
+  exit 1
+fi
+
 assert_compose_provider_kong_losses() {
   local input=$1 cli_acquisition=$2 compose_acquisition=$3 selection=$4
   local cli compose
@@ -1012,7 +1059,10 @@ if bash -c '
     return 1
   }
   supabase_report_published_api_failure() {
-    printf "%s\\n" "$*" >> "${diagnostic_marker}"
+    printf "publication %s\\n" "$*" >> "${diagnostic_marker}"
+  }
+  supabase_report_gateway_path_probes() {
+    printf "paths %s\\n" "$*" >> "${diagnostic_marker}"
   }
   supabase_probe_published_api test-outer test-socket test-prefix
 ' bash "${library}" "${published_api_timeout_attempts}" "${published_api_timeout_sleeps}" \
@@ -1026,7 +1076,7 @@ grep --fixed-strings --quiet \
   "${published_api_timeout_output}"
 [[ "$(sed -n '$=' "${published_api_timeout_attempts}")" == 45 ]]
 [[ "$(sed -n '$=' "${published_api_timeout_sleeps}")" == 45 ]]
-[[ "$(cat "${test_root}/published-api-timeout-diagnostic.marker")" == 'test-outer test-socket test-prefix' ]]
+[[ "$(cat "${test_root}/published-api-timeout-diagnostic.marker")" == $'paths test-outer test-socket test-prefix\npublication test-outer test-socket test-prefix' ]]
 
 published_api_late_argv="${test_root}/published-api-late.argv"
 if bash -c '
@@ -1049,6 +1099,7 @@ if bash -c '
     fi
     return 1
   }
+  supabase_report_gateway_path_probes() { :; }
   supabase_report_published_api_failure() { :; }
   supabase_probe_published_api test-outer test-socket test-prefix
 ' bash "${library}" "${published_api_late_argv}" > /dev/null 2>&1; then
@@ -1094,6 +1145,150 @@ assert late == [
     ["1s", *expected_tail],
 ], late
 PY
+
+gateway_path_output="${test_root}/gateway-path.output"
+gateway_path_argv="${test_root}/gateway-path.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  argv=$2
+  mode=$3
+  engine=test-engine
+  repository_root="$(cd -- "$(dirname -- "$1")/../.." && pwd -P)"
+  run_id=test-run
+  supabase_gateway_diagnostic_operation() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+    local url=${*: -1}
+    if [[ "$*" == *NetworkSettings.Networks* ]]; then
+      if [[ "${mode}" == missing ]]; then printf "{}\\n"; else
+        jq --null-input --arg edge test-prefix-supabase-edge --arg ip 10.89.0.4 \
+          "{(\$edge): {IPAddress: \$ip}}"
+      fi
+      return
+    fi
+    if [[ "$*" == *" inspect --format "* ]]; then
+      printf test-run
+      return
+    fi
+    if [[ "$*" == *" rm --force "* ]]; then return 0; fi
+    if [[ "${mode}" == failure ]]; then
+      printf "body=%s\\n" "${SUPABASE_ANON_KEY}"
+      printf "stderr=%s\\n" "${SUPABASE_SERVICE_KEY}" >&2
+      return 7
+    fi
+    if [[ "${mode}" == missing && "$*" == *test-prefix-supabase-diag-peer-dns* ]]; then
+      printf "body=%s\\n" "${SUPABASE_TEST_PASSWORD}"
+      printf "stderr=%s\\n" "${SUPABASE_DB_PASSWORD}" >&2
+      return 125
+    fi
+    if [[ "${mode}" == missing-client ]]; then
+      printf "node: command not found %s\\n" "${SUPABASE_TEST_PASSWORD}" >&2
+      return 127
+    fi
+    case "${url}" in
+      http://127.0.0.1:8000/*) printf 200 ;;
+      http://kong:8000/*) printf 503 ;;
+      http://10.89.0.4:8000/*) printf 201 ;;
+      http://127.0.0.1:18000/*) printf 000 ;;
+      *) return 1 ;;
+    esac
+  }
+  supabase_report_gateway_path_probes test-outer test-socket test-prefix
+' bash "${library}" "${gateway_path_argv}" success > "${gateway_path_output}" 2>&1
+[[ "$(cat "${gateway_path_output}")" == 'Supabase gateway path probes: kong-local=http=200 exit=0; boundary-dns=http=503 exit=0; boundary-edge-ip=http=201 exit=0; outer-loopback=http=000 exit=0' ]]
+
+python3 - "${gateway_path_argv}" << 'PY'
+import pathlib
+import sys
+
+records = [
+    [field.decode() for field in record.split(b"\0")]
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")[:-1]
+]
+assert all(record[0] == "test-engine" for record in records), records
+run = [record for record in records if "run" in record]
+assert len(run) == 3, records
+assert [record[-1] for record in run] == [
+    "http://127.0.0.1:8000/auth/v1/health",
+    "http://kong:8000/auth/v1/health",
+    "http://10.89.0.4:8000/auth/v1/health",
+], run
+for record in run:
+    for expected in ["--pull=never", "--rm", "--cap-drop=all", "--read-only",
+                     "--security-opt=no-new-privileges", "--pids-limit=32",
+                     "--entrypoint", "node", "--eval", "--network"]:
+        assert expected in record, (expected, record)
+    assert "fetch(process.argv[1]" in record[record.index("--eval") + 1]
+    assert "studio" in record[-4] and "@sha256:" in record[-4], record
+    assert "io.boxferry.live-run=test-run" in record, record
+assert len([record for record in records if "rm" in record]) == 3, records
+assert len([record for record in records if "inspect" in record]) == 4, records
+assert records[-1][-1] == "http://127.0.0.1:18000/auth/v1/health", records
+PY
+
+for mode in failure missing missing-client; do
+  gateway_path_mode_output="${test_root}/gateway-path-${mode}.output"
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    mode=$2
+    engine=test-engine
+    repository_root="$(cd -- "$(dirname -- "$1")/../.." && pwd -P)"
+    run_id=test-run
+    supabase_gateway_diagnostic_operation() {
+      if [[ "$*" == *NetworkSettings.Networks* ]]; then
+        if [[ "${mode}" == missing ]]; then printf "{}\\n"; else
+          jq --null-input --arg edge test-prefix-supabase-edge --arg ip 10.89.0.4 \
+            "{(\$edge): {IPAddress: \$ip}}"
+        fi
+        return
+      fi
+      if [[ "$*" == *" inspect --format "* ]]; then printf test-run; return; fi
+      if [[ "$*" == *" rm --force "* ]]; then return 0; fi
+      if [[ "${mode}" == missing && "$*" != *test-prefix-supabase-diag-peer-dns* ]]; then
+        printf 200
+        return 0
+      fi
+      if [[ "${mode}" == missing-client ]]; then
+        printf "node: command not found %s\\n" "${SUPABASE_TEST_PASSWORD}" >&2
+        return 127
+      fi
+      printf "body=%s\\n" "${SUPABASE_ANON_KEY}"
+      printf "stderr=%s\\n" "${SUPABASE_SERVICE_KEY}" >&2
+      return 7
+    }
+    supabase_report_gateway_path_probes test-outer test-socket test-prefix
+  ' bash "${library}" "${mode}" > "${gateway_path_mode_output}" 2>&1
+  if grep --fixed-strings --quiet 'body=' "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet 'stderr=' "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet "${SUPABASE_ANON_KEY}" "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet "${SUPABASE_SERVICE_KEY}" "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet "${SUPABASE_TEST_PASSWORD}" "${gateway_path_mode_output}"; then
+    printf 'Supabase gateway path diagnostic leaked probe content.\n' >&2
+    exit 1
+  fi
+done
+grep --fixed-strings --quiet \
+  'kong-local=http=unavailable exit=7; boundary-dns=http=unavailable exit=7; boundary-edge-ip=http=unavailable exit=7; outer-loopback=http=unavailable exit=7' \
+  "${test_root}/gateway-path-failure.output"
+grep --fixed-strings --quiet \
+  'kong-local=http=200 exit=0; boundary-dns=http=unavailable exit=7; boundary-edge-ip=unavailable; outer-loopback=http=200 exit=0' \
+  "${test_root}/gateway-path-missing.output"
+grep --fixed-strings --quiet \
+  'kong-local=http=unavailable exit=127; boundary-dns=http=unavailable exit=127; boundary-edge-ip=http=unavailable exit=127; outer-loopback=http=unavailable exit=127' \
+  "${test_root}/gateway-path-missing-client.output"
+
+gateway_hard_cap_started_ns="$(date +%s%N)"
+gateway_hard_cap_result="$(supabase_gateway_diagnostic_get \
+  supabase_gateway_diagnostic_operation bash -c 'trap "" TERM; sleep 30')"
+gateway_hard_cap_elapsed_ms=$((($(date +%s%N) - gateway_hard_cap_started_ns) / 1000000))
+[[ "${gateway_hard_cap_result}" == 'http=unavailable exit=137' ]]
+if ((gateway_hard_cap_elapsed_ms >= 5000)); then
+  printf 'Supabase gateway diagnostic exceeded its five-second wall budget (%d ms).\n' \
+    "${gateway_hard_cap_elapsed_ms}" >&2
+  exit 1
+fi
 
 published_api_diagnostic_transport_argv="${test_root}/published-api-diagnostic-transport.argv"
 bash -c '

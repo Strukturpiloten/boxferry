@@ -1599,11 +1599,12 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             compose_creation_evidence_subjects, expected_compose_creation_evidence_subjects,
             "{selection} Compose acquisition must omit all creation evidence"
         );
-        let (approximate, cli_unsupported, compose_unsupported): (usize, usize, usize) = if selection == "all" {
-            (67, 1_446, 1_406)
-        } else {
-            (63, 1_346, 1_308)
-        };
+        let (cli_approximate, compose_approximate, cli_unsupported, compose_unsupported): (usize, usize, usize, usize) =
+            if selection == "all" {
+                (41, 37, 1_446, 1_406)
+            } else {
+                (39, 35, 1_346, 1_308)
+            };
         assert_eq!(
             cli_unsupported - compose_unsupported,
             16 + (expected_cli_creation_evidence_subjects.len() * 2),
@@ -1614,7 +1615,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "status": "success",
             "fidelity": {
                 "exact": 0,
-                "approximate": approximate,
+                "approximate": cli_approximate,
                 "unsupported": cli_unsupported,
                 "invalid": 0,
                 "other": 0,
@@ -1631,7 +1632,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "status": "success",
             "fidelity": {
                 "exact": 0,
-                "approximate": approximate,
+                "approximate": compose_approximate,
                 "unsupported": compose_unsupported,
                 "invalid": 0,
                 "other": 0,
@@ -2210,36 +2211,36 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let reviewed_fidelity = [
-        ("exact", "podman", "compose", 63, 1_346),
-        ("exact", "podman", "quadlet", 63, 1_318),
-        ("exact", "podman", "podman", 63, 1_527),
+        ("exact", "podman", "compose", 39, 1_346),
+        ("exact", "podman", "quadlet", 39, 1_318),
+        ("exact", "podman", "podman", 39, 1_527),
         ("exact", "quadlet", "compose", 0, 26),
         ("exact", "compose", "compose", 0, 0),
         ("exact", "compose", "quadlet", 0, 1),
         ("exact", "compose", "podman", 0, 198),
         ("exact", "quadlet", "quadlet", 0, 0),
         ("exact", "quadlet", "podman", 0, 223),
-        ("storage", "podman", "compose", 63, 1_346),
-        ("storage", "podman", "quadlet", 63, 1_318),
-        ("storage", "podman", "podman", 63, 1_527),
+        ("storage", "podman", "compose", 39, 1_346),
+        ("storage", "podman", "quadlet", 39, 1_318),
+        ("storage", "podman", "podman", 39, 1_527),
         ("storage", "quadlet", "compose", 0, 26),
         ("storage", "compose", "compose", 0, 0),
         ("storage", "compose", "quadlet", 0, 1),
         ("storage", "compose", "podman", 0, 198),
         ("storage", "quadlet", "quadlet", 0, 0),
         ("storage", "quadlet", "podman", 0, 223),
-        ("label", "podman", "compose", 63, 1_346),
-        ("label", "podman", "quadlet", 63, 1_318),
-        ("label", "podman", "podman", 63, 1_527),
+        ("label", "podman", "compose", 39, 1_346),
+        ("label", "podman", "quadlet", 39, 1_318),
+        ("label", "podman", "podman", 39, 1_527),
         ("label", "quadlet", "compose", 0, 26),
         ("label", "compose", "compose", 0, 0),
         ("label", "compose", "quadlet", 0, 1),
         ("label", "compose", "podman", 0, 198),
         ("label", "quadlet", "quadlet", 0, 0),
         ("label", "quadlet", "podman", 0, 223),
-        ("all", "podman", "compose", 67, 1_446),
-        ("all", "podman", "quadlet", 67, 1_418),
-        ("all", "podman", "podman", 67, 1_641),
+        ("all", "podman", "compose", 41, 1_446),
+        ("all", "podman", "quadlet", 41, 1_418),
+        ("all", "podman", "podman", 41, 1_641),
         ("all", "quadlet", "compose", 0, 26),
         ("all", "compose", "compose", 0, 0),
         ("all", "compose", "quadlet", 0, 1),
@@ -2261,10 +2262,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         );
     }
     for (selection, approximate, unsupported) in [
-        ("exact", 63, 1_308),
-        ("storage", 63, 1_308),
-        ("label", 63, 1_308),
-        ("all", 67, 1_406),
+        ("exact", 35, 1_308),
+        ("storage", 35, 1_308),
+        ("label", 35, 1_308),
+        ("all", 37, 1_406),
     ] {
         let generated = generated_supabase_contract_with_acquisition(
             &root,
@@ -2305,7 +2306,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         system_network_fidelity,
         serde_json::json!({
-            "approximate": 69,
+            "approximate": 44,
             "unsupported": 1_452,
             "invalid": 0,
             "other": 0,
@@ -2331,7 +2332,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         compose_authored_system_network_fidelity,
         serde_json::json!({
-            "approximate": 69,
+            "approximate": 40,
             "unsupported": 1_412,
             "invalid": 0,
             "other": 0,
@@ -2429,6 +2430,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             ("BFP0002", "networks.podman.native_ipv6_enabled", "omitted"),
             ("BFP0003", "networks.podman.internal", "approximated"),
             ("BFP0003", "networks.podman.ipam", "approximated"),
+            ("BFP0003", "networks.podman.ownership", "inferred-application-ownership"),
         ])
     );
 
@@ -2503,7 +2505,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         expected_fidelity,
         serde_json::json!({
-            "approximate": 63,
+            "approximate": 39,
             "unsupported": 1_527,
             "invalid": 0,
             "other": 0,
@@ -2529,8 +2531,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let mut volume_metadata_as_approximate = success_report.clone();
-    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(63);
-    volume_metadata_as_approximate["fidelity"]["unsupported"] = serde_json::json!(1_343);
+    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(40);
     assert!(!supabase_contract_accepts(
         &root,
         "podman",
@@ -2540,7 +2541,17 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let mut missing_kong_network_outcome = success_report.clone();
-    missing_kong_network_outcome["fidelity"]["approximate"] = serde_json::json!(61);
+    missing_kong_network_outcome["diagnostics"]
+        .as_array_mut()
+        .ok_or("synthetic success diagnostics must be an array")?
+        .retain(|diagnostic| {
+            diagnostic["code"] != "BFP0009"
+                || !diagnostic["fields"].as_array().is_some_and(|fields| {
+                    fields.iter().any(|field| {
+                        field["name"] == "subject" && field["value"] == "services.contract-supabase-kong.networks"
+                    })
+                })
+        });
     assert!(!supabase_contract_accepts(
         &root,
         "podman",
@@ -4573,9 +4584,9 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
     }
 
     for route in [
-        "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
-        "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
-        "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0009,BFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0009,BFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0009,BFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "compose\tcompose\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
         "compose\tquadlet\tmigration-success\tlive-unperformed\tBFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",

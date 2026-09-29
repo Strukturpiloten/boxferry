@@ -12,6 +12,167 @@ source "${script_directory}/lib/scenario-validators.sh"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "${test_root}"' EXIT
 
+diagnostic_base="${repository_root}/fixtures/conformance/observability-application/diagnostics/base-compose-provisioned.tsv"
+assert_static_diagnostic_tuple() {
+  local subject=$1 code=$2 severity=$3 decision=$4 policy=$5
+  awk -F '\t' -v subject="${subject}" -v code="${code}" \
+    -v severity="${severity}" -v decision="${decision}" -v policy="${policy}" '
+    $2 == subject {
+      if ($1 == code && $3 == severity && $4 == decision && $5 == policy) {
+        matching++
+      } else {
+        mismatched++
+      }
+    }
+    END { exit !(matching == 1 && mismatched == 0) }
+  ' "${diagnostic_base}" || {
+    printf 'Incorrect authored observability diagnostic for %s.\n' "${subject}" >&2
+    return 1
+  }
+}
+
+for resource in backend alloy-data grafana-data loki-data prometheus-data telemetry-logs; do
+  if [[ "${resource}" == backend ]]; then
+    diagnostic_subject="networks.{{resource_prefix}}${resource}.ownership"
+  else
+    diagnostic_subject="volumes.{{resource_prefix}}${resource}.ownership"
+  fi
+  assert_static_diagnostic_tuple \
+    "${diagnostic_subject}" BFP0003 warning inferred-application-ownership approximate
+done
+if grep --fixed-strings --quiet $'networks.{{resource_prefix}}edge.ownership\t' "${diagnostic_base}"; then
+  printf '%s\n' 'External edge network must not infer application ownership.' >&2
+  exit 1
+fi
+
+for mount in 'alloy.mounts[0]' 'alloy.mounts[1]' 'grafana.mounts[0]' \
+  'log-producer.mounts[0]' 'loki.mounts[0]' 'prometheus.mounts[0]'; do
+  assert_static_diagnostic_tuple \
+    "services.{{resource_prefix}}${mount}" BFP0009 note reconstructed -
+done
+for service in alloy grafana log-producer loki metrics-producer prometheus; do
+  for field in networks restart_policy; do
+    assert_static_diagnostic_tuple \
+      "services.{{resource_prefix}}${service}.${field}" BFP0009 note reconstructed -
+  done
+done
+[[ "$(awk -F '\t' '$1 == "BFP0009" { count++ } END { print count + 0 }' "${diagnostic_base}")" == 18 ]]
+observability_write_live_diagnostic_template \
+  compose exact podman compose bf-private-observability- \
+  "${test_root}/observability-diagnostics.tsv"
+awk -F '\t' '
+  $1 == "BFP0009" && $2 == "services.bf-private-observability-alloy.mounts[0]" {
+    if (NF == 5 && $3 == "note" && $4 == "reconstructed" && $5 == "") matching++
+  }
+  END { exit matching != 1 }
+' "${test_root}/observability-diagnostics.tsv" || {
+  printf '%s\n' 'A reconstruction note retained a literal absent-policy marker.' >&2
+  exit 1
+}
+
+diagnostic_fixture="${repository_root}/fixtures/conformance/observability-application/diagnostics"
+assert_withheld_environment_keys() {
+  local importer=$1 exporter=$2 expected_count=$3
+  [[ "$(wc -l < "${importer}")" == "${expected_count}" ]] || return 1
+  awk -F '\t' '
+    $1 != "BFP0002" || $2 !~ /\.environment\./ ||
+    $3 != "warning" || $4 != "omitted" || $5 != "partial" { exit 1 }
+  ' "${importer}" || return 1
+  diff --unified=0 \
+    <(awk -F '\t' '{ print $2 }' "${importer}" | sort) \
+    <(awk -F '\t' '$1 == "BFP0007" && $2 ~ /\.environment\./ { print $2 }' "${exporter}" | sort)
+}
+assert_withheld_environment_keys \
+  "${diagnostic_fixture}/podman-import-withheld-environment.tsv" \
+  "${diagnostic_fixture}/podman-export.tsv" 47
+assert_withheld_environment_keys \
+  "${diagnostic_fixture}/all-podman-import-withheld-environment.tsv" \
+  "${diagnostic_fixture}/all-podman-export.tsv" 9
+
+for service in alloy grafana log-producer loki metrics-producer prometheus; do
+  awk -F '\t' -v subject="services.{{resource_prefix}}${service}.environment" '
+    $2 == subject && $1 == "BFP0003" && $3 == "warning" &&
+      $4 == "approximated" && $5 == "approximate" { matching++ }
+    END { exit matching != 1 }
+  ' "${diagnostic_fixture}/non-podman-environment-promotions.tsv"
+done
+[[ "$(wc -l < "${diagnostic_fixture}/non-podman-environment-promotions.tsv")" == 6 ]]
+[[ "$(wc -l < "${diagnostic_fixture}/all-non-podman-environment-promotion.tsv")" == 1 ]]
+
+awk -F '\t' '$2 != "services.{{resource_prefix}}alloy.environment.ALLOY_DEPLOY_MODE"' \
+  "${diagnostic_fixture}/podman-import-withheld-environment.tsv" \
+  > "${test_root}/missing-env-key.tsv"
+if assert_withheld_environment_keys \
+  "${test_root}/missing-env-key.tsv" "${diagnostic_fixture}/podman-export.tsv" 47 \
+  > /dev/null 2>&1; then
+  printf '%s\n' 'A missing protected environment key satisfied the authored key contract.' >&2
+  exit 1
+fi
+cp -- "${diagnostic_fixture}/podman-import-withheld-environment.tsv" "${test_root}/extra-env-key.tsv"
+printf 'BFP0002\tservices.{{resource_prefix}}alloy.environment.UNREVIEWED\twarning\tomitted\tpartial\n' \
+  >> "${test_root}/extra-env-key.tsv"
+if assert_withheld_environment_keys \
+  "${test_root}/extra-env-key.tsv" "${diagnostic_fixture}/podman-export.tsv" 47 \
+  > /dev/null 2>&1; then
+  printf '%s\n' 'An extra protected environment key satisfied the authored key contract.' >&2
+  exit 1
+fi
+
+assert_rendered_environment_shape() {
+  local selection=$1 output=$2 application_aggregate=$3 application_keys=$4 peer_aggregate=$5 peer_keys=$6
+  local rendered="${test_root}/environment-${selection}-${output}.tsv"
+  observability_write_live_diagnostic_template \
+    compose "${selection}" podman "${output}" bf-private-observability- "${rendered}"
+  awk -F '\t' -v application_aggregate="${application_aggregate}" -v application_keys="${application_keys}" \
+    -v peer_aggregate="${peer_aggregate}" -v peer_keys="${peer_keys}" '
+    $2 ~ /^services\.bf-private-observability-.*\.environment(\.|$)/ {
+      peer = $2 ~ /boundary-peer/
+      if ($1 == "BFP0003" && $2 ~ /\.environment$/) {
+        if (peer) peer_aggregate_seen++; else application_aggregate_seen++
+      }
+      if ($1 == "BFP0002" && $2 ~ /\.environment\./) {
+        if (peer) peer_keys_seen++; else application_keys_seen++
+      }
+    }
+    END {
+      exit !(application_aggregate_seen == application_aggregate &&
+        application_keys_seen == application_keys &&
+        peer_aggregate_seen == peer_aggregate && peer_keys_seen == peer_keys)
+    }
+  ' "${rendered}"
+}
+assert_rendered_environment_shape exact compose 6 0 0 0
+assert_rendered_environment_shape exact podman 0 47 0 0
+assert_rendered_environment_shape all compose 6 0 1 0
+assert_rendered_environment_shape all podman 0 47 0 9
+for output in compose podman; do
+  for field in networks restart_policy; do
+    awk -F '\t' -v subject="services.bf-private-observability-boundary-peer.${field}" '
+      $2 == subject {
+        if (NF == 5 && $1 == "BFP0009" && $3 == "note" &&
+            $4 == "reconstructed" && $5 == "") matching++
+        else mismatched++
+      }
+      END { exit !(matching == 1 && mismatched == 0) }
+    ' "${test_root}/environment-all-${output}.tsv" || {
+      printf 'Incorrect all-selector boundary-peer reconstruction for %s (%s).\n' \
+        "${field}" "${output}" >&2
+      exit 1
+    }
+  done
+  awk -F '\t' '
+    $2 == "networks.podman.ownership" {
+      if (NF == 5 && $1 == "BFP0003" && $3 == "warning" &&
+          $4 == "inferred-application-ownership" && $5 == "approximate") matching++
+      else mismatched++
+    }
+    END { exit !(matching == 1 && mismatched == 0) }
+  ' "${test_root}/environment-all-${output}.tsv" || {
+    printf 'Incorrect all-selector Podman network ownership for %s.\n' "${output}" >&2
+    exit 1
+  }
+done
+
 assert_absent() {
   local value=$1 output=$2
   if grep --fixed-strings --quiet -- "${value}" <<< "${output}"; then

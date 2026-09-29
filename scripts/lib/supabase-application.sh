@@ -197,9 +197,9 @@ supabase_validate_catalogues() {
   ' "${fixture}/application.tsv"
   awk -F '\t' '
     BEGIN {
-		approved["podman compose"] = "BFP0002,BFP0003,BFC0007"
-		approved["podman quadlet"] = "BFP0002,BFP0003,BFQ0003"
-      approved["podman podman"] = "BFP0002,BFP0003,BFP0007"
+		approved["podman compose"] = "BFP0002,BFP0003,BFP0009,BFC0007"
+		approved["podman quadlet"] = "BFP0002,BFP0003,BFP0009,BFQ0003"
+      approved["podman podman"] = "BFP0002,BFP0003,BFP0009,BFP0007"
     approved["compose compose"] = "-"
 		approved["compose quadlet"] = "BFQ0003"
       approved["compose podman"] = "BFP0007"
@@ -1170,6 +1170,7 @@ supabase_probe_published_api() {
     supabase_probe_published_api_attempt "${outer}"; then
     return 0
   fi
+  supabase_report_gateway_path_probes "${outer}" "${socket}" "${prefix}"
   supabase_report_published_api_failure "${outer}" "${socket}" "${prefix}"
   return 1
 }
@@ -1183,6 +1184,112 @@ supabase_probe_published_api_attempt() {
     'probe Supabase gateway through loopback publication' \
     "${engine}" exec "${outer}" curl --fail --silent --show-error \
     "http://127.0.0.1:${SUPABASE_HTTP_PORT}/auth/v1/health"
+}
+
+supabase_gateway_diagnostic_get() {
+  local http_status exit_code
+  if http_status="$("$@" 2> /dev/null)"; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+  [[ "${http_status}" =~ ^[0-9]{3}$ ]] || http_status=unavailable
+  printf 'http=%s exit=%d' "${http_status}" "${exit_code}"
+}
+
+supabase_gateway_diagnostic_operation() {
+  # A stuck nested client must not consume the shared operation wrapper's grace.
+  timeout --signal=KILL 4s "$@"
+}
+
+supabase_gateway_diagnostic_remote() {
+  local socket=$1
+  shift
+  if [[ -n "${started_outer:-}" && ! -S "${socket}" ]]; then
+    supabase_gateway_diagnostic_operation \
+      "${engine}" exec "${started_outer}" podman "$@"
+  else
+    supabase_gateway_diagnostic_operation \
+      "${engine}" --url "unix://${socket}" "$@"
+  fi
+}
+
+supabase_gateway_diagnostic_cleanup() {
+  local socket=$1 helper=$2 run=$3 owner
+  # --rm is the first cleanup path. A timed-out or interrupted client may
+  # nevertheless leave a named helper; remove it only when its run label matches.
+  owner="$(supabase_gateway_diagnostic_remote "${socket}" inspect \
+    --format '{{index .Config.Labels "io.boxferry.live-run"}}' \
+    "${helper}" 2> /dev/null)" || return 0
+  [[ "${owner}" == "${run}" ]] || return 1
+  supabase_gateway_diagnostic_remote "${socket}" rm --force --time 0 \
+    "${helper}" > /dev/null 2>&1
+}
+
+supabase_gateway_diagnostic_exec() (
+  local socket=$1 target=$2 helper=$3 url=$4 run=$5
+  # This subshell owns the helper on success, failure and trappable cancellation.
+  # The outer target cleanup is the final fallback if the nested engine hangs.
+  trap 'supabase_gateway_diagnostic_cleanup "${socket}" "${helper}" "${run}" || true' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  local script='fetch(process.argv[1], {signal: AbortSignal.timeout(1500)})
+    .then(response => console.log(response.status))
+    .catch(() => { console.log("unavailable"); process.exitCode = 1 })'
+  supabase_gateway_diagnostic_remote "${socket}" run --pull=never --rm \
+    --name "${helper}" --label "io.boxferry.live-run=${run}" \
+    --network "container:${target}" --cap-drop=all \
+    --security-opt=no-new-privileges --read-only --pids-limit=32 \
+    --entrypoint node "$(supabase_image_reference studio)" \
+    --eval "${script}" "${url}"
+)
+
+supabase_gateway_diagnostic_outer() {
+  local outer=$1
+  supabase_gateway_diagnostic_operation \
+    "${engine}" exec "${outer}" curl -q --silent --max-time 2 --connect-timeout 2 \
+    --proto '=http' --noproxy '*' --output /dev/null --write-out '%{http_code}' \
+    --request GET -- "http://127.0.0.1:${SUPABASE_HTTP_PORT}/auth/v1/health"
+}
+
+supabase_report_gateway_path_probes() {
+  local outer=$1 socket=$2 prefix=$3 networks edge_ip octet run
+  local kong_local peer_dns peer_edge_ip outer_loopback
+  local -a octets
+  # These checks are failure evidence only. Each helper shares one target's
+  # network namespace, has no application secrets, and cannot change readiness.
+  run="${run_id:?Supabase diagnostic requires run ownership}"
+  kong_local="$(supabase_gateway_diagnostic_get supabase_gateway_diagnostic_exec \
+    "${socket}" "${prefix}-supabase-kong" "${prefix}-supabase-diag-kong" \
+    'http://127.0.0.1:8000/auth/v1/health' "${run}")"
+  peer_dns="$(supabase_gateway_diagnostic_get supabase_gateway_diagnostic_exec \
+    "${socket}" "${prefix}-supabase-boundary-peer" "${prefix}-supabase-diag-peer-dns" \
+    'http://kong:8000/auth/v1/health' "${run}")"
+
+  peer_edge_ip=unavailable
+  networks="$(supabase_gateway_diagnostic_remote "${socket}" inspect \
+    --format '{{json .NetworkSettings.Networks}}' \
+    "${prefix}-supabase-kong" 2> /dev/null || true)"
+  edge_ip="$(jq -r --arg edge "${prefix}-supabase-edge" \
+    '.[$edge].IPAddress // empty | select(type == "string")' \
+    <<< "${networks}" 2> /dev/null || true)"
+  if [[ "${edge_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    IFS=. read -r -a octets <<< "${edge_ip}"
+    for octet in "${octets[@]}"; do
+      if ((10#${octet} > 255)); then
+        edge_ip=''
+        break
+      fi
+    done
+    if [[ -n "${edge_ip}" ]]; then
+      peer_edge_ip="$(supabase_gateway_diagnostic_get supabase_gateway_diagnostic_exec \
+        "${socket}" "${prefix}-supabase-boundary-peer" "${prefix}-supabase-diag-peer-ip" \
+        "http://${edge_ip}:8000/auth/v1/health" "${run}")"
+    fi
+  fi
+  outer_loopback="$(supabase_gateway_diagnostic_get supabase_gateway_diagnostic_outer "${outer}")"
+  printf 'Supabase gateway path probes: kong-local=%s; boundary-dns=%s; boundary-edge-ip=%s; outer-loopback=%s\n' \
+    "${kong_local}" "${peer_dns}" "${peer_edge_ip}" "${outer_loopback}" >&2
 }
 
 supabase_report_published_api_failure() {
@@ -2431,7 +2538,7 @@ supabase_validate_success_contract_examples() {
     ([.diagnostics[] | select(.code == "BFP0002") | .fields[]? |
       select(.name == "subject" and ((.value // "") | endswith(".creation_evidence")))] |
       length) == 11 and
-    .fidelity.approximate == 63 and
+    .fidelity.approximate == 39 and
     .fidelity.unsupported == 1346
   ' <<< "${cli_compose_report}" > /dev/null || {
     printf '%s\n' 'Supabase CLI-authored Podman-to-Compose contract lost reviewed evidence.' >&2
@@ -2442,7 +2549,7 @@ supabase_validate_success_contract_examples() {
     ([.diagnostics[] | select(.code == "BFP0002") | .fields[]? |
       select(.name == "subject" and ((.value // "") | endswith(".creation_evidence")))] |
       length) == 0 and
-    .fidelity.approximate == 63 and
+    .fidelity.approximate == 35 and
     .fidelity.unsupported == 1308
   ' <<< "${compose_compose_report}" > /dev/null || {
     printf '%s\n' 'Supabase Compose-authored Podman-to-Compose contract invented source intent.' >&2
@@ -2662,10 +2769,10 @@ supabase_validate_success_contract_examples() {
       podman podman all "${prefix}" true "${podman_acquisition}"
   )"
   if ! jq --exit-status '
-    (.diagnostics | length) == 541 and
+    (.diagnostics | length) == 547 and
     ([.diagnostics[] | select(.code == "BFP0007")] | length) == 226 and
     .fidelity == {
-      approximate: 69,
+      approximate: 44,
       unsupported: 1648,
       invalid: 0,
       other: 0,

@@ -1115,85 +1115,85 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "cli",
             "exact",
             "compose",
-            231,
-            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 168)],
+            237,
+            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18)],
         ),
         (
             "cli",
             "exact",
             "quadlet",
-            221,
-            &[("BFP0002", 52), ("BFP0003", 168), ("BFQ0003", 1)],
+            227,
+            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18), ("BFQ0003", 1)],
         ),
         (
             "cli",
             "exact",
             "podman",
-            279,
-            &[("BFP0002", 52), ("BFP0003", 168), ("BFP0007", 59)],
+            326,
+            &[("BFP0002", 99), ("BFP0003", 150), ("BFP0007", 59), ("BFP0009", 18)],
         ),
         (
             "cli",
             "all",
             "compose",
-            250,
-            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 179)],
+            257,
+            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20)],
         ),
         (
             "cli",
             "all",
             "quadlet",
-            239,
-            &[("BFP0002", 59), ("BFP0003", 179), ("BFQ0003", 1)],
+            246,
+            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20), ("BFQ0003", 1)],
         ),
         (
             "cli",
             "all",
             "podman",
-            308,
-            &[("BFP0002", 59), ("BFP0003", 179), ("BFP0007", 70)],
+            364,
+            &[("BFP0002", 115), ("BFP0003", 159), ("BFP0007", 70), ("BFP0009", 20)],
         ),
         (
             "compose",
             "exact",
             "compose",
-            220,
-            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 170)],
+            226,
+            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18)],
         ),
         (
             "compose",
             "exact",
             "quadlet",
-            217,
-            &[("BFP0002", 46), ("BFP0003", 170), ("BFQ0003", 1)],
+            223,
+            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "exact",
             "podman",
-            275,
-            &[("BFP0002", 46), ("BFP0003", 170), ("BFP0007", 59)],
+            322,
+            &[("BFP0002", 93), ("BFP0003", 152), ("BFP0007", 59), ("BFP0009", 18)],
         ),
         (
             "compose",
             "all",
             "compose",
-            239,
-            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 181)],
+            246,
+            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20)],
         ),
         (
             "compose",
             "all",
             "quadlet",
-            235,
-            &[("BFP0002", 53), ("BFP0003", 181), ("BFQ0003", 1)],
+            242,
+            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "all",
             "podman",
-            304,
-            &[("BFP0002", 53), ("BFP0003", 181), ("BFP0007", 70)],
+            360,
+            &[("BFP0002", 109), ("BFP0003", 161), ("BFP0007", 70), ("BFP0009", 20)],
         ),
     ];
     for contract in expected_contracts {
@@ -1379,7 +1379,7 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
     let all = observability_live_expected_diagnostics_for("cli", "all", "quadlet", "live-observability-")?;
     assert!(!exact.contains("boundary-peer"));
     assert_eq!(all.lines().filter(|line| line.contains("boundary-peer")).count(), 12);
-    assert_eq!(all.lines().count() - exact.lines().count(), 18);
+    assert_eq!(all.lines().count() - exact.lines().count(), 19);
 
     let temporary = TemporaryDirectory::new("observability-unsafe-prefix")?;
     let unsafe_prefix = Command::new("bash")
@@ -1404,6 +1404,10 @@ fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
     for (name, expected_rows) in [
         ("base-compose-provisioned.tsv", 214),
+        ("non-podman-environment-promotions.tsv", 6),
+        ("podman-import-withheld-environment.tsv", 47),
+        ("all-non-podman-environment-promotion.tsv", 1),
+        ("all-podman-import-withheld-environment.tsv", 9),
         ("compose-service-identities.tsv", 2),
         ("cli-creation-evidence.tsv", 6),
         ("compose-export-network.tsv", 4),
@@ -1442,6 +1446,10 @@ fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     for (label, malformed) in [
         ("unknown-code", "BFP9999\tsubject\twarning\tomitted\tpartial\n"),
         ("invalid-tuple", "BFP0003\tsubject\twarning\tomitted\tpartial\n"),
+        (
+            "reconstruction-with-loss-policy",
+            "BFP0009\tsubject\tnote\treconstructed\tapproximate\n",
+        ),
         ("implicit-native-empty", "BFC0007\tsubject\twarning\t\t\n"),
         (
             "duplicate-marker",

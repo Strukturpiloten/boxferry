@@ -898,6 +898,8 @@ observability_append_live_diagnostic_template() {
         'BFP0002|warning|omitted|partial' | \
         'BFP0003|warning|not-promoted|partial' | \
         'BFP0003|warning|approximated|approximate' | \
+        'BFP0003|warning|inferred-application-ownership|approximate' | \
+        'BFP0009|note|reconstructed|-' | \
         'BFP0007|warning|omitted|partial') ;;
       *) return 2 ;;
     esac
@@ -906,8 +908,10 @@ observability_append_live_diagnostic_template() {
     [[ "${safe_subject}" != *'{'* && "${safe_subject}" != *'}'* ]] || return 2
     subject="${subject//\{\{resource_prefix\}\}/${resource_prefix}}"
     [[ "${subject}" =~ ^[[:alnum:]_.:/-]+(\[[0-9]+\][[:alnum:]_.:/-]*)*$ ]] || return 2
-    if [[ "${decision}|${policy}" == '-|-' ]]; then
+    if [[ "${decision}" == - ]]; then
       decision=
+    fi
+    if [[ "${policy}" == - ]]; then
       policy=
     fi
     printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -940,6 +944,13 @@ observability_write_live_diagnostic_template() {
   : > "${destination}"
   observability_append_live_diagnostic_template \
     "${fixture}/base-compose-provisioned.tsv" "${resource_prefix}" "${destination}" || return
+  if [[ "${output}" == podman ]]; then
+    observability_append_live_diagnostic_template \
+      "${fixture}/podman-import-withheld-environment.tsv" "${resource_prefix}" "${destination}" || return
+  else
+    observability_append_live_diagnostic_template \
+      "${fixture}/non-podman-environment-promotions.tsv" "${resource_prefix}" "${destination}" || return
+  fi
   if [[ "${mode}" == cli ]]; then
     observability_append_live_diagnostic_template \
       "${fixture}/cli-creation-evidence.tsv" "${resource_prefix}" "${destination}" || return
@@ -968,6 +979,13 @@ observability_write_live_diagnostic_template() {
   if [[ "${selection}" == all ]]; then
     observability_append_live_diagnostic_template \
       "${fixture}/all-importer.tsv" "${resource_prefix}" "${destination}" || return
+    if [[ "${output}" == podman ]]; then
+      observability_append_live_diagnostic_template \
+        "${fixture}/all-podman-import-withheld-environment.tsv" "${resource_prefix}" "${destination}" || return
+    else
+      observability_append_live_diagnostic_template \
+        "${fixture}/all-non-podman-environment-promotion.tsv" "${resource_prefix}" "${destination}" || return
+    fi
     case "${output}" in
       compose)
         observability_append_live_diagnostic_template \

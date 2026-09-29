@@ -29,12 +29,12 @@ def quadlet_dependency_intent_retained:
 def tuple($code; $subject; $decision):
   {
     code: $code,
-    severity: "warning",
+    severity: (if $code == "BFP0009" then "note" else "warning" end),
     subject: $subject,
     decision: $decision,
   };
 
-# All nine route families are successful; diagnostics below describe reviewed lossy projections.
+# All nine route families are successful; diagnostics include loss and exact reconstruction notes.
 
 def selected_services:
   if $selection == "exact" then
@@ -111,6 +111,13 @@ def network_resource_name($network):
 
 def healthcheck_services:
   ["auth", "db", "functions", "imgproxy", "kong", "realtime", "rest", "storage", "studio"];
+
+def reconstructed_healthcheck_services:
+  if $provisioner_mode == "cli" then
+    ["rest"]
+  else
+    ["auth", "imgproxy", "kong", "rest", "storage"]
+  end;
 
 def image_environment_services:
   ["auth", "db", "functions", "imgproxy", "kong", "meta", "realtime", "storage", "studio", "supavisor"];
@@ -197,17 +204,13 @@ def import_service_fields($service):
     ["infra", "not-promoted"],
     ["logging", "not-promoted"],
     ["namespaces", "not-promoted"],
-    ["networks", "approximated"],
     ["resource_controls", "not-promoted"],
-    ["restart_policy", "approximated"],
     ["security", "not-promoted"]
   ] + (
     if $service == "db" then
-      [["mounts[0]", "approximated"], ["mounts[1]", "not-promoted"]]
+      [["mounts[1]", "not-promoted"]]
     elif $service == "functions" then
-      [["mounts[0]", "approximated"], ["mounts[1]", "not-promoted"]]
-    elif $service == "imgproxy" or $service == "storage" then
-      [["mounts[0]", "approximated"]]
+      [["mounts[1]", "not-promoted"]]
     elif $service == "kong" or $service == "studio" then
       [["mounts[0]", "not-promoted"]]
     else
@@ -263,9 +266,24 @@ def import_diagnostics:
     import_service_fields($service)[] |
     tuple("BFP0003"; "services." + $resource_prefix + $service + "." + .[0]; .[1])
   ] + [
+    selected_services[] as $service |
+    alias_networks($service)[] |
+    tuple("BFP0009"; "services." + $resource_prefix + $service + ".networks"; "reconstructed")
+  ] + [
+    selected_services[] |
+    tuple("BFP0009"; "services." + $resource_prefix + . + ".restart_policy"; "reconstructed")
+  ] + [
+    [["db", 0], ["functions", 0], ["imgproxy", 0], ["storage", 0]][] as $mount |
+    select(contains(selected_services; $mount[0])) |
+    tuple("BFP0009"; "services." + $resource_prefix + $mount[0] + ".mounts[" + ($mount[1] | tostring) + "]"; "reconstructed")
+  ] + [
     healthcheck_services[] |
     select(. as $service | contains(selected_services; $service)) |
-    tuple("BFP0003"; "services." + $resource_prefix + . + ".healthcheck"; "approximated")
+    tuple(
+      if contains(reconstructed_healthcheck_services; .) then "BFP0009" else "BFP0003" end;
+      "services." + $resource_prefix + . + ".healthcheck";
+      if contains(reconstructed_healthcheck_services; .) then "reconstructed" else "approximated" end
+    )
   ] + [
     selected_services[] as $service |
     select(contains(network_alias_services; $service)) |
@@ -303,6 +321,9 @@ def import_diagnostics:
     selected_networks[] as $network |
     tuple("BFP0003"; "networks." + network_resource_name($network) + ".ipam"; "approximated")
   ] + [
+    (["backend"] + if $include_system_network then ["podman"] else [] end)[] |
+    tuple("BFP0003"; "networks." + network_resource_name(.) + ".ownership"; "inferred-application-ownership")
+  ] + [
     selected_images[] as $image |
     ["architecture", "created", "digest", "manifest_type", "operating_system"][] |
     tuple("BFP0003"; "images." + $image + "." + .; "not-promoted")
@@ -314,6 +335,9 @@ def import_diagnostics:
     selected_volumes[] as $volume |
     ["anonymous", "created_at", "driver", "gid", "uid"][] |
     tuple("BFP0003"; "volumes." + $resource_prefix + $volume + "." + .; "not-promoted")
+  ] + [
+    selected_volumes[] |
+    tuple("BFP0003"; "volumes." + $resource_prefix + . + ".ownership"; "inferred-application-ownership")
   ]);
 
 def dependencies:
@@ -1057,6 +1081,11 @@ def expected_success_outcomes:
     null
   end;
 
+def approximate_diagnostic:
+  .code == "BFC0009" or
+  (.code == "BFP0003" and
+    (.decision == "approximated" or .decision == "inferred-application-ownership"));
+
 def expected_success_fidelity:
   expected_diagnostics as $diagnostics |
   if $diagnostics == null then
@@ -1064,17 +1093,16 @@ def expected_success_fidelity:
   else
     ([
       $diagnostics[] |
-      select(.code == "BFC0009" or (.code == "BFP0003" and .decision == "approximated"))
+      select(approximate_diagnostic)
     ] | length) as $diagnostic_approximate |
     ([
       $diagnostics[] |
-      select(.code != "BFC0009" and (.code != "BFP0003" or .decision != "approximated"))
+      select(.code != "BFP0009" and (approximate_diagnostic | not))
     ] | length) as $diagnostic_unsupported |
     ([$diagnostics[] | select(.code == "BFP0002")] | length) as $native_diagnostic_count |
     {
       approximate: (
-        $diagnostic_approximate +
-        if $input == "podman" and contains(selected_services; "kong") then 1 else 0 end
+        $diagnostic_approximate
       ),
       unsupported: (
         $diagnostic_unsupported +

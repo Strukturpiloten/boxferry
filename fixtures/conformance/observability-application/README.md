@@ -99,16 +99,29 @@ expectation. The failed focused pre-release run at
 `ff840133a1d8ddef9bdf3c532179b6751e464064` is only a cross-check.
 
 Each row has five fields: code, subject, severity, decision, and required loss policy. The visible
-`-` marker represents fields absent from native Compose and Quadlet diagnostics and is normalized to
+`-` marker represents absent diagnostic fields, including the loss-policy field on Podman
+reconstruction notes, and is normalized to
 empty fields before exact comparison. The 214-row shared importer base includes five portable
-DNS-alias promotions. Compose mode adds two service-identity promotions, while CLI mode adds six
-creation-evidence tuples.
+DNS-alias promotions, six inferred-ownership warnings for the internal backend network and named
+volumes, and 18 reconstruction notes for promoted mount, network, and restart behavior. The external
+edge network has no inferred application ownership. Child-field losses retain separate warnings.
+Compose and Quadlet output add six aggregate environment-promotion warnings because the harness
+explicitly authorizes those values. Podman output withholds values and adds 47 per-key importer
+omissions instead. Their names come from the pinned image configurations and authored Grafana
+environment in the CLI and Compose fixtures; no value appears in the templates.
+Compose mode adds two service-identity promotions, while CLI mode adds six creation-evidence tuples.
 Compose output adds four network tuples in either mode plus seven CLI-only dependency tuples;
 Quadlet output adds the reviewed multi-network Grafana alias omission; Podman output adds 59
 output-omission tuples. Exact and label selectors are equal. The all selector
-adds 18 shared importer tuples (the boundary peer and default Podman network), then one Compose
-network tuple or eleven Podman omission tuples as appropriate. This factoring preserves duplicate
-tuples and represents each observed mode/selection/output multiset without copying six full routes.
+adds 18 shared importer tuples (the boundary peer and default Podman network), plus one aggregate
+boundary-peer environment warning for Compose/Quadlet or nine withheld per-key importer omissions
+for Podman. It then adds one Compose network tuple or eleven Podman omission tuples as appropriate.
+The peer's resolved network attachment and no-restart behavior have separate reconstruction notes.
+The selected Podman default network has an explicit inferred-ownership warning.
+This factoring preserves duplicate tuples and represents each observed mode/selection/output
+multiset without copying six full routes.
+The all-selector boundary-peer environment split follows the reviewed importer and pinned producer
+image configuration; its full live native comparison remains pending.
 
 `{{resource_prefix}}` is the only supported template marker. The harness validates its generated
 prefix and every row before substitution; malformed templates and reports fail closed. Reports and
