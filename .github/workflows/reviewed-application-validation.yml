@@ -100,7 +100,7 @@ jobs:
           ref: ${{ inputs.expected_sha }}
           path: candidate
           persist-credentials: false
-      - name: Verify candidate SHA and one allowlisted catalogue task
+      - name: Admit candidate catalogue with trusted policy and verify exact SHA
         id: plan
         working-directory: candidate
         run: |
@@ -112,12 +112,10 @@ jobs:
           esac
           test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
           test "$(git -C ../trusted rev-parse HEAD)" = "${GITHUB_SHA}"
-          cmp -s ../trusted/fixtures/conformance/migration-readiness/tiers.toml \
-            fixtures/conformance/migration-readiness/tiers.toml
-          cmp -s ../trusted/scripts/migration-readiness.py scripts/migration-readiness.py
-          cmp -s ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json \
-            docs/schemas/migration-readiness-evidence-v2.schema.json
-          python3 scripts/migration-readiness.py plan \
+          python3 ../trusted/scripts/reviewed-application-catalogue.py \
+            --trusted-root ../trusted --candidate-root . --verifier-root ../verifier \
+            --task "${TASK}"
+          python3 ../verifier/scripts/migration-readiness.py plan \
             --tier pre-release --task "${TASK}" --format json > plan.json
           jq -e --arg task "${TASK}" \
             '.tier == "pre-release" and (.tasks | length) == 1 and
@@ -175,7 +173,7 @@ jobs:
           test -f ../evidence-stage/reviewed-application.json
           test ! -L ../evidence-stage/reviewed-application.json
           test "$(stat -c '%s' ../evidence-stage/reviewed-application.json)" -le 131072
-          python3 ../trusted/scripts/migration-readiness.py validate-evidence \
+          python3 ../verifier/scripts/migration-readiness.py validate-evidence \
             --evidence ../evidence-stage/reviewed-application.json --tier pre-release \
             --task "${TASK}" --revision "${EXPECTED_SHA}"
       - name: Upload only bounded diagnostic JSON evidence
@@ -236,6 +234,21 @@ jobs:
           ref: ${{ github.sha }}
           path: trusted
           persist-credentials: false
+      - name: Check out exact candidate for independent catalogue readback
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Repeat trusted catalogue admission at final readback
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C trusted rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git -C candidate rev-parse HEAD)" = "${EXPECTED_SHA}"
+          python3 trusted/scripts/reviewed-application-catalogue.py \
+            --trusted-root trusted --candidate-root candidate --verifier-root verifier \
+            --task "${TASK}"
       - name: Download the exact task evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -244,8 +257,6 @@ jobs:
       - name: Revalidate exact candidate and bounded evidence from trusted code
         run: |
           set -euo pipefail
-          [[ "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git -C trusted rev-parse HEAD)" = "${GITHUB_SHA}"
-          python3 trusted/scripts/migration-readiness.py validate-evidence \
+          python3 verifier/scripts/migration-readiness.py validate-evidence \
             --evidence evidence/reviewed-application.json --tier pre-release \
             --task "${TASK}" --revision "${EXPECTED_SHA}" --require-success
