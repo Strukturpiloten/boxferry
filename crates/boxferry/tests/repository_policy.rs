@@ -7502,6 +7502,34 @@ fn reviewed_application_sections(workflow: &str) -> Result<(&str, &str, &str), S
     Ok((admission, application, aggregate))
 }
 
+fn reviewed_application_step<'a>(job: &'a str, name: &str) -> Result<&'a str, String> {
+    let marker = format!("      - name: {name}\n");
+    let start = job
+        .find(&marker)
+        .ok_or_else(|| format!("reviewed application job lacks step `{name}`"))?;
+    let following = &job[start..];
+    Ok(following
+        .split_once("\n      - name:")
+        .map_or(following, |(step, _)| step))
+}
+
+fn mutate_reviewed_application_step(workflow: &str, name: &str, from: &str, to: &str) -> Result<String, String> {
+    let marker = format!("name: {name}");
+    let (before, following) = workflow
+        .split_once(&marker)
+        .ok_or_else(|| format!("counterexample lacks step `{name}`"))?;
+    let (step, remainder) = following
+        .split_once("\n      - name:")
+        .ok_or_else(|| format!("counterexample cannot isolate step `{name}`"))?;
+    if !step.contains(from) {
+        return Err(format!("counterexample step `{name}` lacks `{from}`"));
+    }
+    Ok(format!(
+        "{before}{marker}{}\n      - name:{remainder}",
+        step.replacen(from, to, 1)
+    ))
+}
+
 fn validate_reviewed_application_workflow(workflow: &str) -> Result<(), String> {
     if !workflow.starts_with("---\n")
         || !workflow.contains("on:\n  workflow_dispatch:\n")
@@ -7567,6 +7595,16 @@ fn validate_reviewed_application_execution(application: &str) -> Result<(), Stri
     if recheck >= checkout {
         return Err("candidate checkout must follow fresh trusted admission".to_owned());
     }
+    let checkout_step = reviewed_application_step(application, "Check out exact reviewed candidate separately")?;
+    for required in [
+        "ref: ${{ inputs.expected_sha }}",
+        "path: candidate",
+        "persist-credentials: false",
+    ] {
+        if !checkout_step.contains(required) {
+            return Err(format!("candidate checkout lacks `{required}`"));
+        }
+    }
     for required in [
         "ref: ${{ inputs.expected_sha }}",
         "path: candidate",
@@ -7574,10 +7612,9 @@ fn validate_reviewed_application_execution(application: &str) -> Result<(), Stri
         "path: trusted",
         "test \"$(git rev-parse HEAD)\" = \"${EXPECTED_SHA}\"",
         "test \"$(git -C ../trusted rev-parse HEAD)\" = \"${GITHUB_SHA}\"",
-        "cmp -s ../trusted/fixtures/conformance/migration-readiness/tiers.toml",
-        "cmp -s ../trusted/scripts/migration-readiness.py scripts/migration-readiness.py",
-        "cmp -s ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json",
-        "docs/schemas/migration-readiness-evidence-v2.schema.json",
+        "python3 ../trusted/scripts/reviewed-application-catalogue.py",
+        "--trusted-root ../trusted --candidate-root . --verifier-root ../verifier",
+        "python3 ../verifier/scripts/migration-readiness.py plan",
         "nextcloud-application|paperless-application|immich-application",
         "(.tasks | length) == 1",
         "cargo build --locked --package boxferry --bin boxferry --features podman",
@@ -7597,22 +7634,38 @@ fn validate_reviewed_application_execution(application: &str) -> Result<(), Stri
             return Err(format!("reviewed application execution lacks `{required}`"));
         }
     }
-    let trusted_budget = application
-        .find("cmp -s ../trusted/scripts/migration-readiness.py scripts/migration-readiness.py")
-        .ok_or_else(|| "trusted runner comparison is missing".to_owned())?;
-    let trusted_schema = application
-        .find("cmp -s ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json")
-        .ok_or_else(|| "trusted evidence schema comparison is missing".to_owned())?;
-    let candidate_plan = application
-        .find("python3 scripts/migration-readiness.py plan")
-        .ok_or_else(|| "candidate task plan is missing".to_owned())?;
-    if trusted_budget >= candidate_plan || trusted_schema >= candidate_plan {
-        return Err("trusted runner and schema preflight must precede candidate script execution".to_owned());
-    }
-    if !application[trusted_schema..candidate_plan]
-        .contains("            docs/schemas/migration-readiness-evidence-v2.schema.json")
+    let candidate_sha = application
+        .find("test \"$(git rev-parse HEAD)\" = \"${EXPECTED_SHA}\"")
+        .ok_or_else(|| "candidate SHA check is missing".to_owned())?;
+    let admission = application
+        .find("python3 ../trusted/scripts/reviewed-application-catalogue.py")
+        .ok_or_else(|| "trusted catalogue admission is missing".to_owned())?;
+    let verifier_plan = application
+        .find("python3 ../verifier/scripts/migration-readiness.py plan")
+        .ok_or_else(|| "trusted verifier plan is missing".to_owned())?;
+    let prerequisites = application
+        .find("name: Install live prerequisites")
+        .ok_or_else(|| "live prerequisite step is missing".to_owned())?;
+    let candidate_build = application
+        .find("name: Build exact candidate with locked dependencies")
+        .ok_or_else(|| "candidate build step is missing".to_owned())?;
+    let provider = application
+        .find("name: Download verified Docker Compose provider")
+        .ok_or_else(|| "verified Compose provider step is missing".to_owned())?;
+    let candidate_run = application
+        .find("python3 scripts/migration-readiness.py run")
+        .ok_or_else(|| "candidate execution is missing".to_owned())?;
+    if candidate_sha >= admission
+        || admission >= verifier_plan
+        || verifier_plan >= prerequisites
+        || prerequisites >= candidate_build
+        || candidate_build >= provider
+        || provider >= candidate_run
     {
-        return Err("candidate evidence schema must be the comparison operand".to_owned());
+        return Err("trusted catalogue admission and verifier plan must precede candidate execution".to_owned());
+    }
+    if !application[admission..verifier_plan].contains("--task \"${TASK}\"") {
+        return Err("trusted catalogue admission must bind the selected task".to_owned());
     }
     Ok(())
 }
@@ -7644,8 +7697,8 @@ fn validate_reviewed_application_upload(application: &str) -> Result<(), String>
         .find("test \"$(stat -c '%s' ../evidence-stage/reviewed-application.json)\" -le 131072")
         .ok_or_else(|| "staged evidence byte bound is missing".to_owned())?;
     let trusted_validation = pre_upload
-        .find("python3 ../trusted/scripts/migration-readiness.py validate-evidence")
-        .ok_or_else(|| "trusted structural evidence validator is missing".to_owned())?;
+        .find("python3 ../verifier/scripts/migration-readiness.py validate-evidence")
+        .ok_or_else(|| "admitted-catalogue evidence validator is missing".to_owned())?;
     if regular_file >= byte_bound
         || no_symlink >= byte_bound
         || byte_bound >= staging
@@ -7656,6 +7709,7 @@ fn validate_reviewed_application_upload(application: &str) -> Result<(), String>
         || !pre_upload.contains("--evidence ../evidence-stage/reviewed-application.json --tier pre-release")
         || pre_upload.contains("--require-success")
         || pre_upload.contains("python3 scripts/migration-readiness.py validate-evidence")
+        || pre_upload.contains("python3 ../trusted/scripts/migration-readiness.py validate-evidence")
     {
         return Err("only bounded evidence may reach trusted structural validation before upload".to_owned());
     }
@@ -7670,13 +7724,63 @@ fn validate_reviewed_application_aggregate(aggregate: &str) -> Result<(), String
         "test \"${APPLICATION_RESULT}\" = success",
         "ref: ${{ github.sha }}",
         "path: trusted",
-        "python3 trusted/scripts/migration-readiness.py validate-evidence",
+        "ref: ${{ inputs.expected_sha }}",
+        "path: candidate",
+        "persist-credentials: false",
+        "test \"$(git -C trusted rev-parse HEAD)\" = \"${GITHUB_SHA}\"",
+        "test \"$(git -C candidate rev-parse HEAD)\" = \"${EXPECTED_SHA}\"",
+        "python3 trusted/scripts/reviewed-application-catalogue.py",
+        "--trusted-root trusted --candidate-root candidate --verifier-root verifier",
+        "python3 verifier/scripts/migration-readiness.py validate-evidence",
         "--evidence evidence/reviewed-application.json --tier pre-release",
         "--task \"${TASK}\" --revision \"${EXPECTED_SHA}\" --require-success",
     ] {
         if !aggregate.contains(required) {
             return Err(format!("final reviewed application aggregate lacks `{required}`"));
         }
+    }
+    let actor_recheck = aggregate
+        .find("python3 admission/scripts/native-dispatch-admission.py")
+        .ok_or_else(|| "final actor recheck is missing".to_owned())?;
+    let candidate_checkout = aggregate
+        .find("name: Check out exact candidate for independent catalogue readback")
+        .ok_or_else(|| "final candidate checkout is missing".to_owned())?;
+    let checkout_step = reviewed_application_step(
+        aggregate,
+        "Check out exact candidate for independent catalogue readback",
+    )?;
+    for required in [
+        "ref: ${{ inputs.expected_sha }}",
+        "path: candidate",
+        "persist-credentials: false",
+    ] {
+        if !checkout_step.contains(required) {
+            return Err(format!("final candidate checkout lacks `{required}`"));
+        }
+    }
+    let result_check = aggregate
+        .find("test \"${APPLICATION_RESULT}\" = success")
+        .ok_or_else(|| "final application result check is missing".to_owned())?;
+    let candidate_sha = aggregate
+        .find("test \"$(git -C candidate rev-parse HEAD)\" = \"${EXPECTED_SHA}\"")
+        .ok_or_else(|| "final candidate SHA check is missing".to_owned())?;
+    let admission = aggregate
+        .find("python3 trusted/scripts/reviewed-application-catalogue.py")
+        .ok_or_else(|| "final catalogue admission is missing".to_owned())?;
+    let download = aggregate
+        .find("name: Download the exact task evidence")
+        .ok_or_else(|| "final evidence download is missing".to_owned())?;
+    let validation = aggregate
+        .find("python3 verifier/scripts/migration-readiness.py validate-evidence")
+        .ok_or_else(|| "final verifier validation is missing".to_owned())?;
+    if actor_recheck >= result_check
+        || result_check >= candidate_checkout
+        || candidate_checkout >= candidate_sha
+        || candidate_sha >= admission
+        || admission >= download
+        || download >= validation
+    {
+        return Err("final admission, candidate readback, and verifier must be ordered".to_owned());
     }
     Ok(())
 }
@@ -7806,13 +7910,32 @@ fn reviewed_application_dispatch_is_exact_head_and_fail_closed() -> Result<(), S
             workflow.replace("nextcloud-application|paperless-application|immich-application", "*"),
         ),
         (
-            "candidate-controlled budget",
+            "missing trusted catalogue admission",
             workflow.replace(
-                "cmp -s ../trusted/scripts/migration-readiness.py scripts/migration-readiness.py",
-                "true",
+                "python3 ../trusted/scripts/reviewed-application-catalogue.py",
+                "python3 scripts/reviewed-application-catalogue.py",
             ),
         ),
+        (
+            "candidate-controlled task plan",
+            workflow.replace(
+                "python3 ../verifier/scripts/migration-readiness.py plan",
+                "python3 scripts/migration-readiness.py plan",
+            ),
+        ),
+        (
+            "candidate checkout retains credentials",
+            mutate_reviewed_application_step(
+                &workflow,
+                "Check out exact reviewed candidate separately",
+                "persist-credentials: false",
+                "persist-credentials: true",
+            )?,
+        ),
     ] {
+        if mutated == workflow {
+            return Err(format!("reviewed application counterexample did not change {failure}"));
+        }
         if validate_reviewed_application_workflow(&mutated).is_ok() {
             return Err(format!("reviewed application policy accepted {failure}"));
         }
@@ -7828,24 +7951,31 @@ fn reviewed_application_evidence_rejects_unsafe_artifact_counterexamples() -> Re
     validate_reviewed_application_workflow(&workflow)?;
     for (failure, mutated) in [
         (
-            "candidate-controlled evidence schema",
+            "candidate-controlled trusted root",
             workflow.replace(
-                "cmp -s ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json",
-                "true",
+                "--trusted-root ../trusted --candidate-root . --verifier-root ../verifier",
+                "--trusted-root . --candidate-root . --verifier-root ../verifier",
             ),
         ),
         (
-            "wrong evidence schema comparison operand",
+            "candidate-controlled verifier tree",
             workflow.replace(
-                "            docs/schemas/migration-readiness-evidence-v2.schema.json",
-                "            ../trusted/docs/schemas/migration-readiness-evidence-v2.schema.json",
+                "--trusted-root ../trusted --candidate-root . --verifier-root ../verifier",
+                "--trusted-root ../trusted --candidate-root . --verifier-root ../candidate",
             ),
         ),
         (
             "candidate-controlled pre-upload validator",
             workflow.replace(
-                "python3 ../trusted/scripts/migration-readiness.py validate-evidence",
+                "python3 ../verifier/scripts/migration-readiness.py validate-evidence",
                 "python3 scripts/migration-readiness.py validate-evidence",
+            ),
+        ),
+        (
+            "trusted-main catalogue used for pre-upload validation",
+            workflow.replace(
+                "python3 ../verifier/scripts/migration-readiness.py validate-evidence",
+                "python3 ../trusted/scripts/migration-readiness.py validate-evidence",
             ),
         ),
         (
@@ -7873,6 +8003,24 @@ fn reviewed_application_evidence_rejects_unsafe_artifact_counterexamples() -> Re
                 "path: candidate/${{ env.EVIDENCE_PATH }}",
             ),
         ),
+    ] {
+        if mutated == workflow {
+            return Err(format!("reviewed application counterexample did not change {failure}"));
+        }
+        if validate_reviewed_application_workflow(&mutated).is_ok() {
+            return Err(format!("reviewed application policy accepted {failure}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn reviewed_application_aggregate_rejects_unsafe_counterexamples() -> Result<(), String> {
+    let root = repository_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/reviewed-application-validation.yml"))
+        .map_err(|error| format!("failed to read reviewed application workflow: {error}"))?;
+    validate_reviewed_application_workflow(&workflow)?;
+    for (failure, mutated) in [
         (
             "skipped aggregate",
             workflow.replace(
@@ -7898,7 +8046,44 @@ fn reviewed_application_evidence_rejects_unsafe_artifact_counterexamples() -> Re
             "missing final recheck",
             workflow.replacen("python3 admission/scripts/native-dispatch-admission.py", "true", 3),
         ),
+        (
+            "missing exact candidate checkout in aggregate",
+            workflow.replace(
+                "name: Check out exact candidate for independent catalogue readback",
+                "name: Skip candidate readback",
+            ),
+        ),
+        (
+            "aggregate candidate checkout retains credentials",
+            mutate_reviewed_application_step(
+                &workflow,
+                "Check out exact candidate for independent catalogue readback",
+                "persist-credentials: false",
+                "persist-credentials: true",
+            )?,
+        ),
+        (
+            "aggregate checks wrong candidate SHA",
+            workflow.replace(
+                "test \"$(git -C candidate rev-parse HEAD)\" = \"${EXPECTED_SHA}\"",
+                "test \"$(git -C trusted rev-parse HEAD)\" = \"${EXPECTED_SHA}\"",
+            ),
+        ),
+        (
+            "missing independent aggregate catalogue admission",
+            workflow.replace("python3 trusted/scripts/reviewed-application-catalogue.py", "true"),
+        ),
+        (
+            "aggregate validates with trusted-main catalogue",
+            workflow.replace(
+                "python3 verifier/scripts/migration-readiness.py validate-evidence",
+                "python3 trusted/scripts/migration-readiness.py validate-evidence",
+            ),
+        ),
     ] {
+        if mutated == workflow {
+            return Err(format!("reviewed application counterexample did not change {failure}"));
+        }
         if validate_reviewed_application_workflow(&mutated).is_ok() {
             return Err(format!("reviewed application policy accepted {failure}"));
         }

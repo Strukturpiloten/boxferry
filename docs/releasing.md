@@ -26,9 +26,11 @@ dispatched full and focused migration-readiness artifacts remain diagnostic only
 `Reviewed PR application validation` dispatches one trusted-main, exact-head Nextcloud, Paperless,
 or Immich diagnostic. Record its URL, SHA, task, and bounded JSON. Rechecks cover the open
 same-repository PR and both actors before execution and afterward; failed/skipped persistence
-fails. Its pinned DockerLens helper alone proves no BoxFerry runtime result. Complete PR/main/Release
-gates remain mandatory; no publication/deployment authority is granted.
-See [ADR 0065](decisions/0065-trusted-reviewed-pr-application-validation.md).
+fails. Trusted catalogue admission permits source/target metadata and full-SHA revisions of
+unselected Lens tasks; the final validator binds the exact candidate catalogue. Its pinned
+DockerLens helper alone proves no BoxFerry runtime result. Complete PR/main/Release gates remain
+mandatory; no publication/deployment authority is granted.
+See [ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md).
 
 ## Automatic release validation
 
