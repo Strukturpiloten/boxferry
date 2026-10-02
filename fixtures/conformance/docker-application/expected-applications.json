@@ -1,0 +1,1559 @@
+{
+  "schema_version": 1,
+  "kind": "boxferry-docker-application-expectations",
+  "evidence_kind": "offline-contract-prerequisite",
+  "source_kind": "authored-compose",
+  "native_execution": false,
+  "applications": {
+    "forgejo": {
+      "owner_suffix": "forgejo",
+      "sources": [
+        {
+          "path": "fixtures/conformance/forgejo-application/compose.yaml",
+          "sha256": "2d7e81eeefc7060812900791db0a3a9fef08b748779f8697fef12f0cced4d5be"
+        },
+        {
+          "path": "fixtures/conformance/forgejo-application/images.tsv",
+          "sha256": "c9c3bd4b9e06e3e1e07edb5dc2d2673e54f5cb94728c20df503326104e67923a"
+        },
+        {
+          "path": "fixtures/conformance/forgejo-application/providers.tsv",
+          "sha256": "668c68fa3edefc30cd8e61faa6810adf555c67296cdda84c07c6f16598405d66"
+        },
+        {
+          "path": "fixtures/conformance/forgejo-application/peer.compose.yaml",
+          "sha256": "14a22ea3ab8f4941b2611c2a983a349cd69f8a141cce239cc4dbaa8469bca6c8"
+        },
+        {
+          "path": "fixtures/conformance/forgejo-application/git-probe.sh",
+          "sha256": "84298a5500bd4531603a0c9beec041fe43b247e8b3bfe2e3b5b5af19716a1274"
+        },
+        {
+          "path": "fixtures/conformance/forgejo-application/repository-proof.txt",
+          "sha256": "de2ef9197648d0166f89c3ea8e5aa3dc7eca4100dfdca55cf0a529665dd77ff0"
+        },
+        {
+          "path": "scripts/lib/forgejo-application-probes.sh",
+          "sha256": "b80f5925a91a53a43c98d4e67585ae003c97c721b6ab8c60cdbf54d28e4fc276"
+        }
+      ],
+      "image_catalogue": "fixtures/conformance/forgejo-application/images.tsv",
+      "provider_catalogue": "fixtures/conformance/forgejo-application/providers.tsv",
+      "networks": {
+        "backend": {
+          "runtime_suffix": "forge-backend",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": true
+        },
+        "edge": {
+          "runtime_suffix": "shared-edge",
+          "ownership": "shared",
+          "driver": "bridge",
+          "internal": false
+        }
+      },
+      "volumes": {
+        "db": {
+          "runtime_suffix": "forge-db"
+        },
+        "data": {
+          "runtime_suffix": "forge-data"
+        }
+      },
+      "services": {
+        "db": {
+          "runtime_suffix": "forge-db",
+          "image_key": "postgres",
+          "networks": {
+            "backend": ["db"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "db",
+              "target": "/var/lib/postgresql/data",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "forgejo": {
+          "runtime_suffix": "forge-app",
+          "image_key": "forgejo",
+          "networks": {
+            "backend": ["forgejo"],
+            "edge": ["forgejo"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "data",
+              "target": "/var/lib/gitea",
+              "read_only": false
+            }
+          ],
+          "ingress": [
+            {
+              "host_ip": "127.0.0.1",
+              "host_port": 13000,
+              "container_port": 3000,
+              "protocol": "tcp"
+            },
+            {
+              "host_ip": "127.0.0.1",
+              "host_port": 12222,
+              "container_port": 2222,
+              "protocol": "tcp"
+            }
+          ]
+        }
+      },
+      "dependencies": [
+        {
+          "service": "forgejo",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        }
+      ],
+      "excluded_peers": [
+        {
+          "runtime_suffix": "peer-app",
+          "owner_suffix": "peer",
+          "networks": {
+            "edge": ["peer"]
+          }
+        }
+      ],
+      "shared_services": [],
+      "required_checks": {
+        "application": [
+          "private-repository-creation",
+          "http-push-clone",
+          "ssh-clone-push",
+          "exact-database-repository-row"
+        ],
+        "persistence": [
+          "database-metadata-after-recreation",
+          "repository-http-and-ssh-after-recreation"
+        ],
+        "safety": [
+          "internal-backend-isolation",
+          "loopback-only-ingress",
+          "resource-ownership-and-excluded-peers",
+          "collision-refusal",
+          "protected-value-report-redaction",
+          "prefix-scoped-cleanup",
+          "no-host-runtime-socket",
+          "no-implicit-image-pulls"
+        ]
+      }
+    },
+    "nextcloud": {
+      "owner_suffix": "cloud",
+      "sources": [
+        {
+          "path": "fixtures/conformance/nextcloud-application/compose.yaml",
+          "sha256": "ca714ddfe9b64620faf47c714db6be2907f7ec6428529c3e041bfd123bdd4761"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/images.tsv",
+          "sha256": "35b92fcf489e44cc4dbaed12102b5736839ef3a81393510aaa72db40f725843e"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/providers.tsv",
+          "sha256": "7e41fb8a83a99d8a257eceb217f6f6dcee1decd4cce758247dbd3b9ee558a504"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/frontend.conf",
+          "sha256": "a456fab6082ad5fa137957d9025000053a16e652fe783664da10f61e54df9b45"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/proxy.conf",
+          "sha256": "97a99a5fb7120c2daa51a3152402e46fc6c302d4db303b2e28ea329b6372309a"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/second-index.html",
+          "sha256": "a42d431c6b1086f003782c51a6ce41fc03e0317900cd0d4cd57a90db039f9bb9"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/webdav-probe.php",
+          "sha256": "90e6d677279c90858ea19924f8c06c4e1de0cf840c3cfdd8f229936e4f16d75b"
+        },
+        {
+          "path": "fixtures/conformance/nextcloud-application/published-probe.php",
+          "sha256": "5f8ed605234a64ada922e1fd5f6da1492779a383284a169ffb42a363f1aeacbe"
+        },
+        {
+          "path": "scripts/lib/nextcloud-application-probes.sh",
+          "sha256": "1ff8976356d8ee4ed2d24a6a5c5a88796cf2ba0576f36af6e0a169bc29be1a4a"
+        }
+      ],
+      "image_catalogue": "fixtures/conformance/nextcloud-application/images.tsv",
+      "provider_catalogue": "fixtures/conformance/nextcloud-application/providers.tsv",
+      "networks": {
+        "backend": {
+          "runtime_suffix": "cloud-backend",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": true
+        },
+        "edge": {
+          "runtime_suffix": "shared-edge",
+          "ownership": "shared",
+          "driver": "bridge",
+          "internal": false
+        }
+      },
+      "volumes": {
+        "database": {
+          "runtime_suffix": "cloud-database"
+        },
+        "redis": {
+          "runtime_suffix": "cloud-redis"
+        },
+        "nextcloud": {
+          "runtime_suffix": "cloud-nextcloud"
+        }
+      },
+      "services": {
+        "db": {
+          "runtime_suffix": "cloud-db",
+          "image_key": "postgres",
+          "networks": {
+            "backend": ["db"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "database",
+              "target": "/var/lib/postgresql/data",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "cache": {
+          "runtime_suffix": "cloud-cache",
+          "image_key": "redis",
+          "networks": {
+            "backend": ["cache"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "redis",
+              "target": "/data",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "app": {
+          "runtime_suffix": "cloud-app",
+          "image_key": "nextcloud",
+          "networks": {
+            "backend": ["app"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "nextcloud",
+              "target": "/var/www/html",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "init": {
+          "runtime_suffix": "cloud-init",
+          "image_key": "nextcloud",
+          "networks": {
+            "backend": []
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "nextcloud",
+              "target": "/var/www/html",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "cron": {
+          "runtime_suffix": "cloud-cron",
+          "image_key": "nextcloud",
+          "networks": {
+            "backend": []
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "nextcloud",
+              "target": "/var/www/html",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "frontend": {
+          "runtime_suffix": "cloud-frontend",
+          "image_key": "nginx",
+          "networks": {
+            "backend": ["frontend"],
+            "edge": ["frontend"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "nextcloud",
+              "target": "/var/www/html",
+              "read_only": true
+            },
+            {
+              "kind": "bind",
+              "source": "frontend.conf",
+              "target": "/etc/nginx/conf.d/default.conf",
+              "read_only": true
+            }
+          ],
+          "ingress": []
+        }
+      },
+      "dependencies": [
+        {
+          "service": "app",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "app",
+          "dependency": "cache",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "init",
+          "dependency": "app",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "cron",
+          "dependency": "init",
+          "condition": "completed_successfully",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "frontend",
+          "dependency": "app",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        }
+      ],
+      "excluded_peers": [
+        {
+          "runtime_suffix": "second-app",
+          "owner_suffix": "second",
+          "networks": {
+            "edge": ["second"]
+          }
+        }
+      ],
+      "shared_services": [
+        {
+          "runtime_suffix": "shared-proxy",
+          "ownership": "shared",
+          "networks": {
+            "edge": ["proxy"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": "proxy.conf",
+              "target": "/etc/nginx/conf.d/default.conf",
+              "read_only": true
+            }
+          ],
+          "ingress": [
+            {
+              "host_ip": "127.0.0.1",
+              "host_port": 18443,
+              "container_port": 8080,
+              "protocol": "tcp"
+            }
+          ]
+        }
+      ],
+      "required_checks": {
+        "application": [
+          "installed-status-through-app-and-proxy",
+          "webdav-byte-exact-upload-download",
+          "database-file-rows",
+          "redis-cache-activity",
+          "published-status-route",
+          "published-second-application-route",
+          "successful-init-before-cron"
+        ],
+        "persistence": [
+          "webdav-content-after-recreation",
+          "database-and-cache-after-recreation",
+          "nextcloud-volume-after-recreation"
+        ],
+        "safety": [
+          "internal-backend-isolation",
+          "loopback-only-ingress",
+          "resource-ownership-and-excluded-peers",
+          "collision-refusal",
+          "protected-value-report-redaction",
+          "prefix-scoped-cleanup",
+          "no-host-runtime-socket",
+          "no-implicit-image-pulls"
+        ]
+      }
+    },
+    "paperless-ngx": {
+      "owner_suffix": "paperless",
+      "sources": [
+        {
+          "path": "fixtures/conformance/paperless-ngx-application/compose.yaml",
+          "sha256": "f22f0e4194db3b907cdb0845045339f8561ad830407acf66f6f1063fcca6f762"
+        },
+        {
+          "path": "fixtures/conformance/paperless-ngx-application/images.tsv",
+          "sha256": "22b8606dfeae19eeb2d7c0ac81b27e5583d088283a27b0d4e40a99dd5371cd87"
+        },
+        {
+          "path": "fixtures/conformance/paperless-ngx-application/providers.tsv",
+          "sha256": "7e41fb8a83a99d8a257eceb217f6f6dcee1decd4cce758247dbd3b9ee558a504"
+        },
+        {
+          "path": "fixtures/conformance/paperless-ngx-application/document-probe.py",
+          "sha256": "01ca26113fc4afb5681d7cd94f38f82f2fd7552ee0d4f6786db9d8f8c124317b"
+        },
+        {
+          "path": "scripts/lib/paperless-application-probes.sh",
+          "sha256": "758e9a76ab25f41c0a0ff06db25739cad0009068b96295c34bd16a46a2010281"
+        }
+      ],
+      "image_catalogue": "fixtures/conformance/paperless-ngx-application/images.tsv",
+      "provider_catalogue": "fixtures/conformance/paperless-ngx-application/providers.tsv",
+      "networks": {
+        "backend": {
+          "runtime_suffix": "paper-backend",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": true
+        },
+        "edge": {
+          "runtime_suffix": "paper-edge",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": false
+        }
+      },
+      "volumes": {
+        "data": {
+          "runtime_suffix": "paper-data"
+        },
+        "media": {
+          "runtime_suffix": "paper-media"
+        },
+        "consume": {
+          "runtime_suffix": "paper-consume"
+        },
+        "export": {
+          "runtime_suffix": "paper-export"
+        },
+        "pgdata": {
+          "runtime_suffix": "paper-pgdata"
+        },
+        "redisdata": {
+          "runtime_suffix": "paper-redisdata"
+        }
+      },
+      "services": {
+        "db": {
+          "runtime_suffix": "paper-db",
+          "image_key": "postgres",
+          "networks": {
+            "backend": ["db"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "pgdata",
+              "target": "/var/lib/postgresql",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "broker": {
+          "runtime_suffix": "paper-broker",
+          "image_key": "valkey",
+          "networks": {
+            "backend": ["broker"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "redisdata",
+              "target": "/data",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "gotenberg": {
+          "runtime_suffix": "paper-gotenberg",
+          "image_key": "gotenberg",
+          "networks": {
+            "backend": ["gotenberg"]
+          },
+          "mounts": [],
+          "ingress": []
+        },
+        "tika": {
+          "runtime_suffix": "paper-tika",
+          "image_key": "tika",
+          "networks": {
+            "backend": ["tika"]
+          },
+          "mounts": [],
+          "ingress": []
+        },
+        "webserver": {
+          "runtime_suffix": "paper-web",
+          "image_key": "paperless",
+          "networks": {
+            "backend": ["webserver"],
+            "edge": ["paperless"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "data",
+              "target": "/usr/src/paperless/data",
+              "read_only": false
+            },
+            {
+              "kind": "volume",
+              "source": "media",
+              "target": "/usr/src/paperless/media",
+              "read_only": false
+            },
+            {
+              "kind": "volume",
+              "source": "consume",
+              "target": "/usr/src/paperless/consume",
+              "read_only": false
+            },
+            {
+              "kind": "volume",
+              "source": "export",
+              "target": "/usr/src/paperless/export",
+              "read_only": false
+            },
+            {
+              "kind": "bind",
+              "source": ".",
+              "target": "/fixture",
+              "read_only": false
+            }
+          ],
+          "ingress": [
+            {
+              "host_ip": "127.0.0.1",
+              "host_port": 18000,
+              "container_port": 8000,
+              "protocol": "tcp"
+            }
+          ]
+        }
+      },
+      "dependencies": [
+        {
+          "service": "webserver",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "webserver",
+          "dependency": "broker",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "webserver",
+          "dependency": "gotenberg",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "webserver",
+          "dependency": "tika",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        }
+      ],
+      "excluded_peers": [],
+      "shared_services": [],
+      "required_checks": {
+        "application": [
+          "pdf-docx-odt-ingestion",
+          "asynchronous-processing-completion",
+          "searchable-body-text",
+          "byte-exact-original-downloads",
+          "docx-odt-pdf-archives",
+          "exact-document-database-rows",
+          "valkey-command-activity",
+          "bounded-worker-converter-settings",
+          "application-user-storage-access"
+        ],
+        "persistence": [
+          "search-download-conversion-after-recreation",
+          "document-database-rows-after-recreation",
+          "named-storage-after-recreation"
+        ],
+        "safety": [
+          "internal-backend-isolation",
+          "loopback-only-ingress",
+          "resource-ownership-and-excluded-peers",
+          "collision-refusal",
+          "protected-value-report-redaction",
+          "prefix-scoped-cleanup",
+          "no-host-runtime-socket",
+          "no-implicit-image-pulls"
+        ]
+      }
+    },
+    "immich": {
+      "owner_suffix": "immich",
+      "sources": [
+        {
+          "path": "fixtures/conformance/immich-application/compose.yaml",
+          "sha256": "a1ca57ad8d5342aafa2e947c9ed657b6006e89288c97d1d12166ddc86b55755d"
+        },
+        {
+          "path": "fixtures/conformance/immich-application/images.tsv",
+          "sha256": "77eabf3a9ae489d44a825d55f64d769c7a9ae4437b48a14e9e6cc9f3081bb011"
+        },
+        {
+          "path": "fixtures/conformance/immich-application/providers.tsv",
+          "sha256": "7e41fb8a83a99d8a257eceb217f6f6dcee1decd4cce758247dbd3b9ee558a504"
+        },
+        {
+          "path": "fixtures/conformance/immich-application/media-probe.py",
+          "sha256": "a5ad20d591524a0014319ca4a90f08f85fc60d5e0c7268964e48ca83a872b6f5"
+        },
+        {
+          "path": "scripts/lib/immich-application-probes.sh",
+          "sha256": "2a40ed6e72639a9bd8598e9f271550bd605c4beb12c3b143eec7fcd6f0d63bdd"
+        }
+      ],
+      "image_catalogue": "fixtures/conformance/immich-application/images.tsv",
+      "provider_catalogue": "fixtures/conformance/immich-application/providers.tsv",
+      "networks": {
+        "backend": {
+          "runtime_suffix": "immich-backend",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": true
+        },
+        "edge": {
+          "runtime_suffix": "immich-edge",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": false
+        }
+      },
+      "volumes": {
+        "library": {
+          "runtime_suffix": "immich-library"
+        },
+        "model-cache": {
+          "runtime_suffix": "immich-model-cache"
+        },
+        "pgdata": {
+          "runtime_suffix": "immich-pgdata"
+        },
+        "redisdata": {
+          "runtime_suffix": "immich-redisdata"
+        }
+      },
+      "services": {
+        "database": {
+          "runtime_suffix": "immich-database",
+          "image_key": "postgres",
+          "networks": {
+            "backend": ["database"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "pgdata",
+              "target": "/var/lib/postgresql/data",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "redis": {
+          "runtime_suffix": "immich-redis",
+          "image_key": "valkey",
+          "networks": {
+            "backend": ["redis"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "redisdata",
+              "target": "/data",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "immich-machine-learning": {
+          "runtime_suffix": "immich-machine-learning",
+          "image_key": "machine-learning",
+          "networks": {
+            "backend": ["immich-machine-learning"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "model-cache",
+              "target": "/cache",
+              "read_only": false
+            },
+            {
+              "kind": "bind",
+              "source": ".",
+              "target": "/fixture",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "immich-server": {
+          "runtime_suffix": "immich-server",
+          "image_key": "server",
+          "networks": {
+            "backend": [],
+            "edge": ["immich-server"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "library",
+              "target": "/data",
+              "read_only": false
+            }
+          ],
+          "ingress": [
+            {
+              "host_ip": "127.0.0.1",
+              "host_port": 18283,
+              "container_port": 2283,
+              "protocol": "tcp"
+            }
+          ]
+        }
+      },
+      "dependencies": [
+        {
+          "service": "immich-server",
+          "dependency": "database",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "immich-server",
+          "dependency": "redis",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "immich-server",
+          "dependency": "immich-machine-learning",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        }
+      ],
+      "excluded_peers": [],
+      "shared_services": [],
+      "required_checks": {
+        "application": [
+          "administrator-login",
+          "deterministic-png-upload",
+          "metadata-preview-thumbnail-processing",
+          "byte-exact-original-and-distinct-derivatives",
+          "exact-asset-job-rows",
+          "vectorchord-and-supporting-extensions",
+          "valkey-command-activity",
+          "ml-ping-without-predict-or-model-download",
+          "application-user-storage-access"
+        ],
+        "persistence": [
+          "asset-and-derivative-retrieval-after-recreation",
+          "asset-job-rows-after-recreation",
+          "library-and-model-cache-after-recreation"
+        ],
+        "safety": [
+          "internal-backend-isolation",
+          "loopback-only-ingress",
+          "resource-ownership-and-excluded-peers",
+          "collision-refusal",
+          "protected-value-report-redaction",
+          "prefix-scoped-cleanup",
+          "no-host-runtime-socket",
+          "no-implicit-image-pulls"
+        ]
+      }
+    },
+    "observability": {
+      "owner_suffix": "observability",
+      "sources": [
+        {
+          "path": "fixtures/conformance/observability-application/compose.yaml",
+          "sha256": "4f825faa765e58e8fee7b0faf093d298e48fbd37c5e24a41b564abfa9f567d48"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/images.tsv",
+          "sha256": "d304e88035ea328312f27396438e0b299119426711b576aebc362ffaa6ce13ab"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/providers.tsv",
+          "sha256": "54b0eb79562afe91f4508a6f94a5284131515ff9ecca1e524d2912b03359bf78"
+        },
+        {
+          "path": "scripts/lib/observability-application.sh",
+          "sha256": "b75018ea514e1f49acc56d8af90df95fd7a4d68d077f3a5f7985ab1d56bc3b79"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/producer.sh",
+          "sha256": "6c8ac9a423e99a5bb0014d7835222e0e0c9282350d1eda1f7c16d1bcf8ecf7db"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/config.alloy",
+          "sha256": "6e153eb8521165610f7aab3d2bd6e631d5d9e77ccd14d408959206cd0cc486d4"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/prometheus.yml",
+          "sha256": "56e8ab1086aedd3aa76ff16a7f7e860a6bdb4e954e1fbe6a5bb1841e85dbdf9e"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/loki.yaml",
+          "sha256": "7bb3e41f38b9ab1199eeb7cc61609b5fb1e6924894b4372e591a058ceee9cd27"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/grafana-datasources.yaml",
+          "sha256": "814b645dc114784dfe8e69306c3138963380a292e2cfaebe471de5fa806041e8"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/grafana-dashboards.yaml",
+          "sha256": "90d3e4130f1d058a175659b6d891e724319e5c5fd7a296d51d00e2394b994cbd"
+        },
+        {
+          "path": "fixtures/conformance/observability-application/dashboard.json",
+          "sha256": "83fa01feb5a7064eb6165a967e8e3c6b3d13c2d57b785d3f2a4926dd2e63cf6a"
+        }
+      ],
+      "image_catalogue": "fixtures/conformance/observability-application/images.tsv",
+      "provider_catalogue": "fixtures/conformance/observability-application/providers.tsv",
+      "networks": {
+        "backend": {
+          "runtime_suffix": "observability-backend",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": true
+        },
+        "edge": {
+          "runtime_suffix": "observability-edge",
+          "ownership": "shared",
+          "driver": "bridge",
+          "internal": false
+        }
+      },
+      "volumes": {
+        "alloy-data": {
+          "runtime_suffix": "observability-alloy-data"
+        },
+        "grafana-data": {
+          "runtime_suffix": "observability-grafana-data"
+        },
+        "loki-data": {
+          "runtime_suffix": "observability-loki-data"
+        },
+        "prometheus-data": {
+          "runtime_suffix": "observability-prometheus-data"
+        },
+        "telemetry-logs": {
+          "runtime_suffix": "observability-telemetry-logs"
+        }
+      },
+      "services": {
+        "metrics-producer": {
+          "runtime_suffix": "observability-metrics-producer",
+          "image_key": "producer",
+          "networks": {
+            "backend": ["metrics-producer"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": ".",
+              "target": "/fixture",
+              "read_only": true
+            }
+          ],
+          "ingress": []
+        },
+        "log-producer": {
+          "runtime_suffix": "observability-log-producer",
+          "image_key": "producer",
+          "networks": {
+            "backend": []
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": ".",
+              "target": "/fixture",
+              "read_only": true
+            },
+            {
+              "kind": "volume",
+              "source": "telemetry-logs",
+              "target": "/var/log/boxferry",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "prometheus": {
+          "runtime_suffix": "observability-prometheus",
+          "image_key": "prometheus",
+          "networks": {
+            "backend": ["prometheus"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": "prometheus.yml",
+              "target": "/etc/prometheus/prometheus.yml",
+              "read_only": true
+            },
+            {
+              "kind": "volume",
+              "source": "prometheus-data",
+              "target": "/prometheus",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "loki": {
+          "runtime_suffix": "observability-loki",
+          "image_key": "loki",
+          "networks": {
+            "backend": ["loki"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": "loki.yaml",
+              "target": "/etc/loki/loki.yaml",
+              "read_only": true
+            },
+            {
+              "kind": "volume",
+              "source": "loki-data",
+              "target": "/loki",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "alloy": {
+          "runtime_suffix": "observability-alloy",
+          "image_key": "alloy",
+          "networks": {
+            "backend": []
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": "config.alloy",
+              "target": "/etc/alloy/config.alloy",
+              "read_only": true
+            },
+            {
+              "kind": "volume",
+              "source": "alloy-data",
+              "target": "/var/lib/alloy/data",
+              "read_only": false
+            },
+            {
+              "kind": "volume",
+              "source": "telemetry-logs",
+              "target": "/var/log/boxferry",
+              "read_only": true
+            }
+          ],
+          "ingress": []
+        },
+        "grafana": {
+          "runtime_suffix": "observability-grafana",
+          "image_key": "grafana",
+          "networks": {
+            "backend": [],
+            "edge": ["grafana"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": "grafana-datasources.yaml",
+              "target": "/etc/grafana/provisioning/datasources/boxferry.yaml",
+              "read_only": true
+            },
+            {
+              "kind": "bind",
+              "source": "grafana-dashboards.yaml",
+              "target": "/etc/grafana/provisioning/dashboards/boxferry.yaml",
+              "read_only": true
+            },
+            {
+              "kind": "bind",
+              "source": "dashboard.json",
+              "target": "/etc/grafana/provisioning/boxferry-dashboards/boxferry.json",
+              "read_only": true
+            },
+            {
+              "kind": "volume",
+              "source": "grafana-data",
+              "target": "/var/lib/grafana",
+              "read_only": false
+            }
+          ],
+          "ingress": [
+            {
+              "host_ip": "127.0.0.1",
+              "host_port": 13000,
+              "container_port": 3000,
+              "protocol": "tcp"
+            }
+          ]
+        }
+      },
+      "dependencies": [
+        {
+          "service": "prometheus",
+          "dependency": "metrics-producer",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "alloy",
+          "dependency": "prometheus",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "alloy",
+          "dependency": "loki",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "alloy",
+          "dependency": "log-producer",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "grafana",
+          "dependency": "prometheus",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "grafana",
+          "dependency": "loki",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "grafana",
+          "dependency": "alloy",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        }
+      ],
+      "excluded_peers": [
+        {
+          "runtime_suffix": "observability-boundary-peer",
+          "owner_suffix": "boundary",
+          "networks": {
+            "edge": []
+          }
+        }
+      ],
+      "shared_services": [],
+      "required_checks": {
+        "application": [
+          "promql-controlled-metric-42-after-alloy-remote-write",
+          "logql-exact-known-line-after-alloy-tailing",
+          "grafana-datasource-uids-and-dashboard-expressions",
+          "prometheus-24h-retention-and-remote-write",
+          "loki-24h-filesystem-tsdb-retention",
+          "alloy-read-only-log-handoff"
+        ],
+        "persistence": [
+          "historical-metric-84-after-recreation",
+          "known-log-without-alloy-replay-after-recreation",
+          "grafana-volume-marker-after-recreation"
+        ],
+        "safety": [
+          "internal-backend-isolation",
+          "loopback-only-ingress",
+          "resource-ownership-and-excluded-peers",
+          "collision-refusal",
+          "protected-value-report-redaction",
+          "prefix-scoped-cleanup",
+          "no-host-runtime-socket",
+          "no-implicit-image-pulls"
+        ]
+      }
+    },
+    "supabase": {
+      "owner_suffix": "supabase",
+      "sources": [
+        {
+          "path": "fixtures/conformance/supabase-application/compose.yaml",
+          "sha256": "9dd2e33343e8cf00836d783fb25d6488dcc0b958f68472dafa4b6d7b24c8a42b"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/images.tsv",
+          "sha256": "afbce8137e32fcae9ec72aef6b0ab8deecb6ec36d02591a657fa881168bf5819"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/providers.tsv",
+          "sha256": "2bb0d842fa60f0654224ed0117f9896b237af00ae6252654a2cde5ee93ab44a3"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/peer.compose.yaml",
+          "sha256": "748488b4d1ae9cf2776301144eb10168d1f1a7b6969d3d1c9d1402d5621103db"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/db-init.sql",
+          "sha256": "39cfece9f67a1b77fe8adb675fac9beb530958e2fb3eb32c8510899c29975fa9"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/kong.yml",
+          "sha256": "4c79d587714fa83088806ee2c746a4e596545e255d2b2eed9dc57c7822937f5b"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/graph.tsv",
+          "sha256": "90f7e93e9571bfbaf0904a9d91ca32ffec92b0186e1b88b549d5df3f321c0f74"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/routes.tsv",
+          "sha256": "93f25d54ccf5f6fb061e8e2e5e54d03a60b9fa82a2a6c235d38fd3c340f216ce"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/application.tsv",
+          "sha256": "e1938acae1787b442cc1b6b2c77748db2472dfb058d47840aaafbc5575494ed5"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/application-probe.mjs",
+          "sha256": "36b0bbaf65c53794f93e47f3a47f42700b3d86a34f2ed0976fd503bc275ff240"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/realtime-websocket.mjs",
+          "sha256": "dcfa990b301eacafbfb2db960cf6a0392fabd278880e166daf57611a3128e1c5"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/realtime-readiness.mjs",
+          "sha256": "6edd777bbaa367f0a9187adc863c9cc6d69bbbcdcee886e2eed6dc74c4704321"
+        },
+        {
+          "path": "fixtures/conformance/supabase-application/functions/main/index.ts",
+          "sha256": "05c6ba92c91316869bd87ef1bbac5c77b4569b4e0c6770d4dbae2d4505f90d82"
+        }
+      ],
+      "image_catalogue": "fixtures/conformance/supabase-application/images.tsv",
+      "provider_catalogue": "fixtures/conformance/supabase-application/providers.tsv",
+      "networks": {
+        "backend": {
+          "runtime_suffix": "supabase-backend",
+          "ownership": "application",
+          "driver": "bridge",
+          "internal": true
+        },
+        "edge": {
+          "runtime_suffix": "supabase-edge",
+          "ownership": "shared",
+          "driver": "bridge",
+          "internal": false
+        }
+      },
+      "volumes": {
+        "deno-cache": {
+          "runtime_suffix": "supabase-deno-cache"
+        },
+        "pgdata": {
+          "runtime_suffix": "supabase-pgdata"
+        },
+        "storage": {
+          "runtime_suffix": "supabase-storage"
+        }
+      },
+      "services": {
+        "db": {
+          "runtime_suffix": "supabase-db",
+          "image_key": "db",
+          "networks": {
+            "backend": ["db"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "pgdata",
+              "target": "/var/lib/postgresql/data",
+              "read_only": false
+            },
+            {
+              "kind": "bind",
+              "source": "db-init.sql",
+              "target": "/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql",
+              "read_only": true
+            }
+          ],
+          "ingress": []
+        },
+        "auth": {
+          "runtime_suffix": "supabase-auth",
+          "image_key": "auth",
+          "networks": {
+            "backend": ["auth"]
+          },
+          "mounts": [],
+          "ingress": []
+        },
+        "rest": {
+          "runtime_suffix": "supabase-rest",
+          "image_key": "rest",
+          "networks": {
+            "backend": ["rest"]
+          },
+          "mounts": [],
+          "ingress": []
+        },
+        "realtime": {
+          "runtime_suffix": "supabase-realtime",
+          "image_key": "realtime",
+          "networks": {
+            "backend": ["realtime-dev.supabase-realtime", "realtime"]
+          },
+          "mounts": [],
+          "ingress": []
+        },
+        "imgproxy": {
+          "runtime_suffix": "supabase-imgproxy",
+          "image_key": "imgproxy",
+          "networks": {
+            "backend": ["imgproxy"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "storage",
+              "target": "/var/lib/storage",
+              "read_only": true
+            }
+          ],
+          "ingress": []
+        },
+        "storage": {
+          "runtime_suffix": "supabase-storage",
+          "image_key": "storage",
+          "networks": {
+            "backend": ["storage"]
+          },
+          "mounts": [
+            {
+              "kind": "volume",
+              "source": "storage",
+              "target": "/var/lib/storage",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "meta": {
+          "runtime_suffix": "supabase-meta",
+          "image_key": "meta",
+          "networks": {
+            "backend": ["meta"]
+          },
+          "mounts": [],
+          "ingress": []
+        },
+        "supavisor": {
+          "runtime_suffix": "supabase-supavisor",
+          "image_key": "supavisor",
+          "networks": {
+            "backend": ["supavisor"]
+          },
+          "mounts": [],
+          "ingress": []
+        },
+        "functions": {
+          "runtime_suffix": "supabase-functions",
+          "image_key": "functions",
+          "networks": {
+            "backend": ["functions"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": "functions",
+              "target": "/home/deno/functions",
+              "read_only": true
+            },
+            {
+              "kind": "volume",
+              "source": "deno-cache",
+              "target": "/root/.cache/deno",
+              "read_only": false
+            }
+          ],
+          "ingress": []
+        },
+        "studio": {
+          "runtime_suffix": "supabase-studio",
+          "image_key": "studio",
+          "networks": {
+            "backend": ["studio"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": ".",
+              "target": "/boxferry-fixture",
+              "read_only": true
+            }
+          ],
+          "ingress": []
+        },
+        "kong": {
+          "runtime_suffix": "supabase-kong",
+          "image_key": "kong",
+          "networks": {
+            "backend": ["kong"],
+            "edge": ["supabase"]
+          },
+          "mounts": [
+            {
+              "kind": "bind",
+              "source": "kong.yml",
+              "target": "/etc/kong/kong.yml",
+              "read_only": true
+            }
+          ],
+          "ingress": [
+            {
+              "host_ip": "127.0.0.1",
+              "host_port": 18000,
+              "container_port": 8000,
+              "protocol": "tcp"
+            }
+          ]
+        }
+      },
+      "dependencies": [
+        {
+          "service": "auth",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "rest",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "realtime",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "storage",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "meta",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "supavisor",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "functions",
+          "dependency": "db",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "storage",
+          "dependency": "imgproxy",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "storage",
+          "dependency": "rest",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "studio",
+          "dependency": "meta",
+          "condition": "started",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "kong",
+          "dependency": "auth",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "kong",
+          "dependency": "functions",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "kong",
+          "dependency": "realtime",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "kong",
+          "dependency": "rest",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "kong",
+          "dependency": "storage",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        },
+        {
+          "service": "kong",
+          "dependency": "studio",
+          "condition": "healthy",
+          "required": true,
+          "restart": false
+        }
+      ],
+      "excluded_peers": [
+        {
+          "runtime_suffix": "supabase-boundary-peer",
+          "owner_suffix": "boundary-peer",
+          "networks": {
+            "edge": ["boundary-peer"]
+          }
+        }
+      ],
+      "shared_services": [],
+      "required_checks": {
+        "application": [
+          "complete-eleven-service-graph",
+          "peer-network-password-sql-bootstrap",
+          "fresh-eight-service-configured-health-execution",
+          "auth-signup-signin-current-user",
+          "postgrest-insert-select-and-realtime-notification",
+          "private-storage-bucket-byte-exact-round-trip",
+          "edge-function-exact-seed-and-verify-sha256",
+          "studio-meta-realtime-supavisor-http-readiness",
+          "gateway-realtime-websocket",
+          "database-auth-storage-rows-publication-and-extensions",
+          "partial-storage-selection-retains-required-graph"
+        ],
+        "persistence": [
+          "authentication-and-realtime-after-eleven-container-recreation",
+          "postgrest-api-reads-after-recreation",
+          "storage-byte-exact-retrieval-after-recreation",
+          "edge-function-exact-response-after-recreation",
+          "postgres-storage-deno-cache-ownership-after-recreation"
+        ],
+        "safety": [
+          "internal-backend-isolation",
+          "loopback-only-ingress",
+          "resource-ownership-and-excluded-peers",
+          "collision-refusal",
+          "protected-value-report-redaction",
+          "prefix-scoped-cleanup",
+          "no-host-runtime-socket",
+          "no-implicit-image-pulls"
+        ]
+      }
+    }
+  }
+}

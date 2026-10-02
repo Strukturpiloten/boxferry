@@ -4,6 +4,8 @@ set -Eeuo pipefail
 
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 bash "${script_directory}/test-application-probes-runner.sh"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-expectations.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/lib/docker-application-expectations.py" check-sources
 bash "${script_directory}/test-application-export-privacy.sh"
 for application in forgejo nextcloud paperless immich; do
   bash "${script_directory}/test-${application}-application-probes.sh"
