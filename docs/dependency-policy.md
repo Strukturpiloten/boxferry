@@ -1,7 +1,7 @@
 # Dependency and license policy
 
-Use this guide when a change adds, removes, pins, or enables a dependency. Exact versions belong in
-the manifest, lock file, workflow, or installer that uses them—not in this page.
+Use when adding, removing, pinning, or enabling dependencies. Versions belong in their manifest,
+lockfile, workflow, or installer.
 
 ## Sources of truth
 
@@ -25,9 +25,8 @@ the manifest, lock file, workflow, or installer that uses them—not in this pag
 - Record dependencies that shape architecture, representation, or public APIs in an ADR.
 - Commit the lock file and use locked resolution in CI.
 
-`deny.toml` intentionally allows only Apache-2.0, MIT, MPL-2.0, and Unicode-3.0. Add a license
-only for a reviewed dependency whose obligations are understood. This policy records project
-intent and is not legal advice.
+`deny.toml` allows only Apache-2.0, MIT, MPL-2.0, and Unicode-3.0. Additional licenses require reviewed
+dependencies and understood obligations. This policy is project intent, not legal advice.
 
 An advisory, license clarification, duplicate allowance, or source exception must be narrow,
 versioned, and explained where it is configured. Never add an exception only to make CI green.
@@ -61,16 +60,15 @@ checksum-pinned Compose providers, active application images, and live probe ima
 Workflows call the canonical version/checksum installer `scripts/lib/compose-provider.sh`;
 never duplicate its release URLs.
 
-The repository-owned Dockerfile is already managed atomically by its release/digest regex manager,
-and every Compose or Quadlet document is fixture input. Their native managers are disabled so they
-cannot duplicate Dev Container proposals or treat intentionally invalid fixture registries as live
-dependencies. Curated application `images.tsv` catalogues remain visible through their explicit
-manager.
+The Dockerfile's regex manager owns atomic release/digest updates. Compose and Quadlet documents are
+fixtures. Their native managers stay disabled, preventing duplicate Dev Container proposals and
+updates to intentionally invalid fixture registries. Curated application `images.tsv` catalogues
+retain explicit management.
 
-Checksum-bearing provider and live-image proposals require Dependency Dashboard approval and never
-auto-merge. Review the new release asset or platform manifest digest, provenance, license, resource
-budget, and live behavior before updating the corresponding catalogues. Semantic policy tests may
-assert action identity and immutable-pin shape, but must not embed a Renovate-owned action revision.
+Checksum-bearing provider and live-image proposals require Dependency Dashboard approval, never
+auto-merge. Review release assets/platform digests, provenance, license, resource budgets, and live
+behavior before catalogue updates. Policy tests may assert Action identity and immutable-pin shape,
+never Renovate-owned revisions.
 
 The application dispatcher's canonical `ADMISSION_REVISION` pins DockerLens #42's reviewed merge
 commit: unreleased infrastructure, not a package release. No helper tag or downloadable checksum
@@ -79,16 +77,23 @@ approval and disables automerge. Review producer/consumer together: both actors'
 exact-head admission, privacy, and fail-closed cases.
 
 Captured cassettes, generated expectations, historical observations, and the Podman compatibility
-matrix are retained evidence rather than floating dependencies. Their recorded versions change only
-through the owning evidence or version-boundary revalidation workflow. API contract dates and fixed
-support targets are likewise reviewed compatibility decisions, not update streams.
+matrix remain evidence; version changes require owning evidence/version-boundary revalidation.
+API contract dates and fixed support targets are reviewed compatibility decisions, outside updates.
 
-Renovate's global three-day age governs direct updates, not lock maintenance. Lock maintenance sets
-Renovate's unsupported synthetic age status to zero; auto-merge instead requires the aggregate
-gate's shared 72-hour check of every introduced Cargo/npm registry version. The fail-closed guard has
-one Renovate-owned immutable commit. Checksum, image, runner, provider, and Dev Container updates
-remain manual. Actions stay SHA-pinned, release tools stay version/checksum-pinned, and release-plz
-only prepares. Formatting tools do not change the published graph or MSRV.
+Renovate's global three-day direct-update age has one exact-name Cargo/crate exception: six BoxFerry
+workspace packages plus `compose-lens`, `podman-lens`, `quadlet-lens`, and `docker-lens`. Prefixes,
+wildcards, other managers, and same-name npm packages remain excluded.
+
+Lock maintenance's unsupported synthetic Renovate age status is zero; auto-merge requires the
+aggregate gate's shared check of every introduced Cargo/npm registry version. Only these four
+canonical crates.io Cargo packages waive the guard's age threshold, after successful bounded registry
+lookup. Missing, malformed, or future publication timestamps fail closed. Other versions, including
+third-party and transitive dependencies, retain 72 hours. Only age changes: immutable pins, Cargo
+checksums, lockfile integrity, audits, required checks, and manual approvals remain mandatory. The
+existing shared-policy manager owns the guard's immutable commit; no new manager or extraction path
+is added. Checksum, image, runner, provider, and Dev Container updates remain manual. Actions stay
+SHA-pinned, release tools version/checksum-pinned, and release-plz only prepares. Formatting tools
+cannot change the published graph or MSRV.
 
 Run `cargo deny check` and the complete repository gate after dependency changes. Local link
 checks are deterministic and offline; external URL checks run separately on a schedule or by
@@ -96,19 +101,18 @@ manual request.
 
 ### Workflow changes and Renovate ownership
 
-A task refactor is also a dependency-automation review, even when version numbers do not change.
-For every added, changed, moved, or removed operational pin:
+Refactors require dependency-automation review even without version changes. For every added,
+changed, moved, or removed operational pin:
 
-1. Identify its canonical source and affected local scripts, CI/release workflows, Dev Containers,
-   and cross-repository consumers. Record the impact in the issue or PR.
+1. Record canonical sources and affected scripts, CI/release workflows, Dev Containers, and
+   cross-repository consumers in the issue or PR.
 2. Check native/custom manager ownership, file patterns, extraction expressions, versioning,
    grouping, approval rules, and consumer reference updates. Remove obsolete matches; prove each
    operational pin is extracted exactly once at its intended source.
 3. Keep full Action/reusable-workflow SHAs paired with exact release tags. Preserve reviewed
    version/checksum and image release/digest pairs; never relax approvals to make an update merge.
-4. Validate Renovate configuration and exercise extraction/regression checks against the new
-   layout, including composite actions and shared scripts. Ensure immutable historical fixtures,
-   compatibility anchors, and intentionally invalid inputs remain outside update streams.
+4. Validate Renovate and extraction/regression checks, including composite actions and shared scripts.
+   Keep historical fixtures, compatibility anchors, and intentionally invalid inputs outside updates.
 5. Verify every affected consumer and link coordinated changes. If Renovate needs no edit, record
    the extraction evidence and reason rather than assuming an existing regex still matches.
 
