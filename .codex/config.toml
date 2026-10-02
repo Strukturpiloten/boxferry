@@ -4,6 +4,7 @@ model_reasoning_effort = "xhigh"
 
 [agents]
 enabled = true
-max_concurrent_threads_per_session = 9
-default_subagent_model = "gpt-6-sol"
+# This limit excludes the primary: eight subagents, nine agents in total.
+max_concurrent_threads_per_session = 8
+default_subagent_model = "gpt-6.1-sol"
 default_subagent_reasoning_effort = "medium"

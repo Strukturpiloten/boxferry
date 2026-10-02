@@ -8530,16 +8530,16 @@ fn agent_roles_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
     for required in [
         "model = \"gpt-6-sol\"",
         "model_reasoning_effort = \"xhigh\"",
-        "max_concurrent_threads_per_session = 9",
-        "default_subagent_model = \"gpt-6-sol\"",
+        "max_concurrent_threads_per_session = 8",
+        "default_subagent_model = \"gpt-6.1-sol\"",
         "default_subagent_reasoning_effort = \"medium\"",
     ] {
         assert!(config.contains(required), "missing agent default: {required}");
     }
     for (role, model, effort, sandbox) in [
-        ("implementation-worker", "gpt-6-sol", "high", "workspace-write"),
-        ("specification-researcher", "gpt-6-sol", "high", "read-only"),
-        ("reviewer", "gpt-6-sol", "high", "read-only"),
+        ("implementation-worker", "gpt-6.1-sol", "high", "workspace-write"),
+        ("specification-researcher", "gpt-6.1-sol", "high", "read-only"),
+        ("reviewer", "gpt-6.1-sol", "high", "read-only"),
         ("verifier", "gpt-6-luna", "high", "workspace-write"),
     ] {
         let text = fs::read_to_string(root.join(format!(".codex/agents/{role}.toml")))?;
@@ -8592,9 +8592,12 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
     let flattened = instructions.split_whitespace().collect::<Vec<_>>().join(" ");
     for required in [
         "The primary manager always uses `gpt-6-sol` with `xhigh` reasoning",
-        "up to nine concurrent subagents plus the primary manager",
+        "Task-specific subagents may use `gpt-6.1-sol` or `gpt-6-luna` with `medium`, `high`, or `xhigh` reasoning",
+        "Use `gpt-6-astra` only with `xhigh` reasoning for particularly difficult architectural questions",
+        "up to eight concurrent subagents plus the primary manager (nine agents in total)",
         "subject to the session's actual runtime limit",
-        "Nine is a ceiling, not a target or nine distinct roles",
+        "Eight is a ceiling, not a target or eight distinct roles",
+        "`agents.max_concurrent_threads_per_session = 8` excludes the primary",
         "Do not create nested agents to evade the limit",
         "Never run two writers in one checkout",
         "at most one complete gate or heavy runtime suite at a time across this workspace",
@@ -8612,7 +8615,7 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
         assert!(flattened.contains(required), "missing workspace boundary: {required}");
     }
     for obsolete in [
-        "Use at most three subagents",
+        "up to nine concurrent subagents plus the primary manager",
         "does not authorize a merge",
         "Merge only when the user explicitly authorizes",
     ] {
