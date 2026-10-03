@@ -156,16 +156,27 @@ expectation. The failed focused pre-release run at
 `ff840133a1d8ddef9bdf3c532179b6751e464064` is only a cross-check.
 
 Each row has five fields: code, subject, severity, decision, and required loss policy. The visible
-`-` marker represents fields absent from native Compose and Quadlet diagnostics and is normalized to
-empty fields before exact comparison. The 214-row shared importer base includes five portable
+`-` marker represents absent fields and is normalized independently for decision and policy before
+exact comparison. The 220-row shared importer base includes five portable
 DNS-alias promotions. Compose mode adds two service-identity promotions, while CLI mode adds six
 creation-evidence tuples.
 Compose output adds four network tuples in either mode plus seven CLI-only dependency tuples;
 Quadlet output adds the reviewed multi-network Grafana alias omission; Podman output adds 61
 output-omission tuples. Exact and label selectors are equal. The all selector
-adds 18 shared importer tuples (the boundary peer and default Podman network), then one Compose
+adds 19 shared importer tuples (the boundary peer and default Podman network), then one Compose
 network tuple or eleven Podman omission tuples as appropriate. This factoring preserves duplicate
 tuples and represents each observed mode/selection/output multiset without copying six full routes.
+
+Under [ADR 0060](../../../docs/decisions/0060-portable-podman-cli-import-policy.md), the base separately
+requires 18 `BFP0009` reconstruction notes: six named-volume mount relationships, six aggregate
+network-attachment subjects, and six restart policies. These notes have decision `reconstructed`
+and no required loss policy. Grafana retains both backend and edge attachments; the CLI deduplicates
+their identical complete aggregate diagnostics into one network note. Six independent `BFP0003`
+warnings retain inferred application ownership for backend and the five named volumes. Edge remains
+external and must not acquire an ownership warning. All-resource selection adds two boundary-peer
+reconstruction notes and an inferred-ownership warning for the default Podman network. Environment,
+aliases, network definition/IPAM, bind mounts, and child-field warnings remain non-exact; these
+templates retain PodmanLens 0.2.4 environment semantics and do not change reimport contracts.
 
 `{{resource_prefix}}` is the only supported template marker. The harness validates its generated
 prefix and every row before substitution; malformed templates and reports fail closed. Reports and

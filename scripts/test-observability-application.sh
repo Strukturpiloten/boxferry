@@ -12,6 +12,165 @@ source "${script_directory}/lib/scenario-validators.sh"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "${test_root}"' EXIT
 
+diagnostic_base="${repository_root}/fixtures/conformance/observability-application/diagnostics/base-compose-provisioned.tsv"
+assert_static_diagnostic_tuple() {
+  local subject=$1 code=$2 severity=$3 decision=$4 policy=$5 count=${6:-1}
+  awk -F '\t' -v subject="${subject}" -v code="${code}" \
+    -v severity="${severity}" -v decision="${decision}" -v policy="${policy}" -v count="${count}" '
+    $2 == subject {
+      if ($1 == code && $3 == severity && $4 == decision && $5 == policy) {
+        matching++
+      } else {
+        mismatched++
+      }
+    }
+    END { exit !(matching == count && mismatched == 0) }
+  ' "${diagnostic_base}" || {
+    printf 'Incorrect authored observability diagnostic for %s.\n' "${subject}" >&2
+    return 1
+  }
+}
+
+for resource in backend alloy-data grafana-data loki-data prometheus-data telemetry-logs; do
+  if [[ "${resource}" == backend ]]; then
+    diagnostic_subject="networks.{{resource_prefix}}${resource}.ownership"
+  else
+    diagnostic_subject="volumes.{{resource_prefix}}${resource}.ownership"
+  fi
+  assert_static_diagnostic_tuple \
+    "${diagnostic_subject}" BFP0003 warning inferred-application-ownership approximate
+done
+if grep --fixed-strings --quiet $'networks.{{resource_prefix}}edge.ownership\t' "${diagnostic_base}"; then
+  printf '%s\n' 'External edge network must not infer application ownership.' >&2
+  exit 1
+fi
+
+for mount in 'alloy.mounts[0]' 'alloy.mounts[1]' 'grafana.mounts[0]' \
+  'log-producer.mounts[0]' 'loki.mounts[0]' 'prometheus.mounts[0]'; do
+  assert_static_diagnostic_tuple \
+    "services.{{resource_prefix}}${mount}" BFP0009 note reconstructed -
+done
+for service in alloy grafana log-producer loki metrics-producer prometheus; do
+  for field in networks restart_policy; do
+    # The library emits per-attachment notes; the CLI deduplicates identical
+    # complete diagnostics without removing Grafana's two network attachments.
+    assert_static_diagnostic_tuple \
+      "services.{{resource_prefix}}${service}.${field}" BFP0009 note reconstructed -
+  done
+done
+[[ "$(awk -F '\t' '$1 == "BFP0009" { count++ } END { print count + 0 }' "${diagnostic_base}")" == 18 ]]
+reviewed_diagnostic_base="${diagnostic_base}"
+grafana_network_subject='services.{{resource_prefix}}grafana.networks'
+awk -F '\t' -v subject="${grafana_network_subject}" '
+  $1 == "BFP0009" && $2 == subject && !removed++ { next }
+  { print }
+' "${reviewed_diagnostic_base}" > "${test_root}/missing-grafana-network.tsv"
+cp -- "${reviewed_diagnostic_base}" "${test_root}/extra-grafana-network.tsv"
+printf 'BFP0009\t%s\tnote\treconstructed\t-\n' "${grafana_network_subject}" \
+  >> "${test_root}/extra-grafana-network.tsv"
+for mutation in missing extra; do
+  diagnostic_base="${test_root}/${mutation}-grafana-network.tsv"
+  if assert_static_diagnostic_tuple "${grafana_network_subject}" BFP0009 note reconstructed - \
+    > /dev/null 2>&1; then
+    printf 'Observability contract admitted %s Grafana network reconstruction tuple.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+diagnostic_base="${reviewed_diagnostic_base}"
+
+# Exercise every exporter, provisioning mode, and selector without a runtime.
+for diagnostic_mode in cli compose; do
+  for diagnostic_selection in exact label all; do
+    for diagnostic_output in compose quadlet podman; do
+      rendered="${test_root}/native-${diagnostic_mode}-${diagnostic_selection}-${diagnostic_output}.tsv"
+      observability_write_live_diagnostic_template \
+        "${diagnostic_mode}" "${diagnostic_selection}" podman "${diagnostic_output}" \
+        bf-private-observability- "${rendered}"
+      expected_notes=18 expected_ownership=6 expected_environment=6
+      if [[ "${diagnostic_selection}" == all ]]; then
+        expected_notes=20 expected_ownership=7 expected_environment=7
+      fi
+      awk -F '\t' -v notes="${expected_notes}" -v ownership="${expected_ownership}" \
+        -v environment="${expected_environment}" '
+        $1 == "BFP0009" {
+          if (NF != 5 || $3 != "note" || $4 != "reconstructed" || $5 != "") exit 1
+          notes_seen++
+        }
+        $4 == "inferred-application-ownership" {
+          if (NF != 5 || $1 != "BFP0003" || $3 != "warning" || $5 != "approximate") exit 1
+          ownership_seen++
+        }
+        $2 ~ /\.environment$/ && $1 == "BFP0003" &&
+          $3 == "warning" && $4 == "approximated" && $5 == "approximate" { environment_seen++ }
+        $2 ~ /edge\.ownership$/ { exit 1 }
+        END { exit !(notes_seen == notes && ownership_seen == ownership && environment_seen == environment) }
+      ' "${rendered}"
+      if [[ "${diagnostic_selection}" == all ]]; then
+        for field in networks restart_policy; do
+          awk -F '\t' -v subject="services.bf-private-observability-boundary-peer.${field}" '
+            $2 == subject {
+              if ($1 == "BFP0009" && $3 == "note" && $4 == "reconstructed" && $5 == "") matching++
+              else mismatched++
+            }
+            END { exit !(matching == 1 && mismatched == 0) }
+          ' "${rendered}"
+        done
+        grep --fixed-strings --line-regexp --quiet \
+          $'BFP0003\tnetworks.podman.ownership\twarning\tinferred-application-ownership\tapproximate' "${rendered}"
+      fi
+      # Synthetic reports test normalization; the literal tuples above remain
+      # independent semantic expectations, never derived from native output.
+      diagnostic_report="${rendered}.json"
+      jq --raw-input --slurp '{
+        diagnostics: (split("\n") | map(select(length > 0) | split("\t") |
+          {code: .[0], severity: .[2], fields:
+            ([{name: "subject", value: .[1]}] +
+             (if .[3] == "" then [] else [{name: "decision", value: .[3]}] end) +
+             (if .[4] == "" then [] else [{name: "required_loss_policy", value: .[4]}] end))}))
+      }' "${rendered}" > "${diagnostic_report}"
+      observability_assert_reviewed_diagnostics live-native-export \
+        "${diagnostic_mode}" "${diagnostic_selection}" podman "${diagnostic_output}" \
+        bf-private-observability- "${diagnostic_report}"
+      for mutation in missing duplicate severity decision policy duplicate-field; do
+        jq --arg mutation "${mutation}" '
+          ([.diagnostics | to_entries[] | select(.value.code == "BFP0009")][0].key) as $index |
+          if $mutation == "missing" then del(.diagnostics[$index])
+          elif $mutation == "duplicate" then .diagnostics += [.diagnostics[$index]]
+          elif $mutation == "severity" then .diagnostics[$index].severity = "warning"
+          elif $mutation == "decision" then
+            .diagnostics[$index].fields |= map(if .name == "decision" then .value = "approximated" else . end)
+          elif $mutation == "policy" then
+            .diagnostics[$index].fields += [{name: "required_loss_policy", value: "approximate"}]
+          else .diagnostics[$index].fields += [{name: "decision", value: "reconstructed"}]
+          end
+        ' "${diagnostic_report}" > "${diagnostic_report}.mutated"
+        if observability_assert_reviewed_diagnostics live-native-export \
+          "${diagnostic_mode}" "${diagnostic_selection}" podman "${diagnostic_output}" \
+          bf-private-observability- "${diagnostic_report}.mutated" > /dev/null 2>&1; then
+          printf 'Native contract admitted %s reconstruction note for %s/%s/%s.\n' \
+            "${mutation}" "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_output}" >&2
+          exit 1
+        fi
+      done
+    done
+  done
+done
+for malformed in \
+  $'BFP0009\tsubject\twarning\treconstructed\t-' \
+  $'BFP0009\tsubject\tnote\tapproximated\t-' \
+  $'BFP0009\tsubject\tnote\treconstructed\tapproximate' \
+  $'BFP0009\tsubject\tnote\treconstructed\t' \
+  $'BFP0003\tsubject\tnote\tinferred-application-ownership\tapproximate' \
+  $'BFP0003\tsubject\twarning\tinferred-application-ownership\t-'; do
+  printf '%s\n' "${malformed}" > "${test_root}/malformed-native.tsv"
+  if observability_append_live_diagnostic_template \
+    "${test_root}/malformed-native.tsv" bf-private-observability- \
+    "${test_root}/malformed-native-rendered.tsv" > /dev/null 2>&1; then
+    printf '%s\n' 'A malformed native reconstruction or ownership tuple was accepted.' >&2
+    exit 1
+  fi
+done
+
 assert_absent() {
   local value=$1 output=$2
   if grep --fixed-strings --quiet -- "${value}" <<< "${output}"; then

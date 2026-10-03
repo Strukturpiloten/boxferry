@@ -12,7 +12,8 @@ BFP0003	services.{{resource_prefix}}boundary-peer.health_failure_action	warning	
 BFP0003	services.{{resource_prefix}}boundary-peer.infra	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}boundary-peer.logging	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}boundary-peer.namespaces	warning	not-promoted	partial
-BFP0003	services.{{resource_prefix}}boundary-peer.networks	warning	approximated	approximate
+BFP0009	services.{{resource_prefix}}boundary-peer.networks	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}boundary-peer.resource_controls	warning	not-promoted	partial
-BFP0003	services.{{resource_prefix}}boundary-peer.restart_policy	warning	approximated	approximate
+BFP0009	services.{{resource_prefix}}boundary-peer.restart_policy	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}boundary-peer.security	warning	not-promoted	partial
+BFP0003	networks.podman.ownership	warning	inferred-application-ownership	approximate

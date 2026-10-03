@@ -1155,85 +1155,85 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "cli",
             "exact",
             "compose",
-            231,
-            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 168)],
+            237,
+            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18)],
         ),
         (
             "cli",
             "exact",
             "quadlet",
-            221,
-            &[("BFP0002", 52), ("BFP0003", 168), ("BFQ0003", 1)],
+            227,
+            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18), ("BFQ0003", 1)],
         ),
         (
             "cli",
             "exact",
             "podman",
-            281,
-            &[("BFP0002", 52), ("BFP0003", 168), ("BFP0007", 61)],
+            287,
+            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18), ("BFP0007", 61)],
         ),
         (
             "cli",
             "all",
             "compose",
-            250,
-            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 179)],
+            257,
+            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20)],
         ),
         (
             "cli",
             "all",
             "quadlet",
-            239,
-            &[("BFP0002", 59), ("BFP0003", 179), ("BFQ0003", 1)],
+            246,
+            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20), ("BFQ0003", 1)],
         ),
         (
             "cli",
             "all",
             "podman",
-            310,
-            &[("BFP0002", 59), ("BFP0003", 179), ("BFP0007", 72)],
+            317,
+            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20), ("BFP0007", 72)],
         ),
         (
             "compose",
             "exact",
             "compose",
-            220,
-            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 170)],
+            226,
+            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18)],
         ),
         (
             "compose",
             "exact",
             "quadlet",
-            217,
-            &[("BFP0002", 46), ("BFP0003", 170), ("BFQ0003", 1)],
+            223,
+            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "exact",
             "podman",
-            277,
-            &[("BFP0002", 46), ("BFP0003", 170), ("BFP0007", 61)],
+            283,
+            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18), ("BFP0007", 61)],
         ),
         (
             "compose",
             "all",
             "compose",
-            239,
-            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 181)],
+            246,
+            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20)],
         ),
         (
             "compose",
             "all",
             "quadlet",
-            235,
-            &[("BFP0002", 53), ("BFP0003", 181), ("BFQ0003", 1)],
+            242,
+            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "all",
             "podman",
-            306,
-            &[("BFP0002", 53), ("BFP0003", 181), ("BFP0007", 72)],
+            313,
+            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20), ("BFP0007", 72)],
         ),
     ];
     for contract in expected_contracts {
@@ -1370,10 +1370,87 @@ fn observability_assert_template_contract(
         );
     }
     observability_assert_promoted_alias_contract(&diagnostics, mode, selection, output);
+    observability_assert_reconstruction_contract(&diagnostics, selection);
     let label = observability_live_expected_diagnostics_for(mode, "label", output, "live-observability-")?;
     let exact = observability_live_expected_diagnostics_for(mode, "exact", output, "live-observability-")?;
     assert_eq!(exact, label, "{mode}/{output} exact and label contracts differ");
     Ok(())
+}
+
+fn observability_assert_reconstruction_contract(diagnostics: &str, selection: &str) {
+    let mut subjects = [
+        "alloy.mounts[0]",
+        "alloy.mounts[1]",
+        "grafana.mounts[0]",
+        "log-producer.mounts[0]",
+        "loki.mounts[0]",
+        "prometheus.mounts[0]",
+    ]
+    .map(|subject| format!("services.live-observability-{subject}"))
+    .to_vec();
+    for service in [
+        "alloy",
+        "grafana",
+        "log-producer",
+        "loki",
+        "metrics-producer",
+        "prometheus",
+    ] {
+        for field in ["networks", "restart_policy"] {
+            subjects.push(format!("services.live-observability-{service}.{field}"));
+        }
+        let environment =
+            format!("BFP0003\tservices.live-observability-{service}.environment\twarning\tapproximated\tapproximate");
+        assert_eq!(diagnostics.lines().filter(|line| *line == environment).count(), 1);
+    }
+    if selection == "all" {
+        for field in ["networks", "restart_policy"] {
+            subjects.push(format!("services.live-observability-boundary-peer.{field}"));
+        }
+    }
+    for subject in &subjects {
+        let expected = format!("BFP0009\t{subject}\tnote\treconstructed\t");
+        assert_eq!(
+            diagnostics.lines().filter(|line| *line == expected).count(),
+            1,
+            "{subject}"
+        );
+        assert!(
+            !diagnostics
+                .lines()
+                .any(|line| line.starts_with(&format!("BFP0003\t{subject}\t")))
+        );
+    }
+    assert_eq!(
+        diagnostics.lines().filter(|line| line.starts_with("BFP0009\t")).count(),
+        subjects.len(),
+    );
+    let mut ownership = vec!["networks.live-observability-backend.ownership".to_owned()];
+    for volume in [
+        "alloy-data",
+        "grafana-data",
+        "loki-data",
+        "prometheus-data",
+        "telemetry-logs",
+    ] {
+        ownership.push(format!("volumes.live-observability-{volume}.ownership"));
+    }
+    if selection == "all" {
+        ownership.push("networks.podman.ownership".to_owned());
+    }
+    for subject in &ownership {
+        let expected = format!("BFP0003\t{subject}\twarning\tinferred-application-ownership\tapproximate");
+        assert_eq!(
+            diagnostics.lines().filter(|line| *line == expected).count(),
+            1,
+            "{subject}"
+        );
+    }
+    assert_eq!(
+        diagnostics.lines().filter(|line| line.contains(".ownership\t")).count(),
+        ownership.len(),
+    );
+    assert!(!diagnostics.contains("networks.live-observability-edge.ownership\t"));
 }
 
 fn observability_assert_promoted_alias_contract(diagnostics: &str, mode: &str, selection: &str, output: &str) {
@@ -1419,7 +1496,7 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
     let all = observability_live_expected_diagnostics_for("cli", "all", "quadlet", "live-observability-")?;
     assert!(!exact.contains("boundary-peer"));
     assert_eq!(all.lines().filter(|line| line.contains("boundary-peer")).count(), 12);
-    assert_eq!(all.lines().count() - exact.lines().count(), 18);
+    assert_eq!(all.lines().count() - exact.lines().count(), 19);
 
     let temporary = TemporaryDirectory::new("observability-unsafe-prefix")?;
     let unsafe_prefix = Command::new("bash")
@@ -1443,13 +1520,13 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
 fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
     for (name, expected_rows) in [
-        ("base-compose-provisioned.tsv", 214),
+        ("base-compose-provisioned.tsv", 220),
         ("compose-service-identities.tsv", 2),
         ("cli-creation-evidence.tsv", 6),
         ("compose-export-network.tsv", 4),
         ("cli-compose-export-dependencies.tsv", 7),
         ("podman-export.tsv", 61),
-        ("all-importer.tsv", 18),
+        ("all-importer.tsv", 19),
         ("all-compose-export.tsv", 1),
         ("all-podman-export.tsv", 11),
         ("quadlet-network-alias.tsv", 1),
@@ -1482,6 +1559,23 @@ fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     for (label, malformed) in [
         ("unknown-code", "BFP9999\tsubject\twarning\tomitted\tpartial\n"),
         ("invalid-tuple", "BFP0003\tsubject\twarning\tomitted\tpartial\n"),
+        (
+            "reconstruction-warning",
+            "BFP0009\tsubject\twarning\treconstructed\t-\n",
+        ),
+        ("reconstruction-decision", "BFP0009\tsubject\tnote\tapproximated\t-\n"),
+        (
+            "reconstruction-policy",
+            "BFP0009\tsubject\tnote\treconstructed\tapproximate\n",
+        ),
+        (
+            "ownership-note",
+            "BFP0003\tsubject\tnote\tinferred-application-ownership\tapproximate\n",
+        ),
+        (
+            "ownership-policy",
+            "BFP0003\tsubject\twarning\tinferred-application-ownership\t-\n",
+        ),
         ("implicit-native-empty", "BFC0007\tsubject\twarning\t\t\n"),
         (
             "duplicate-marker",

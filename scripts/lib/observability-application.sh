@@ -1046,6 +1046,8 @@ observability_append_live_diagnostic_template() {
         'BFP0002|warning|omitted|partial' | \
         'BFP0003|warning|not-promoted|partial' | \
         'BFP0003|warning|approximated|approximate' | \
+        'BFP0003|warning|inferred-application-ownership|approximate' | \
+        'BFP0009|note|reconstructed|-' | \
         'BFP0007|warning|omitted|partial') ;;
       *) return 2 ;;
     esac
@@ -1054,8 +1056,10 @@ observability_append_live_diagnostic_template() {
     [[ "${safe_subject}" != *'{'* && "${safe_subject}" != *'}'* ]] || return 2
     subject="${subject//\{\{resource_prefix\}\}/${resource_prefix}}"
     [[ "${subject}" =~ ^[[:alnum:]_.:/-]+(\[[0-9]+\][[:alnum:]_.:/-]*)*$ ]] || return 2
-    if [[ "${decision}|${policy}" == '-|-' ]]; then
+    if [[ "${decision}" == - ]]; then
       decision=
+    fi
+    if [[ "${policy}" == - ]]; then
       policy=
     fi
     printf '%s\t%s\t%s\t%s\t%s\n' \
