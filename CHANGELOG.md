@@ -5,6 +5,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.9.0...boxferry-v0.9.1) - 2026-10-03
+
 ### Changed
 
 - Infer the neutral application name from one Quadlet unit filename on `convert` and `validate`;
