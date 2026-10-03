@@ -29,22 +29,23 @@ MAX_REQUEST_HEADERS = 32 * 1024
 MAX_RESPONSE = 64 * 1024 * 1024
 SOCKET_TIMEOUT_SECONDS = 30
 PROXY_STARTUP_TIMEOUT_SECONDS = 6
-CASSETTE_NAME = "paperless-ngx-6.1.0-rootless.cassette.json"
-MANIFEST_NAME = "capture-manifest-6.1.0-rootless.json"
+PODMAN_VERSION = "6.1.2"
+CASSETTE_NAME = f"paperless-ngx-{PODMAN_VERSION}-rootless.cassette.json"
+MANIFEST_NAME = f"capture-manifest-{PODMAN_VERSION}-rootless.json"
 CHECKSUM_NAME = "SHA256SUMS"
 SANITIZER_VERSION = 3
 APPLICATION = "paperless"
 APPLICATION_SUFFIX = "paperless"
 CAPTURE_PLACEHOLDER = "paperless-captured"
-SCENARIO_ID = "paperless-ngx-application-podman-6.1.0-rootless-captured"
+SCENARIO_ID = f"paperless-ngx-application-podman-{PODMAN_VERSION}-rootless-captured"
 IMAGE_CATALOGUE = "fixtures/conformance/paperless-ngx-application/images.tsv"
 IMAGE_COUNT = 5
 SETUP_SCRIPT = "scripts/lib/paperless-application.sh"
-PODMAN_REVISION = "cade97a52ebdf9dbf9e81de8009015776837a074"
-MATRIX_SHA256 = "1ed306f4b368c229bca927697156e2314b922c2ec728c55c2820c69a712bad25"
+PODMAN_REVISION = "04f3aa430e6df81bea059978bc5bafbc846ba3e7"
+MATRIX_SHA256 = "08b148167923c13367d7ed22f8acfb8b2245f54a544e234f9286baa36cd4360e"
 RUNTIME_IMAGE = (
-    "ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@"
-    "sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e"
+    f"ghcr.io/strukturpiloten/podman-6.1-rootless:v{PODMAN_VERSION}@"
+    "sha256:04684652923ba6d4f046dbb9f4a764ef7b30c8e890883b840e10c702dd2482ed"
 )
 SOURCE_FILES = (
     "scripts/lib/paperless-application.sh",
@@ -65,9 +66,9 @@ def configure_application(application: str) -> None:
     if application == "paperless":
         APPLICATION_SUFFIX = "paperless"
         CAPTURE_PLACEHOLDER = "paperless-captured"
-        CASSETTE_NAME = "paperless-ngx-6.1.0-rootless.cassette.json"
-        MANIFEST_NAME = "capture-manifest-6.1.0-rootless.json"
-        SCENARIO_ID = "paperless-ngx-application-podman-6.1.0-rootless-captured"
+        CASSETTE_NAME = f"paperless-ngx-{PODMAN_VERSION}-rootless.cassette.json"
+        MANIFEST_NAME = f"capture-manifest-{PODMAN_VERSION}-rootless.json"
+        SCENARIO_ID = f"paperless-ngx-application-podman-{PODMAN_VERSION}-rootless-captured"
         IMAGE_CATALOGUE = "fixtures/conformance/paperless-ngx-application/images.tsv"
         IMAGE_COUNT = 5
         SETUP_SCRIPT = "scripts/lib/paperless-application.sh"
@@ -82,9 +83,9 @@ def configure_application(application: str) -> None:
     elif application == "immich":
         APPLICATION_SUFFIX = "immich"
         CAPTURE_PLACEHOLDER = "immich-captured"
-        CASSETTE_NAME = "immich-application-6.1.0-rootless.cassette.json"
-        MANIFEST_NAME = "immich-capture-manifest-6.1.0-rootless.json"
-        SCENARIO_ID = "immich-application-podman-6.1.0-rootless-captured"
+        CASSETTE_NAME = f"immich-application-{PODMAN_VERSION}-rootless.cassette.json"
+        MANIFEST_NAME = f"immich-capture-manifest-{PODMAN_VERSION}-rootless.json"
+        SCENARIO_ID = f"immich-application-podman-{PODMAN_VERSION}-rootless-captured"
         IMAGE_CATALOGUE = "fixtures/conformance/immich-application/images.tsv"
         IMAGE_COUNT = 4
         SETUP_SCRIPT = "scripts/lib/immich-application.sh"
@@ -668,6 +669,9 @@ class Sanitizer:
                     "https://github.com/containers/podman/tree/"
                     f"{PODMAN_REVISION}/pkg/api/handlers/libpod"
                 ),
+                # Frozen 6.1.0 captures retain their original provenance.
+                "https://github.com/containers/podman/tree/"
+                "cade97a52ebdf9dbf9e81de8009015776837a074/pkg/api/handlers/libpod",
                 "https://github.com/Strukturpiloten/boxferry",
             } or re.fullmatch(
                 r"https://github\.com/Strukturpiloten/boxferry/blob/"
@@ -863,7 +867,7 @@ def validate_matrix(repository: Path) -> str:
         raise CaptureError("reviewed podman-6.1-rootless matrix row is missing or ambiguous")
     row = rows[0]
     if row[1] != RUNTIME_IMAGE or row[2:] != [
-        "6.1.0",
+        PODMAN_VERSION,
         "upstream-source",
         "rootless",
         "container",
@@ -871,6 +875,27 @@ def validate_matrix(repository: Path) -> str:
     ]:
         raise CaptureError("reviewed podman-6.1-rootless matrix row changed")
     return row[1]
+
+
+def verify_capture_version(interactions: list[dict[str, Any]]) -> None:
+    """Never label a new recording with a version absent from its handshake."""
+    ping_seen = False
+    for interaction in interactions:
+        path = interaction["request"]["path"]
+        if path == "/libpod/_ping":
+            response_value = interaction["response"]
+            versions = [
+                value
+                for name, value in response_value["headers"]
+                if name.casefold() == "libpod-api-version"
+            ]
+            if response_value["status"] != 200 or versions != [PODMAN_VERSION]:
+                raise CaptureError("capture handshake differs from reviewed API version")
+            ping_seen = True
+        elif not path.startswith(f"/v{PODMAN_VERSION}/libpod/"):
+            raise CaptureError("capture request differs from reviewed API version")
+    if not ping_seen:
+        raise CaptureError("capture has no reviewed API handshake")
 
 
 def build_artifacts(
@@ -892,18 +917,19 @@ def build_artifacts(
         hashes.append(interaction_hashes)
     if not sanitized:
         raise CaptureError("capture contained no interactions")
+    verify_capture_version(sanitized)
     cassette = {
         "schema_version": 1,
         "fixture_kind": "libpod-cassette",
         "scenario_id": SCENARIO_ID,
         "scenario_revision": 1,
-        "engine_version": "6.1.0",
-        "api_version": "6.1.0",
+        "engine_version": PODMAN_VERSION,
+        "api_version": PODMAN_VERSION,
         "execution_context": "rootless",
         "synthetic": False,
         "provenance": {
             "evidence_kind": "captured-native-sanitized-candidate",
-            "release_tag": "v6.1.0",
+            "release_tag": f"v{PODMAN_VERSION}",
             "revision": PODMAN_REVISION,
         },
         "sanitization": (
@@ -928,8 +954,8 @@ def build_artifacts(
         "schema_version": 1,
         "candidate": CASSETTE_NAME,
         "admission": "one-off-non-reproducible-candidate-requires-human-privacy-review",
-        "engine_version": "6.1.0",
-        "api_version": "6.1.0",
+        "engine_version": PODMAN_VERSION,
+        "api_version": PODMAN_VERSION,
         "rootless": True,
         "podman_revision": PODMAN_REVISION,
         "boxferry_revision": revision,
@@ -949,7 +975,7 @@ def build_artifacts(
     source_sha256 = manifest["source_sha256"]
     cassette["provenance"] = {
         "evidence_kind": "privacy-review-required-one-off-native-capture",
-        "release_tag": "v6.1.0",
+        "release_tag": f"v{PODMAN_VERSION}",
         "revision": PODMAN_REVISION,
         "source_urls": [
             (
@@ -1608,7 +1634,7 @@ def self_test() -> None:
                         connection.sendall(
                             response(
                                 None,
-                                [("libpod-api-version", "6.1.0")],
+                                [("libpod-api-version", PODMAN_VERSION)],
                             )
                         )
             except BaseException as error:
@@ -1700,6 +1726,34 @@ def self_test() -> None:
         assert json.loads(manifest_bytes)["sanitizer_version"] == SANITIZER_VERSION
         provenance = cassette["provenance"]
         assert cassette["synthetic"] is False
+        assert cassette["engine_version"] == PODMAN_VERSION
+        assert cassette["api_version"] == PODMAN_VERSION
+        verify_capture_version(cassette["interactions"])
+        valid_ping = {
+            "request": {"path": "/libpod/_ping"},
+            "response": {
+                "status": 200,
+                "headers": [["libpod-api-version", PODMAN_VERSION]],
+            },
+        }
+        verify_capture_version([
+            valid_ping,
+            {"request": {"path": f"/v{PODMAN_VERSION}/libpod/containers/json"}},
+        ])
+        for invalid in [
+            [],
+            [valid_ping, {"request": {"path": "/v6.1.0/libpod/containers/json"}}],
+            [{"request": {"path": "/libpod/_ping"}, "response": {"status": 200, "headers": []}}],
+            [{"request": {"path": "/libpod/_ping"}, "response": {
+                "status": 200, "headers": [["libpod-api-version", "6.1.0"]]
+            }}],
+        ]:
+            try:
+                verify_capture_version(invalid)
+            except CaptureError:
+                pass
+            else:
+                raise AssertionError("capture accepted unproved current API version")
         assert "sanitizer_version" not in cassette
         assert provenance["evidence_kind"] == (
             "privacy-review-required-one-off-native-capture"
@@ -1730,16 +1784,22 @@ def self_test() -> None:
         rejected_thread = threading.Thread(target=rejected_proxy.serve, daemon=True)
         rejected_thread.start()
         try:
-            for _ in range(40):
-                if rejected_proxy_path.exists():
-                    break
-                rejected_proxy.stop.wait(0.05)
-            if not rejected_proxy_path.exists():
-                raise AssertionError("rejected-request proxy failed to create its socket")
+            # bind() creates the path before listen(); only readiness authorizes
+            # the negative-test client to connect to this listener.
+            if not rejected_proxy.ready.wait(2):
+                raise AssertionError(
+                    "rejected-request proxy failed to become ready"
+                ) from rejected_proxy.failure
+            if rejected_proxy.failure or not rejected_thread.is_alive():
+                raise AssertionError(
+                    "rejected-request proxy listener failed"
+                ) from rejected_proxy.failure
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.settimeout(SOCKET_TIMEOUT_SECONDS)
                 client.connect(str(rejected_proxy_path))
                 client.sendall(b"POST /libpod/_ping HTTP/1.1\r\n\r\n")
+                if not rejected_proxy.stop.wait(SOCKET_TIMEOUT_SECONDS):
+                    raise AssertionError("rejected-request proxy did not reject POST")
         finally:
             rejected_proxy.stop.set()
             rejected_thread.join(SOCKET_TIMEOUT_SECONDS + 1)
@@ -1748,7 +1808,7 @@ def self_test() -> None:
         assert not rejected_proxy_path.exists()
 
     configure_application("immich")
-    assert CASSETTE_NAME == "immich-application-6.1.0-rootless.cassette.json"
+    assert CASSETTE_NAME == "immich-application-6.1.2-rootless.cassette.json"
     assert IMAGE_COUNT == 4
     immich_sanitizer = Sanitizer(
         "safe-immich", Path("/private/repository"), Path("/private/podman.sock"), set()

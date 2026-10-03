@@ -1775,7 +1775,8 @@ def validate_reviewed_admission(repository_root: Path) -> None:
     admission_path = decision / "admission.toml"
     archive_path = decision / "candidates.toml"
     active_path = repository_root / "fixtures/conformance/podman-live/candidates.toml"
-    matrix_path = repository_root / "fixtures/conformance/podman-live/matrix.tsv"
+    # Bind the historical decision to its original catalogue, not current lanes.
+    matrix_path = decision / "matrix.tsv"
     limitations_path = repository_root / "fixtures/conformance/podman-live/limitations.tsv"
     with admission_path.open("rb") as handle:
         admission = tomllib.load(handle)
@@ -2001,6 +2002,7 @@ def validate_reviewed_admission(repository_root: Path) -> None:
     if {path.name for path in decision.iterdir()} != {
         "admission.toml",
         "candidates.toml",
+        "matrix.tsv",
         "evidence",
     }:
         raise ContractError("reviewed Podman decision directory contains an unexpected file")

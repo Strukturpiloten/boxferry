@@ -112,6 +112,320 @@ fn assert_portable_settings_survive_without_environment_value(artifact: &str) {
     );
 }
 
+fn write_supabase_privacy_sources(scratch: &Scratch) -> Result<(), Box<dyn Error>> {
+    let image = format!("example.invalid/privacy-fixture@sha256:{}", "f".repeat(64));
+    // A one-service authored policy fixture, not a synthesized live application.
+    for mode in ["cli", "compose"] {
+        for selection in ["exact", "storage", "label", "all"] {
+            for input in ["compose", "quadlet"] {
+                let directory = scratch.0.join(format!("outputs/{mode}-{selection}-{input}"));
+                fs::create_dir_all(&directory)?;
+                let (filename, text) = if input == "compose" {
+                    (
+                        "compose.yaml",
+                        format!(
+                            "---\nname: policy-supabase\nservices:\n  policy-supabase-db:\n    image: {image}\n    environment:\n      - POSTGRES_PASSWORD={DOCUMENT_SECRET}\n"
+                        ),
+                    )
+                } else {
+                    (
+                        "policy-supabase-db.container",
+                        format!("[Container]\nImage={image}\nEnvironment=POSTGRES_PASSWORD={DOCUMENT_SECRET}\n"),
+                    )
+                };
+                fs::write(directory.join(filename), text)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn supabase_chained_helper_authorizes_document_canaries_without_relaxing_privacy() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new()?;
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    write_supabase_privacy_sources(&scratch)?;
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            r#"
+        set -Eeuo pipefail
+        repository_root=$1
+        source "$2"
+        boxferry_bin=$3
+        current_case=$4
+        SUPABASE_DB_PASSWORD=$BOXFERRY_TEST_CANARY
+        timed_operation() { shift 2; "$@"; }
+        # The minimal fixture checks artifact policy, not the full application graph.
+        assert_successful_conversion() { :; }
+        supabase_assert_success_contract() { :; }
+        supabase_assert_output_membership() { :; }
+        supabase_assert_output_semantics() { :; }
+        supabase_run_reimports cli policy
+        supabase_run_reimports compose policy
+        supabase_assert_report_privacy "$current_case"
+    "#,
+            "supabase-chained-privacy",
+        ])
+        .arg(&repository)
+        .arg(repository.join("scripts/lib/supabase-application.sh"))
+        .arg(env!("CARGO_BIN_EXE_boxferry"))
+        .arg(&scratch.0)
+        .env("BOXFERRY_TEST_CANARY", DOCUMENT_SECRET)
+        .output()?;
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(DOCUMENT_SECRET));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(DOCUMENT_SECRET));
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mut reports = 0;
+    for entry in fs::read_dir(scratch.0.join("reimports"))? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "json") {
+            reports += 1;
+            let bytes = fs::read(&path)?;
+            assert!(!String::from_utf8_lossy(&bytes).contains(DOCUMENT_SECRET));
+            let report: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let withheld = path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("-to-podman.report.json"));
+            assert_eq!(report["status"], "success");
+            assert_eq!(
+                report["fidelity"]["unsupported"],
+                usize::from(withheld),
+                "{}",
+                path.display()
+            );
+            assert_eq!(
+                report["diagnostics"].as_array().ok_or("diagnostics")?.len(),
+                usize::from(withheld)
+            );
+        }
+    }
+    assert_eq!(
+        reports, 48,
+        "all provisioner/selector/document-input/output combinations"
+    );
+    // A source artifact carrying values still grants no implicit authorization.
+    let default = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+        .args([
+            "convert",
+            "compose",
+            "compose",
+            "--loss-policy",
+            "partial",
+            "--input-file",
+        ])
+        .arg(scratch.0.join("outputs/cli-exact-compose/compose.yaml"))
+        .arg("--output-directory")
+        .arg(scratch.0.join("default-withheld"))
+        .args(["--console-format", "json"])
+        .output()?;
+    assert!(default.status.success());
+    assert_report_without_value(&default.stdout, DOCUMENT_SECRET, "POSTGRES_PASSWORD")?;
+    assert!(!fs::read_to_string(scratch.0.join("default-withheld/compose.yaml"))?.contains(DOCUMENT_SECRET));
+    Ok(())
+}
+
+#[test]
+fn paperless_withheld_broker_assertion_matches_real_compose_omission_and_quadlet_health() -> Result<(), Box<dyn Error>>
+{
+    const BROKER_CANARY: &str = "boxferry-public-broker-canary";
+    let scratch = Scratch::new()?;
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = scratch.0.join("broker.yaml");
+    // Independently authored three-token command and two-token shell healthcheck,
+    // matching the live broker's relevant shape without replaying a runtime.
+    fs::write(
+        &source,
+        format!(
+            "---\nname: fixture-paperless\nservices:\n  fixture-paper-broker:\n    image: example.invalid/valkey@sha256:{}\n    command: [valkey-server, --requirepass, {BROKER_CANARY}]\n    healthcheck:\n      test: [CMD-SHELL, \"valkey-cli -a {BROKER_CANARY} ping\"]\n    environment:\n      MODE: {DOCUMENT_SECRET}\n",
+            "f".repeat(64),
+        ),
+    )?;
+    for target in ["compose", "quadlet"] {
+        let destination = scratch.0.join(target);
+        let output = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args(["convert", "compose", target, "--input-file"])
+            .arg(&source)
+            .args(["--loss-policy", "partial", "--output-directory"])
+            .arg(&destination)
+            .args(["--console-format", "json"])
+            .output()?;
+        assert!(output.status.success());
+        assert_report_without_value(&output.stdout, DOCUMENT_SECRET, "MODE")?;
+        for bytes in [&output.stdout, &output.stderr] {
+            assert!(!String::from_utf8_lossy(bytes).contains(BROKER_CANARY));
+        }
+        let report = scratch.0.join(format!("{target}.report.json"));
+        fs::write(&report, &output.stdout)?;
+        let result = Command::new("bash")
+            .args([
+                "-c",
+                "source \"$1\"; paperless_assert_withheld_broker_command \"$2\" \"$3\" \"$4\" fixture",
+                "paperless-broker-privacy",
+            ])
+            .arg(repository.join("scripts/lib/paperless-application.sh"))
+            .arg(&destination)
+            .arg(&report)
+            .arg(target)
+            .output()?;
+        assert!(!String::from_utf8_lossy(&result.stdout).contains(BROKER_CANARY));
+        assert!(!String::from_utf8_lossy(&result.stderr).contains(BROKER_CANARY));
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let artifact = if target == "compose" {
+            "compose.yaml"
+        } else {
+            "fixture-paper-broker.container"
+        };
+        let artifact = fs::read_to_string(destination.join(artifact))?;
+        assert!(!artifact.contains(DOCUMENT_SECRET));
+        assert_eq!(
+            artifact.matches(BROKER_CANARY).count(),
+            if target == "compose" { 1 } else { 2 }
+        );
+    }
+    Ok(())
+}
+
+fn paperless_broker_privacy_cassette(
+    captured: &serde_json::Value,
+    health_kind: &str,
+    canary: &str,
+) -> Result<PodmanCassette, Box<dyn Error>> {
+    // Derive authored privacy cases from the admitted redacted transport
+    // fixture; do not alter its provenance or claim new native evidence.
+    let mut fixture = captured.clone();
+    let interactions = fixture["interactions"].as_array_mut().ok_or("interactions")?;
+    assert_eq!(interactions.len(), 27);
+    let broker = interactions
+        .iter_mut()
+        .find(|interaction| interaction["response"]["body"]["Name"] == "paperless-captured-paper-broker")
+        .ok_or("captured broker inspect")?;
+    assert_eq!(
+        broker["response"]["body"]["Config"]["Cmd"],
+        serde_json::json!(["valkey-server", "--requirepass", "<redacted:PAPERLESS_REDIS_PASSWORD>"])
+    );
+    assert_eq!(
+        broker["response"]["body"]["Config"]["Healthcheck"]["Test"],
+        serde_json::json!(["CMD-SHELL", "valkey-cli -a <redacted:PAPERLESS_REDIS_PASSWORD> ping"])
+    );
+    broker["response"]["body"]["Config"]["Cmd"] = serde_json::json!(["valkey-server", "--requirepass", canary]);
+    broker["response"]["body"]["Config"]["Healthcheck"]["Test"] = if health_kind == "CMD-SHELL" {
+        serde_json::json!(["CMD-SHELL", format!("valkey-cli -a {canary} ping")])
+    } else {
+        serde_json::json!(["CMD", "valkey-cli", "-a", canary, "ping"])
+    };
+    Ok(serde_json::from_value(fixture)?)
+}
+
+#[test]
+fn paperless_podman_health_findings_coexist_with_export_omission_evidence() -> Result<(), Box<dyn Error>> {
+    const BROKER_CANARY: &str = "boxferry-public-broker-canary";
+    const HEALTH_SUBJECT: &str = "services.paperless-captured-paper-broker.healthcheck";
+    let scratch = Scratch::new()?;
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let captured: serde_json::Value = serde_json::from_slice(&fs::read(
+        repository.join("fixtures/conformance/paperless-ngx-application/paperless-ngx-6.1.0-rootless.cassette.json"),
+    )?)?;
+    for (health_kind, source_code) in [("CMD-SHELL", "BFP0003"), ("CMD", "BFP0009")] {
+        for target in ["compose", "quadlet"] {
+            let cassette = paperless_broker_privacy_cassette(&captured, health_kind, BROKER_CANARY)?;
+            let server = PodmanCassetteServer::start_unordered(cassette)?;
+            let destination = scratch.0.join(format!("{health_kind}-{target}"));
+            let output = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+                .args(["convert", "podman", target, "--podman-socket"])
+                .arg(server.socket())
+                .args([
+                    "--application-name",
+                    "paperless-captured-paperless",
+                    "--podman-label",
+                    "io.boxferry.application=paperless-captured-paperless",
+                    "--promote-podman-effective-named-volumes",
+                    "--promote-podman-effective-named-networks",
+                    "--promote-podman-portable-effective-settings",
+                    "--loss-policy",
+                    "partial",
+                    "--console-format",
+                    "json",
+                ])
+                .arg("--output-directory")
+                .arg(&destination)
+                .output()?;
+            // Complete consumption proves all 27 production acquisition requests.
+            server.finish()?;
+            assert!(output.status.success());
+            assert_report_without_value(&output.stdout, BROKER_CANARY, "PAPERLESS_DBPASS")?;
+            assert!(!String::from_utf8_lossy(&output.stderr).contains(BROKER_CANARY));
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            let findings = report["diagnostics"]
+                .as_array()
+                .ok_or("diagnostics")?
+                .iter()
+                .filter(|finding| {
+                    finding["fields"].as_array().is_some_and(|fields| {
+                        fields
+                            .iter()
+                            .any(|field| field["name"] == "subject" && field["value"] == HEALTH_SUBJECT)
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                findings.iter().filter(|finding| finding["code"] == source_code).count(),
+                1,
+                "{health_kind} source finding must remain visible for {target}"
+            );
+            let omissions = findings
+                .iter()
+                .filter(|finding| finding["code"] == "BFC0007")
+                .collect::<Vec<_>>();
+            assert_eq!(omissions.len(), usize::from(target == "compose"));
+            for omission in omissions {
+                assert_eq!(omission["severity"], "warning");
+                assert!(
+                    omission["fields"]
+                        .as_array()
+                        .ok_or("omission fields")?
+                        .iter()
+                        .any(|field| {
+                            field["name"] == "reason"
+                                && field["value"]
+                                    == "the current Compose generation boundary does not yet expose health-check fields"
+                        })
+                );
+            }
+            let report_path = scratch.0.join(format!("{health_kind}-{target}.report.json"));
+            fs::write(&report_path, &output.stdout)?;
+            let result = Command::new("bash")
+                .args([
+                    "-c",
+                    "source \"$1\"; paperless_assert_withheld_broker_command \"$2\" \"$3\" \"$4\" paperless-captured",
+                    "paperless-podman-broker-privacy",
+                ])
+                .arg(repository.join("scripts/lib/paperless-application.sh"))
+                .arg(&destination)
+                .arg(&report_path)
+                .arg(target)
+                .output()?;
+            assert!(!String::from_utf8_lossy(&result.stdout).contains(BROKER_CANARY));
+            assert!(!String::from_utf8_lossy(&result.stderr).contains(BROKER_CANARY));
+            assert!(
+                result.status.success(),
+                "{health_kind} to {target}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                fs::read(&report_path)?,
+                output.stdout,
+                "source findings must remain untouched"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn authored_values_are_withheld_across_exporters_and_validate_the_same_way() -> Result<(), Box<dyn Error>> {
     let scratch = Scratch::new()?;

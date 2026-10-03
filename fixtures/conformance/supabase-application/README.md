@@ -40,6 +40,17 @@ offline evidence remains independent of the manual live gate and cannot satisfy 
 multiset for every successful live route and selection. Each tuple fixes the
 code, severity, subject, and decision. It includes Podman acquisition findings,
 promoted healthchecks, and Quadlet-to-Compose dependency and healthcheck losses.
+Reviewed effective network attachments, named-volume mounts, and default restart
+behavior are expected to produce `BFP0009` reconstruction notes,
+not source-fidelity losses. The library emits a network note for each attachment;
+the CLI deduplicates identical complete diagnostics, so Kong has one visible network
+note while retaining both backend/edge attachments and their distinct aliases.
+Healthcheck notes are origin-specific: native CLI
+provisioning uses an exec check only for PostgREST, while Compose provisioning
+uses exec checks for Auth, PostgREST, imgproxy, Storage, and Kong; shell checks
+remain approximate. The backend network and three named volumes retain
+`BFP0003` inferred-ownership warnings; the stopped shared edge remains external.
+The `all` selection also retains a system-network ownership warning.
 On a failed success contract, the harness reports a bounded static list of
 failed predicates plus only the expected and observed well-shaped integer
 fidelity counters, and the invalid diagnostic-name count. Schema, status, and
@@ -73,8 +84,8 @@ healthcheck and managed-backend IPAM losses. Its loss-fidelity totals fix the
 native-finding occurrences. The silent
 `exact` implementation counter has no independent semantic oracle and is
 therefore constrained only to a non-negative integer. Catalogue validation
-admits a complete positive example while rejecting an unseen `BFP0003` subject
-and a duplicate `BFP0007` diagnostic.
+admits a complete positive example while rejecting an unseen `BFP0003` subject,
+a reconstruction note with warning severity, and a duplicate `BFP0007` diagnostic.
 Compose-to-Podman `all` selection additionally retains the system `podman` network's unsupported
 neutral `internal` state; narrower selections exclude that runtime-observed network.
 The generated Quadlet-to-Compose `all` reimport likewise reports the system network's retained IPAM
@@ -150,7 +161,12 @@ the harness never executes those generated deployment artifacts.
 
 All credentials are fixed public test canaries. They are intentionally safe to
 place in explicitly authorized deployment artifacts, but must not occur in any
-BoxFerry JSON report. The behavior probe keeps access tokens in memory and
+BoxFerry JSON report. Direct exports and every chained Compose/Quadlet output
+explicitly pass `--environment-values include`; authorization does not carry over
+from the source artifact. Each output checks the database canary is retained only
+in documents. Podman outputs keep the default withholding policy and assert its
+absence. This test-owned authorization changes neither the product default nor
+report redaction. The behavior probe keeps access tokens in memory and
 prints only a phase success marker.
 
 ## Supply-chain and license boundary

@@ -162,6 +162,24 @@ observability_test_report_from_tsv() {
   }' "$1" > "$2"
 }
 
+# Retain the independent Alloy key counterexamples from the native adoption.
+for mutation in missing extra; do
+  mutated="${test_root}/alloy-${mutation}-environment.tsv"
+  awk -F '\t' -v mutation="${mutation}" '
+    $2 == "services.{{resource_prefix}}alloy.environment.ALLOY_DEPLOY_MODE" && mutation == "missing" { next }
+    { print }
+    END {
+      if (mutation == "extra")
+        print "BFP0002\tservices.{{resource_prefix}}alloy.environment.UNREVIEWED\twarning\tomitted\tpartial"
+    }
+  ' "${diagnostic_fixture}/podman-import-withheld-environment.tsv" > "${mutated}"
+  if assert_withheld_environment_keys "${mutated}" "${diagnostic_fixture}/podman-export.tsv" 49 \
+    > /dev/null 2>&1; then
+    printf 'The withheld key contract admitted an %s Alloy key.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+
 # Exercise every exporter, provisioning mode, and selector without a runtime.
 for diagnostic_mode in cli compose; do
   for diagnostic_selection in exact label all; do
@@ -346,7 +364,6 @@ compose all quadlet compose 2
 compose all quadlet quadlet 0
 compose all quadlet podman 69
 EOF
-
 assert_absent() {
   local value=$1 output=$2
   if grep --fixed-strings --quiet -- "${value}" <<< "${output}"; then

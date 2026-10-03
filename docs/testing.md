@@ -67,10 +67,10 @@ executes that script.
 
 ## Podman evidence
 
-Offline evidence separates input compatibility from output compatibility. Legacy input anchors
-cover 3.0.1, 3.4.4, 4.3.1, 4.9.3, and 4.9.4; modern request-bound cassettes cover reviewed 5.4
-through 6.1 observations in rootful and rootless contexts. The output target catalogue remains
-5.4.0 through 6.1.0. Use `boxferry capabilities --verbose` for exact finite bounds.
+Historical input anchors cover 3.0.1, 3.4.4, 4.3.1, 4.9.3, 4.9.4 and reviewed 5.4–6.1
+rootful/rootless cassettes. Active upstream runtime lanes use 5.8.7 and 6.1.2 without relabelling
+captures. Exact Podman rendering still ends at 6.1.0; Quadlet generator evidence reaches 6.1.2.
+These are separate contracts. Use `boxferry capabilities --verbose` for finite bounds.
 
 Fixtures include all resource kinds, pods and standalone containers, isolated and shared networks,
 volumes and bind mounts, dependencies, protected metadata, incomplete resources, ambiguous

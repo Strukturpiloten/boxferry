@@ -118,6 +118,50 @@ fn run_bounded_command(command: &mut Command, timeout: Duration, description: &s
 }
 
 #[test]
+fn reviewed_podman_live_projection_losses_are_bounded() -> Result<(), String> {
+    let output = run_bounded_command(
+        Command::new("python3")
+            .arg("scripts/test-podman-live-projections.py")
+            .current_dir(repository_root()),
+        Duration::from_secs(5),
+        "reviewed Podman live projection regression",
+    )?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
+}
+
+#[test]
+fn compose_network_assertions_accept_aliases_but_require_exact_membership() -> Result<(), String> {
+    let output = run_bounded_command(
+        Command::new("bash")
+            .args([
+                "-c",
+                r#"set -euo pipefail
+source scripts/lib/scenario-validators.sh
+for attachment in '      private: {}' $'      private:\n        aliases:\n          - api'; do
+  printf '  api:\n    networks:\n%s\n' "$attachment" |
+    assert_compose_network_attachment private /dev/stdin
+done
+for invalid in \
+  $'  api:\n    networks:\n      private-other: {}' \
+  $'  api:\n    labels:\n      private: {}' \
+  $'  api:\n    networks:\n      edge:\n        aliases:\n          - private' \
+  $'  api:\n    networks:\n      edge: {}\n    labels:\n      private: {}'; do
+  if printf '%s\n' "$invalid" | assert_compose_network_attachment private /dev/stdin; then
+    exit 1
+  fi
+done
+"#,
+            ])
+            .current_dir(repository_root()),
+        Duration::from_secs(5),
+        "Compose network attachment assertion regression",
+    )?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
+}
+
+#[test]
 fn bounded_repository_policy_children_are_killed_and_reaped() -> Result<(), String> {
     let Err(error) = run_bounded_command(
         Command::new("python3").args(["-c", "import os, time; print(os.getpid(), flush=True); time.sleep(60)"]),
@@ -610,6 +654,96 @@ fn assert_supabase_fidelity_mismatch_summaries(root: &Path, report: &serde_json:
             "{category} mismatch retains only its reviewed integer counters"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn capture_proxy_rejected_request_waits_for_listener_readiness() -> Result<(), String> {
+    // Independent scheduling control: a pathname-only startup check cannot
+    // release this listen barrier. Exercise the real self-test and its cleanup.
+    let regression = r#"
+import importlib.util
+import pathlib
+import sys
+import threading
+
+path = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("capture_readiness_regression", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+original_serve = module.Proxy.serve
+original_init = module.Proxy.__init__
+proxies = []
+waits = []
+mode = "bound-before-listen"
+
+def controlled_init(proxy, listen, upstream, **kwargs):
+    original_init(proxy, listen, upstream, **kwargs)
+    if proxy.listen.name != "rejected-proxy.sock":
+        return
+    proxies.append(proxy)
+    if mode == "bound-before-listen":
+        proxy.bound = threading.Event()
+        proxy.listen_permitted = threading.Event()
+        class ObservedReady(threading.Event):
+            def wait(self, timeout=None):
+                assert timeout == 2
+                assert proxy.bound.wait(2)
+                assert proxy.listen.exists() and not self.is_set()
+                assert proxy.failure is None
+                waits.append(mode)
+                proxy.listen_permitted.set()
+                return super().wait(timeout)
+        proxy.ready = ObservedReady()
+        return
+    if mode == "dead-listener":
+        class ExitedReady(threading.Event):
+            def wait(self, timeout=None):
+                assert timeout == 2
+                assert super().wait(timeout)
+                proxy.worker.join(timeout)
+                assert not proxy.worker.is_alive()
+                return True
+        proxy.ready = ExitedReady()
+
+def controlled_serve(proxy):
+    if proxy.listen.name != "rejected-proxy.sock" or mode == "bound-before-listen":
+        return original_serve(proxy)
+    if mode == "startup-failure":
+        proxy.failure = module.CaptureError("authored startup failure")
+        proxy.stop.set()
+        return
+    assert mode == "dead-listener"
+    proxy.worker = threading.current_thread()
+    proxy.ready.set()
+
+module.Proxy.__init__ = controlled_init
+module.Proxy.serve = controlled_serve
+module.self_test()
+assert waits == ["bound-before-listen"] and len(proxies) == 1
+assert proxies[0].ready.is_set() and proxies[0].stop.is_set()
+assert isinstance(proxies[0].failure, module.CaptureError)
+assert str(proxies[0].failure) == "capture proxy permits only HTTP GET"
+assert proxies[0].interactions == [] and not proxies[0].listen.exists()
+for mode, message in [("startup-failure", "failed to become ready"), ("dead-listener", "listener failed")]:
+    try:
+        module.self_test()
+    except AssertionError as error:
+        assert message in str(error)
+        assert error.__cause__ is proxies[-1].failure
+    else:
+        raise AssertionError(f"{mode} was accepted")
+    assert proxies[-1].interactions == [] and not proxies[-1].listen.exists()
+"#;
+    let output = run_bounded_command(
+        Command::new("python3")
+            .args(["-B", "-c", regression])
+            .arg(repository_root().join("fixtures/conformance/podman-live/capture_proxy.py")),
+        Duration::from_secs(180),
+        "capture rejection listener readiness regression",
+    )?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     Ok(())
 }
 
@@ -1191,7 +1325,7 @@ fn supabase_provider_origin_controls_exact_kong_podman_losses() -> Result<(), St
                 // Native Compose acquisition has separately reviewed creation-evidence
                 // accounting. Its exact counter nevertheless includes only these two
                 // additional Kong environment omissions.
-                let expected = if selection == "all" { 1_619 } else { 1_507 };
+                let expected = if selection == "all" { 1_826 } else { 1_700 };
                 assert_eq!(compose_fidelity["unsupported"].as_u64(), Some(expected));
             } else if input == "quadlet" {
                 // Compose origin drops 16 native dependencies and adds two Kong omissions.
@@ -1575,11 +1709,12 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             compose_creation_evidence_subjects, expected_compose_creation_evidence_subjects,
             "{selection} Compose acquisition must omit all creation evidence"
         );
-        let (approximate, cli_unsupported, compose_unsupported): (usize, usize, usize) = if selection == "all" {
-            (67, 1_446, 1_406)
-        } else {
-            (63, 1_346, 1_308)
-        };
+        let (cli_approximate, compose_approximate, cli_unsupported, compose_unsupported): (usize, usize, usize, usize) =
+            if selection == "all" {
+                (41, 37, 1_446, 1_406)
+            } else {
+                (39, 35, 1_346, 1_308)
+            };
         assert_eq!(
             cli_unsupported - compose_unsupported,
             16 + (expected_cli_creation_evidence_subjects.len() * 2),
@@ -1590,7 +1725,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "status": "success",
             "fidelity": {
                 "exact": 0,
-                "approximate": approximate,
+                "approximate": cli_approximate,
                 "unsupported": cli_unsupported,
                 "invalid": 0,
                 "other": 0,
@@ -1607,7 +1742,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             "status": "success",
             "fidelity": {
                 "exact": 0,
-                "approximate": approximate,
+                "approximate": compose_approximate,
                 "unsupported": compose_unsupported,
                 "invalid": 0,
                 "other": 0,
@@ -2186,36 +2321,36 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let reviewed_fidelity = [
-        ("exact", "podman", "compose", 63, 1_346),
-        ("exact", "podman", "quadlet", 63, 1_318),
-        ("exact", "podman", "podman", 63, 1_527),
+        ("exact", "podman", "compose", 39, 1_346),
+        ("exact", "podman", "quadlet", 39, 1_318),
+        ("exact", "podman", "podman", 28, 1_718),
         ("exact", "quadlet", "compose", 0, 26),
         ("exact", "compose", "compose", 0, 0),
         ("exact", "compose", "quadlet", 0, 1),
         ("exact", "compose", "podman", 0, 198),
         ("exact", "quadlet", "quadlet", 0, 0),
         ("exact", "quadlet", "podman", 0, 223),
-        ("storage", "podman", "compose", 63, 1_346),
-        ("storage", "podman", "quadlet", 63, 1_318),
-        ("storage", "podman", "podman", 63, 1_527),
+        ("storage", "podman", "compose", 39, 1_346),
+        ("storage", "podman", "quadlet", 39, 1_318),
+        ("storage", "podman", "podman", 28, 1_718),
         ("storage", "quadlet", "compose", 0, 26),
         ("storage", "compose", "compose", 0, 0),
         ("storage", "compose", "quadlet", 0, 1),
         ("storage", "compose", "podman", 0, 198),
         ("storage", "quadlet", "quadlet", 0, 0),
         ("storage", "quadlet", "podman", 0, 223),
-        ("label", "podman", "compose", 63, 1_346),
-        ("label", "podman", "quadlet", 63, 1_318),
-        ("label", "podman", "podman", 63, 1_527),
+        ("label", "podman", "compose", 39, 1_346),
+        ("label", "podman", "quadlet", 39, 1_318),
+        ("label", "podman", "podman", 28, 1_718),
         ("label", "quadlet", "compose", 0, 26),
         ("label", "compose", "compose", 0, 0),
         ("label", "compose", "quadlet", 0, 1),
         ("label", "compose", "podman", 0, 198),
         ("label", "quadlet", "quadlet", 0, 0),
         ("label", "quadlet", "podman", 0, 223),
-        ("all", "podman", "compose", 67, 1_446),
-        ("all", "podman", "quadlet", 67, 1_418),
-        ("all", "podman", "podman", 67, 1_641),
+        ("all", "podman", "compose", 41, 1_446),
+        ("all", "podman", "quadlet", 41, 1_418),
+        ("all", "podman", "podman", 29, 1_846),
         ("all", "quadlet", "compose", 0, 26),
         ("all", "compose", "compose", 0, 0),
         ("all", "compose", "quadlet", 0, 1),
@@ -2237,10 +2372,10 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         );
     }
     for (selection, approximate, unsupported) in [
-        ("exact", 63, 1_308),
-        ("storage", 63, 1_308),
-        ("label", 63, 1_308),
-        ("all", 67, 1_406),
+        ("exact", 35, 1_308),
+        ("storage", 35, 1_308),
+        ("label", 35, 1_308),
+        ("all", 37, 1_406),
     ] {
         let generated = generated_supabase_contract_with_acquisition(
             &root,
@@ -2281,7 +2416,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         system_network_fidelity,
         serde_json::json!({
-            "approximate": 69,
+            "approximate": 44,
             "unsupported": 1_452,
             "invalid": 0,
             "other": 0,
@@ -2307,7 +2442,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         compose_authored_system_network_fidelity,
         serde_json::json!({
-            "approximate": 69,
+            "approximate": 40,
             "unsupported": 1_412,
             "invalid": 0,
             "other": 0,
@@ -2405,6 +2540,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
             ("BFP0002", "networks.podman.native_ipv6_enabled", "omitted"),
             ("BFP0003", "networks.podman.internal", "approximated"),
             ("BFP0003", "networks.podman.ipam", "approximated"),
+            ("BFP0003", "networks.podman.ownership", "inferred-application-ownership"),
         ])
     );
 
@@ -2479,8 +2615,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         expected_fidelity,
         serde_json::json!({
-            "approximate": 63,
-            "unsupported": 1_527,
+            "approximate": 28,
+            "unsupported": 1_718,
             "invalid": 0,
             "other": 0,
         })
@@ -2505,8 +2641,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let mut volume_metadata_as_approximate = success_report.clone();
-    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(63);
-    volume_metadata_as_approximate["fidelity"]["unsupported"] = serde_json::json!(1_343);
+    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(29);
     assert!(!supabase_contract_accepts(
         &root,
         "podman",
@@ -2516,7 +2651,17 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let mut missing_kong_network_outcome = success_report.clone();
-    missing_kong_network_outcome["fidelity"]["approximate"] = serde_json::json!(61);
+    missing_kong_network_outcome["diagnostics"]
+        .as_array_mut()
+        .ok_or("synthetic success diagnostics must be an array")?
+        .retain(|diagnostic| {
+            diagnostic["code"] != "BFP0009"
+                || !diagnostic["fields"].as_array().is_some_and(|fields| {
+                    fields.iter().any(|field| {
+                        field["name"] == "subject" && field["value"] == "services.contract-supabase-kong.networks"
+                    })
+                })
+        });
     assert!(!supabase_contract_accepts(
         &root,
         "podman",
@@ -3524,7 +3669,7 @@ fn validate_live_target_contracts(runner: &str) -> Result<(), String> {
     for apply_target_contract in [
         "'$1 == \"podman-6.1-rootful\" { print; exit }'",
         "\"${id}\" == podman-6.1-rootful",
-        "\"${declared_version}\" == 6.1.0",
+        "\"${declared_version}\" == 6.1.2",
     ] {
         if !runner.contains(apply_target_contract) {
             return Err(format!(
@@ -4342,10 +4487,10 @@ fn validate_live_observability_application_cell(runner: &str) -> Result<(), Stri
     reason = "keeps the complete Supabase live contract auditable in one place"
 )]
 fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result<(), String> {
-    let exact_cell = "podman-6.1-rootless\tghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e\t6.1.0\tupstream-source\trootless\tcontainer\tamd64";
+    let exact_cell = "podman-6.1-rootless\tghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.2@sha256:04684652923ba6d4f046dbb9f4a764ef7b30c8e890883b840e10c702dd2482ed\t6.1.2\tupstream-source\trootless\tcontainer\tamd64";
     if !matrix.lines().any(|line| line == exact_cell) {
         return Err(
-            "Supabase application target must remain the exact reviewed Podman 6.1.0 rootless amd64 cell".to_owned(),
+            "Supabase application target must remain the exact reviewed Podman 6.1.2 rootless amd64 cell".to_owned(),
         );
     }
     for contract in [
@@ -4651,9 +4796,9 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
     }
 
     for route in [
-        "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
-        "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
-        "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tcompose\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0009,BFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tquadlet\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0009,BFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0009,BFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "compose\tcompose\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
         "compose\tquadlet\tmigration-success\tlive-unperformed\tBFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",

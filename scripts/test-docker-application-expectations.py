@@ -454,6 +454,43 @@ class ApplicationExpectations(unittest.TestCase):
             with self.assertRaisesRegex(contract.ExpectationError, "source bytes differ"):
                 contract.check_sources(ROOT, RAW)
 
+    def test_supabase_diagnostic_source_retains_independent_migration_tuples(self):
+        path = "fixtures/conformance/supabase-application/routes.tsv"
+        records = [row for row in EXPECTED["applications"]["supabase"]["sources"] if row["path"] == path]
+        self.assertEqual(len(records), 1, "migration route source must be bound exactly once")
+        source_path = ROOT / path
+        original = source_path.read_bytes()
+        self.assertEqual(records[0]["sha256"], hashlib.sha256(original).hexdigest())
+        # Independently reviewed migration semantics: reconstruction notes do not
+        # authorize live success, change a route, or weaken exact tuple comparison.
+        routes = [
+            ("podman", "compose", "BFP0002,BFP0003,BFP0009,BFC0007"),
+            ("podman", "quadlet", "BFP0002,BFP0003,BFP0009,BFQ0003"),
+            ("podman", "podman", "BFP0002,BFP0003,BFP0009,BFP0007"),
+            ("compose", "compose", "-"),
+            ("compose", "quadlet", "BFQ0003"),
+            ("compose", "podman", "BFP0007"),
+            ("quadlet", "compose", "BFC0007"),
+            ("quadlet", "quadlet", "-"),
+            ("quadlet", "podman", "BFP0007"),
+        ]
+        expected = [
+            (source, target, "migration-success", "live-unperformed", codes,
+             "zero-loss-zero-diagnostic-reimport" if codes == "-" else
+             "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1")
+            for source, target, codes in routes
+        ]
+        actual = [tuple(line.split("\t")) for line in original.decode().splitlines()
+                  if line and not line.startswith("#")]
+        self.assertEqual(actual, expected)
+        changed = original.replace(b"live-unperformed", b"live-success", 1)
+        self.assertNotEqual(original, changed, "mutation must change the actual evidence claim")
+        read_bytes = pathlib.Path.read_bytes
+        with mock.patch.object(pathlib.Path, "read_bytes", autospec=True,
+                               side_effect=lambda candidate: changed if candidate == source_path else read_bytes(candidate)):
+            with self.assertRaisesRegex(contract.ExpectationError, "source bytes differ"):
+                contract.check_sources(ROOT, RAW)
+
     def test_catalogue_schema_and_required_supabase_services_fail_closed(self):
         mutations = [lambda c: c.update(schema_version=2), lambda c: c.update(native_execution=True),
                      lambda c: c["applications"].pop("immich"),

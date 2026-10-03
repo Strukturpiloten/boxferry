@@ -11,11 +11,13 @@ import json
 import math
 import os
 import pathlib
+import re
 import subprocess
 import struct
 import sys
 import tempfile
 import time
+import tomllib
 import types
 import unittest
 from unittest import mock
@@ -31,6 +33,92 @@ SPEC.loader.exec_module(MODULE)
 
 
 class MigrationReadinessTests(unittest.TestCase):
+    def test_native_pins_have_unique_renovate_extraction_and_manual_admission(self) -> None:
+        renovate = json.loads((ROOT / ".github/renovate.json").read_text())
+        catalogue = MODULE.load_catalogue()
+
+        def extract(description: str, path: str) -> list[dict[str, str]]:
+            owners = [
+                item for item in renovate["customManagers"]
+                if item.get("description") == description
+            ]
+            self.assertEqual(len(owners), 1)
+            owner = owners[0]
+            self.assertEqual(len(owner["matchStrings"]), 1)
+            self.assertIsNotNone(re.search(owner["managerFilePatterns"][0][1:-1], path))
+            matching_owners = [
+                item for item in renovate["customManagers"]
+                if any(re.search(pattern[1:-1], path) for pattern in item["managerFilePatterns"])
+            ]
+            self.assertEqual(matching_owners, [owner], "operational pins need one manager")
+            # These RE2 patterns share Python syntax except for named groups.
+            pattern = re.sub(r"\(\?<([A-Za-z]+)>", r"(?P<\1>", owner["matchStrings"][0])
+            return [
+                match.groupdict()
+                for match in re.finditer(pattern, (ROOT / path).read_text())
+            ]
+
+        image_pins = extract(
+            "Track reviewed live Podman matrix images",
+            "fixtures/conformance/podman-live/matrix.tsv",
+        )
+        self.assertEqual(len(image_pins), len(MODULE.tabular_ids(MODULE.PODMAN_MATRIX)))
+        self.assertEqual(len({pin["depName"] for pin in image_pins}), len(image_pins))
+        for minor, patch in [("5.8", "5.8.7"), ("6.1", "6.1.2")]:
+            for mode in ["rootful", "rootless"]:
+                pin = next(
+                    pin for pin in image_pins
+                    if pin["depName"].endswith(f"/podman-{minor}-{mode}")
+                )
+                self.assertEqual(pin["currentValue"], f"v{patch}")
+                self.assertRegex(pin["currentDigest"], r"^sha256:[0-9a-f]{64}$")
+
+        lens_pins = extract(
+            "Track release-bound native Lens conformance revisions",
+            "fixtures/conformance/migration-readiness/tiers.toml",
+        )
+        self.assertEqual(len(lens_pins), 2)
+        self.assertEqual(
+            {pin["depName"] for pin in lens_pins},
+            {"Strukturpiloten/compose-lens", "Strukturpiloten/quadlet-lens"},
+        )
+        lockfile = tomllib.loads((ROOT / "Cargo.lock").read_text())
+        for lens in ("compose-lens", "quadlet-lens"):
+            with self.subTest(lens=lens):
+                pin = next(
+                    item for item in lens_pins if item["depName"] == f"Strukturpiloten/{lens}"
+                )
+                task = MODULE.by_id(catalogue["tasks"], f"{lens}-candidate", "task")
+                self.assertEqual(pin["currentDigest"], task["revision"])
+                self.assertRegex(pin["currentValue"], r"^v[0-9]+\.[0-9]+\.[0-9]+$")
+                adapter = lens.removesuffix("-lens")
+                manifest = tomllib.loads(
+                    (ROOT / f"crates/boxferry-{adapter}/Cargo.toml").read_text()
+                )
+                dependency = manifest["dependencies"][lens]
+                self.assertEqual(set(dependency), {"version", "default-features"})
+                self.assertFalse(dependency["default-features"])
+                self.assertEqual(pin["currentValue"], f"v{dependency['version']}")
+                packages = [item for item in lockfile["package"] if item["name"] == lens]
+                self.assertEqual(len(packages), 1)
+                package = packages[0]
+                self.assertEqual(package["version"], dependency["version"])
+                self.assertEqual(
+                    package["source"], "registry+https://github.com/rust-lang/crates.io-index"
+                )
+                self.assertRegex(package["checksum"], r"^[0-9a-f]{64}$")
+        rule = next(
+            rule for rule in renovate["packageRules"]
+            if rule.get("description") == "Require native revalidation of Lens conformance revisions"
+        )
+        self.assertEqual(
+            rule["matchFileNames"], ["fixtures/conformance/migration-readiness/tiers.toml"]
+        )
+        self.assertEqual(rule["matchDatasources"], ["github-tags"])
+        self.assertTrue(rule["pinDigests"])
+        self.assertTrue(rule["dependencyDashboardApproval"])
+        self.assertFalse(rule["automerge"])
+
     def assert_catalogue_rejected(self, source: str, pattern: str) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary) / "tiers.toml"
@@ -264,7 +352,7 @@ class MigrationReadinessTests(unittest.TestCase):
             [
                 "native-podman",
                 "docker-compose-5.5.0",
-                "podman-api-6.1.0-rootless",
+                "podman-api-6.1.2-rootless",
             ],
         )
         self.assertEqual(task["deadline-seconds"], 5400)
@@ -408,14 +496,11 @@ class MigrationReadinessTests(unittest.TestCase):
                 'commands = ["cargo"]',
                 1,
             ),
-            "missing Lens revision": source.replace(
-                'revision = "44c9b6a4c72e8ea0db2cd2d2c73f2bf4d07b6a0e"\n',
-                "",
-                1,
-            ),
+            "missing Lens revision": replace_line('revision = "', ""),
         }
         for label, changed in mutations.items():
             with self.subTest(label=label):
+                self.assertNotEqual(changed, source, "mutation must change the catalogue")
                 self.assert_catalogue_rejected(changed, "catalogue")
 
     def test_schema_valid_evidence_binds_catalogue_and_revision(self) -> None:

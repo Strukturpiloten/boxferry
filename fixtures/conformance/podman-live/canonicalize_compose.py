@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 
@@ -66,15 +67,86 @@ def canonicalize(lines: list[str]) -> list[str]:
     return output
 
 
+def require_omission(report: dict, subject: str, reason: str) -> None:
+    matching = [
+        item for item in report.get("diagnostics", [])
+        if item.get("code") == "BFQ0003"
+        and item.get("severity") == "warning"
+        and item.get("fields") == [
+            {"name": "subject", "value": subject},
+            {"name": "reason", "value": reason},
+        ]
+    ]
+    if report.get("status") != "success" or len(matching) != 1:
+        raise ValueError("missing exact reviewed Quadlet omission diagnostic")
+
+
+def reviewed_quadlet_alias_loss(text: str, prefix: str, report: dict) -> str:
+    """Account only for the authored dual-network API service's diagnosed loss."""
+    service = f"{prefix}-large-api"
+    require_omission(
+        report, f"services.{service}.networks",
+        "IP, IP6, and NetworkAlias require exactly one compatible network attachment",
+    )
+    lines = text.splitlines(keepends=True)
+    header = f"  {service}:\n"
+    if lines.count(header) != 1:
+        raise ValueError("missing unique reviewed API service")
+    start = lines.index(header)
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("    "):
+        end += 1
+    block = "".join(lines[start:end])
+    for network, alias in [("private", "api"), ("edge", "public-api")]:
+        attachment = f"      {prefix}-large-{network}:"
+        expected = f"{attachment}\n        aliases:\n          - {alias}\n"
+        if block.count(expected) != 1:
+            raise ValueError("missing exact reviewed per-network alias")
+        block = block.replace(expected, f"{attachment} {{}}\n", 1)
+    return "".join(lines[:start]) + block + "".join(lines[end:])
+
+
+def reviewed_quadlet_restart_loss(text: str, prefix: str, report: dict) -> str:
+    """Remove only the options fixture's independently authored finite retry policy."""
+    lines = text.splitlines(keepends=True)
+    header = f"  {prefix}-options:\n"
+    if header not in lines:
+        return text
+    if lines.count(header) != 1:
+        raise ValueError("duplicate reviewed options service")
+    start = lines.index(header)
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("    "):
+        end += 1
+    block = lines[start:end]
+    restart = "    restart: on-failure:3\n"
+    if block.count(restart) != 1:
+        raise ValueError("missing exact reviewed options restart policy")
+    require_omission(
+        report, f"services.{prefix}-options.restart_policy",
+        "a finite container restart count has no equivalent in Restart=; "
+        "systemd start-rate limits use different time-window semantics",
+    )
+    block.remove(restart)
+    return "".join(lines[:start] + block + lines[end:])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--reviewed-quadlet-losses", nargs=2, metavar=("PREFIX", "REPORT"))
     args = parser.parse_args()
     lines = args.input.read_text(encoding="utf-8").splitlines(keepends=True)
     if not lines or lines[0] != "---\n":
         raise SystemExit("expected a complete BoxFerry-generated YAML document")
-    args.output.write_text("".join(canonicalize(lines)), encoding="utf-8")
+    text = "".join(canonicalize(lines))
+    if args.reviewed_quadlet_losses:
+        prefix, report_path = args.reviewed_quadlet_losses
+        report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+        text = reviewed_quadlet_alias_loss(text, prefix, report)
+        text = reviewed_quadlet_restart_loss(text, prefix, report)
+    args.output.write_text(text, encoding="utf-8")
     return 0
 
 

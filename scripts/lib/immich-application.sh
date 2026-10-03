@@ -574,16 +574,16 @@ immich_recreate_application() {
 
 immich_assert_output_membership() {
   local selection=$1 output=$2 directory=$3 prefix=$4
-  assert_named_member "${output}" "${directory}" immich-server "${prefix}-immich-server"
-  assert_named_member "${output}" "${directory}" database "${prefix}-immich-database"
-  assert_named_member "${output}" "${directory}" redis "${prefix}-immich-redis"
+  assert_named_member "${output}" "${directory}" immich-server "${prefix}-immich-server" || return $?
+  assert_named_member "${output}" "${directory}" database "${prefix}-immich-database" || return $?
+  assert_named_member "${output}" "${directory}" redis "${prefix}-immich-redis" || return $?
   assert_named_member "${output}" "${directory}" immich-machine-learning \
-    "${prefix}-immich-machine-learning"
-  assert_resource_member "${output}" "${directory}" network "${prefix}-immich-backend"
-  assert_resource_member "${output}" "${directory}" network "${prefix}-immich-edge"
+    "${prefix}-immich-machine-learning" || return $?
+  assert_resource_member "${output}" "${directory}" network "${prefix}-immich-backend" || return $?
+  assert_resource_member "${output}" "${directory}" network "${prefix}-immich-edge" || return $?
   local volume
   for volume in library model-cache pgdata redisdata; do
-    assert_resource_member "${output}" "${directory}" volume "${prefix}-immich-${volume}"
+    assert_resource_member "${output}" "${directory}" volume "${prefix}-immich-${volume}" || return $?
   done
   [[ "${selection}" == exact || "${selection}" == label || "${selection}" == all ]]
 }
@@ -669,10 +669,26 @@ immich_assert_output_semantics() {
 }
 
 immich_report_conversion_failure() {
-  local report=$1
-  if [[ -s "${report}" ]]; then
-    jq . "${report}" >&2 || sed -n '1,240p' "${report}" >&2
+  local report=$1 sanitized
+  # Never echo an unvalidated failure body: it can contain a protected value
+  # even when the successful JSON-report path correctly redacts that value.
+  if [[ ! -s "${report}" ]]; then
+    printf 'Immich conversion failed without a JSON report: %s\n' "${report}" >&2
+    return
   fi
+  if ! sanitized="$(jq --slurp \
+    --arg admin "${IMMICH_ADMIN_PASSWORD}" --arg db "${IMMICH_DB_PASSWORD}" '
+      if length != 1 or
+        (.[0] | type != "object" or (tostring | contains($admin) or contains($db)))
+      then error("unsafe conversion report")
+      else .[0] | {schema_version, status, exit_category, primary_diagnostic_code,
+        diagnostics, fidelity}
+      end
+    ' "${report}" 2> /dev/null)"; then
+    printf 'Immich conversion failure report withheld because validation or redaction failed.\n' >&2
+    return
+  fi
+  printf '%s\n' "${sanitized}" >&2
 }
 
 immich_run_exports() {
@@ -708,10 +724,12 @@ immich_run_exports() {
         fi
         application_assert_default_withholding \
           "${withheld_directory}" "${withheld_report}" \
-          "services.${prefix}-immich-server.environment.DB_PASSWORD" "${IMMICH_DB_PASSWORD}"
+          "services.${prefix}-immich-server.environment.DB_PASSWORD" "${IMMICH_DB_PASSWORD}" || return $?
         immich_assert_output_membership \
-          "${selection}" "${output}" "${withheld_directory}" "${prefix}"
+          "${selection}" "${output}" "${withheld_directory}" "${prefix}" || return $?
       fi
+      # Explicit consent applies only to synthetic fixture values in document outputs.
+      # Podman retains its separate protected-inline-value omission contract.
       [[ "${output}" != podman ]] && target_arguments+=(--environment-values include)
       if ! boxferry_operation "Immich ${mode} ${selection} Podman-to-${output}" \
         "${conversion_arguments[@]}" \
