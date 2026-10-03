@@ -150,7 +150,10 @@ the live-template row/code counts include those two rows without changing loss p
 reviewed rootless Podman 6.1.0 nested image:
 `ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e`.
 They apply the `podman-lens` 0.2.4 acquisition and promotion evidence to both independently provisioned
-topologies: direct Podman CLI and Docker Compose 5.5.0. The templates retain native image, network,
+topologies: direct Podman CLI and Docker Compose 5.5.0. These tuples retain their original provenance.
+The active lane comes from [`../podman-live/matrix.tsv`](../podman-live/matrix.tsv); changing that lane
+requires rerunning both provisioners against these independent expectations, not relabelling history.
+The templates retain native image, network,
 creation-evidence, runtime, mount, and volume findings; no conversion report is read to construct an
 expectation. The failed focused pre-release run at
 `ff840133a1d8ddef9bdf3c532179b6751e464064` is only a cross-check.
@@ -181,9 +184,12 @@ their identical complete aggregate diagnostics into one network note. Six indepe
 warnings retain inferred application ownership for backend and the five named volumes. Edge remains
 external and must not acquire an ownership warning. All-resource selection adds two boundary-peer
 reconstruction notes and an inferred-ownership warning for the default Podman network. Environment,
-aliases, network definition/IPAM, bind mounts, and child-field warnings remain non-exact; these
-templates retain PodmanLens 0.2.4 environment semantics. The six application logging observations
-and the all-selector peer logging observation remain non-promoted, not neutral logging intent.
+aliases, network definition/IPAM, bind mounts, and child-field warnings remain non-exact.
+The historical tuple review used PodmanLens 0.2.4; the current candidate consumes released
+PodmanLens 0.2.5 and the active Podman 6.1.2 rootless lane. Exact-head acceptance must reprove both
+provisioners, every selector, and every exporter/reimport without relabelling the historical review.
+The six application logging observations and the all-selector peer logging observation remain
+non-promoted, not neutral logging intent.
 All 36 document-reimport combinations retain their separately authored contracts: Podman outputs
 require named exporter omissions, never native-importer omissions or observation-only logging rows.
 

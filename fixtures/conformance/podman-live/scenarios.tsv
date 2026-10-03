@@ -10,7 +10,7 @@ invalid-literal-glob	small	container=<run>-small-*	rejected	no
 socket-discovery	small	container=<run>-discovery-small-web	compose	no
 compose-reimports	large	label-large	compose/quadlet/podman	yes
 quadlet-reimports	large	label-large	compose/quadlet/podman	yes
-neutral-projection-equivalence	small-and-large	all selections	canonical Compose projections remain byte-identical; all-resource Quadlet export diagnoses uncertain default-network ownership before reimport	yes
+neutral-projection-equivalence	small-and-large	all selections	canonical Compose projections remain byte-identical; Quadlet allows only exactly diagnosed authored dual-network aliases and finite retry loss; all-resource export diagnoses uncertain default-network ownership	yes
 deterministic-exact-compose	small	exact-small	byte-identical compose artifact	yes
 strict-policy-blocks	small	exact-small	strict policy reports actionable subject	yes
 stopped-and-running	lifecycle	label-large	Podman inspect proves running and created states	yes

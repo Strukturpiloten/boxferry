@@ -8,12 +8,12 @@ podman-5.6-rootful	ghcr.io/strukturpiloten/podman-5.6-rootful:v5.6.2@sha256:5acb
 podman-5.6-rootless	ghcr.io/strukturpiloten/podman-5.6-rootless:v5.6.2@sha256:c04a910c1fe6f77035b5aa3327a7acf63c54a0cae84e0a553ffbbde5b664ffca	5.6.2	upstream-source	rootless	container	amd64
 podman-5.7-rootful	ghcr.io/strukturpiloten/podman-5.7-rootful:v5.7.1@sha256:25805cd316bbe0cd20236e0026920edc9ae697f09dcbf383575139ab8b474059	5.7.1	upstream-source	rootful	container	amd64
 podman-5.7-rootless	ghcr.io/strukturpiloten/podman-5.7-rootless:v5.7.1@sha256:cd677d113466055bb4bfbecd494ed261fae159d26671274a0563878220968b5d	5.7.1	upstream-source	rootless	container	amd64
-podman-5.8-rootful	ghcr.io/strukturpiloten/podman-5.8-rootful:v5.8.7@sha256:1f775f68c41c9e926128a002dcf68c446603c4b3d561b7cef72c7daf90c66219	5.8.7	upstream-source	rootful	container	amd64
-podman-5.8-rootless	ghcr.io/strukturpiloten/podman-5.8-rootless:v5.8.7@sha256:6d813d80158d46e7ba45e68f5bd289c409a0fc6024dee85277cdd644408fe1cb	5.8.7	upstream-source	rootless	container	amd64
+podman-5.8-rootful	ghcr.io/strukturpiloten/podman-5.8-rootful:v5.8.6@sha256:9a918e56a062b58d1c312829a9dfd73204c70e414d15c37710ea3761cfa9b78c	5.8.6	upstream-source	rootful	container	amd64
+podman-5.8-rootless	ghcr.io/strukturpiloten/podman-5.8-rootless:v5.8.6@sha256:d6c517c56baffc0615523dc0f4f212917935c68c2bab60317fe8afae27583491	5.8.6	upstream-source	rootless	container	amd64
 podman-6.0-rootful	ghcr.io/strukturpiloten/podman-6.0-rootful:v6.0.2@sha256:22f84e4858d208ad206e32b09203c6725308bc0b1b21b5a5c89817962b296ed1	6.0.2	upstream-source	rootful	container	amd64
 podman-6.0-rootless	ghcr.io/strukturpiloten/podman-6.0-rootless:v6.0.2@sha256:f19b57674f8380f6c8f6037002364e5cea029e78a26a4e381803cc093808bcc3	6.0.2	upstream-source	rootless	container	amd64
-podman-6.1-rootful	ghcr.io/strukturpiloten/podman-6.1-rootful:v6.1.2@sha256:445b0e9b44ac01a7bcbf01a21de868892225b78dbe9c3b6535b4c0f4daadb297	6.1.2	upstream-source	rootful	container	amd64
-podman-6.1-rootless	ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.2@sha256:04684652923ba6d4f046dbb9f4a764ef7b30c8e890883b840e10c702dd2482ed	6.1.2	upstream-source	rootless	container	amd64
+podman-6.1-rootful	ghcr.io/strukturpiloten/podman-6.1-rootful:v6.1.0@sha256:2cf1d0fa3d0776e6a87bc4fd3391abd227001ab22885c5897c04970f3f38cb2c	6.1.0	upstream-source	rootful	container	amd64
+podman-6.1-rootless	ghcr.io/strukturpiloten/podman-6.1-rootless:v6.1.0@sha256:dd00fadfff6e732728643df565a5db50f6d36dc3ec2d7f23a1fe87e905e08b5e	6.1.0	upstream-source	rootless	container	amd64
 podman-alpine-3.24-rootful	ghcr.io/strukturpiloten/podman-alpine-3.24-rootful:v1.0.0@sha256:6ccf6355cdb81a0fbedc26abbb77070b861d0890bdfb8dfed67abf330f251d04	5.8.6-r0	alpine-3.24	rootful	container	amd64
 podman-alpine-3.24-rootless	ghcr.io/strukturpiloten/podman-alpine-3.24-rootless:v1.0.0@sha256:0cf90595f9c9de238c789e5776b6a67167f71927c7bacc22416b86da1c16290d	5.8.6-r0	alpine-3.24	rootless	container	amd64
 podman-arch-rootful	ghcr.io/strukturpiloten/podman-arch-rootful:v1.0.0@sha256:2b352f802035f1667f0bdb4f2f25715b97fd65f70d281b025049dc10e7d7d451	6.1.0-1	arch	rootful	container	amd64

@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""Independent native projection and application export privacy regressions."""
+
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "projection", ROOT / "fixtures/conformance/podman-live/canonicalize_compose.py"
+)
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+SOURCE = """---
+services:
+  live-large-api:
+    image: example.invalid/api:1
+    networks:
+      live-large-edge:
+        aliases:
+          - public-api
+      live-large-private:
+        aliases:
+          - api
+  unrelated:
+    networks:
+      other:
+        aliases:
+          - retained
+"""
+EXPECTED = """---
+services:
+  live-large-api:
+    image: example.invalid/api:1
+    networks:
+      live-large-edge: {}
+      live-large-private: {}
+  unrelated:
+    networks:
+      other:
+        aliases:
+          - retained
+"""
+REPORT = {
+    "status": "success",
+    "diagnostics": [{
+        "code": "BFQ0003",
+        "severity": "warning",
+        "fields": [
+            {"name": "subject", "value": "services.live-large-api.networks"},
+            {"name": "reason", "value": (
+                "IP, IP6, and NetworkAlias require exactly one compatible network attachment"
+            )},
+        ],
+    }],
+}
+
+
+class ReviewedAliasLossTests(unittest.TestCase):
+    def test_only_two_reviewed_aliases_are_removed(self):
+        self.assertEqual(MODULE.reviewed_quadlet_alias_loss(SOURCE, "live", REPORT), EXPECTED)
+
+    def test_missing_wrong_or_duplicate_diagnostic_is_rejected(self):
+        mutations = [
+            {"status": "success", "diagnostics": []},
+            {**REPORT, "status": "failure"},
+            {**REPORT, "diagnostics": REPORT["diagnostics"] * 2},
+        ]
+        for key, value in [("code", "BFQ0002"), ("severity", "info")]:
+            changed = copy.deepcopy(REPORT)
+            changed["diagnostics"][0][key] = value
+            mutations.append(changed)
+        for index in (0, 1):
+            changed = copy.deepcopy(REPORT)
+            changed["diagnostics"][0]["fields"][index]["value"] = "unreviewed"
+            mutations.append(changed)
+        for report in mutations:
+            with self.subTest(report=report), self.assertRaises(ValueError):
+                MODULE.reviewed_quadlet_alias_loss(SOURCE, "live", report)
+
+    def test_missing_or_changed_alias_or_service_is_rejected(self):
+        for source in [
+            SOURCE.replace("- api\n", "- changed\n"),
+            SOURCE.replace("          - public-api\n", ""),
+            SOURCE.replace("live-large-api:", "other-api:"),
+            SOURCE.replace("live-large-private:", "other-private:"),
+        ]:
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                MODULE.reviewed_quadlet_alias_loss(source, "live", REPORT)
+
+    def test_unreviewed_semantic_changes_are_not_normalized(self):
+        for before, after in [
+            ("api:1", "api:2"),
+            ("- retained", "- unexpected"),
+            ("          - api\n", "          - api\n          - additional\n"),
+        ]:
+            changed = SOURCE.replace(before, after)
+            self.assertNotEqual(MODULE.reviewed_quadlet_alias_loss(changed, "live", REPORT), EXPECTED)
+
+
+class ReviewedRestartLossTests(unittest.TestCase):
+    def setUp(self):
+        self.source = "---\nservices:\n  live-options:\n    restart: on-failure:3\n    image: example.invalid/options:1\n"
+        self.report = copy.deepcopy(REPORT)
+        self.report["diagnostics"][0]["fields"] = [
+            {"name": "subject", "value": "services.live-options.restart_policy"},
+            {"name": "reason", "value": (
+                "a finite container restart count has no equivalent in Restart=; "
+                "systemd start-rate limits use different time-window semantics"
+            )},
+        ]
+
+    def test_exact_diagnosed_restart_loss_only(self):
+        expected = "---\nservices:\n  live-options:\n    image: example.invalid/options:1\n"
+        self.assertEqual(MODULE.reviewed_quadlet_restart_loss(self.source, "live", self.report), expected)
+        self.assertEqual(MODULE.reviewed_quadlet_restart_loss(SOURCE, "live", {}), SOURCE)
+
+    def test_missing_diagnostic_or_changed_value_is_rejected(self):
+        with self.assertRaises(ValueError):
+            MODULE.reviewed_quadlet_restart_loss(self.source, "live", REPORT)
+        with self.assertRaises(ValueError):
+            MODULE.reviewed_quadlet_restart_loss(self.source.replace("failure:3", "failure:4"), "live", self.report)
+
+    def test_other_service_restart_is_unchanged(self):
+        source = self.source.replace("live-options:", "other-options:")
+        self.assertEqual(MODULE.reviewed_quadlet_restart_loss(source, "live", self.report), source)
+
+
+class ApplicationExportPrivacyTests(unittest.TestCase):
+    INCLUDE = '[[ "${output}" != podman ]] && target_arguments+=(--environment-values include)'
+    WITHHOLD_EXACT = 'if [[ "${selection}" == exact && "${output}" != podman ]]; then'
+
+    def run_exports(self, application, mutation=None, withhold_mutation=None):
+        helper = ROOT / "scripts/lib" / f"{application}-application.sh"
+        source = helper.read_text(encoding="utf-8")
+        function = re.search(
+            rf"\n{application}_run_exports\(\) \{{.*?\n\}}", source, re.DOTALL
+        ).group(0)
+        self.assertIn(self.INCLUDE, function)
+        if mutation is not None:
+            function = function.replace(self.INCLUDE, mutation)
+        if withhold_mutation is not None:
+            self.assertIn(self.WITHHOLD_EXACT, function)
+            function = function.replace(self.WITHHOLD_EXACT, withhold_mutation)
+        shell = r'''
+set -euo pipefail
+repository_root=$1
+current_case=$2
+application=$3
+source "$4"
+eval "$5"
+for assertion in assert_output_membership assert_output_semantics assert_success_contract assert_direct_export_environment; do
+  eval "${application}_${assertion}() { :; }"
+done
+assert_successful_conversion() { :; }
+application_assert_default_withholding() {
+  local directory=$1 report=$2 subject=$3 output
+  [[ "${application}" != supabase && "${report}" == "${directory}.report.json" ]] || return 93
+  case "${directory}" in
+    *-default-withheld-compose) output=compose ;;
+    *-default-withheld-quadlet) output=quadlet ;;
+    *) return 94 ;;
+  esac
+  case "${application}:${subject}" in
+    paperless:services.contract-paper-web.environment.PAPERLESS_DBPASS|\
+    immich:services.contract-immich-server.environment.DB_PASSWORD) ;;
+    *) return 94 ;;
+  esac
+  printf 'assert:%s\n' "${output}" >> "${current_case}/calls"
+}
+paperless_assert_withheld_broker_command() {
+  local directory=$1 report=$2 output=$3 prefix=$4
+  [[ "${application}" == paperless && "${report}" == "${directory}.report.json" &&
+    "${prefix}" == contract ]] || return 99
+  case "${directory}:${output}" in
+    *-default-withheld-compose:compose|*-default-withheld-quadlet:quadlet) ;;
+    *) return 99 ;;
+  esac
+  printf 'broker:%s\n' "${output}" >> "${current_case}/calls"
+}
+boxferry_operation() {
+  local description=$1 output=$4 includes=0 event
+  while (( $# )); do
+    if [[ "$1" == --environment-values ]]; then
+      [[ "${2:-}" == include ]] || return 95
+      includes=$((includes + 1))
+    fi
+    shift
+  done
+  if [[ "${description}" == *' default-withheld Podman-to-'* ]]; then
+    [[ "${application}" != supabase && "${output}" != podman && "${includes}" == 0 ]] || return 98
+    event="withheld:${output}"
+  elif [[ "$output" == podman ]]; then
+    [[ "$includes" == 0 ]] || return 96
+    event=podman
+  else
+    [[ "$includes" == 1 ]] || return 97
+    event="included:${output}"
+  fi
+  printf '%s\n' "${event}" >> "${current_case}/calls"
+  printf '%s\n' '{"schema_version":1,"status":"success","exit_category":"success","diagnostics":[],"fidelity":{"invalid":0},"output_artifacts":[{"name":"stub"}]}'
+}
+"${application}_run_exports" cli /nonexistent-test-socket contract
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            result = subprocess.run(
+                ["bash", "-c", shell, "export-privacy-test", str(ROOT), temporary,
+                 application, str(helper), function],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            calls = Path(temporary) / "calls"
+            return result, calls.read_text().splitlines() if calls.exists() else []
+
+    @staticmethod
+    def expected_calls(application):
+        normal = ["included:compose", "included:quadlet", "podman"]
+        if application == "supabase":
+            return normal * 4
+        broker_compose = ["broker:compose"] if application == "paperless" else []
+        broker_quadlet = ["broker:quadlet"] if application == "paperless" else []
+        return [
+            "withheld:compose", "assert:compose", *broker_compose, "included:compose",
+            "withheld:quadlet", "assert:quadlet", *broker_quadlet,
+            "included:quadlet", "podman",
+        ] + normal * 2
+
+    def test_every_selection_checks_default_withholding_and_explicit_inclusion(self):
+        for application in ("paperless", "immich", "supabase"):
+            with self.subTest(application=application):
+                result, calls = self.run_exports(application)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, self.expected_calls(application))
+
+    def test_missing_opt_in_or_including_podman_values_is_rejected(self):
+        for application in ("paperless", "immich", "supabase"):
+            for mutation in (":", "target_arguments+=(--environment-values include)"):
+                with self.subTest(application=application, mutation=mutation):
+                    result, _ = self.run_exports(application, mutation)
+                    self.assertNotEqual(result.returncode, 0)
+
+    def test_missing_default_withholding_is_rejected(self):
+        for application in ("paperless", "immich"):
+            with self.subTest(application=application):
+                result, calls = self.run_exports(application, withhold_mutation="if false; then")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotEqual(calls, self.expected_calls(application))
+
+
+class SupabaseEnvironmentArtifactTests(unittest.TestCase):
+    PASSWORD = "boxferry-public-supabase-db-password"
+
+    def check_artifact(self, output, text):
+        filenames = {"compose": "compose.yaml", "quadlet": "contract-supabase-db.container",
+                     "podman": "podman.json"}
+        with tempfile.TemporaryDirectory() as temporary:
+            Path(temporary, filenames[output]).write_text(text, encoding="utf-8")
+            result = subprocess.run([
+                "bash", "-c",
+                'set -euo pipefail; source "$1"; supabase_assert_direct_export_environment "$3" "$2" contract',
+                "artifact-privacy-test", str(ROOT / "scripts/lib/supabase-application.sh"),
+                temporary, output,
+            ], capture_output=True, text=True, timeout=5, check=False)
+            return result.returncode
+
+    def test_compose_value_must_belong_to_database_environment(self):
+        source = ("---\nservices:\n  contract-supabase-db:\n    environment:\n"
+                  f"      - POSTGRES_PASSWORD={self.PASSWORD}\n")
+        self.assertEqual(self.check_artifact("compose", source), 0)
+        for before, after in [(self.PASSWORD, "withheld"), ("-db:", "-other:"),
+                              ("environment:", "labels:"), ("POSTGRES_PASSWORD", "OTHER")]:
+            self.assertNotEqual(self.check_artifact("compose", source.replace(before, after)), 0)
+
+    def test_quadlet_value_must_belong_to_database_container_section(self):
+        source = f"[Container]\nEnvironment=POSTGRES_PASSWORD={self.PASSWORD}\n"
+        self.assertEqual(self.check_artifact("quadlet", source), 0)
+        for before, after in [(self.PASSWORD, "withheld"), ("[Container]", "[Service]"),
+                              ("POSTGRES_PASSWORD", "OTHER")]:
+            self.assertNotEqual(self.check_artifact("quadlet", source.replace(before, after)), 0)
+
+    def test_podman_plan_must_withhold_both_renderings_and_known_value(self):
+        plan = {"operations": [{"action": "create",
+                 "resource": {"kind": "container", "name": "contract-supabase-db"},
+                 "cli": {"argv": ["create", "database-image"]},
+                 "libpod": {"body": {"json": {}}}}]}
+        self.assertEqual(self.check_artifact("podman", json.dumps(plan)), 0)
+        mutations = []
+        for arguments in (["--env", "POSTGRES_PASSWORD=unexpected"],
+                          ["--env=POSTGRES_PASSWORD=unexpected"],
+                          ["-ePOSTGRES_PASSWORD=unexpected"],
+                          ["--env", "POSTGRES_PASSWORD"]):
+            cli = copy.deepcopy(plan)
+            cli["operations"][0]["cli"]["argv"] += arguments
+            mutations.append(cli)
+        for value in ("unexpected", "", None):
+            api = copy.deepcopy(plan)
+            api["operations"][0]["libpod"]["body"]["json"]["env"] = {"POSTGRES_PASSWORD": value}
+            mutations.append(api)
+        mutations += [{"operations": []}, {**plan, "unexpected": self.PASSWORD}]
+        for mutation in mutations:
+            self.assertNotEqual(self.check_artifact("podman", json.dumps(mutation)), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

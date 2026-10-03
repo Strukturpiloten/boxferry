@@ -52,6 +52,126 @@ supabase_contract_fidelity() {
     --from-file "$(supabase_fixture_root)/success-contract.jq"
 }
 
+# Counts come from the independently reviewed effective environment inventories,
+# including image defaults, the all-selection peer, and Compose's two Kong keys.
+for acquisition in cli compose; do
+  for selection in exact storage label all; do
+    expected_keys=191
+    expected_approximate=28
+    expected_services=11
+    [[ "${acquisition}" == compose ]] && expected_keys=$((expected_keys + 2))
+    [[ "${acquisition}" == compose ]] && expected_approximate=24
+    if [[ "${selection}" == all ]]; then
+      expected_keys=$((expected_keys + 14))
+      expected_approximate=$((expected_approximate + 1))
+      expected_services=12
+    fi
+    withheld_diagnostics="$(supabase_contract_expected podman podman "${acquisition}" "${acquisition}" "${selection}")"
+    jq --exit-status --argjson expected_keys "${expected_keys}" '
+      [.[] | select(.code == "BFP0002" and (.subject | contains(".environment.")))] as $keys |
+      ($keys | length) == $expected_keys and
+      ($keys | map(.subject) | unique | length) == $expected_keys and
+      all($keys[]; .severity == "warning" and .decision == "omitted") and
+      ([.[] | select(.code == "BFP0003" and (.subject | test("^services\\..*\\.environment$")))] | length) == 0 and
+      ($keys | map(.subject) | sort) ==
+        ([.[] | select(.code == "BFP0007" and (.subject | contains(".environment."))) | .subject] | sort)
+    ' <<< "${withheld_diagnostics}" > /dev/null
+    [[ "$(supabase_contract_fidelity podman podman "${acquisition}" "${acquisition}" "${selection}" | jq -r .approximate)" == "${expected_approximate}" ]]
+    for output in compose quadlet; do
+      included_diagnostics="$(supabase_contract_expected podman "${output}" "${acquisition}" "${acquisition}" "${selection}")"
+      jq --exit-status --argjson services "${expected_services}" '
+        ([.[] | select(.code == "BFP0003" and (.subject | test("^services\\..*\\.environment$")))] | length) == $services and
+        ([.[] | select(.code == "BFP0002" and (.subject | contains(".environment.")))] | length) == 0
+      ' <<< "${included_diagnostics}" > /dev/null
+    done
+  done
+done
+
+for mutation in missing-key extra-key aggregate-promotion; do
+  jq --arg mutation "${mutation}" '
+    (.diagnostics | map(select(.code == "BFP0002" and
+      any(.fields[]; .name == "subject" and (.value | contains(".environment."))))) | first) as $key |
+    if $mutation == "missing-key" then
+      .diagnostics -= [$key] | .fidelity.unsupported -= 1
+    elif $mutation == "extra-key" then
+      .diagnostics += [($key | (.fields[] | select(.name == "subject") | .value) += "_UNREVIEWED")] |
+      .fidelity.unsupported += 1
+    else
+      .diagnostics += [($key | .code = "BFP0003" |
+        (.fields[] | select(.name == "subject") | .value) |= sub("\\.environment\\.[^.]+$"; ".environment") |
+        (.fields[] | select(.name == "decision") | .value) = "approximated")] |
+      .fidelity.approximate += 1
+    end
+  ' "${contract_report}" > "${contract_drift_report}"
+  if supabase_assert_success_contract podman podman storage "${contract_drift_report}" \
+    contract false cli > /dev/null 2>&1; then
+    printf 'Supabase contract admitted withheld environment mutation: %s.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+
+for acquisition in cli compose; do
+  podman_diagnostics="$(supabase_contract_expected podman compose "${acquisition}" "${acquisition}" storage)"
+  jq --exit-status --arg acquisition "${acquisition}" '
+    [ .[] | select(.code == "BFP0009") ] as $notes |
+    all($notes[]; .severity == "note" and .decision == "reconstructed") and
+    ([$notes[] | select(.subject | endswith(".networks"))] | length) == 11 and
+    ([$notes[] | select(.subject == "services.contract-supabase-kong.networks")] | length) == 1 and
+    ([$notes[] | select(.subject | endswith(".restart_policy"))] | length) == 11 and
+    ([$notes[] | select(.subject | endswith(".port_bindings"))] | length) == 0 and
+    ([$notes[] | select(.subject | contains(".mounts[")) | .subject] | sort) == [
+      "services.contract-supabase-db.mounts[0]",
+      "services.contract-supabase-functions.mounts[0]",
+      "services.contract-supabase-imgproxy.mounts[0]",
+      "services.contract-supabase-storage.mounts[0]"
+    ] and
+    ([$notes[] | select(.subject | endswith(".healthcheck")) | .subject] | sort) == (
+      if $acquisition == "cli" then
+        ["services.contract-supabase-rest.healthcheck"]
+      else
+        ["auth", "imgproxy", "kong", "rest", "storage"] |
+        map("services.contract-supabase-" + . + ".healthcheck")
+      end
+    ) and
+    ([.[] | select(.code == "BFP0003" and .decision == "inferred-application-ownership") |
+      select(.subject | endswith(".ownership")) | .subject] | sort) == [
+      "networks.contract-supabase-backend.ownership",
+      "volumes.contract-supabase-deno-cache.ownership",
+      "volumes.contract-supabase-pgdata.ownership",
+      "volumes.contract-supabase-storage.ownership"
+    ] and
+    ([$notes[] | select(.subject == "networks.contract-supabase-edge.ownership")] | length) == 0
+  ' <<< "${podman_diagnostics}" > /dev/null
+done
+
+for mutation in missing duplicated; do
+  jq --arg mutation "${mutation}" '
+    [.diagnostics[] | select(.code == "BFP0009" and any(.fields[];
+      .name == "subject" and .value == "services.contract-supabase-kong.networks"))] as $notes |
+    if $mutation == "duplicated" then .diagnostics += [$notes[0]]
+    else .diagnostics -= $notes end
+  ' "${contract_report}" > "${contract_drift_report}"
+  if supabase_assert_success_contract podman podman storage "${contract_drift_report}" \
+    contract false cli > /dev/null 2>&1; then
+    printf 'Supabase contract admitted %s Kong network reconstruction note.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+
+all_podman_diagnostics="$(supabase_contract_expected podman compose cli cli all true)"
+jq --exit-status '
+  ([.[] | select(.code == "BFP0003" and .decision == "inferred-application-ownership" and
+    .subject == "networks.podman.ownership")] | length) == 1 and
+  ([.[] | select(.code == "BFP0003" and .subject == "networks.contract-supabase-edge.ownership")] | length) == 0
+' <<< "${all_podman_diagnostics}" > /dev/null
+
+if supabase_assert_success_contract podman podman storage \
+  <(jq '(.diagnostics[] | select(.code == "BFP0009") | .severity) = "warning"' "${contract_report}") \
+  contract false cli > /dev/null 2>&1; then
+  printf '%s\n' 'Supabase contract admitted reconstruction notes with warning severity.' >&2
+  exit 1
+fi
+
 assert_compose_provider_kong_losses() {
   local input=$1 cli_acquisition=$2 compose_acquisition=$3 selection=$4
   local cli compose
@@ -88,8 +208,8 @@ assert_compose_provider_kong_losses() {
     # Its all selection excludes Compose boundary peer creation evidence;
     # otherwise the reviewed difference is only the two Kong omissions.
     case "${selection}" in
-      exact | storage | label) [[ "${compose_unsupported}" == 1507 ]] ;;
-      all) [[ "${compose_unsupported}" == 1619 ]] ;;
+      exact | storage | label) [[ "${compose_unsupported}" == 1700 ]] ;;
+      all) [[ "${compose_unsupported}" == 1826 ]] ;;
     esac || return 1
   elif [[ "${input}" == quadlet ]]; then
     # Compose retains two Kong values, but lacks all sixteen native dependency losses.
@@ -427,7 +547,7 @@ assert_contract_predicate_failure fidelity-shape "${fidelity_shape_drift_report}
 assert_contract_predicate_failure non-object-fidelity \
   "${non_object_fidelity_drift_report}" fidelity-shape
 assert_contract_predicate_failure fidelity-unsupported \
-  "${fidelity_counter_drift_report}" fidelity-unsupported 1528
+  "${fidelity_counter_drift_report}" fidelity-unsupported 1719
 assert_contract_predicate_failure diagnostic-names \
   "${empty_name_drift_report}" diagnostic-names
 
@@ -663,13 +783,36 @@ bash -c '
   current_case=$2
   argument_log=$3
   boxferry_bin=unused
-  timed_operation() { return 0; }
+  command_checks=0
+  environment_assertions=0
+  timed_operation() {
+    shift 2
+    local -a arguments=("$@")
+    local output="${arguments[3]}" index inclusion=0
+    for ((index = 0; index < ${#arguments[@]}; index++)); do
+      if [[ "${arguments[index]}" == --environment-values ]]; then
+        [[ "${arguments[index + 1]}" == include ]]
+        inclusion=$((inclusion + 1))
+      fi
+    done
+    if [[ "${output}" == podman ]]; then
+      [[ "${inclusion}" == 0 ]]
+    else
+      [[ "${inclusion}" == 1 ]]
+    fi
+    command_checks=$((command_checks + 1))
+  }
   assert_successful_conversion() { :; }
   supabase_assert_success_contract() {
     [[ "$#" == 8 && "$1" =~ ^(compose|quadlet)$ && "$7" == not-podman &&
       "$8" =~ ^(cli|compose)$ ]]
   }
   supabase_assert_output_membership() { :; }
+  supabase_assert_direct_export_environment() {
+    [[ "$#" == 3 && "$1" =~ ^(compose|quadlet|podman)$ &&
+      "$2" == "${current_case}/reimports/"* && "$3" == test-prefix ]]
+    environment_assertions=$((environment_assertions + 1))
+  }
   supabase_assert_output_semantics() {
     [[ "$#" == 9 ]]
     printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
@@ -677,6 +820,7 @@ bash -c '
   }
   supabase_run_reimports cli test-prefix
   supabase_run_reimports compose test-prefix
+  [[ "${command_checks}" == 48 && "${environment_assertions}" == 48 ]]
 ' bash "${library}" "${test_root}/reimport-case" "${reimport_argument_log}"
 awk -F '\t' '
   NF != 6 ||
@@ -1012,7 +1156,10 @@ if bash -c '
     return 1
   }
   supabase_report_published_api_failure() {
-    printf "%s\\n" "$*" >> "${diagnostic_marker}"
+    printf "publication %s\\n" "$*" >> "${diagnostic_marker}"
+  }
+  supabase_report_gateway_path_probes() {
+    printf "paths %s\\n" "$*" >> "${diagnostic_marker}"
   }
   supabase_probe_published_api test-outer test-socket test-prefix
 ' bash "${library}" "${published_api_timeout_attempts}" "${published_api_timeout_sleeps}" \
@@ -1026,7 +1173,7 @@ grep --fixed-strings --quiet \
   "${published_api_timeout_output}"
 [[ "$(sed -n '$=' "${published_api_timeout_attempts}")" == 45 ]]
 [[ "$(sed -n '$=' "${published_api_timeout_sleeps}")" == 45 ]]
-[[ "$(cat "${test_root}/published-api-timeout-diagnostic.marker")" == 'test-outer test-socket test-prefix' ]]
+[[ "$(cat "${test_root}/published-api-timeout-diagnostic.marker")" == $'paths test-outer test-socket test-prefix\npublication test-outer test-socket test-prefix' ]]
 
 published_api_late_argv="${test_root}/published-api-late.argv"
 if bash -c '
@@ -1049,6 +1196,7 @@ if bash -c '
     fi
     return 1
   }
+  supabase_report_gateway_path_probes() { :; }
   supabase_report_published_api_failure() { :; }
   supabase_probe_published_api test-outer test-socket test-prefix
 ' bash "${library}" "${published_api_late_argv}" > /dev/null 2>&1; then
@@ -1094,6 +1242,150 @@ assert late == [
     ["1s", *expected_tail],
 ], late
 PY
+
+gateway_path_output="${test_root}/gateway-path.output"
+gateway_path_argv="${test_root}/gateway-path.argv"
+bash -c '
+  set -Eeuo pipefail
+  source "$1"
+  argv=$2
+  mode=$3
+  engine=test-engine
+  repository_root="$(cd -- "$(dirname -- "$1")/../.." && pwd -P)"
+  run_id=test-run
+  supabase_gateway_diagnostic_operation() {
+    printf "%s\\0" "$@" >> "${argv}"
+    printf "\\0" >> "${argv}"
+    local url=${*: -1}
+    if [[ "$*" == *NetworkSettings.Networks* ]]; then
+      if [[ "${mode}" == missing ]]; then printf "{}\\n"; else
+        jq --null-input --arg edge test-prefix-supabase-edge --arg ip 10.89.0.4 \
+          "{(\$edge): {IPAddress: \$ip}}"
+      fi
+      return
+    fi
+    if [[ "$*" == *" inspect --format "* ]]; then
+      printf test-run
+      return
+    fi
+    if [[ "$*" == *" rm --force "* ]]; then return 0; fi
+    if [[ "${mode}" == failure ]]; then
+      printf "body=%s\\n" "${SUPABASE_ANON_KEY}"
+      printf "stderr=%s\\n" "${SUPABASE_SERVICE_KEY}" >&2
+      return 7
+    fi
+    if [[ "${mode}" == missing && "$*" == *test-prefix-supabase-diag-peer-dns* ]]; then
+      printf "body=%s\\n" "${SUPABASE_TEST_PASSWORD}"
+      printf "stderr=%s\\n" "${SUPABASE_DB_PASSWORD}" >&2
+      return 125
+    fi
+    if [[ "${mode}" == missing-client ]]; then
+      printf "node: command not found %s\\n" "${SUPABASE_TEST_PASSWORD}" >&2
+      return 127
+    fi
+    case "${url}" in
+      http://127.0.0.1:8000/*) printf 200 ;;
+      http://kong:8000/*) printf 503 ;;
+      http://10.89.0.4:8000/*) printf 201 ;;
+      http://127.0.0.1:18000/*) printf 000 ;;
+      *) return 1 ;;
+    esac
+  }
+  supabase_report_gateway_path_probes test-outer test-socket test-prefix
+' bash "${library}" "${gateway_path_argv}" success > "${gateway_path_output}" 2>&1
+[[ "$(cat "${gateway_path_output}")" == 'Supabase gateway path probes: kong-local=http=200 exit=0; boundary-dns=http=503 exit=0; boundary-edge-ip=http=201 exit=0; outer-loopback=http=000 exit=0' ]]
+
+python3 - "${gateway_path_argv}" << 'PY'
+import pathlib
+import sys
+
+records = [
+    [field.decode() for field in record.split(b"\0")]
+    for record in pathlib.Path(sys.argv[1]).read_bytes().split(b"\0\0")[:-1]
+]
+assert all(record[0] == "test-engine" for record in records), records
+run = [record for record in records if "run" in record]
+assert len(run) == 3, records
+assert [record[-1] for record in run] == [
+    "http://127.0.0.1:8000/auth/v1/health",
+    "http://kong:8000/auth/v1/health",
+    "http://10.89.0.4:8000/auth/v1/health",
+], run
+for record in run:
+    for expected in ["--pull=never", "--rm", "--cap-drop=all", "--read-only",
+                     "--security-opt=no-new-privileges", "--pids-limit=32",
+                     "--entrypoint", "node", "--eval", "--network"]:
+        assert expected in record, (expected, record)
+    assert "fetch(process.argv[1]" in record[record.index("--eval") + 1]
+    assert "studio" in record[-4] and "@sha256:" in record[-4], record
+    assert "io.boxferry.live-run=test-run" in record, record
+assert len([record for record in records if "rm" in record]) == 3, records
+assert len([record for record in records if "inspect" in record]) == 4, records
+assert records[-1][-1] == "http://127.0.0.1:18000/auth/v1/health", records
+PY
+
+for mode in failure missing missing-client; do
+  gateway_path_mode_output="${test_root}/gateway-path-${mode}.output"
+  bash -c '
+    set -Eeuo pipefail
+    source "$1"
+    mode=$2
+    engine=test-engine
+    repository_root="$(cd -- "$(dirname -- "$1")/../.." && pwd -P)"
+    run_id=test-run
+    supabase_gateway_diagnostic_operation() {
+      if [[ "$*" == *NetworkSettings.Networks* ]]; then
+        if [[ "${mode}" == missing ]]; then printf "{}\\n"; else
+          jq --null-input --arg edge test-prefix-supabase-edge --arg ip 10.89.0.4 \
+            "{(\$edge): {IPAddress: \$ip}}"
+        fi
+        return
+      fi
+      if [[ "$*" == *" inspect --format "* ]]; then printf test-run; return; fi
+      if [[ "$*" == *" rm --force "* ]]; then return 0; fi
+      if [[ "${mode}" == missing && "$*" != *test-prefix-supabase-diag-peer-dns* ]]; then
+        printf 200
+        return 0
+      fi
+      if [[ "${mode}" == missing-client ]]; then
+        printf "node: command not found %s\\n" "${SUPABASE_TEST_PASSWORD}" >&2
+        return 127
+      fi
+      printf "body=%s\\n" "${SUPABASE_ANON_KEY}"
+      printf "stderr=%s\\n" "${SUPABASE_SERVICE_KEY}" >&2
+      return 7
+    }
+    supabase_report_gateway_path_probes test-outer test-socket test-prefix
+  ' bash "${library}" "${mode}" > "${gateway_path_mode_output}" 2>&1
+  if grep --fixed-strings --quiet 'body=' "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet 'stderr=' "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet "${SUPABASE_ANON_KEY}" "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet "${SUPABASE_SERVICE_KEY}" "${gateway_path_mode_output}" ||
+    grep --fixed-strings --quiet "${SUPABASE_TEST_PASSWORD}" "${gateway_path_mode_output}"; then
+    printf 'Supabase gateway path diagnostic leaked probe content.\n' >&2
+    exit 1
+  fi
+done
+grep --fixed-strings --quiet \
+  'kong-local=http=unavailable exit=7; boundary-dns=http=unavailable exit=7; boundary-edge-ip=http=unavailable exit=7; outer-loopback=http=unavailable exit=7' \
+  "${test_root}/gateway-path-failure.output"
+grep --fixed-strings --quiet \
+  'kong-local=http=200 exit=0; boundary-dns=http=unavailable exit=7; boundary-edge-ip=unavailable; outer-loopback=http=200 exit=0' \
+  "${test_root}/gateway-path-missing.output"
+grep --fixed-strings --quiet \
+  'kong-local=http=unavailable exit=127; boundary-dns=http=unavailable exit=127; boundary-edge-ip=http=unavailable exit=127; outer-loopback=http=unavailable exit=127' \
+  "${test_root}/gateway-path-missing-client.output"
+
+gateway_hard_cap_started_ns="$(date +%s%N)"
+gateway_hard_cap_result="$(supabase_gateway_diagnostic_get \
+  supabase_gateway_diagnostic_operation bash -c 'trap "" TERM; sleep 30')"
+gateway_hard_cap_elapsed_ms=$((($(date +%s%N) - gateway_hard_cap_started_ns) / 1000000))
+[[ "${gateway_hard_cap_result}" == 'http=unavailable exit=137' ]]
+if ((gateway_hard_cap_elapsed_ms >= 5000)); then
+  printf 'Supabase gateway diagnostic exceeded its five-second wall budget (%d ms).\n' \
+    "${gateway_hard_cap_elapsed_ms}" >&2
+  exit 1
+fi
 
 published_api_diagnostic_transport_argv="${test_root}/published-api-diagnostic-transport.argv"
 bash -c '
@@ -1349,6 +1641,12 @@ bash -c '
   supabase_assert_output_semantics() {
     printf "%s\\t%s\\n" "$8" "$9" >> "${forwarding_log}"
   }
+  environment_assertions=0
+  supabase_assert_direct_export_environment() {
+    [[ "$#" == 3 && "$1" =~ ^(compose|quadlet|podman)$ &&
+      "$2" == "${current_case}/outputs/"* && "$3" == test-prefix ]]
+    environment_assertions=$((environment_assertions + 1))
+  }
 
   [[ "$(supabase_direct_export_dependency_order_required cli)" == true ]]
   [[ "$(supabase_direct_export_dependency_order_required compose)" == false ]]
@@ -1359,6 +1657,7 @@ bash -c '
 
   supabase_run_exports cli unused test-prefix
   supabase_run_exports compose unused test-prefix
+  [[ "${environment_assertions}" == 24 ]]
 ' bash "${library}" "${test_root}/direct-export-forwarding" \
   "${test_root}/direct-export-forwarding.tsv"
 

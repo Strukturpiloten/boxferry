@@ -138,6 +138,18 @@ assert_resource_absent() {
   fi
 }
 
+assert_compose_network_attachment() {
+  local name=$1 file=$2
+  # Portable defaults can retain per-network aliases, making the attachment a
+  # populated mapping. Check its exact key inside networks, not the empty shape.
+  awk -v key="${name}" '
+    $0 == "    networks:" { inside = 1; next }
+    inside && /^    [^ ]/ { inside = 0 }
+    inside && ($0 == "      " key ":" || $0 == "      " key ": {}") { found = 1 }
+    END { exit !found }
+  ' "${file}"
+}
+
 assert_network_boundary_semantics() {
   local output=$1 directory=$2
   local api="${current_prefix:?caller must supply current_prefix}-large-api"
@@ -159,9 +171,9 @@ assert_network_boundary_semantics() {
       grep --fixed-strings --quiet "source: ${cache}" "${service_block}"
       grep --fixed-strings --quiet 'target: /cache' "${service_block}"
       grep --fixed-strings --quiet 'read_only: true' "${service_block}"
-      grep --fixed-strings --quiet "${private}: {}" "${service_block}"
+      assert_compose_network_attachment "${private}" "${service_block}"
       if [[ "${dual_attachment}" == true ]]; then
-        grep --fixed-strings --quiet "${edge}: {}" "${service_block}"
+        assert_compose_network_attachment "${edge}" "${service_block}"
       else
         local proxy_block="${current_case:?caller must supply current_case}/proxy-service.compose.yaml"
         awk -v service="${current_prefix:?caller must supply current_prefix}-large-proxy" '
@@ -169,7 +181,7 @@ assert_network_boundary_semantics() {
           inside && $0 ~ /^  [^ ].*:$/ && $0 != "  " service ":" { exit }
           inside { print }
         ' "${directory}/compose.yaml" > "${proxy_block}"
-        grep --fixed-strings --quiet "${edge}: {}" "${proxy_block}"
+        assert_compose_network_attachment "${edge}" "${proxy_block}"
       fi
       ;;
     quadlet)
@@ -288,6 +300,7 @@ assert_deterministic_exact_compose() {
 
 assert_neutral_projection_equivalent() {
   local left=$1 right=$2 assertion=$3 side input output report
+  local quadlet_loss_report=${4:-}
   local projection_root="${current_case:?caller must supply current_case}/neutral-projections/${assertion}"
   mkdir -p -- "${projection_root}"
   for side in left right; do
@@ -303,6 +316,13 @@ assert_neutral_projection_equivalent() {
     [[ -s "${output}/compose.yaml" ]]
     canonicalize_compose_semantics "${output}/compose.yaml" "${projection_root}/${side}.semantic.yaml"
   done
+  if [[ -n "${quadlet_loss_report}" ]] && ! cmp --silent "${projection_root}/left.semantic.yaml" "${projection_root}/right.semantic.yaml"; then
+    # This is an explicit, independently authored loss contract, not generic
+    # alias normalization: reject missing diagnostics or different alias values.
+    python3 "${repository_root:?caller must supply repository_root}/fixtures/conformance/podman-live/canonicalize_compose.py" \
+      "${projection_root}/left/compose.yaml" "${projection_root}/left.semantic.yaml" \
+      --reviewed-quadlet-losses "${current_prefix}" "${quadlet_loss_report}"
+  fi
   diff --unified "${projection_root}/left.semantic.yaml" "${projection_root}/right.semantic.yaml"
 }
 
@@ -334,7 +354,7 @@ assert_strict_policy_blocks() {
 
 run_reimports() {
   local version=${1:?caller must supply declared Podman version}
-  local selection input output reimport_directory
+  local selection input output reimport_directory quadlet_loss_report
   mkdir -p -- "${current_case:?caller must supply current_case}/reimports"
   for selection in exact prefix label all network-boundary; do
     for input in compose quadlet; do
@@ -363,10 +383,15 @@ run_reimports() {
       "${current_case:?caller must supply current_case}/reimports/${selection}-compose-to-compose/compose.yaml" \
       "${selection}-compose-reimport"
     if [[ "${selection}" != all ]]; then
+      quadlet_loss_report=''
+      if [[ "${selection}" != exact && "${current_podman_major}" -ge 4 ]]; then
+        quadlet_loss_report="${current_case}/outputs/${selection}-quadlet.report.json"
+      fi
       assert_neutral_projection_equivalent \
         "${current_case:?caller must supply current_case}/outputs/${selection}-compose/compose.yaml" \
         "${current_case:?caller must supply current_case}/reimports/${selection}-quadlet-to-compose/compose.yaml" \
-        "${selection}-quadlet-reimport"
+        "${selection}-quadlet-reimport" \
+        "${quadlet_loss_report}"
     else
       assert_default_podman_network_evidence \
         "${current_case:?caller must supply current_case}/outputs/all-quadlet.report.json" \

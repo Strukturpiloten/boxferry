@@ -122,6 +122,15 @@
     },
     {
       "customType": "regex",
+      "description": "Track release-bound native Lens conformance revisions",
+      "managerFilePatterns": ["/^fixtures/conformance/migration-readiness/tiers\\.toml$/"],
+      "matchStrings": [
+        "# renovate: datasource=github-tags depName=(?<depName>[^\\s]+) version=(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\\nrevision = \"(?<currentDigest>[a-f0-9]{40})\""
+      ],
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
       "description": "Track reviewed live Podman matrix images",
       "managerFilePatterns": ["/^fixtures/conformance/podman-live/matrix\\.tsv$/"],
       "matchStrings": [
@@ -239,6 +248,18 @@
       "automerge": false,
       "prBodyNotes": [
         "Regenerate and commit the Dev Container feature lock as documented in docs/development-environment.md."
+      ]
+    },
+    {
+      "description": "Require native revalidation of Lens conformance revisions",
+      "matchFileNames": ["fixtures/conformance/migration-readiness/tiers.toml"],
+      "matchDatasources": ["github-tags"],
+      "pinDigests": true,
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "groupName": "Native Lens conformance",
+      "prBodyNotes": [
+        "Review the exact release commit and native evidence; update processing or generator target metadata and rerun downstream conformance. Discovery alone does not admit support."
       ]
     },
     {

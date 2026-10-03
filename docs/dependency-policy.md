@@ -65,6 +65,7 @@ fixtures. Their native managers stay disabled, preventing duplicate Dev Containe
 updates to intentionally invalid fixture registries. Curated application `images.tsv` catalogues
 retain explicit management.
 
+Lens conformance release refs use approval-gated `github-tags` extraction.
 Checksum-bearing provider and live-image proposals require Dependency Dashboard approval, never
 auto-merge. Review release assets/platform digests, provenance, license, resource budgets, and live
 behavior before catalogue updates. Policy tests may assert Action identity and immutable-pin shape,

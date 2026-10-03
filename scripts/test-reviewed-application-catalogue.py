@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 
@@ -40,25 +41,33 @@ class ReviewedApplicationCatalogueTests(unittest.TestCase):
     def candidate_source(self) -> str:
         return (self.candidate / MODULE.CATALOGUE).read_text(encoding="utf-8")
 
-    def replace(self, old: str, new: str) -> None:
+    def replace_task_field(self, task_id: str, field: str, value: str | list[str]) -> None:
         source = self.candidate_source()
-        self.assertIn(old, source)
+        marker = f'[[tasks]]\nid = "{task_id}"\n'
+        self.assertEqual(source.count(marker), 1)
+        before, block = source.split(marker, 1)
+        task, separator, after = block.partition("\n[[tasks]]")
+        matches = [line for line in task.splitlines() if line.startswith(f"{field} = ")]
+        self.assertEqual(len(matches), 1)
+        task = task.replace(matches[0], f"{field} = {json.dumps(value)}", 1)
         (self.candidate / MODULE.CATALOGUE).write_text(
-            source.replace(old, new, 1), encoding="utf-8"
+            before + marker + task + separator + after, encoding="utf-8"
         )
 
     def admit(self, task: str = "nextcloud-application") -> None:
         MODULE.admit(self.trusted, self.candidate, self.verifier, task)
 
     def test_metadata_and_full_sha_lens_revisions_use_candidate_evidence_contract(self) -> None:
-        self.replace('sources = ["native-podman", "docker-compose-5.5.0", "podman-api-6.1.0-rootless"]',
-                     'sources = ["reviewed-native-podman", "docker-compose-5.5.0", "podman-api-6.1.0-rootless"]')
-        self.replace('targets = ["compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]',
-                     'targets = ["reviewed-compose-specification", "podman-5.4.0..6.1.0", "quadlet-5.4.0..6.1.0"]')
-        self.replace('revision = "44c9b6a4c72e8ea0db2cd2d2c73f2bf4d07b6a0e"',
-                     'revision = "' + 'a' * 40 + '"')
-        self.replace('revision = "3a8c8b42a0187fe4000b8553ffc78b701d7290f6"',
-                     'revision = "' + 'b' * 40 + '"')
+        tasks = tomllib.loads(self.candidate_source())["tasks"]
+        selected = next(task for task in tasks if task["id"] == "nextcloud-application")
+        self.replace_task_field(
+            selected["id"], "sources", ["reviewed-native-podman", *selected["sources"][1:]]
+        )
+        self.replace_task_field(
+            selected["id"], "targets", ["reviewed-compose-specification", *selected["targets"][1:]]
+        )
+        self.replace_task_field("compose-lens-candidate", "revision", "a" * 40)
+        self.replace_task_field("quadlet-lens-candidate", "revision", "b" * 40)
         self.admit()
         for label in (MODULE.RUNNER, MODULE.SCHEMA):
             self.assertEqual((self.verifier / label).read_bytes(), (self.trusted / label).read_bytes())
@@ -107,6 +116,8 @@ class ReviewedApplicationCatalogueTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
 
     def test_execution_policy_and_shape_changes_are_rejected(self) -> None:
+        tasks = tomllib.loads(self.candidate_source())["tasks"]
+        lens = next(task for task in tasks if task["id"] == "compose-lens-candidate")
         forbidden = (
             ('privileged = true', 'privileged = false'),
             ('deadline-seconds = 3600', 'deadline-seconds = 7200'),
@@ -129,8 +140,7 @@ class ReviewedApplicationCatalogueTests(unittest.TestCase):
             ('schema = 2', 'schema = 2\nunexpected = "candidate"'),
             ('state = "not-executed"', 'state = "passed"'),
             ('id = "nextcloud-application"', 'id = "renamed-application"'),
-            ('revision = "44c9b6a4c72e8ea0db2cd2d2c73f2bf4d07b6a0e"',
-             'revision = "main"'),
+            (f'revision = "{lens["revision"]}"', 'revision = "main"'),
         )
         original = self.candidate_source()
         for before, after in forbidden:

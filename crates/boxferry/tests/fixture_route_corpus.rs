@@ -1,4 +1,7 @@
 //! Capability-driven conversion coverage for every positive importer fixture.
+//!
+//! Native renderer quote spelling is byte-checked; core mount intent is independently asserted
+//! for both plain and quoted scalars so dependency-driven formatting changes cannot mask loss.
 
 #![cfg(all(feature = "cli", feature = "compose", feature = "podman", feature = "quadlet"))]
 
@@ -12,6 +15,13 @@ use std::{
 };
 
 use serde::Deserialize;
+
+use boxferry::compose::compose_lens::{
+    loader::{DocumentInput, DocumentOrigin, LoadedProject},
+    merge::merge_project,
+    source::SourceId as ComposeSourceId,
+};
+use boxferry::{ComposeImporter, ComposeSource, Identifier, ImportAdapter, MountSource, SelinuxRelabel};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -381,6 +391,75 @@ fn every_positive_importer_fixture_covers_every_registered_exporter() -> Result<
         covered_inputs, registered_inputs,
         "fixture corpus must contain at least one scenario for every registered importer"
     );
+    Ok(())
+}
+
+#[test]
+fn core_compose_goldens_preserve_mount_intent_with_plain_or_quoted_scalars() -> Result<(), Box<dyn Error>> {
+    let repository = repository_root();
+    let importer = ComposeImporter::new()?;
+    let expected = [
+        (
+            MountSource::Volume(Identifier::new("data")?),
+            "/var/lib/data",
+            true,
+            None,
+        ),
+        (
+            MountSource::HostPath("./config".to_owned()),
+            "/etc/app",
+            true,
+            Some(SelinuxRelabel::Private),
+        ),
+        (
+            MountSource::HostPath("./shared".to_owned()),
+            "/srv/shared",
+            false,
+            Some(SelinuxRelabel::Shared),
+        ),
+        (
+            MountSource::HostPath("./data".to_owned()),
+            "/srv/data",
+            true,
+            Some(SelinuxRelabel::Private),
+        ),
+    ];
+    for path in [
+        "fixtures/adapter-contract/compose-import-core/expected-matrix-compose.yaml",
+        "fixtures/conversion/compose-to-quadlet-core/expected-matrix-compose.txt",
+    ] {
+        let plain = fs::read_to_string(repository.join(path))?;
+        let quoted = plain
+            .replace("- ./config:/etc/app:Z,ro", "- \"./config:/etc/app:Z,ro\"")
+            .replace("- ./data:/srv/data:Z,ro", "- \"./data:/srv/data:Z,ro\"");
+        assert_ne!(plain, quoted, "{path} must exercise both scalar spellings");
+        for text in [&plain, &quoted] {
+            let loaded = LoadedProject::load([DocumentInput::new(
+                ComposeSourceId::new(1),
+                DocumentOrigin::new("compose.yaml", "core-mount-intent"),
+                text.as_str(),
+            )])?;
+            let merged = merge_project(&loaded, None);
+            let project = merged.project().ok_or("merged Compose project")?.clone();
+            let source = ComposeSource::new(project, Identifier::new("core-mount-intent")?)?;
+            let result = importer.import(&source);
+            assert!(result.diagnostics().is_empty(), "{path}: {:#?}", result.diagnostics());
+            let application = result.application().ok_or("imported core application")?;
+            let web = application
+                .services()
+                .iter()
+                .find(|service| service.value().name().as_str() == "web")
+                .ok_or("core web service")?
+                .value();
+            assert_eq!(web.mounts().len(), expected.len(), "{path}");
+            for (mount, (source, target, read_only, relabel)) in web.mounts().iter().zip(&expected) {
+                assert_eq!(mount.value().source(), source, "{path}");
+                assert_eq!(mount.value().target(), *target, "{path}");
+                assert_eq!(mount.value().read_only(), *read_only, "{path}");
+                assert_eq!(mount.value().selinux_relabel(), *relabel, "{path}");
+            }
+        }
+    }
     Ok(())
 }
 

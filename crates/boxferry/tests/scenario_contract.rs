@@ -545,6 +545,213 @@ fn authored_podman_value_routes_have_complete_withholding_contracts() -> Result<
 }
 
 #[test]
+fn supabase_dual_network_replay_keeps_topology_and_deduplicates_only_cli_notes() -> Result<(), Box<dyn Error>> {
+    const KONG_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let root = repository_root();
+    let fixture = root.join("fixtures/scenarios/supabase-application");
+    let manifest = read_manifest(&fixture)?;
+    let route = manifest
+        .evidence
+        .iter()
+        .find(|route| route.input == "podman" && route.exporter == "compose")
+        .ok_or("missing Supabase Compose route")?;
+    // Independently authored network-only projection of the real 6.1.2 rootless
+    // inspect shape: both attachments, distinct aliases, and all attachment fields.
+    // The original 6.1.0 cassette and its expectations remain unchanged; this replay
+    // is not evidence of the full live application or its environment inventory.
+    let text = fs::read_to_string(fixture.join("input-podman.cassette.json"))?.replace("c-kong", KONG_ID);
+    let mut projection: serde_json::Value = serde_json::from_str(&text)?;
+    let kong = projection["interactions"]
+        .as_array_mut()
+        .ok_or("cassette interactions")?
+        .iter_mut()
+        .find(|entry| entry["request"]["path"] == format!("/v6.1.0/libpod/containers/{KONG_ID}/json"))
+        .ok_or("Kong inspect interaction")?;
+    let attachment = |id: &str, alias: &str| {
+        serde_json::json!({
+            "NetworkID": id, "Aliases": [alias, &KONG_ID[..12]],
+            "EndpointID": "", "Gateway": "", "IPAddress": "", "IPPrefixLen": 0,
+            "IPv6Gateway": "", "GlobalIPv6Address": "", "GlobalIPv6PrefixLen": 0,
+            "MacAddress": "", "DriverOpts": null, "IPAMConfig": null, "Links": null,
+        })
+    };
+    kong["response"]["body"]["HostConfig"]["NetworkMode"] = serde_json::json!("bridge");
+    kong["response"]["body"]["NetworkSettings"]["Networks"] = serde_json::json!({
+        "backend": attachment("n-backend", "kong"),
+        "edge": attachment("n-edge", "supabase"),
+    });
+    // Exact-order replay follows sorted runtime identities; the realistic hex ID
+    // now sorts ahead of the original cassette's remaining c-* identities.
+    let interactions = projection["interactions"]
+        .as_array_mut()
+        .ok_or("cassette interactions")?;
+    let index = interactions
+        .iter()
+        .position(|entry| entry["request"]["path"] == format!("/v6.1.0/libpod/containers/{KONG_ID}/json"))
+        .ok_or("Kong inspect interaction")?;
+    let interaction = interactions.remove(index);
+    let index = interactions
+        .iter()
+        .position(|entry| entry["request"]["path"] == "/v6.1.0/libpod/containers/c-auth/json")
+        .ok_or("first container inspect interaction")?;
+    interactions.insert(index, interaction);
+    let imported = import_podman_cassette(&manifest, "podman", serde_json::from_value(projection.clone())?)?;
+    supabase_assert_kong_networks(&imported)?;
+    let notes = imported
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code().as_str() == "BFP0009"
+                && diagnostic
+                    .fields()
+                    .iter()
+                    .any(|field| field.name() == "subject" && field.value().redacted() == "services.kong.networks")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(notes.len(), 2, "library retains per-attachment notes");
+    assert_eq!(notes[0], notes[1], "only identical complete diagnostics collapse");
+    let conversion = convert_imported(imported, &ComposeExporter::new()?, &route.target()?, route.policy()?)?;
+    assert_eq!(
+        diagnostic_facts(conversion.diagnostics())
+            .iter()
+            .filter(|fact| fact.as_str() == "BFP0009|services.kong.networks")
+            .count(),
+        2,
+        "facade conversion retains both library notes"
+    );
+    let generated = conversion.output().ok_or("facade Compose output")?;
+    supabase_assert_kong_networks(&import_compose(generated.text(), "supabase")?)?;
+    let temporary = TemporaryDirectory::new("supabase-dual-network-notes")?;
+    let source = temporary.path().join("network-projection.cassette.json");
+    fs::write(&source, serde_json::to_vec(&projection)?)?;
+    let destination = temporary.path().join("compose-output");
+    let report = convert_cli(&manifest, &[source], route, &destination)?;
+    assert_eq!(report["status"], "success");
+    assert_eq!(
+        report_diagnostic_facts(&report)?
+            .iter()
+            .filter(|fact| fact.as_str() == "BFP0009|services.kong.networks")
+            .count(),
+        1,
+        "CLI deduplicates visible notes, not topology or library outcomes"
+    );
+    let reimported = import_compose(&fs::read_to_string(destination.join("compose.yaml"))?, "supabase")?;
+    supabase_assert_kong_networks(&reimported)?;
+    Ok(())
+}
+
+fn supabase_assert_kong_networks(imported: &ImportResult) -> Result<(), Box<dyn Error>> {
+    let application = imported.application().ok_or("Supabase application")?;
+    let kong = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "kong")
+        .ok_or("Supabase Kong service")?
+        .value();
+    let actual = kong
+        .networks()
+        .iter()
+        .map(|network| (network.value().network().as_str(), network.value().aliases().to_vec()))
+        .collect::<BTreeSet<_>>();
+    let expected = BTreeSet::from([
+        ("backend", vec!["kong".to_owned()]),
+        ("edge", vec!["supabase".to_owned()]),
+    ]);
+    assert_eq!(actual, expected, "independent backend/edge topology and aliases");
+    Ok(())
+}
+
+#[test]
+fn supabase_withheld_podman_report_matches_live_environment_contract() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let fixture = root.join("fixtures/scenarios/supabase-application");
+    let manifest = read_manifest(&fixture)?;
+    let route = manifest
+        .evidence
+        .iter()
+        .find(|route| route.input == "podman" && route.exporter == "podman")
+        .ok_or("missing Supabase Podman-to-Podman route")?;
+    assert!(!route.includes_environment_values());
+    // Production CLI acquisition consumes an authored read-only cassette through
+    // the published PodmanLens; this is offline evidence, never a native claim.
+    let output = TemporaryDirectory::new("supabase-withheld-environment-report")?;
+    let report = convert_cli(
+        &manifest,
+        &[fixture.join("input-podman.cassette.json")],
+        route,
+        output.path(),
+    )?;
+    assert_eq!(report["status"], "success");
+    validate_cli_loss_aggregate(&route.cli_losses(&fixture)?, route, &report)?;
+    let expected = manifest
+        .semantics
+        .required_environment
+        .iter()
+        .map(|assignment| {
+            let (service, assignment) = assignment.split_once(':').ok_or("missing environment service")?;
+            let (name, _) = assignment.split_once('=').ok_or("missing environment assignment")?;
+            Ok(format!("BFP0002|services.{service}.environment.{name}"))
+        })
+        .collect::<Result<BTreeSet<_>, Box<dyn Error>>>()?;
+    let facts = report_diagnostic_facts(&report)?;
+    let actual = facts
+        .iter()
+        .filter(|fact| fact.starts_with("BFP0002|services.") && fact.contains(".environment."))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "one omission per independently required key"
+    );
+    assert_eq!(actual.into_iter().collect::<BTreeSet<_>>(), expected);
+    assert!(
+        !facts
+            .iter()
+            .any(|fact| fact.starts_with("BFP0003|services.") && fact.ends_with(".environment")),
+        "redacted values cannot produce aggregate environment promotion"
+    );
+    let declared = Command::new("jq")
+        .args(["--null-input", "--arg", "input", "podman", "--arg", "output", "podman"])
+        .args(["--arg", "selection", "exact", "--arg", "resource_prefix", ""])
+        .args(["--arg", "podman_acquisition", "cli", "--arg", "provisioner_mode", "cli"])
+        .args([
+            "--argjson",
+            "include_system_network",
+            "false",
+            "--argjson",
+            "emit_expected",
+            "true",
+        ])
+        .arg("--from-file")
+        .arg(root.join("fixtures/conformance/supabase-application/success-contract.jq"))
+        .output()?;
+    assert!(declared.status.success(), "live environment contract must compile");
+    let declared: Vec<serde_json::Value> = serde_json::from_slice(&declared.stdout)?;
+    let projection = declared
+        .iter()
+        .filter(|tuple| tuple["code"] == "BFP0002")
+        .filter_map(|tuple| {
+            tuple["subject"]
+                .as_str()
+                .map(|subject| (tuple, format!("BFP0002|{subject}")))
+        })
+        .filter(|(_, fact)| expected.contains(fact))
+        .map(|(tuple, fact)| {
+            assert_eq!(tuple["severity"], "warning");
+            assert_eq!(tuple["decision"], "omitted");
+            fact
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        projection, expected,
+        "live contract must admit the real redacted importer tuples"
+    );
+    assert_no_protected_environment_values(&manifest, &report.to_string(), "withheld replay report")?;
+    Ok(())
+}
+
+#[test]
 fn reviewed_podman_cassette_requires_route_authorization_for_compose_values() -> Result<(), Box<dyn Error>> {
     let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
     let manifest = read_manifest(&fixture)?;
