@@ -78,7 +78,6 @@ BFP0003	networks.{{resource_prefix}}backend.internal	warning	approximated	approx
 BFP0003	networks.{{resource_prefix}}backend.ipam	warning	approximated	approximate
 BFP0003	networks.{{resource_prefix}}edge.internal	warning	approximated	approximate
 BFP0003	networks.{{resource_prefix}}edge.ipam	warning	approximated	approximate
-BFP0003	services.{{resource_prefix}}alloy.environment	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}alloy.health_failure_action	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}alloy.infra	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}alloy.logging	warning	not-promoted	partial
@@ -97,7 +96,6 @@ BFP0009	services.{{resource_prefix}}alloy.networks	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}alloy.resource_controls	warning	not-promoted	partial
 BFP0009	services.{{resource_prefix}}alloy.restart_policy	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}alloy.security	warning	not-promoted	partial
-BFP0003	services.{{resource_prefix}}grafana.environment	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}grafana.health_failure_action	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}grafana.infra	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}grafana.logging	warning	not-promoted	partial
@@ -123,7 +121,6 @@ BFP0003	services.{{resource_prefix}}grafana.networks.{{resource_prefix}}edge.ali
 BFP0003	services.{{resource_prefix}}grafana.resource_controls	warning	not-promoted	partial
 BFP0009	services.{{resource_prefix}}grafana.restart_policy	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}grafana.security	warning	not-promoted	partial
-BFP0003	services.{{resource_prefix}}log-producer.environment	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}log-producer.health_failure_action	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}log-producer.infra	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}log-producer.logging	warning	not-promoted	partial
@@ -139,7 +136,6 @@ BFP0009	services.{{resource_prefix}}log-producer.networks	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}log-producer.resource_controls	warning	not-promoted	partial
 BFP0009	services.{{resource_prefix}}log-producer.restart_policy	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}log-producer.security	warning	not-promoted	partial
-BFP0003	services.{{resource_prefix}}loki.environment	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}loki.health_failure_action	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}loki.infra	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}loki.logging	warning	not-promoted	partial
@@ -156,7 +152,6 @@ BFP0003	services.{{resource_prefix}}loki.networks.{{resource_prefix}}backend.ali
 BFP0003	services.{{resource_prefix}}loki.resource_controls	warning	not-promoted	partial
 BFP0009	services.{{resource_prefix}}loki.restart_policy	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}loki.security	warning	not-promoted	partial
-BFP0003	services.{{resource_prefix}}metrics-producer.environment	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}metrics-producer.health_failure_action	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}metrics-producer.infra	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}metrics-producer.logging	warning	not-promoted	partial
@@ -170,7 +165,6 @@ BFP0003	services.{{resource_prefix}}metrics-producer.networks.{{resource_prefix}
 BFP0003	services.{{resource_prefix}}metrics-producer.resource_controls	warning	not-promoted	partial
 BFP0009	services.{{resource_prefix}}metrics-producer.restart_policy	note	reconstructed	-
 BFP0003	services.{{resource_prefix}}metrics-producer.security	warning	not-promoted	partial
-BFP0003	services.{{resource_prefix}}prometheus.environment	warning	approximated	approximate
 BFP0003	services.{{resource_prefix}}prometheus.health_failure_action	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}prometheus.infra	warning	not-promoted	partial
 BFP0003	services.{{resource_prefix}}prometheus.logging	warning	not-promoted	partial

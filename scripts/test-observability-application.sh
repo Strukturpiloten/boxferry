@@ -78,6 +78,90 @@ for mutation in missing extra; do
 done
 diagnostic_base="${reviewed_diagnostic_base}"
 
+diagnostic_fixture="${repository_root}/fixtures/conformance/observability-application/diagnostics"
+assert_withheld_environment_keys() {
+  local importer=$1 exporter=$2 expected_count=$3
+  [[ "$(wc -l < "${importer}")" == "${expected_count}" ]] || return 1
+  awk -F '\t' '
+    NF != 5 || $1 != "BFP0002" || $2 !~ /^services\..*\.environment\./ ||
+      $3 != "warning" || $4 != "omitted" || $5 != "partial" { exit 1 }
+  ' "${importer}" || return 1
+  diff --unified=0 \
+    <(awk -F '\t' '{ print $2 }' "${importer}" | sort) \
+    <(awk -F '\t' '$1 == "BFP0007" && $2 ~ /\.environment\./ { print $2 }' "${exporter}" | sort)
+}
+assert_withheld_environment_keys \
+  "${diagnostic_fixture}/podman-import-withheld-environment.tsv" "${diagnostic_fixture}/podman-export.tsv" 49
+assert_withheld_environment_keys \
+  "${diagnostic_fixture}/all-podman-import-withheld-environment.tsv" "${diagnostic_fixture}/all-podman-export.tsv" 9
+diagnostic_base="${diagnostic_fixture}/non-podman-environment-promotions.tsv"
+for service in alloy grafana log-producer loki metrics-producer prometheus; do
+  assert_static_diagnostic_tuple \
+    "services.{{resource_prefix}}${service}.environment" BFP0003 warning approximated approximate
+done
+[[ "$(wc -l < "${diagnostic_base}")" == 6 ]]
+diagnostic_base="${diagnostic_fixture}/all-non-podman-environment-promotion.tsv"
+assert_static_diagnostic_tuple \
+  'services.{{resource_prefix}}boundary-peer.environment' BFP0003 warning approximated approximate
+[[ "$(wc -l < "${diagnostic_base}")" == 1 ]]
+diagnostic_base="${reviewed_diagnostic_base}"
+for key in GF_PLUGINS_PREINSTALL_AUTO_UPDATE GF_PLUGINS_PREINSTALL_DISABLED; do
+  subject="services.{{resource_prefix}}grafana.environment.${key}"
+  for mutation in missing duplicate malformed extra; do
+    mutated="${test_root}/${key}-${mutation}.tsv"
+    awk -F '\t' -v subject="${subject}" -v mutation="${mutation}" '
+      $2 == subject && mutation == "missing" { next }
+      $2 == subject && mutation == "malformed" { sub(/omitted/, "approximated") }
+      { print }
+      $2 == subject && mutation == "duplicate" { print }
+      END {
+        if (mutation == "extra")
+          print "BFP0002\tservices.{{resource_prefix}}grafana.environment.UNREVIEWED\twarning\tomitted\tpartial"
+      }
+    ' "${diagnostic_fixture}/podman-import-withheld-environment.tsv" > "${mutated}"
+    if assert_withheld_environment_keys "${mutated}" "${diagnostic_fixture}/podman-export.tsv" 49 \
+      > /dev/null 2>&1; then
+      printf 'Withheld key contract admitted %s %s.\n' "${mutation}" "${key}" >&2
+      exit 1
+    fi
+  done
+done
+
+assert_rendered_environment_contract() {
+  local rendered=$1 selection=$2 output=$3 importer_expected=${4:-true}
+  local -a key_templates=("${diagnostic_fixture}/podman-import-withheld-environment.tsv")
+  [[ "${selection}" != all ]] || key_templates+=("${diagnostic_fixture}/all-podman-import-withheld-environment.tsv")
+  awk -F '\t' -v output="${output}" -v importer_expected="${importer_expected}" '
+    FILENAME != ARGV[ARGC - 1] {
+      subject = $2
+      sub(/\{\{resource_prefix\}\}/, "bf-private-observability-", subject)
+      keys[subject] = 1
+      next
+    }
+    $2 ~ /^services\..*\.environment\./ {
+      if (!(($2 in keys) && ($1 == "BFP0002" || $1 == "BFP0007") &&
+          $3 == "warning" && $4 == "omitted" && $5 == "partial")) invalid++
+      counts[$1 SUBSEP $2]++
+    }
+    END {
+      if (invalid) exit 1
+      for (key in keys)
+        if (counts["BFP0002" SUBSEP key] != (output == "podman" && importer_expected == "true") ||
+            counts["BFP0007" SUBSEP key] != (output == "podman")) exit 1
+    }
+  ' "${key_templates[@]}" "${rendered}"
+}
+
+observability_test_report_from_tsv() {
+  jq --raw-input --slurp '{
+    diagnostics: (split("\n") | map(select(length > 0) | split("\t") |
+      {code: .[0], severity: .[2], fields:
+        ([{name: "subject", value: .[1]}] +
+         (if .[3] == "" then [] else [{name: "decision", value: .[3]}] end) +
+         (if .[4] == "" then [] else [{name: "required_loss_policy", value: .[4]}] end))}))
+  }' "$1" > "$2"
+}
+
 # Exercise every exporter, provisioning mode, and selector without a runtime.
 for diagnostic_mode in cli compose; do
   for diagnostic_selection in exact label all; do
@@ -90,6 +174,7 @@ for diagnostic_mode in cli compose; do
       if [[ "${diagnostic_selection}" == all ]]; then
         expected_notes=20 expected_ownership=7 expected_environment=7
       fi
+      [[ "${diagnostic_output}" != podman ]] || expected_environment=0
       awk -F '\t' -v notes="${expected_notes}" -v ownership="${expected_ownership}" \
         -v environment="${expected_environment}" '
         $1 == "BFP0009" {
@@ -102,9 +187,15 @@ for diagnostic_mode in cli compose; do
         }
         $2 ~ /\.environment$/ && $1 == "BFP0003" &&
           $3 == "warning" && $4 == "approximated" && $5 == "approximate" { environment_seen++ }
+        $2 ~ /^services\..*\.logging$/ {
+          if ($1 != "BFP0003" || $3 != "warning" || $4 != "not-promoted" || $5 != "partial") exit 1
+          logging_seen++
+        }
         $2 ~ /edge\.ownership$/ { exit 1 }
-        END { exit !(notes_seen == notes && ownership_seen == ownership && environment_seen == environment) }
+        END { exit !(notes_seen == notes && ownership_seen == ownership &&
+          environment_seen == environment && logging_seen == ownership) }
       ' "${rendered}"
+      assert_rendered_environment_contract "${rendered}" "${diagnostic_selection}" "${diagnostic_output}"
       if [[ "${diagnostic_selection}" == all ]]; then
         for field in networks restart_policy; do
           awk -F '\t' -v subject="services.bf-private-observability-boundary-peer.${field}" '
@@ -121,13 +212,7 @@ for diagnostic_mode in cli compose; do
       # Synthetic reports test normalization; the literal tuples above remain
       # independent semantic expectations, never derived from native output.
       diagnostic_report="${rendered}.json"
-      jq --raw-input --slurp '{
-        diagnostics: (split("\n") | map(select(length > 0) | split("\t") |
-          {code: .[0], severity: .[2], fields:
-            ([{name: "subject", value: .[1]}] +
-             (if .[3] == "" then [] else [{name: "decision", value: .[3]}] end) +
-             (if .[4] == "" then [] else [{name: "required_loss_policy", value: .[4]}] end))}))
-      }' "${rendered}" > "${diagnostic_report}"
+      observability_test_report_from_tsv "${rendered}" "${diagnostic_report}"
       observability_assert_reviewed_diagnostics live-native-export \
         "${diagnostic_mode}" "${diagnostic_selection}" podman "${diagnostic_output}" \
         bf-private-observability- "${diagnostic_report}"
@@ -152,6 +237,31 @@ for diagnostic_mode in cli compose; do
           exit 1
         fi
       done
+      if [[ "${diagnostic_output}" == podman ]]; then
+        for key in GF_PLUGINS_PREINSTALL_AUTO_UPDATE GF_PLUGINS_PREINSTALL_DISABLED; do
+          for code in BFP0002 BFP0007; do
+            for mutation in missing duplicate malformed extra; do
+              jq --arg key "${key}" --arg code "${code}" --arg mutation "${mutation}" '
+                ([.diagnostics | to_entries[] | select(.value.code == $code and
+                  any(.value.fields[]; .name == "subject" and (.value | endswith(".environment." + $key))))][0].key) as $index |
+                if $mutation == "missing" then del(.diagnostics[$index])
+                elif $mutation == "duplicate" then .diagnostics += [.diagnostics[$index]]
+                elif $mutation == "malformed" then
+                  .diagnostics[$index].fields |= map(if .name == "decision" then .value = "approximated" else . end)
+                else .diagnostics += [.diagnostics[$index] |
+                  .fields |= map(if .name == "subject" then .value += ".UNREVIEWED" else . end)]
+                end
+              ' "${diagnostic_report}" > "${diagnostic_report}.key-mutated"
+              if observability_assert_reviewed_diagnostics live-native-export \
+                "${diagnostic_mode}" "${diagnostic_selection}" podman podman \
+                bf-private-observability- "${diagnostic_report}.key-mutated" > /dev/null 2>&1; then
+                printf 'Native contract admitted %s %s %s.\n' "${mutation}" "${code}" "${key}" >&2
+                exit 1
+              fi
+            done
+          done
+        done
+      fi
     done
   done
 done
@@ -170,6 +280,72 @@ for malformed in \
     exit 1
   fi
 done
+
+# Reimports read emitted documents, not a native Podman inventory.
+while read -r diagnostic_mode diagnostic_selection diagnostic_input diagnostic_output expected_rows; do
+  rendered="${test_root}/reimport-${diagnostic_mode}-${diagnostic_selection}-${diagnostic_input}-${diagnostic_output}.tsv"
+  observability_write_live_reimport_diagnostic_template \
+    "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_input}" "${diagnostic_output}" \
+    bf-private-observability- "${rendered}"
+  [[ "$(wc -l < "${rendered}")" == "${expected_rows}" ]]
+  if grep --extended-regexp --quiet '^BFP000[239][[:space:]]|\.logging[[:space:]]' "${rendered}"; then
+    printf '%s\n' 'A reimport acquired native-importer or observation-only logging diagnostics.' >&2
+    exit 1
+  fi
+  assert_rendered_environment_contract "${rendered}" "${diagnostic_selection}" "${diagnostic_output}" false
+  diagnostic_report="${rendered}.json"
+  observability_test_report_from_tsv "${rendered}" "${diagnostic_report}"
+  observability_assert_reviewed_diagnostics live-reimport \
+    "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_input}" "${diagnostic_output}" \
+    bf-private-observability- "${diagnostic_report}"
+  jq '.diagnostics += [{code: "BFP0002", severity: "warning", fields: [
+    {name: "subject", value: "services.bf-private-observability-grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED"},
+    {name: "decision", value: "omitted"}, {name: "required_loss_policy", value: "partial"}
+  ]}]' "${diagnostic_report}" > "${diagnostic_report}.fallback"
+  if observability_assert_reviewed_diagnostics live-reimport \
+    "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_input}" "${diagnostic_output}" \
+    bf-private-observability- "${diagnostic_report}.fallback" > /dev/null 2>&1; then
+    printf '%s\n' 'A native-importer fallback satisfied a reimport contract.' >&2
+    exit 1
+  fi
+done << 'EOF'
+cli exact compose compose 0
+cli exact compose quadlet 1
+cli exact compose podman 58
+cli exact quadlet compose 8
+cli exact quadlet quadlet 0
+cli exact quadlet podman 65
+cli label compose compose 0
+cli label compose quadlet 1
+cli label compose podman 58
+cli label quadlet compose 8
+cli label quadlet quadlet 0
+cli label quadlet podman 65
+cli all compose compose 0
+cli all compose quadlet 1
+cli all compose podman 68
+cli all quadlet compose 9
+cli all quadlet quadlet 0
+cli all quadlet podman 76
+compose exact compose compose 0
+compose exact compose quadlet 1
+compose exact compose podman 58
+compose exact quadlet compose 1
+compose exact quadlet quadlet 0
+compose exact quadlet podman 58
+compose label compose compose 0
+compose label compose quadlet 1
+compose label compose podman 58
+compose label quadlet compose 1
+compose label quadlet quadlet 0
+compose label quadlet podman 58
+compose all compose compose 0
+compose all compose quadlet 1
+compose all compose podman 68
+compose all quadlet compose 2
+compose all quadlet quadlet 0
+compose all quadlet podman 69
+EOF
 
 assert_absent() {
   local value=$1 output=$2

@@ -157,13 +157,19 @@ expectation. The failed focused pre-release run at
 
 Each row has five fields: code, subject, severity, decision, and required loss policy. The visible
 `-` marker represents absent fields and is normalized independently for decision and policy before
-exact comparison. The 220-row shared importer base includes five portable
+exact comparison. The 214-row shared importer base includes five portable
 DNS-alias promotions. Compose mode adds two service-identity promotions, while CLI mode adds six
 creation-evidence tuples.
+Environment diagnostics are output-specific: explicitly included Compose and Quadlet routes add
+six aggregate `BFP0003` approximation warnings; default-withheld Podman routes instead add 49 named
+`BFP0002` omissions. The names are independently reviewed against the existing authored Podman
+exporter omission vector, including both Grafana plugin flags. Each withheld name requires exactly
+one importer omission and one exporter omission; it never also receives an aggregate promotion.
 Compose output adds four network tuples in either mode plus seven CLI-only dependency tuples;
 Quadlet output adds the reviewed multi-network Grafana alias omission; Podman output adds 61
 output-omission tuples. Exact and label selectors are equal. The all selector
-adds 19 shared importer tuples (the boundary peer and default Podman network), then one Compose
+adds 18 shared importer tuples (the boundary peer and default Podman network), plus one included
+boundary-peer environment approximation or nine withheld named omissions. It then adds one Compose
 network tuple or eleven Podman omission tuples as appropriate. This factoring preserves duplicate
 tuples and represents each observed mode/selection/output multiset without copying six full routes.
 
@@ -176,7 +182,10 @@ warnings retain inferred application ownership for backend and the five named vo
 external and must not acquire an ownership warning. All-resource selection adds two boundary-peer
 reconstruction notes and an inferred-ownership warning for the default Podman network. Environment,
 aliases, network definition/IPAM, bind mounts, and child-field warnings remain non-exact; these
-templates retain PodmanLens 0.2.4 environment semantics and do not change reimport contracts.
+templates retain PodmanLens 0.2.4 environment semantics. The six application logging observations
+and the all-selector peer logging observation remain non-promoted, not neutral logging intent.
+All 36 document-reimport combinations retain their separately authored contracts: Podman outputs
+require named exporter omissions, never native-importer omissions or observation-only logging rows.
 
 `{{resource_prefix}}` is the only supported template marker. The harness validates its generated
 prefix and every row before substitution; malformed templates and reports fail closed. Reports and

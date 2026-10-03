@@ -1169,8 +1169,8 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "cli",
             "exact",
             "podman",
-            287,
-            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18), ("BFP0007", 61)],
+            330,
+            &[("BFP0002", 101), ("BFP0003", 150), ("BFP0009", 18), ("BFP0007", 61)],
         ),
         (
             "cli",
@@ -1190,8 +1190,8 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "cli",
             "all",
             "podman",
-            317,
-            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20), ("BFP0007", 72)],
+            368,
+            &[("BFP0002", 117), ("BFP0003", 159), ("BFP0009", 20), ("BFP0007", 72)],
         ),
         (
             "compose",
@@ -1211,8 +1211,8 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "compose",
             "exact",
             "podman",
-            283,
-            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18), ("BFP0007", 61)],
+            326,
+            &[("BFP0002", 95), ("BFP0003", 152), ("BFP0009", 18), ("BFP0007", 61)],
         ),
         (
             "compose",
@@ -1232,8 +1232,8 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "compose",
             "all",
             "podman",
-            313,
-            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20), ("BFP0007", 72)],
+            364,
+            &[("BFP0002", 111), ("BFP0003", 161), ("BFP0009", 20), ("BFP0007", 72)],
         ),
     ];
     for contract in expected_contracts {
@@ -1303,6 +1303,7 @@ fn observability_assert_reimport_template_contracts() -> Result<(), Box<dyn Erro
         );
         assert!(!actual.contains("boxferry-public-observability-admin-canary"));
         observability_assert_reimport_alias_contract(&actual, mode, selection, input, output);
+        observability_assert_environment_contract(&actual, selection, output, false)?;
     }
     for mode in ["cli", "compose"] {
         for input in ["compose", "quadlet"] {
@@ -1337,6 +1338,12 @@ fn observability_assert_reimport_alias_contract(
     input: &str,
     output: &str,
 ) {
+    assert!(!diagnostics.lines().any(|line| {
+        ["BFP0002\t", "BFP0003\t", "BFP0009\t"]
+            .iter()
+            .any(|code| line.starts_with(code))
+            || line.contains(".logging\t")
+    }));
     assert_eq!(
         diagnostics.lines().filter(|line| line.contains(".aliases\t")).count(),
         0,
@@ -1371,9 +1378,79 @@ fn observability_assert_template_contract(
     }
     observability_assert_promoted_alias_contract(&diagnostics, mode, selection, output);
     observability_assert_reconstruction_contract(&diagnostics, selection);
+    observability_assert_environment_contract(&diagnostics, selection, output, true)?;
     let label = observability_live_expected_diagnostics_for(mode, "label", output, "live-observability-")?;
     let exact = observability_live_expected_diagnostics_for(mode, "exact", output, "live-observability-")?;
     assert_eq!(exact, label, "{mode}/{output} exact and label contracts differ");
+    Ok(())
+}
+
+fn observability_assert_environment_contract(
+    diagnostics: &str,
+    selection: &str,
+    output: &str,
+    native_import: bool,
+) -> Result<(), Box<dyn Error>> {
+    let mut services = vec![
+        "alloy",
+        "grafana",
+        "log-producer",
+        "loki",
+        "metrics-producer",
+        "prometheus",
+    ];
+    if selection == "all" {
+        services.push("boundary-peer");
+    }
+    let aggregate_count = usize::from(native_import && output != "podman");
+    for service in services {
+        let expected =
+            format!("BFP0003\tservices.live-observability-{service}.environment\twarning\tapproximated\tapproximate");
+        assert_eq!(
+            diagnostics.lines().filter(|line| *line == expected).count(),
+            aggregate_count
+        );
+    }
+    let root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
+    let mut files = vec![("podman-export.tsv", 49)];
+    if selection == "all" {
+        files.push(("all-podman-export.tsv", 9));
+    }
+    let mut key_count = 0;
+    for (file, expected_keys) in files {
+        let template = fs::read_to_string(root.join(file))?;
+        let subjects = template
+            .lines()
+            .filter_map(|line| line.split('\t').nth(1))
+            .filter(|subject| subject.contains(".environment."))
+            .collect::<Vec<_>>();
+        assert_eq!(subjects.len(), expected_keys, "{file} environment key vocabulary");
+        key_count += subjects.len();
+        for subject in subjects {
+            let subject = subject.replace("{{resource_prefix}}", "live-observability-");
+            for (code, expected_count) in [
+                ("BFP0002", usize::from(native_import && output == "podman")),
+                ("BFP0007", usize::from(output == "podman")),
+            ] {
+                let expected = format!("{code}\t{subject}\twarning\tomitted\tpartial");
+                assert_eq!(
+                    diagnostics.lines().filter(|line| *line == expected).count(),
+                    expected_count,
+                    "{subject}"
+                );
+            }
+        }
+    }
+    for code in ["BFP0002", "BFP0007"] {
+        let expected = key_count * usize::from(output == "podman" && (code == "BFP0007" || native_import));
+        assert_eq!(
+            diagnostics
+                .lines()
+                .filter(|line| line.starts_with(code) && line.contains(".environment."))
+                .count(),
+            expected,
+        );
+    }
     Ok(())
 }
 
@@ -1399,9 +1476,6 @@ fn observability_assert_reconstruction_contract(diagnostics: &str, selection: &s
         for field in ["networks", "restart_policy"] {
             subjects.push(format!("services.live-observability-{service}.{field}"));
         }
-        let environment =
-            format!("BFP0003\tservices.live-observability-{service}.environment\twarning\tapproximated\tapproximate");
-        assert_eq!(diagnostics.lines().filter(|line| *line == environment).count(), 1);
     }
     if selection == "all" {
         for field in ["networks", "restart_policy"] {
@@ -1520,13 +1594,17 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
 fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
     for (name, expected_rows) in [
-        ("base-compose-provisioned.tsv", 220),
+        ("base-compose-provisioned.tsv", 214),
+        ("non-podman-environment-promotions.tsv", 6),
+        ("podman-import-withheld-environment.tsv", 49),
+        ("all-non-podman-environment-promotion.tsv", 1),
+        ("all-podman-import-withheld-environment.tsv", 9),
         ("compose-service-identities.tsv", 2),
         ("cli-creation-evidence.tsv", 6),
         ("compose-export-network.tsv", 4),
         ("cli-compose-export-dependencies.tsv", 7),
         ("podman-export.tsv", 61),
-        ("all-importer.tsv", 19),
+        ("all-importer.tsv", 18),
         ("all-compose-export.tsv", 1),
         ("all-podman-export.tsv", 11),
         ("quadlet-network-alias.tsv", 1),
