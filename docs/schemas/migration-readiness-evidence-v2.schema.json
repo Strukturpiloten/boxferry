@@ -167,6 +167,75 @@
         "maximum_concurrency": { "type": "integer", "const": 1 }
       }
     },
+    "btrfsIdentity": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["mounted_fsid", "num_devices", "max_id", "backing_devices"],
+      "properties": {
+        "mounted_fsid": { "type": "string", "format": "uuid" },
+        "num_devices": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "max_id": { "type": "integer", "minimum": 1 },
+        "backing_devices": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["device", "sysfs_path"],
+            "properties": {
+              "device": { "type": "string", "pattern": "^[0-9]+:[0-9]+$" },
+              "sysfs_path": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "filesystemView": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device",
+        "st_dev",
+        "statfs_fsid",
+        "mount_id",
+        "mount_device",
+        "mount_root",
+        "mount_point",
+        "mount_options",
+        "optional_fields",
+        "filesystem_type",
+        "mount_source",
+        "super_options",
+        "btrfs"
+      ],
+      "properties": {
+        "device": { "type": "string", "minLength": 1 },
+        "st_dev": { "type": "string", "pattern": "^[0-9]+$" },
+        "statfs_fsid": { "type": "string", "pattern": "^-?[0-9]+$" },
+        "mount_id": { "type": "integer", "minimum": 1 },
+        "mount_device": { "type": "string", "pattern": "^[0-9]+:[0-9]+$" },
+        "mount_root": { "type": "string", "minLength": 1 },
+        "mount_point": { "type": "string", "minLength": 1 },
+        "mount_options": { "type": "string", "minLength": 1 },
+        "optional_fields": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "filesystem_type": { "type": "string", "minLength": 1 },
+        "mount_source": { "type": "string", "minLength": 1 },
+        "super_options": { "type": "string", "minLength": 1 },
+        "btrfs": { "$ref": "#/$defs/btrfsIdentity" }
+      }
+    },
+    "pathObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "measurement_path", "view"],
+      "properties": {
+        "role": { "enum": ["checkout", "temporary-directory", "podman-graph-root"] },
+        "path": { "type": "string", "minLength": 1 },
+        "measurement_path": { "type": "string", "minLength": 1 },
+        "view": { "$ref": "#/$defs/filesystemView" }
+      }
+    },
     "filesystem": {
       "type": "object",
       "additionalProperties": false,
@@ -189,6 +258,12 @@
           }
         },
         "paths": { "$ref": "#/$defs/stringArray" },
+        "path_observations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/pathObservation" }
+        },
         "baseline_free_mib": { "type": "integer", "minimum": 0 },
         "minimum_free_mib": { "type": "integer", "minimum": 0 },
         "peak_growth_mib": { "type": "integer", "minimum": 0 }
@@ -221,6 +296,7 @@
         "concurrency": { "type": "integer", "const": 1 },
         "available_memory_mib": { "type": ["integer", "null"], "minimum": 0 },
         "available_disk_mib": { "type": ["integer", "null"], "minimum": 0 },
+        "disk_measurement_error": { "type": ["string", "null"], "minLength": 1 },
         "peak_memory_delta_mib": { "type": ["integer", "null"], "minimum": 0 },
         "peak_rss_kib": { "type": "integer", "minimum": 0 },
         "disk_growth_mib": { "type": "integer", "minimum": 0 },
