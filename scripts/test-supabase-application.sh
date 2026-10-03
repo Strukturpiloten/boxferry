@@ -115,7 +115,8 @@ for acquisition in cli compose; do
   jq --exit-status --arg acquisition "${acquisition}" '
     [ .[] | select(.code == "BFP0009") ] as $notes |
     all($notes[]; .severity == "note" and .decision == "reconstructed") and
-    ([$notes[] | select(.subject | endswith(".networks"))] | length) == 12 and
+    ([$notes[] | select(.subject | endswith(".networks"))] | length) == 11 and
+    ([$notes[] | select(.subject == "services.contract-supabase-kong.networks")] | length) == 1 and
     ([$notes[] | select(.subject | endswith(".restart_policy"))] | length) == 11 and
     ([$notes[] | select(.subject | endswith(".port_bindings"))] | length) == 0 and
     ([$notes[] | select(.subject | contains(".mounts[")) | .subject] | sort) == [
@@ -141,6 +142,20 @@ for acquisition in cli compose; do
     ] and
     ([$notes[] | select(.subject == "networks.contract-supabase-edge.ownership")] | length) == 0
   ' <<< "${podman_diagnostics}" > /dev/null
+done
+
+for mutation in missing duplicated; do
+  jq --arg mutation "${mutation}" '
+    [.diagnostics[] | select(.code == "BFP0009" and any(.fields[];
+      .name == "subject" and .value == "services.contract-supabase-kong.networks"))] as $notes |
+    if $mutation == "duplicated" then .diagnostics += [$notes[0]]
+    else .diagnostics -= $notes end
+  ' "${contract_report}" > "${contract_drift_report}"
+  if supabase_assert_success_contract podman podman storage "${contract_drift_report}" \
+    contract false cli > /dev/null 2>&1; then
+    printf 'Supabase contract admitted %s Kong network reconstruction note.\n' "${mutation}" >&2
+    exit 1
+  fi
 done
 
 all_podman_diagnostics="$(supabase_contract_expected podman compose cli cli all true)"

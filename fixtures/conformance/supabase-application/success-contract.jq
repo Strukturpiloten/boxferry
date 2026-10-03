@@ -266,9 +266,10 @@ def import_diagnostics:
     import_service_fields($service)[] |
     tuple("BFP0003"; "services." + $resource_prefix + $service + "." + .[0]; .[1])
   ] + [
-    selected_services[] as $service |
-    alias_networks($service)[] |
-    tuple("BFP0009"; "services." + $resource_prefix + $service + ".networks"; "reconstructed")
+    # Library notes are per attachment; the CLI deduplicates identical complete
+    # diagnostics. Kong still retains both networks and their distinct aliases.
+    selected_services[] |
+    tuple("BFP0009"; "services." + $resource_prefix + . + ".networks"; "reconstructed")
   ] + [
     selected_services[] |
     tuple("BFP0009"; "services." + $resource_prefix + . + ".restart_policy"; "reconstructed")

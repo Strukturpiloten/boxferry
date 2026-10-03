@@ -200,7 +200,6 @@ BFP0009	services.{{resource_prefix}}alloy.networks	note	reconstructed	-
 BFP0009	services.{{resource_prefix}}alloy.restart_policy	note	reconstructed	-
 BFP0009	services.{{resource_prefix}}grafana.mounts[0]	note	reconstructed	-
 BFP0009	services.{{resource_prefix}}grafana.networks	note	reconstructed	-
-BFP0009	services.{{resource_prefix}}grafana.networks	note	reconstructed	-
 BFP0009	services.{{resource_prefix}}grafana.restart_policy	note	reconstructed	-
 BFP0009	services.{{resource_prefix}}log-producer.mounts[0]	note	reconstructed	-
 BFP0009	services.{{resource_prefix}}log-producer.networks	note	reconstructed	-

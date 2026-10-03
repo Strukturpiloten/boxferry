@@ -42,7 +42,10 @@ code, severity, subject, and decision. It includes Podman acquisition findings,
 promoted healthchecks, and Quadlet-to-Compose dependency and healthcheck losses.
 Reviewed effective network attachments, named-volume mounts, and default restart
 behavior are expected to produce `BFP0009` reconstruction notes,
-not source-fidelity losses. Healthcheck notes are origin-specific: native CLI
+not source-fidelity losses. The library emits a network note for each attachment;
+the CLI deduplicates identical complete diagnostics, so Kong has one visible network
+note while retaining both backend/edge attachments and their distinct aliases.
+Healthcheck notes are origin-specific: native CLI
 provisioning uses an exec check only for PostgREST, while Compose provisioning
 uses exec checks for Auth, PostgREST, imgproxy, Storage, and Kong; shell checks
 remain approximate. The backend network and three named volumes retain

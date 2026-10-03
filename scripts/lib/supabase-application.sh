@@ -2769,7 +2769,7 @@ supabase_validate_success_contract_examples() {
       podman podman all "${prefix}" true "${podman_acquisition}"
   )"
   if ! jq --exit-status '
-    (.diagnostics | length) == 740 and
+    (.diagnostics | length) == 739 and
     ([.diagnostics[] | select(.code == "BFP0007")] | length) == 226 and
     .fidelity == {
       approximate: 32,

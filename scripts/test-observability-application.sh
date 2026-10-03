@@ -52,15 +52,13 @@ for mount in 'alloy.mounts[0]' 'alloy.mounts[1]' 'grafana.mounts[0]' \
 done
 for service in alloy grafana log-producer loki metrics-producer prometheus; do
   for field in networks restart_policy; do
-    # Native promotion emits a reconstruction for each attachment. Grafana
-    # independently belongs to both backend and edge; keep the repeated tuple.
-    reconstruction_count=1
-    [[ "${service}:${field}" == grafana:networks ]] && reconstruction_count=2
+    # The library emits per-attachment notes; the CLI deduplicates identical
+    # complete diagnostics without removing Grafana's two network attachments.
     assert_static_diagnostic_tuple \
-      "services.{{resource_prefix}}${service}.${field}" BFP0009 note reconstructed - "${reconstruction_count}"
+      "services.{{resource_prefix}}${service}.${field}" BFP0009 note reconstructed -
   done
 done
-[[ "$(awk -F '\t' '$1 == "BFP0009" { count++ } END { print count + 0 }' "${diagnostic_base}")" == 19 ]]
+[[ "$(awk -F '\t' '$1 == "BFP0009" { count++ } END { print count + 0 }' "${diagnostic_base}")" == 18 ]]
 reviewed_diagnostic_base="${diagnostic_base}"
 grafana_network_subject='services.{{resource_prefix}}grafana.networks'
 awk -F '\t' -v subject="${grafana_network_subject}" '
@@ -72,7 +70,7 @@ printf 'BFP0009\t%s\tnote\treconstructed\t-\n' "${grafana_network_subject}" \
   >> "${test_root}/extra-grafana-network.tsv"
 for mutation in missing extra; do
   diagnostic_base="${test_root}/${mutation}-grafana-network.tsv"
-  if assert_static_diagnostic_tuple "${grafana_network_subject}" BFP0009 note reconstructed - 2 \
+  if assert_static_diagnostic_tuple "${grafana_network_subject}" BFP0009 note reconstructed - \
     > /dev/null 2>&1; then
     printf 'Observability contract admitted %s Grafana network reconstruction tuple.\n' "${mutation}" >&2
     exit 1

@@ -101,11 +101,12 @@ expectation. The failed focused pre-release run at
 Each row has five fields: code, subject, severity, decision, and required loss policy. The visible
 `-` marker represents absent diagnostic fields, including the loss-policy field on Podman
 reconstruction notes, and is normalized to
-empty fields before exact comparison. The 215-row shared importer base includes five portable
+empty fields before exact comparison. The 214-row shared importer base includes five portable
 DNS-alias promotions, six inferred-ownership warnings for the internal backend network and named
-volumes, and 19 reconstruction notes for promoted mount, network, and restart behavior. Grafana's
-backend and edge attachments require two identical network reconstruction tuples; exact comparison
-retains their multiplicity. The external edge network has no inferred application ownership.
+volumes, and 18 reconstruction notes for promoted mount, network, and restart behavior. The library
+emits a note for each of Grafana's backend and edge attachments; the CLI deduplicates identical
+complete diagnostics, so its template requires one visible network note without changing topology.
+The external edge network has no inferred application ownership.
 Child-field losses retain separate warnings.
 Compose and Quadlet output add six aggregate environment-promotion warnings because the harness
 explicitly authorizes those values. Podman output withholds values and adds 47 per-key importer

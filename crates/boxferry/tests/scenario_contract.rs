@@ -545,6 +545,123 @@ fn authored_podman_value_routes_have_complete_withholding_contracts() -> Result<
 }
 
 #[test]
+fn supabase_dual_network_replay_keeps_topology_and_deduplicates_only_cli_notes() -> Result<(), Box<dyn Error>> {
+    const KONG_ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let root = repository_root();
+    let fixture = root.join("fixtures/scenarios/supabase-application");
+    let manifest = read_manifest(&fixture)?;
+    let route = manifest
+        .evidence
+        .iter()
+        .find(|route| route.input == "podman" && route.exporter == "compose")
+        .ok_or("missing Supabase Compose route")?;
+    // Independently authored network-only projection of the real 6.1.2 rootless
+    // inspect shape: both attachments, distinct aliases, and all attachment fields.
+    // The original 6.1.0 cassette and its expectations remain unchanged; this replay
+    // is not evidence of the full live application or its environment inventory.
+    let text = fs::read_to_string(fixture.join("input-podman.cassette.json"))?.replace("c-kong", KONG_ID);
+    let mut projection: serde_json::Value = serde_json::from_str(&text)?;
+    let kong = projection["interactions"]
+        .as_array_mut()
+        .ok_or("cassette interactions")?
+        .iter_mut()
+        .find(|entry| entry["request"]["path"] == format!("/v6.1.0/libpod/containers/{KONG_ID}/json"))
+        .ok_or("Kong inspect interaction")?;
+    let attachment = |id: &str, alias: &str| {
+        serde_json::json!({
+            "NetworkID": id, "Aliases": [alias, &KONG_ID[..12]],
+            "EndpointID": "", "Gateway": "", "IPAddress": "", "IPPrefixLen": 0,
+            "IPv6Gateway": "", "GlobalIPv6Address": "", "GlobalIPv6PrefixLen": 0,
+            "MacAddress": "", "DriverOpts": null, "IPAMConfig": null, "Links": null,
+        })
+    };
+    kong["response"]["body"]["HostConfig"]["NetworkMode"] = serde_json::json!("bridge");
+    kong["response"]["body"]["NetworkSettings"]["Networks"] = serde_json::json!({
+        "backend": attachment("n-backend", "kong"),
+        "edge": attachment("n-edge", "supabase"),
+    });
+    // Exact-order replay follows sorted runtime identities; the realistic hex ID
+    // now sorts ahead of the original cassette's remaining c-* identities.
+    let interactions = projection["interactions"]
+        .as_array_mut()
+        .ok_or("cassette interactions")?;
+    let index = interactions
+        .iter()
+        .position(|entry| entry["request"]["path"] == format!("/v6.1.0/libpod/containers/{KONG_ID}/json"))
+        .ok_or("Kong inspect interaction")?;
+    let interaction = interactions.remove(index);
+    let index = interactions
+        .iter()
+        .position(|entry| entry["request"]["path"] == "/v6.1.0/libpod/containers/c-auth/json")
+        .ok_or("first container inspect interaction")?;
+    interactions.insert(index, interaction);
+    let imported = import_podman_cassette(&manifest, "podman", serde_json::from_value(projection.clone())?)?;
+    supabase_assert_kong_networks(&imported)?;
+    let notes = imported
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code().as_str() == "BFP0009"
+                && diagnostic
+                    .fields()
+                    .iter()
+                    .any(|field| field.name() == "subject" && field.value().redacted() == "services.kong.networks")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(notes.len(), 2, "library retains per-attachment notes");
+    assert_eq!(notes[0], notes[1], "only identical complete diagnostics collapse");
+    let conversion = convert_imported(imported, &ComposeExporter::new()?, &route.target()?, route.policy()?)?;
+    assert_eq!(
+        diagnostic_facts(conversion.diagnostics())
+            .iter()
+            .filter(|fact| fact.as_str() == "BFP0009|services.kong.networks")
+            .count(),
+        2,
+        "facade conversion retains both library notes"
+    );
+    let generated = conversion.output().ok_or("facade Compose output")?;
+    supabase_assert_kong_networks(&import_compose(generated.text(), "supabase")?)?;
+    let temporary = TemporaryDirectory::new("supabase-dual-network-notes")?;
+    let source = temporary.path().join("network-projection.cassette.json");
+    fs::write(&source, serde_json::to_vec(&projection)?)?;
+    let destination = temporary.path().join("compose-output");
+    let report = convert_cli(&manifest, &[source], route, &destination)?;
+    assert_eq!(report["status"], "success");
+    assert_eq!(
+        report_diagnostic_facts(&report)?
+            .iter()
+            .filter(|fact| fact.as_str() == "BFP0009|services.kong.networks")
+            .count(),
+        1,
+        "CLI deduplicates visible notes, not topology or library outcomes"
+    );
+    let reimported = import_compose(&fs::read_to_string(destination.join("compose.yaml"))?, "supabase")?;
+    supabase_assert_kong_networks(&reimported)?;
+    Ok(())
+}
+
+fn supabase_assert_kong_networks(imported: &ImportResult) -> Result<(), Box<dyn Error>> {
+    let application = imported.application().ok_or("Supabase application")?;
+    let kong = application
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "kong")
+        .ok_or("Supabase Kong service")?
+        .value();
+    let actual = kong
+        .networks()
+        .iter()
+        .map(|network| (network.value().network().as_str(), network.value().aliases().to_vec()))
+        .collect::<BTreeSet<_>>();
+    let expected = BTreeSet::from([
+        ("backend", vec!["kong".to_owned()]),
+        ("edge", vec!["supabase".to_owned()]),
+    ]);
+    assert_eq!(actual, expected, "independent backend/edge topology and aliases");
+    Ok(())
+}
+
+#[test]
 fn supabase_withheld_podman_report_matches_live_environment_contract() -> Result<(), Box<dyn Error>> {
     let root = repository_root();
     let fixture = root.join("fixtures/scenarios/supabase-application");
@@ -1205,85 +1322,85 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "cli",
             "exact",
             "compose",
-            238,
-            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 19)],
+            237,
+            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18)],
         ),
         (
             "cli",
             "exact",
             "quadlet",
-            228,
-            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 19), ("BFQ0003", 1)],
-        ),
-        (
-            "cli",
-            "exact",
-            "podman",
-            327,
-            &[("BFP0002", 99), ("BFP0003", 150), ("BFP0007", 59), ("BFP0009", 19)],
-        ),
-        (
-            "cli",
-            "all",
-            "compose",
-            258,
-            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 21)],
-        ),
-        (
-            "cli",
-            "all",
-            "quadlet",
-            247,
-            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 21), ("BFQ0003", 1)],
-        ),
-        (
-            "cli",
-            "all",
-            "podman",
-            365,
-            &[("BFP0002", 115), ("BFP0003", 159), ("BFP0007", 70), ("BFP0009", 21)],
-        ),
-        (
-            "compose",
-            "exact",
-            "compose",
             227,
-            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 19)],
+            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18), ("BFQ0003", 1)],
+        ),
+        (
+            "cli",
+            "exact",
+            "podman",
+            326,
+            &[("BFP0002", 99), ("BFP0003", 150), ("BFP0007", 59), ("BFP0009", 18)],
+        ),
+        (
+            "cli",
+            "all",
+            "compose",
+            257,
+            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20)],
+        ),
+        (
+            "cli",
+            "all",
+            "quadlet",
+            246,
+            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20), ("BFQ0003", 1)],
+        ),
+        (
+            "cli",
+            "all",
+            "podman",
+            364,
+            &[("BFP0002", 115), ("BFP0003", 159), ("BFP0007", 70), ("BFP0009", 20)],
+        ),
+        (
+            "compose",
+            "exact",
+            "compose",
+            226,
+            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18)],
         ),
         (
             "compose",
             "exact",
             "quadlet",
-            224,
-            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 19), ("BFQ0003", 1)],
+            223,
+            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "exact",
             "podman",
-            323,
-            &[("BFP0002", 93), ("BFP0003", 152), ("BFP0007", 59), ("BFP0009", 19)],
+            322,
+            &[("BFP0002", 93), ("BFP0003", 152), ("BFP0007", 59), ("BFP0009", 18)],
         ),
         (
             "compose",
             "all",
             "compose",
-            247,
-            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 21)],
+            246,
+            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20)],
         ),
         (
             "compose",
             "all",
             "quadlet",
-            243,
-            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 21), ("BFQ0003", 1)],
+            242,
+            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "all",
             "podman",
-            361,
-            &[("BFP0002", 109), ("BFP0003", 161), ("BFP0007", 70), ("BFP0009", 21)],
+            360,
+            &[("BFP0002", 109), ("BFP0003", 161), ("BFP0007", 70), ("BFP0009", 20)],
         ),
     ];
     for contract in expected_contracts {
@@ -1493,7 +1610,7 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
 fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
     for (name, expected_rows) in [
-        ("base-compose-provisioned.tsv", 215),
+        ("base-compose-provisioned.tsv", 214),
         ("non-podman-environment-promotions.tsv", 6),
         ("podman-import-withheld-environment.tsv", 47),
         ("all-non-podman-environment-promotion.tsv", 1),
