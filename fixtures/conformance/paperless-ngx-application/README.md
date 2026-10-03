@@ -35,6 +35,15 @@ This lane does not execute any BoxFerry-generated artifact and does not claim Qu
 ComposeLens provider, other Podman version/root-mode/architecture, arbitrary-document, or
 production-secret conformance.
 
+Default-withheld broker checks allow the fixed public password only in its authored Valkey command.
+Compose output intentionally omits healthchecks at the current generation boundary: the broker
+command must remain, the healthcheck must be absent, and exactly one `BFC0007` warning must identify
+that broker's healthcheck with the reviewed static omission reason. Quadlet retains both the command
+and healthcheck. Podman import findings (`BFP0003` for shell approximation or `BFP0009` for exec
+reconstruction) may share that healthcheck subject; they remain visible and do not count as Compose
+omission evidence. Neither form may move the canary into environment fields or conversion reports.
+This known output limitation is not proof that generated Compose preserves runtime health behavior.
+
 ## One-off native capture candidate
 
 Native capture is disabled by default and in pull-request CI. A maintainer may explicitly record the first
@@ -123,3 +132,7 @@ Because the capture cannot carry semantic environment values, it must never repl
 `fixtures/scenarios/paperless-ngx-application/input-podman.cassette.json`. The authored cassette
 remains the only Podman scenario input; repository-policy tests enforce this separation. The
 captured cassette exists only to replay the exact 27-request production acquisition route.
+The CLI privacy regression also derives in-memory broker-command and healthcheck variants from
+this redacted transport fixture, substituting only the public broker canary and testing both shell
+and exec health forms. Those authored variants exercise export assertions without changing the
+admitted capture or claiming new native acceptance.

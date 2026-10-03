@@ -985,7 +985,8 @@ paperless_report_conversion_failure() {
 
 # The broker password is also an authored Valkey command argument. Check its
 # location structurally so the default-withheld environment contract does not
-# mistake that command for a leaked environment assignment.
+# mistake that command for a leaked environment assignment. Compose omits the
+# unsupported healthcheck with an exact diagnostic; Quadlet retains it.
 paperless_assert_withheld_broker_command() {
   local directory=$1 report=$2 output=$3 prefix=$4
   python3 - "${directory}" "${report}" "${output}" "${prefix}" "${PAPERLESS_REDIS_PASSWORD}" << 'PY'
@@ -1003,7 +1004,8 @@ def reject(message):
     raise SystemExit(f"Default-withheld Paperless broker check failed: {message}")
 
 
-if canary in pathlib.Path(report).read_text(encoding="utf-8"):
+report_text = pathlib.Path(report).read_text(encoding="utf-8")
+if canary in report_text:
     reject("report retained broker value")
 
 seen = {"command": 0, "healthcheck": 0}
@@ -1036,6 +1038,26 @@ def require_password_argument(value, kind):
 if output == "compose":
     import yaml
 
+    try:
+        diagnostics = json.loads(report_text)["diagnostics"]
+        if not isinstance(diagnostics, list):
+            reject("invalid Compose diagnostics")
+        omissions = []
+        for diagnostic in diagnostics:
+            fields = diagnostic["fields"]
+            if not isinstance(fields, list):
+                reject("invalid Compose diagnostic fields")
+            values = {field["name"]: field["value"] for field in fields}
+            if len(values) != len(fields):
+                reject("duplicate Compose diagnostic fields")
+            if diagnostic.get("code") == "BFC0007" and values.get("subject") == f"services.{broker}.healthcheck":
+                omissions.append((diagnostic.get("code"), diagnostic.get("severity"), values.get("reason")))
+        expected = ("BFC0007", "warning", "the current Compose generation boundary does not yet expose health-check fields")
+        if omissions != [expected]:
+            reject("missing or incorrect Compose broker healthcheck omission")
+    except (ValueError, KeyError, TypeError):
+        reject("invalid Compose diagnostic report")
+
     files = list(root.rglob("*"))
     for path in files:
         if not path.is_file():
@@ -1051,6 +1073,9 @@ if output == "compose":
         for name, service in services.items():
             if not isinstance(service, dict):
                 reject("invalid Compose service")
+            is_broker = name in ("broker", broker) or service.get("container_name") == broker
+            if is_broker and "healthcheck" in service:
+                reject("Compose broker healthcheck was not omitted")
             for key in ("command", "healthcheck"):
                 value = service.get(key)
                 if value is None or canary not in str(value):
@@ -1097,7 +1122,7 @@ elif output == "quadlet":
 else:
     reject("unexpected output format")
 
-if seen != {"command": 1, "healthcheck": 1}:
+if seen != {"command": 1, "healthcheck": 0 if output == "compose" else 1}:
     reject("authored broker command or healthcheck missing")
 PY
 }

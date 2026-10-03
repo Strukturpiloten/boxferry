@@ -3003,6 +3003,9 @@ supabase_run_reimports() {
         fi
         [[ "${output}" == podman ]] &&
           command+=(--podman-target-context rootless)
+        # Fixed public fixture canaries remain authorized only in document
+        # artifacts. Each chained invocation needs its own explicit inclusion.
+        [[ "${output}" != podman ]] && command+=(--environment-values include)
         command+=(--output-directory "${result}" --console-format json)
         local status=0
         timed_operation 120s \
@@ -3022,6 +3025,7 @@ supabase_run_reimports() {
         supabase_assert_output_semantics \
           "${selection}" "${input}" "${output}" "${result}" "${prefix}" \
           "${include_system_network}" podman "${require_dependency_order}" "${mode}"
+        supabase_assert_direct_export_environment "${output}" "${result}" "${prefix}"
       done
     done
   done

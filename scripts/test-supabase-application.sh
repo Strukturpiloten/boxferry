@@ -783,13 +783,36 @@ bash -c '
   current_case=$2
   argument_log=$3
   boxferry_bin=unused
-  timed_operation() { return 0; }
+  command_checks=0
+  environment_assertions=0
+  timed_operation() {
+    shift 2
+    local -a arguments=("$@")
+    local output="${arguments[3]}" index inclusion=0
+    for ((index = 0; index < ${#arguments[@]}; index++)); do
+      if [[ "${arguments[index]}" == --environment-values ]]; then
+        [[ "${arguments[index + 1]}" == include ]]
+        inclusion=$((inclusion + 1))
+      fi
+    done
+    if [[ "${output}" == podman ]]; then
+      [[ "${inclusion}" == 0 ]]
+    else
+      [[ "${inclusion}" == 1 ]]
+    fi
+    command_checks=$((command_checks + 1))
+  }
   assert_successful_conversion() { :; }
   supabase_assert_success_contract() {
     [[ "$#" == 8 && "$1" =~ ^(compose|quadlet)$ && "$7" == not-podman &&
       "$8" =~ ^(cli|compose)$ ]]
   }
   supabase_assert_output_membership() { :; }
+  supabase_assert_direct_export_environment() {
+    [[ "$#" == 3 && "$1" =~ ^(compose|quadlet|podman)$ &&
+      "$2" == "${current_case}/reimports/"* && "$3" == test-prefix ]]
+    environment_assertions=$((environment_assertions + 1))
+  }
   supabase_assert_output_semantics() {
     [[ "$#" == 9 ]]
     printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
@@ -797,6 +820,7 @@ bash -c '
   }
   supabase_run_reimports cli test-prefix
   supabase_run_reimports compose test-prefix
+  [[ "${command_checks}" == 48 && "${environment_assertions}" == 48 ]]
 ' bash "${library}" "${test_root}/reimport-case" "${reimport_argument_log}"
 awk -F '\t' '
   NF != 6 ||

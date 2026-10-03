@@ -95,7 +95,18 @@ if application_assert_default_withholding \
 fi
 rm -- "${directory}/broker-leak.txt"
 
-# Only the authored broker command and healthcheck may retain this canary.
+# Compose keeps only the command; its unsupported healthcheck needs exact evidence.
+broker_report="${test_root}/broker-compose.report.json"
+jq '.diagnostics += [{code: "BFC0007", severity: "warning", fields: [
+  {name: "subject", value: "services.fixture-paper-broker.healthcheck"},
+  {name: "reason", value: "the current Compose generation boundary does not yet expose health-check fields"}]},
+  {code: "BFP0003", severity: "warning", fields: [
+    {name: "subject", value: "services.fixture-paper-broker.healthcheck"},
+    {name: "reason", value: "authored source shell approximation"}]},
+  {code: "BFP0009", severity: "note", fields: [
+    {name: "subject", value: "services.fixture-paper-broker.healthcheck"},
+    {name: "reason", value: "authored source exec reconstruction"}]}]' \
+  "${report}" > "${broker_report}"
 broker_directory="${test_root}/broker-export"
 mkdir -p -- "${broker_directory}"
 printf '%s\n' \
@@ -103,38 +114,55 @@ printf '%s\n' \
   '  fixture-paper-broker:' \
   '    container_name: fixture-paper-broker' \
   "    command: [valkey-server, --requirepass, ${PAPERLESS_REDIS_PASSWORD}]" \
-  '    healthcheck:' \
-  "      test: [CMD, valkey-cli, -a, ${PAPERLESS_REDIS_PASSWORD}, ping]" \
   '  fixture-paper-web:' \
   '    environment: {}' > "${broker_directory}/compose.yaml"
 paperless_assert_withheld_broker_command \
-  "${broker_directory}" "${report}" compose fixture
+  "${broker_directory}" "${broker_report}" compose fixture
 cp -- "${broker_directory}/compose.yaml" "${test_root}/valid-broker-compose.yaml"
-for mutation in missing-command missing-health misplaced-command misplaced-health; do
+for mutation in missing-command misplaced-command extraneous-health canary-health; do
   cp -- "${test_root}/valid-broker-compose.yaml" "${broker_directory}/compose.yaml"
   case "${mutation}" in
     missing-command) sed -i '/^    command:/d' "${broker_directory}/compose.yaml" ;;
-    missing-health) sed -i '/^    healthcheck:/,+1d' "${broker_directory}/compose.yaml" ;;
     misplaced-command)
       sed -i "s/--requirepass, ${PAPERLESS_REDIS_PASSWORD}/${PAPERLESS_REDIS_PASSWORD}, --requirepass/" \
         "${broker_directory}/compose.yaml"
       ;;
-    misplaced-health)
-      sed -i "s/-a, ${PAPERLESS_REDIS_PASSWORD}/${PAPERLESS_REDIS_PASSWORD}, -a/" \
+    extraneous-health)
+      sed -i '/^    command:/a\    healthcheck: {test: [CMD, true]}' "${broker_directory}/compose.yaml"
+      ;;
+    canary-health)
+      sed -i "/^    command:/a\\    healthcheck: {test: [CMD, valkey-cli, -a, ${PAPERLESS_REDIS_PASSWORD}, ping]}" \
         "${broker_directory}/compose.yaml"
       ;;
   esac
   if paperless_assert_withheld_broker_command \
-    "${broker_directory}" "${report}" compose fixture > /dev/null 2>&1; then
+    "${broker_directory}" "${broker_report}" compose fixture > /dev/null 2>&1; then
     printf 'Paperless broker check accepted %s in Compose.\n' "${mutation}" >&2
     exit 1
   fi
 done
 cp -- "${test_root}/valid-broker-compose.yaml" "${broker_directory}/compose.yaml"
+for mutation in \
+  '.diagnostics |= map(select(.code != "BFC0007"))' \
+  '(.diagnostics[] | select(.code == "BFC0007") | .code) = "BFP0007"' \
+  '(.diagnostics[] | select(.code == "BFC0007") | .fields[0].value) = "services.other.healthcheck"' \
+  '(.diagnostics[] | select(.code == "BFC0007") | .fields[1].value) = "wrong-boundary-reason"' \
+  '(.diagnostics[] | select(.code == "BFC0007") | .severity) = "note"' \
+  '.diagnostics += [.diagnostics[] | select(.code == "BFC0007")]' \
+  '(.diagnostics[] | select(.code == "BFC0007") | .fields) += [{name: "subject", value: "services.fixture-paper-broker.healthcheck"}]' \
+  '(.diagnostics[] | select(.code == "BFP0003") | .fields) += [{name: "subject", value: "services.fixture-paper-broker.healthcheck"}]' \
+  '(.diagnostics[] | select(.code == "BFP0009") | .fields) = {}'; do
+  jq "${mutation}" "${broker_report}" > "${test_root}/invalid-broker-report.json"
+  if paperless_assert_withheld_broker_command \
+    "${broker_directory}" "${test_root}/invalid-broker-report.json" compose fixture > /dev/null 2>&1; then
+    printf 'Paperless broker check accepted missing, incorrect, duplicated, or malformed Compose evidence.\n' >&2
+    exit 1
+  fi
+done
 printf '    environment: {PAPERLESS_REDIS: %s}\n' "${PAPERLESS_REDIS_PASSWORD}" \
   >> "${broker_directory}/compose.yaml"
 if paperless_assert_withheld_broker_command \
-  "${broker_directory}" "${report}" compose fixture > /dev/null 2>&1; then
+  "${broker_directory}" "${broker_report}" compose fixture > /dev/null 2>&1; then
   printf 'Paperless broker check accepted a leaked Compose environment value.\n' >&2
   exit 1
 fi

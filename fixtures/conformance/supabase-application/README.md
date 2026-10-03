@@ -161,7 +161,12 @@ the harness never executes those generated deployment artifacts.
 
 All credentials are fixed public test canaries. They are intentionally safe to
 place in explicitly authorized deployment artifacts, but must not occur in any
-BoxFerry JSON report. The behavior probe keeps access tokens in memory and
+BoxFerry JSON report. Direct exports and every chained Compose/Quadlet output
+explicitly pass `--environment-values include`; authorization does not carry over
+from the source artifact. Each output checks the database canary is retained only
+in documents. Podman outputs keep the default withholding policy and assert its
+absence. This test-owned authorization changes neither the product default nor
+report redaction. The behavior probe keeps access tokens in memory and
 prints only a phase success marker.
 
 ## Supply-chain and license boundary
