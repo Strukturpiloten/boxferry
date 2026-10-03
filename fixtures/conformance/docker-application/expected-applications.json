@@ -835,7 +835,7 @@
       "sources": [
         {
           "path": "fixtures/conformance/observability-application/compose.yaml",
-          "sha256": "4f825faa765e58e8fee7b0faf093d298e48fbd37c5e24a41b564abfa9f567d48"
+          "sha256": "d66a018d9c3cfe804ab594ad6a1bcbe89e366ac1780422efa90ef3fca3143cbc"
         },
         {
           "path": "fixtures/conformance/observability-application/images.tsv",
@@ -847,7 +847,7 @@
         },
         {
           "path": "scripts/lib/observability-application.sh",
-          "sha256": "aa88c40ab7a8a94910fdccd4e28275bd46ea950cba09a1fb71b9e66e3b6ce817"
+          "sha256": "5dd657508ed99fc7a4966bdc3702eb66034e02f607201329231d7bc3c9d1014d"
         },
         {
           "path": "fixtures/conformance/observability-application/producer.sh",

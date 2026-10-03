@@ -286,18 +286,31 @@ observability_remote() {
   podman_socket "${socket}" "Observability ${1:-command}" "$@"
 }
 
+observability_clock() {
+  printf '%s\n' "${SECONDS}"
+}
+
 observability_wait_for() {
   local deadline_seconds=$1 description=$2
   shift 2
-  local deadline=$((SECONDS + deadline_seconds))
-  until "$@" > /dev/null 2>&1; do
-    if ((SECONDS >= deadline)); then
-      printf 'Timed out after %ss waiting for observability %s.\n' \
-        "${deadline_seconds}" "${description}" >&2
-      return 1
+  local now deadline
+  now=$(observability_clock)
+  deadline=$((now + deadline_seconds))
+  local OBSERVABILITY_WAIT_DEADLINE=${deadline}
+  while ((now < deadline)); do
+    if "$@" > /dev/null 2>&1; then
+      now=$(observability_clock)
+      ((now < deadline)) && return 0
+      break
     fi
-    sleep 2
+    now=$(observability_clock)
+    ((now < deadline)) || break
+    sleep "$((deadline - now < 2 ? deadline - now : 2))"
+    now=$(observability_clock)
   done
+  printf 'Timed out after %ss waiting for observability %s.\n' \
+    "${deadline_seconds}" "${description}" >&2
+  return 1
 }
 
 observability_assert_clean_prefix() {
@@ -436,6 +449,8 @@ observability_create_cli_grafana() {
     --env GF_ANALYTICS_REPORTING_ENABLED=false \
     --env GF_AUTH_ANONYMOUS_ENABLED=true \
     --env GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer \
+    --env GF_PLUGINS_PREINSTALL_DISABLED=true \
+    --env GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false \
     --env "GF_SECURITY_ADMIN_PASSWORD=${OBSERVABILITY_ADMIN_PASSWORD}" \
     --env GF_USERS_ALLOW_SIGN_UP=false \
     --volume "${fixture_root}/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/boxferry.yaml:ro" \
@@ -582,14 +597,147 @@ observability_grafana_api() {
   observability_backend_get "${socket}" "${prefix}" "http://grafana:3000${path}"
 }
 
+observability_classify_grafana_health() {
+  python3 -c '
+import json
+import re
+import sys
+
+def unique_members(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate JSON member")
+        result[name] = value
+    return result
+
+def reject_constant(_value):
+    raise ValueError("nonfinite JSON constant")
+
+endpoint = sys.argv[1]
+raw = sys.stdin.buffer.read(16385)
+status, category, ready = "unknown", "unknown", False
+if len(raw) > 16384:
+    category = "oversized-response"
+else:
+    lines = raw.splitlines(keepends=True)
+    first = lines.pop(0).rstrip(b"\r\n") if lines else b""
+    code = re.fullmatch(rb"[ \t]*HTTP/(?:1\.[01]|2(?:\.0)?) ([1-5][0-9]{2})(?:[ \t]+[^\r\n]*)?", first)
+    if code:
+        status = code[1].decode("ascii")
+    # BusyBox wget indents headers and can omit the blank separator. Consume
+    # only the initial header block; status-looking body text is never framing.
+    while lines:
+        line = lines[0].rstrip(b"\r\n")
+        if not line.strip():
+            lines.pop(0)
+            break
+        if not re.fullmatch(rb"[ \t]*[!#$%&\x27*+.^_`|~0-9A-Za-z-]+:[^\r\n]*", line):
+            break
+        lines.pop(0)
+    payload = None
+    if code:
+        try:
+            payload = json.loads(b"".join(lines).decode("utf-8"),
+                                 object_pairs_hook=unique_members,
+                                 parse_constant=reject_constant)
+        except (ValueError, UnicodeError, RecursionError):
+            pass
+    if not code:
+        category = "malformed-response" if raw else "unknown"
+    elif status == "200":
+        field = "database" if endpoint == "basic" else "status"
+        expected = "ok" if endpoint == "basic" else "OK"
+        if not isinstance(payload, dict) or not isinstance(payload.get(field), str):
+            category = "malformed-response"
+        elif payload[field] != expected:
+            category = "unhealthy-response"
+        else:
+            ready = endpoint in {"basic", "prometheus", "loki"}
+    elif isinstance(payload, dict):
+        category = {
+            "plugin.notRegistered": "plugin-not-registered",
+            "plugin.notImplemented": "method-not-implemented",
+            "plugin.unavailable": "plugin-unavailable",
+        }.get(payload.get("messageId") if isinstance(payload.get("messageId"), str) else None, "unknown")
+print(status + "\t" + category + "\t" + str(ready).lower())
+' "$1"
+}
+
+observability_grafana_health_request() {
+  local socket=$1 prefix=$2 path=$3 request_timeout=$4
+  local -a command=("${engine}")
+  # Match podman_socket transport selection without inheriting its fixed 90s RPC budget.
+  if [[ -n "${started_outer:-}" && ! -S "${socket}" ]]; then
+    command+=(exec "${started_outer}" podman)
+  else
+    command+=(--url "unix://${socket}")
+  fi
+  command+=(exec "${prefix}-observability-metrics-producer"
+    /bin/sh -c '/bin/busybox timeout -s KILL "$2" /bin/busybox wget -qS -T "$2" -O- "$1" 2>&1' grafana-health
+    "http://grafana:3000${path}" "${request_timeout}")
+  timeout --foreground --signal=KILL "${request_timeout}s" "${command[@]}"
+}
+
+observability_probe_grafana_health() {
+  local socket=$1 prefix=$2 endpoint=$3 path result probe_status=0 ready=false request_timeout=5
+  case "${endpoint}" in
+    basic) path=/api/health ;;
+    prometheus) path=/api/datasources/uid/boxferry-prometheus/health ;;
+    loki) path=/api/datasources/uid/boxferry-loki/health ;;
+    *) return 2 ;;
+  esac
+  OBSERVABILITY_GRAFANA_ENDPOINT=${endpoint}
+  OBSERVABILITY_GRAFANA_HTTP_STATUS=unknown
+  OBSERVABILITY_GRAFANA_ERROR_CATEGORY=unknown
+  if [[ -n "${OBSERVABILITY_WAIT_DEADLINE:-}" ]]; then
+    request_timeout=$((OBSERVABILITY_WAIT_DEADLINE - $(observability_clock)))
+    ((request_timeout > 0)) || return 1
+    ((request_timeout <= 5)) || request_timeout=5
+  fi
+  result="$(observability_grafana_health_request "${socket}" "${prefix}" "${path}" \
+    "${request_timeout}" 2> /dev/null | observability_classify_grafana_health "${endpoint}")" || probe_status=$?
+  IFS=$'\t' read -r OBSERVABILITY_GRAFANA_HTTP_STATUS OBSERVABILITY_GRAFANA_ERROR_CATEGORY ready <<< "${result}"
+  if [[ "${ready}" == true && "${probe_status}" != 0 ]]; then
+    OBSERVABILITY_GRAFANA_ERROR_CATEGORY=transport-failure
+    return 1
+  fi
+  [[ "${ready}" == true && "${probe_status}" == 0 ]]
+}
+
+observability_grafana_ready() {
+  local socket=$1 prefix=$2 endpoint
+  for endpoint in basic prometheus loki; do
+    observability_probe_grafana_health "${socket}" "${prefix}" "${endpoint}" || return 1
+  done
+}
+
+observability_report_grafana_health_failure() {
+  local endpoint=${OBSERVABILITY_GRAFANA_ENDPOINT:-unknown}
+  local status=${OBSERVABILITY_GRAFANA_HTTP_STATUS:-unknown}
+  local category=${OBSERVABILITY_GRAFANA_ERROR_CATEGORY:-unknown}
+  case "${endpoint}" in basic | prometheus | loki) ;; *) endpoint=unknown ;; esac
+  [[ "${status}" =~ ^[1-5][0-9]{2}$ ]] || status=unknown
+  case "${category}" in
+    malformed-response | unhealthy-response | oversized-response | plugin-not-registered | \
+      method-not-implemented | plugin-unavailable | transport-failure) ;;
+    *) category=unknown ;;
+  esac
+  printf 'OBSERVABILITY DIAGNOSTIC endpoint=%s http-status=%s error-category=%s\n' \
+    "${endpoint}" "${status}" "${category}" >&2
+}
+
 observability_wait_application() {
   local socket=$1 prefix=$2
   observability_wait_for 240 'Prometheus readiness' observability_backend_get \
     "${socket}" "${prefix}" http://prometheus:9090/-/ready
   observability_wait_for 240 'Loki readiness' observability_backend_get \
     "${socket}" "${prefix}" http://loki:3100/ready
-  observability_wait_for 240 'Grafana readiness' observability_grafana_api \
-    "${socket}" "${prefix}" /api/health
+  if ! observability_wait_for 240 'Grafana readiness' observability_grafana_ready \
+    "${socket}" "${prefix}"; then
+    observability_report_grafana_health_failure
+    return 1
+  fi
   if ! observability_pipeline_roles_running "${socket}" "${prefix}"; then
     printf '%s\n' 'Observability pipeline process stopped before ingestion completed.' >&2
     observability_report_pipeline_states "${socket}" "${prefix}"
@@ -1087,8 +1235,8 @@ observability_write_expected_diagnostics() {
       # The CLI reimport starts from a default-withheld Podman export, unlike
       # the explicitly included authored Compose scenario.
       if [[ "${mode}" == cli ]]; then
-        printf 'BFQ0003\tservices.grafana.environment.GF_SECURITY_ADMIN_PASSWORD\twarning\t\t\n' \
-          > "${destination}"
+        observability_append_live_diagnostic_template \
+          "${fixture}/expected.compose-quadlet.withheld.tsv" "${resource_prefix}" "${destination}" || return
       fi
       return
       ;;

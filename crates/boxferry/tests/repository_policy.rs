@@ -867,6 +867,14 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
             .map_err(|error| format!("failed to read observability fixture: {error}"))?,
         );
     }
+    validate_observability_withheld_snapshot(
+        &fs::read_to_string(root.join("scripts/lib/observability-application.sh"))
+            .map_err(|error| format!("failed to read observability helper: {error}"))?,
+        &fs::read_to_string(
+            root.join("fixtures/scenarios/observability-application/expected.compose-quadlet.withheld.tsv"),
+        )
+        .map_err(|error| format!("failed to read observability withheld snapshot: {error}"))?,
+    )?;
     let capture_tool = root.join("fixtures/conformance/podman-live/capture_proxy.py");
     runner_contract.push_str(
         &fs::read_to_string(&capture_tool)
@@ -4282,6 +4290,108 @@ fn immich_captured_native_evidence_is_supplementary_and_redacted() -> Result<(),
     Ok(())
 }
 
+fn validate_observability_withheld_snapshot(helper: &str, snapshot: &str) -> Result<(), String> {
+    let expected = concat!(
+        "BFQ0003\tservices.grafana.environment.GF_PLUGINS_PREINSTALL_AUTO_UPDATE\twarning\t-\t-\n",
+        "BFQ0003\tservices.grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED\twarning\t-\t-\n",
+        "BFQ0003\tservices.grafana.environment.GF_SECURITY_ADMIN_PASSWORD\twarning\t-\t-\n",
+    );
+    if snapshot != expected {
+        return Err("observability withheld snapshot must retain exactly three literal BFQ0003 tuples".to_owned());
+    }
+    let filename = "${fixture}/expected.compose-quadlet.withheld.tsv";
+    if helper.matches(filename).count() != 1 {
+        return Err("observability withheld snapshot must have exactly one helper consumer".to_owned());
+    }
+    let function = helper
+        .split_once("observability_write_expected_diagnostics() {")
+        .and_then(|(_, body)| body.split_once("\n}\n"))
+        .map(|(body, _)| body)
+        .ok_or("observability expected-diagnostic function is missing")?;
+    for scope in ["live-native-export", "live-reimport"] {
+        let branch = function
+            .split_once(&format!("    {scope})\n"))
+            .and_then(|(_, body)| body.split_once("      ;;\n"))
+            .map(|(body, _)| body)
+            .ok_or("observability live diagnostic scope is missing")?;
+        if !branch.ends_with("      return\n") {
+            return Err("observability live scopes must not fall through to the withheld offline snapshot".to_owned());
+        }
+    }
+    let route = function
+        .split_once("  case \"${route}\" in\n")
+        .and_then(|(_, routes)| routes.split_once("    compose-quadlet)\n"))
+        .and_then(|(_, routes)| routes.split_once("    compose-compose | quadlet-compose | quadlet-quadlet)"))
+        .map(|(body, _)| body)
+        .ok_or("observability Compose-to-Quadlet diagnostic route is missing")?;
+    let selection = concat!(
+        "      if [[ \"${mode}\" == cli ]]; then\n",
+        "        observability_append_live_diagnostic_template \\\n",
+        "          \"${fixture}/expected.compose-quadlet.withheld.tsv\" \"${resource_prefix}\" \"${destination}\" || return\n",
+        "      fi\n      return\n      ;;\n",
+    );
+    if !route.contains(selection) {
+        return Err(
+            "observability withheld snapshot must remain confined to the offline CLI Compose-to-Quadlet route"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn observability_withheld_snapshot_policy_rejects_counterexamples() -> Result<(), String> {
+    let root = repository_root();
+    let helper = fs::read_to_string(root.join("scripts/lib/observability-application.sh"))
+        .map_err(|error| format!("failed to read observability helper: {error}"))?;
+    let snapshot = fs::read_to_string(
+        root.join("fixtures/scenarios/observability-application/expected.compose-quadlet.withheld.tsv"),
+    )
+    .map_err(|error| format!("failed to read observability withheld snapshot: {error}"))?;
+    validate_observability_withheld_snapshot(&helper, &snapshot)?;
+    for row in snapshot.lines() {
+        let missing = snapshot.replace(&format!("{row}\n"), "");
+        assert!(
+            validate_observability_withheld_snapshot(&helper, &missing).is_err(),
+            "missing literal row"
+        );
+        let duplicate = format!("{snapshot}{row}\n");
+        assert!(
+            validate_observability_withheld_snapshot(&helper, &duplicate).is_err(),
+            "duplicate literal row"
+        );
+    }
+    for changed in [
+        snapshot.replace("\twarning\t", "\terror\t"),
+        snapshot.replace("\t-\t-\n", "\tomitted\tpartial\n"),
+        snapshot.replace("GF_PLUGINS_PREINSTALL_DISABLED", "UNREVIEWED_FIELD"),
+    ] {
+        assert!(
+            validate_observability_withheld_snapshot(&helper, &changed).is_err(),
+            "changed literal tuple"
+        );
+    }
+    for changed in [
+        helper.replace("expected.compose-quadlet.withheld.tsv", "unreviewed.tsv"),
+        helper.replacen(
+            "      return\n      ;;\n    live-reimport)",
+            "      ;;\n    live-reimport)",
+            1,
+        ),
+        helper.replace(
+            "if [[ \"${mode}\" == cli ]]; then",
+            "if [[ \"${mode}\" == compose ]]; then",
+        ),
+        format!("{helper}\n# ${{fixture}}/expected.compose-quadlet.withheld.tsv\n"),
+    ] {
+        assert!(
+            validate_observability_withheld_snapshot(&changed, &snapshot).is_err(),
+            "changed route consumer"
+        );
+    }
+    Ok(())
+}
+
 fn validate_live_observability_application_cell(runner: &str) -> Result<(), String> {
     for required in [
         "--profile <smoke|full-container|limitation-revalidation|application|forgejo-application|paperless-application|immich-application|observability-application|supabase-application>",
@@ -4328,7 +4438,7 @@ fn validate_live_observability_application_cell(runner: &str) -> Result<(), Stri
         "observability_assert_default_withholding",
         "observability_assert_output_membership exact",
         "--environment-values include",
-        "BFQ0003\\tservices.grafana.environment.GF_SECURITY_ADMIN_PASSWORD",
+        "${fixture}/expected.compose-quadlet.withheld.tsv",
         "if (subject ~ /^volumes\\./)",
         "decision = \"approximated\"",
         "policy = \"approximate\"",

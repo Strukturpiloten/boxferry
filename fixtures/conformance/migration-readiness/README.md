@@ -90,3 +90,43 @@ systemd are the four explicit non-success gaps retained in every evidence docume
 
 See [ADR 0049](../../../docs/decisions/0049-bounded-supabase-application-acceptance.md) for the
 application, supply-chain, and resource-boundary decision.
+
+## Filesystem-space measurement
+
+Disk growth measures the decrease in a mounted filesystem's available-space estimate, not exclusive
+task writes. Ordinary filesystems retain `st_dev` accounting. Btrfs subvolumes can have different
+`st_dev` and statfs IDs while sharing one global `f_bavail` view: the helper counts that view once
+using the mounted FSID from the fixed, read-only `BTRFS_IOC_FS_INFO` ABI and the complete canonical
+kernel backing-device set. Equal counters and filesystem UUIDs alone never authorize merging;
+distinct physical-space identities still contribute separately to the unchanged growth budget.
+
+Linux mountinfo and the opened descriptor's mount ID select the exact longest matching mount,
+including overmounts. Valid [opaque nsfs namespace roots](https://github.com/torvalds/linux/blob/v7.2/fs/nsfs.c#L404)
+on unrelated mounts are accepted; unrelated mount-table churn does not change the selected view.
+Mountinfo paths are decoded once, and retained evidence preserves literal backslashes. Bounded
+ioctl/sysfs checks reject malformed, missing, incomplete, ambiguous, or changing identity. The
+descriptor supplies both identity and `f_bavail * f_frsize`; all registered paths are revalidated on
+every sample and at final evidence collection. A fresh read-only descriptor reopens the requested
+path's current ancestor after the counter read, so a same-target overmount cannot hide behind a
+still-valid old descriptor. Additive evidence-v2 path observations retain each role, requested path,
+measured ancestor, raw subvolume device/statfs IDs, mount provenance, and Btrfs backing devices. A
+disk measurement error is sticky: preflight cannot run the task, and a mid-run error stops/reaps its
+child and produces failed, non-timeout evidence.
+
+Measurement aborts and timeouts give the entire owned process group the existing 20-second TERM
+grace, then issue group-wide KILL before bounded leader reaping. The leader remains unreaped until
+group cleanup completes, preventing PID/PGID reuse during signalling. This is not a guarantee that
+detached descendants or managed-runtime resources were cleaned; runtime suites retain their own
+exact-label cleanup checks. Historical evidence-v1 is unchanged. Recorded backing-device provenance
+is validated canonically with kernel device-number bounds and a one-to-one target mapping, without
+dereferencing another host's historical sysfs paths.
+
+The ABI and accounting basis are the Linux
+[FS_INFO UAPI](https://github.com/torvalds/linux/blob/v6.17/include/uapi/linux/btrfs.h),
+[mounted-FSID ioctl](https://github.com/torvalds/linux/blob/v7.2/fs/btrfs/ioctl.c),
+[kernel device inventory](https://github.com/torvalds/linux/blob/v7.2/fs/btrfs/sysfs.c), and
+[Btrfs statfs implementation](https://github.com/torvalds/linux/blob/v7.2/fs/btrfs/super.c).
+This is a shared available-space estimate affected by allocation profiles, metadata and reservations,
+not qgroup quota headroom or exclusive-write attribution. The exact local vendor-kernel source is
+not bound by those upstream references. Unsupported Btrfs ioctl ABIs fail unavailable; x86_64 and
+AArch64 use the reviewed generic encoding, without claiming new native runtime conformance.

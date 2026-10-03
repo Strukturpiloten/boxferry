@@ -77,122 +77,293 @@ for mutation in missing extra; do
   fi
 done
 diagnostic_base="${reviewed_diagnostic_base}"
-observability_write_live_diagnostic_template \
-  compose exact podman compose bf-private-observability- \
-  "${test_root}/observability-diagnostics.tsv"
-awk -F '\t' '
-  $1 == "BFP0009" && $2 == "services.bf-private-observability-alloy.mounts[0]" {
-    if (NF == 5 && $3 == "note" && $4 == "reconstructed" && $5 == "") matching++
-  }
-  END { exit matching != 1 }
-' "${test_root}/observability-diagnostics.tsv" || {
-  printf '%s\n' 'A reconstruction note retained a literal absent-policy marker.' >&2
-  exit 1
-}
 
 diagnostic_fixture="${repository_root}/fixtures/conformance/observability-application/diagnostics"
 assert_withheld_environment_keys() {
   local importer=$1 exporter=$2 expected_count=$3
   [[ "$(wc -l < "${importer}")" == "${expected_count}" ]] || return 1
   awk -F '\t' '
-    $1 != "BFP0002" || $2 !~ /\.environment\./ ||
-    $3 != "warning" || $4 != "omitted" || $5 != "partial" { exit 1 }
+    NF != 5 || $1 != "BFP0002" || $2 !~ /^services\..*\.environment\./ ||
+      $3 != "warning" || $4 != "omitted" || $5 != "partial" { exit 1 }
   ' "${importer}" || return 1
   diff --unified=0 \
     <(awk -F '\t' '{ print $2 }' "${importer}" | sort) \
     <(awk -F '\t' '$1 == "BFP0007" && $2 ~ /\.environment\./ { print $2 }' "${exporter}" | sort)
 }
 assert_withheld_environment_keys \
-  "${diagnostic_fixture}/podman-import-withheld-environment.tsv" \
-  "${diagnostic_fixture}/podman-export.tsv" 47
+  "${diagnostic_fixture}/podman-import-withheld-environment.tsv" "${diagnostic_fixture}/podman-export.tsv" 49
 assert_withheld_environment_keys \
-  "${diagnostic_fixture}/all-podman-import-withheld-environment.tsv" \
-  "${diagnostic_fixture}/all-podman-export.tsv" 9
-
+  "${diagnostic_fixture}/all-podman-import-withheld-environment.tsv" "${diagnostic_fixture}/all-podman-export.tsv" 9
+diagnostic_base="${diagnostic_fixture}/non-podman-environment-promotions.tsv"
 for service in alloy grafana log-producer loki metrics-producer prometheus; do
-  awk -F '\t' -v subject="services.{{resource_prefix}}${service}.environment" '
-    $2 == subject && $1 == "BFP0003" && $3 == "warning" &&
-      $4 == "approximated" && $5 == "approximate" { matching++ }
-    END { exit matching != 1 }
-  ' "${diagnostic_fixture}/non-podman-environment-promotions.tsv"
+  assert_static_diagnostic_tuple \
+    "services.{{resource_prefix}}${service}.environment" BFP0003 warning approximated approximate
 done
-[[ "$(wc -l < "${diagnostic_fixture}/non-podman-environment-promotions.tsv")" == 6 ]]
-[[ "$(wc -l < "${diagnostic_fixture}/all-non-podman-environment-promotion.tsv")" == 1 ]]
-
-awk -F '\t' '$2 != "services.{{resource_prefix}}alloy.environment.ALLOY_DEPLOY_MODE"' \
-  "${diagnostic_fixture}/podman-import-withheld-environment.tsv" \
-  > "${test_root}/missing-env-key.tsv"
-if assert_withheld_environment_keys \
-  "${test_root}/missing-env-key.tsv" "${diagnostic_fixture}/podman-export.tsv" 47 \
-  > /dev/null 2>&1; then
-  printf '%s\n' 'A missing protected environment key satisfied the authored key contract.' >&2
-  exit 1
-fi
-cp -- "${diagnostic_fixture}/podman-import-withheld-environment.tsv" "${test_root}/extra-env-key.tsv"
-printf 'BFP0002\tservices.{{resource_prefix}}alloy.environment.UNREVIEWED\twarning\tomitted\tpartial\n' \
-  >> "${test_root}/extra-env-key.tsv"
-if assert_withheld_environment_keys \
-  "${test_root}/extra-env-key.tsv" "${diagnostic_fixture}/podman-export.tsv" 47 \
-  > /dev/null 2>&1; then
-  printf '%s\n' 'An extra protected environment key satisfied the authored key contract.' >&2
-  exit 1
-fi
-
-assert_rendered_environment_shape() {
-  local selection=$1 output=$2 application_aggregate=$3 application_keys=$4 peer_aggregate=$5 peer_keys=$6
-  local rendered="${test_root}/environment-${selection}-${output}.tsv"
-  observability_write_live_diagnostic_template \
-    compose "${selection}" podman "${output}" bf-private-observability- "${rendered}"
-  awk -F '\t' -v application_aggregate="${application_aggregate}" -v application_keys="${application_keys}" \
-    -v peer_aggregate="${peer_aggregate}" -v peer_keys="${peer_keys}" '
-    $2 ~ /^services\.bf-private-observability-.*\.environment(\.|$)/ {
-      peer = $2 ~ /boundary-peer/
-      if ($1 == "BFP0003" && $2 ~ /\.environment$/) {
-        if (peer) peer_aggregate_seen++; else application_aggregate_seen++
+[[ "$(wc -l < "${diagnostic_base}")" == 6 ]]
+diagnostic_base="${diagnostic_fixture}/all-non-podman-environment-promotion.tsv"
+assert_static_diagnostic_tuple \
+  'services.{{resource_prefix}}boundary-peer.environment' BFP0003 warning approximated approximate
+[[ "$(wc -l < "${diagnostic_base}")" == 1 ]]
+diagnostic_base="${reviewed_diagnostic_base}"
+for key in GF_PLUGINS_PREINSTALL_AUTO_UPDATE GF_PLUGINS_PREINSTALL_DISABLED; do
+  subject="services.{{resource_prefix}}grafana.environment.${key}"
+  for mutation in missing duplicate malformed extra; do
+    mutated="${test_root}/${key}-${mutation}.tsv"
+    awk -F '\t' -v subject="${subject}" -v mutation="${mutation}" '
+      $2 == subject && mutation == "missing" { next }
+      $2 == subject && mutation == "malformed" { sub(/omitted/, "approximated") }
+      { print }
+      $2 == subject && mutation == "duplicate" { print }
+      END {
+        if (mutation == "extra")
+          print "BFP0002\tservices.{{resource_prefix}}grafana.environment.UNREVIEWED\twarning\tomitted\tpartial"
       }
-      if ($1 == "BFP0002" && $2 ~ /\.environment\./) {
-        if (peer) peer_keys_seen++; else application_keys_seen++
-      }
+    ' "${diagnostic_fixture}/podman-import-withheld-environment.tsv" > "${mutated}"
+    if assert_withheld_environment_keys "${mutated}" "${diagnostic_fixture}/podman-export.tsv" 49 \
+      > /dev/null 2>&1; then
+      printf 'Withheld key contract admitted %s %s.\n' "${mutation}" "${key}" >&2
+      exit 1
+    fi
+  done
+done
+
+assert_rendered_environment_contract() {
+  local rendered=$1 selection=$2 output=$3 importer_expected=${4:-true}
+  local -a key_templates=("${diagnostic_fixture}/podman-import-withheld-environment.tsv")
+  [[ "${selection}" != all ]] || key_templates+=("${diagnostic_fixture}/all-podman-import-withheld-environment.tsv")
+  awk -F '\t' -v output="${output}" -v importer_expected="${importer_expected}" '
+    FILENAME != ARGV[ARGC - 1] {
+      subject = $2
+      sub(/\{\{resource_prefix\}\}/, "bf-private-observability-", subject)
+      keys[subject] = 1
+      next
+    }
+    $2 ~ /^services\..*\.environment\./ {
+      if (!(($2 in keys) && ($1 == "BFP0002" || $1 == "BFP0007") &&
+          $3 == "warning" && $4 == "omitted" && $5 == "partial")) invalid++
+      counts[$1 SUBSEP $2]++
     }
     END {
-      exit !(application_aggregate_seen == application_aggregate &&
-        application_keys_seen == application_keys &&
-        peer_aggregate_seen == peer_aggregate && peer_keys_seen == peer_keys)
+      if (invalid) exit 1
+      for (key in keys)
+        if (counts["BFP0002" SUBSEP key] != (output == "podman" && importer_expected == "true") ||
+            counts["BFP0007" SUBSEP key] != (output == "podman")) exit 1
     }
-  ' "${rendered}"
+  ' "${key_templates[@]}" "${rendered}"
 }
-assert_rendered_environment_shape exact compose 6 0 0 0
-assert_rendered_environment_shape exact podman 0 47 0 0
-assert_rendered_environment_shape all compose 6 0 1 0
-assert_rendered_environment_shape all podman 0 47 0 9
-for output in compose podman; do
-  for field in networks restart_policy; do
-    awk -F '\t' -v subject="services.bf-private-observability-boundary-peer.${field}" '
-      $2 == subject {
-        if (NF == 5 && $1 == "BFP0009" && $3 == "note" &&
-            $4 == "reconstructed" && $5 == "") matching++
-        else mismatched++
-      }
-      END { exit !(matching == 1 && mismatched == 0) }
-    ' "${test_root}/environment-all-${output}.tsv" || {
-      printf 'Incorrect all-selector boundary-peer reconstruction for %s (%s).\n' \
-        "${field}" "${output}" >&2
-      exit 1
+
+observability_test_report_from_tsv() {
+  jq --raw-input --slurp '{
+    diagnostics: (split("\n") | map(select(length > 0) | split("\t") |
+      {code: .[0], severity: .[2], fields:
+        ([{name: "subject", value: .[1]}] +
+         (if .[3] == "" then [] else [{name: "decision", value: .[3]}] end) +
+         (if .[4] == "" then [] else [{name: "required_loss_policy", value: .[4]}] end))}))
+  }' "$1" > "$2"
+}
+
+# Retain the independent Alloy key counterexamples from the native adoption.
+for mutation in missing extra; do
+  mutated="${test_root}/alloy-${mutation}-environment.tsv"
+  awk -F '\t' -v mutation="${mutation}" '
+    $2 == "services.{{resource_prefix}}alloy.environment.ALLOY_DEPLOY_MODE" && mutation == "missing" { next }
+    { print }
+    END {
+      if (mutation == "extra")
+        print "BFP0002\tservices.{{resource_prefix}}alloy.environment.UNREVIEWED\twarning\tomitted\tpartial"
     }
-  done
-  awk -F '\t' '
-    $2 == "networks.podman.ownership" {
-      if (NF == 5 && $1 == "BFP0003" && $3 == "warning" &&
-          $4 == "inferred-application-ownership" && $5 == "approximate") matching++
-      else mismatched++
-    }
-    END { exit !(matching == 1 && mismatched == 0) }
-  ' "${test_root}/environment-all-${output}.tsv" || {
-    printf 'Incorrect all-selector Podman network ownership for %s.\n' "${output}" >&2
+  ' "${diagnostic_fixture}/podman-import-withheld-environment.tsv" > "${mutated}"
+  if assert_withheld_environment_keys "${mutated}" "${diagnostic_fixture}/podman-export.tsv" 49 \
+    > /dev/null 2>&1; then
+    printf 'The withheld key contract admitted an %s Alloy key.\n' "${mutation}" >&2
     exit 1
-  }
+  fi
 done
 
+# Exercise every exporter, provisioning mode, and selector without a runtime.
+for diagnostic_mode in cli compose; do
+  for diagnostic_selection in exact label all; do
+    for diagnostic_output in compose quadlet podman; do
+      rendered="${test_root}/native-${diagnostic_mode}-${diagnostic_selection}-${diagnostic_output}.tsv"
+      observability_write_live_diagnostic_template \
+        "${diagnostic_mode}" "${diagnostic_selection}" podman "${diagnostic_output}" \
+        bf-private-observability- "${rendered}"
+      expected_notes=18 expected_ownership=6 expected_environment=6
+      if [[ "${diagnostic_selection}" == all ]]; then
+        expected_notes=20 expected_ownership=7 expected_environment=7
+      fi
+      [[ "${diagnostic_output}" != podman ]] || expected_environment=0
+      awk -F '\t' -v notes="${expected_notes}" -v ownership="${expected_ownership}" \
+        -v environment="${expected_environment}" '
+        $1 == "BFP0009" {
+          if (NF != 5 || $3 != "note" || $4 != "reconstructed" || $5 != "") exit 1
+          notes_seen++
+        }
+        $4 == "inferred-application-ownership" {
+          if (NF != 5 || $1 != "BFP0003" || $3 != "warning" || $5 != "approximate") exit 1
+          ownership_seen++
+        }
+        $2 ~ /\.environment$/ && $1 == "BFP0003" &&
+          $3 == "warning" && $4 == "approximated" && $5 == "approximate" { environment_seen++ }
+        $2 ~ /^services\..*\.logging$/ {
+          if ($1 != "BFP0003" || $3 != "warning" || $4 != "not-promoted" || $5 != "partial") exit 1
+          logging_seen++
+        }
+        $2 ~ /edge\.ownership$/ { exit 1 }
+        END { exit !(notes_seen == notes && ownership_seen == ownership &&
+          environment_seen == environment && logging_seen == ownership) }
+      ' "${rendered}"
+      assert_rendered_environment_contract "${rendered}" "${diagnostic_selection}" "${diagnostic_output}"
+      if [[ "${diagnostic_selection}" == all ]]; then
+        for field in networks restart_policy; do
+          awk -F '\t' -v subject="services.bf-private-observability-boundary-peer.${field}" '
+            $2 == subject {
+              if ($1 == "BFP0009" && $3 == "note" && $4 == "reconstructed" && $5 == "") matching++
+              else mismatched++
+            }
+            END { exit !(matching == 1 && mismatched == 0) }
+          ' "${rendered}"
+        done
+        grep --fixed-strings --line-regexp --quiet \
+          $'BFP0003\tnetworks.podman.ownership\twarning\tinferred-application-ownership\tapproximate' "${rendered}"
+      fi
+      # Synthetic reports test normalization; the literal tuples above remain
+      # independent semantic expectations, never derived from native output.
+      diagnostic_report="${rendered}.json"
+      observability_test_report_from_tsv "${rendered}" "${diagnostic_report}"
+      observability_assert_reviewed_diagnostics live-native-export \
+        "${diagnostic_mode}" "${diagnostic_selection}" podman "${diagnostic_output}" \
+        bf-private-observability- "${diagnostic_report}"
+      for mutation in missing duplicate severity decision policy duplicate-field; do
+        jq --arg mutation "${mutation}" '
+          ([.diagnostics | to_entries[] | select(.value.code == "BFP0009")][0].key) as $index |
+          if $mutation == "missing" then del(.diagnostics[$index])
+          elif $mutation == "duplicate" then .diagnostics += [.diagnostics[$index]]
+          elif $mutation == "severity" then .diagnostics[$index].severity = "warning"
+          elif $mutation == "decision" then
+            .diagnostics[$index].fields |= map(if .name == "decision" then .value = "approximated" else . end)
+          elif $mutation == "policy" then
+            .diagnostics[$index].fields += [{name: "required_loss_policy", value: "approximate"}]
+          else .diagnostics[$index].fields += [{name: "decision", value: "reconstructed"}]
+          end
+        ' "${diagnostic_report}" > "${diagnostic_report}.mutated"
+        if observability_assert_reviewed_diagnostics live-native-export \
+          "${diagnostic_mode}" "${diagnostic_selection}" podman "${diagnostic_output}" \
+          bf-private-observability- "${diagnostic_report}.mutated" > /dev/null 2>&1; then
+          printf 'Native contract admitted %s reconstruction note for %s/%s/%s.\n' \
+            "${mutation}" "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_output}" >&2
+          exit 1
+        fi
+      done
+      if [[ "${diagnostic_output}" == podman ]]; then
+        for key in GF_PLUGINS_PREINSTALL_AUTO_UPDATE GF_PLUGINS_PREINSTALL_DISABLED; do
+          for code in BFP0002 BFP0007; do
+            for mutation in missing duplicate malformed extra; do
+              jq --arg key "${key}" --arg code "${code}" --arg mutation "${mutation}" '
+                ([.diagnostics | to_entries[] | select(.value.code == $code and
+                  any(.value.fields[]; .name == "subject" and (.value | endswith(".environment." + $key))))][0].key) as $index |
+                if $mutation == "missing" then del(.diagnostics[$index])
+                elif $mutation == "duplicate" then .diagnostics += [.diagnostics[$index]]
+                elif $mutation == "malformed" then
+                  .diagnostics[$index].fields |= map(if .name == "decision" then .value = "approximated" else . end)
+                else .diagnostics += [.diagnostics[$index] |
+                  .fields |= map(if .name == "subject" then .value += ".UNREVIEWED" else . end)]
+                end
+              ' "${diagnostic_report}" > "${diagnostic_report}.key-mutated"
+              if observability_assert_reviewed_diagnostics live-native-export \
+                "${diagnostic_mode}" "${diagnostic_selection}" podman podman \
+                bf-private-observability- "${diagnostic_report}.key-mutated" > /dev/null 2>&1; then
+                printf 'Native contract admitted %s %s %s.\n' "${mutation}" "${code}" "${key}" >&2
+                exit 1
+              fi
+            done
+          done
+        done
+      fi
+    done
+  done
+done
+for malformed in \
+  $'BFP0009\tsubject\twarning\treconstructed\t-' \
+  $'BFP0009\tsubject\tnote\tapproximated\t-' \
+  $'BFP0009\tsubject\tnote\treconstructed\tapproximate' \
+  $'BFP0009\tsubject\tnote\treconstructed\t' \
+  $'BFP0003\tsubject\tnote\tinferred-application-ownership\tapproximate' \
+  $'BFP0003\tsubject\twarning\tinferred-application-ownership\t-'; do
+  printf '%s\n' "${malformed}" > "${test_root}/malformed-native.tsv"
+  if observability_append_live_diagnostic_template \
+    "${test_root}/malformed-native.tsv" bf-private-observability- \
+    "${test_root}/malformed-native-rendered.tsv" > /dev/null 2>&1; then
+    printf '%s\n' 'A malformed native reconstruction or ownership tuple was accepted.' >&2
+    exit 1
+  fi
+done
+
+# Reimports read emitted documents, not a native Podman inventory.
+while read -r diagnostic_mode diagnostic_selection diagnostic_input diagnostic_output expected_rows; do
+  rendered="${test_root}/reimport-${diagnostic_mode}-${diagnostic_selection}-${diagnostic_input}-${diagnostic_output}.tsv"
+  observability_write_live_reimport_diagnostic_template \
+    "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_input}" "${diagnostic_output}" \
+    bf-private-observability- "${rendered}"
+  [[ "$(wc -l < "${rendered}")" == "${expected_rows}" ]]
+  if grep --extended-regexp --quiet '^BFP000[239][[:space:]]|\.logging[[:space:]]' "${rendered}"; then
+    printf '%s\n' 'A reimport acquired native-importer or observation-only logging diagnostics.' >&2
+    exit 1
+  fi
+  assert_rendered_environment_contract "${rendered}" "${diagnostic_selection}" "${diagnostic_output}" false
+  diagnostic_report="${rendered}.json"
+  observability_test_report_from_tsv "${rendered}" "${diagnostic_report}"
+  observability_assert_reviewed_diagnostics live-reimport \
+    "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_input}" "${diagnostic_output}" \
+    bf-private-observability- "${diagnostic_report}"
+  jq '.diagnostics += [{code: "BFP0002", severity: "warning", fields: [
+    {name: "subject", value: "services.bf-private-observability-grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED"},
+    {name: "decision", value: "omitted"}, {name: "required_loss_policy", value: "partial"}
+  ]}]' "${diagnostic_report}" > "${diagnostic_report}.fallback"
+  if observability_assert_reviewed_diagnostics live-reimport \
+    "${diagnostic_mode}" "${diagnostic_selection}" "${diagnostic_input}" "${diagnostic_output}" \
+    bf-private-observability- "${diagnostic_report}.fallback" > /dev/null 2>&1; then
+    printf '%s\n' 'A native-importer fallback satisfied a reimport contract.' >&2
+    exit 1
+  fi
+done << 'EOF'
+cli exact compose compose 0
+cli exact compose quadlet 1
+cli exact compose podman 58
+cli exact quadlet compose 8
+cli exact quadlet quadlet 0
+cli exact quadlet podman 65
+cli label compose compose 0
+cli label compose quadlet 1
+cli label compose podman 58
+cli label quadlet compose 8
+cli label quadlet quadlet 0
+cli label quadlet podman 65
+cli all compose compose 0
+cli all compose quadlet 1
+cli all compose podman 68
+cli all quadlet compose 9
+cli all quadlet quadlet 0
+cli all quadlet podman 76
+compose exact compose compose 0
+compose exact compose quadlet 1
+compose exact compose podman 58
+compose exact quadlet compose 1
+compose exact quadlet quadlet 0
+compose exact quadlet podman 58
+compose label compose compose 0
+compose label compose quadlet 1
+compose label compose podman 58
+compose label quadlet compose 1
+compose label quadlet quadlet 0
+compose label quadlet podman 58
+compose all compose compose 0
+compose all compose quadlet 1
+compose all compose podman 68
+compose all quadlet compose 2
+compose all quadlet quadlet 0
+compose all quadlet podman 69
+EOF
 assert_absent() {
   local value=$1 output=$2
   if grep --fixed-strings --quiet -- "${value}" <<< "${output}"; then
@@ -200,6 +371,298 @@ assert_absent() {
     return 1
   fi
 }
+
+(
+  clock_file="${test_root}/grafana-clock"
+  calls_file="${test_root}/grafana-health-calls"
+  diagnostics_file="${test_root}/grafana-health-diagnostics"
+  private_marker='private-password-runtime-identity-/run/private.sock-10.88.0.9'
+  observability_clock() { printf '%s\n' "$(< "${clock_file}")"; }
+  sleep() {
+    [[ "$1" == 1 || "$1" == 2 ]]
+    # Simulate scheduler delay without adding real waits to the offline suite.
+    printf '%s\n' "$(($(< "${clock_file}") + 60))" > "${clock_file}"
+  }
+  observability_grafana_health_request() {
+    local path=$3 request_timeout=$4 endpoint=loki now count
+    case "${path}" in
+      /api/health) endpoint=basic ;;
+      /api/datasources/uid/boxferry-prometheus/health) endpoint=prometheus ;;
+      /api/datasources/uid/boxferry-loki/health) ;;
+      *) return 2 ;;
+    esac
+    now=$(< "${clock_file}")
+    ((request_timeout > 0 && request_timeout <= 5 && request_timeout <= 240 - now)) || return 90
+    printf '%s %s %s\n' "${endpoint}" "${request_timeout}" "${now}" >> "${calls_file}"
+    if [[ "${mode}" == exhausted ]]; then
+      if [[ "${endpoint}" == basic ]]; then
+        printf '%s\n' "$((now + 239))" > "${clock_file}"
+      else
+        printf '%s\n' "$((now + 1))" > "${clock_file}"
+      fi
+    elif [[ "${mode}" == late ]]; then
+      printf '%s\n' 241 > "${clock_file}"
+    fi
+    if [[ "${endpoint}" == basic ]]; then
+      printf 'HTTP/1.1 200 OK\n\n{"database":"ok","version":"fixture"}\n'
+      return 0
+    fi
+    if [[ "${endpoint}" == prometheus || "${mode}" == exhausted ]]; then
+      printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\n'
+      return 0
+    fi
+    count=$(grep --count '^loki ' "${calls_file}")
+    case "${mode}" in
+      delayed)
+        if ((count > 1)); then
+          printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\n'
+          return 0
+        fi
+        ;;
+      malformed)
+        printf 'HTTP/1.1 200 OK\n\n{"status":42,"message":"%s"}\n' "${private_marker}"
+        return 0
+        ;;
+      unknown)
+        printf 'HTTP/1.1 404 Not Found\n\n{"messageId":"%s","message":"%s"}\n' "${private_marker}" "${private_marker}"
+        return 1
+        ;;
+      timeout)
+        printf '%s\n' "${private_marker}" >&2
+        return 124
+        ;;
+      failed-client)
+        printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\n'
+        return 1
+        ;;
+    esac
+    printf 'HTTP/1.1 404 Not Found\n\n{"messageId":"plugin.notRegistered","message":"%s"}\n' "${private_marker}"
+    return 1
+  }
+  printf '%s\n' 0 > "${clock_file}"
+  : > "${calls_file}"
+  mode=control
+  observability_grafana_health_request /tmp/private.sock bf-private /api/health 5 > /dev/null
+  [[ "$(< "${calls_file}")" == 'basic 5 0' ]]
+  for mode in delayed persistent malformed unknown timeout failed-client exhausted late; do
+    printf '%s\n' 0 > "${clock_file}"
+    : > "${calls_file}"
+    if observability_wait_for 240 'Grafana readiness' observability_grafana_ready \
+      /tmp/private.sock bf-private > /dev/null 2> "${diagnostics_file}"; then
+      [[ "${mode}" == delayed ]]
+      [[ "$(< "${clock_file}")" == 60 ]]
+      [[ "$(wc -l < "${calls_file}")" == 6 ]]
+      [[ ! -s "${diagnostics_file}" ]]
+    else
+      [[ "${mode}" != delayed ]]
+      observability_report_grafana_health_failure 2>> "${diagnostics_file}"
+      diagnostics=$(< "${diagnostics_file}")
+      grep --fixed-strings --quiet 'Timed out after 240s waiting for observability Grafana readiness.' <<< "${diagnostics}"
+      case "${mode}" in
+        persistent) expected='endpoint=loki http-status=404 error-category=plugin-not-registered' ;;
+        malformed) expected='endpoint=loki http-status=200 error-category=malformed-response' ;;
+        unknown) expected='endpoint=loki http-status=404 error-category=unknown' ;;
+        timeout | exhausted) expected='endpoint=loki http-status=unknown error-category=unknown' ;;
+        failed-client) expected='endpoint=loki http-status=200 error-category=transport-failure' ;;
+        late) expected='endpoint=prometheus http-status=unknown error-category=unknown' ;;
+      esac
+      grep --fixed-strings --quiet "${expected}" <<< "${diagnostics}"
+      ((${#diagnostics} < 256))
+      for forbidden in "${private_marker}" /tmp/private.sock bf-private; do
+        assert_absent "${forbidden}" "${diagnostics}"
+      done
+      if [[ "${mode}" == exhausted ]]; then
+        [[ "$(< "${calls_file}")" == $'basic 5 0\nprometheus 1 239' ]]
+      elif [[ "${mode}" == late ]]; then
+        [[ "$(wc -l < "${calls_file}")" == 1 ]]
+      else
+        [[ "$(< "${clock_file}")" == 240 ]]
+        [[ "$(wc -l < "${calls_file}")" == 12 ]]
+      fi
+    fi
+  done
+  classified=$(printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\ntrailing-private-data' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 404 Not Found\n\n{"messageId":"plugin.notImplemented"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'404\tmethod-not-implemented\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 503 Unavailable\n\n{"messageId":"plugin.unavailable"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'503\tplugin-unavailable\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n\n{"database":true}' | observability_classify_grafana_health basic)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n\n{"database":"failed"}' | observability_classify_grafana_health basic)
+  [[ "${classified}" == $'200\tunhealthy-response\tfalse' ]]
+  classified=$(printf '  HTTP/1.1 200 OK\r\n  Content-Type: application/json\r\n  X-Fixture: {private}\r\n{"status":"OK"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tunknown\ttrue' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n  Content-Type: application/json\n  Content-Length: 17\n  Connection: close\n  \n{"database":"ok"}' | observability_classify_grafana_health basic)
+  [[ "${classified}" == $'200\tunknown\ttrue' ]]
+  for endpoint in basic prometheus loki; do
+    field=status expected_value=OK
+    [[ "${endpoint}" != basic ]] || {
+      field=database
+      expected_value=ok
+    }
+    for malformed_body in \
+      "{\"${field}\":\"failed\",\"${field}\":\"${expected_value}\"}" \
+      "{\"${field}\":\"${expected_value}\",\"${field}\":\"${expected_value}\"}" \
+      "{\"${field}\":\"${expected_value}\",\"extra\":{\"private\":1,\"private\":2}}"; do
+      classified=$(printf 'HTTP/1.1 200 OK\n\n%s' "${malformed_body}" | observability_classify_grafana_health "${endpoint}")
+      [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+    done
+    for nonfinite in NaN Infinity -Infinity; do
+      classified=$(printf 'HTTP/1.1 200 OK\n\n{"%s":"%s","unused":[%s]}' "${field}" "${expected_value}" "${nonfinite}" | observability_classify_grafana_health "${endpoint}")
+      [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+    done
+    classified=$(printf 'HTTP/1.1 200 OK\n\n{"%s":"%s","unused":{"finite":1.5,"nothing":null}}' "${field}" "${expected_value}" | observability_classify_grafana_health "${endpoint}")
+    [[ "${classified}" == $'200\tunknown\ttrue' ]]
+  done
+  classified=$(printf '{"status":"OK"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'unknown\tmalformed-response\tfalse' ]]
+  for malformed_body in 'not-json' 'HTTP/1.1 200 OK\n\n{"status":"OK"}' '{"status":"OK"}\nHTTP/1.1 200 OK'; do
+    classified=$(printf 'HTTP/1.1 404 Not Found\n\n%b' "${malformed_body}" | observability_classify_grafana_health loki)
+    [[ "${classified}" == $'404\tunknown\tfalse' ]]
+  done
+  classified=$(printf 'HTTP/1.1 200 OK\nHTTP/1.1 404 Not Found\n\n{"status":"OK"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n\nnot-json' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 404 Not Found\n\n{"message":"plugin.notRegistered","messageId":"plugin.notRegistered.extra"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'404\tunknown\tfalse' ]]
+  classified=$(python3 -c 'print("HTTP/1.1 200 OK\n\n" + "x" * 16385)' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'unknown\toversized-response\tfalse' ]]
+  OBSERVABILITY_GRAFANA_ENDPOINT=${private_marker}
+  OBSERVABILITY_GRAFANA_HTTP_STATUS=${private_marker}
+  OBSERVABILITY_GRAFANA_ERROR_CATEGORY=${private_marker}
+  diagnostics=$(observability_report_grafana_health_failure 2>&1)
+  [[ "${diagnostics}" == 'OBSERVABILITY DIAGNOSTIC endpoint=unknown http-status=unknown error-category=unknown' ]]
+)
+
+(
+  request_arguments="${test_root}/grafana-request-arguments"
+  timeout() { printf '%s\n' "$@" > "${request_arguments}"; }
+  engine="fixture-engine"
+  started_outer=owned-outer
+  observability_grafana_health_request /tmp/nonexistent-observability.sock bf-private /api/health 3
+  [[ "$(head -n 7 "${request_arguments}")" == $'--foreground\n--signal=KILL\n3s\nfixture-engine\nexec\nowned-outer\npodman' ]]
+  [[ "$(tail -n 2 "${request_arguments}")" == $'http://grafana:3000/api/health\n3' ]]
+  socket="${test_root}/grafana-request.sock"
+  python3 -c 'import socket,sys; stream=socket.socket(socket.AF_UNIX); stream.bind(sys.argv[1]); stream.close()' "${socket}"
+  observability_grafana_health_request "${socket}" bf-private /api/health 1
+  [[ "$(head -n 6 "${request_arguments}")" == "$(printf '%s\n' --foreground --signal=KILL 1s fixture-engine --url "unix://${socket}")" ]]
+  [[ "$(tail -n 1 "${request_arguments}")" == 1 ]]
+)
+
+(
+  waits_file="${test_root}/grafana-wait-integration"
+  observability_wait_for() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "${waits_file}"; }
+  observability_pipeline_roles_running() { return 0; }
+  observability_wait_application /tmp/private.sock bf-private
+  [[ "$(wc -l < "${waits_file}")" == 5 ]]
+  [[ "$(grep --count $'240\tGrafana readiness\tobservability_grafana_ready' "${waits_file}")" == 1 ]]
+)
+
+(
+  client="${test_root}/grafana-slow-client"
+  client_marker="${test_root}/grafana-slow-client.pid"
+  printf '%s\n' '#!/bin/sh' "printf \"%s\\n\" \"\$\$\" > \"\$CLIENT_MARKER\"" 'exec sleep 100' > "${client}"
+  chmod 0700 "${client}"
+  CLIENT_MARKER="${client_marker}" python3 - "${script_directory}/lib/observability-application.sh" "${client}" << 'PY'
+import os
+import pathlib
+import select
+import signal
+import subprocess
+import sys
+import time
+
+helper, client = sys.argv[1:]
+marker = pathlib.Path(os.environ["CLIENT_MARKER"])
+child = subprocess.Popen(
+    ["bash", "-c", 'source "$1"; engine="$2"; started_outer=; observability_grafana_health_request /tmp/private.sock bf-private /api/health 1', "fixture", helper, client],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+)
+client_fd = None
+try:
+    deadline = time.monotonic() + 3
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert marker.exists(), "owned dummy client must start"
+    client_fd = os.pidfd_open(int(marker.read_text()))
+    child.communicate(timeout=3)
+    assert child.returncode == 137, "hard client timer must fail, never report health"
+    poller = select.poll()
+    poller.register(client_fd, select.POLLIN)
+    assert poller.poll(1000), "owned host client must not survive its deadline"
+    assert not pathlib.Path(f"/proc/{int(marker.read_text())}").exists(), "timer must reap its direct host client"
+finally:
+    if client_fd is not None:
+        try:
+            signal.pidfd_send_signal(client_fd, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.close(client_fd)
+    if child.poll() is None:
+        os.killpg(child.pid, signal.SIGKILL)
+    child.communicate(timeout=3)
+PY
+)
+
+(
+  cli_arguments="${test_root}/grafana-cli-arguments"
+  observability_remote() { printf '%s\n' "$@" > "${cli_arguments}"; }
+  observability_image_reference() { printf '%s\n' fixture-grafana-image; }
+  observability_create_cli_grafana /tmp/private.sock bf-private fixture-run
+  [[ "$(grep --count '^GF_PLUGINS_PREINSTALL_DISABLED=true$' "${cli_arguments}")" == 1 ]]
+  [[ "$(grep --count '^GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false$' "${cli_arguments}")" == 1 ]]
+  assert_absent GF_INSTALL_PLUGINS "$(< "${cli_arguments}")"
+)
+
+python3 - "${repository_root}" << 'PY'
+import json
+import pathlib
+import sys
+import tomllib
+
+root = pathlib.Path(sys.argv[1])
+scenario = root / "fixtures/scenarios/observability-application"
+native = root / "fixtures/conformance/observability-application"
+required = {"GF_PLUGINS_PREINSTALL_AUTO_UPDATE": "false", "GF_PLUGINS_PREINSTALL_DISABLED": "true"}
+for key, value in required.items():
+    assert f'{key}: "{value}"' in (native / "compose.yaml").read_text()
+    assert f"- {key}={value}" in (scenario / "compose.yaml").read_text()
+    assert f"Environment={key}={value}" in (scenario / "grafana.container").read_text()
+contract = tomllib.loads((scenario / "scenario.toml").read_text())
+for key, value in required.items():
+    assert f"grafana:{key}={value}" in contract["semantics"]["required-environment"]
+cassette = json.loads((scenario / "input-podman.cassette.json").read_text())
+def find_grafana(value):
+    if isinstance(value, dict):
+        if value.get("Name") == "grafana" and "Config" in value:
+            return value
+        for child in value.values():
+            found = find_grafana(child)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = find_grafana(child)
+            if found is not None:
+                return found
+    return None
+grafana = find_grafana(cassette)
+assert grafana is not None
+for key, value in required.items():
+    assert f"{key}={value}" in grafana["Config"]["Env"]
+for source in ["compose", "quadlet", "podman"]:
+    diagnostics = (scenario / f"expected.{source}-podman.diagnostics").read_text()
+    losses = (scenario / f"expected.{source}-podman.losses.tsv").read_text()
+    for key in required:
+        assert f"BFP0007|services.grafana.environment.{key}" in diagnostics
+        assert f"BFP0007\tservices.grafana.environment.{key}\tunsupported\t" in losses
+for name in ["podman-export", "reimport-compose-podman", "reimport-quadlet-podman"]:
+    diagnostics = (native / "diagnostics" / f"{name}.tsv").read_text()
+    for key in required:
+        assert f"BFP0007\tservices.{{{{resource_prefix}}}}grafana.environment.{key}\twarning\tomitted\tpartial" in diagnostics
+PY
 
 withheld_directory="${test_root}/default-withheld"
 mkdir -p -- "${withheld_directory}"
@@ -464,6 +927,31 @@ if observability_assert_reviewed_diagnostics \
   live-reimport cli exact compose quadlet bf-private-observability- \
   "${bfq_report}.unexpected-decision" > /dev/null 2>&1; then
   printf '%s\n' 'A Quadlet diagnostic with an invented decision field satisfied the contract.' >&2
+  exit 1
+fi
+
+withheld_report="${test_root}/withheld-environment-report.json"
+jq --null-input '{diagnostics: [
+  {code: "BFQ0003", severity: "warning", fields: [{name: "subject", value: "services.grafana.environment.GF_PLUGINS_PREINSTALL_AUTO_UPDATE"}]},
+  {code: "BFQ0003", severity: "warning", fields: [{name: "subject", value: "services.grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED"}]},
+  {code: "BFQ0003", severity: "warning", fields: [{name: "subject", value: "services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD"}]}
+]}' > "${withheld_report}"
+observability_assert_reviewed_diagnostics offline-scenario cli exact compose quadlet '' "${withheld_report}"
+for name in GF_PLUGINS_PREINSTALL_AUTO_UPDATE GF_PLUGINS_PREINSTALL_DISABLED; do
+  jq --arg subject "services.grafana.environment.${name}" \
+    '.diagnostics |= map(select(all(.fields[]; .name != "subject" or .value != $subject)))' \
+    "${withheld_report}" > "${withheld_report}.missing"
+  if observability_assert_reviewed_diagnostics offline-scenario cli exact compose quadlet '' \
+    "${withheld_report}.missing" > /dev/null 2>&1; then
+    printf 'A missing %s withholding diagnostic satisfied the exact route contract.\n' "${name}" >&2
+    exit 1
+  fi
+done
+printf '%s\n' '{"diagnostics":[]}' > "${withheld_report}.included"
+observability_assert_reviewed_diagnostics offline-scenario compose exact compose quadlet '' "${withheld_report}.included"
+if observability_assert_reviewed_diagnostics offline-scenario compose exact compose quadlet '' \
+  "${withheld_report}" > /dev/null 2>&1; then
+  printf '%s\n' 'Withholding diagnostics incorrectly satisfied the authored include route.' >&2
   exit 1
 fi
 
