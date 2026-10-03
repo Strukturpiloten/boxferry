@@ -5,17 +5,20 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import math
 import os
 import pathlib
+import platform
 import pwd
 import re
 import resource
 import shutil
 import signal
 import subprocess
+import struct
 import sys
 import tempfile
 import time
@@ -26,6 +29,15 @@ from typing import Any
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+MOUNTINFO = pathlib.Path("/proc/self/mountinfo")
+FDINFO = pathlib.Path("/proc/self/fdinfo")
+SYSFS = pathlib.Path("/sys")
+MAX_MOUNTINFO_BYTES = 1024 * 1024
+MAX_MOUNTS = 4096
+MAX_BTRFS_DEVICES = 128
+# Linux generic read-only FS_INFO ABI: 1024 bytes, native-endian u64 header
+# and the mounted (not on-disk or subvolume statfs) UUID at offset 16.
+BTRFS_IOC_FS_INFO = 0x8400941F
 CATALOGUE = ROOT / "fixtures/conformance/migration-readiness/tiers.toml"
 PODMAN_MATRIX = ROOT / "fixtures/conformance/podman-live/matrix.tsv"
 PODMAN_LIMITATIONS = ROOT / "fixtures/conformance/podman-live/limitations.tsv"
@@ -34,6 +46,8 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 FINAL_STATES = {"passed", "failed", "unavailable", "not-run"}
 EVIDENCE_SCHEMA = ROOT / "docs/schemas/migration-readiness-evidence-v2.schema.json"
 SAMPLE_INTERVAL_SECONDS = 0.25
+PROCESS_GROUP_TERM_GRACE_SECONDS = 20
+PROCESS_GROUP_REAP_SECONDS = 20
 SAMPLE_INTERVAL_MILLISECONDS = 250
 PODMAN_GRAPH_ROOT_DISCOVERY_TIMEOUT_SECONDS = 30.0
 CATALOGUE_KEYS = {"schema", "evidence-schema", "gaps", "tiers", "tasks"}
@@ -874,6 +888,206 @@ def discover_podman_graph_root(
     return pathlib.Path(graph_root).expanduser().resolve()
 
 
+def bounded_text(path: pathlib.Path, maximum: int) -> str:
+    with path.open("rb") as stream:
+        value = stream.read(maximum + 1)
+    if len(value) > maximum:
+        raise ContractError("filesystem identity metadata exceeds its read bound")
+    return value.decode("utf-8", errors="strict")
+
+
+def canonical_path(value: str) -> str:
+    """Validate an already-decoded path without interpreting literal backslashes."""
+    if not value.startswith("/") or "\x00" in value:
+        raise ContractError("malformed filesystem mount path")
+    if str(pathlib.PurePosixPath(value)) != value or ".." in pathlib.PurePosixPath(value).parts:
+        raise ContractError("non-canonical filesystem mount path")
+    return value
+
+
+def mount_path(value: str) -> str:
+    if re.search(r"\\(?!040|011|012|134)", value):
+        raise ContractError("malformed filesystem mount path escape")
+    decoded = re.sub(r"\\(040|011|012|134)", lambda match: chr(int(match[1], 8)), value)
+    return canonical_path(decoded)
+
+
+def mount_root(value: str, filesystem_type: str, *, encoded: bool = True) -> str:
+    # Namespace bind mounts have opaque roots, not filesystem directory paths.
+    if filesystem_type == "nsfs" and re.fullmatch(r"[a-z_]+:\[[1-9][0-9]*\]", value):
+        return value
+    return mount_path(value) if encoded else canonical_path(value)
+
+
+def read_mounts() -> dict[int, dict[str, Any]]:
+    rows = bounded_text(MOUNTINFO, MAX_MOUNTINFO_BYTES).splitlines()
+    if not rows or len(rows) > MAX_MOUNTS:
+        raise ContractError("missing or oversized filesystem mount inventory")
+    mounts = {}
+    for row_number, line in enumerate(rows, start=1):
+        before, marker, after = line.partition(" - ")
+        fields, tail = before.split(" "), after.split(" ")
+        if not marker or len(fields) < 6 or len(tail) != 3 or any(not field for field in fields + tail):
+            raise ContractError("malformed filesystem mount inventory")
+        if not re.fullmatch(r"[1-9][0-9]*", fields[0]) or not re.fullmatch(r"[0-9]+", fields[1]):
+            raise ContractError("invalid filesystem mount identifiers")
+        mount_id = int(fields[0])
+        if mount_id in mounts or not re.fullmatch(r"[0-9]+:[0-9]+", fields[2]):
+            raise ContractError("duplicate mount or malformed mount device")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", tail[0]):
+            raise ContractError("malformed filesystem type")
+        try:
+            root = mount_root(fields[3], tail[0])
+        except ContractError as error:
+            raise ContractError(f"mount inventory row {row_number} root: {error}") from error
+        try:
+            point = mount_path(fields[4])
+        except ContractError as error:
+            raise ContractError(f"mount inventory row {row_number} mountpoint: {error}") from error
+        mounts[mount_id] = {
+            "mount_id": mount_id,
+            "mount_device": fields[2],
+            "mount_root": root,
+            "mount_point": point,
+            "mount_options": fields[5],
+            "optional_fields": fields[6:],
+            "filesystem_type": tail[0],
+            "mount_source": tail[1],
+            "super_options": tail[2],
+        }
+    return mounts
+
+
+def mounted_view(fd: int, path: pathlib.Path) -> dict[str, Any]:
+    mounts = read_mounts()
+    ids = [line[7:].strip() for line in bounded_text(FDINFO / str(fd), 4096).splitlines() if line.startswith("mnt_id:")]
+    if len(ids) != 1 or not re.fullmatch(r"[1-9][0-9]*", ids[0]):
+        raise ContractError("missing or malformed opened-path mount identity")
+    matching = [row for row in mounts.values() if path.is_relative_to(row["mount_point"])]
+    selected = mounts.get(int(ids[0]))
+    if not matching or selected not in matching:
+        raise ContractError("opened path has no consistent filesystem mount")
+    longest = max(len(pathlib.Path(row["mount_point"]).parts) for row in matching)
+    if len(pathlib.Path(selected["mount_point"]).parts) != longest:
+        raise ContractError("ambiguous or changed filesystem overmount")
+    return selected
+
+
+def btrfs_info(fd: int) -> dict[str, Any]:
+    if sys.platform != "linux" or platform.machine() not in {"x86_64", "aarch64"}:
+        raise ContractError("Btrfs FS_INFO ioctl ABI is unavailable on this platform")
+    buffer = bytearray(1024)
+    if fcntl.ioctl(fd, BTRFS_IOC_FS_INFO, buffer, True) != 0 or len(buffer) != 1024:
+        raise ContractError("Btrfs FS_INFO ioctl returned an invalid result")
+    max_id, count, fsid = struct.unpack_from("=QQ16s", buffer)
+    if not any(fsid) or not 0 < count <= MAX_BTRFS_DEVICES or max_id < count:
+        raise ContractError("Btrfs FS_INFO identity or device count is unavailable")
+    return {"mounted_fsid": str(uuid.UUID(bytes=fsid)), "num_devices": count, "max_id": max_id}
+
+
+def backing_device_number(number: str) -> str:
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*):(?:0|[1-9][0-9]*)", number):
+        raise ContractError("Btrfs backing device number is malformed")
+    major, minor = (int(value) for value in number.split(":"))
+    if (major, minor) == (0, 0) or major > 4095 or minor > 1048575:
+        raise ContractError("Btrfs backing device number is outside kernel bounds")
+    return number
+
+
+def btrfs_devices(info: dict[str, Any]) -> list[dict[str, str]]:
+    directory = SYSFS / "fs/btrfs" / info["mounted_fsid"] / "devices"
+    if directory.resolve(strict=True) != directory:
+        raise ContractError("Btrfs sysfs inventory is not a canonical kernel directory")
+    entries = []
+    with os.scandir(directory) as scanner:
+        for entry in scanner:
+            if len(entries) >= MAX_BTRFS_DEVICES:
+                raise ContractError("Btrfs sysfs device inventory exceeds its bound")
+            entries.append(pathlib.Path(entry.path))
+    if len(entries) != info["num_devices"]:
+        raise ContractError("Btrfs sysfs device membership is incomplete")
+    devices = []
+    seen = set()
+    for entry in entries:
+        if not entry.is_symlink():
+            raise ContractError("Btrfs sysfs device is not a kernel link")
+        target = entry.resolve(strict=True)
+        if not target.is_relative_to(SYSFS / "devices"):
+            raise ContractError("Btrfs sysfs device escaped the kernel device tree")
+        number = backing_device_number(bounded_text(target / "dev", 64).rstrip("\n"))
+        if number in seen:
+            raise ContractError("Btrfs backing device membership is invalid or duplicated")
+        alias = SYSFS / "dev/block" / number
+        if not alias.is_symlink() or alias.resolve(strict=True) != target:
+            raise ContractError("Btrfs backing device kernel alias is unavailable or inconsistent")
+        seen.add(number)
+        devices.append({"device": number, "sysfs_path": str(target)})
+    return sorted(devices, key=lambda item: item["device"])
+
+
+def descriptor_view(
+    fd: int,
+    ancestor: pathlib.Path,
+    read_counter: bool,
+    *,
+    stat_reader: Callable[[pathlib.Path], Any] = os.stat,
+    disk_usage_reader: Callable[[pathlib.Path], Any] = shutil.disk_usage,
+) -> tuple[dict[str, Any], int | None]:
+    """Read one stable descriptor view; never infer identity from counters."""
+    mount = mounted_view(fd, ancestor)
+    raw_device = os.fstat(fd).st_dev if stat_reader is os.stat else stat_reader(ancestor).st_dev
+    info = btrfs_info(fd) if mount["filesystem_type"] == "btrfs" else None
+    devices = btrfs_devices(info) if info is not None else None
+    counters = os.fstatvfs(fd)
+    if counters.f_bavail < 0 or counters.f_frsize <= 0:
+        raise ContractError("filesystem free-space counters are invalid")
+    free = counters.f_bavail * counters.f_frsize if read_counter else None
+    if read_counter and disk_usage_reader is not shutil.disk_usage:
+        free = int(disk_usage_reader(ancestor).free)
+    if free is not None and free < 0:
+        raise ContractError("filesystem free-space measurement is invalid")
+    if info is not None and (btrfs_info(fd) != info or btrfs_devices(info) != devices):
+        raise ContractError("Btrfs physical-space identity changed during measurement")
+    if mounted_view(fd, ancestor) != mount or (stat_reader is os.stat and os.fstat(fd).st_dev != raw_device):
+        raise ContractError("filesystem mount identity changed during measurement")
+    device = str(raw_device)
+    if info is not None:
+        device = f"btrfs:{info['mounted_fsid']}:{','.join(item['device'] for item in devices)}"
+    view = mount | {
+        "device": device,
+        "st_dev": str(raw_device),
+        "statfs_fsid": str(counters.f_fsid),
+        "btrfs": info | {"backing_devices": devices} if info is not None else None,
+    }
+    return {"measurement_path": str(ancestor), "view": view}, free
+
+
+def filesystem_view(
+    path: pathlib.Path,
+    read_counter: bool,
+    *,
+    stat_reader: Callable[[pathlib.Path], Any] = os.stat,
+    disk_usage_reader: Callable[[pathlib.Path], Any] = shutil.disk_usage,
+) -> tuple[dict[str, Any], int | None]:
+    """Reopen the registered path to detect remounts hidden by a still-valid old fd."""
+    ancestor = existing_ancestor(path)
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(ancestor, flags)
+    try:
+        observation, free = descriptor_view(fd, ancestor, read_counter, stat_reader=stat_reader, disk_usage_reader=disk_usage_reader)
+        current_ancestor = existing_ancestor(path)
+        current_fd = os.open(current_ancestor, flags)
+        try:
+            current, _free = descriptor_view(current_fd, current_ancestor, False, stat_reader=stat_reader, disk_usage_reader=disk_usage_reader)
+            if current["view"] != observation["view"]:
+                raise ContractError("registered filesystem pathname identity changed during measurement")
+        finally:
+            os.close(current_fd)
+        return observation, free
+    finally:
+        os.close(fd)
+
+
 class ResourceSampler:
     """Retain resource peaks for one task across all of its child commands."""
 
@@ -884,9 +1098,15 @@ class ResourceSampler:
         memory_reader: Callable[[], int | None] = memory_available_mib,
         disk_usage_reader: Callable[[pathlib.Path], Any] = shutil.disk_usage,
         stat_reader: Callable[[pathlib.Path], Any] = os.stat,
+        filesystem_reader: Callable[[pathlib.Path, bool], tuple[dict[str, Any], int | None]] | None = None,
     ) -> None:
         self._memory_reader = memory_reader
-        self._disk_usage_reader = disk_usage_reader
+        self._filesystem_reader = filesystem_reader or (
+            lambda path, counter: filesystem_view(
+                path, counter, stat_reader=stat_reader, disk_usage_reader=disk_usage_reader
+            )
+        )
+        self.disk_measurement_error: str | None = None
         self.baseline_memory_mib = memory_reader()
         self._memory_samples_complete = self.baseline_memory_mib is not None
         self.peak_memory_delta_mib: int | None = (
@@ -895,27 +1115,35 @@ class ResourceSampler:
         self.peak_rss_kib = 0
         self._filesystems: dict[str, dict[str, Any]] = {}
 
-        for role, path in measurement_paths:
-            resolved = path.expanduser().resolve()
-            ancestor = existing_ancestor(resolved)
-            device = str(stat_reader(ancestor).st_dev)
-            record = self._filesystems.get(device)
-            if record is None:
-                free_bytes = int(disk_usage_reader(ancestor).free)
-                record = {
-                    "device": device,
-                    "roles": [],
-                    "paths": [],
-                    "measurement_path": ancestor,
-                    "baseline_free_bytes": free_bytes,
-                    "minimum_free_bytes": free_bytes,
-                }
-                self._filesystems[device] = record
-            if role not in record["roles"]:
-                record["roles"].append(role)
-            path_label = str(resolved)
-            if path_label not in record["paths"]:
-                record["paths"].append(path_label)
+        try:
+            for role, path in measurement_paths:
+                resolved = path.expanduser().resolve()
+                observation, _ = self._filesystem_reader(resolved, False)
+                device = observation["view"]["device"]
+                record = self._filesystems.get(device)
+                if record is None:
+                    measured, free_bytes = self._filesystem_reader(resolved, True)
+                    if measured["view"] != observation["view"] or free_bytes is None:
+                        raise ContractError("filesystem identity changed before its baseline")
+                    record = {
+                        "device": device,
+                        "roles": [],
+                        "paths": [],
+                        "path_observations": [],
+                        "baseline_free_bytes": free_bytes,
+                        "minimum_free_bytes": free_bytes,
+                    }
+                    self._filesystems[device] = record
+                if role not in record["roles"]:
+                    record["roles"].append(role)
+                path_label = str(resolved)
+                if path_label not in record["paths"]:
+                    record["paths"].append(path_label)
+                source = {"role": role, "path": path_label} | observation
+                if source not in record["path_observations"]:
+                    record["path_observations"].append(source)
+        except (ContractError, OSError, UnicodeError, ValueError, TypeError, KeyError, struct.error) as error:
+            self.disk_measurement_error = f"disk filesystem identity unavailable: {error}"
 
     def sample(self, root_pid: int | None = None) -> None:
         available = self._memory_reader()
@@ -926,9 +1154,22 @@ class ResourceSampler:
             self.peak_memory_delta_mib = max(self.peak_memory_delta_mib or 0, delta)
         if root_pid is not None:
             self.peak_rss_kib = max(self.peak_rss_kib, process_tree_rss_kib(root_pid))
-        for record in self._filesystems.values():
-            free_bytes = int(self._disk_usage_reader(record["measurement_path"]).free)
-            record["minimum_free_bytes"] = min(record["minimum_free_bytes"], free_bytes)
+        if self.disk_measurement_error is None:
+            try:
+                measurements = []
+                for record in self._filesystems.values():
+                    for index, source in enumerate(record["path_observations"]):
+                        observation, free_bytes = self._filesystem_reader(pathlib.Path(source["path"]), index == 0)
+                        if observation["view"] != source["view"]:
+                            raise ContractError("registered filesystem identity changed during sampling")
+                        if index == 0:
+                            if free_bytes is None:
+                                raise ContractError("filesystem counter is unavailable")
+                            measurements.append((record, free_bytes))
+                for record, free_bytes in measurements:
+                    record["minimum_free_bytes"] = min(record["minimum_free_bytes"], free_bytes)
+            except (ContractError, OSError, UnicodeError, ValueError, TypeError, KeyError, struct.error) as error:
+                self.disk_measurement_error = f"disk filesystem measurement unavailable: {error}"
 
     def apply_rss_fallback(self) -> None:
         if self.peak_rss_kib == 0:
@@ -953,6 +1194,7 @@ class ResourceSampler:
                     "device": record["device"],
                     "roles": sorted(record["roles"]),
                     "paths": sorted(record["paths"]),
+                    "path_observations": record["path_observations"],
                     "baseline_free_mib": record["baseline_free_bytes"] // mebibyte,
                     "minimum_free_mib": record["minimum_free_bytes"] // mebibyte,
                     "peak_growth_mib": growth_mib,
@@ -964,7 +1206,8 @@ class ResourceSampler:
         )
         return {
             "available_memory_mib": self.baseline_memory_mib,
-            "available_disk_mib": available_disk_mib,
+            "available_disk_mib": available_disk_mib if self.disk_measurement_error is None else None,
+            "disk_measurement_error": self.disk_measurement_error,
             "peak_memory_delta_mib": (
                 self.peak_memory_delta_mib if self._memory_samples_complete else None
             ),
@@ -1098,6 +1341,8 @@ def preflight(
         reason = identity_error
     elif discovery_error is not None:
         reason = discovery_error
+    elif observed.get("disk_measurement_error"):
+        reason = observed["disk_measurement_error"]
     elif memory_mib is None:
         reason = "available memory could not be measured"
     elif memory_mib < task["minimum-memory-mib"]:
@@ -1116,6 +1361,32 @@ def preflight(
     return observed, reason, identity
 
 
+def child_exited_unreaped(child: subprocess.Popen[Any]) -> bool:
+    """Observe exit without releasing the PID that pins our private process group."""
+    return os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+
+
+def stop_process_group(child: subprocess.Popen[Any]) -> None:
+    """Finish group-wide cleanup before reaping the leader and allowing PID reuse."""
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    grace_deadline = time.monotonic() + PROCESS_GROUP_TERM_GRACE_SECONDS
+    while time.monotonic() < grace_deadline:
+        time.sleep(min(SAMPLE_INTERVAL_SECONDS, max(0, grace_deadline - time.monotonic())))
+    # A dead leader does not establish that its TERM-resistant descendants exited.
+    # The unreaped direct child pins its PID/PGID through this final group signal.
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        child.wait(timeout=PROCESS_GROUP_REAP_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        raise ContractError("owned process-group leader could not be reaped after KILL") from error
+
+
 def run_process(
     command: list[str],
     cwd: pathlib.Path,
@@ -1128,6 +1399,8 @@ def run_process(
         sampler.sample()
         return 124, sampler.peak_rss_kib, True
     sampler.sample()
+    if sampler.disk_measurement_error is not None:
+        return 1, sampler.peak_rss_kib, False
     child_environment = os.environ.copy()
     child_environment.update(
         {
@@ -1154,29 +1427,24 @@ def run_process(
         start_new_session=True,
     )
     timed_out = False
-    while child.poll() is None:
+    while True:
+        exited = child_exited_unreaped(child)
         sampler.sample(child.pid)
-        if time.monotonic() >= deadline:
-            timed_out = True
-            try:
-                os.killpg(child.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                child.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                child.wait()
+        measurement_failed = sampler.disk_measurement_error is not None
+        if measurement_failed or (not exited and time.monotonic() >= deadline):
+            timed_out = not measurement_failed
+            stop_process_group(child)
+            break
+        if exited:
+            child.wait(timeout=PROCESS_GROUP_REAP_SECONDS)
             break
         time.sleep(SAMPLE_INTERVAL_SECONDS)
-    sampler.sample(child.pid)
     return_code = child.returncode
     if return_code is None:
         raise ContractError("child process ended without a return code")
     exit_status = 124 if timed_out else (return_code if return_code >= 0 else 128 - return_code)
+    if sampler.disk_measurement_error is not None and exit_status == 0:
+        exit_status = 1
     return exit_status, sampler.peak_rss_kib, timed_out
 
 
@@ -1278,7 +1546,9 @@ def run_task(
     peak_memory_delta_mib = observed_resources["peak_memory_delta_mib"]
     disk_growth_mib = observed_resources["disk_growth_mib"]
     budget_failure = None
-    if time.monotonic() >= tier_deadline:
+    if observed_resources.get("disk_measurement_error"):
+        budget_failure = observed_resources["disk_measurement_error"]
+    elif time.monotonic() >= tier_deadline:
         budget_failure = "tier deadline exceeded during task execution"
     elif elapsed > task["deadline-seconds"] or timed_out:
         budget_failure = f"deadline exceeded ({elapsed:.3f}s > {task['deadline-seconds']}s)"
@@ -1380,6 +1650,53 @@ def atomic_json(path: pathlib.Path, value: dict[str, Any]) -> None:
             os.unlink(name)
 
 
+def validate_filesystem_observations(item: dict[str, Any]) -> None:
+    """Cross-check additive raw provenance without rewriting historical evidence."""
+    sources = item.get("path_observations")
+    if sources is None:
+        if item["device"].startswith("btrfs:"):
+            raise ContractError("Btrfs filesystem evidence lacks physical-space provenance")
+        return
+    pairs = [(source["role"], source["path"]) for source in sources]
+    if len(pairs) != len(set(pairs)) or {pair[0] for pair in pairs} != set(item["roles"]) or {pair[1] for pair in pairs} != set(item["paths"]):
+        raise ContractError("filesystem path provenance does not match its roles and paths")
+    for source in sources:
+        view = source["view"]
+        if view["device"] != item["device"]:
+            raise ContractError("filesystem path provenance has a different accounting identity")
+        for name in ("path", "measurement_path"):
+            canonical_path(source[name])
+        if not pathlib.Path(source["path"]).is_relative_to(source["measurement_path"]):
+            raise ContractError("filesystem measurement path is not an ancestor")
+        mount_root(view["mount_root"], view["filesystem_type"], encoded=False)
+        canonical_path(view["mount_point"])
+        if not pathlib.Path(source["measurement_path"]).is_relative_to(view["mount_point"]):
+            raise ContractError("filesystem measurement is outside its mounted view")
+        info = view["btrfs"]
+        if view["filesystem_type"] != "btrfs":
+            if info is not None or item["device"] != view["st_dev"]:
+                raise ContractError("ordinary filesystem evidence has an inconsistent device identity")
+            continue
+        if info is None:
+            raise ContractError("Btrfs filesystem evidence lacks mounted identity")
+        members = info["backing_devices"]
+        devices = [member["device"] for member in members]
+        if len(devices) != len(set(devices)) or devices != sorted(devices) or len(devices) != info["num_devices"] or info["max_id"] < info["num_devices"]:
+            raise ContractError("Btrfs filesystem evidence has incomplete device membership")
+        if uuid.UUID(info["mounted_fsid"]).int == 0:
+            raise ContractError("Btrfs filesystem evidence has an invalid mounted identity")
+        targets = set()
+        for member in members:
+            backing_device_number(member["device"])
+            target = pathlib.Path(canonical_path(member["sysfs_path"]))
+            if not target.is_relative_to("/sys/devices") or target == pathlib.Path("/sys/devices") or target in targets:
+                raise ContractError("Btrfs filesystem evidence lacks canonical kernel device provenance")
+            targets.add(target)
+        identity = f"btrfs:{info['mounted_fsid']}:{','.join(devices)}"
+        if item["device"] != identity:
+            raise ContractError("Btrfs filesystem evidence has an inconsistent physical-space identity")
+
+
 def validate_evidence_semantics(
     run: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -1416,6 +1733,8 @@ def validate_evidence_semantics(
         observed = actual["observed"]
         if actual["state"] != "passed":
             continue
+        if observed.get("disk_measurement_error"):
+            raise ContractError(f"successful evidence task {actual['id']} has incomplete disk measurements")
         budgets = actual["budgets"]
         if observed["wall_seconds"] > budgets["deadline_seconds"]:
             raise ContractError(f"successful evidence task {actual['id']} exceeded deadline")
@@ -1466,6 +1785,8 @@ def validate_evidence_semantics(
             raise ContractError(
                 f"successful evidence task {actual['id']} repeats a filesystem device"
             )
+        for item in filesystems:
+            validate_filesystem_observations(item)
         roles = {role for item in filesystems for role in item["roles"]}
         if not {"checkout", "temporary-directory"}.issubset(roles):
             raise ContractError(

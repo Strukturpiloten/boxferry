@@ -156,6 +156,8 @@ required-mounts = [
   "prometheus:prometheus-data:/prometheus",
 ]
 required-environment = [
+  "grafana:GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false",
+  "grafana:GF_PLUGINS_PREINSTALL_DISABLED=true",
   "grafana:GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary",
 ]
 required-ports = ["grafana:13000:3000/tcp"]
@@ -245,7 +247,7 @@ allowed-losses-file = "expected.compose-podman.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
-semantic-gaps = ["environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
+semantic-gaps = ["environment:grafana:GF_PLUGINS_PREINSTALL_AUTO_UPDATE", "environment:grafana:GF_PLUGINS_PREINSTALL_DISABLED", "environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
 
 [[evidence]]
 input = "quadlet"
@@ -294,7 +296,7 @@ allowed-losses-file = "expected.quadlet-podman.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
-semantic-gaps = ["environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
+semantic-gaps = ["environment:grafana:GF_PLUGINS_PREINSTALL_AUTO_UPDATE", "environment:grafana:GF_PLUGINS_PREINSTALL_DISABLED", "environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
 
 [[evidence]]
 input = "podman"
@@ -345,7 +347,7 @@ allowed-losses-file = "expected.podman-podman.losses.tsv"
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
 reimport = { state = "not-applicable", reason = "Deployment plans are not observed Podman inventories." }
-semantic-gaps = ["environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
+semantic-gaps = ["environment:grafana:GF_PLUGINS_PREINSTALL_AUTO_UPDATE", "environment:grafana:GF_PLUGINS_PREINSTALL_DISABLED", "environment:grafana:GF_SECURITY_ADMIN_PASSWORD", "network-internal:backend", "port:grafana:3000:Some(13000)", "publication:grafana:13000:3000/tcp"]
 
 [evidence.podman-plan]
 creatable-resources = ["container:alloy", "container:grafana", "container:log-producer", "container:loki", "container:metrics-producer", "container:prometheus", "network:backend", "volume:alloy-data", "volume:grafana-data", "volume:loki-data", "volume:prometheus-data", "volume:telemetry-logs"]

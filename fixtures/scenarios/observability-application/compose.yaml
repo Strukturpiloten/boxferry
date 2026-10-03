@@ -20,6 +20,8 @@ services:
   grafana:
     image: docker.io/grafana/grafana@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     environment:
+      - GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false
+      - GF_PLUGINS_PREINSTALL_DISABLED=true
       - GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary
     ports:
       - target: 3000

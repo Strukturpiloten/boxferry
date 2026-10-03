@@ -28,22 +28,24 @@ reimports.
 [ADR 0039](decisions/0039-independent-migration-scenarios.md) defines evidence
 boundaries and synthetic image identities.
 
-The [live entry point](../scripts/podman-live-conformance.sh) sources reusable
+The [live entry point](../scripts/podman-live-conformance.sh) sources
 [scenario](../scripts/lib/scenario-contract.sh) and
-[validator](../scripts/lib/scenario-validators.sh) modules; it retains ownership
-of inner deadlines, numbered progress, isolation and cleanup. The shared
-[`migration-readiness.py`](../scripts/migration-readiness.py) tier helper owns outer selection,
-budgets, and evidence used both locally and by GitHub Actions.
+[validator](../scripts/lib/scenario-validators.sh) modules, retaining inner deadlines,
+numbered progress, isolation and cleanup. The
+[`migration-readiness.py`](../scripts/migration-readiness.py) helper owns outer selection,
+budgets, and evidence locally and in GitHub Actions.
 
 ## Migration-readiness tiers
 
-The machine [tier catalogue and commands](../fixtures/conformance/migration-readiness/) define the
-ordinary `offline`, manual `trusted-live`, and exact-SHA `pre-release` gates. Evidence records
-measured wall/RSS/disk/concurrency budgets, sources, targets, approved losses, and explicit gaps.
-Pre-release evidence v2 collects isolated workers under one four-runner cap. Four shards cover all
-48 Podman cells and five limitations. Its 1,200-second aggregate deadline preserves task safety
-budgets; failure is never success, including Release validation.
-Local `--task` evidence records outcomes, not release approval.
+The [tier catalogue](../fixtures/conformance/migration-readiness/) defines `offline`, manual
+`trusted-live`, and exact-SHA `pre-release` gates. Evidence records wall/RSS/disk/concurrency budgets,
+sources, targets, approved losses, and gaps. Pre-release evidence v2 isolates workers under a
+four-runner cap. Four shards cover 48 Podman cells and five limitations. Its 1,200-second aggregate
+deadline preserves task safety budgets; failure is never success, including Release validation.
+Local `--task` records outcomes, not release approval.
+
+Disk growth counts shared filesystem views once and fails closed on unavailable or changing identity;
+see the [measurement contract](../fixtures/conformance/migration-readiness/README.md#filesystem-space-measurement).
 
 ## Fixture route corpus
 

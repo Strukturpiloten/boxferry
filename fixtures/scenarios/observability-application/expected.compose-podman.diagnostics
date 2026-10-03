@@ -1,3 +1,5 @@
 BFP0007|networks.backend.internal
+BFP0007|services.grafana.environment.GF_PLUGINS_PREINSTALL_AUTO_UPDATE
+BFP0007|services.grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED
 BFP0007|services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD
 BFP0007|services.grafana.ports

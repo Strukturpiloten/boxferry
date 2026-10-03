@@ -1,0 +1,6 @@
+BFP0003	services.{{resource_prefix}}alloy.environment	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}grafana.environment	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}log-producer.environment	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}loki.environment	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}metrics-producer.environment	warning	approximated	approximate
+BFP0003	services.{{resource_prefix}}prometheus.environment	warning	approximated	approximate

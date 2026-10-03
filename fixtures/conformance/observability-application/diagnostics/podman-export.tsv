@@ -18,6 +18,8 @@ BFP0007	services.{{resource_prefix}}grafana.environment.GF_PATHS_HOME	warning	om
 BFP0007	services.{{resource_prefix}}grafana.environment.GF_PATHS_LOGS	warning	omitted	partial
 BFP0007	services.{{resource_prefix}}grafana.environment.GF_PATHS_PLUGINS	warning	omitted	partial
 BFP0007	services.{{resource_prefix}}grafana.environment.GF_PATHS_PROVISIONING	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}grafana.environment.GF_PLUGINS_PREINSTALL_AUTO_UPDATE	warning	omitted	partial
+BFP0007	services.{{resource_prefix}}grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED	warning	omitted	partial
 BFP0007	services.{{resource_prefix}}grafana.environment.GF_SECURITY_ADMIN_PASSWORD	warning	omitted	partial
 BFP0007	services.{{resource_prefix}}grafana.environment.GF_USERS_ALLOW_SIGN_UP	warning	omitted	partial
 BFP0007	services.{{resource_prefix}}grafana.environment.HOME	warning	omitted	partial

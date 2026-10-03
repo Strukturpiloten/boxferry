@@ -151,7 +151,11 @@
           "Pod": "",
           "Config": {
             "Entrypoint": "",
-            "Env": ["GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary"]
+            "Env": [
+              "GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false",
+              "GF_PLUGINS_PREINSTALL_DISABLED=true",
+              "GF_SECURITY_ADMIN_PASSWORD=boxferry-public-observability-admin-canary"
+            ]
           },
           "HostConfig": {
             "PortBindings": { "3000/tcp": [{ "HostIp": "127.0.0.1", "HostPort": "13000" }] }
