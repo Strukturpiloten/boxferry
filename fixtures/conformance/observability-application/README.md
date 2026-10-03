@@ -11,8 +11,26 @@ The authored Alloy scrape interval is two seconds and its explicit timeout is on
 timeout remains strictly below the interval so the pinned Alloy release can load the configuration
 and the live acceptance can distinguish configuration failure from missing metric ingestion.
 Before querying telemetry, the harness also checks every fixed application role is still running.
-Failure output contains only the role, running state, exit code, and OOM state; it never includes
-container names, runtime identifiers, paths, environment, protected values, or raw logs.
+Failure diagnostics contain only fixed roles and running/exit/OOM state, or a fixed Grafana
+endpoint, HTTP status, and allowlisted error category. They never include container names, runtime
+identifiers, paths, environment, protected values, raw native replies, or raw logs.
+
+Grafana's independently authored Compose, Podman CLI, and offline Quadlet definitions disable
+default plugin preinstallation and automatic updates. The pinned full image supplies the bundled
+Prometheus and Loki plugins; no download fallback is permitted. Basic `/api/health` must report
+`database: "ok"`, and both provisioned datasource-health endpoints must report `status: "OK"`,
+within the existing single 240-second Grafana readiness deadline. A missing plugin therefore fails
+closed. The later strict telemetry/dashboard assertions and all 35 live checkpoints are unchanged.
+
+Each readiness GET receives at most five seconds, capped to the remaining shared deadline. GNU
+`timeout --foreground --signal=KILL` owns and reaps the direct host runtime client. Inside the pinned
+producer image, explicit BusyBox `timeout -s KILL` independently bounds `wget` from guest startup;
+the socket timeout alone is not a total deadline. Killing the host client does not prove remote
+guest termination, and a guest may start after the host deadline; the guest timer bounds its own
+lifetime, not the delay before startup. These probes require no new software or image pin.
+The classifier reads at most 16 KiB plus one overflow-detection byte, accepts only an initial
+HTTP/header block and a complete JSON object, and emits closed fields. Unknown native errors remain
+unknown; neither malformed success nor failed transport can satisfy readiness.
 
 The profile is deliberately one reviewed Podman 6.1 rootless cell rather than an application by
 version Cartesian product. It independently provisions the same topology through native Podman
@@ -68,6 +86,37 @@ The provider is Apache-2.0 from <https://github.com/docker/compose>. Images and 
 pulled or downloaded only as transient test inputs; BoxFerry redistributes none of them. The config,
 dashboard, and producer under this directory are repository-authored MPL-2.0 test material.
 
+Plugin-setting and loader research used Grafana v13.2.1's immutable source commit
+`56cd3e9288d8255fecebe5d05b48d191f50674b5` (AGPL-3.0-only), read-only HTTP inspection, and the
+exact digest-pinned full image's bundled plugin manifests. A reproducible source lookup is
+`curl --fail --location --max-time 30 https://raw.githubusercontent.com/grafana/grafana/56cd3e9288d8255fecebe5d05b48d191f50674b5/pkg/setting/setting_plugins.go`.
+That setting implementation skips preinstallation when disabled; `pkg/setting/setting.go` and
+`pkg/services/pluginsintegration/pluginsources/pluginsources.go` retain bundled plugin scanning
+independently. The reviewed full image contains bundled Prometheus 13.1.7 and Loki 13.1.0; those
+are owned by its existing digest, not separate downloaded dependencies. No upstream source was
+copied or translated, and none is redistributed. These settings are not a claim that all outbound
+metadata checks are prohibited. The earlier Loki-health HTTP 404 remains an unproved native cause:
+its response body and Grafana logs were not retained, so a possible asynchronous plugin race is
+not a retrospective diagnosis.
+
+Canonical consumers are `scripts/podman-live-conformance.sh` (the live helper),
+`scripts/check-all.sh` (the focused offline regression), and the Observability task in
+`fixtures/conformance/migration-readiness/tiers.toml`, dispatched by
+`scripts/migration-readiness.py` through the reusable `migration-readiness.yml` workflow, including
+Release's fresh pre-release validation. No Lens product depends on this BoxFerry application suite.
+The current-authored offline Docker prerequisite in
+`fixtures/conformance/docker-application/expected-applications.json` also binds this Compose source
+and helper by SHA-256. Their two bindings are updated only after reviewing this readiness change:
+the six-service graph, excluded boundary peer, network isolation, mounts, loopback ingress,
+dependencies, and application/persistence/safety success categories remain unchanged. The
+`scripts/test-application-probes.sh` consumer verifies those source bytes without executing the
+harness; this binding update admits no native Docker evidence and alters no historical evidence.
+This change leaves `images.tsv`, `providers.tsv`, `scripts/lib/compose-provider.sh`, all operational
+pins, and `.github/renovate.json` unchanged. The existing live-image regex manager still extracts
+the image catalogue at its unchanged path; the checksum-pinned provider manager still owns the
+canonical installer. Their grouping, Dashboard approvals, and no-automerge rules remain intact;
+fixture Compose/Quadlet managers remain intentionally disabled, so no duplicate manager is added.
+
 The entry point sources `scripts/lib/observability-application.sh`, exposes the bounded profile,
 selects only `podman-6.1-rootless`, and calls `run_observability_application_cell` through the same
 deadline, cleanup, and evidence boundary as the established application profiles. The pre-release
@@ -79,12 +128,23 @@ Expectation scope is explicit. `live-native-export` selects the native Podman im
 contract; `live-reimport` selects independently authored Compose/Quadlet reimport contracts;
 `offline-scenario` selects the scenario fixture contract. Scope is never inferred from source
 kind. The eight `reimport-*.tsv` templates cover all 36 live reimport combinations: two
-provisioners, three selectors, two inputs, and three outputs. Compose-to-Compose/Quadlet and
-Quadlet-to-Quadlet have empty multisets; remaining routes retain exact duplicate-sensitive
-omissions. Their sole interpolation is `{{resource_prefix}}`, which is the complete
+provisioners, three selectors, two inputs, and three outputs. Compose-to-Compose and
+Quadlet-to-Quadlet have empty multisets; Compose-to-Quadlet retains the reviewed network-alias
+omission, and remaining routes retain exact duplicate-sensitive omissions. Their sole
+interpolation is `{{resource_prefix}}`, which is the complete
 `<run-prefix>-observability-` resource stem; templates must not append another application
 segment. Static reviewed templates never derive expectations from reports or artifacts. Exact and
 label selectors agree, while all uses separately reviewed boundary-peer deltas.
+
+The plugin flags are literal environment strings, not lossy boolean coercions. Explicitly included
+authored and live routes preserve them without new Quadlet diagnostics. The offline matcher also
+checks the distinct default-withheld Podman-to-Compose-to-Quadlet route: its required environment
+values cannot be emitted by Quadlet, so
+`fixtures/scenarios/observability-application/expected.compose-quadlet.withheld.tsv` independently
+requires one `BFQ0003` row for each plugin flag and the admin-password field. Each plugin-field
+omission is a separate negative mutation; the unchanged exact matcher rejects missing or extra
+rows. Podman-output routes likewise require both independent `BFP0007` environment-omission rows;
+the live-template row/code counts include those two rows without changing loss policy or privacy.
 
 [`diagnostics/`](diagnostics/) holds independently authored factored normalized multisets for the
 reviewed rootless Podman 6.1.0 nested image:
@@ -101,7 +161,7 @@ empty fields before exact comparison. The 214-row shared importer base includes 
 DNS-alias promotions. Compose mode adds two service-identity promotions, while CLI mode adds six
 creation-evidence tuples.
 Compose output adds four network tuples in either mode plus seven CLI-only dependency tuples;
-Quadlet output adds the reviewed multi-network Grafana alias omission; Podman output adds 59
+Quadlet output adds the reviewed multi-network Grafana alias omission; Podman output adds 61
 output-omission tuples. Exact and label selectors are equal. The all selector
 adds 18 shared importer tuples (the boundary peer and default Podman network), then one Compose
 network tuple or eleven Podman omission tuples as appropriate. This factoring preserves duplicate

@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
 import importlib.util
 import json
 import math
+import os
 import pathlib
 import subprocess
+import struct
 import sys
 import tempfile
 import time
@@ -653,6 +656,541 @@ class MigrationReadinessTests(unittest.TestCase):
             ["checkout", "podman-graph-root"],
         )
 
+    @staticmethod
+    def authored_view(path: pathlib.Path, raw_device: int, pool: str | None = None) -> dict[str, object]:
+        fsid = "12345678-1234-5678-9abc-123456789abc"
+        return {
+            "measurement_path": str(path),
+            "view": {
+                "device": str(raw_device) if pool is None else f"btrfs:{fsid}:{pool}",
+                "st_dev": str(raw_device), "statfs_fsid": str(raw_device * 99),
+                "mount_id": raw_device, "mount_device": f"0:{raw_device}",
+                "mount_root": f"/subvolume-{raw_device}", "mount_point": str(path),
+                "mount_options": "rw", "optional_fields": [],
+                "filesystem_type": "ext4" if pool is None else "btrfs",
+                "mount_source": "fixture", "super_options": "rw",
+                "btrfs": None if pool is None else {
+                    "mounted_fsid": fsid, "num_devices": 1, "max_id": 100,
+                    "backing_devices": [{"device": pool, "sysfs_path": f"/sys/devices/fixture-{pool}"}],
+                },
+            },
+        }
+
+    def test_btrfs_subvolumes_share_one_counter_but_keep_raw_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [pathlib.Path(directory) / name for name in ["checkout", "graph"]]
+            views = {path: self.authored_view(path, raw, "259:3") for path, raw in zip(paths, [39, 54], strict=True)}
+            free = 20 * 1024 * 1024
+            counter_paths = []
+            def reader(path: pathlib.Path, counter: bool) -> tuple[dict[str, object], int | None]:
+                if counter:
+                    counter_paths.append(path)
+                return copy.deepcopy(views[path]), free if counter else None
+            sampler = MODULE.ResourceSampler(
+                list(zip(["checkout", "podman-graph-root"], paths, strict=True)),
+                memory_reader=lambda: 10000, filesystem_reader=reader,
+            )
+            free -= 2 * 1024 * 1024
+            sampler.sample()
+            observed = sampler.snapshot(sample=False)
+        self.assertIsNone(observed["disk_measurement_error"])
+        self.assertEqual(observed["disk_growth_mib"], 2)
+        self.assertEqual(counter_paths, [paths[0], paths[0]])
+        self.assertEqual(len(observed["filesystems"]), 1)
+        sources = observed["filesystems"][0]["path_observations"]
+        self.assertEqual({source["view"]["st_dev"] for source in sources}, {"39", "54"})
+        self.assertEqual({source["path"] for source in sources}, {str(path) for path in paths})
+        self.assertEqual({source["role"] for source in sources}, {"checkout", "podman-graph-root"})
+
+    def test_equal_counters_on_distinct_and_cloned_filesystems_are_summed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [pathlib.Path(directory) / name for name in ["one", "two"]]
+            for pools in [(None, None), ("259:3", "260:3")]:
+                with self.subTest(pools=pools):
+                    views = {path: self.authored_view(path, raw, pool) for path, raw, pool in zip(paths, [39, 54], pools, strict=True)}
+                    free = 20 * 1024 * 1024
+                    def reader(path: pathlib.Path, counter: bool) -> tuple[dict[str, object], int | None]:
+                        return copy.deepcopy(views[path]), free if counter else None
+                    sampler = MODULE.ResourceSampler(
+                        [("checkout", paths[0]), ("temporary-directory", paths[1])],
+                        memory_reader=lambda: 10000, filesystem_reader=reader,
+                    )
+                    free -= 2 * 1024 * 1024
+                    observed = sampler.snapshot()
+                    self.assertEqual(len(observed["filesystems"]), 2)
+                    self.assertEqual(observed["disk_growth_mib"], 4)
+                    self.assertIsNone(observed["disk_measurement_error"])
+
+    def test_changed_subvolume_mount_or_pool_identity_is_sticky_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [pathlib.Path(directory) / name for name in ["one", "two"]]
+            for field, changed in [("mount_id", 999), ("st_dev", "999"), ("mount_options", "ro"), ("device", "changed-pool")]:
+                with self.subTest(field=field):
+                    views = {path: self.authored_view(path, raw, "259:3") for path, raw in zip(paths, [39, 54], strict=True)}
+                    def reader(path: pathlib.Path, counter: bool) -> tuple[dict[str, object], int | None]:
+                        return copy.deepcopy(views[path]), 20 * 1024 * 1024 if counter else None
+                    sampler = MODULE.ResourceSampler(
+                        [("checkout", paths[0]), ("temporary-directory", paths[1])],
+                        memory_reader=lambda: 10000, filesystem_reader=reader,
+                    )
+                    original = views[paths[1]]["view"][field]
+                    views[paths[1]]["view"][field] = changed
+                    sampler.sample()
+                    self.assertIn("identity changed", sampler.disk_measurement_error)
+                    views[paths[1]]["view"][field] = original
+                    observed = sampler.snapshot()
+                    self.assertIsNone(observed["available_disk_mib"])
+                    self.assertIsNotNone(observed["disk_measurement_error"])
+
+    def test_btrfs_fs_info_uses_readonly_fixed_abi_and_sparse_device_ids(self) -> None:
+        fsid = bytes.fromhex("12345678123456789abc123456789abc")
+        def ioctl(fd: int, request: int, buffer: bytearray, mutate: bool) -> int:
+            self.assertEqual((fd, request, len(buffer), mutate), (42, 0x8400941f, 1024, True))
+            self.assertEqual(buffer, bytes(1024))
+            struct.pack_into("=QQ16s", buffer, 0, 100, 2, fsid)
+            return 0
+        with mock.patch.object(MODULE.fcntl, "ioctl", side_effect=ioctl), mock.patch.object(MODULE.platform, "machine", return_value="x86_64"):
+            self.assertEqual(MODULE.btrfs_info(42), {
+                "max_id": 100, "num_devices": 2,
+                "mounted_fsid": "12345678-1234-5678-9abc-123456789abc",
+            })
+        for maximum, count, raw in [(0, 0, fsid), (1, 2, fsid), (200, 129, fsid), (1, 1, bytes(16))]:
+            with self.subTest(count=count, maximum=maximum):
+                def malformed(_fd: int, _request: int, buffer: bytearray, _mutate: bool) -> int:
+                    struct.pack_into("=QQ16s", buffer, 0, maximum, count, raw)
+                    return 0
+                with mock.patch.object(MODULE.fcntl, "ioctl", side_effect=malformed), self.assertRaises(MODULE.ContractError):
+                    MODULE.btrfs_info(42)
+        with mock.patch.object(MODULE.fcntl, "ioctl", side_effect=OSError("authored ioctl failure")), self.assertRaises(OSError):
+            MODULE.btrfs_info(42)
+        with mock.patch.object(MODULE.platform, "machine", return_value="unsupported"), self.assertRaises(MODULE.ContractError):
+            MODULE.btrfs_info(42)
+
+    def test_btrfs_sysfs_membership_is_complete_canonical_and_bounded(self) -> None:
+        fsid = "12345678-1234-5678-9abc-123456789abc"
+        for mutation in ["none", "missing", "dangling", "nonlink", "duplicate", "alias", "invalid-number", "cardinality", "escape"]:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                target = root / "devices/physical"
+                target.mkdir(parents=True)
+                (target / "dev").write_text("259:3\n")
+                members = root / "fs/btrfs" / fsid / "devices"
+                members.mkdir(parents=True)
+                member = members / "physical"
+                member.symlink_to(target, target_is_directory=True)
+                aliases = root / "dev/block"
+                aliases.mkdir(parents=True)
+                alias = aliases / "259:3"
+                alias.symlink_to(target, target_is_directory=True)
+                count = 1
+                if mutation == "missing":
+                    member.unlink()
+                elif mutation in {"dangling", "nonlink", "escape"}:
+                    member.unlink()
+                    if mutation == "nonlink":
+                        member.mkdir()
+                    else:
+                        member.symlink_to(root / ("nonexistent" if mutation == "dangling" else "dev"))
+                elif mutation == "duplicate":
+                    (members / "other-alias").symlink_to(target, target_is_directory=True)
+                    count = 2
+                elif mutation == "alias":
+                    alias.unlink()
+                    alias.symlink_to(members, target_is_directory=True)
+                elif mutation == "invalid-number":
+                    (target / "dev").write_text("0:0\n")
+                elif mutation == "cardinality":
+                    count = 2
+                with mock.patch.object(MODULE, "SYSFS", root):
+                    if mutation == "none":
+                        self.assertEqual(MODULE.btrfs_devices({"mounted_fsid": fsid, "num_devices": count}), [{"device": "259:3", "sysfs_path": str(target)}])
+                    else:
+                        with self.assertRaises((MODULE.ContractError, OSError)):
+                            MODULE.btrfs_devices({"mounted_fsid": fsid, "num_devices": count})
+
+    def test_mount_detection_uses_exact_fd_mount_and_component_boundaries(self) -> None:
+        mounts = "1 0 8:1 / / rw - ext4 /dev/root rw\n2 1 0:39 /subvol /data rw shared:7 - btrfs /dev/disk rw\n3 1 0:54 /other /data rw future:1 - btrfs /dev/clone rw\n"
+        def metadata(path: pathlib.Path, _maximum: int) -> str:
+            return mounts if path == MODULE.MOUNTINFO else "pos:\t0\nmnt_id:\t3\n"
+        with mock.patch.object(MODULE, "bounded_text", side_effect=metadata):
+            self.assertEqual(MODULE.mounted_view(42, pathlib.Path("/data/application"))["mount_id"], 3)
+            with self.assertRaises(MODULE.ContractError):
+                MODULE.mounted_view(42, pathlib.Path("/database"))
+        for invalid in ["", mounts + mounts, "1 0 bad / / rw - btrfs /dev/disk rw\n", "1 0 8:1 / /bad\\999 rw - ext4 disk rw\n", "1 0 8:1 / /x/../y rw - ext4 disk rw\n"]:
+            with self.subTest(invalid=invalid), mock.patch.object(MODULE, "bounded_text", return_value=invalid), self.assertRaises(MODULE.ContractError):
+                MODULE.read_mounts()
+        self.assertEqual(MODULE.mount_path("/with\\040space\\134040"), "/with space\\040")
+
+    def test_unrelated_namespace_mount_churn_does_not_change_opened_view(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            selected = f"3 1 0:39 /subvol {path} rw - btrfs /dev/disk rw\n"
+            inventories = iter([
+                "1 0 8:1 / / rw - ext4 /dev/root rw\n" + selected
+                + "9 1 0:4 net:[4026533210] /run/netns/fixture rw - nsfs nsfs rw\n",
+                "1 0 8:1 / / rw - ext4 /dev/root rw\n" + selected
+                + "10 1 0:4 mnt:[4026533211] /run/namespaces/other rw - nsfs nsfs rw\n",
+                "1 0 8:1 / / rw - ext4 /dev/root rw\n" + selected,
+                "1 0 8:1 / / rw - ext4 /dev/root rw\n" + selected,
+            ])
+            def metadata(metadata_path: pathlib.Path, _maximum: int) -> str:
+                return next(inventories) if metadata_path == MODULE.MOUNTINFO else "mnt_id:\t3\n"
+            info = {"mounted_fsid": "12345678-1234-5678-9abc-123456789abc", "num_devices": 1, "max_id": 100}
+            with (
+                mock.patch.object(MODULE, "bounded_text", side_effect=metadata),
+                mock.patch.object(MODULE, "btrfs_info", return_value=info),
+                mock.patch.object(MODULE, "btrfs_devices", return_value=[{"device": "259:3", "sysfs_path": "/sys/devices/fixture"}]),
+                mock.patch.object(MODULE.os, "fstat", return_value=types.SimpleNamespace(st_dev=39)),
+                mock.patch.object(MODULE.os, "fstatvfs", return_value=types.SimpleNamespace(f_bavail=512, f_frsize=4096, f_fsid=12345)),
+            ):
+                observed, free = MODULE.filesystem_view(path, True)
+            self.assertEqual(observed["view"]["mount_id"], 3)
+            self.assertEqual(free, 512 * 4096)
+        for filesystem_type, root, mountpoint, field in [
+            ("btrfs", "net:[4026533210]", "/run/netns/fixture", "root"),
+            ("nsfs", "net:[0]", "/run/netns/fixture", "root"),
+            ("nsfs", "net:[4026533210]", "relative", "mountpoint"),
+        ]:
+            row = f"9 1 0:4 {root} {mountpoint} rw - {filesystem_type} fixture rw\n"
+            with self.subTest(row=row), mock.patch.object(MODULE, "bounded_text", return_value=row):
+                with self.assertRaisesRegex(MODULE.ContractError, f"mount inventory row 1 {field}:"):
+                    MODULE.read_mounts()
+
+    def test_raw_evidence_paths_are_not_mountinfo_decoded_twice(self) -> None:
+        path = pathlib.Path("/with space\\040")
+        source = {"role": "checkout", "path": str(path)} | self.authored_view(path, 39, "259:3")
+        source["view"]["mount_root"] = "/literal\\root"
+        item = {"device": source["view"]["device"], "roles": ["checkout"], "paths": [str(path)], "path_observations": [source]}
+        MODULE.validate_filesystem_observations(item)
+        for invalid in ["relative", "/a/../b", "/a//b", "/a\x00b"]:
+            with self.subTest(invalid=invalid), self.assertRaises(MODULE.ContractError):
+                MODULE.canonical_path(invalid)
+
+    def test_measurement_failure_terminates_and_reaps_child_without_timeout(self) -> None:
+        for already_exited in [False, True]:
+            with self.subTest(already_exited=already_exited):
+                sampler = mock.Mock(peak_rss_kib=0, disk_measurement_error=None)
+                def sample(pid: int | None = None) -> None:
+                    if pid is not None:
+                        sampler.disk_measurement_error = "authored mount change"
+                sampler.sample.side_effect = sample
+                child = mock.Mock(pid=4242, returncode=0)
+                child.wait.return_value = 0
+                identity = {"uid": 1000, "gid": 1000, "home": "/tmp", "user": "fixture"}
+                with mock.patch.object(MODULE.os, "geteuid", return_value=1000), mock.patch.object(MODULE.subprocess, "Popen", return_value=child), mock.patch.object(MODULE.os, "killpg") as kill, mock.patch.object(MODULE, "child_exited_unreaped", return_value=already_exited), mock.patch.object(MODULE, "PROCESS_GROUP_TERM_GRACE_SECONDS", 0):
+                    status, _rss, timed_out = MODULE.run_process(["fixture"], ROOT, time.monotonic() + 10, sampler, identity)
+                self.assertEqual(status, 1, "even a clean child exit cannot repair missing measurements")
+                self.assertFalse(timed_out)
+                self.assertEqual(kill.call_args_list, [mock.call(4242, MODULE.signal.SIGTERM), mock.call(4242, MODULE.signal.SIGKILL)])
+                child.wait.assert_called_once_with(timeout=20)
+
+    @unittest.skipUnless(sys.platform == "linux", "owned process-group regression requires Linux")
+    def test_abort_kills_resistant_descendant_after_leader_exits_and_reaps_owned_children(self) -> None:
+        # Become a temporary subreaper only to collect this fixture's orphaned child.
+        # Production cleanup promises the direct leader's reap, not global reaping.
+        libc = ctypes.CDLL(None, use_errno=True)
+        previous = ctypes.c_int()
+        if libc.prctl(37, ctypes.byref(previous), 0, 0, 0) != 0 or libc.prctl(36, 1, 0, 0, 0) != 0:
+            self.skipTest("temporary fixture subreaper is unavailable")
+        try:
+            for failure in ["measurement", "exited-leader", "timeout"]:
+                with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                    marker = pathlib.Path(directory)
+                    descendant_program = "import pathlib,signal,sys,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); pathlib.Path(sys.argv[1],'descendant-ready').write_text('ready'); time.sleep(100)"
+                    leader_program = (
+                        "import pathlib,signal,subprocess,sys,time\n"
+                        "root=pathlib.Path(sys.argv[1])\n"
+                        f"descendant=subprocess.Popen([sys.executable,'-c',{descendant_program!r},str(root)])\n"
+                        "def terminate(_signal,_frame):\n"
+                        "    (root/'leader-term').write_text('exit-zero')\n"
+                        "    raise SystemExit(0)\n"
+                        "signal.signal(signal.SIGTERM,terminate)\n"
+                        "while not (root/'descendant-ready').exists(): time.sleep(0.01)\n"
+                        "(root/'leader-ready').write_text(str(descendant.pid))\n"
+                        + ("(root/'leader-natural-exit').write_text('exit-zero')\nraise SystemExit(0)\n" if failure == "exited-leader" else "")
+                        +
+                        "while True: time.sleep(0.01)\n"
+                    )
+                    children = []
+                    popen = subprocess.Popen
+                    def launch(*args: object, **kwargs: object) -> subprocess.Popen:
+                        child = popen(*args, **kwargs)
+                        children.append(child)
+                        return child
+                    sampler = mock.Mock(peak_rss_kib=0, disk_measurement_error=None)
+                    def sample(pid: int | None = None) -> None:
+                        if pid is None:
+                            return
+                        ready_deadline = time.monotonic() + 3
+                        while not (marker / "leader-ready").exists() and time.monotonic() < ready_deadline:
+                            time.sleep(0.01)
+                        self.assertTrue((marker / "leader-ready").exists(), "fixture must install both signal handlers before abort")
+                        if failure == "exited-leader":
+                            exit_deadline = time.monotonic() + 3
+                            while not MODULE.child_exited_unreaped(types.SimpleNamespace(pid=pid)) and time.monotonic() < exit_deadline:
+                                time.sleep(0.01)
+                            self.assertTrue(MODULE.child_exited_unreaped(types.SimpleNamespace(pid=pid)))
+                        if failure != "timeout":
+                            sampler.disk_measurement_error = "authored measurement failure"
+                    sampler.sample.side_effect = sample
+                    identity = {"uid": os.geteuid(), "gid": os.getegid(), "home": directory, "user": "fixture"}
+                    reaped_descendant = False
+                    try:
+                        with mock.patch.object(MODULE.subprocess, "Popen", side_effect=launch), mock.patch.object(MODULE, "PROCESS_GROUP_TERM_GRACE_SECONDS", 0.1), mock.patch.object(MODULE, "SAMPLE_INTERVAL_SECONDS", 0.01):
+                            status, _rss, timed_out = MODULE.run_process([sys.executable, "-c", leader_program, directory], ROOT, time.monotonic() + (0.2 if failure == "timeout" else 5), sampler, identity)
+                        descendant_pid = int((marker / "leader-ready").read_text())
+                        self.assertEqual(status, 124 if failure == "timeout" else 1)
+                        self.assertEqual(timed_out, failure == "timeout")
+                        self.assertEqual(children[0].returncode, 0, "leader must exit before group KILL")
+                        self.assertEqual((marker / ("leader-natural-exit" if failure == "exited-leader" else "leader-term")).read_text(), "exit-zero")
+                        reap_deadline = time.monotonic() + 3
+                        while time.monotonic() < reap_deadline:
+                            pid, wait_status = os.waitpid(descendant_pid, os.WNOHANG)
+                            if pid:
+                                reaped_descendant = True
+                                self.assertTrue(os.WIFSIGNALED(wait_status))
+                                self.assertEqual(os.WTERMSIG(wait_status), MODULE.signal.SIGKILL)
+                                break
+                            time.sleep(0.01)
+                        self.assertTrue(reaped_descendant, "TERM-resistant descendant must be killed and collected")
+                        self.assertFalse(pathlib.Path(f"/proc/{descendant_pid}").exists())
+                        with self.assertRaises(ChildProcessError):
+                            os.waitpid(children[0].pid, os.WNOHANG)
+                        if failure != "timeout":
+                            self.assertEqual(sampler.disk_measurement_error, "authored measurement failure")
+                    finally:
+                        if children and not reaped_descendant:
+                            # The leader or adopted, unreaped fixture descendant pins this group.
+                            try:
+                                os.killpg(children[0].pid, MODULE.signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            children[0].wait(timeout=3)
+                            cleanup_deadline = time.monotonic() + 3
+                            while time.monotonic() < cleanup_deadline:
+                                try:
+                                    pid, _status = os.waitpid(-children[0].pid, os.WNOHANG)
+                                except ChildProcessError:
+                                    break
+                                if not pid:
+                                    time.sleep(0.01)
+        finally:
+            self.assertEqual(libc.prctl(36, previous.value, 0, 0, 0), 0)
+
+    def test_btrfs_counter_and_identity_share_a_closed_descriptor(self) -> None:
+        real_fstat = os.fstat
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            authored = self.authored_view(path, 39, "259:3")["view"]
+            mount = {name: value for name, value in authored.items() if name not in {"device", "st_dev", "statfs_fsid", "btrfs"}}
+            info = {"mounted_fsid": authored["btrfs"]["mounted_fsid"], "num_devices": 1, "max_id": 100}
+            devices = authored["btrfs"]["backing_devices"]
+            counters = types.SimpleNamespace(f_bavail=512, f_frsize=4096, f_fsid=12345)
+            for failure in [None, "ioctl", "sysfs", "statvfs", "mount"]:
+                with (
+                    self.subTest(failure=failure),
+                    mock.patch.object(MODULE, "mounted_view", side_effect=[mount, mount | {"mount_id": 1000}] if failure == "mount" else None, return_value=mount),
+                    mock.patch.object(MODULE, "btrfs_info", side_effect=[info, info | {"mounted_fsid": "changed"}] if failure == "ioctl" else None, return_value=info) as identity,
+                    mock.patch.object(MODULE, "btrfs_devices", side_effect=[devices, [{"device": "260:3", "sysfs_path": "/sys/devices/other"}]] if failure == "sysfs" else None, return_value=devices),
+                    mock.patch.object(MODULE.os, "fstat", return_value=types.SimpleNamespace(st_dev=39)),
+                    mock.patch.object(MODULE.os, "fstatvfs", side_effect=OSError("unavailable") if failure == "statvfs" else None, return_value=counters) as counter,
+                    mock.patch.object(MODULE.os, "close", wraps=os.close) as close,
+                ):
+                    if failure is None:
+                        observed, free = MODULE.filesystem_view(path, True)
+                        self.assertEqual(free, 512 * 4096)
+                        self.assertEqual(observed["view"]["st_dev"], "39")
+                        self.assertEqual(observed["view"]["statfs_fsid"], "12345")
+                    else:
+                        with self.assertRaises((MODULE.ContractError, OSError)):
+                            MODULE.filesystem_view(path, True)
+                    descriptor = identity.call_args_list[0].args[0]
+                    self.assertEqual(counter.call_args_list[0].args[0], descriptor)
+                    self.assertIn(mock.call(descriptor), close.call_args_list)
+                    self.assertEqual(close.call_count, 2 if failure is None else 1)
+                    for call in close.call_args_list:
+                        with self.assertRaises(OSError):
+                            real_fstat(call.args[0])
+
+    def test_missing_identity_and_later_counter_failures_are_not_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            failed_reader = mock.Mock(side_effect=OSError("authored missing Btrfs identity"))
+            sampler = MODULE.ResourceSampler([("checkout", path)], memory_reader=lambda: 10000, filesystem_reader=failed_reader)
+            self.assertIn("identity unavailable", sampler.disk_measurement_error)
+            self.assertIsNone(sampler.snapshot()["available_disk_mib"])
+            self.assertEqual(failed_reader.call_count, 1)
+            reader = mock.Mock(return_value=(self.authored_view(path, 39, "259:3"), 10 * 1024 * 1024))
+            sampler = MODULE.ResourceSampler([("checkout", path)], memory_reader=lambda: 10000, filesystem_reader=reader)
+            reader.side_effect = OSError("authored failed counter sample")
+            sampler.sample()
+            error = sampler.disk_measurement_error
+            reader.side_effect = None
+            observed = sampler.snapshot()
+            self.assertEqual(observed["disk_measurement_error"], error)
+            self.assertIsNone(observed["available_disk_mib"])
+
+    def test_successful_evidence_cannot_retain_a_disk_measurement_failure(self) -> None:
+        evidence, revision = self.evidence_fixture()
+        evidence["tasks"][0]["observed"]["disk_measurement_error"] = "authored identity change"
+        with self.assertRaisesRegex(MODULE.ContractError, "incomplete disk measurements"):
+            MODULE.validate_evidence(evidence, "offline", revision)
+
+    def test_reopened_path_detects_same_target_overmount_with_valid_old_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            mounts = f"1 0 8:1 / / rw - ext4 root rw\n3 1 0:39 /subvol {path} rw - btrfs disk rw\n4 1 0:39 /subvol {path} rw - btrfs disk rw\n"
+            original_fd = None
+            def metadata(metadata_path: pathlib.Path, _maximum: int) -> str:
+                nonlocal original_fd
+                if metadata_path == MODULE.MOUNTINFO:
+                    return mounts
+                fd = int(metadata_path.name)
+                if original_fd is None:
+                    original_fd = fd
+                return f"mnt_id:\t{3 if fd == original_fd else 4}\n"
+            info = {"mounted_fsid": "12345678-1234-5678-9abc-123456789abc", "num_devices": 1, "max_id": 100}
+            with (
+                mock.patch.object(MODULE, "bounded_text", side_effect=metadata),
+                mock.patch.object(MODULE, "btrfs_info", return_value=info),
+                mock.patch.object(MODULE, "btrfs_devices", return_value=[{"device": "259:3", "sysfs_path": "/sys/devices/fixture"}]),
+                mock.patch.object(MODULE.os, "fstat", return_value=types.SimpleNamespace(st_dev=39)),
+                mock.patch.object(MODULE.os, "fstatvfs", return_value=types.SimpleNamespace(f_bavail=512, f_frsize=4096, f_fsid=12345)),
+                mock.patch.object(MODULE.os, "close", wraps=os.close) as close,
+            ):
+                with self.assertRaisesRegex(MODULE.ContractError, "pathname identity changed"):
+                    MODULE.filesystem_view(path, True)
+            self.assertEqual(close.call_count, 2)
+            for call in close.call_args_list:
+                with self.assertRaises(OSError):
+                    os.fstat(call.args[0])
+
+    def test_reopening_uses_newly_created_ancestor_without_rejecting_same_filesystem(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            ancestor = pathlib.Path(directory)
+            path = ancestor / "future"
+            def counters(_fd: int) -> object:
+                path.mkdir(exist_ok=True)
+                return types.SimpleNamespace(f_bavail=512, f_frsize=4096, f_fsid=12345)
+            mounts = "1 0 8:1 / / rw - ext4 root rw\n"
+            with (
+                mock.patch.object(MODULE, "bounded_text", side_effect=lambda metadata_path, _maximum: mounts if metadata_path == MODULE.MOUNTINFO else "mnt_id:\t1\n"),
+                mock.patch.object(MODULE.os, "fstatvfs", side_effect=counters),
+                mock.patch.object(MODULE.os, "open", wraps=os.open) as opened,
+            ):
+                observation, _free = MODULE.filesystem_view(path, True)
+            self.assertEqual(observation["measurement_path"], str(ancestor))
+            self.assertEqual([call.args[0] for call in opened.call_args_list], [ancestor, path])
+
+    def test_btrfs_evidence_keeps_and_validates_each_raw_subvolume_source(self) -> None:
+        evidence, revision = self.evidence_fixture()
+        record = evidence["tasks"][0]["observed"]["filesystems"][0]
+        record["device"] = "btrfs:12345678-1234-5678-9abc-123456789abc:259:3"
+        record["path_observations"] = [
+            {"role": role, "path": path} | self.authored_view(pathlib.Path(path), index + 1, "259:3")
+            for index, (role, path) in enumerate(zip(record["roles"], record["paths"], strict=True))
+        ]
+        MODULE.validate_evidence(evidence, "offline", revision)
+        for mutation in ["missing", "wrong-pool", "incomplete", "raw-device-loss"]:
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(evidence)
+                candidate = changed["tasks"][0]["observed"]["filesystems"][0]
+                if mutation == "missing":
+                    del candidate["path_observations"]
+                elif mutation == "wrong-pool":
+                    candidate["path_observations"][0]["view"]["btrfs"]["backing_devices"][0]["device"] = "260:3"
+                elif mutation == "incomplete":
+                    candidate["path_observations"][0]["view"]["btrfs"]["num_devices"] = 2
+                else:
+                    del candidate["path_observations"][0]["view"]["st_dev"]
+                with self.assertRaises(MODULE.ContractError):
+                    MODULE.validate_evidence(changed, "offline", revision)
+
+    def test_passed_btrfs_evidence_rejects_noncanonical_or_impossible_backing_provenance(self) -> None:
+        evidence, revision = self.evidence_fixture()
+        record = evidence["tasks"][0]["observed"]["filesystems"][0]
+        record["device"] = "btrfs:12345678-1234-5678-9abc-123456789abc:259:3"
+        record["path_observations"] = [
+            {"role": role, "path": path} | self.authored_view(pathlib.Path(path), index + 1, "259:3")
+            for index, (role, path) in enumerate(zip(record["roles"], record["paths"], strict=True))
+        ]
+        MODULE.validate_evidence(evidence, "offline", revision)
+        for target in ["/sys/devices/../../private", "/sys/devices/./disk", "/sys/devices//disk", "/sys/devices", "/sys/devices-other/disk", "relative"]:
+            changed = copy.deepcopy(evidence)
+            candidate = changed["tasks"][0]["observed"]["filesystems"][0]
+            for source in candidate["path_observations"]:
+                source["view"]["btrfs"]["backing_devices"][0]["sysfs_path"] = target
+            with self.subTest(target=target), self.assertRaises(MODULE.ContractError):
+                MODULE.validate_evidence(changed, "offline", revision)
+        for device in ["0:0", "99999:3", "259:1048576", "0259:3"]:
+            changed = copy.deepcopy(evidence)
+            candidate = changed["tasks"][0]["observed"]["filesystems"][0]
+            candidate["device"] = f"btrfs:12345678-1234-5678-9abc-123456789abc:{device}"
+            for source in candidate["path_observations"]:
+                source["view"]["device"] = candidate["device"]
+                source["view"]["btrfs"]["backing_devices"][0]["device"] = device
+            with self.subTest(device=device), self.assertRaises(MODULE.ContractError):
+                MODULE.validate_evidence(changed, "offline", revision)
+        changed = copy.deepcopy(evidence)
+        candidate = changed["tasks"][0]["observed"]["filesystems"][0]
+        candidate["device"] = "btrfs:12345678-1234-5678-9abc-123456789abc:259:3,260:3"
+        for source in candidate["path_observations"]:
+            source["view"]["device"] = candidate["device"]
+            info = source["view"]["btrfs"]
+            info["num_devices"] = 2
+            info["backing_devices"].append(info["backing_devices"][0] | {"device": "260:3"})
+        with self.assertRaisesRegex(MODULE.ContractError, "canonical kernel device provenance"):
+            MODULE.validate_evidence(changed, "offline", revision)
+
+    def test_unavailable_identity_prevents_execution_and_midrun_error_retains_failure(self) -> None:
+        task = copy.deepcopy(MODULE.load_catalogue()["tasks"][0])
+        task["required-tools"] = []
+        task["minimum-memory-mib"] = 1
+        task["minimum-disk-mib"] = 1
+        revisions = MODULE.catalogue_lens_revisions(MODULE.load_catalogue())
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            view = self.authored_view(path, 39, "259:3")
+            reader = mock.Mock(side_effect=MODULE.ContractError("authored missing identity"))
+            sampler = MODULE.ResourceSampler([("checkout", path)], memory_reader=lambda: 10000, filesystem_reader=reader)
+            identity = {"uid": 1000, "gid": 1000, "user": "fixture", "home": "/tmp", "groups": [1000]}
+            with mock.patch.object(MODULE, "execution_identity", return_value=(identity, None)), mock.patch.object(MODULE, "resource_sampler_for_task", return_value=(sampler, None)), mock.patch.object(MODULE, "run_process") as execute, mock.patch.object(MODULE, "emit"):
+                result, _step = MODULE.run_task(task, revisions, 1, 3, time.monotonic() + 10)
+                self.assertEqual(result["state"], "unavailable")
+                self.assertIsNotNone(result["observed"]["disk_measurement_error"])
+                execute.assert_not_called()
+            reader.side_effect = None
+            reader.return_value = (view, 10000 * 1024 * 1024)
+            sampler = MODULE.ResourceSampler([("checkout", path)], memory_reader=lambda: 10000, filesystem_reader=reader)
+            def clean_exit_with_missing_sample(*_args: object) -> tuple[int, int, bool]:
+                reader.side_effect = OSError("authored midrun failure")
+                sampler.sample()
+                return 0, 0, False
+            with mock.patch.object(MODULE, "execution_identity", return_value=(identity, None)), mock.patch.object(MODULE, "resource_sampler_for_task", return_value=(sampler, None)), mock.patch.object(MODULE, "run_process", side_effect=clean_exit_with_missing_sample), mock.patch.object(MODULE, "emit"):
+                result, _step = MODULE.run_task(task, revisions, 1, 3, time.monotonic() + 10)
+                self.assertEqual(result["state"], "failed")
+                self.assertEqual(result["observed"]["exit_status"], 0)
+                self.assertFalse(result["observed"]["timed_out"])
+                self.assertIn("midrun failure", result["reason"])
+
+    def test_mount_inventory_and_sysfs_traversal_limits_fail_closed(self) -> None:
+        for metadata in ["pos:\t0\n", "mnt_id:\tno\n", "mnt_id:\t1\nmnt_id:\t1\n"]:
+            with self.subTest(metadata=metadata), mock.patch.object(MODULE, "read_mounts", return_value={}), mock.patch.object(MODULE, "bounded_text", return_value=metadata), self.assertRaises(MODULE.ContractError):
+                MODULE.mounted_view(42, pathlib.Path("/"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            metadata = root / "oversized"
+            metadata.write_bytes(b"12345")
+            with self.assertRaises(MODULE.ContractError):
+                MODULE.bounded_text(metadata, 4)
+            fsid = "12345678-1234-5678-9abc-123456789abc"
+            devices = root / "fs/btrfs" / fsid / "devices"
+            devices.mkdir(parents=True)
+            (devices / "one").touch()
+            (devices / "two").touch()
+            with mock.patch.object(MODULE, "SYSFS", root), mock.patch.object(MODULE, "MAX_BTRFS_DEVICES", 1), self.assertRaisesRegex(MODULE.ContractError, "exceeds"):
+                MODULE.btrfs_devices({"mounted_fsid": fsid, "num_devices": 2})
+
     def test_task_sampler_always_registers_checkout_and_temporary_filesystems(self) -> None:
         task = copy.deepcopy(MODULE.load_catalogue()["tasks"][0])
         sampler, discovery_error = MODULE.resource_sampler_for_task(task)
@@ -773,8 +1311,10 @@ class MigrationReadinessTests(unittest.TestCase):
             sampler = MODULE.ResourceSampler(
                 [("checkout", checkout), ("podman-graph-root", graph_root)],
                 memory_reader=lambda: 10_000,
-                disk_usage_reader=disk_reader,
-                stat_reader=stat_reader,
+                filesystem_reader=lambda path, counter: (
+                    self.authored_view(path, stat_reader(path).st_dev),
+                    disk_reader(path).free if counter else None,
+                ),
             )
             task = copy.deepcopy(MODULE.load_catalogue()["tasks"][0])
             task["required-tools"] = []
@@ -877,7 +1417,7 @@ class MigrationReadinessTests(unittest.TestCase):
             "actual=(os.geteuid(),os.getegid(),os.environ['USER'],os.environ['HOME']); "
             f"raise SystemExit(0 if actual == {expected} and 'SUDO_UID' not in os.environ else 1)"
         )
-        sampler = mock.Mock(peak_rss_kib=0)
+        sampler = mock.Mock(peak_rss_kib=0, disk_measurement_error=None)
         sampler.sample.return_value = None
         status, _rss, timed_out = MODULE.run_process(
             [sys.executable, "-c", program],

@@ -20,6 +20,298 @@ assert_absent() {
   fi
 }
 
+(
+  clock_file="${test_root}/grafana-clock"
+  calls_file="${test_root}/grafana-health-calls"
+  diagnostics_file="${test_root}/grafana-health-diagnostics"
+  private_marker='private-password-runtime-identity-/run/private.sock-10.88.0.9'
+  observability_clock() { printf '%s\n' "$(< "${clock_file}")"; }
+  sleep() {
+    [[ "$1" == 1 || "$1" == 2 ]]
+    # Simulate scheduler delay without adding real waits to the offline suite.
+    printf '%s\n' "$(($(< "${clock_file}") + 60))" > "${clock_file}"
+  }
+  observability_grafana_health_request() {
+    local path=$3 request_timeout=$4 endpoint=loki now count
+    case "${path}" in
+      /api/health) endpoint=basic ;;
+      /api/datasources/uid/boxferry-prometheus/health) endpoint=prometheus ;;
+      /api/datasources/uid/boxferry-loki/health) ;;
+      *) return 2 ;;
+    esac
+    now=$(< "${clock_file}")
+    ((request_timeout > 0 && request_timeout <= 5 && request_timeout <= 240 - now)) || return 90
+    printf '%s %s %s\n' "${endpoint}" "${request_timeout}" "${now}" >> "${calls_file}"
+    if [[ "${mode}" == exhausted ]]; then
+      if [[ "${endpoint}" == basic ]]; then
+        printf '%s\n' "$((now + 239))" > "${clock_file}"
+      else
+        printf '%s\n' "$((now + 1))" > "${clock_file}"
+      fi
+    elif [[ "${mode}" == late ]]; then
+      printf '%s\n' 241 > "${clock_file}"
+    fi
+    if [[ "${endpoint}" == basic ]]; then
+      printf 'HTTP/1.1 200 OK\n\n{"database":"ok","version":"fixture"}\n'
+      return 0
+    fi
+    if [[ "${endpoint}" == prometheus || "${mode}" == exhausted ]]; then
+      printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\n'
+      return 0
+    fi
+    count=$(grep --count '^loki ' "${calls_file}")
+    case "${mode}" in
+      delayed)
+        if ((count > 1)); then
+          printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\n'
+          return 0
+        fi
+        ;;
+      malformed)
+        printf 'HTTP/1.1 200 OK\n\n{"status":42,"message":"%s"}\n' "${private_marker}"
+        return 0
+        ;;
+      unknown)
+        printf 'HTTP/1.1 404 Not Found\n\n{"messageId":"%s","message":"%s"}\n' "${private_marker}" "${private_marker}"
+        return 1
+        ;;
+      timeout)
+        printf '%s\n' "${private_marker}" >&2
+        return 124
+        ;;
+      failed-client)
+        printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\n'
+        return 1
+        ;;
+    esac
+    printf 'HTTP/1.1 404 Not Found\n\n{"messageId":"plugin.notRegistered","message":"%s"}\n' "${private_marker}"
+    return 1
+  }
+  printf '%s\n' 0 > "${clock_file}"
+  : > "${calls_file}"
+  mode=control
+  observability_grafana_health_request /tmp/private.sock bf-private /api/health 5 > /dev/null
+  [[ "$(< "${calls_file}")" == 'basic 5 0' ]]
+  for mode in delayed persistent malformed unknown timeout failed-client exhausted late; do
+    printf '%s\n' 0 > "${clock_file}"
+    : > "${calls_file}"
+    if observability_wait_for 240 'Grafana readiness' observability_grafana_ready \
+      /tmp/private.sock bf-private > /dev/null 2> "${diagnostics_file}"; then
+      [[ "${mode}" == delayed ]]
+      [[ "$(< "${clock_file}")" == 60 ]]
+      [[ "$(wc -l < "${calls_file}")" == 6 ]]
+      [[ ! -s "${diagnostics_file}" ]]
+    else
+      [[ "${mode}" != delayed ]]
+      observability_report_grafana_health_failure 2>> "${diagnostics_file}"
+      diagnostics=$(< "${diagnostics_file}")
+      grep --fixed-strings --quiet 'Timed out after 240s waiting for observability Grafana readiness.' <<< "${diagnostics}"
+      case "${mode}" in
+        persistent) expected='endpoint=loki http-status=404 error-category=plugin-not-registered' ;;
+        malformed) expected='endpoint=loki http-status=200 error-category=malformed-response' ;;
+        unknown) expected='endpoint=loki http-status=404 error-category=unknown' ;;
+        timeout | exhausted) expected='endpoint=loki http-status=unknown error-category=unknown' ;;
+        failed-client) expected='endpoint=loki http-status=200 error-category=transport-failure' ;;
+        late) expected='endpoint=prometheus http-status=unknown error-category=unknown' ;;
+      esac
+      grep --fixed-strings --quiet "${expected}" <<< "${diagnostics}"
+      ((${#diagnostics} < 256))
+      for forbidden in "${private_marker}" /tmp/private.sock bf-private; do
+        assert_absent "${forbidden}" "${diagnostics}"
+      done
+      if [[ "${mode}" == exhausted ]]; then
+        [[ "$(< "${calls_file}")" == $'basic 5 0\nprometheus 1 239' ]]
+      elif [[ "${mode}" == late ]]; then
+        [[ "$(wc -l < "${calls_file}")" == 1 ]]
+      else
+        [[ "$(< "${clock_file}")" == 240 ]]
+        [[ "$(wc -l < "${calls_file}")" == 12 ]]
+      fi
+    fi
+  done
+  classified=$(printf 'HTTP/1.1 200 OK\n\n{"status":"OK"}\ntrailing-private-data' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 404 Not Found\n\n{"messageId":"plugin.notImplemented"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'404\tmethod-not-implemented\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 503 Unavailable\n\n{"messageId":"plugin.unavailable"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'503\tplugin-unavailable\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n\n{"database":true}' | observability_classify_grafana_health basic)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n\n{"database":"failed"}' | observability_classify_grafana_health basic)
+  [[ "${classified}" == $'200\tunhealthy-response\tfalse' ]]
+  classified=$(printf '  HTTP/1.1 200 OK\r\n  Content-Type: application/json\r\n  X-Fixture: {private}\r\n{"status":"OK"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tunknown\ttrue' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n  Content-Type: application/json\n  Content-Length: 17\n  Connection: close\n  \n{"database":"ok"}' | observability_classify_grafana_health basic)
+  [[ "${classified}" == $'200\tunknown\ttrue' ]]
+  for endpoint in basic prometheus loki; do
+    field=status expected_value=OK
+    [[ "${endpoint}" != basic ]] || {
+      field=database
+      expected_value=ok
+    }
+    for malformed_body in \
+      "{\"${field}\":\"failed\",\"${field}\":\"${expected_value}\"}" \
+      "{\"${field}\":\"${expected_value}\",\"${field}\":\"${expected_value}\"}" \
+      "{\"${field}\":\"${expected_value}\",\"extra\":{\"private\":1,\"private\":2}}"; do
+      classified=$(printf 'HTTP/1.1 200 OK\n\n%s' "${malformed_body}" | observability_classify_grafana_health "${endpoint}")
+      [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+    done
+    for nonfinite in NaN Infinity -Infinity; do
+      classified=$(printf 'HTTP/1.1 200 OK\n\n{"%s":"%s","unused":[%s]}' "${field}" "${expected_value}" "${nonfinite}" | observability_classify_grafana_health "${endpoint}")
+      [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+    done
+    classified=$(printf 'HTTP/1.1 200 OK\n\n{"%s":"%s","unused":{"finite":1.5,"nothing":null}}' "${field}" "${expected_value}" | observability_classify_grafana_health "${endpoint}")
+    [[ "${classified}" == $'200\tunknown\ttrue' ]]
+  done
+  classified=$(printf '{"status":"OK"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'unknown\tmalformed-response\tfalse' ]]
+  for malformed_body in 'not-json' 'HTTP/1.1 200 OK\n\n{"status":"OK"}' '{"status":"OK"}\nHTTP/1.1 200 OK'; do
+    classified=$(printf 'HTTP/1.1 404 Not Found\n\n%b' "${malformed_body}" | observability_classify_grafana_health loki)
+    [[ "${classified}" == $'404\tunknown\tfalse' ]]
+  done
+  classified=$(printf 'HTTP/1.1 200 OK\nHTTP/1.1 404 Not Found\n\n{"status":"OK"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 200 OK\n\nnot-json' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'200\tmalformed-response\tfalse' ]]
+  classified=$(printf 'HTTP/1.1 404 Not Found\n\n{"message":"plugin.notRegistered","messageId":"plugin.notRegistered.extra"}' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'404\tunknown\tfalse' ]]
+  classified=$(python3 -c 'print("HTTP/1.1 200 OK\n\n" + "x" * 16385)' | observability_classify_grafana_health loki)
+  [[ "${classified}" == $'unknown\toversized-response\tfalse' ]]
+  OBSERVABILITY_GRAFANA_ENDPOINT=${private_marker}
+  OBSERVABILITY_GRAFANA_HTTP_STATUS=${private_marker}
+  OBSERVABILITY_GRAFANA_ERROR_CATEGORY=${private_marker}
+  diagnostics=$(observability_report_grafana_health_failure 2>&1)
+  [[ "${diagnostics}" == 'OBSERVABILITY DIAGNOSTIC endpoint=unknown http-status=unknown error-category=unknown' ]]
+)
+
+(
+  request_arguments="${test_root}/grafana-request-arguments"
+  timeout() { printf '%s\n' "$@" > "${request_arguments}"; }
+  engine="fixture-engine"
+  started_outer=owned-outer
+  observability_grafana_health_request /tmp/nonexistent-observability.sock bf-private /api/health 3
+  [[ "$(head -n 7 "${request_arguments}")" == $'--foreground\n--signal=KILL\n3s\nfixture-engine\nexec\nowned-outer\npodman' ]]
+  [[ "$(tail -n 2 "${request_arguments}")" == $'http://grafana:3000/api/health\n3' ]]
+  socket="${test_root}/grafana-request.sock"
+  python3 -c 'import socket,sys; stream=socket.socket(socket.AF_UNIX); stream.bind(sys.argv[1]); stream.close()' "${socket}"
+  observability_grafana_health_request "${socket}" bf-private /api/health 1
+  [[ "$(head -n 6 "${request_arguments}")" == "$(printf '%s\n' --foreground --signal=KILL 1s fixture-engine --url "unix://${socket}")" ]]
+  [[ "$(tail -n 1 "${request_arguments}")" == 1 ]]
+)
+
+(
+  waits_file="${test_root}/grafana-wait-integration"
+  observability_wait_for() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "${waits_file}"; }
+  observability_pipeline_roles_running() { return 0; }
+  observability_wait_application /tmp/private.sock bf-private
+  [[ "$(wc -l < "${waits_file}")" == 5 ]]
+  [[ "$(grep --count $'240\tGrafana readiness\tobservability_grafana_ready' "${waits_file}")" == 1 ]]
+)
+
+(
+  client="${test_root}/grafana-slow-client"
+  client_marker="${test_root}/grafana-slow-client.pid"
+  printf '%s\n' '#!/bin/sh' "printf \"%s\\n\" \"\$\$\" > \"\$CLIENT_MARKER\"" 'exec sleep 100' > "${client}"
+  chmod 0700 "${client}"
+  CLIENT_MARKER="${client_marker}" python3 - "${script_directory}/lib/observability-application.sh" "${client}" << 'PY'
+import os
+import pathlib
+import select
+import signal
+import subprocess
+import sys
+import time
+
+helper, client = sys.argv[1:]
+marker = pathlib.Path(os.environ["CLIENT_MARKER"])
+child = subprocess.Popen(
+    ["bash", "-c", 'source "$1"; engine="$2"; started_outer=; observability_grafana_health_request /tmp/private.sock bf-private /api/health 1', "fixture", helper, client],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+)
+client_fd = None
+try:
+    deadline = time.monotonic() + 3
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert marker.exists(), "owned dummy client must start"
+    client_fd = os.pidfd_open(int(marker.read_text()))
+    child.communicate(timeout=3)
+    assert child.returncode == 137, "hard client timer must fail, never report health"
+    poller = select.poll()
+    poller.register(client_fd, select.POLLIN)
+    assert poller.poll(1000), "owned host client must not survive its deadline"
+    assert not pathlib.Path(f"/proc/{int(marker.read_text())}").exists(), "timer must reap its direct host client"
+finally:
+    if client_fd is not None:
+        try:
+            signal.pidfd_send_signal(client_fd, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.close(client_fd)
+    if child.poll() is None:
+        os.killpg(child.pid, signal.SIGKILL)
+    child.communicate(timeout=3)
+PY
+)
+
+(
+  cli_arguments="${test_root}/grafana-cli-arguments"
+  observability_remote() { printf '%s\n' "$@" > "${cli_arguments}"; }
+  observability_image_reference() { printf '%s\n' fixture-grafana-image; }
+  observability_create_cli_grafana /tmp/private.sock bf-private fixture-run
+  [[ "$(grep --count '^GF_PLUGINS_PREINSTALL_DISABLED=true$' "${cli_arguments}")" == 1 ]]
+  [[ "$(grep --count '^GF_PLUGINS_PREINSTALL_AUTO_UPDATE=false$' "${cli_arguments}")" == 1 ]]
+  assert_absent GF_INSTALL_PLUGINS "$(< "${cli_arguments}")"
+)
+
+python3 - "${repository_root}" << 'PY'
+import json
+import pathlib
+import sys
+import tomllib
+
+root = pathlib.Path(sys.argv[1])
+scenario = root / "fixtures/scenarios/observability-application"
+native = root / "fixtures/conformance/observability-application"
+required = {"GF_PLUGINS_PREINSTALL_AUTO_UPDATE": "false", "GF_PLUGINS_PREINSTALL_DISABLED": "true"}
+for key, value in required.items():
+    assert f'{key}: "{value}"' in (native / "compose.yaml").read_text()
+    assert f"- {key}={value}" in (scenario / "compose.yaml").read_text()
+    assert f"Environment={key}={value}" in (scenario / "grafana.container").read_text()
+contract = tomllib.loads((scenario / "scenario.toml").read_text())
+for key, value in required.items():
+    assert f"grafana:{key}={value}" in contract["semantics"]["required-environment"]
+cassette = json.loads((scenario / "input-podman.cassette.json").read_text())
+def find_grafana(value):
+    if isinstance(value, dict):
+        if value.get("Name") == "grafana" and "Config" in value:
+            return value
+        for child in value.values():
+            found = find_grafana(child)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = find_grafana(child)
+            if found is not None:
+                return found
+    return None
+grafana = find_grafana(cassette)
+assert grafana is not None
+for key, value in required.items():
+    assert f"{key}={value}" in grafana["Config"]["Env"]
+for source in ["compose", "quadlet", "podman"]:
+    diagnostics = (scenario / f"expected.{source}-podman.diagnostics").read_text()
+    losses = (scenario / f"expected.{source}-podman.losses.tsv").read_text()
+    for key in required:
+        assert f"BFP0007|services.grafana.environment.{key}" in diagnostics
+        assert f"BFP0007\tservices.grafana.environment.{key}\tunsupported\t" in losses
+for name in ["podman-export", "reimport-compose-podman", "reimport-quadlet-podman"]:
+    diagnostics = (native / "diagnostics" / f"{name}.tsv").read_text()
+    for key in required:
+        assert f"BFP0007\tservices.{{{{resource_prefix}}}}grafana.environment.{key}\twarning\tomitted\tpartial" in diagnostics
+PY
+
 withheld_directory="${test_root}/default-withheld"
 mkdir -p -- "${withheld_directory}"
 printf '%s\n' 'services:' '  bf-private-observability-grafana:' \
@@ -283,6 +575,31 @@ if observability_assert_reviewed_diagnostics \
   live-reimport cli exact compose quadlet bf-private-observability- \
   "${bfq_report}.unexpected-decision" > /dev/null 2>&1; then
   printf '%s\n' 'A Quadlet diagnostic with an invented decision field satisfied the contract.' >&2
+  exit 1
+fi
+
+withheld_report="${test_root}/withheld-environment-report.json"
+jq --null-input '{diagnostics: [
+  {code: "BFQ0003", severity: "warning", fields: [{name: "subject", value: "services.grafana.environment.GF_PLUGINS_PREINSTALL_AUTO_UPDATE"}]},
+  {code: "BFQ0003", severity: "warning", fields: [{name: "subject", value: "services.grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED"}]},
+  {code: "BFQ0003", severity: "warning", fields: [{name: "subject", value: "services.grafana.environment.GF_SECURITY_ADMIN_PASSWORD"}]}
+]}' > "${withheld_report}"
+observability_assert_reviewed_diagnostics offline-scenario cli exact compose quadlet '' "${withheld_report}"
+for name in GF_PLUGINS_PREINSTALL_AUTO_UPDATE GF_PLUGINS_PREINSTALL_DISABLED; do
+  jq --arg subject "services.grafana.environment.${name}" \
+    '.diagnostics |= map(select(all(.fields[]; .name != "subject" or .value != $subject)))' \
+    "${withheld_report}" > "${withheld_report}.missing"
+  if observability_assert_reviewed_diagnostics offline-scenario cli exact compose quadlet '' \
+    "${withheld_report}.missing" > /dev/null 2>&1; then
+    printf 'A missing %s withholding diagnostic satisfied the exact route contract.\n' "${name}" >&2
+    exit 1
+  fi
+done
+printf '%s\n' '{"diagnostics":[]}' > "${withheld_report}.included"
+observability_assert_reviewed_diagnostics offline-scenario compose exact compose quadlet '' "${withheld_report}.included"
+if observability_assert_reviewed_diagnostics offline-scenario compose exact compose quadlet '' \
+  "${withheld_report}" > /dev/null 2>&1; then
+  printf '%s\n' 'Withholding diagnostics incorrectly satisfied the authored include route.' >&2
   exit 1
 fi
 
