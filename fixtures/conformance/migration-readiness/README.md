@@ -46,11 +46,13 @@ Lens revisions come only from the reviewed catalogue. Changing a ComposeLens or 
 requires changing `tiers.toml`; the runner accepts no command-line revision override.
 The QuadletLens candidate is bound to the released 0.2.4 commit and its 6.1.2 generator contracts.
 Its release tag/commit pair is Renovate-managed but requires explicit native revalidation.
-The ComposeLens authored-contract baseline is intentionally unchanged; it is not evidence of
-new Compose-provider or Podman runtime compatibility.
-Cargo's manager owns published requirements and lockfile integrity separately. The release-ref
-manager extracts only the annotated tag/commit pair, requires dashboard approval and never
-auto-merges; it deliberately leaves the fixed, unannotated ComposeLens baseline alone.
+The ComposeLens consumer binds the published 0.3.4 release and independent authored contracts,
+including the service/environment association repair from
+[release PR #175](https://github.com/Strukturpiloten/compose-lens/pull/175).
+It is not evidence of new Compose-provider or Podman runtime compatibility.
+Cargo's manager owns published requirements and lockfile integrity separately. One release-ref
+manager extracts both annotated Lens tag/commit pairs, requires dashboard approval and never
+auto-merges; captured historical revisions remain unchanged.
 
 Live tasks reuse `scripts/podman-live-conformance.sh`: Docker Compose output is consumed by the
 reviewed standalone provider, Quadlet output is checked by the pinned candidate generator, and

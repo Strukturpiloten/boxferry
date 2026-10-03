@@ -357,7 +357,8 @@ maximum-disk-growth-mib = 4096
 required-tools = ["cargo", "git"]
 lens = "compose-lens"
 repository = "https://github.com/Strukturpiloten/compose-lens.git"
-revision = "44c9b6a4c72e8ea0db2cd2d2c73f2bf4d07b6a0e"
+# renovate: datasource=github-tags depName=Strukturpiloten/compose-lens version=v0.3.4
+revision = "1ada5476149c3314c7b92e4ef339c001adae04f7"
 commands = [["cargo", "ci-application"]]
 
 [[tasks]]

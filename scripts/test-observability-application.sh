@@ -14,9 +14,9 @@ trap 'rm -rf -- "${test_root}"' EXIT
 
 diagnostic_base="${repository_root}/fixtures/conformance/observability-application/diagnostics/base-compose-provisioned.tsv"
 assert_static_diagnostic_tuple() {
-  local subject=$1 code=$2 severity=$3 decision=$4 policy=$5
+  local subject=$1 code=$2 severity=$3 decision=$4 policy=$5 count=${6:-1}
   awk -F '\t' -v subject="${subject}" -v code="${code}" \
-    -v severity="${severity}" -v decision="${decision}" -v policy="${policy}" '
+    -v severity="${severity}" -v decision="${decision}" -v policy="${policy}" -v count="${count}" '
     $2 == subject {
       if ($1 == code && $3 == severity && $4 == decision && $5 == policy) {
         matching++
@@ -24,7 +24,7 @@ assert_static_diagnostic_tuple() {
         mismatched++
       }
     }
-    END { exit !(matching == 1 && mismatched == 0) }
+    END { exit !(matching == count && mismatched == 0) }
   ' "${diagnostic_base}" || {
     printf 'Incorrect authored observability diagnostic for %s.\n' "${subject}" >&2
     return 1
@@ -52,11 +52,33 @@ for mount in 'alloy.mounts[0]' 'alloy.mounts[1]' 'grafana.mounts[0]' \
 done
 for service in alloy grafana log-producer loki metrics-producer prometheus; do
   for field in networks restart_policy; do
+    # Native promotion emits a reconstruction for each attachment. Grafana
+    # independently belongs to both backend and edge; keep the repeated tuple.
+    reconstruction_count=1
+    [[ "${service}:${field}" == grafana:networks ]] && reconstruction_count=2
     assert_static_diagnostic_tuple \
-      "services.{{resource_prefix}}${service}.${field}" BFP0009 note reconstructed -
+      "services.{{resource_prefix}}${service}.${field}" BFP0009 note reconstructed - "${reconstruction_count}"
   done
 done
-[[ "$(awk -F '\t' '$1 == "BFP0009" { count++ } END { print count + 0 }' "${diagnostic_base}")" == 18 ]]
+[[ "$(awk -F '\t' '$1 == "BFP0009" { count++ } END { print count + 0 }' "${diagnostic_base}")" == 19 ]]
+reviewed_diagnostic_base="${diagnostic_base}"
+grafana_network_subject='services.{{resource_prefix}}grafana.networks'
+awk -F '\t' -v subject="${grafana_network_subject}" '
+  $1 == "BFP0009" && $2 == subject && !removed++ { next }
+  { print }
+' "${reviewed_diagnostic_base}" > "${test_root}/missing-grafana-network.tsv"
+cp -- "${reviewed_diagnostic_base}" "${test_root}/extra-grafana-network.tsv"
+printf 'BFP0009\t%s\tnote\treconstructed\t-\n' "${grafana_network_subject}" \
+  >> "${test_root}/extra-grafana-network.tsv"
+for mutation in missing extra; do
+  diagnostic_base="${test_root}/${mutation}-grafana-network.tsv"
+  if assert_static_diagnostic_tuple "${grafana_network_subject}" BFP0009 note reconstructed - 2 \
+    > /dev/null 2>&1; then
+    printf 'Observability contract admitted %s Grafana network reconstruction tuple.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+diagnostic_base="${reviewed_diagnostic_base}"
 observability_write_live_diagnostic_template \
   compose exact podman compose bf-private-observability- \
   "${test_root}/observability-diagnostics.tsv"

@@ -223,6 +223,8 @@
     },
     {
       "description": "Do not delay BoxFerry and Lens releases",
+      "matchManagers": ["cargo"],
+      "matchDatasources": ["crate"],
       "matchPackageNames": [
         "boxferry",
         "boxferry-model",
@@ -232,7 +234,8 @@
         "boxferry-quadlet",
         "compose-lens",
         "podman-lens",
-        "quadlet-lens"
+        "quadlet-lens",
+        "docker-lens"
       ],
       "minimumReleaseAge": "0 days"
     },
@@ -256,7 +259,7 @@
       "automerge": false,
       "groupName": "Native Lens conformance",
       "prBodyNotes": [
-        "Review the exact release commit and native evidence; update generator target metadata and rerun downstream conformance. Discovery alone does not admit support."
+        "Review the exact release commit and native evidence; update processing or generator target metadata and rerun downstream conformance. Discovery alone does not admit support."
       ]
     },
     {

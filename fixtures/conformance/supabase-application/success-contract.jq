@@ -199,7 +199,7 @@ def podman_native_unsupported_occurrences:
   selected_image_label_count;
 
 def import_service_fields($service):
-  [["environment", "approximated"]] + [
+  (if $output == "podman" then [] else [["environment", "approximated"]] end) + [
     ["health_failure_action", "not-promoted"],
     ["infra", "not-promoted"],
     ["logging", "not-promoted"],
@@ -677,6 +677,21 @@ def expected_podman_environment_fields:
     $observed
   end;
 
+# Podman artifacts retain the CLI's default redacted acquisition. Each named
+# required value is an individual importer loss; none is an aggregate promotion.
+def withheld_environment_diagnostics:
+  if $input == "podman" and $output == "podman" then
+    [
+      expected_podman_environment_fields | to_entries[] |
+      .key as $service |
+      select(contains(selected_services; $service)) |
+      .value[] |
+      tuple("BFP0002"; "services." + $resource_prefix + $service + ".environment." + .; "omitted")
+    ]
+  else
+    []
+  end;
+
 # Generated Podman artifacts have route-specific exact network-loss subjects.
 
 def generated_podman_network_subjects:
@@ -817,7 +832,7 @@ def expected_diagnostics:
   elif $input == "podman" and $output == "quadlet" then
     import_diagnostics + quadlet_network_alias_diagnostics
   elif $input == "podman" and $output == "podman" then
-    import_diagnostics + podman_diagnostics
+    import_diagnostics + withheld_environment_diagnostics + podman_diagnostics
   elif $input == "compose" and $output == "podman" then
     generated_podman_diagnostics(false)
   elif $input == "quadlet" and $output == "podman" then
@@ -1099,7 +1114,10 @@ def expected_success_fidelity:
       $diagnostics[] |
       select(.code != "BFP0009" and (approximate_diagnostic | not))
     ] | length) as $diagnostic_unsupported |
-    ([$diagnostics[] | select(.code == "BFP0002")] | length) as $native_diagnostic_count |
+    # Environment-key omissions each carry their own outcome. Only summarized
+    # native findings are replaced by the independently counted occurrences.
+    (([$diagnostics[] | select(.code == "BFP0002")] | length) -
+      (withheld_environment_diagnostics | length)) as $native_diagnostic_count |
     {
       approximate: (
         $diagnostic_approximate

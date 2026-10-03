@@ -1227,7 +1227,7 @@ fn supabase_provider_origin_controls_exact_kong_podman_losses() -> Result<(), St
                 // Native Compose acquisition has separately reviewed creation-evidence
                 // accounting. Its exact counter nevertheless includes only these two
                 // additional Kong environment omissions.
-                let expected = if selection == "all" { 1_619 } else { 1_507 };
+                let expected = if selection == "all" { 1_826 } else { 1_700 };
                 assert_eq!(compose_fidelity["unsupported"].as_u64(), Some(expected));
             } else if input == "quadlet" {
                 // Compose origin drops 16 native dependencies and adds two Kong omissions.
@@ -2225,7 +2225,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     let reviewed_fidelity = [
         ("exact", "podman", "compose", 39, 1_346),
         ("exact", "podman", "quadlet", 39, 1_318),
-        ("exact", "podman", "podman", 39, 1_527),
+        ("exact", "podman", "podman", 28, 1_718),
         ("exact", "quadlet", "compose", 0, 26),
         ("exact", "compose", "compose", 0, 0),
         ("exact", "compose", "quadlet", 0, 1),
@@ -2234,7 +2234,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("exact", "quadlet", "podman", 0, 223),
         ("storage", "podman", "compose", 39, 1_346),
         ("storage", "podman", "quadlet", 39, 1_318),
-        ("storage", "podman", "podman", 39, 1_527),
+        ("storage", "podman", "podman", 28, 1_718),
         ("storage", "quadlet", "compose", 0, 26),
         ("storage", "compose", "compose", 0, 0),
         ("storage", "compose", "quadlet", 0, 1),
@@ -2243,7 +2243,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("storage", "quadlet", "podman", 0, 223),
         ("label", "podman", "compose", 39, 1_346),
         ("label", "podman", "quadlet", 39, 1_318),
-        ("label", "podman", "podman", 39, 1_527),
+        ("label", "podman", "podman", 28, 1_718),
         ("label", "quadlet", "compose", 0, 26),
         ("label", "compose", "compose", 0, 0),
         ("label", "compose", "quadlet", 0, 1),
@@ -2252,7 +2252,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
         ("label", "quadlet", "podman", 0, 223),
         ("all", "podman", "compose", 41, 1_446),
         ("all", "podman", "quadlet", 41, 1_418),
-        ("all", "podman", "podman", 41, 1_641),
+        ("all", "podman", "podman", 29, 1_846),
         ("all", "quadlet", "compose", 0, 26),
         ("all", "compose", "compose", 0, 0),
         ("all", "compose", "quadlet", 0, 1),
@@ -2517,8 +2517,8 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     assert_eq!(
         expected_fidelity,
         serde_json::json!({
-            "approximate": 39,
-            "unsupported": 1_527,
+            "approximate": 28,
+            "unsupported": 1_718,
             "invalid": 0,
             "other": 0,
         })
@@ -2543,7 +2543,7 @@ fn supabase_report_contract_rejects_subject_and_fidelity_counterexamples() -> Re
     )?);
 
     let mut volume_metadata_as_approximate = success_report.clone();
-    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(40);
+    volume_metadata_as_approximate["fidelity"]["approximate"] = serde_json::json!(29);
     assert!(!supabase_contract_accepts(
         &root,
         "podman",
@@ -7135,12 +7135,196 @@ fn validate_renovate_manager_coverage(package_rules: &[serde_json::Value]) -> Re
             return Err(format!("Renovate configuration is missing manager `{manager}`"));
         }
     }
-    let release_age_rule = package_rules
+    Ok(())
+}
+
+fn validate_first_party_release_age(renovate: &serde_json::Value) -> Result<(), String> {
+    if renovate["minimumReleaseAge"] != "3 days" {
+        return Err("Renovate must retain the global three-day release age".to_owned());
+    }
+    let package_rules = renovate["packageRules"]
+        .as_array()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
+    let release_age_rules = package_rules
         .iter()
-        .find(|rule| rule["description"] == "Do not delay BoxFerry and Lens releases")
-        .ok_or_else(|| "Renovate release-age exception is missing".to_owned())?;
-    if release_age_rule["minimumReleaseAge"] != "0 days" {
-        return Err("Renovate must not delay coordinated BoxFerry and Lens releases".to_owned());
+        .filter(|rule| rule["description"] == "Do not delay BoxFerry and Lens releases")
+        .collect::<Vec<_>>();
+    if release_age_rules.len() != 1 {
+        return Err("Renovate must define exactly one first-party release-age exception".to_owned());
+    }
+    let rule = release_age_rules[0];
+    if rule["minimumReleaseAge"] != "0 days"
+        || rule["matchManagers"] != serde_json::json!(["cargo"])
+        || rule["matchDatasources"] != serde_json::json!(["crate"])
+    {
+        return Err("Renovate first-party age exception must cover only Cargo/crate releases".to_owned());
+    }
+    let names = rule["matchPackageNames"]
+        .as_array()
+        .ok_or_else(|| "first-party package names must be an array".to_owned())?;
+    let expected_names = BTreeSet::from([
+        "boxferry",
+        "boxferry-model",
+        "boxferry-engine",
+        "boxferry-compose",
+        "boxferry-podman",
+        "boxferry-quadlet",
+        "compose-lens",
+        "podman-lens",
+        "quadlet-lens",
+        "docker-lens",
+    ]);
+    let actual_names = names
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<BTreeSet<_>>();
+    if names.len() != expected_names.len() || actual_names != expected_names {
+        return Err("Renovate age exception must list exactly the six BoxFerry and four Lens crates".to_owned());
+    }
+    let fields = rule
+        .as_object()
+        .ok_or_else(|| "first-party age exception must be an object".to_owned())?
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if fields
+        != BTreeSet::from([
+            "description",
+            "matchManagers",
+            "matchDatasources",
+            "matchPackageNames",
+            "minimumReleaseAge",
+        ])
+    {
+        return Err("Renovate first-party exception must change only age under its exact scope".to_owned());
+    }
+    for candidate in package_rules {
+        if candidate.get("minimumReleaseAge").is_none() || candidate == rule {
+            continue;
+        }
+        if candidate["description"] != "Automerge green-gated lock-file maintenance"
+            || candidate["matchUpdateTypes"] != serde_json::json!(["lockFileMaintenance"])
+            || candidate["minimumReleaseAge"] != "0 days"
+        {
+            return Err("Renovate must not introduce another registry release-age override".to_owned());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn first_party_release_age_exception_has_exact_cargo_scope() -> Result<(), String> {
+    let path = repository_root().join(".github/renovate.json");
+    let contents = fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&contents).map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    validate_first_party_release_age(&renovate)?;
+    let rule_index = renovate["packageRules"]
+        .as_array()
+        .and_then(|rules| {
+            rules
+                .iter()
+                .position(|rule| rule["description"] == "Do not delay BoxFerry and Lens releases")
+        })
+        .ok_or_else(|| "first-party age exception is missing".to_owned())?;
+
+    // Package order carries no policy meaning; independently reject changes to membership and scope.
+    let mut reordered = renovate.clone();
+    reordered["packageRules"][rule_index]["matchPackageNames"]
+        .as_array_mut()
+        .ok_or_else(|| "first-party package names must be an array".to_owned())?
+        .reverse();
+    validate_first_party_release_age(&reordered)?;
+    for (label, field, value) in [
+        ("missing manager", "matchManagers", serde_json::Value::Null),
+        ("npm manager", "matchManagers", serde_json::json!(["npm"])),
+        (
+            "additional manager",
+            "matchManagers",
+            serde_json::json!(["cargo", "npm"]),
+        ),
+        ("missing datasource", "matchDatasources", serde_json::Value::Null),
+        ("npm datasource", "matchDatasources", serde_json::json!(["npm"])),
+        (
+            "additional datasource",
+            "matchDatasources",
+            serde_json::json!(["crate", "npm"]),
+        ),
+        (
+            "wildcard packages",
+            "matchPackageNames",
+            serde_json::json!(["boxferry*", "*-lens"]),
+        ),
+        (
+            "regex packages",
+            "matchPackageNames",
+            serde_json::json!(["/^boxferry/", "/-lens$/"]),
+        ),
+        ("missing packages", "matchPackageNames", serde_json::Value::Null),
+        ("disabled exception", "enabled", serde_json::json!(false)),
+        ("extra matching scope", "matchDepNames", serde_json::json!(["*"])),
+        ("changed age", "minimumReleaseAge", serde_json::json!("1 day")),
+    ] {
+        let mut invalid = renovate.clone();
+        invalid["packageRules"][rule_index][field] = value;
+        if validate_first_party_release_age(&invalid).is_ok() {
+            return Err(format!("first-party release-age policy accepted {label}"));
+        }
+    }
+    for (label, replacement) in [
+        ("third-party crate", "serde"),
+        ("BoxFerry prefix lookalike", "boxferry-extra"),
+        ("Lens suffix lookalike", "unreviewed-lens"),
+        ("duplicate package", "boxferry-model"),
+    ] {
+        let mut invalid = renovate.clone();
+        invalid["packageRules"][rule_index]["matchPackageNames"][0] = serde_json::json!(replacement);
+        if validate_first_party_release_age(&invalid).is_ok() {
+            return Err(format!("first-party release-age policy accepted {label}"));
+        }
+    }
+    let mut missing_docker_lens = renovate.clone();
+    missing_docker_lens["packageRules"][rule_index]["matchPackageNames"]
+        .as_array_mut()
+        .ok_or_else(|| "first-party package names must be an array".to_owned())?
+        .retain(|name| name != "docker-lens");
+    if validate_first_party_release_age(&missing_docker_lens).is_ok() {
+        return Err("first-party release-age policy accepted missing DockerLens".to_owned());
+    }
+    let mut duplicate = renovate.clone();
+    duplicate["packageRules"]
+        .as_array_mut()
+        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?
+        .push(renovate["packageRules"][rule_index].clone());
+    if validate_first_party_release_age(&duplicate).is_ok() {
+        return Err("first-party release-age policy accepted duplicate exceptions".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn first_party_release_age_rejects_global_and_third_party_waivers() -> Result<(), String> {
+    let path = repository_root().join(".github/renovate.json");
+    let contents = fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let renovate: serde_json::Value =
+        serde_json::from_str(&contents).map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    validate_first_party_release_age(&renovate)?;
+    let mut global_waiver = renovate.clone();
+    global_waiver["minimumReleaseAge"] = serde_json::json!("0 days");
+    if validate_first_party_release_age(&global_waiver).is_ok() {
+        return Err("first-party release-age policy accepted a global waiver".to_owned());
+    }
+    for age in [serde_json::json!("0 days"), serde_json::Value::Null] {
+        let mut third_party_waiver = renovate.clone();
+        third_party_waiver["packageRules"]
+            .as_array_mut()
+            .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?
+            .push(serde_json::json!({"matchPackageNames": ["serde"], "minimumReleaseAge": age}));
+        if validate_first_party_release_age(&third_party_waiver).is_ok() {
+            return Err(format!(
+                "first-party release-age policy accepted a third-party age waiver: {age}"
+            ));
+        }
     }
     Ok(())
 }
@@ -7218,6 +7402,7 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
         .as_array()
         .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?;
     validate_renovate_manager_coverage(package_rules)?;
+    validate_first_party_release_age(&renovate_value)?;
     let ci_workflow = fs::read_to_string(root.join(".github/workflows/ci.yml"))
         .map_err(|error| format!("failed to read CI workflow: {error}"))?;
     validate_renovate_lock_maintenance(&renovate_value, package_rules)?;
@@ -8585,16 +8770,16 @@ fn agent_roles_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
     for required in [
         "model = \"gpt-6-sol\"",
         "model_reasoning_effort = \"xhigh\"",
-        "max_concurrent_threads_per_session = 9",
-        "default_subagent_model = \"gpt-6-sol\"",
+        "max_concurrent_threads_per_session = 8",
+        "default_subagent_model = \"gpt-6.1-sol\"",
         "default_subagent_reasoning_effort = \"medium\"",
     ] {
         assert!(config.contains(required), "missing agent default: {required}");
     }
     for (role, model, effort, sandbox) in [
-        ("implementation-worker", "gpt-6-sol", "high", "workspace-write"),
-        ("specification-researcher", "gpt-6-sol", "high", "read-only"),
-        ("reviewer", "gpt-6-sol", "high", "read-only"),
+        ("implementation-worker", "gpt-6.1-sol", "high", "workspace-write"),
+        ("specification-researcher", "gpt-6.1-sol", "high", "read-only"),
+        ("reviewer", "gpt-6.1-sol", "high", "read-only"),
         ("verifier", "gpt-6-luna", "high", "workspace-write"),
     ] {
         let text = fs::read_to_string(root.join(format!(".codex/agents/{role}.toml")))?;
@@ -8647,9 +8832,12 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
     let flattened = instructions.split_whitespace().collect::<Vec<_>>().join(" ");
     for required in [
         "The primary manager always uses `gpt-6-sol` with `xhigh` reasoning",
-        "up to nine concurrent subagents plus the primary manager",
+        "Task-specific subagents may use `gpt-6.1-sol` or `gpt-6-luna` with `medium`, `high`, or `xhigh` reasoning",
+        "Use `gpt-6-astra` only with `xhigh` reasoning for particularly difficult architectural questions",
+        "up to eight concurrent subagents plus the primary manager (nine agents in total)",
         "subject to the session's actual runtime limit",
-        "Nine is a ceiling, not a target or nine distinct roles",
+        "Eight is a ceiling, not a target or eight distinct roles",
+        "`agents.max_concurrent_threads_per_session = 8` excludes the primary",
         "Do not create nested agents to evade the limit",
         "Never run two writers in one checkout",
         "at most one complete gate or heavy runtime suite at a time across this workspace",
@@ -8667,7 +8855,7 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
         assert!(flattened.contains(required), "missing workspace boundary: {required}");
     }
     for obsolete in [
-        "Use at most three subagents",
+        "up to nine concurrent subagents plus the primary manager",
         "does not authorize a merge",
         "Merge only when the user explicitly authorizes",
     ] {

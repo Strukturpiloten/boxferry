@@ -402,7 +402,7 @@ jobs:
         with:
           repository: Strukturpiloten/.github
           # renovate: datasource=github-digest depName=Strukturpiloten/.github currentValue=main
-          ref: a9e003816709ccac55e761e5ef8a884d4359c853
+          ref: e362e4564f8e3c1d9d113242e3bf34011f2d7cd7
           path: .github/strukturpiloten-shared
           persist-credentials: false
       - name: Reject newly introduced dependencies younger than three days

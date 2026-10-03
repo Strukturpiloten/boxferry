@@ -41,9 +41,9 @@ services:
         source: data
         target: /var/lib/data
         read_only: true
-      - "./config:/etc/app:Z,ro"
+      - ./config:/etc/app:Z,ro
       - ./shared:/srv/shared:z
-      - "./data:/srv/data:Z,ro"
+      - ./data:/srv/data:Z,ro
     networks:
       frontend:
         aliases:

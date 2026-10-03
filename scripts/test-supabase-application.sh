@@ -52,6 +52,64 @@ supabase_contract_fidelity() {
     --from-file "$(supabase_fixture_root)/success-contract.jq"
 }
 
+# Counts come from the independently reviewed effective environment inventories,
+# including image defaults, the all-selection peer, and Compose's two Kong keys.
+for acquisition in cli compose; do
+  for selection in exact storage label all; do
+    expected_keys=191
+    expected_approximate=28
+    expected_services=11
+    [[ "${acquisition}" == compose ]] && expected_keys=$((expected_keys + 2))
+    [[ "${acquisition}" == compose ]] && expected_approximate=24
+    if [[ "${selection}" == all ]]; then
+      expected_keys=$((expected_keys + 14))
+      expected_approximate=$((expected_approximate + 1))
+      expected_services=12
+    fi
+    withheld_diagnostics="$(supabase_contract_expected podman podman "${acquisition}" "${acquisition}" "${selection}")"
+    jq --exit-status --argjson expected_keys "${expected_keys}" '
+      [.[] | select(.code == "BFP0002" and (.subject | contains(".environment.")))] as $keys |
+      ($keys | length) == $expected_keys and
+      ($keys | map(.subject) | unique | length) == $expected_keys and
+      all($keys[]; .severity == "warning" and .decision == "omitted") and
+      ([.[] | select(.code == "BFP0003" and (.subject | test("^services\\..*\\.environment$")))] | length) == 0 and
+      ($keys | map(.subject) | sort) ==
+        ([.[] | select(.code == "BFP0007" and (.subject | contains(".environment."))) | .subject] | sort)
+    ' <<< "${withheld_diagnostics}" > /dev/null
+    [[ "$(supabase_contract_fidelity podman podman "${acquisition}" "${acquisition}" "${selection}" | jq -r .approximate)" == "${expected_approximate}" ]]
+    for output in compose quadlet; do
+      included_diagnostics="$(supabase_contract_expected podman "${output}" "${acquisition}" "${acquisition}" "${selection}")"
+      jq --exit-status --argjson services "${expected_services}" '
+        ([.[] | select(.code == "BFP0003" and (.subject | test("^services\\..*\\.environment$")))] | length) == $services and
+        ([.[] | select(.code == "BFP0002" and (.subject | contains(".environment.")))] | length) == 0
+      ' <<< "${included_diagnostics}" > /dev/null
+    done
+  done
+done
+
+for mutation in missing-key extra-key aggregate-promotion; do
+  jq --arg mutation "${mutation}" '
+    (.diagnostics | map(select(.code == "BFP0002" and
+      any(.fields[]; .name == "subject" and (.value | contains(".environment."))))) | first) as $key |
+    if $mutation == "missing-key" then
+      .diagnostics -= [$key] | .fidelity.unsupported -= 1
+    elif $mutation == "extra-key" then
+      .diagnostics += [($key | (.fields[] | select(.name == "subject") | .value) += "_UNREVIEWED")] |
+      .fidelity.unsupported += 1
+    else
+      .diagnostics += [($key | .code = "BFP0003" |
+        (.fields[] | select(.name == "subject") | .value) |= sub("\\.environment\\.[^.]+$"; ".environment") |
+        (.fields[] | select(.name == "decision") | .value) = "approximated")] |
+      .fidelity.approximate += 1
+    end
+  ' "${contract_report}" > "${contract_drift_report}"
+  if supabase_assert_success_contract podman podman storage "${contract_drift_report}" \
+    contract false cli > /dev/null 2>&1; then
+    printf 'Supabase contract admitted withheld environment mutation: %s.\n' "${mutation}" >&2
+    exit 1
+  fi
+done
+
 for acquisition in cli compose; do
   podman_diagnostics="$(supabase_contract_expected podman compose "${acquisition}" "${acquisition}" storage)"
   jq --exit-status --arg acquisition "${acquisition}" '
@@ -135,8 +193,8 @@ assert_compose_provider_kong_losses() {
     # Its all selection excludes Compose boundary peer creation evidence;
     # otherwise the reviewed difference is only the two Kong omissions.
     case "${selection}" in
-      exact | storage | label) [[ "${compose_unsupported}" == 1507 ]] ;;
-      all) [[ "${compose_unsupported}" == 1619 ]] ;;
+      exact | storage | label) [[ "${compose_unsupported}" == 1700 ]] ;;
+      all) [[ "${compose_unsupported}" == 1826 ]] ;;
     esac || return 1
   elif [[ "${input}" == quadlet ]]; then
     # Compose retains two Kong values, but lacks all sixteen native dependency losses.
@@ -474,7 +532,7 @@ assert_contract_predicate_failure fidelity-shape "${fidelity_shape_drift_report}
 assert_contract_predicate_failure non-object-fidelity \
   "${non_object_fidelity_drift_report}" fidelity-shape
 assert_contract_predicate_failure fidelity-unsupported \
-  "${fidelity_counter_drift_report}" fidelity-unsupported 1528
+  "${fidelity_counter_drift_report}" fidelity-unsupported 1719
 assert_contract_predicate_failure diagnostic-names \
   "${empty_name_drift_report}" diagnostic-names
 

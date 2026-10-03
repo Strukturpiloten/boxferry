@@ -7,8 +7,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
-- Consume PodmanLens 0.2.5 and QuadletLens 0.2.4; refresh active upstream Podman test lanes to
-  5.8.7 and 6.1.2 in both root modes, while retaining historical captures and the separate
+- Consume ComposeLens 0.3.4, PodmanLens 0.2.5, and QuadletLens 0.2.4; preserve generated
+  Compose strings containing YAML separation characters and service/environment associations in
+  application definitions such as Appwrite. Refresh active upstream Podman test lanes to 5.8.7 and
+  6.1.2 in both root modes, while retaining historical captures and the separate
   exact Podman rendering boundary ([#340](https://github.com/Strukturpiloten/boxferry/issues/340)).
 
 - Infer the neutral application name from one Quadlet unit filename on `convert` and `validate`;

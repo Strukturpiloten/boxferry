@@ -545,6 +545,96 @@ fn authored_podman_value_routes_have_complete_withholding_contracts() -> Result<
 }
 
 #[test]
+fn supabase_withheld_podman_report_matches_live_environment_contract() -> Result<(), Box<dyn Error>> {
+    let root = repository_root();
+    let fixture = root.join("fixtures/scenarios/supabase-application");
+    let manifest = read_manifest(&fixture)?;
+    let route = manifest
+        .evidence
+        .iter()
+        .find(|route| route.input == "podman" && route.exporter == "podman")
+        .ok_or("missing Supabase Podman-to-Podman route")?;
+    assert!(!route.includes_environment_values());
+    // Production CLI acquisition consumes an authored read-only cassette through
+    // the published PodmanLens; this is offline evidence, never a native claim.
+    let output = TemporaryDirectory::new("supabase-withheld-environment-report")?;
+    let report = convert_cli(
+        &manifest,
+        &[fixture.join("input-podman.cassette.json")],
+        route,
+        output.path(),
+    )?;
+    assert_eq!(report["status"], "success");
+    validate_cli_loss_aggregate(&route.cli_losses(&fixture)?, route, &report)?;
+    let expected = manifest
+        .semantics
+        .required_environment
+        .iter()
+        .map(|assignment| {
+            let (service, assignment) = assignment.split_once(':').ok_or("missing environment service")?;
+            let (name, _) = assignment.split_once('=').ok_or("missing environment assignment")?;
+            Ok(format!("BFP0002|services.{service}.environment.{name}"))
+        })
+        .collect::<Result<BTreeSet<_>, Box<dyn Error>>>()?;
+    let facts = report_diagnostic_facts(&report)?;
+    let actual = facts
+        .iter()
+        .filter(|fact| fact.starts_with("BFP0002|services.") && fact.contains(".environment."))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "one omission per independently required key"
+    );
+    assert_eq!(actual.into_iter().collect::<BTreeSet<_>>(), expected);
+    assert!(
+        !facts
+            .iter()
+            .any(|fact| fact.starts_with("BFP0003|services.") && fact.ends_with(".environment")),
+        "redacted values cannot produce aggregate environment promotion"
+    );
+    let declared = Command::new("jq")
+        .args(["--null-input", "--arg", "input", "podman", "--arg", "output", "podman"])
+        .args(["--arg", "selection", "exact", "--arg", "resource_prefix", ""])
+        .args(["--arg", "podman_acquisition", "cli", "--arg", "provisioner_mode", "cli"])
+        .args([
+            "--argjson",
+            "include_system_network",
+            "false",
+            "--argjson",
+            "emit_expected",
+            "true",
+        ])
+        .arg("--from-file")
+        .arg(root.join("fixtures/conformance/supabase-application/success-contract.jq"))
+        .output()?;
+    assert!(declared.status.success(), "live environment contract must compile");
+    let declared: Vec<serde_json::Value> = serde_json::from_slice(&declared.stdout)?;
+    let projection = declared
+        .iter()
+        .filter(|tuple| tuple["code"] == "BFP0002")
+        .filter_map(|tuple| {
+            tuple["subject"]
+                .as_str()
+                .map(|subject| (tuple, format!("BFP0002|{subject}")))
+        })
+        .filter(|(_, fact)| expected.contains(fact))
+        .map(|(tuple, fact)| {
+            assert_eq!(tuple["severity"], "warning");
+            assert_eq!(tuple["decision"], "omitted");
+            fact
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        projection, expected,
+        "live contract must admit the real redacted importer tuples"
+    );
+    assert_no_protected_environment_values(&manifest, &report.to_string(), "withheld replay report")?;
+    Ok(())
+}
+
+#[test]
 fn reviewed_podman_cassette_requires_route_authorization_for_compose_values() -> Result<(), Box<dyn Error>> {
     let fixture = repository_root().join("fixtures/scenarios/nextcloud-application");
     let manifest = read_manifest(&fixture)?;
@@ -1115,85 +1205,85 @@ fn observability_assert_live_template_contracts() -> Result<(), Box<dyn Error>> 
             "cli",
             "exact",
             "compose",
-            237,
-            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18)],
+            238,
+            &[("BFC0007", 11), ("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 19)],
         ),
         (
             "cli",
             "exact",
             "quadlet",
+            228,
+            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 19), ("BFQ0003", 1)],
+        ),
+        (
+            "cli",
+            "exact",
+            "podman",
+            327,
+            &[("BFP0002", 99), ("BFP0003", 150), ("BFP0007", 59), ("BFP0009", 19)],
+        ),
+        (
+            "cli",
+            "all",
+            "compose",
+            258,
+            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 21)],
+        ),
+        (
+            "cli",
+            "all",
+            "quadlet",
+            247,
+            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 21), ("BFQ0003", 1)],
+        ),
+        (
+            "cli",
+            "all",
+            "podman",
+            365,
+            &[("BFP0002", 115), ("BFP0003", 159), ("BFP0007", 70), ("BFP0009", 21)],
+        ),
+        (
+            "compose",
+            "exact",
+            "compose",
             227,
-            &[("BFP0002", 52), ("BFP0003", 156), ("BFP0009", 18), ("BFQ0003", 1)],
-        ),
-        (
-            "cli",
-            "exact",
-            "podman",
-            326,
-            &[("BFP0002", 99), ("BFP0003", 150), ("BFP0007", 59), ("BFP0009", 18)],
-        ),
-        (
-            "cli",
-            "all",
-            "compose",
-            257,
-            &[("BFC0007", 12), ("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20)],
-        ),
-        (
-            "cli",
-            "all",
-            "quadlet",
-            246,
-            &[("BFP0002", 59), ("BFP0003", 166), ("BFP0009", 20), ("BFQ0003", 1)],
-        ),
-        (
-            "cli",
-            "all",
-            "podman",
-            364,
-            &[("BFP0002", 115), ("BFP0003", 159), ("BFP0007", 70), ("BFP0009", 20)],
-        ),
-        (
-            "compose",
-            "exact",
-            "compose",
-            226,
-            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18)],
+            &[("BFC0007", 4), ("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 19)],
         ),
         (
             "compose",
             "exact",
             "quadlet",
-            223,
-            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 18), ("BFQ0003", 1)],
+            224,
+            &[("BFP0002", 46), ("BFP0003", 158), ("BFP0009", 19), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "exact",
             "podman",
-            322,
-            &[("BFP0002", 93), ("BFP0003", 152), ("BFP0007", 59), ("BFP0009", 18)],
+            323,
+            &[("BFP0002", 93), ("BFP0003", 152), ("BFP0007", 59), ("BFP0009", 19)],
         ),
         (
             "compose",
             "all",
             "compose",
-            246,
-            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20)],
+            247,
+            &[("BFC0007", 5), ("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 21)],
         ),
         (
             "compose",
             "all",
             "quadlet",
-            242,
-            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 20), ("BFQ0003", 1)],
+            243,
+            &[("BFP0002", 53), ("BFP0003", 168), ("BFP0009", 21), ("BFQ0003", 1)],
         ),
         (
             "compose",
             "all",
             "podman",
-            360,
-            &[("BFP0002", 109), ("BFP0003", 161), ("BFP0007", 70), ("BFP0009", 20)],
+            361,
+            &[("BFP0002", 109), ("BFP0003", 161), ("BFP0007", 70), ("BFP0009", 21)],
         ),
     ];
     for contract in expected_contracts {
@@ -1403,7 +1493,7 @@ fn observability_assert_template_selection_contract() -> Result<(), Box<dyn Erro
 fn observability_assert_template_files() -> Result<(), Box<dyn Error>> {
     let template_root = repository_root().join("fixtures/conformance/observability-application/diagnostics");
     for (name, expected_rows) in [
-        ("base-compose-provisioned.tsv", 214),
+        ("base-compose-provisioned.tsv", 215),
         ("non-podman-environment-promotions.tsv", 6),
         ("podman-import-withheld-environment.tsv", 47),
         ("all-non-podman-environment-promotion.tsv", 1),
