@@ -658,6 +658,96 @@ fn assert_supabase_fidelity_mismatch_summaries(root: &Path, report: &serde_json:
 }
 
 #[test]
+fn capture_proxy_rejected_request_waits_for_listener_readiness() -> Result<(), String> {
+    // Independent scheduling control: a pathname-only startup check cannot
+    // release this listen barrier. Exercise the real self-test and its cleanup.
+    let regression = r#"
+import importlib.util
+import pathlib
+import sys
+import threading
+
+path = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("capture_readiness_regression", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+original_serve = module.Proxy.serve
+original_init = module.Proxy.__init__
+proxies = []
+waits = []
+mode = "bound-before-listen"
+
+def controlled_init(proxy, listen, upstream, **kwargs):
+    original_init(proxy, listen, upstream, **kwargs)
+    if proxy.listen.name != "rejected-proxy.sock":
+        return
+    proxies.append(proxy)
+    if mode == "bound-before-listen":
+        proxy.bound = threading.Event()
+        proxy.listen_permitted = threading.Event()
+        class ObservedReady(threading.Event):
+            def wait(self, timeout=None):
+                assert timeout == 2
+                assert proxy.bound.wait(2)
+                assert proxy.listen.exists() and not self.is_set()
+                assert proxy.failure is None
+                waits.append(mode)
+                proxy.listen_permitted.set()
+                return super().wait(timeout)
+        proxy.ready = ObservedReady()
+        return
+    if mode == "dead-listener":
+        class ExitedReady(threading.Event):
+            def wait(self, timeout=None):
+                assert timeout == 2
+                assert super().wait(timeout)
+                proxy.worker.join(timeout)
+                assert not proxy.worker.is_alive()
+                return True
+        proxy.ready = ExitedReady()
+
+def controlled_serve(proxy):
+    if proxy.listen.name != "rejected-proxy.sock" or mode == "bound-before-listen":
+        return original_serve(proxy)
+    if mode == "startup-failure":
+        proxy.failure = module.CaptureError("authored startup failure")
+        proxy.stop.set()
+        return
+    assert mode == "dead-listener"
+    proxy.worker = threading.current_thread()
+    proxy.ready.set()
+
+module.Proxy.__init__ = controlled_init
+module.Proxy.serve = controlled_serve
+module.self_test()
+assert waits == ["bound-before-listen"] and len(proxies) == 1
+assert proxies[0].ready.is_set() and proxies[0].stop.is_set()
+assert isinstance(proxies[0].failure, module.CaptureError)
+assert str(proxies[0].failure) == "capture proxy permits only HTTP GET"
+assert proxies[0].interactions == [] and not proxies[0].listen.exists()
+for mode, message in [("startup-failure", "failed to become ready"), ("dead-listener", "listener failed")]:
+    try:
+        module.self_test()
+    except AssertionError as error:
+        assert message in str(error)
+        assert error.__cause__ is proxies[-1].failure
+    else:
+        raise AssertionError(f"{mode} was accepted")
+    assert proxies[-1].interactions == [] and not proxies[-1].listen.exists()
+"#;
+    let output = run_bounded_command(
+        Command::new("python3")
+            .args(["-B", "-c", regression])
+            .arg(repository_root().join("fixtures/conformance/podman-live/capture_proxy.py")),
+        Duration::from_secs(180),
+        "capture rejection listener readiness regression",
+    )?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
+}
+
+#[test]
 #[allow(
     clippy::too_many_lines,
     reason = "keeps the one live-conformance repository contract reviewable in one place"

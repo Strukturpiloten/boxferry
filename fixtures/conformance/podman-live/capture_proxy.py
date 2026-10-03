@@ -1784,16 +1784,22 @@ def self_test() -> None:
         rejected_thread = threading.Thread(target=rejected_proxy.serve, daemon=True)
         rejected_thread.start()
         try:
-            for _ in range(40):
-                if rejected_proxy_path.exists():
-                    break
-                rejected_proxy.stop.wait(0.05)
-            if not rejected_proxy_path.exists():
-                raise AssertionError("rejected-request proxy failed to create its socket")
+            # bind() creates the path before listen(); only readiness authorizes
+            # the negative-test client to connect to this listener.
+            if not rejected_proxy.ready.wait(2):
+                raise AssertionError(
+                    "rejected-request proxy failed to become ready"
+                ) from rejected_proxy.failure
+            if rejected_proxy.failure or not rejected_thread.is_alive():
+                raise AssertionError(
+                    "rejected-request proxy listener failed"
+                ) from rejected_proxy.failure
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.settimeout(SOCKET_TIMEOUT_SECONDS)
                 client.connect(str(rejected_proxy_path))
                 client.sendall(b"POST /libpod/_ping HTTP/1.1\r\n\r\n")
+                if not rejected_proxy.stop.wait(SOCKET_TIMEOUT_SECONDS):
+                    raise AssertionError("rejected-request proxy did not reject POST")
         finally:
             rejected_proxy.stop.set()
             rejected_thread.join(SOCKET_TIMEOUT_SECONDS + 1)
