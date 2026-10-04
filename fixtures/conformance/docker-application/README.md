@@ -76,6 +76,60 @@ six-application acceptance or the complete repository gate. No operational image
 tool, dependency pin or Renovate definition is added or moved: the canonical
 DockerLens image assignments and their existing managers remain authoritative.
 
+## Readiness failure observations
+
+The unchanged 180-second private-socket readiness timeout and early outer-daemon
+exit path collect read-only observations before mandatory teardown. Diagnostics
+never turn that original failure into success, retry a lane, repair the host,
+change launcher privileges or establish a startup cause. Core and volume profiles
+share this same boundary; their native/application acceptance remains unchanged.
+
+Only an explicitly registered outer name/run can be observed. Socket metadata is
+limited to the exact run-private `/tmp/boxferry-docker-core.<run>/socket/docker.sock`
+boundary with an owner-private, nonsymlink root and nonsymlink socket directory.
+The helper authenticates a successful bounded narrow Podman inspection: exact
+outer name, complete immutable container ID and exact run label. Wrong ownership,
+malformed inspection or failed status with matching stdout never authorizes log
+reading. Logs use only that authenticated ID, never ambient names or prefix scans.
+
+Each read subprocess has a three-second limit and a 16-KiB output cap. Inspection
+stderr is discarded; the last 80 log lines combine both streams under the same
+cap, and any failed log status discards all bytes. The two reads and their process
+teardown share an eight-second budget, enclosed by the existing runtime-budget
+wrapper at 12 seconds with its unchanged kill-after and cleanup reserve. Timeout
+or cancellation kills only diagnostic process groups, waits boundedly and closes
+output handles. Kill/reap uncertainty is explicitly `termination-unverified`, not
+successful observation; diagnostic failure never suppresses exact-owned cleanup.
+
+Only finite socket, ownership, native-state and log-read categories are printed.
+Recognized permission/storage/network/socket/startup error phrases are reported
+as log observations, not inferred causes. Empty, unrecognized, oversized, failed,
+timed-out and cancelled reads remain distinct. No raw log/inspect body, native
+error, absolute private path, protected value or exception text is emitted.
+`startup-cause=unestablished` remains explicit even when a phrase is recognized.
+
+Independent offline fakes cover wrong owner/status, immutable-ID selection,
+closed parsing, protected/oversized output, both log streams, deadline/cancellation
+and kill/reap uncertainty. Both core and volume readiness paths test observations
+before removal and preserve failure even if diagnostics fail. These source checks
+do not diagnose the historical failed run or provide fresh native evidence.
+
+An isolated stopped-container probe on host Podman 6.0.2 confirmed that plain
+`{{.Id}}` is a compatibility alias, while JSON template arguments require the
+native Go field `{{json .ID}}`. The combined inspection uses that native field
+and keeps its controlled JSON key `id`. Exact label/ID ownership was verified
+before all probe reads; the container was never started and its ID/name absence
+was verified after removal. This is template evidence only, not Docker startup,
+volume behavior, daemon-mode compatibility or application acceptance.
+
+Consumer/Renovate no-change evidence: `scripts/test-application-probes.sh` already
+registers this Python contract once. Local `scripts/check-all.sh`, CI's application
+contract job for PR/main/dispatch, and Release's reused CI consume that wrapper.
+No gate wiring, workflow, operational image assignment, package/lockfile or tool
+pin changes. `.github/renovate.json` retains its existing application-image,
+Podman-matrix/provider and Lens-revision extraction paths; Docker image pins remain
+only in the selected clean DockerLens catalogue, with no duplicate manager added.
+
 ## Authored core artifact prerequisite
 
 [`core.compose.yaml`](core.compose.yaml) and [`core-expectations.json`](core-expectations.json)

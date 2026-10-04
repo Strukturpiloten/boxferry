@@ -131,6 +131,17 @@ guard_alive() {
     return 1
   fi
 }
+readiness_failure() {
+  printf '%s\n' "$1" >&2
+  # Observation only, before EXIT teardown; bounded() preserves cleanup reserve.
+  if [[ $registered == true ]]; then
+    bounded 12s python3 "$contract" readiness-diagnostics --registered \
+      --outer "$outer" --run "$run_id" --socket "$socket_path" >&2 2> /dev/null ||
+      printf 'readiness observations: diagnostic=unavailable; startup-cause=unestablished\n' >&2
+  else
+    printf 'readiness observations: outer=not-registered; startup-cause=unestablished\n' >&2
+  fi
+}
 cleanup_now() {
   local uptime rest
   read -r uptime rest < /proc/uptime || return 1
@@ -567,11 +578,11 @@ fi
 deadline=$((SECONDS + 180))
 until [[ -S $socket_path ]] && curl --fail --silent --max-time 5 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/_ping > /dev/null; do
   ((SECONDS < deadline)) || {
-    printf 'nested Docker daemon did not become ready\n' >&2
+    readiness_failure 'nested Docker daemon did not become ready'
     exit 1
   }
-  [[ $(bounded 15s podman inspect --format '{{.State.Running}}' "$outer") == true ]] || {
-    printf 'outer Docker daemon exited before readiness\n' >&2
+  [[ $(bounded 15s podman inspect --format '{{.State.Running}}' "$outer" 2> /dev/null) == true ]] || {
+    readiness_failure 'outer Docker daemon exited before readiness'
     exit 1
   }
   sleep 2

@@ -1618,6 +1618,242 @@ class ParentLifetimeTests(unittest.TestCase):
             self.assertFalse(rejected.exists())
 
 
+class ReadinessDiagnosticTests(unittest.TestCase):
+    def test_inspect_uses_native_go_id_field_not_plain_format_compatibility_alias(self) -> None:
+        # Podman 6.0.2 accepts {{.Id}} but not {{json .Id}}. The native Go
+        # field is ID; the controlled JSON key exposed to our parser stays id.
+        self.assertEqual(contract.READINESS_INSPECT_FORMAT,
+                         '{"id":{{json .ID}},"name":{{json .Name}},"labels":{{json .Config.Labels}},'
+                         '"state":{{json .State.Status}},"running":{{json .State.Running}}}')
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp")
+        self.addCleanup(self.temporary.cleanup)
+        self.run_id = pathlib.Path(self.temporary.name).name.removeprefix("boxferry-docker-core.")
+        self.outer = f"bf-docker-core-{self.run_id}"
+        self.socket_path = pathlib.Path(self.temporary.name) / "socket/docker.sock"
+        self.socket_path.parent.mkdir()
+        self.record = {"id": "a" * 64, "name": self.outer, "labels": {
+            "io.boxferry.docker-core-run": self.run_id, "private-label": "DO-NOT-PRINT/private/path"},
+            "state": "exited", "running": False}
+
+    def diagnose(self, responses, *, registered: bool = True):
+        with mock.patch.object(contract, "readiness_read", side_effect=responses) as calls:
+            result = contract.readiness_diagnostics(self.outer, self.run_id, self.socket_path,
+                                                   registered=registered)
+        return result, calls
+
+    def test_successful_owned_inspect_uses_only_immutable_id_and_closed_log_observation(self) -> None:
+        result, calls = self.diagnose([("read", json.dumps(self.record).encode()),
+                                      ("read", b"permission denied DO-NOT-PRINT /private/path")])
+        self.assertEqual(result, {"socket": "absent", "outer": "verified", "state": "exited",
+                                  "logs": "permission-error-observed"})
+        self.assertEqual(calls.call_args_list[0].args[0], ["podman", "inspect", "--format",
+                                                        contract.READINESS_INSPECT_FORMAT, self.outer])
+        self.assertEqual(calls.call_args_list[1].args[0], ["podman", "logs", "--tail", "80", "a" * 64])
+        self.assertEqual(calls.call_args_list[1].kwargs, {"merge_output": True})
+        self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+        self.assertEqual(calls.call_args_list[0].args[1], calls.call_args_list[1].args[1])
+
+    def test_unregistered_wrong_owner_and_failed_status_with_matching_stdout_never_read_logs(self) -> None:
+        result, calls = self.diagnose([], registered=False)
+        self.assertEqual(result["outer"], "not-registered")
+        calls.assert_not_called()
+        for outcome in ("read-failed", "oversized", "timed-out"):
+            with self.subTest(outcome=outcome):
+                result, calls = self.diagnose([(outcome, json.dumps(self.record).encode())])
+                self.assertEqual(result["outer"], outcome)
+                self.assertEqual(result["logs"], "not-read")
+                self.assertEqual(calls.call_count, 1)
+        self.record["labels"]["io.boxferry.docker-core-run"] = "another-run"
+        result, calls = self.diagnose([("read", json.dumps(self.record).encode())])
+        self.assertEqual(result["outer"], "wrong-owner")
+        self.assertEqual(calls.call_count, 1)
+
+    def test_closed_inspect_parsing_rejects_injected_fields_types_names_and_duplicate_json(self) -> None:
+        for mutation in (lambda row: row.update(extra="private-value"),
+                         lambda row: row.update(name="ambient-other-container"),
+                         lambda row: row.update(id="a" * 63), lambda row: row.update(running=1),
+                         lambda row: row.update(labels=[])):
+            row = copy.deepcopy(self.record)
+            mutation(row)
+            result, calls = self.diagnose([("read", json.dumps(row).encode())])
+            self.assertEqual(result["outer"], "malformed")
+            self.assertEqual(calls.call_count, 1)
+        for raw in (b'{"id":1,"id":2}', b"private non-JSON error", b'{"id":NaN}'):
+            result, calls = self.diagnose([("read", raw)])
+            self.assertEqual(result["outer"], "malformed")
+            self.assertEqual(calls.call_count, 1)
+
+    def test_socket_and_unknown_state_categories_never_include_native_values_or_paths(self) -> None:
+        self.socket_path.write_bytes(b"private-value")
+        self.record["state"] = "/private-path/DO-NOT-PRINT"
+        result, _ = self.diagnose([("read", json.dumps(self.record).encode()), ("read", b"DO-NOT-PRINT")])
+        self.assertEqual(result, {"socket": "not-socket", "outer": "verified", "state": "unknown",
+                                  "logs": "content-present"})
+        self.record["state"] = "running"
+        result, _ = self.diagnose([("read", json.dumps(self.record).encode()), ("read-failed", b"DO-NOT-PRINT")])
+        self.assertEqual(result["state"], "inconsistent")
+        self.assertEqual(result["logs"], "read-failed")
+        with mock.patch.object(pathlib.Path, "lstat", side_effect=PermissionError("private-path")):
+            result, _ = self.diagnose([], registered=False)
+        self.assertEqual(result["socket"], "unavailable")
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_log_observations_are_finite_and_not_causality_or_raw_content(self) -> None:
+        cases = [(b"", "empty"), (b"   \n", "empty"), (b"private-value", "content-present"),
+                 (b"failed to mount overlay /private", "storage-error-observed"),
+                 (b"iptables failed private-key", "network-error-observed"),
+                 (b"address already in use /private", "socket-error-observed"),
+                 (b"failed to start daemon private", "startup-error-observed"),
+                 (b"permission denied; failed to start daemon private", "multiple-errors-observed")]
+        for raw, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(contract.readiness_log_category(raw), expected)
+
+    def test_bounded_subprocess_output_status_combined_streams_and_timeout(self) -> None:
+        cases = [("print('safe')", False, "read", b"safe\n"),
+                 ("import sys; print('matching-inspect'); sys.exit(1)", False, "read-failed", b""),
+                 ("import sys; sys.stdout.write('x'*16385)", False, "oversized", b""),
+                 ("import sys; sys.stderr.write('private-value')", False, "read", b""),
+                 ("import sys; sys.stderr.write('x'*16385)", True, "oversized", b"")]
+        for source, merge, expected, raw in cases:
+            with self.subTest(expected=expected, merge=merge):
+                self.assertEqual(contract.readiness_read([sys.executable, "-c", source], time.monotonic() + 2,
+                                                        merge_output=merge), (expected, raw))
+        children = []
+        original_popen = subprocess.Popen
+        def launch(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            children.append(child)
+            self.assertTrue(kwargs["start_new_session"])
+            return child
+        started = time.monotonic()
+        with mock.patch.object(contract.subprocess, "Popen", side_effect=launch):
+            result = contract.readiness_read([sys.executable, "-c", "import time; time.sleep(60)"], started + 0.1)
+        self.assertEqual(result, ("timed-out", b""))
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIsNotNone(children[0].poll())
+        self.assertTrue(children[0].stdout.closed)
+
+    def test_cancellation_kills_owned_reader_and_restores_diagnostic_signal_handlers(self) -> None:
+        children = []
+        original_popen = subprocess.Popen
+        def launch(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        with mock.patch.object(contract.subprocess, "Popen", side_effect=launch), \
+                mock.patch.object(contract.select, "select", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            contract.readiness_read([sys.executable, "-c", "import time; time.sleep(60)"], time.monotonic() + 2)
+        self.assertIsNotNone(children[0].poll())
+        self.assertTrue(children[0].stdout.closed)
+        previous = {signum: contract.signal.getsignal(signum) for signum in
+                    (contract.signal.SIGTERM, contract.signal.SIGINT, contract.signal.SIGHUP)}
+        result, _ = self.diagnose([KeyboardInterrupt])
+        self.assertEqual(result["outer"], "cancelled")
+        result, _ = self.diagnose([("read", json.dumps(self.record).encode()), KeyboardInterrupt])
+        self.assertEqual(result["outer"], "verified")
+        self.assertEqual(result["logs"], "cancelled")
+        self.assertEqual(previous, {signum: contract.signal.getsignal(signum) for signum in previous})
+
+    def test_kill_and_reap_uncertainty_is_closed_and_always_closes_output(self) -> None:
+        for kill_error, wait_error in ((PermissionError("private-error"), None),
+                                       (KeyboardInterrupt(), None),
+                                       (None, subprocess.TimeoutExpired("private-command", 1)),
+                                       (None, KeyboardInterrupt())):
+            with self.subTest(kill_error=type(kill_error), wait_error=type(wait_error)), tempfile.TemporaryFile() as stream:
+                child = mock.Mock(pid=12345, stdout=stream)
+                if wait_error is not None:
+                    child.wait.side_effect = wait_error
+                with mock.patch.object(contract.subprocess, "Popen", return_value=child), \
+                        mock.patch.object(contract.select, "select", return_value=([], [], [])), \
+                        mock.patch.object(contract.os, "killpg", side_effect=kill_error), \
+                        mock.patch.object(contract.time, "monotonic", return_value=100):
+                    result = contract.readiness_read(["fake-read"], 100.25)
+                self.assertEqual(result, ("termination-unverified", b""))
+                self.assertTrue(stream.closed)
+                child.wait.assert_called_once_with(timeout=0.25)
+                if kill_error is not None:
+                    child.kill.assert_called_once_with()
+
+    def test_eof_success_and_failed_status_terminate_owned_group_before_first_reap(self) -> None:
+        for status in (0, 1, -15):
+            with self.subTest(status=status), tempfile.TemporaryFile() as stream:
+                stream.write(b"bounded-private-output")
+                stream.seek(0)
+                events = []
+                child = mock.Mock(pid=12345, stdout=stream)
+                def observe(*args):
+                    self.assertEqual(args, (contract.os.P_PID, 12345,
+                                            contract.os.WEXITED | contract.os.WNOHANG | contract.os.WNOWAIT))
+                    events.append("observe-unreaped")
+                    return mock.Mock()
+                def reap(**_kwargs):
+                    events.append("reap")
+                    return status
+                child.wait.side_effect = reap
+                with mock.patch.object(contract.subprocess, "Popen", return_value=child), \
+                        mock.patch.object(contract.os, "waitid", side_effect=observe), \
+                        mock.patch.object(contract.os, "killpg", side_effect=lambda *_args: events.append("terminate-group")):
+                    result = contract.readiness_read(["fake-read"], time.monotonic() + 2)
+                self.assertEqual(events, ["observe-unreaped", "terminate-group", "reap"])
+                self.assertEqual(result, ("read", b"bounded-private-output") if status == 0 else ("read-failed", b""))
+                self.assertTrue(stream.closed)
+                child.poll.assert_not_called()
+
+    def test_total_eight_second_budget_includes_final_read_and_reaping(self) -> None:
+        now = [100.0]
+        original_read = contract.readiness_read
+        def first_read_then_bounded_logs(arguments, deadline, **kwargs):
+            if arguments[1] == "inspect":
+                self.assertEqual(deadline, 108)
+                now[0] = 107.75
+                return "read", json.dumps(self.record).encode()
+            return original_read(arguments, deadline, **kwargs)
+        with tempfile.TemporaryFile() as stream:
+            child = mock.Mock(pid=12345, stdout=stream)
+            with mock.patch.object(contract.time, "monotonic", side_effect=lambda: now[0]), \
+                    mock.patch.object(contract, "readiness_read", side_effect=first_read_then_bounded_logs), \
+                    mock.patch.object(contract.subprocess, "Popen", return_value=child), \
+                    mock.patch.object(contract.select, "select", return_value=([], [], [])) as selected, \
+                    mock.patch.object(contract.os, "killpg"):
+                result = contract.readiness_diagnostics(self.outer, self.run_id, self.socket_path, registered=True)
+            self.assertEqual(result["logs"], "timed-out")
+            self.assertEqual(selected.call_args.args[3], 0.25)
+            child.wait.assert_called_once_with(timeout=0.25)
+            self.assertTrue(stream.closed)
+        with mock.patch.object(contract.subprocess, "Popen") as launched:
+            self.assertEqual(contract.readiness_read(["fake-read"], time.monotonic() - 1), ("timed-out", b""))
+        launched.assert_not_called()
+
+    def test_failed_log_status_with_recognized_stdout_and_invalid_socket_boundary_are_not_observations(self) -> None:
+        result, calls = self.diagnose([("read", json.dumps(self.record).encode()),
+                                      ("read-failed", b"permission denied /private")])
+        self.assertEqual(result["logs"], "read-failed")
+        self.assertEqual(calls.call_count, 2)
+        with mock.patch.object(contract, "readiness_read") as calls, mock.patch.object(pathlib.Path, "lstat") as lstat:
+            result = contract.readiness_diagnostics(self.outer, self.run_id, pathlib.Path("/ambient/socket"), registered=True)
+        self.assertEqual(result["outer"], "invalid-boundary")
+        calls.assert_not_called()
+        lstat.assert_not_called()
+        self.record["labels"]["io.boxferry.docker-core-run"] = "another-run"
+        for outcome in ("read", "read-failed"):
+            result, calls = self.diagnose([(outcome, json.dumps(self.record).encode())])
+            self.assertEqual(result["outer"], "wrong-owner" if outcome == "read" else "read-failed")
+            self.assertEqual(calls.call_count, 1)
+
+    def test_cli_unregistered_diagnostic_is_sanitized_without_native_execution(self) -> None:
+        result = subprocess.run([sys.executable, str(SOURCE), "readiness-diagnostics", "--outer", "bf-docker-core-test",
+                                 "--run", "test", "--socket", str(self.socket_path)], capture_output=True,
+                                text=True, timeout=3, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "readiness observations: socket=unavailable outer=not-registered state=unverified "
+                                       "logs=not-read; startup-cause=unestablished\n")
+        self.assertEqual(result.stderr, "")
+
+
 class RunnerSafetyTests(unittest.TestCase):
     runner = (pathlib.Path(__file__).parent / "docker-application-conformance.sh").read_text(encoding="utf-8")
 
@@ -1638,6 +1874,52 @@ class RunnerSafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 124)
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_readiness_failure_diagnostics_precede_teardown_for_core_and_volume_without_repair(self) -> None:
+        start = self.runner.index("deadline=$((SECONDS + 180))")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        self.assertEqual(self.runner.count("readiness_failure 'nested Docker daemon did not become ready'"), 1)
+        for profile in ("core-journey", "volume-fixtures"):
+            for reason in ("timeout", "exited"):
+                for diagnostic_status in (0, 124, 130):
+                    with self.subTest(profile=profile, reason=reason, diagnostic_status=diagnostic_status), \
+                            tempfile.TemporaryDirectory(prefix="boxferry-readiness-fake-") as name:
+                        sentinel = pathlib.Path(name) / "fake-socket"
+                        sentinel.write_bytes(b"")
+                        body = f"""profile={profile}
+registered=true
+outer=bf-docker-core-test
+run_id=test
+socket_path={shlex.quote(str(sentinel))}
+contract=unused
+SECONDS=0
+cleanup_owned() {{ printf 'exact-owned-teardown\\n' >&2; }}
+trap cleanup_owned EXIT
+curl() {{
+  if [[ {reason} == timeout ]]; then SECONDS=181; fi
+  return 1
+}}
+bounded() {{
+  if [[ $2 == podman ]]; then printf 'false\\n'; return 0; fi
+  [[ $1 == 12s && $2 == python3 && $4 == readiness-diagnostics && $5 == --registered ]] || return 99
+  if (({diagnostic_status} == 0)); then
+    printf 'readiness observations: outer=verified state=exited logs=empty; startup-cause=unestablished\\n'
+  else
+    printf 'DO-NOT-PRINT /private-error-path\\n' >&2
+  fi
+  return {diagnostic_status}
+}}
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path")
+                        result = self.bash(body)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    message = "nested Docker daemon did not become ready" if reason == "timeout" else \
+                              "outer Docker daemon exited before readiness"
+                    self.assertIn(message, result.stderr)
+                    self.assertLess(result.stderr.index(message), result.stderr.index("readiness observations:"))
+                    self.assertLess(result.stderr.index("readiness observations:"), result.stderr.index("exact-owned-teardown"))
+                    self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+                    self.assertNotIn("private-error-path", result.stdout + result.stderr)
+                    self.assertNotIn("CHECKS-PASSED", result.stdout + result.stderr)
+                    self.assertEqual(result.stderr.count("readiness observations:"), 1)
     def test_core_journey_uses_exact_id_and_preserves_transport_only_result(self) -> None:
         self.assertIn('verify-candidate --boxferry-root "$boxferry_root"', self.runner)
         self.assertIn('render-core-source', self.runner)

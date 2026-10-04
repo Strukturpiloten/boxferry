@@ -1372,9 +1372,185 @@ def replay(
     return state
 
 
+READINESS_INSPECT_FORMAT = (
+    '{"id":{{json .ID}},"name":{{json .Name}},"labels":{{json .Config.Labels}},'
+    '"state":{{json .State.Status}},"running":{{json .State.Running}}}'
+)
+
+
+def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool = False) -> tuple[str, bytes]:
+    """Bound one read-only subprocess; neither stderr nor failed output escapes."""
+    process = None
+    outcome, raw = "read-failed", b""
+    interrupted = False
+    termination_failed = False
+    completed = False
+    status = None
+    expires = min(deadline, time.monotonic() + 3)
+    try:
+        if expires <= time.monotonic():
+            return "timed-out", b""
+        process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT if merge_output else subprocess.DEVNULL,
+                                   start_new_session=True)
+        assert process.stdout is not None
+        descriptor = process.stdout.fileno()
+        os.set_blocking(descriptor, False)
+        output = bytearray()
+        while True:
+            remaining = expires - time.monotonic()
+            if remaining <= 0:
+                outcome = "timed-out"
+                break
+            if not select.select([descriptor], [], [], remaining)[0]:
+                outcome = "timed-out"
+                break
+            chunk = os.read(descriptor, min(4096, 16_385 - len(output)))
+            if not chunk:
+                # WNOWAIT keeps the leader PID reserved until its owned group
+                # has been terminated. Never reap and then signal a numeric PGID.
+                while True:
+                    observed = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                    if observed is not None:
+                        completed, raw = True, bytes(output)
+                        break
+                    remaining = expires - time.monotonic()
+                    if remaining <= 0:
+                        outcome = "timed-out"
+                        break
+                    time.sleep(min(0.01, remaining))
+                break
+            output.extend(chunk)
+            if len(output) > 16_384:
+                outcome = "oversized"
+                break
+    except subprocess.TimeoutExpired:
+        outcome = "timed-out"
+    except OSError:
+        pass
+    except KeyboardInterrupt:
+        interrupted = True
+    finally:
+        if process is not None:
+            # This session belongs only to this diagnostic read, not the daemon.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except (OSError, KeyboardInterrupt):
+                termination_failed = True
+                try:
+                    process.kill()
+                except (OSError, KeyboardInterrupt):
+                    pass
+            try:
+                status = process.wait(timeout=max(0.001, min(1, deadline - time.monotonic())))
+            except (OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
+                termination_failed = True
+            finally:
+                if process.stdout is not None:
+                    try:
+                        process.stdout.close()
+                    except OSError:
+                        termination_failed = True
+    if termination_failed:
+        return "termination-unverified", b""
+    if interrupted:
+        raise KeyboardInterrupt
+    if completed:
+        return ("read", raw) if status == 0 else ("read-failed", b"")
+    return outcome, raw
+
+
+def readiness_log_category(raw: bytes) -> str:
+    if not raw.strip():
+        return "empty"
+    lowered = raw.lower()
+    observations = {
+        "permission-error-observed": (b"permission denied",),
+        "storage-error-observed": (b"failed to mount overlay", b"error initializing graphdriver"),
+        "network-error-observed": (b"failed to create nat chain", b"iptables failed"),
+        "socket-error-observed": (b"address already in use",),
+        "startup-error-observed": (b"failed to start daemon",),
+    }
+    matched = [category for category, phrases in observations.items() if any(phrase in lowered for phrase in phrases)]
+    return matched[0] if len(matched) == 1 else "multiple-errors-observed" if matched else "content-present"
+
+
+def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, registered: bool) -> dict[str, str]:
+    """Private observations only; this cannot establish startup cause or readiness."""
+    result = {"socket": "unavailable", "outer": "not-registered", "state": "unverified", "logs": "not-read"}
+    if not registered or re.fullmatch(r"[A-Za-z0-9_]{1,64}", run) is None or outer != f"bf-docker-core-{run}":
+        return result
+    if socket_path != pathlib.Path(f"/tmp/boxferry-docker-core.{run}/socket/docker.sock"):
+        result["outer"] = "invalid-boundary"
+        return result
+    deadline = time.monotonic() + 8
+    try:
+        root = socket_path.parent.parent.lstat()
+        require(stat.S_ISDIR(root.st_mode) and stat.S_IMODE(root.st_mode) == 0o700 and root.st_uid == os.geteuid(),
+                "readiness private root differs")
+        require(stat.S_ISDIR(socket_path.parent.lstat().st_mode), "readiness socket directory differs")
+    except (OSError, ContractError):
+        result["outer"] = "invalid-boundary"
+        return result
+    try:
+        mode = socket_path.lstat().st_mode
+        result["socket"] = "socket" if stat.S_ISSOCK(mode) else "not-socket"
+    except FileNotFoundError:
+        result["socket"] = "absent"
+    except OSError:
+        pass
+    previous = {}
+    def cancelled(_signum, _frame):
+        raise KeyboardInterrupt
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous[signum] = signal.signal(signum, cancelled)
+        outcome, raw = readiness_read(["podman", "inspect", "--format", READINESS_INSPECT_FORMAT, outer], deadline)
+        if outcome != "read":
+            result["outer"] = outcome
+            return result
+        try:
+            record = volume_document(raw)
+            require(set(record) == {"id", "name", "labels", "state", "running"}
+                    and isinstance(record["id"], str) and DIGEST_PATTERN.fullmatch(record["id"]) is not None
+                    and record["name"] == outer and isinstance(record["labels"], dict)
+                    and all(isinstance(key, str) and isinstance(value, str) for key, value in record["labels"].items())
+                    and isinstance(record["state"], str) and type(record["running"]) is bool,
+                    "readiness inspect shape differs")
+        except ContractError:
+            result["outer"] = "malformed"
+            return result
+        if record["labels"].get("io.boxferry.docker-core-run") != run:
+            result["outer"] = "wrong-owner"
+            return result
+        result["outer"] = "verified"
+        state = record["state"]
+        if state in {"configured", "created", "running", "stopped", "exited", "paused", "restarting", "removing", "stopping"}:
+            result["state"] = state if record["running"] == (state == "running") else "inconsistent"
+        else:
+            result["state"] = "unknown"
+        outcome, raw = readiness_read(["podman", "logs", "--tail", "80", record["id"]], deadline, merge_output=True)
+        result["logs"] = readiness_log_category(raw) if outcome == "read" else outcome
+    except KeyboardInterrupt:
+        result["logs"] = "cancelled"
+        if result["outer"] != "verified":
+            result["outer"] = "cancelled"
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    readiness = commands.add_parser("readiness-diagnostics")
+    readiness.add_argument("--outer", required=True)
+    readiness.add_argument("--run", required=True)
+    readiness.add_argument("--socket", type=pathlib.Path, required=True)
+    readiness.add_argument("--registered", action="store_true")
     catalogue = commands.add_parser("catalogue")
     catalogue.add_argument("--docker-lens-root", required=True)
     catalogue.add_argument("--docker-lens-revision", required=True)
@@ -1500,7 +1676,11 @@ def main() -> int:
     deadline.add_argument("--ready-file")
     args = parser.parse_args()
     try:
-        if args.command == "parent-start":
+        if args.command == "readiness-diagnostics":
+            result = readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered)
+            print("readiness observations: " + " ".join(f"{key}={value}" for key, value in result.items())
+                  + "; startup-cause=unestablished")
+        elif args.command == "parent-start":
             print(process_start(args.parent_pid))
         elif args.command == "parent-alive":
             fd = verified_parent_fd(args.parent_pid, args.parent_start)
