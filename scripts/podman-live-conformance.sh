@@ -735,7 +735,7 @@ engine_image_available() {
   local name=$1 image=$2 started_at elapsed status
   started_at="$(date +%s)"
   printf '%s STEP START %s (deadline 90s)\n' "$(timestamp)" "${name}" >&3
-  if timeout --signal=TERM --kill-after=10s 90s "${engine}" image exists "${image}"; then
+  if native_presence 90s "${engine}" image "${image}"; then
     elapsed=$(($(date +%s) - started_at))
     printf '%s STEP PASS  %s: present (%s)\n' \
       "$(timestamp)" "${name}" "$(format_duration "${elapsed}")" >&3
@@ -821,6 +821,7 @@ cleanup() {
       if [[ "${outer}" == "${revalidation_apply_target_outer}" ]]; then apply_target_removed=true; fi
     fi
   done
+  [[ ${native_presence_unverified:-false} == false ]] || cleanup_failed=true
   if [[ "${profile}" == limitation-revalidation ]]; then
     if [[ -n "${revalidation_mounted_image_active}" ]] &&
       ! timeout --signal=TERM --kill-after=10s 30s \
@@ -853,20 +854,6 @@ cleanup() {
       cleanup_failed=true
     fi
   done
-  for directory in "${discovery_directories[@]}"; do
-    rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
-      "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
-      "${directory}/runtime-canaries.log" "${directory}/selected-container-id" \
-      "${directory}/smoke-baseline.json" "${directory}/start-api" \
-      "${directory}/resource-setup.status" "${directory}/resource-setup.status.tmp"
-    rmdir -- "${directory}" 2> /dev/null || true
-  done
-  if [[ "${discovery_parent_created}" == true ]]; then
-    rmdir -- /run/user/0 2> /dev/null || true
-  fi
-  if ! rm -rf -- "${runtime_root}"; then
-    [[ "${profile}" == limitation-revalidation ]] && cleanup_failed=true
-  fi
   if [[ "${profile}" == limitation-revalidation && -f "${revalidation_evidence}" &&
     "${cleanup_failed}" == false ]] &&
     jq --exit-status '.evidence_kind == "podman-limitation-revalidation"' \
@@ -883,6 +870,28 @@ cleanup() {
       ! mark_revalidation_result cleanup.apply_target_removed; then
       cleanup_failed=true
     fi
+  fi
+  if [[ "${cleanup_failed}" == false ]]; then
+    for directory in "${discovery_directories[@]}"; do
+      if ! rm -f -- "${directory}/podman.sock" "${directory}/bootstrap.log" \
+        "${directory}/runtime-evidence.tsv" "${directory}/runtime-evidence.ready" \
+        "${directory}/runtime-canaries.log" "${directory}/selected-container-id" \
+        "${directory}/smoke-baseline.json" "${directory}/start-api" \
+        "${directory}/resource-setup.status" "${directory}/resource-setup.status.tmp"; then
+        cleanup_failed=true
+      fi
+      rmdir -- "${directory}" 2> /dev/null || true
+    done
+    if [[ "${discovery_parent_created}" == true ]]; then
+      rmdir -- /run/user/0 2> /dev/null || true
+    fi
+    if [[ "${cleanup_failed}" == false ]] && ! rm -rf -- "${runtime_root}"; then
+      cleanup_failed=true
+    fi
+  fi
+  if [[ "${cleanup_failed}" == true ]]; then
+    printf 'Cleanup unverified; private runtime/discovery recovery evidence retained at %s\n' \
+      "${runtime_root}" >&2
   fi
   if [[ "${profile}" == limitation-revalidation && "${cleanup_failed}" == true ]]; then
     revalidation_phase="cleanup"
@@ -1750,17 +1759,17 @@ run_external_apply_reacquire() {
     --url "unix://${apply_target_socket}" network rm "${expected_network}" > /dev/null
   engine_operation 'remove applied target volume through API' \
     --url "unix://${apply_target_socket}" volume rm "${expected_volume}" > /dev/null
-  local kind name
+  local kind name presence_status
   for kind in container network volume; do
     case "${kind}" in
       container) name=${expected_container} ;;
       network) name=${expected_network} ;;
       volume) name=${expected_volume} ;;
     esac
-    if ! expected_failure_operation 90s "verify applied target ${kind} cleanup" 1 \
-      "${engine}" --url "unix://${apply_target_socket}" "${kind}" exists "${name}" \
-      > /dev/null 2>&1; then
-      printf 'Applied conformance %s survived exact cleanup: %s\n' "${kind}" "${name}" >&2
+    presence_status=0
+    native_presence 90s "${engine}" "${kind}" "${name}" "${apply_target_socket}" || presence_status=$?
+    if ((presence_status != 1)); then
+      printf 'Applied conformance %s remains or absence is unverified: %s\n' "${kind}" "${name}" >&2
       return 1
     fi
   done
@@ -2690,8 +2699,8 @@ run_revalidation_baseline_collision() {
   revalidation_phase="baseline-cleanup"
   revalidation_failure_code="cleanup-failed"
   remove_outer "${outer}"
-  if "${engine}" container exists "${outer}"; then
-    printf 'Historical limitation container survived cleanup: %s\n' "${id}" >&2
+  if ! outer_resource_absent container "${outer}"; then
+    printf 'Historical limitation container remains or cleanup is unverified: %s\n' "${id}" >&2
     return 1
   fi
 }
@@ -2780,8 +2789,8 @@ run_limitation_revalidation() {
     printf '%s\n' 'Candidate cleanup review lost its private outer runtime identity.' >&2
     return 1
   }
-  if "${engine}" container exists "${revalidation_candidate_outer}"; then
-    printf '%s\n' 'Candidate outer runtime survived limitation-revalidation cleanup.' >&2
+  if ! outer_resource_absent container "${revalidation_candidate_outer}"; then
+    printf '%s\n' 'Candidate outer runtime remains or limitation-revalidation cleanup is unverified.' >&2
     return 1
   fi
 
@@ -2806,8 +2815,8 @@ run_limitation_revalidation() {
   revalidation_failure_code="cleanup-failed"
   if [[ -n "${apply_target_outer}" ]]; then
     remove_outer "${apply_target_outer}"
-    if "${engine}" container exists "${apply_target_outer}"; then
-      printf '%s\n' 'External-apply target survived limitation-revalidation cleanup.' >&2
+    if ! outer_resource_absent container "${apply_target_outer}"; then
+      printf '%s\n' 'External-apply target remains or limitation-revalidation cleanup is unverified.' >&2
       return 1
     fi
   fi

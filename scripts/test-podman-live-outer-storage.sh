@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-native-presence.py"
 # shellcheck source=scripts/lib/podman-live-outer-storage.sh
 source "${script_directory}/lib/podman-live-outer-storage.sh"
 engine="${script_directory}/lib/test-podman-live-storage-engine.sh"
@@ -153,6 +154,51 @@ if prepare_outer_storage unavailable image; then
 fi
 [[ ! -d "${FAKE_PODMAN_ROOT}/volumes/unavailable-store-1" ]]
 unset FAKE_FAIL_EXISTS
+
+# Native diagnostic exit 1 and warning exit 0 are neither presence nor absence.
+# Exercise the real bounded helper, preserving later-resource cleanup attempts.
+for native_status in 0 1; do
+  for kind in container volume; do
+    for phase in initial post-removal; do
+      query_outer="query-${kind}-${phase}-${native_status}"
+      run_id="bf-test-${query_outer}"
+      prepare_outer_storage "${query_outer}" image
+      query_volume=${outer_storage_names[-2]}
+      later_query_volume=${outer_storage_names[-1]}
+      register_container "${query_outer}" 42 "${run_id}" "${query_volume}"
+      query_name=${query_outer}
+      [[ ${kind} != volume ]] || query_name=${query_volume}
+      export FAKE_AMBIGUOUS_EXISTS="${kind}:${query_name}"
+      export FAKE_EXISTS_STATUS=${native_status} FAKE_EXISTS_STDERR='PRIVATE/query-diagnostic'
+      export FAKE_AMBIGUOUS_AFTER_RM=false
+      [[ ${phase} != post-removal ]] || FAKE_AMBIGUOUS_AFTER_RM=true
+      if release_outer "${query_outer}" > "${FAKE_PODMAN_ROOT}/query.stdout" 2> "${FAKE_PODMAN_ROOT}/query.stderr"; then
+        printf '%s\n' 'Ambiguous native presence established cleanup success.' >&2
+        exit 1
+      fi
+      [[ ${native_presence_unverified} == true ]]
+      if grep -q 'PRIVATE' "${FAKE_PODMAN_ROOT}/query.stdout" "${FAKE_PODMAN_ROOT}/query.stderr"; then
+        printf '%s\n' 'Native diagnostics escaped the private query.' >&2
+        exit 1
+      fi
+      if [[ ${phase} == initial ]]; then
+        [[ -d "${FAKE_PODMAN_ROOT}/${kind}s/${query_name}" ]]
+      else
+        [[ ! -d "${FAKE_PODMAN_ROOT}/${kind}s/${query_name}" ]]
+      fi
+      [[ ! -d "${FAKE_PODMAN_ROOT}/volumes/${later_query_volume}" ]]
+      unset FAKE_AMBIGUOUS_EXISTS FAKE_EXISTS_STATUS FAKE_EXISTS_STDERR FAKE_AMBIGUOUS_AFTER_RM
+      release_outer "${query_outer}"
+    done
+  done
+done
+export FAKE_AMBIGUOUS_EXISTS='volume:query-free-store-1' FAKE_EXISTS_STDERR='PRIVATE/preflight-error' FAKE_EXISTS_STATUS=1
+if prepare_outer_storage query-free image > "${FAKE_PODMAN_ROOT}/query.stdout" 2> "${FAKE_PODMAN_ROOT}/query.stderr"; then
+  printf '%s\n' 'Diagnostic exit 1 authorized creation of an uncertain name.' >&2
+  exit 1
+fi
+[[ ! -d "${FAKE_PODMAN_ROOT}/volumes/query-free-store-1" ]]
+unset FAKE_AMBIGUOUS_EXISTS FAKE_EXISTS_STATUS FAKE_EXISTS_STDERR
 
 # JSON keys are validated before line-based decoding. Otherwise one embedded
 # newline could turn one declared path into two unrelated, apparently safe ones.

@@ -2,6 +2,9 @@
 # Exact, run-scoped outer Podman storage. The caller supplies engine and run_id.
 # shellcheck disable=SC2154 # engine and run_id are supplied by the sourcing runner.
 
+# shellcheck source=scripts/lib/native-presence.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/native-presence.sh" || return 1
+
 declare -a outer_storage_names=()
 declare -A outer_storage_owner=()
 declare -a outer_storage_mount_args=()
@@ -13,8 +16,7 @@ ignore_outer_cleanup_signals() {
 
 outer_resource_absent() {
   local kind=$1 name=$2 status=0
-  timeout --signal=TERM --kill-after=10s 30s \
-    "${engine}" "${kind}" exists "${name}" > /dev/null 2>&1 || status=$?
+  native_presence 30s "${engine}" "${kind}" "${name}" || status=$?
   case "${status}" in
     0) return 1 ;;
     1) return 0 ;;

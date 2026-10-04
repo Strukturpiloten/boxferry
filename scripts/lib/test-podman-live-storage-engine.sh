@@ -12,6 +12,12 @@ case "${kind} ${1:-}" in
   'volume exists' | 'container exists')
     resource=${kind}
     name=${2:?}
+    if [[ ${FAKE_AMBIGUOUS_EXISTS:-} == "${resource}:${name}" ]] &&
+      [[ ${FAKE_AMBIGUOUS_AFTER_RM:-false} == false || ! -d "${root}/${resource}s/${name}" ]]; then
+      printf '%s' "${FAKE_EXISTS_STDOUT:-}"
+      printf '%s' "${FAKE_EXISTS_STDERR:-}" >&2
+      exit "${FAKE_EXISTS_STATUS:-1}"
+    fi
     if [[ "${FAKE_FAIL_EXISTS:-}" == "${resource}:${name}" ]]; then
       exit 124
     fi

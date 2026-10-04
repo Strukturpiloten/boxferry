@@ -85,6 +85,9 @@ deadline and owned-process-group teardown. Only a completed read with empty stdo
 stderr and native status 0 or 1 establishes `present` or `absent`, respectively. Warnings,
 configuration errors (including native exit 1 with diagnostics), other statuses, output
 overflow, timeout, cancellation and unverified termination remain `unknown`.
+The reader now lives once in `scripts/lib/bounded-native-read.py`; this helper imports
+it while preserving its existing diagnostic/presence call and mock boundary. The Podman
+live harness reuses that primitive for separately typed local/Unix-socket queries.
 Presence queries additionally require read-only process-group disappearance after
 leader reaping, bounded to 250 milliseconds within the helper deadline. A surviving
 group or lookup error leaves termination unverified. No group signal is sent after
