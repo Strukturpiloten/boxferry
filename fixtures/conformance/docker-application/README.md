@@ -406,3 +406,38 @@ Image/provider catalogues, manifests, lockfiles, operational pins, workflow defi
 Renovate configuration remain unchanged. Custom-manager file patterns match none of the changed
 paths; canonical image/provider extraction, grouping and approval rules stay intact. No native
 package-manager input or additional software dependency is introduced.
+
+## Pending bounded core harness (#366)
+
+The isolated core harness reuses `scripts/lib/docker-core-artifact.py` for its
+independently authored source, artifact and profile checks. It selects the bounded
+private artifact's SHA-256 once and reuses that identity before daemon startup,
+after observed identity checks and at test-only replay. This digest binds bytes;
+it is not semantic authority and cannot approve changed output. Image pins remain
+owned by the explicitly selected clean DockerLens checkout rather than copied here.
+
+The per-lane reacquisition diagnostic oracle remains empty and deliberately
+fail-closed. Offline contracts, source receipt checks and harness definitions do
+not establish a passing Docker journey or six-application acceptance. Candidate
+Docker CLI/library integration, native evidence and independent live expectations
+remain #343/#366 prerequisites. No product code applies output; only this explicitly
+isolated, opt-in test boundary can replay its single allowlisted synthetic request.
+
+The canonical `scripts/test-application-probes.sh` wrapper also runs
+`scripts/test-docker-application-contract.py` once after the core artifact tests
+and source check. Its independent runner regression checks exact Python argv,
+disabled bytecode writing, ordering and failure propagation. The existing local
+complete gate, PR/main/dispatch CI and Release validation all consume this wrapper;
+none launches the opt-in runtime harness. Existing Podman application and Lens
+native requirements are unchanged. No other repository consumes this BoxFerry-only
+test boundary.
+
+No operational pin, package declaration, lockfile, workflow definition or canonical
+software location changes in this checkpoint. The harness reads image pins only
+from the caller-selected exact clean DockerLens checkout; it does not copy or
+manage them. The BusyBox constant is a fixed independent historical image-config
+expectation, not a pull source. Existing Renovate custom-manager paths do not
+extract these new scripts or this fixture README; native package inputs are
+unchanged. Existing image/provider owners, grouping and approval rules therefore
+need no configuration change. Updating that historical expectation in the future
+requires independent native source review, not an automated silent refresh.

@@ -14,3 +14,4 @@ for application in forgejo nextcloud paperless immich observability; do
 done
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-core-artifact.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/lib/docker-core-artifact.py" check-sources
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-contract.py"
