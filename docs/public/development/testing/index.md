@@ -54,9 +54,12 @@ guarantee or aggregate memory measurement. The cassette tests require permission
 to bind local Unix sockets; a restricted sandbox can deny that operation.
 
 This command gives fast feedback while changing CLI behavior. It does not replace
-`./scripts/check-all.sh`, native conformance, or release validation. Extend the suite when
-the approved Quadlet target-default (#335) or Quadlet identity inference (#338) behavior lands;
-do not assert those pending contracts as current behavior.
+`./scripts/check-all.sh`, native conformance, or release validation. The suite checks the default
+Quadlet range requested as 5.4 through 6.1 and resolved as 5.4.0 through 6.1.2 across every input
+format and both commands, while preserving the separate Podman deployment default of 6.1.0.
+Route help exposes the Quadlet maximum default, and unsupported or reversed Quadlet ranges fail
+closed. Existing sole-unit identity coverage checks filename inference and explicit overrides;
+multi-unit inputs still require an explicit application name.
 
 ## Test layers
 

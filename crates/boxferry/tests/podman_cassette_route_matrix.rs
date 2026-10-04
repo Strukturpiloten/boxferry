@@ -940,6 +940,12 @@ fn assert_report(bytes: &[u8], output: &str, directory: &Path) -> Result<(), Box
     assert_eq!(report["source_type"], "podman");
     assert_eq!(report["target_type"], output);
     assert_eq!(report["application"], "complex");
+    if output == "quadlet" {
+        assert_eq!(report["requested_versions"]["minimum"], "5.4");
+        assert_eq!(report["requested_versions"]["maximum"], "6.1");
+        assert_eq!(report["resolved_versions"]["minimum"], "5.4.0");
+        assert_eq!(report["resolved_versions"]["maximum"], "6.1.2");
+    }
     assert!(report["failed_stage"].is_null());
     let text = String::from_utf8_lossy(bytes);
     assert!(!text.contains(".sock"), "report disclosed its test socket path");

@@ -36,7 +36,7 @@ quadlet-output/
 ```
 
 The explicit name overrides the `web` identity inferred from a sole `web.container`; multiple
-units need an explicit name. The default target covers Podman 5.4.0 through 6.1.0. Every emitted
+units need an explicit name. The default target covers Podman 5.4.0 through 6.1.2. Every emitted
 key must work across the whole selected range. Select a different target range explicitly when
 needed; the source filename and development host do not select it.
 

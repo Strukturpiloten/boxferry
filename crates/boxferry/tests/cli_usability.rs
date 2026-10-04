@@ -352,6 +352,15 @@ fn all_eighteen_cli_route_forms_preserve_a_reviewed_user_intent() -> Result<(), 
                 assert_eq!(report["target_type"], output, "{label}");
                 assert_eq!(report["application"], application(input), "{label}");
                 assert_eq!(report["invocation"]["command_kind"], verb, "{label}");
+                if output == "quadlet" {
+                    assert_eq!(report["requested_versions"]["minimum"], "5.4", "{label}");
+                    assert_eq!(report["requested_versions"]["maximum"], "6.1", "{label}");
+                    assert_eq!(report["resolved_versions"]["minimum"], "5.4.0", "{label}");
+                    assert_eq!(report["resolved_versions"]["maximum"], "6.1.2", "{label}");
+                } else if output == "podman" {
+                    assert_eq!(report["requested_versions"]["maximum"], "6.1", "{label}");
+                    assert_eq!(report["resolved_versions"]["maximum"], "6.1.0", "{label}");
+                }
                 assert!(report["failed_stage"].is_null(), "{label}");
                 assert_structured_diagnostics(&report, &label)?;
                 assert_expected_diagnostics(&report, input, output, &label)?;
@@ -647,6 +656,22 @@ fn focused_help_and_error_paths_keep_canonical_defaults_and_fail_closed() -> Res
     }
     assert!(text.contains("--podman-resource"));
 
+    for input in FORMATS {
+        for verb in ["convert", "validate"] {
+            let help = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+                .args(["help", verb, input, "quadlet"])
+                .output()?;
+            assert!(help.status.success(), "{verb} {input} quadlet help");
+            let text = String::from_utf8(help.stdout)?;
+            let section = text
+                .split_once("--podman-maximum-version")
+                .and_then(|(_, after)| after.split_once("--quadlet-grouping"))
+                .map(|(section, _)| section)
+                .ok_or("missing Quadlet maximum-version help section")?;
+            assert!(section.contains("[default: 6.1]"), "{verb} {input} quadlet: {section}");
+        }
+    }
+
     let scratch = Scratch::new("error-paths")?;
     let input = scratch.path().join("compose.yaml");
     fs::write(
@@ -673,7 +698,33 @@ fn focused_help_and_error_paths_keep_canonical_defaults_and_fail_closed() -> Res
     assert_diagnostic_subject(&approximate_report, "BFQ0009", "services.web.restart_policy")?;
 
     assert_unsupported_podman_target(&input)?;
+    assert_unsupported_quadlet_ranges(&input)?;
     assert_ambiguous_quadlet_inputs(scratch.path())?;
+    Ok(())
+}
+
+fn assert_unsupported_quadlet_ranges(input: &Path) -> Result<(), Box<dyn Error>> {
+    for (minimum, maximum) in [("5.4", "6.1.3"), ("5.4", "6.2"), ("6.1.2", "6.1.0")] {
+        let unsupported = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args(["validate", "compose", "quadlet", "--input-file"])
+            .arg(input)
+            .args([
+                "--podman-minimum-version",
+                minimum,
+                "--podman-maximum-version",
+                maximum,
+                "--console-format",
+                "json",
+            ])
+            .output()?;
+        assert_eq!(unsupported.status.code(), Some(1), "{minimum} through {maximum}");
+        assert!(unsupported.stderr.is_empty());
+        let report: serde_json::Value = serde_json::from_slice(&unsupported.stdout)?;
+        assert_eq!(report["status"], "failure");
+        assert_eq!(report["failed_stage"], "conversion");
+        assert_eq!(report["primary_diagnostic_code"], "BFO1003");
+        assert_eq!(report["output_artifacts"], serde_json::json!([]));
+    }
     Ok(())
 }
 

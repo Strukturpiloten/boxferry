@@ -7,6 +7,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Extend the default Quadlet target range through 6.1.2, matching QuadletLens evidence while
+  retaining the separate 6.1.0 Podman deployment target ([#335](https://github.com/Strukturpiloten/boxferry/issues/335)).
+
 - Consume ComposeLens 0.3.4, PodmanLens 0.2.5, and QuadletLens 0.2.4; preserve generated
   Compose strings containing YAML separation characters and service/environment associations in
   application definitions such as Appwrite. Refresh active upstream Podman test lanes to 5.8.7 and

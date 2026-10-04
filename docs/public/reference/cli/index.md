@@ -107,7 +107,7 @@ artifacts. Acquisition is bounded and read-only; BoxFerry never invokes the `pod
 | ---------------------------------------------------- | -------------- | -------------------------------------------------------- |
 | `--output-directory DIR`                             | `convert`      | Write to an absent or existing empty directory.          |
 | `--podman-minimum-version VERSION`                   | Quadlet output | Select the inclusive minimum; default resolves to 5.4.0. |
-| `--podman-maximum-version VERSION`                   | Quadlet output | Select the inclusive maximum; default resolves to 6.0.2. |
+| `--podman-maximum-version VERSION`                   | Quadlet output | Select the inclusive maximum; default resolves to 6.1.2. |
 | `--quadlet-grouping separate`                        | Quadlet output | Keep one container unit per service; default.            |
 | `--quadlet-grouping pod`                             | Quadlet output | Request one compatible pod.                              |
 | `--pod-name NAME`                                    | Pod grouping   | Set the native pod name.                                 |

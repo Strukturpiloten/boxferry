@@ -689,6 +689,12 @@ fn assert_success_report(bytes: &[u8], route: &Route, command_kind: &str) -> Res
     assert_eq!(report["source_type"], route.input);
     assert_eq!(report["target_type"], route.output);
     assert_eq!(report["application"], "route-matrix");
+    if route.output == "quadlet" {
+        assert_eq!(report["requested_versions"]["minimum"], "5.4");
+        assert_eq!(report["requested_versions"]["maximum"], "6.1");
+        assert_eq!(report["resolved_versions"]["minimum"], "5.4.0");
+        assert_eq!(report["resolved_versions"]["maximum"], "6.1.2");
+    }
     assert_eq!(
         report_diagnostic_codes(&report)?,
         if route.output == "podman" {
