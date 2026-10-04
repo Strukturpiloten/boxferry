@@ -1619,6 +1619,13 @@ class ParentLifetimeTests(unittest.TestCase):
 
 
 class ReadinessDiagnosticTests(unittest.TestCase):
+    def test_inspect_uses_native_go_id_field_not_plain_format_compatibility_alias(self) -> None:
+        # Podman 6.0.2 accepts {{.Id}} but not {{json .Id}}. The native Go
+        # field is ID; the controlled JSON key exposed to our parser stays id.
+        self.assertEqual(contract.READINESS_INSPECT_FORMAT,
+                         '{"id":{{json .ID}},"name":{{json .Name}},"labels":{{json .Config.Labels}},'
+                         '"state":{{json .State.Status}},"running":{{json .State.Running}}}')
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp")
         self.addCleanup(self.temporary.cleanup)

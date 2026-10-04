@@ -114,6 +114,14 @@ and kill/reap uncertainty. Both core and volume readiness paths test observation
 before removal and preserve failure even if diagnostics fail. These source checks
 do not diagnose the historical failed run or provide fresh native evidence.
 
+An isolated stopped-container probe on host Podman 6.0.2 confirmed that plain
+`{{.Id}}` is a compatibility alias, while JSON template arguments require the
+native Go field `{{json .ID}}`. The combined inspection uses that native field
+and keeps its controlled JSON key `id`. Exact label/ID ownership was verified
+before all probe reads; the container was never started and its ID/name absence
+was verified after removal. This is template evidence only, not Docker startup,
+volume behavior, daemon-mode compatibility or application acceptance.
+
 Consumer/Renovate no-change evidence: `scripts/test-application-probes.sh` already
 registers this Python contract once. Local `scripts/check-all.sh`, CI's application
 contract job for PR/main/dispatch, and Release's reused CI consume that wrapper.

@@ -1373,7 +1373,7 @@ def replay(
 
 
 READINESS_INSPECT_FORMAT = (
-    '{"id":{{json .Id}},"name":{{json .Name}},"labels":{{json .Config.Labels}},'
+    '{"id":{{json .ID}},"name":{{json .Name}},"labels":{{json .Config.Labels}},'
     '"state":{{json .State.Status}},"running":{{json .State.Running}}}'
 )
 
