@@ -107,3 +107,77 @@ complement the complete gate and
 do not replace any core, native-library, diagnostic/loss, or live acceptance
 check. No runtime runner is wired to this helper, and this prerequisite does not
 complete BoxFerry #366.
+
+## Forgejo topology and dependency-sidecar review
+
+[`docker-application-schedule.py`](../../../scripts/lib/docker-application-schedule.py) adds one
+Forgejo-only offline check of the actual native plan, existing topology admission, and unpublished
+BoxFerry dependency sidecar as an inseparable review set. It reuses `validate_application` above;
+there is no second native decoder, request renderer, or runtime client. The canonical CLI calls
+`check_sources` before reading artifacts. Its pure `validate_schedule` takes the three raw byte
+documents and the independently supplied catalogue, application, lane, profile, image aliases,
+prefix, run ID, and fixture root; embedded callers must separately check the source bindings.
+The catalogue and selected profile are caller trust inputs, not authority inferred from output.
+All JSON uses the existing 1-MiB/depth-32 parser, rejecting duplicate keys and nonfinite numbers.
+CLI file reads reject nonregular files and final-component symlinks before a bounded read.
+
+The sidecar contract follows the repository-authored #343 candidate's
+`render_docker_dependency_sidecar` and the separately preserved #366 scaffold's pure dependency
+validator. Neither unpublished worktree becomes a dependency of this check. Its closed schema-1
+envelope contains `kind: "boxferry-docker-dependency-decisions"`, `native_execution: false`,
+`docker_plan_sha256`, and `decisions`. Each decision has `service`, `service_runtime_name`,
+`dependency`, `dependency_runtime_name`, `condition`, `condition_explicit`, `required`,
+`required_explicit`, `restart`, `restart_explicit`, `fidelity`, `native_engine_field`, and
+`provenance`. Conditions are `started`, `healthy`, or `completed_successfully`; implicit values
+must resolve to started/required/no-restart. Fidelity must be `approximate` and
+`native_engine_field` must be false. Provenance contains only `reference`, `condition`, `required`,
+and `restart` arrays of the finite source-document, runtime-observation, user-override,
+implementation-default, and conversion-decision category spellings. Paths and protected values
+are not provenance categories. This is a BoxFerry choreography decision, not an Engine field.
+
+The independently authored Forgejo contract requires exactly `db` and `forgejo`, with the sole
+`forgejo` → `db` edge `healthy`, required, and no restart propagation. Logical keys and runtime
+identities must agree with the authored inventory, not just with each other. The admission and
+sidecar each bind SHA-256 of the exact native plan bytes. The closed result additionally hashes
+the exact admission and sidecar bytes before reserialization; whitespace changes in plan bytes
+invalidate either old binding, and whitespace changes in the other documents change their result
+hashes. This does not invent an admission-to-sidecar binding absent from the existing schemas.
+Missing, swapped, extra, unknown, duplicate, self-referential, reversed, or cyclic decisions fail.
+The merged topology validator retains its network, volume, alias, ingress, mount, excluded-peer,
+ownership, and operation-order assertions unchanged.
+
+The result is `boxferry-docker-forgejo-offline-schedule` schema 1. It preserves the external edge
+prerequisite's identity, bridge constraint, and exact decimal `u64` reference, including its
+maximum value. `native_request_order` retains original request indices. Separate
+`review_operations` reference those same indices in deterministic network, volume,
+dependency-ordered container, then attachment order; they neither alter nor re-render the plan.
+External prerequisites must be reviewed before those operations. `service_review_layers` is
+`[["db"], ["forgejo"]]`, not a generated native start request or a claim that database health
+was observed. Validated dependency choices are retained separately. Result identities are private
+artifact-review data; raw request bodies, environment values, and commands are never copied into
+the result or rejection diagnostics.
+
+Every result says `offline-contract-prerequisite`, `native_execution: false`,
+`replay_authority: false`, `native_admission: false`, `runtime_evidence: "unmeasured"`, and null
+budget measurements. Command/environment/health semantics, actual external-resource existence,
+image loading, startup/readiness/restart behavior, Git/SSH/persistence/isolation acceptance,
+apply/reacquire, native capability admission, and measured budgets remain separate requirements.
+No runtime runner or new application lane is enabled; #343 and #366 remain incomplete.
+
+Run the focused regression without building Rust or launching a runtime:
+
+```console
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-docker-application-schedule.py
+```
+
+The existing `test-application-probes.sh` entry point runs this suite after the topology tests and
+source-binding check, before privacy and existing Podman probe suites. Its runner regression
+checks the exact Python command, disabled bytecode writes, order, and stop-on-failure behavior,
+preserving every prior case. Canonical consumers remain `scripts/check-all.sh`, hosted CI/main,
+and Release's complete validation through the existing shared wrapper; none requires new wiring.
+BoxFerry alone owns this application contract, so Lens/native conformance and other repositories
+need no consumer change or new dependency. All manifests, lockfiles, workflows, application image
+and provider catalogues, and `.github/renovate.json` are unchanged. No operational pin, extraction
+path, manager, grouping, approval, or historical evidence is added, moved, or changed: existing
+Renovate ownership stays intact. Test Engine/profile strings and synthetic aliases are authored
+offline evidence, not downloaded software pins or native admission.
