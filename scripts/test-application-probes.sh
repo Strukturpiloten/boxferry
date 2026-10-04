@@ -7,6 +7,7 @@ bash "${script_directory}/test-application-probes-runner.sh"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-expectations.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/lib/docker-application-expectations.py" check-sources
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-schedule.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-forgejo-authored-fields.py"
 bash "${script_directory}/test-application-export-privacy.sh"
 for application in forgejo nextcloud paperless immich; do
   bash "${script_directory}/test-${application}-application-probes.sh"

@@ -181,3 +181,76 @@ and provider catalogues, and `.github/renovate.json` are unchanged. No operation
 path, manager, grouping, approval, or historical evidence is added, moved, or changed: existing
 Renovate ownership stays intact. Test Engine/profile strings and synthetic aliases are authored
 offline evidence, not downloaded software pins or native admission.
+
+## Forgejo explicitly authored fields
+
+[`docker-forgejo-authored-fields.py`](../../../scripts/lib/docker-forgejo-authored-fields.py)
+adds a separate Forgejo-only offline prerequisite for the explicitly authored environment,
+database healthcheck, and application user. It reuses the complete topology and dependency-sidecar
+review above, including exact plan/admission/sidecar bytes, source bindings and independently
+selected context. The CLI checks canonical source bytes before opening artifact or protected
+expectation files. The pure `validate_authored_fields` API performs no I/O; its caller must
+separately call `topology.check_sources` before relying on source bindings, as with the other
+pure helpers. No additional native decoder, renderer, runtime client, or interpolation engine
+is introduced.
+
+The separate `--interpolation-expectations` regular JSON file has exactly these fields:
+
+- `schema_version`: integer `1` (not a boolean).
+- `kind`: `boxferry-docker-forgejo-interpolation-expectations`.
+- `context`: exactly `application`, `lane`, `profile`, `image_aliases`, `prefix`, `run_id`, and
+  `fixture_root`, equal to the independently supplied review context. Application is `forgejo`;
+  profile and aliases are full objects, not identities inferred from the native plan.
+- `interpolation`: exactly `BF_DB_PASSWORD` and `BF_FORGEJO_SECRET_KEY`, supplied independently
+  from the reviewed source inputs, never extracted from the artifact being checked. Each value
+  is a nonempty, valid UTF-8 string of at most 4096 bytes, without NUL. Whitespace, Unicode, and
+  embedded `=` remain significant.
+
+All JSON documents retain the shared 1-MiB/depth-32, duplicate-key and nonfinite-number rejection.
+Expectation input rejects missing, extra, malformed or cross-context fields. The CLI retains
+bounded, nonblocking regular-file reads and rejects final-component symlinks. Keep private
+expectation files owner-readable only and outside shared evidence; supplying this file is not
+authorization to publish credentials, render them into artifacts, or execute output. No implicit
+process environment or `.env` lookup occurs. Caller-supplied catalogue, source, profile, image
+aliases and interpolation are trust inputs, not authority established by the result.
+
+The independent authored comparisons require all three PostgreSQL and fifteen Forgejo environment
+assignments, the same independent database password in both containers, and the independent Forgejo
+secret key. Missing or wrong values/types and duplicate environment names fail, including duplicate
+unauthored names. PostgreSQL's health test is exactly the authored `CMD-SHELL` command, with interval
+2 seconds, timeout 5 seconds (native nanoseconds), and 60 retries. Forgejo's user is exactly
+`1000:1000`. No health test is executed or observed.
+
+Additional well-formed native environment assignments, including unauthored overrides, are
+**unassessed**: neither their presence nor their absence establishes image-default or complete
+environment fidelity. Likewise this helper does not assert unauthored command, entrypoint,
+database user, application healthcheck, or health default fields. The existing native shape
+boundary still applies to every field. Passing these authored-subset assertions does not establish
+that an application will work.
+
+The result kind is `boxferry-docker-forgejo-authored-fields`, schema 1, and records only the four
+authored-check categories alongside the existing topology/schedule review metadata and exact
+artifact hashes. It never copies protected expectation values, their input digest, raw native
+environment assignments or health commands into results or rejection diagnostics. It remains
+`offline-contract-prerequisite`, with `native_execution`, `native_admission` and `replay_authority`
+all false, `runtime_evidence: "unmeasured"` and null budget measurements. Real external resources,
+image defaults, native capability admission, startup/readiness/restart, Git/SSH/persistence/isolation,
+apply/reacquire and budgets still require separate reviewed acceptance. No runtime runner is wired;
+The parent issues #343 and #366 remain incomplete.
+
+Run the independent synthetic-artifact regression without Rust builds or a runtime:
+
+```console
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-docker-forgejo-authored-fields.py
+```
+
+The canonical `test-application-probes.sh` wrapper runs it after the existing topology/source and
+schedule checks, before privacy and Podman probes. The runner regression checks exact command,
+disabled bytecode writes, ordering and stop-on-failure while retaining every prior suite and case.
+Consumers remain `scripts/check-all.sh`, CI/main and Release validation through that same wrapper;
+there is no new workflow or gate. BoxFerry owns this application assertion; no Lens or other
+repository consumer changes. All manifests, lockfiles, workflows, image/provider catalogues and
+Renovate definitions are unchanged. The new helper/tests contain no operational software pin,
+download or package declaration and add no Renovate extraction match: existing native/custom
+managers, grouping and approval rules retain their canonical paths, with synthetic profile strings
+remaining offline test data rather than managed dependencies.
