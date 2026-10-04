@@ -281,7 +281,7 @@ struct QuadletOutputOptions {
     #[arg(long, default_value = "5.4")]
     podman_minimum_version: PodmanSelector,
     /// Maximum Podman version, as major.minor or major.minor.patch.
-    #[arg(long, default_value = "6.0")]
+    #[arg(long, default_value = "6.1")]
     podman_maximum_version: PodmanSelector,
     /// Quadlet service grouping request.
     #[arg(long = "quadlet-grouping", value_enum, default_value_t = Grouping::Separate)]
@@ -6434,6 +6434,69 @@ mod tests {
     }
 
     #[test]
+    fn quadlet_target_defaults_are_visible_and_consistent_for_every_input() -> Result<(), Box<dyn Error>> {
+        let routes: [&[&str]; 3] = [
+            &["boxferry", "validate", "compose", "quadlet", "--input-file", "input"],
+            &[
+                "boxferry",
+                "validate",
+                "quadlet",
+                "quadlet",
+                "--input-file",
+                "input",
+                "--application-name",
+                "example",
+            ],
+            &[
+                "boxferry",
+                "validate",
+                "podman",
+                "quadlet",
+                "--podman-socket",
+                "/unused/podman.sock",
+                "--podman-all",
+            ],
+        ];
+        for arguments in routes {
+            let conversion = parse_validation(arguments)?;
+            assert_eq!(conversion.podman_minimum_version.requested, "5.4");
+            assert_eq!(conversion.podman_maximum_version.requested, "6.1");
+        }
+
+        let help = Cli::try_parse_from(["boxferry", "convert", "compose", "quadlet", "--help"])
+            .err()
+            .ok_or("--help should display the route help")?;
+        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+        let help = help.to_string();
+        assert!(help.contains("[default: 5.4]"), "{help}");
+        assert!(help.contains("[default: 6.1]"), "{help}");
+        Ok(())
+    }
+
+    #[test]
+    fn quadlet_target_range_resolves_newest_admitted_patch_and_rejects_out_of_range_selectors()
+    -> Result<(), Box<dyn Error>> {
+        let minimum = "5.4".parse()?;
+        for maximum in ["6.1", "6.1.2"] {
+            assert_eq!(
+                resolve_versions(&minimum, &maximum.parse()?)?,
+                (PlatformVersion::new(5, 4, 0), PlatformVersion::new(6, 1, 2))
+            );
+        }
+        assert_eq!(
+            resolve_versions(&"5.4.0".parse()?, &"6.1.0".parse()?)?,
+            (PlatformVersion::new(5, 4, 0), PlatformVersion::new(6, 1, 0))
+        );
+        for (minimum, maximum) in [("5.4", "6.1.3"), ("5.4", "6.2"), ("5.3.9", "6.1.2"), ("6.1.2", "6.1.0")] {
+            assert!(
+                resolve_versions(&minimum.parse()?, &maximum.parse()?).is_err(),
+                "accepted unsupported or reversed range {minimum} through {maximum}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn podman_selectors_only_gate_podman_input_routes() -> Result<(), Box<dyn Error>> {
         let document = [OrderedInput::File(PathBuf::from("input"))];
         let compose = parse_validation(&[
@@ -6627,7 +6690,7 @@ mod tests {
             assert!(Cli::try_parse_from(arguments).is_err());
         }
         for option in ["--podman-minimum-version", "--podman-maximum-version"] {
-            for value in ["5.4", "5.4.0", "6.0", "6.0.2"] {
+            for value in ["5.4", "5.4.0", "6.0", "6.0.2", "6.1", "6.1.2"] {
                 assert!(parse(option, value).is_ok(), "{option}={value}");
             }
             for value in ["5", "5.4.0.1", "five.four"] {

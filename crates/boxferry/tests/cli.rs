@@ -583,6 +583,7 @@ fn generic_convert_handles_a_large_repository_owned_offline_scenario() -> Result
 fn capabilities_verbose_and_human_conversion_output_include_concise_summaries() -> Result<(), Box<dyn Error>> {
     assert_verbose_capabilities_include_concise_summaries()?;
     assert_human_conversion_output_includes_concise_summary()?;
+    assert_verbose_conversion_output_includes_quadlet_default_versions()?;
     Ok(())
 }
 
@@ -703,6 +704,38 @@ fn assert_human_conversion_output_includes_concise_summary() -> Result<(), Box<d
         stdout.lines().next_back(),
         Some("boxferry: command succeeded; wrote 1 file(s) to output directory")
     );
+    Ok(())
+}
+
+fn assert_verbose_conversion_output_includes_quadlet_default_versions() -> Result<(), Box<dyn Error>> {
+    let project = TemporaryOutput::new("human-conversion-versions");
+    let output = TemporaryOutput::new("human-conversion-versions-output");
+    fs::create_dir_all(project.path())?;
+    let compose = project.path().join("compose.yaml");
+    fs::write(
+        &compose,
+        "name: human-versions\nservices:\n  app:\n    image: example.invalid/app:1\n",
+    )?;
+    let conversion = boxferry_command()
+        .args([
+            "convert",
+            "compose",
+            "quadlet",
+            "--input-file",
+            path_text(&compose)?,
+            "--verbose",
+            "--output-directory",
+            path_text(output.path())?,
+        ])
+        .output()?;
+    assert!(
+        conversion.status.success(),
+        "{}",
+        String::from_utf8_lossy(&conversion.stderr)
+    );
+    let stdout = String::from_utf8(conversion.stdout)?;
+    assert!(stdout.contains("Podman requested: 5.4 through 6.1"));
+    assert!(stdout.contains("Podman resolved: 5.4.0 through 6.1.2"));
     Ok(())
 }
 
@@ -3198,7 +3231,12 @@ fn generic_clap_json_and_stdin_failure_contracts_are_fail_closed() -> Result<(),
 #[test]
 fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<dyn Error>> {
     let fixture = fixture_directory("compose-to-quadlet-dependencies").join("compose.yaml");
-    for (minimum, maximum) in [("5.4", "5.8"), ("5.4", "6.1"), ("5.4.0", "6.1.0")] {
+    for (minimum, maximum, resolved_minimum, resolved_maximum) in [
+        ("5.4", "5.8", "5.4.0", "5.8.5"),
+        ("5.4", "6.1", "5.4.0", "6.1.2"),
+        ("5.4.0", "6.1.0", "5.4.0", "6.1.0"),
+        ("5.4.0", "6.1.2", "5.4.0", "6.1.2"),
+    ] {
         let result = boxferry_command()
             .args([
                 "validate",
@@ -3222,8 +3260,17 @@ fn generic_accepts_finite_short_and_exact_podman_selectors() -> Result<(), Box<d
             String::from_utf8_lossy(&result.stderr)
         );
         assert!(result.stderr.is_empty());
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+        assert_eq!(report["resolved_versions"]["minimum"], resolved_minimum);
+        assert_eq!(report["resolved_versions"]["maximum"], resolved_maximum);
     }
-    for (minimum, maximum) in [("5.3", "6.0"), ("5.4", "6.2"), ("6.0", "5.4")] {
+    for (minimum, maximum) in [
+        ("5.3", "6.0"),
+        ("5.4", "6.2"),
+        ("5.4", "6.1.3"),
+        ("6.0", "5.4"),
+        ("6.1.2", "6.1.0"),
+    ] {
         let result = boxferry_command()
             .args([
                 "validate",
