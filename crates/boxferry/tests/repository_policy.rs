@@ -3214,7 +3214,6 @@ fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> 
         "engine_operation 'remove applied target network through API' \\\n    --url \"unix://${apply_target_socket}\" network rm",
         "engine_operation 'remove applied target volume through API' \\\n    --url \"unix://${apply_target_socket}\" volume rm",
         "for kind in container network volume; do",
-        "\"${engine}\" --url \"unix://${apply_target_socket}\" \"${kind}\" exists \"${name}\"",
     ] {
         if !contract.contains(required) {
             return Err(format!(
@@ -3229,6 +3228,8 @@ fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> 
         "exec \"${apply_target_outer}\" podman rm",
         "exec \"${apply_target_outer}\" podman network rm",
         "exec \"${apply_target_outer}\" podman volume rm",
+        "expected_failure_operation 90s \"verify applied target",
+        "\"${engine}\" --url \"unix://${apply_target_socket}\" \"${kind}\" exists \"${name}\"",
     ] {
         if contract.contains(stale) {
             return Err(format!(
@@ -3251,8 +3252,22 @@ fn validate_external_apply_reacquire_runner(runner: &str) -> Result<(), String> 
     if !(execution < inspected && inspected < activation && activation < reacquisition) {
         return Err("live Podman external apply/reacquire must finish CLI work before API activation".to_owned());
     }
-
+    validate_external_apply_presence_loop(contract)?;
     Ok(())
+}
+
+fn validate_external_apply_presence_loop(contract: &str) -> Result<(), String> {
+    require_ordered_contracts(
+        contract,
+        "applied-target closed presence and positive absence",
+        &[
+            "engine_operation 'remove applied target volume through API'",
+            "for kind in container network volume; do",
+            "    presence_status=0\n    native_presence 90s \"${engine}\" \"${kind}\" \"${name}\" \"${apply_target_socket}\" || presence_status=$?\n    if ((presence_status != 1)); then",
+            "Applied conformance %s remains or absence is unverified: %s",
+            "      return 1\n    fi\n  done\n  release_outer \"${apply_target_outer}\"",
+        ],
+    )
 }
 
 #[test]
@@ -3291,6 +3306,21 @@ fn live_external_apply_reacquire_rejects_stale_prerequisite_contracts() -> Resul
             "cmp --silent \"${current_case}/outputs/apply-source-compose/compose.yaml\"",
         )?,
         remove_first(&runner, "for kind in container network volume; do")?,
+        remove_first(
+            &runner,
+            "native_presence 90s \"${engine}\" \"${kind}\" \"${name}\" \"${apply_target_socket}\"",
+        )?,
+        runner.replacen("if ((presence_status != 1)); then", "if ((presence_status == 0)); then", 1),
+        runner.replacen(
+            "    presence_status=0\n    native_presence",
+            "    presence_status=1\n    native_presence",
+            1,
+        ),
+        runner.replacen(
+            "native_presence 90s \"${engine}\" \"${kind}\" \"${name}\" \"${apply_target_socket}\" || presence_status=$?",
+            "\"${engine}\" --url \"unix://${apply_target_socket}\" \"${kind}\" exists \"${name}\" || presence_status=$?",
+            1,
+        ),
         runner
             .replacen(
                 "  activate_outer_runtime \"${runtime_root}/apply-target\"\n",
@@ -3321,6 +3351,7 @@ fn validate_live_runner(runner: &str, matrix: &str) -> Result<(), String> {
     validate_paperless_live_runner(runner)?;
     validate_immich_live_runner(runner)?;
     validate_external_apply_reacquire_runner(runner)?;
+    validate_closed_presence_cleanup(runner)?;
     for required in [
         "--podman-resource-prefix",
         "--podman-label",
@@ -3458,8 +3489,12 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
         "Candidate reused the historical socket namespace.",
         "Candidate reused the historical graph-root identity.",
         "Candidate reused the historical application-name prefix.",
-        "Candidate outer runtime survived limitation-revalidation cleanup.",
-        "External-apply target survived limitation-revalidation cleanup.",
+        "if ! outer_resource_absent container \"${outer}\"; then",
+        "if ! outer_resource_absent container \"${revalidation_candidate_outer}\"; then",
+        "if ! outer_resource_absent container \"${apply_target_outer}\"; then",
+        "Historical limitation container remains or cleanup is unverified: %s",
+        "Candidate outer runtime remains or limitation-revalidation cleanup is unverified.",
+        "External-apply target remains or limitation-revalidation cleanup is unverified.",
     ] {
         if !runner.contains(required) {
             return Err(format!("Podman limitation-revalidation runner is missing `{required}`"));
@@ -3644,6 +3679,177 @@ fn validate_limitation_revalidation_runner(runner: &str) -> Result<(), String> {
             "trap cleanup EXIT",
         ],
     )?;
+    validate_closed_presence_cleanup(runner)?;
+    Ok(())
+}
+
+fn shell_function_contract<'a>(source: &'a str, name: &str) -> Result<&'a str, String> {
+    let marker = format!("{name}() {{");
+    let start = source
+        .find(&marker)
+        .ok_or_else(|| format!("missing shell function {name}"))?;
+    let tail = &source[start..];
+    let end = tail
+        .find("\n}\n")
+        .ok_or_else(|| format!("unclosed shell function {name}"))?;
+    Ok(&tail[..end + 3])
+}
+
+fn validate_closed_presence_cleanup(runner: &str) -> Result<(), String> {
+    let image = shell_function_contract(runner, "engine_image_available")?;
+    require_ordered_contracts(
+        image,
+        "host image presence must precede tag/pull ownership",
+        &[
+            "if native_presence 90s \"${engine}\" image \"${image}\"; then",
+            "else\n    status=$?\n  fi",
+            "if ((status == 1)); then",
+            "return 1",
+            "STEP FAIL",
+            "return \"${status}\"",
+        ],
+    )?;
+    let cleanup = shell_function_contract(runner, "cleanup")?;
+    require_ordered_contracts(
+        cleanup,
+        "unknown cleanup must retain runtime and discovery recovery",
+        &[
+            "if ! release_outer \"${outer}\"; then",
+            "[[ ${native_presence_unverified:-false} == false ]] || cleanup_failed=true",
+            "if [[ \"${cleanup_failed}\" == false ]]; then\n    for directory in \"${discovery_directories[@]}\"; do",
+            "if [[ \"${cleanup_failed}\" == false ]] && ! rm -rf -- \"${runtime_root}\"; then",
+            "Cleanup unverified; private runtime/discovery recovery evidence retained at %s",
+        ],
+    )
+}
+
+fn validate_shared_native_presence_sources(sources: &[String; 4]) -> Result<(), String> {
+    let contracts: [(&str, &str, &[&str]); 4] = [
+        (
+            "outer resource absence",
+            &sources[0],
+            &[
+                "/native-presence.sh",
+                "native_presence 30s \"${engine}\" \"${kind}\" \"${name}\" || status=$?",
+                "0) return 1 ;;",
+                "1) return 0 ;;",
+                "return 2",
+            ],
+        ),
+        (
+            "closed shell presence protocol",
+            &sources[1],
+            &[
+                "timeout --signal=TERM --kill-after=10s \"${maximum}\"",
+                "python3 \"${helper}\" \"${arguments[@]}\" 2> /dev/null",
+                "printf '#'",
+                "case \"${status}:${observation}\" in",
+                "$'0:present\\n#') return 0 ;;",
+                "$'1:absent\\n#') return 1 ;;",
+                "native_presence_unverified=true",
+                "return 2",
+            ],
+        ),
+        (
+            "typed native presence query",
+            &sources[2],
+            &[
+                "arguments = [engine]",
+                "arguments.extend([\"--url\", \"unix://\" + socket])",
+                "arguments.extend([kind, \"exists\", name])",
+                "native_read.readiness_read(arguments, time.monotonic() + 4, presence=True)",
+                "return outcome if outcome in (\"present\", \"absent\") else \"unknown\"",
+                "except (OSError, KeyboardInterrupt):\n        return \"unknown\"",
+                "return {\"present\": 0, \"absent\": 1, \"unknown\": 2}[outcome]",
+            ],
+        ),
+        (
+            "bounded native presence reader",
+            &sources[3],
+            &[
+                "time.monotonic() + 3",
+                "stderr=subprocess.STDOUT if merge_output or presence else subprocess.DEVNULL",
+                "16_385 - len(output)",
+                "os.WEXITED | os.WNOHANG | os.WNOWAIT",
+                "if len(output) > 16_384:",
+                "os.killpg(process.pid, signal.SIGKILL)",
+                "status = process.wait(",
+                "os.killpg(process.pid, 0)",
+                "except (OSError, KeyboardInterrupt):\n                    termination_failed = True",
+                "if termination_failed:\n        return \"termination-unverified\", b\"\"",
+                "if interrupted:\n        raise KeyboardInterrupt",
+                "{0: \"present\", 1: \"absent\"}.get(status, \"unknown\")",
+                "if raw == b\"\" else (\"unknown\", b\"\")",
+            ],
+        ),
+    ];
+    for (context, source, expected) in contracts {
+        require_ordered_contracts(source, context, expected)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn live_native_presence_policy_rejects_counterfactuals() -> Result<(), String> {
+    let root = repository_root();
+    let mut sources = [String::new(), String::new(), String::new(), String::new()];
+    for (destination, path) in sources.iter_mut().zip([
+        "scripts/lib/podman-live-outer-storage.sh",
+        "scripts/lib/native-presence.sh",
+        "scripts/lib/native-presence.py",
+        "scripts/lib/bounded-native-read.py",
+    ]) {
+        *destination =
+            fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+    }
+    validate_shared_native_presence_sources(&sources)?;
+    for (index, original, replacement) in [
+        (0, "native_presence 30s", "timeout 30s"),
+        (0, "1) return 0 ;;", "2) return 0 ;;"),
+        (1, "$'1:absent\\n#') return 1 ;;", "1) return 1 ;;"),
+        (1, "native_presence_unverified=true", "native_presence_unverified=false"),
+        (1, "return 2", "return 1"),
+        (
+            2,
+            "return outcome if outcome in (\"present\", \"absent\") else \"unknown\"",
+            "return \"absent\"",
+        ),
+        (2, "\"unknown\": 2", "\"unknown\": 1"),
+        (3, "if raw == b\"\" else", "if True else"),
+        (3, "os.killpg(process.pid, 0)", "pass"),
+        (3, "os.WEXITED | os.WNOHANG | os.WNOWAIT", "os.WEXITED | os.WNOHANG"),
+    ] {
+        let mut changed = sources.clone();
+        changed[index] = replace_first(&sources[index], original, replacement)?;
+        if validate_shared_native_presence_sources(&changed).is_ok() {
+            return Err(format!("native presence policy accepted counterfactual {original}"));
+        }
+    }
+    let runner = fs::read_to_string(root.join("scripts/podman-live-conformance.sh"))
+        .map_err(|error| format!("failed to read Podman live runner: {error}"))?;
+    validate_closed_presence_cleanup(&runner)?;
+    for (original, replacement) in [
+        (
+            "if native_presence 90s \"${engine}\" image \"${image}\"; then",
+            "if \"${engine}\" image exists \"${image}\"; then",
+        ),
+        (
+            "[[ ${native_presence_unverified:-false} == false ]] || cleanup_failed=true",
+            ":",
+        ),
+        (
+            "if [[ \"${cleanup_failed}\" == false ]]; then\n    for directory",
+            "if true; then\n    for directory",
+        ),
+        ("if [[ \"${cleanup_failed}\" == false ]] && ! rm -rf", "if ! rm -rf"),
+    ] {
+        let changed = replace_first(&runner, original, replacement)?;
+        if validate_closed_presence_cleanup(&changed).is_ok() {
+            return Err(format!(
+                "native presence cleanup policy accepted counterfactual {original}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -5405,6 +5611,18 @@ fn podman_limitation_revalidation_policy_rejects_counterfactuals() -> Result<(),
         ("missing re-import", "reimports.quadlet"),
         ("missing apply result", "external_apply.reacquired"),
         ("missing cleanup result", "cleanup.apply_target_removed"),
+        (
+            "missing baseline positive absence",
+            "if ! outer_resource_absent container \"${outer}\"; then",
+        ),
+        (
+            "missing replacement positive absence",
+            "if ! outer_resource_absent container \"${revalidation_candidate_outer}\"; then",
+        ),
+        (
+            "missing apply-target positive absence",
+            "if ! outer_resource_absent container \"${apply_target_outer}\"; then",
+        ),
         (
             "missing replacement cleanup registration",
             "replacement) revalidation_candidate_outer=\"${outer}\" ;;",

@@ -24,6 +24,54 @@ It does not establish conformance under an enforcing workload security profile.
 
 ## Active patches and retained evidence
 
+### Closed local and socket presence queries
+
+The outer-storage helper and live runner use one typed, read-only presence query for
+local Podman resources and explicitly selected Unix sockets. It covers exact outer
+container/storage-volume checks, applied-target container/network/volume absence,
+limitation cleanup readbacks and host image-cache checks before tagging or pulling.
+Only completed native status 0 or 1 with empty combined stdout and stderr establishes
+present or absent. Diagnostics (including error exit 1 and warning exit 0), other
+statuses, output overflow, deadlines, cancellation and unverified process teardown
+remain unknown. The shell requires the exact newline-terminated marker and matching
+helper status; helper launch or timeout failures cannot establish absence.
+
+`scripts/lib/bounded-native-read.py` is the sole reader, extracted from the Docker
+application helper without changing its readiness diagnostics or query behavior.
+It retains a three-second read bound, a 16-KiB combined-output cap for presence and
+owned-process-group termination before leader reaping. Presence additionally requires
+bounded read-only group disappearance afterward; no signal is sent to a reaped group.
+The four-second helper budget remains inside the existing 30/90-second caller timeout
+and kill-after bound. Both helper and timer run at the caller's native-client privilege;
+the rootful live runner remains rootful and rootless storage probes remain rootless.
+No additional privilege or runtime mutation is introduced by observation.
+
+Presence never authorizes ownership. Outer cleanup retains exact run/outer volume
+labels, successful authenticated container inspection and immutable-ID removal,
+non-force volume removal, registration before creation and attempts on later resources.
+Unknown queries cannot authorize creation, tagging, pulling or image ownership claims.
+Unknown presence or failed cleanup retains the private runtime and discovery recovery
+files as well as failed-run artifacts. Verified cleanup preserves the original failure
+status. Offline fake tests exercise both initial and post-removal ambiguity, mutation
+refusal, later-resource attempts and recovery retention; they supply no live admission.
+The existing complete-gate outer-storage test directly runs the shared helper vectors.
+
+This is the first query-hardening stage of
+[BoxFerry #342](https://github.com/Strukturpiloten/boxferry/issues/342), not a completed
+consumer rollout. Nextcloud and Forgejo shared-edge creation, Observability edge/peer
+creation and application image checks inside `podman exec` remain follow-ups. Their
+pre-API container-CLI transport needs a proven bounded inner-command termination
+boundary: killing a host client process group alone cannot prove that nested workload
+stopped. This stage does not change application provisioning or use a missing API
+socket as permission to start an unverified inner query.
+
+Renovate no-change evidence: the live runner's existing workload-image assignment and
+its regex manager remain at the same path with identical bytes. Matrix images remain
+owned by the `podman-live/matrix.tsv` manager; application images and DockerLens pins
+retain their existing canonical sources. New helper/test files match no custom-manager
+file patterns. No software pin, dependency, workflow, manager, historical catalogue
+or captured evidence changes.
+
 Compose reimports retain byte-identical canonical semantics. Quadlet comparisons
 also retain every remaining field, but explicitly verify two diagnosed fixture
 losses: the dual-network API service's `api`/`public-api` aliases and the options
