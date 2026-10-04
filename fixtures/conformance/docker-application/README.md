@@ -1,5 +1,81 @@
 # Offline Docker application contract prerequisite
 
+## Closed volume-only fixture rehearsal
+
+`scripts/docker-application-conformance.sh --profile volume-fixtures` is an
+explicitly opt-in, test-only isolated-daemon profile. It does not run the six
+applications, exercise persistence or container mounts, or establish fresh native
+admission. It retains the existing four-lane clean DockerLens catalogue selection,
+outer daemon/bootstrap/socket, two-CPU/4-GiB/512-PID limits, storage watchdog,
+execution/cleanup deadlines, ownership checks and outer cleanup. Unlike the core
+journey it never pulls/saves/loads the Busybox fixture, creates/starts a core
+container, runs the core marker, or reacquires Docker-to-Compose output. The
+existing core/replay validators and fail-closed core reacquisition oracle remain
+separate and unchanged.
+
+The producer is the facade's build-only example
+`docker-volume-fixture-rehearsal`, not the CLI or a public runtime executor.
+Candidate receipt schema 2 keeps its existing closed shape. The trusted profile
+selects the exact build recipe, never a recipe proposed by the receipt:
+
+```text
+cargo build --locked --package boxferry --example docker-volume-fixture-rehearsal --no-default-features --features compose,docker --jobs 2 --config 'patch.crates-io.docker-lens.path="CLEAN_ABS_LENS"'
+```
+
+`core-journey` remains the default candidate-verification profile with its
+existing CLI recipe. Cross-profile receipts, arbitrary commands, dirty/changed
+Lens inputs, changed candidate/source/lock/binary bytes and noncanonical paths
+are refused. The runner executes only its bounded owner-private binary snapshot,
+passing exactly `--lane`, `--run`, `--prefix`, `--receipt-sha256` and
+`--output-directory`. Run and prefix are lowercase tokens matching
+`^[a-z][a-z0-9-]{0,63}$`, derived separately from the unchanged outer ownership ID.
+The producer receives an empty mode-0700 directory. Its bounded console remains
+private and is not echoed into diagnostics.
+
+The output directory must contain exactly six `<id>-volumes.json` complete
+schema-1 artifacts plus `manifest.json`, all mode 0600. The manifest's closed
+fields are `schema: 1`, `scope: "volume-only"`, `lane`, `run`, `prefix`,
+`candidate_receipt_sha256` and `fixtures`. Its six ordered fixture records contain
+only `id`, `source_sha256`, `artifact`, `artifact_sha256` and `volume_count`:
+Forgejo 2, Nextcloud 3, Paperless-ngx 6, Immich 4, observability 5 and Supabase 3.
+The validator independently binds the original canonical Compose source bytes in
+the selected BoxFerry checkout, literal volume name/owner suffixes and both full
+labels (`io.boxferry.live-run` and `io.boxferry.application`). It does not learn
+authority from manifest hashes or rewrite authored labels.
+
+All six artifacts and all 23 requests are validated before any POST. Every
+artifact must have the complete independently selected clean-Lens catalogue
+context, empty prerequisites and only exact versioned volume-create POSTs with
+closed `Name`/`Labels` bodies. Duplicate names, wrong context/evidence, additional
+fields/files/requests, partial schemas and source/receipt/artifact drift fail
+closed. Native JSON responses are bounded to 16 KiB, parsed privately and never
+printed; diagnostics do not include raw bodies or exception text.
+
+Each create requires successful native absence first; Engine's idempotent create
+cannot reuse an existing volume. An atomic owner-private ledger records the exact
+name and two labels before each POST, including a POST whose response fails or
+times out. Fresh successful inspection must confirm the exact name and full
+labels. Cleanup reads only this independently constrained ledger, requires a
+successful fresh ownership inspection before DELETE, and verifies native absence.
+Failed inspection stdout cannot authorize deletion. Wrong/unavailable ownership,
+timeouts, cancellation, partial creation and failed absence never become success;
+outer owned-resource teardown and residual reporting remain mandatory. A volume
+apply attempt or existing ledger requires explicit successful inner cleanup;
+an already absent outer daemon, missing ledger or successful outer/storage
+teardown cannot replace inner absence proof. Unverified inner cleanup fails
+closure and retains private ledger evidence with an uncertainty diagnostic.
+Receipt, source and binary bindings are rechecked before apply and during closure,
+including after cleanup. No retries, ambient resources or broader cleanup scope
+are introduced.
+
+The focused Python/fake regressions cover recipe confusion, source and manifest
+binding, context and field injection, all-request-before-mutation refusal,
+existing volumes, registered partial POSTs, deadlines, failed inspection,
+ownership and cleanup. They do not establish real live volume compatibility,
+six-application acceptance or the complete repository gate. No operational image,
+tool, dependency pin or Renovate definition is added or moved: the canonical
+DockerLens image assignments and their existing managers remain authoritative.
+
 ## Authored core artifact prerequisite
 
 [`core.compose.yaml`](core.compose.yaml) and [`core-expectations.json`](core-expectations.json)

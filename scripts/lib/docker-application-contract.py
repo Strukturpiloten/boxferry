@@ -72,6 +72,24 @@ CORE_PRESETS = {
 # resulting per-field decision has an independently reviewed exact expectation.
 CORE_REACQUIRE_REPORT_EXPECTATIONS: dict[str, dict[str, Any]] = {}
 
+# Independent authored fixture bindings, not values learned from producer output.
+VOLUME_TOKEN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+VOLUME_FIXTURES = (
+    ("forgejo", "forgejo", "2d7e81eeefc7060812900791db0a3a9fef08b748779f8697fef12f0cced4d5be",
+     ("forge-db", "forge-data")),
+    ("nextcloud", "cloud", "ca714ddfe9b64620faf47c714db6be2907f7ec6428529c3e041bfd123bdd4761",
+     ("cloud-database", "cloud-redis", "cloud-nextcloud")),
+    ("paperless-ngx", "paperless", "f22f0e4194db3b907cdb0845045339f8561ad830407acf66f6f1063fcca6f762",
+     ("paper-data", "paper-media", "paper-consume", "paper-export", "paper-pgdata", "paper-redisdata")),
+    ("immich", "immich", "a1ca57ad8d5342aafa2e947c9ed657b6006e89288c97d1d12166ddc86b55755d",
+     ("immich-library", "immich-model-cache", "immich-pgdata", "immich-redisdata")),
+    ("observability", "observability", "d66a018d9c3cfe804ab594ad6a1bcbe89e366ac1780422efa90ef3fca3143cbc",
+     ("observability-alloy-data", "observability-grafana-data", "observability-loki-data",
+      "observability-prometheus-data", "observability-telemetry-logs")),
+    ("supabase", "supabase", "9dd2e33343e8cf00836d783fb25d6488dcc0b958f68472dafa4b6d7b24c8a42b",
+     ("supabase-deno-cache", "supabase-pgdata", "supabase-storage")),
+)
+
 
 def candidate_source_digest(root: pathlib.Path) -> str:
     """Hash actual candidate bytes, including uncommitted and untracked source."""
@@ -104,13 +122,18 @@ def candidate_source_digest(root: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def expected_build_command(lens_root: pathlib.Path) -> list[str]:
+def expected_build_command(lens_root: pathlib.Path, profile: str = "core-journey") -> list[str]:
+    require(profile in {"core-journey", "volume-fixtures"}, "candidate profile is unreviewed")
+    if profile == "volume-fixtures":
+        return ["cargo", "build", "--locked", "--package", "boxferry", "--example",
+                "docker-volume-fixture-rehearsal", "--no-default-features", "--features", "compose,docker",
+                "--jobs", "2", "--config", f'patch.crates-io.docker-lens.path="{lens_root}"']
     return ["cargo", "build", "--locked", "--package", "boxferry", "--bin", "boxferry",
             "--jobs", "2", "--config", f'patch.crates-io.docker-lens.path="{lens_root}"']
 
 
 def verify_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.Path,
-                     lens_root: pathlib.Path, lens_revision: str) -> dict[str, Any]:
+                     lens_root: pathlib.Path, lens_revision: str, *, profile: str = "core-journey") -> dict[str, Any]:
     require(root.is_absolute() and lens_root.is_absolute()
             and root.resolve(strict=True) == root and lens_root.resolve(strict=True) == lens_root
             and re.fullmatch(r"[A-Za-z0-9_./-]+", str(lens_root)) is not None,
@@ -161,7 +184,7 @@ def verify_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.
         require(isinstance(value, str) and DIGEST_PATTERN.fullmatch(value)
                 and value == hashlib.sha256(bounded_regular_bytes(checkout / "Cargo.lock", 1024 * 1024)).hexdigest(),
                 "candidate lockfile differs from receipt")
-    require(record["build_command"] == expected_build_command(lens_root)
+    require(record["build_command"] == expected_build_command(lens_root, profile)
             and record["override_identity"] == {
                 "kind": "cargo-crates-io-patch", "package": "docker-lens", "path": str(lens_root),
                 "revision": lens_revision, "source_sha256": record["docker_lens_source_sha256"],
@@ -174,9 +197,9 @@ def verify_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.
 
 def capture_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.Path,
                       lens_root: pathlib.Path, lens_revision: str,
-                      destination: pathlib.Path) -> dict[str, Any]:
+                      destination: pathlib.Path, *, profile: str = "core-journey") -> dict[str, Any]:
     """Execute only an owner-private snapshot of the attested input bytes."""
-    record = verify_candidate(root, binary, receipt, lens_root, lens_revision)
+    record = verify_candidate(root, binary, receipt, lens_root, lens_revision, profile=profile)
     require(destination.is_absolute() and destination.name == "boxferry-candidate"
             and not destination.exists() and destination.parent.is_dir()
             and not destination.parent.is_symlink()
@@ -224,7 +247,7 @@ def capture_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib
             readback.update(chunk)
     require(readback.hexdigest() == record["binary_sha256"],
             "candidate snapshot readback differs")
-    verify_candidate(root, binary, receipt, lens_root, lens_revision)
+    verify_candidate(root, binary, receipt, lens_root, lens_revision, profile=profile)
     return record
 
 
@@ -1074,8 +1097,10 @@ class UnixConnection(http.client.HTTPConnection):
         self.sock.connect(str(self.socket_path))
 
 
-def engine_request(socket_path: pathlib.Path, method: str, path: str, body: bytes | None = None) -> tuple[int, bytes]:
+def engine_request(socket_path: pathlib.Path, method: str, path: str, body: bytes | None = None,
+                   *, timeout: float = 10) -> tuple[int, bytes]:
     connection = UnixConnection(socket_path)
+    connection.timeout = timeout
     try:
         headers = {"Content-Type": "application/json"} if body is not None else {}
         connection.request(method, path, body=body, headers=headers)
@@ -1085,6 +1110,220 @@ def engine_request(socket_path: pathlib.Path, method: str, path: str, body: byte
         return response.status, data
     finally:
         connection.close()
+
+
+def volume_document(raw: bytes) -> dict[str, Any]:
+    try:
+        value = core_artifact.topology.document(raw)
+    except core_artifact.topology.ExpectationError as error:
+        raise ContractError("volume document is not bounded closed JSON") from error
+    require(isinstance(value, dict), "volume document must be an object")
+    return value
+
+
+def expected_volumes(run: str, prefix: str) -> list[dict[str, Any]]:
+    require(isinstance(run, str) and VOLUME_TOKEN.fullmatch(run) is not None
+            and isinstance(prefix, str) and VOLUME_TOKEN.fullmatch(prefix) is not None,
+            "volume run and prefix must be closed tokens")
+    return [{"Name": f"{prefix}-{suffix}",
+             "Labels": {"io.boxferry.live-run": run, "io.boxferry.application": f"{prefix}-{owner}"}}
+            for _, owner, _, suffixes in VOLUME_FIXTURES for suffix in suffixes]
+
+
+def validate_volume_fixtures(directory: pathlib.Path, root: pathlib.Path, *, lane: str, run: str,
+                             prefix: str, receipt_sha256: str, api_version: str,
+                             profiles: dict[str, dict[str, Any]], observed_release: str | None = None,
+                             observed_api: str | None = None, observed_package: str | None = None) -> list[dict[str, Any]]:
+    """Validate all six complete artifacts/23 requests before authorizing any POST."""
+    expected = expected_volumes(run, prefix)
+    require(lane in CORE_PRESETS and lane in profiles, "volume lane has no reviewed profile")
+    require(isinstance(receipt_sha256, str) and DIGEST_PATTERN.fullmatch(receipt_sha256) is not None,
+            "volume candidate receipt binding is invalid")
+    profile = profiles[lane]
+    require(profile["rendering_api_version"] == api_version, "volume rendering API differs")
+    releases = {profile["engine_release"]}
+    if lane.startswith("debian11-") and profile["engine_release"].endswith("+dfsg1"):
+        releases.add(profile["engine_release"].removesuffix("+dfsg1"))
+    require(observed_release is None or observed_release in releases, "volume Engine release differs")
+    require(observed_api is None or observed_api == profile["advertised_api_version"],
+            "volume advertised API differs")
+    require(observed_package is None or observed_package == profile["build"].get("revision", ""),
+            "volume installed package differs")
+    require(root.is_absolute() and root.resolve(strict=True) == root and root.is_dir(),
+            "volume source checkout must be canonical")
+    require(directory.is_absolute() and directory.resolve(strict=True) == directory
+            and directory.is_dir() and directory.stat().st_uid == os.geteuid()
+            and stat.S_IMODE(directory.stat().st_mode) == 0o700,
+            "volume output must be an owner-private canonical directory")
+    names = {"manifest.json", *(f"{identity}-volumes.json" for identity, _, _, _ in VOLUME_FIXTURES)}
+    require(set(os.listdir(directory)) == names, "volume output files differ from closed inventory")
+    require(all((directory / name).stat().st_uid == os.geteuid() for name in names),
+            "volume output file ownership differs")
+    manifest = volume_document(read_private_artifact(directory / "manifest.json").encode())
+    require(set(manifest) == {"schema", "scope", "lane", "run", "prefix", "candidate_receipt_sha256", "fixtures"}
+            and type(manifest["schema"]) is int and manifest["schema"] == 1
+            and manifest["scope"] == "volume-only" and manifest["lane"] == lane
+            and manifest["run"] == run and manifest["prefix"] == prefix
+            and manifest["candidate_receipt_sha256"] == receipt_sha256,
+            "volume manifest envelope or candidate binding differs")
+    rows = manifest["fixtures"]
+    require(isinstance(rows, list) and len(rows) == 6, "volume manifest fixture inventory differs")
+    validated = []
+    offset = 0
+    for row, (identity, _owner, source_sha, suffixes) in zip(rows, VOLUME_FIXTURES, strict=True):
+        require(isinstance(row, dict) and set(row) == {"id", "source_sha256", "artifact", "artifact_sha256", "volume_count"}
+                and row["id"] == identity and row["source_sha256"] == source_sha
+                and row["artifact"] == f"{identity}-volumes.json"
+                and type(row["volume_count"]) is int and row["volume_count"] == len(suffixes),
+                "volume manifest fixture fields differ")
+        source = bounded_regular_bytes(root / f"fixtures/conformance/{identity}-application/compose.yaml", 65_536)
+        require(hashlib.sha256(source).hexdigest() == source_sha, "volume original fixture source differs")
+        raw = read_private_artifact(directory / row["artifact"]).encode()
+        require(hashlib.sha256(raw).hexdigest() == row["artifact_sha256"], "volume artifact hash differs")
+        artifact = volume_document(raw)
+        require(set(artifact) == {"schema_version", "context", "requests", "prerequisites"}
+                and type(artifact["schema_version"]) is int and artifact["schema_version"] == 1
+                and artifact["context"] == profile and artifact["prerequisites"] == [],
+                "volume complete artifact context or envelope differs")
+        requests = artifact["requests"]
+        bodies = expected[offset:offset + len(suffixes)]
+        offset += len(suffixes)
+        require(isinstance(requests, list) and len(requests) == len(bodies), "volume request count differs")
+        remaining = {body["Name"]: body for body in bodies}
+        for request in requests:
+            require(isinstance(request, dict) and set(request) == {"method", "path", "body"}
+                    and request["method"] == "POST" and request["path"] == f"/v{api_version}/volumes/create"
+                    and isinstance(request["body"], dict), "volume native request envelope differs")
+            body = request["body"]
+            require(isinstance(body.get("Name"), str) and body["Name"] in remaining
+                    and body == remaining[body["Name"]], "volume literal name or complete labels differ")
+            remaining.pop(body["Name"])
+            validated.append(request)
+        require(not remaining, "volume literal inventory is incomplete")
+    require(len(validated) == 23, "volume total inventory differs")
+    return validated
+
+
+def volume_socket(path: pathlib.Path) -> None:
+    require(path.is_absolute() and not path.is_symlink() and stat.S_ISSOCK(path.stat().st_mode)
+            and not path.parent.is_symlink() and stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o700,
+            "volume Engine socket must remain in the private run directory")
+
+
+def volume_native_identity(raw: bytes, body: dict[str, Any]) -> None:
+    value = volume_document(raw)
+    require(value.get("Name") == body["Name"] and value.get("Labels") == body["Labels"],
+            "native volume identity or complete ownership differs")
+
+
+def volume_ledger(path: pathlib.Path, *, run: str, prefix: str, lane: str, api_version: str) -> dict[str, Any]:
+    require(path.stat().st_uid == os.geteuid(), "volume ledger owner differs")
+    value = volume_document(read_private_artifact(path).encode())
+    require(set(value) == {"schema", "scope", "lane", "run", "prefix", "api_version", "volumes"}
+            and type(value["schema"]) is int and value["schema"] == 1 and value["scope"] == "volume-only"
+            and value["lane"] == lane and value["run"] == run and value["prefix"] == prefix
+            and value["api_version"] == api_version and lane in CORE_PRESETS
+            and API_PATTERN.fullmatch(api_version) is not None,
+            "volume cleanup ledger envelope differs")
+    expected = {body["Name"]: body for body in expected_volumes(run, prefix)}
+    volumes = value["volumes"]
+    require(isinstance(volumes, list) and len(volumes) <= 23, "volume ledger count differs")
+    for body in volumes:
+        require(isinstance(body, dict) and isinstance(body.get("Name"), str)
+                and body["Name"] in expected and body == expected.pop(body["Name"]),
+                "volume ledger ownership or inventory differs")
+    return value
+
+
+def volume_call(socket_path: pathlib.Path, method: str, path: str, body: bytes | None, deadline: float) -> tuple[int, bytes]:
+    remaining = deadline - time.monotonic()
+    require(remaining > 0, "volume request deadline exhausted")
+    return engine_request(socket_path, method, path, body, timeout=min(10, remaining))
+
+
+def apply_volume_fixtures(socket_path: pathlib.Path, state: pathlib.Path, requests: list[dict[str, Any]],
+                          *, run: str, prefix: str, lane: str, api_version: str) -> None:
+    expected = {body["Name"]: body for body in expected_volumes(run, prefix)}
+    require(lane in CORE_PRESETS and API_PATTERN.fullmatch(api_version) is not None
+            and isinstance(requests, list) and len(requests) == 23, "volume apply inventory differs")
+    for request in requests:
+        require(isinstance(request, dict) and set(request) == {"method", "path", "body"}
+                and request["method"] == "POST" and request["path"] == f"/v{api_version}/volumes/create"
+                and isinstance(request["body"], dict) and isinstance(request["body"].get("Name"), str)
+                and request["body"]["Name"] in expected
+                and request["body"] == expected.pop(request["body"]["Name"]),
+                "volume apply native request differs")
+    volume_socket(socket_path)
+    require(state.is_absolute() and not state.exists() and not state.is_symlink()
+            and state.parent.is_dir() and not state.parent.is_symlink()
+            and stat.S_IMODE(state.parent.stat().st_mode) == 0o700, "volume ledger must be new and private")
+    ledger = {"schema": 1, "scope": "volume-only", "lane": lane, "run": run, "prefix": prefix,
+              "api_version": api_version, "volumes": []}
+    deadline = time.monotonic() + 40
+    descriptor = os.open(state, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        identity = os.fstat(descriptor)
+        def save() -> None:
+            nonlocal identity
+            raw = json.dumps(ledger, separators=(",", ":"), sort_keys=True).encode()
+            require(len(raw) <= 16_384, "volume ledger exceeds bound")
+            current = state.lstat()
+            require((current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino)
+                    and stat.S_ISREG(current.st_mode), "volume ledger identity changed")
+            temporary_fd, temporary_name = tempfile.mkstemp(prefix=".volume-ledger-", dir=state.parent)
+            try:
+                view = memoryview(raw)
+                while view:
+                    written = os.write(temporary_fd, view)
+                    require(written > 0, "volume ledger write failed")
+                    view = view[written:]
+                os.fsync(temporary_fd)
+                identity = os.fstat(temporary_fd)
+                os.replace(temporary_name, state)
+            finally:
+                os.close(temporary_fd)
+                if os.path.lexists(temporary_name):
+                    os.unlink(temporary_name)
+        save()
+        for request in requests:
+            body = request["body"]
+            path = f"/v{api_version}/volumes/{body['Name']}"
+            status, _ = volume_call(socket_path, "GET", path, None, deadline)
+            require(status == 404, "volume name is occupied or absence inspection failed")
+            ledger["volumes"].append(body)
+            save()  # Registration survives a partially successful/failed/timed-out POST.
+            raw = json.dumps(body, separators=(",", ":")).encode()
+            status, response = volume_call(socket_path, "POST", request["path"], raw, deadline)
+            require(status == 201, "volume create failed")
+            volume_native_identity(response, body)
+            status, response = volume_call(socket_path, "GET", path, None, deadline)
+            require(status == 200, "created volume inspection failed")
+            volume_native_identity(response, body)
+    finally:
+        os.close(descriptor)
+
+
+def cleanup_volume_fixtures(socket_path: pathlib.Path, state: pathlib.Path, *, run: str, prefix: str,
+                            lane: str, api_version: str) -> None:
+    ledger = volume_ledger(state, run=run, prefix=prefix, lane=lane, api_version=api_version)
+    volume_socket(socket_path)
+    deadline = time.monotonic() + 25
+    failed = False
+    for body in reversed(ledger["volumes"]):
+        path = f"/v{api_version}/volumes/{body['Name']}"
+        try:
+            status, response = volume_call(socket_path, "GET", path, None, deadline)
+            if status == 404:
+                continue
+            require(status == 200, "volume cleanup inspection failed")
+            volume_native_identity(response, body)
+            status, _ = volume_call(socket_path, "DELETE", path, None, deadline)
+            require(status == 204, "owned volume removal failed")
+            status, _ = volume_call(socket_path, "GET", path, None, deadline)
+            require(status == 404, "owned volume absence is unverified")
+        except (ContractError, OSError, ValueError, http.client.HTTPException):
+            failed = True
+    require(not failed, "volume cleanup is incomplete or ownership unavailable")
 
 
 def replay(
@@ -1148,6 +1387,7 @@ def main() -> int:
     candidate.add_argument("--receipt", required=True)
     candidate.add_argument("--docker-lens-root", required=True)
     candidate.add_argument("--docker-lens-revision", required=True)
+    candidate.add_argument("--profile", choices=("core-journey", "volume-fixtures"), default="core-journey")
     snapshot = commands.add_parser("capture-candidate")
     snapshot.add_argument("--boxferry-root", required=True)
     snapshot.add_argument("--binary", required=True)
@@ -1155,6 +1395,32 @@ def main() -> int:
     snapshot.add_argument("--docker-lens-root", required=True)
     snapshot.add_argument("--docker-lens-revision", required=True)
     snapshot.add_argument("--destination", required=True)
+    snapshot.add_argument("--profile", choices=("core-journey", "volume-fixtures"), default="core-journey")
+    for name in ("validate-volume-fixtures", "apply-volume-fixtures"):
+        volumes = commands.add_parser(name)
+        volumes.add_argument("--directory", type=pathlib.Path, required=True)
+        volumes.add_argument("--boxferry-root", type=pathlib.Path, required=True)
+        volumes.add_argument("--lane", required=True)
+        volumes.add_argument("--run", required=True)
+        volumes.add_argument("--prefix", required=True)
+        volumes.add_argument("--receipt-sha256", required=True)
+        volumes.add_argument("--api-version", required=True)
+        volumes.add_argument("--catalogue-json", required=True)
+        volumes.add_argument("--observed-release")
+        volumes.add_argument("--observed-api")
+        volumes.add_argument("--observed-package")
+        if name == "apply-volume-fixtures":
+            volumes.add_argument("--socket", type=pathlib.Path, required=True)
+            volumes.add_argument("--state", type=pathlib.Path, required=True)
+            volumes.add_argument("--allow-isolated-apply", action="store_true")
+    volumes_cleanup = commands.add_parser("cleanup-volume-fixtures")
+    volumes_cleanup.add_argument("--socket", type=pathlib.Path, required=True)
+    volumes_cleanup.add_argument("--state", type=pathlib.Path, required=True)
+    volumes_cleanup.add_argument("--lane", required=True)
+    volumes_cleanup.add_argument("--run", required=True)
+    volumes_cleanup.add_argument("--prefix", required=True)
+    volumes_cleanup.add_argument("--api-version", required=True)
+    volumes_cleanup.add_argument("--allow-isolated-apply", action="store_true")
     source_digest = commands.add_parser("candidate-source-digest")
     source_digest.add_argument("--boxferry-root", required=True)
     sample = commands.add_parser("sample-owned-storage")
@@ -1257,13 +1523,33 @@ def main() -> int:
         elif args.command == "verify-candidate":
             print(json.dumps(verify_candidate(pathlib.Path(args.boxferry_root),
                                               pathlib.Path(args.binary), pathlib.Path(args.receipt),
-                                              pathlib.Path(args.docker_lens_root), args.docker_lens_revision),
+                                              pathlib.Path(args.docker_lens_root), args.docker_lens_revision,
+                                              profile=args.profile),
                              sort_keys=True))
         elif args.command == "capture-candidate":
             print(json.dumps(capture_candidate(pathlib.Path(args.boxferry_root),
                                                pathlib.Path(args.binary), pathlib.Path(args.receipt),
                                                pathlib.Path(args.docker_lens_root), args.docker_lens_revision,
-                                               pathlib.Path(args.destination)), sort_keys=True))
+                                               pathlib.Path(args.destination), profile=args.profile), sort_keys=True))
+        elif args.command in {"validate-volume-fixtures", "apply-volume-fixtures"}:
+            catalogue = json.loads(args.catalogue_json, object_pairs_hook=no_duplicate_keys)
+            requests = validate_volume_fixtures(
+                args.directory, args.boxferry_root, lane=args.lane, run=args.run, prefix=args.prefix,
+                receipt_sha256=args.receipt_sha256, api_version=args.api_version,
+                profiles=catalogue["profiles"], observed_release=args.observed_release,
+                observed_api=args.observed_api, observed_package=args.observed_package)
+            if args.command == "apply-volume-fixtures":
+                require(args.allow_isolated_apply and all(value is not None for value in
+                        (args.observed_release, args.observed_api, args.observed_package)),
+                        "volume apply requires explicit isolated permission and observed identity")
+                apply_volume_fixtures(args.socket, args.state, requests, run=args.run, prefix=args.prefix,
+                                      lane=args.lane, api_version=args.api_version)
+            print("volume-only fixture contract verified; no application acceptance")
+        elif args.command == "cleanup-volume-fixtures":
+            require(args.allow_isolated_apply, "volume cleanup requires explicit isolated permission")
+            cleanup_volume_fixtures(args.socket, args.state, run=args.run, prefix=args.prefix,
+                                    lane=args.lane, api_version=args.api_version)
+            print("volume-only owned cleanup and absence verified")
         elif args.command == "candidate-source-digest":
             root = pathlib.Path(args.boxferry_root)
             print(json.dumps({"revision": git(root, "rev-parse", "HEAD"),
@@ -1367,7 +1653,8 @@ def main() -> int:
     except ContractError as error:
         print(f"docker application contract failed: {error}", file=sys.stderr)
         return 1
-    except (OSError, UnicodeError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError):
+    except (OSError, UnicodeError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError,
+            http.client.HTTPException):
         # Native or caller-provided values must not escape via exception text.
         print("docker application contract failed: invalid or unavailable bounded input", file=sys.stderr)
         return 1

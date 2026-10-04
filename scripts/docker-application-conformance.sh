@@ -10,7 +10,7 @@ profile='' lane='' lens_root='' lens_revision='' script_sha='' artifact='' artif
 boxferry_root='' boxferry_binary='' boxferry_receipt=''
 
 usage() {
-  printf 'usage: %s --profile {catalogue|replay-probe|core-journey} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH]\n' "$0" >&2
+  printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH]\n' "$0" >&2
   exit 2
 }
 
@@ -32,7 +32,7 @@ while (($#)); do
   shift 2
 done
 [[ -n $lens_root && -n $lens_revision && -n $script_sha ]] || usage
-[[ $profile == catalogue || $profile == replay-probe || $profile == core-journey ]] || usage
+[[ $profile == catalogue || $profile == replay-probe || $profile == core-journey || $profile == volume-fixtures ]] || usage
 for tool in python3 git; do command -v "$tool" > /dev/null || {
   printf 'missing required tool: %s\n' "$tool" >&2
   exit 1
@@ -49,11 +49,11 @@ if [[ $profile == catalogue ]]; then
 fi
 
 [[ -n $lane && -n $api_version ]] || usage
-if [[ $profile == core-journey ]]; then
+if [[ $profile == core-journey || $profile == volume-fixtures ]]; then
   [[ -z $artifact && -n $boxferry_root && -n $boxferry_binary && -n $boxferry_receipt ]] || usage
   python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
     --binary "$boxferry_binary" --receipt "$boxferry_receipt" \
-    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" > /dev/null
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" --profile "$profile" > /dev/null
 else
   [[ -n $artifact && -z $boxferry_root && -z $boxferry_binary && -z $boxferry_receipt ]] || usage
 fi
@@ -117,6 +117,7 @@ fi
 
 run_dir='' outer='' storage_volume='' watchdog_pid='' socket_path='' volume_path='' guard_pid='' guard_start=''
 registered=false
+volume_apply_attempted=false
 main_pid=$$
 main_start=$(python3 "$contract" parent-start --parent-pid "$main_pid")
 signal_main() {
@@ -149,6 +150,11 @@ cleanup_bounded() {
 cleanup_owned() {
   local failure=0 observed state inner_status now monitor_joined=true
   local outer_residual=none volume_residual=none directory_residual=none
+  local inner_volume_cleanup=not-required
+  if [[ ${profile:-} == volume-fixtures ]] &&
+    [[ ${volume_apply_attempted:-false} == true || -e $run_dir/volume-ledger.json || -L $run_dir/volume-ledger.json ]]; then
+    inner_volume_cleanup=unverified
+  fi
   cleanup_active=true
   if [[ ${guard_ready:-false} == true ]]; then
     guard_alive || failure=1
@@ -186,6 +192,9 @@ cleanup_owned() {
     [[ $registered != true || -z $outer ]] || outer_residual=$outer
     [[ $registered != true || -z $storage_volume ]] || volume_residual=$storage_volume
     [[ -z $run_dir ]] || directory_residual=$run_dir
+    if [[ $inner_volume_cleanup == unverified ]]; then
+      printf 'inner-volume cleanup/absence unverified; retaining private evidence\n' >&2
+    fi
     printf 'cleanup residuals: outer-container=%s storage-volume=%s private-directory=%s\n' \
       "$outer_residual" "$volume_residual" "$directory_residual" >&2
     return 1
@@ -197,19 +206,33 @@ cleanup_owned() {
     if ((state == 0)); then
       if observed=$(cleanup_bounded 15s podman inspect --format '{{index .Config.Labels "io.boxferry.docker-core-run"}}' "$outer") && [[ $observed == "$run_id" ]]; then
         if [[ -n $socket_path && -S $socket_path ]]; then
-          # Only remove the fixed name if this run actually created it. A
-          # failed removal is still failure even though outer storage goes.
-          inner_status=$(cleanup_bounded 10s curl --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
-            --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
-          if [[ $inner_status == 200 ]]; then
-            cleanup_bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-              rm --force bf-docker-core > /dev/null 2>&1 || failure=1
+          if [[ $profile == volume-fixtures ]]; then
+            if [[ $inner_volume_cleanup == unverified ]]; then
+              if cleanup_bounded 30s python3 "$contract" cleanup-volume-fixtures --allow-isolated-apply \
+                --socket "$socket_path" --state "$run_dir/volume-ledger.json" --lane "$lane" \
+                --run "$volume_run" --prefix "$volume_prefix" --api-version "$api_version" > /dev/null; then
+                inner_volume_cleanup=verified
+              else
+                failure=1
+              fi
+            fi
+          else
+            # Only remove the fixed name if this run actually created it. A
+            # failed removal is still failure even though outer storage goes.
             inner_status=$(cleanup_bounded 10s curl --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
               --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
-            [[ $inner_status == 404 ]] || failure=1
-          elif [[ $inner_status != 404 ]]; then
-            failure=1
+            if [[ $inner_status == 200 ]]; then
+              cleanup_bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+                rm --force bf-docker-core > /dev/null 2>&1 || failure=1
+              inner_status=$(cleanup_bounded 10s curl --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
+                --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
+              [[ $inner_status == 404 ]] || failure=1
+            elif [[ $inner_status != 404 ]]; then
+              failure=1
+            fi
           fi
+        elif [[ $profile == volume-fixtures && -e $run_dir/volume-ledger.json ]]; then
+          failure=1
         fi
         cleanup_bounded 60s podman rm --force --volumes "$outer" > /dev/null || failure=1
         state=0
@@ -247,16 +270,21 @@ cleanup_owned() {
       volume_residual=none
     fi
   fi
+  if [[ $inner_volume_cleanup == unverified ]]; then
+    # Outer teardown cannot replace successful inner ownership/absence proof.
+    printf 'inner-volume cleanup/absence unverified; retaining private evidence\n' >&2
+    failure=1
+  fi
   if [[ -n $run_dir ]]; then
     # Only the exact mktemp-owned private directory is removed. It contains
     # synthetic request/state and image archive material for this run alone.
     directory_residual=$run_dir
     if [[ $run_dir == /tmp/boxferry-docker-core.* && -d $run_dir && ! -L $run_dir ]]; then
-      if [[ $outer_residual == none ]]; then
+      if [[ $outer_residual == none && $inner_volume_cleanup != unverified ]]; then
         cleanup_bounded 30s rm -r -- "$run_dir" || failure=1
         [[ -e $run_dir ]] || directory_residual=none
       else
-        # Keep the socket for precise recovery of an outer container, but
+        # Keep the socket/ledger for precise recovery or uncertain inner cleanup, but
         # discard only run-owned temporary archive bytes independently.
         cleanup_bounded 10s rm -f -- "$run_dir/busybox.tar" || failure=1
       fi
@@ -292,6 +320,8 @@ trap 'exit 1' HUP INT TERM
 run_dir=$(mktemp -d /tmp/boxferry-docker-core.XXXXXXXX)
 chmod 0700 "$run_dir"
 run_id=${run_dir##*.}
+volume_run="bf-${run_id,,}"
+volume_prefix="bf-volume-${run_id,,}"
 outer="bf-docker-core-${run_id}"
 storage_volume="bf-docker-core-data-${run_id}"
 socket_dir="$run_dir/socket"
@@ -350,6 +380,24 @@ if [[ $profile == core-journey ]]; then
   python3 "$contract" validate-artifact --artifact "$artifact" --image "$core_alias" \
     --artifact-sha256 "$artifact_sha256" \
     --api-version "$api_version" --lane "$lane" --catalogue-json "$catalogue" > /dev/null
+fi
+if [[ $profile == volume-fixtures ]]; then
+  boxferry_snapshot="$run_dir/boxferry-candidate"
+  bounded 45s python3 "$contract" capture-candidate --boxferry-root "$boxferry_root" \
+    --binary "$boxferry_binary" --receipt "$boxferry_receipt" \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+    --profile volume-fixtures --destination "$boxferry_snapshot" > /dev/null
+  receipt_sha256=$(python3 "$contract" artifact-identity --artifact "$boxferry_receipt")
+  mkdir -m 0700 "$run_dir/volume-output"
+  (
+    ulimit -f 128
+    bounded 60s "$boxferry_snapshot" --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
+      --receipt-sha256 "$receipt_sha256" --output-directory "$run_dir/volume-output" \
+      > /dev/null 2> "$run_dir/volume-producer-console.txt"
+  )
+  python3 "$contract" validate-volume-fixtures --directory "$run_dir/volume-output" \
+    --boxferry-root "$boxferry_root" --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
+    --receipt-sha256 "$receipt_sha256" --api-version "$api_version" --catalogue-json "$catalogue" > /dev/null
 fi
 [[ $(bounded 15s podman info --format '{{.Host.Security.Rootless}}') == false ]] || {
   printf 'outer Podman is not rootful\n' >&2
@@ -468,20 +516,22 @@ watchdog_pid=$!
 # host-side prerequisites; the nested Engine is never asked to pull an image.
 outer_pull_attempted=true
 bounded 180s podman pull "$outer_image" > /dev/null
-fixture_pull_attempted=true
-bounded 180s podman pull "$fixture_image" > /dev/null
-host_image_id=$(bounded 15s podman image inspect --format '{{.Id}}' "$fixture_image")
-host_image_id=${host_image_id#sha256:}
-[[ $host_image_id =~ ^[0-9a-f]{64}$ ]] || {
-  printf 'canonical fixture image ID unavailable\n' >&2
-  exit 1
-}
-[[ $(bounded 15s podman image inspect --format '{{.Os}}/{{.Architecture}}' "$fixture_image") == linux/amd64 ]] || {
-  printf 'host fixture image platform has no reviewed environment baseline\n' >&2
-  exit 1
-}
-archive="$run_dir/busybox.tar"
-bounded 120s podman save --format docker-archive --output "$archive" "$fixture_image"
+if [[ $profile != volume-fixtures ]]; then
+  fixture_pull_attempted=true
+  bounded 180s podman pull "$fixture_image" > /dev/null
+  host_image_id=$(bounded 15s podman image inspect --format '{{.Id}}' "$fixture_image")
+  host_image_id=${host_image_id#sha256:}
+  [[ $host_image_id =~ ^[0-9a-f]{64}$ ]] || {
+    printf 'canonical fixture image ID unavailable\n' >&2
+    exit 1
+  }
+  [[ $(bounded 15s podman image inspect --format '{{.Os}}/{{.Architecture}}' "$fixture_image") == linux/amd64 ]] || {
+    printf 'host fixture image platform has no reviewed environment baseline\n' >&2
+    exit 1
+  }
+  archive="$run_dir/busybox.tar"
+  bounded 120s podman save --format docker-archive --output "$archive" "$fixture_image"
+fi
 storage_target=/var/lib/docker
 [[ $lane == *-rootless ]] && storage_target=/home/docker/.local/share/docker
 storage_mount="$storage_volume:$storage_target:U"
@@ -557,100 +607,127 @@ if [[ $lane == debian11-* ]]; then
   # shellcheck disable=SC2016
   installed_package=$(bounded 15s podman exec "$outer" dpkg-query -W '-f=${Version}' docker.io 2> /dev/null)
 fi
-python3 "$contract" validate-artifact --artifact "$artifact" --image "$core_alias" \
-  --artifact-sha256 "$artifact_sha256" \
-  --api-version "$api_version" --lane "$lane" \
-  --observed-release "$observed_release" --observed-api "$observed_api" \
-  --observed-package "$installed_package" --catalogue-json "$catalogue" > /dev/null
-bounded 45s podman cp "$archive" "$outer:/tmp/bf-core-busybox.tar"
-bounded 45s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-  load --input /tmp/bf-core-busybox.tar > /dev/null
-inner_image_id=$(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-  image inspect --format '{{.Id}}' "$fixture_tag")
-inner_image_id=${inner_image_id#sha256:}
-[[ $inner_image_id == "$host_image_id" ]] || {
-  printf 'loaded inner image ID differs from canonical pinned image\n' >&2
-  exit 1
-}
-[[ $(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-  image inspect --format '{{.Os}}/{{.Architecture}}' "$fixture_tag") == linux/amd64 ]] || {
-  printf 'inner fixture image platform has no reviewed environment baseline\n' >&2
-  exit 1
-}
-bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock tag "$fixture_tag" "$core_alias"
-alias_image_id=$(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-  image inspect --format '{{.Id}}' "$core_alias")
-alias_image_id=${alias_image_id#sha256:}
-[[ $alias_image_id == "$host_image_id" ]] || {
-  printf 'isolated image alias does not resolve to the reviewed image ID\n' >&2
-  exit 1
-}
-
-bounded 45s python3 "$contract" replay-test-only --allow-isolated-apply \
-  --artifact-sha256 "$artifact_sha256" \
-  --artifact "$artifact" --image "$core_alias" --api-version "$api_version" --lane "$lane" \
-  --observed-release "$observed_release" --observed-api "$observed_api" \
-  --observed-package "$installed_package" --catalogue-json "$catalogue" \
-  --socket "$socket_path" --state "$run_dir/state.json" > /dev/null
-if [[ $profile == core-journey ]]; then
-  container_id=$(python3 "$contract" check-core-output --kind state-id \
-    --file "$run_dir/state.json" --image "$core_alias")
-  (
-    ulimit -f 128
-    bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-      inspect --format '{{json .}}' "$container_id" > "$run_dir/native-inspect.json" 2> /dev/null
-  )
-  network_id=$(python3 "$contract" check-core-output --kind inspect \
-    --file "$run_dir/native-inspect.json" --container-id "$container_id" \
-    --image "$core_alias" --fixture-image "$fixture_image")
-  (
-    ulimit -f 128
-    bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-      network inspect --format '{{json .}}' "$network_id" > "$run_dir/native-network-inspect.json" 2> /dev/null
-  )
-  python3 "$contract" check-core-output --kind network-inspect \
-    --file "$run_dir/native-network-inspect.json" \
-    --container-file "$run_dir/native-inspect.json" \
-    --container-id "$container_id" --network-id "$network_id" \
-    --image "$core_alias" --fixture-image "$fixture_image"
+if [[ $profile == volume-fixtures ]]; then
   bounded 30s python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
-    --binary "$boxferry_binary" --receipt "$boxferry_receipt" \
+    --binary "$boxferry_binary" --receipt "$boxferry_receipt" --profile volume-fixtures \
     --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" > /dev/null
-  (
-    ulimit -f 128
-    bounded 60s "$boxferry_snapshot" convert docker compose \
-      --docker-socket "$socket_path" --docker-container-id "$container_id" \
-      --application-name bf-docker-core \
-      --docker-import-policy portable \
-      --promote-docker-protected-environment-values \
-      --environment-values include \
-      --docker-resource-decision "network:${network_id}=external:bridge" \
-      --loss-policy partial --output-directory "$run_dir/compose-output" \
-      --console-format json > "$run_dir/compose-report.json" 2> "$run_dir/compose-console.txt"
-  )
-  python3 "$contract" check-core-output --kind compose-console --file "$run_dir/compose-console.txt" \
-    --container-file "$run_dir/native-inspect.json" \
-    --network-file "$run_dir/native-network-inspect.json" \
-    --container-id "$container_id" --network-id "$network_id" \
-    --image "$core_alias" --fixture-image "$fixture_image" --socket-path "$socket_path"
-  python3 "$contract" check-core-output --kind compose-report --file "$run_dir/compose-report.json" \
-    --lane "$lane" --catalogue-json "$catalogue" \
-    --container-file "$run_dir/native-inspect.json" \
-    --network-file "$run_dir/native-network-inspect.json" \
-    --container-id "$container_id" --network-id "$network_id" \
-    --image "$core_alias" --fixture-image "$fixture_image" --socket-path "$socket_path"
-  python3 "$contract" check-core-output --kind compose \
-    --file "$run_dir/compose-output/compose.yaml" --image "$core_alias" \
-    --fixture-image "$fixture_image" --container-id "$container_id" \
-    --container-file "$run_dir/native-inspect.json" \
-    --network-id "$network_id" --network-file "$run_dir/native-network-inspect.json"
+  [[ $(python3 "$contract" artifact-identity --artifact "$boxferry_receipt") == "$receipt_sha256" ]] || {
+    printf 'volume candidate receipt bytes changed; refusing apply\n' >&2
+    exit 1
+  }
+  volume_apply_attempted=true
+  bounded 45s python3 "$contract" apply-volume-fixtures --allow-isolated-apply \
+    --directory "$run_dir/volume-output" --boxferry-root "$boxferry_root" \
+    --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
+    --receipt-sha256 "$receipt_sha256" --api-version "$api_version" --catalogue-json "$catalogue" \
+    --observed-release "$observed_release" --observed-api "$observed_api" --observed-package "$installed_package" \
+    --socket "$socket_path" --state "$run_dir/volume-ledger.json" > /dev/null
+  bounded 30s python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
+    --binary "$boxferry_binary" --receipt "$boxferry_receipt" --profile volume-fixtures \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" > /dev/null
+  [[ $(python3 "$contract" artifact-identity --artifact "$boxferry_receipt") == "$receipt_sha256" ]] || {
+    printf 'volume candidate receipt bytes changed; refusing closure\n' >&2
+    exit 1
+  }
+  python3 "$contract" validate-volume-fixtures --directory "$run_dir/volume-output" \
+    --boxferry-root "$boxferry_root" --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
+    --receipt-sha256 "$receipt_sha256" --api-version "$api_version" --catalogue-json "$catalogue" > /dev/null
+else
+  python3 "$contract" validate-artifact --artifact "$artifact" --image "$core_alias" \
+    --artifact-sha256 "$artifact_sha256" \
+    --api-version "$api_version" --lane "$lane" \
+    --observed-release "$observed_release" --observed-api "$observed_api" \
+    --observed-package "$installed_package" --catalogue-json "$catalogue" > /dev/null
+  bounded 45s podman cp "$archive" "$outer:/tmp/bf-core-busybox.tar"
+  bounded 45s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+    load --input /tmp/bf-core-busybox.tar > /dev/null
+  inner_image_id=$(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+    image inspect --format '{{.Id}}' "$fixture_tag")
+  inner_image_id=${inner_image_id#sha256:}
+  [[ $inner_image_id == "$host_image_id" ]] || {
+    printf 'loaded inner image ID differs from canonical pinned image\n' >&2
+    exit 1
+  }
+  [[ $(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+    image inspect --format '{{.Os}}/{{.Architecture}}' "$fixture_tag") == linux/amd64 ]] || {
+    printf 'inner fixture image platform has no reviewed environment baseline\n' >&2
+    exit 1
+  }
+  bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock tag "$fixture_tag" "$core_alias"
+  alias_image_id=$(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+    image inspect --format '{{.Id}}' "$core_alias")
+  alias_image_id=${alias_image_id#sha256:}
+  [[ $alias_image_id == "$host_image_id" ]] || {
+    printf 'isolated image alias does not resolve to the reviewed image ID\n' >&2
+    exit 1
+  }
+
+  bounded 45s python3 "$contract" replay-test-only --allow-isolated-apply \
+    --artifact-sha256 "$artifact_sha256" \
+    --artifact "$artifact" --image "$core_alias" --api-version "$api_version" --lane "$lane" \
+    --observed-release "$observed_release" --observed-api "$observed_api" \
+    --observed-package "$installed_package" --catalogue-json "$catalogue" \
+    --socket "$socket_path" --state "$run_dir/state.json" > /dev/null
+  if [[ $profile == core-journey ]]; then
+    container_id=$(python3 "$contract" check-core-output --kind state-id \
+      --file "$run_dir/state.json" --image "$core_alias")
+    (
+      ulimit -f 128
+      bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+        inspect --format '{{json .}}' "$container_id" > "$run_dir/native-inspect.json" 2> /dev/null
+    )
+    network_id=$(python3 "$contract" check-core-output --kind inspect \
+      --file "$run_dir/native-inspect.json" --container-id "$container_id" \
+      --image "$core_alias" --fixture-image "$fixture_image")
+    (
+      ulimit -f 128
+      bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+        network inspect --format '{{json .}}' "$network_id" > "$run_dir/native-network-inspect.json" 2> /dev/null
+    )
+    python3 "$contract" check-core-output --kind network-inspect \
+      --file "$run_dir/native-network-inspect.json" \
+      --container-file "$run_dir/native-inspect.json" \
+      --container-id "$container_id" --network-id "$network_id" \
+      --image "$core_alias" --fixture-image "$fixture_image"
+    bounded 30s python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
+      --binary "$boxferry_binary" --receipt "$boxferry_receipt" \
+      --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" > /dev/null
+    (
+      ulimit -f 128
+      bounded 60s "$boxferry_snapshot" convert docker compose \
+        --docker-socket "$socket_path" --docker-container-id "$container_id" \
+        --application-name bf-docker-core \
+        --docker-import-policy portable \
+        --promote-docker-protected-environment-values \
+        --environment-values include \
+        --docker-resource-decision "network:${network_id}=external:bridge" \
+        --loss-policy partial --output-directory "$run_dir/compose-output" \
+        --console-format json > "$run_dir/compose-report.json" 2> "$run_dir/compose-console.txt"
+    )
+    python3 "$contract" check-core-output --kind compose-console --file "$run_dir/compose-console.txt" \
+      --container-file "$run_dir/native-inspect.json" \
+      --network-file "$run_dir/native-network-inspect.json" \
+      --container-id "$container_id" --network-id "$network_id" \
+      --image "$core_alias" --fixture-image "$fixture_image" --socket-path "$socket_path"
+    python3 "$contract" check-core-output --kind compose-report --file "$run_dir/compose-report.json" \
+      --lane "$lane" --catalogue-json "$catalogue" \
+      --container-file "$run_dir/native-inspect.json" \
+      --network-file "$run_dir/native-network-inspect.json" \
+      --container-id "$container_id" --network-id "$network_id" \
+      --image "$core_alias" --fixture-image "$fixture_image" --socket-path "$socket_path"
+    python3 "$contract" check-core-output --kind compose \
+      --file "$run_dir/compose-output/compose.yaml" --image "$core_alias" \
+      --fixture-image "$fixture_image" --container-id "$container_id" \
+      --container-file "$run_dir/native-inspect.json" \
+      --network-id "$network_id" --network-file "$run_dir/native-network-inspect.json"
+  fi
+  marker=$(bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+    exec bf-docker-core cat /tmp/boxferry-core-marker)
+  [[ $marker == boxferry-core-ready ]] || {
+    printf 'core marker behavior differs\n' >&2
+    exit 1
+  }
 fi
-marker=$(bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-  exec bf-docker-core cat /tmp/boxferry-core-marker)
-[[ $marker == boxferry-core-ready ]] || {
-  printf 'core marker behavior differs\n' >&2
-  exit 1
-}
 minimum_free=$(cat "$run_dir/minimum-free-kib" 2> /dev/null || printf '%s' "$baseline_free")
 [[ $minimum_free =~ ^[0-9]+$ ]] || {
   printf 'Docker core storage monitor report is invalid\n' >&2
@@ -675,6 +752,18 @@ if [[ $cleanup_interrupted == true ]]; then
 fi
 trap - EXIT HUP INT TERM
 report_host_cache
+if [[ $profile == volume-fixtures ]]; then
+  # Cleanup is part of closure, not permission to accept changed source/receipt.
+  bounded 30s python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
+    --binary "$boxferry_binary" --receipt "$boxferry_receipt" --profile volume-fixtures \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" > /dev/null
+  [[ $(python3 "$contract" artifact-identity --artifact "$boxferry_receipt") == "$receipt_sha256" ]] || {
+    printf 'volume candidate receipt bytes changed after cleanup; refusing success\n' >&2
+    exit 1
+  }
+  printf 'VOLUME-ONLY REHEARSAL CHECKS-PASSED: lane=%s fixtures=6 volumes=23 cleanup=verified acceptance=pending-reviewed-native-evidence; no container/image workload or six-application acceptance\n' "$lane"
+  exit 0
+fi
 if [[ $profile == core-journey ]]; then
   printf 'CORE-JOURNEY-SCAFFOLD CHECKS-PASSED: lane=%s docker-release=%s advertised-api=%s docker-lens-revision=%s candidate-receipt=operator-attested loaded-image-id=%s peak-disk-growth-kib=%s cleanup=verified acceptance=pending-reviewed-native-evidence; one core service only, no six-application acceptance\n' \
     "$lane" "$observed_release" "$observed_api" "$lens_revision" \

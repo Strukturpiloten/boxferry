@@ -139,6 +139,22 @@ class CoreJourneyBoundaryTests(unittest.TestCase):
                     contract.verify_candidate(root, binary, receipt, lens, "c" * 40)
                 record["build_command"] = contract.expected_build_command(lens)
                 receipt.write_text(json.dumps(record))
+                literal_volume_recipe = ["cargo", "build", "--locked", "--package", "boxferry", "--example",
+                                         "docker-volume-fixture-rehearsal", "--no-default-features", "--features",
+                                         "compose,docker", "--jobs", "2", "--config",
+                                         f'patch.crates-io.docker-lens.path="{lens}"']
+                with self.assertRaises(contract.ContractError):
+                    contract.verify_candidate(root, binary, receipt, lens, "c" * 40, profile="volume-fixtures")
+                record["build_command"] = literal_volume_recipe
+                receipt.write_text(json.dumps(record))
+                self.assertEqual(contract.verify_candidate(root, binary, receipt, lens, "c" * 40,
+                                                          profile="volume-fixtures"), record)
+                with self.assertRaises(contract.ContractError):
+                    contract.verify_candidate(root, binary, receipt, lens, "c" * 40)
+                with self.assertRaises(contract.ContractError):
+                    contract.expected_build_command(lens, "arbitrary")
+                record["build_command"] = contract.expected_build_command(lens)
+                receipt.write_text(json.dumps(record))
                 (lens / "Cargo.lock").write_bytes(b"changed lock")
                 with self.assertRaises(contract.ContractError):
                     contract.verify_candidate(root, binary, receipt, lens, "c" * 40)
@@ -1205,6 +1221,288 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(request.call_args_list[2].args[1:3], ("POST", f"/v1.41/containers/{'b' * 64}/start"))
 
 
+class VolumeFixtureTests(unittest.TestCase):
+    # Independent literals, never inferred from the producer or tested inventory.
+    fixtures = (
+        ("forgejo", "forgejo", ("forge-db", "forge-data")),
+        ("nextcloud", "cloud", ("cloud-database", "cloud-redis", "cloud-nextcloud")),
+        ("paperless-ngx", "paperless", ("paper-data", "paper-media", "paper-consume", "paper-export",
+                                     "paper-pgdata", "paper-redisdata")),
+        ("immich", "immich", ("immich-library", "immich-model-cache", "immich-pgdata", "immich-redisdata")),
+        ("observability", "observability", ("observability-alloy-data", "observability-grafana-data",
+                                         "observability-loki-data", "observability-prometheus-data",
+                                         "observability-telemetry-logs")),
+        ("supabase", "supabase", ("supabase-deno-cache", "supabase-pgdata", "supabase-storage")),
+    )
+    run_id = "test-run"
+    prefix = "test-prefix"
+    receipt = "a" * 64
+    lane = "upstream-rootless"
+    api = "1.56"
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = pathlib.Path(self.temporary.name)
+        self.output = self.root / "output"
+        self.output.mkdir(mode=0o700)
+        self.profile = {"kind": "target", "build": {"kind": "upstream"}, "engine_release": "29.8.1",
+                        "advertised_api_version": self.api, "acquisition_api_version": self.api,
+                        "rendering_api_version": self.api, "daemon_mode": "rootless", "evidence_sha256": "b" * 64}
+        self.profiles = {self.lane: self.profile}
+        self.manifest = {"schema": 1, "scope": "volume-only", "lane": self.lane, "run": self.run_id,
+                         "prefix": self.prefix, "candidate_receipt_sha256": self.receipt, "fixtures": []}
+        self.requests = []
+        for identity, owner, suffixes in self.fixtures:
+            source_path = pathlib.Path(f"fixtures/conformance/{identity}-application/compose.yaml")
+            source = (contract.REPOSITORY_ROOT / source_path).read_bytes()
+            target = self.root / source_path
+            target.parent.mkdir(parents=True)
+            target.write_bytes(source)
+            requests = [{"method": "POST", "path": "/v1.56/volumes/create",
+                         "body": {"Name": f"test-prefix-{suffix}", "Labels": {
+                             "io.boxferry.live-run": "test-run", "io.boxferry.application": f"test-prefix-{owner}"}}}
+                        for suffix in suffixes]
+            artifact = {"schema_version": 1, "context": copy.deepcopy(self.profile),
+                        "requests": requests, "prerequisites": []}
+            filename = f"{identity}-volumes.json"
+            raw = json.dumps(artifact).encode()
+            (self.output / filename).write_bytes(raw)
+            os.chmod(self.output / filename, 0o600)
+            self.manifest["fixtures"].append({"id": identity, "source_sha256": hashlib.sha256(source).hexdigest(),
+                                             "artifact": filename, "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+                                             "volume_count": len(suffixes)})
+            self.requests.extend(requests)
+        self.save_manifest()
+
+    def save_manifest(self) -> None:
+        path = self.output / "manifest.json"
+        path.write_text(json.dumps(self.manifest))
+        os.chmod(path, 0o600)
+
+    def mutate_artifact(self, mutation, index: int = 0) -> None:
+        row = self.manifest["fixtures"][index]
+        path = self.output / row["artifact"]
+        artifact = json.loads(path.read_bytes())
+        mutation(artifact)
+        raw = json.dumps(artifact).encode()
+        path.write_bytes(raw)
+        row["artifact_sha256"] = hashlib.sha256(raw).hexdigest()
+        self.save_manifest()
+
+    def validate(self) -> list[dict]:
+        return contract.validate_volume_fixtures(self.output, self.root, lane=self.lane, run=self.run_id,
+                                                prefix=self.prefix, receipt_sha256=self.receipt,
+                                                api_version=self.api, profiles=self.profiles)
+
+    def test_independent_six_fixture_23_request_context_and_source_inventory(self) -> None:
+        self.assertEqual(self.validate(), self.requests)
+        self.assertEqual([row["volume_count"] for row in self.manifest["fixtures"]], [2, 3, 6, 4, 5, 3])
+        self.assertEqual(len(self.requests), 23)
+        source = self.root / "fixtures/conformance/forgejo-application/compose.yaml"
+        source.write_bytes(source.read_bytes() + b"\n# changed source\n")
+        with self.assertRaisesRegex(contract.ContractError, "original fixture source differs"):
+            self.validate()
+
+    def test_manifest_sha_receipt_field_and_token_confusion_refused(self) -> None:
+        original = copy.deepcopy(self.manifest)
+        for change in ({"candidate_receipt_sha256": "c" * 64}, {"lane": "upstream-rootful"},
+                       {"run": "other-run"}, {"prefix": "other-prefix"}, {"scope": "application"},
+                       {"schema": True}, {"raw_private": "not-authorized"}):
+            with self.subTest(change=change):
+                self.manifest = {**copy.deepcopy(original), **change}
+                self.save_manifest()
+                with self.assertRaises(contract.ContractError):
+                    self.validate()
+        for key, value in (("artifact_sha256", "0" * 64), ("source_sha256", "0" * 64),
+                           ("volume_count", True), ("artifact", "../escape"), ("id", "other")):
+            self.manifest = copy.deepcopy(original)
+            self.manifest["fixtures"][0][key] = value
+            self.save_manifest()
+            with self.subTest(key=key), self.assertRaises(contract.ContractError):
+                self.validate()
+        for token in ("Bad", "-bad", "bad/name", "a" * 65):
+            with self.subTest(token=token), self.assertRaises(contract.ContractError):
+                contract.expected_volumes(token, self.prefix)
+
+    def test_complete_artifact_request_labels_context_and_prerequisites_closed(self) -> None:
+        original = (self.output / "forgejo-volumes.json").read_bytes()
+        mutations = (
+            lambda a: a.update(extra="private"),
+            lambda a: a.update(schema_version=True),
+            lambda a: a.update(context={**a["context"], "evidence_sha256": "f" * 64}),
+            lambda a: a.update(prerequisites=[{"kind": "image"}]),
+            lambda a: a["requests"].append(copy.deepcopy(a["requests"][0])),
+            lambda a: a["requests"][0].update(method="GET"),
+            lambda a: a["requests"][0].update(path="/v1.56/containers/create"),
+            lambda a: a["requests"][0]["body"].update(Driver="local"),
+            lambda a: a["requests"][0]["body"].update(Name="test-prefix-wrong"),
+            lambda a: a["requests"][0]["body"]["Labels"].update(extra="private"),
+            lambda a: a["requests"][0]["body"]["Labels"].update({"io.boxferry.live-run": "other-run"}),
+        )
+        for index, mutation in enumerate(mutations):
+            (self.output / "forgejo-volumes.json").write_bytes(original)
+            self.mutate_artifact(mutation)
+            with self.subTest(index=index), self.assertRaises(contract.ContractError):
+                self.validate()
+
+    def test_all_23_requests_checked_before_engine_mutation(self) -> None:
+        requests = copy.deepcopy(self.requests)
+        requests[-1]["path"] = "/v1.56/containers/create"
+        with mock.patch.object(contract, "engine_request") as native, self.assertRaises(contract.ContractError):
+            contract.apply_volume_fixtures(self.root / "socket", self.root / "ledger", requests,
+                                          run=self.run_id, prefix=self.prefix, lane=self.lane, api_version=self.api)
+        native.assert_not_called()
+
+    def apply(self, native) -> pathlib.Path:
+        state = self.root / "ledger.json"
+        with mock.patch.object(contract, "volume_socket"), mock.patch.object(contract, "engine_request", side_effect=native):
+            contract.apply_volume_fixtures(self.root / "socket", state, self.validate(),
+                                          run=self.run_id, prefix=self.prefix, lane=self.lane, api_version=self.api)
+        return state
+
+    def cleanup(self, state: pathlib.Path, native) -> None:
+        with mock.patch.object(contract, "volume_socket"), mock.patch.object(contract, "engine_request", side_effect=native):
+            contract.cleanup_volume_fixtures(self.root / "socket", state,
+                                            run=self.run_id, prefix=self.prefix, lane=self.lane, api_version=self.api)
+
+    def test_existing_volume_cannot_be_reused_or_registered(self) -> None:
+        calls = []
+        def native(_socket, method, path, body=None, **_kwargs):
+            calls.append(method)
+            return 200, json.dumps(self.requests[0]["body"]).encode()
+        with self.assertRaisesRegex(contract.ContractError, "occupied"):
+            self.apply(native)
+        self.assertEqual(calls, ["GET"])
+        ledger = contract.volume_ledger(self.root / "ledger.json", run=self.run_id, prefix=self.prefix,
+                                        lane=self.lane, api_version=self.api)
+        self.assertEqual(ledger["volumes"], [])
+
+    def test_partial_post_failure_timeout_and_cancellation_keep_cleanup_ledger(self) -> None:
+        for failure in (RuntimeError("private-failure"), TimeoutError("private-timeout"), KeyboardInterrupt()):
+            state = self.root / "ledger.json"
+            if state.exists():
+                state.unlink()
+            created = {}
+            def native(_socket, method, path, body=None, **_kwargs):
+                if method == "POST":
+                    record = json.loads(body)
+                    ledger = contract.volume_ledger(state, run=self.run_id, prefix=self.prefix,
+                                                    lane=self.lane, api_version=self.api)
+                    self.assertEqual(ledger["volumes"][-1], record)
+                    created[record["Name"]] = record
+                    raise failure
+                name = path.rsplit("/", 1)[-1]
+                if method == "DELETE":
+                    created.pop(name)
+                    return 204, b""
+                return (200, json.dumps(created[name]).encode()) if name in created else (404, b"")
+            with self.subTest(failure=type(failure)), self.assertRaises(type(failure)) as raised:
+                self.apply(native)
+            self.assertIs(raised.exception, failure)
+            self.cleanup(state, native)
+            self.assertEqual(created, {})
+
+    def test_successful_exact_inspection_and_cleanup_absence_for_all23(self) -> None:
+        created = {}
+        def native(_socket, method, path, body=None, **_kwargs):
+            if method == "POST":
+                value = json.loads(body)
+                created[value["Name"]] = value
+                return 201, json.dumps(value).encode()
+            name = path.rsplit("/", 1)[-1]
+            if method == "DELETE":
+                created.pop(name)
+                return 204, b""
+            return (200, json.dumps(created[name]).encode()) if name in created else (404, b"")
+        state = self.apply(native)
+        self.assertEqual(len(created), 23)
+        self.cleanup(state, native)
+        self.assertEqual(created, {})
+
+    def test_failed_inspect_matching_stdout_wrong_labels_and_failed_absence_cannot_authorize_cleanup(self) -> None:
+        state = self.root / "ledger.json"
+        ledger = {"schema": 1, "scope": "volume-only", "lane": self.lane, "run": self.run_id,
+                  "prefix": self.prefix, "api_version": self.api, "volumes": [self.requests[0]["body"]]}
+        state.write_text(json.dumps(ledger))
+        os.chmod(state, 0o600)
+        for status, value in ((500, self.requests[0]["body"]),
+                              (200, {**self.requests[0]["body"], "Labels": {"io.boxferry.live-run": self.run_id}})):
+            calls = []
+            def native(_socket, method, path, body=None, **_kwargs):
+                calls.append(method)
+                return status, json.dumps(value).encode()
+            with self.subTest(status=status), self.assertRaises(contract.ContractError):
+                self.cleanup(state, native)
+            self.assertEqual(calls, ["GET"])
+        with self.assertRaises(contract.ContractError):
+            self.cleanup(state, mock.Mock(side_effect=[(200, json.dumps(self.requests[0]["body"]).encode()),
+                                                       (204, b""), (500, b"")]))
+
+    def test_volume_deadline_refusal_precedes_request(self) -> None:
+        with mock.patch.object(contract.time, "monotonic", return_value=10), \
+             mock.patch.object(contract, "engine_request") as native, self.assertRaises(contract.ContractError):
+            contract.volume_call(self.root / "socket", "POST", "/v1.56/volumes/create", b"{}", 10)
+        native.assert_not_called()
+
+    def test_last_fixture_refusal_and_private_output_schema_do_not_reach_apply(self) -> None:
+        self.mutate_artifact(lambda a: a["requests"][-1]["body"].update(Driver="unreviewed"), index=5)
+        with mock.patch.object(contract, "engine_request") as native, self.assertRaises(contract.ContractError):
+            self.validate()
+        native.assert_not_called()
+        raw = (self.output / "manifest.json").read_bytes()
+        (self.output / "manifest.json").write_bytes(raw.replace(b'"schema": 1', b'"schema": 1, "schema": 1'))
+        with self.assertRaises(contract.ContractError):
+            self.validate()
+        (self.output / "manifest.json").write_bytes(raw)
+        os.chmod(self.output / "manifest.json", 0o644)
+        with self.assertRaises(contract.ContractError):
+            self.validate()
+
+    def test_volume_runner_preserves_core_oracle_and_excludes_core_workload(self) -> None:
+        runner = (SOURCE.parent.parent / "docker-application-conformance.sh").read_text()
+        self.assertIn('--profile volume-fixtures --destination "$boxferry_snapshot"', runner)
+        self.assertIn('--lane "$lane" --run "$volume_run" --prefix "$volume_prefix"', runner)
+        self.assertRegex(runner, r'if \[\[ \$profile != volume-fixtures \]\]; then\n\s+fixture_pull_attempted=true')
+        begin = runner.index('if [[ $profile == volume-fixtures ]]; then\n  bounded 30s python3 "$contract" verify-candidate')
+        end = runner.index('\nelse\n', begin)
+        volume_branch = runner[begin:end]
+        self.assertIn("apply-volume-fixtures --allow-isolated-apply", volume_branch)
+        self.assertNotIn("containers/create", volume_branch)
+        self.assertNotIn("load --input", volume_branch)
+        self.assertNotIn("convert docker compose", volume_branch)
+        self.assertIn("cleanup-volume-fixtures --allow-isolated-apply", runner)
+        self.assertIn("receipt bytes changed after cleanup; refusing success", runner)
+        self.assertEqual(contract.CORE_REACQUIRE_REPORT_EXPECTATIONS, {})
+        self.assertIn("no container/image workload or six-application acceptance", runner)
+
+    def test_cleanup_refuses_modified_ledger_and_timeout_and_creation_inspect_failure(self) -> None:
+        created = {}
+        state = self.root / "ledger.json"
+        def native(_socket, method, path, body=None, **_kwargs):
+            if method == "POST":
+                record = json.loads(body)
+                created[record["Name"]] = record
+                return 201, json.dumps(record).encode()
+            return (500, json.dumps(next(iter(created.values()))).encode()) if created else (404, b"")
+        with self.assertRaisesRegex(contract.ContractError, "created volume inspection failed"):
+            self.apply(native)
+        ledger = json.loads(state.read_bytes())
+        ledger["volumes"][0]["Name"] = "ambient-volume"
+        state.write_text(json.dumps(ledger))
+        with mock.patch.object(contract, "engine_request") as calls, self.assertRaises(contract.ContractError):
+            self.cleanup(state, calls)
+        calls.assert_not_called()
+        ledger["volumes"][0]["Name"] = self.requests[0]["body"]["Name"]
+        state.write_text(json.dumps(ledger))
+        with mock.patch.object(contract.os, "geteuid", return_value=state.stat().st_uid + 1), \
+                mock.patch.object(contract, "engine_request") as calls, self.assertRaises(contract.ContractError):
+            self.cleanup(state, calls)
+        calls.assert_not_called()
+        with self.assertRaises(contract.ContractError):
+            self.cleanup(state, mock.Mock(side_effect=TimeoutError("private-body")))
+
+
 class StorageMountTests(unittest.TestCase):
     destination = "/home/docker/.local/share/docker"
 
@@ -1611,6 +1909,90 @@ cleanup_bounded() {{
                     self.assertFalse(directory.exists())
                     expected = f"outer-container=none storage-volume={volume} private-directory=none"
                 self.assertIn("cleanup residuals: " + expected, result.stderr)
+
+    def test_volume_profile_requires_inner_absence_proof_despite_successful_outer_teardown(self) -> None:
+        closure = self.runner[self.runner.index("cleanup_interrupted=false\ntrap"):
+                              self.runner.index("if [[ $profile == core-journey ]]; then\n  printf 'CORE-JOURNEY-SCAFFOLD")]
+        for scenario in ("outer-absent", "inner-failed", "verified", "ledger-missing"):
+            with self.subTest(scenario=scenario), \
+                    tempfile.TemporaryDirectory(prefix="boxferry-cleanup-proof-") as proof_name, \
+                    tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
+                directory = pathlib.Path(name)
+                proof = pathlib.Path(proof_name)
+                ledger = directory / "volume-ledger.json"
+                ledger_bytes = json.dumps({"volumes": [{"Name": "test-prefix-forge-db", "Labels": {
+                    "io.boxferry.live-run": "test-run", "io.boxferry.application": "test-prefix-forgejo"}}]}).encode()
+                if scenario != "ledger-missing":
+                    ledger.write_bytes(ledger_bytes)
+                    ledger.chmod(0o600)
+                socket_path = directory / "docker.sock"
+                # Native transport is fake: only the Bash socket predicate uses
+                # a regular sentinel, avoiding an actual socket/runtime service.
+                with socket_path.open("wb"):
+                    body = f"""profile=volume-fixtures
+registered=true
+volume_apply_attempted=true
+outer=bf-docker-core-test
+storage_volume=bf-docker-core-data-test
+run_id=test
+volume_run=test-run
+volume_prefix=test-prefix
+lane=upstream-rootful
+api_version=1.56
+run_dir={shlex.quote(name)}
+socket_path={shlex.quote(str(socket_path))}
+watchdog_pid=
+contract=unused
+boxferry_root=unused
+boxferry_binary=unused
+boxferry_receipt=unused
+lens_root=unused
+lens_revision=unused
+receipt_sha256=candidate
+outer_removed=false
+storage_removed=false
+cleanup_now() {{ printf '1\\n'; }}
+report_host_cache() {{ :; }}
+bounded() {{ :; }}
+python3() {{ printf 'candidate\\n'; }}
+cleanup_bounded() {{
+  if [[ $2 == podman && $3 == container && $4 == exists ]]; then
+    [[ {shlex.quote(scenario)} != outer-absent && $outer_removed == false ]]; return;
+  fi
+  if [[ $2 == podman && $3 == inspect ]]; then printf 'test\\n'; return 0; fi
+  if [[ $2 == python3 && $4 == cleanup-volume-fixtures ]]; then
+    printf 'attempted\\n' > {shlex.quote(str(proof / 'inner-attempted'))}
+    [[ {shlex.quote(scenario)} == verified ]]; return;
+  fi
+  if [[ $2 == podman && $3 == rm ]]; then outer_removed=true; return 0; fi
+  if [[ $2 == podman && $3 == volume && $4 == exists ]]; then
+    [[ $storage_removed == false ]]; return;
+  fi
+  if [[ $2 == podman && $3 == volume && $4 == inspect ]]; then printf 'test\\n'; return 0; fi
+  if [[ $2 == podman && $3 == volume && $4 == rm ]]; then
+    storage_removed=true
+    printf 'removed\\n' > {shlex.quote(str(proof / 'storage-removed'))}
+    return 0
+  fi
+  shift
+  "$@"
+}}
+""" + self.function("cleanup_owned").replace("-S $socket_path", "-f $socket_path") + closure
+                    result = self.bash(body)
+                self.assertTrue((proof / "storage-removed").exists(), result.stderr)
+                if scenario == "verified":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("VOLUME-ONLY REHEARSAL CHECKS-PASSED", result.stdout)
+                    self.assertFalse(directory.exists())
+                else:
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertNotIn("CHECKS-PASSED", result.stdout)
+                    self.assertIn("inner-volume cleanup/absence unverified", result.stderr)
+                    self.assertIn(f"private-directory={name}", result.stderr)
+                    self.assertTrue(directory.exists())
+                    if scenario != "ledger-missing":
+                        self.assertEqual(ledger.read_bytes(), ledger_bytes)
+                self.assertEqual((proof / "inner-attempted").exists(), scenario != "outer-absent")
 
     def test_failed_outer_inspection_cannot_authorize_removal_with_matching_stdout(self) -> None:
         self.failed_ownership_cleanup("container")
