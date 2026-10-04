@@ -1422,6 +1422,14 @@ def readiness_log_category(raw: bytes) -> str:
     return matched[0] if len(matched) == 1 else "multiple-errors-observed" if matched else "content-present"
 
 
+def readiness_ping_observations(curl_exit: str, http_status: str) -> dict[str, str]:
+    """Validate only the final existing poll's closed fields; never infer a cause."""
+    return {
+        "ping-curl-exit": curl_exit if re.fullmatch(r"[0-9]|[1-9][0-9]|not-run|unknown", curl_exit) else "unknown",
+        "ping-http-status": http_status if re.fullmatch(r"[0-5][0-9]{2}|unknown", http_status) else "unknown",
+    }
+
+
 def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, registered: bool) -> dict[str, str]:
     """Private observations only; this cannot establish startup cause or readiness."""
     result = {"socket": "unavailable", "outer": "not-registered", "state": "unverified", "logs": "not-read"}
@@ -1500,6 +1508,8 @@ def main() -> int:
     readiness.add_argument("--run", required=True)
     readiness.add_argument("--socket", type=pathlib.Path, required=True)
     readiness.add_argument("--registered", action="store_true")
+    readiness.add_argument("--ping-curl-exit", default="not-run")
+    readiness.add_argument("--ping-http-status", default="unknown")
     catalogue = commands.add_parser("catalogue")
     catalogue.add_argument("--docker-lens-root", required=True)
     catalogue.add_argument("--docker-lens-revision", required=True)
@@ -1630,7 +1640,8 @@ def main() -> int:
             print(outcome)
             return {"present": 0, "absent": 1, "unknown": 2}[outcome]
         elif args.command == "readiness-diagnostics":
-            result = readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered)
+            result = readiness_ping_observations(args.ping_curl_exit, args.ping_http_status)
+            result.update(readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered))
             print("readiness observations: " + " ".join(f"{key}={value}" for key, value in result.items())
                   + "; startup-cause=unestablished")
         elif args.command == "parent-start":

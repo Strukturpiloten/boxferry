@@ -1975,8 +1975,33 @@ class ReadinessDiagnosticTests(unittest.TestCase):
                                  "--run", "test", "--socket", str(self.socket_path)], capture_output=True,
                                 text=True, timeout=3, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "readiness observations: socket=unavailable outer=not-registered state=unverified "
+        self.assertEqual(result.stdout, "readiness observations: ping-curl-exit=not-run ping-http-status=unknown "
+                                       "socket=unavailable outer=not-registered state=unverified "
                                        "logs=not-read; startup-cause=unestablished\n")
+        self.assertEqual(result.stderr, "")
+
+    def test_ping_observations_accept_only_closed_numeric_ranges_and_markers(self) -> None:
+        for status in [str(value) for value in range(100)] + ["not-run", "unknown"]:
+            self.assertEqual(contract.readiness_ping_observations(status, "000")["ping-curl-exit"], status)
+        for status in [f"{value:03d}" for value in range(600)] + ["unknown"]:
+            self.assertEqual(contract.readiness_ping_observations("7", status)["ping-http-status"], status)
+        for invalid in ("", "-1", "100", "600", "999", "00", "7\n", " 7", "7 ", "０", "DO-NOT-PRINT"):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(contract.readiness_ping_observations(invalid, "000")["ping-curl-exit"], "unknown")
+        for invalid in ("", "-1", "0", "99", "600", "999", "000\n", " 000", "000 ", "０００", "DO-NOT-PRINT"):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(contract.readiness_ping_observations("7", invalid)["ping-http-status"], "unknown")
+
+    def test_cli_malformed_ping_fields_are_unknown_and_never_echoed(self) -> None:
+        result = subprocess.run([sys.executable, str(SOURCE), "readiness-diagnostics", "--outer", "bf-docker-core-test",
+                                 "--run", "test", "--socket", str(self.socket_path),
+                                 "--ping-curl-exit=DO-NOT-PRINT/private-exit",
+                                 "--ping-http-status=DO-NOT-PRINT/private-body"],
+                                capture_output=True, text=True, timeout=3, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ping-curl-exit=unknown ping-http-status=unknown", result.stdout)
+        self.assertIn("startup-cause=unestablished", result.stdout)
+        self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
         self.assertEqual(result.stderr, "")
 
 
@@ -2161,7 +2186,6 @@ SECONDS=0
 cleanup_owned() {{ printf 'exact-owned-teardown\\n' >&2; }}
 trap cleanup_owned EXIT
 curl() {{
-  if [[ {reason} == timeout ]]; then SECONDS=181; fi
   return 1
 }}
 bounded() {{
@@ -2174,7 +2198,9 @@ bounded() {{
   fi
   return {diagnostic_status}
 }}
-""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path")
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path").replace(
+                            "deadline=$((SECONDS + 180))", "deadline=$((SECONDS - 1))" if reason == "timeout" else
+                            "deadline=$((SECONDS + 180))")
                         result = self.bash(body)
                     self.assertEqual(result.returncode, 1, result.stderr)
                     message = "nested Docker daemon did not become ready" if reason == "timeout" else \
@@ -2186,6 +2212,123 @@ bounded() {{
                     self.assertNotIn("private-error-path", result.stdout + result.stderr)
                     self.assertNotIn("CHECKS-PASSED", result.stdout + result.stderr)
                     self.assertEqual(result.stderr.count("readiness observations:"), 1)
+    def test_failed_ping_poll_records_only_existing_curl_exit_and_fixed_http_status(self) -> None:
+        start = self.runner.index("deadline=$((SECONDS + 180))")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        cases = (("connect-failure", 7, "000", True, "7", "000"),
+                 ("curl-timeout", 28, "000", True, "28", "000"),
+                 ("http-error", 22, "503", True, "22", "503"),
+                 ("unexpected-exit", 99, "000", True, "99", "000"),
+                 ("out-of-range-exit", 100, "000", True, "unknown", "000"),
+                 ("malformed-http", 7, "DO-NOT-PRINT/private-http", True, "7", "unknown"),
+                 ("http-newline", 7, "000\n", True, "7", "unknown"),
+                 ("missing-socket", 7, "000", False, "not-run", "unknown"))
+        for profile in ("core-journey", "volume-fixtures"):
+            for reason, status, http, socket_exists, expected_exit, expected_http in cases:
+                with self.subTest(profile=profile, reason=reason), \
+                        tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
+                    directory = pathlib.Path(name)
+                    socket_path = directory / "socket/docker.sock"
+                    socket_path.parent.mkdir()
+                    if socket_exists:
+                        socket_path.write_bytes(b"")
+                    count_path = directory / "curl-count"
+                    curl_path = directory / "curl"
+                    expected_args = ["--fail", "--silent", "--max-time", "5", "--max-filesize", "65536",
+                                     "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket",
+                                     str(socket_path), "http://localhost/_ping"]
+                    curl_path.write_text(f"""#!{sys.executable}
+import pathlib, sys
+if sys.argv[1:] != {expected_args!r}:
+    sys.exit(98)
+with pathlib.Path({str(count_path)!r}).open('a') as output:
+    output.write('poll\\n')
+with open(sys.argv[sys.argv.index('--output') + 1], 'w') as output:
+    output.write('DO-NOT-PRINT/private-response-body')
+sys.stderr.write('DO-NOT-PRINT/private-curl-error')
+sys.stdout.write({http!r})
+sys.exit({status})
+""", encoding="utf-8")
+                    curl_path.chmod(0o700)
+                    native = directory / "podman"
+                    native.write_text("#!/bin/sh\nprintf 'DO-NOT-PRINT/private-native-error' >&2\nexit 1\n",
+                                      encoding="utf-8")
+                    native.chmod(0o700)
+                    body = f"""PATH={shlex.quote(name)}:"$PATH"
+profile={profile}
+registered=true
+outer=bf-docker-core-{directory.name.removeprefix('boxferry-docker-core.')}
+run_id={shlex.quote(directory.name.removeprefix('boxferry-docker-core.'))}
+socket_path={shlex.quote(str(socket_path))}
+contract={shlex.quote(str(SOURCE))}
+cleanup_owned() {{ printf 'exact-owned-teardown\\n' >&2; }}
+trap cleanup_owned EXIT
+bounded() {{
+  if [[ $2 == podman ]]; then printf 'false\\n'; return 0; fi
+  shift; "$@"
+}}
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path") + \
+                        "\nprintf 'DO-NOT-APPLY\\n'\n"
+                    result = self.bash(body)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertEqual(count_path.read_text() if count_path.exists() else "",
+                                     "poll\n" if socket_exists else "")
+                    self.assertIn(f"ping-curl-exit={expected_exit} ping-http-status={expected_http}", result.stderr)
+                    self.assertIn("startup-cause=unestablished", result.stderr)
+                    self.assertLess(result.stderr.index("readiness observations:"), result.stderr.index("exact-owned-teardown"))
+                    self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+                    self.assertNotIn("DO-NOT-APPLY", result.stdout + result.stderr)
+                    self.assertNotIn(str(socket_path), result.stdout + result.stderr)
+
+    def test_readiness_failure_sanitizes_fields_even_when_diagnostics_fail(self) -> None:
+        for registered in ("true", "false"):
+            with self.subTest(registered=registered):
+                body = f"""registered={registered}
+outer=bf-docker-core-test
+run_id=test
+socket_path=/unused
+ping_curl_exit=DO-NOT-PRINT/private-exit
+ping_http_status=DO-NOT-PRINT/private-http
+bounded() {{
+  [[ ${{12}} == --ping-curl-exit=unknown && ${{13}} == --ping-http-status=unknown ]] || {{ printf 'BAD-ARGS\\n'; return 99; }}
+  return 124
+}}
+""" + self.function("readiness_failure") + "\nreadiness_failure 'readiness failed'\n"
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("ping-curl-exit=unknown ping-http-status=unknown", result.stderr)
+                self.assertIn("startup-cause=unestablished", result.stderr)
+                self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+                self.assertNotIn("BAD-ARGS", result.stdout + result.stderr)
+
+    def test_readiness_keeps_final_poll_and_cadence_without_extra_request(self) -> None:
+        start = self.runner.index("deadline=$((SECONDS + 180))")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        for final_exit in (0, 22):
+            with self.subTest(final_exit=final_exit), tempfile.TemporaryDirectory(prefix="boxferry-ping-fake-") as name:
+                count_path = pathlib.Path(name) / "count"
+                body = f"""registered=false
+outer=bf-docker-core-test
+socket_path={shlex.quote(name)}
+count_path={shlex.quote(str(count_path))}
+curl() {{
+  if [[ ! -e $count_path ]]; then printf 'first\\n' > "$count_path"; printf '000'; return 7; fi
+  printf 'second\\n' >> "$count_path"
+  printf '503'; return {final_exit}
+}}
+bounded() {{ [[ $(wc -l < "$count_path") == 1 ]] && printf 'true\\n' || printf 'false\\n'; }}
+sleep() {{ [[ $1 == 2 ]] || return 99; printf 'cadence=2\\n'; }}
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-d $socket_path") + \
+                    "\nprintf 'ready\\n'\n"
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 0 if final_exit == 0 else 1, result.stderr)
+                self.assertEqual(count_path.read_text(), "first\nsecond\n", result.stderr)
+                self.assertEqual(result.stdout, "cadence=2\nready\n" if final_exit == 0 else "cadence=2\n")
+                if final_exit == 0:
+                    self.assertEqual(result.stderr, "")
+                else:
+                    self.assertIn("ping-curl-exit=22 ping-http-status=503", result.stderr)
+
     def test_core_journey_uses_exact_id_and_preserves_transport_only_result(self) -> None:
         self.assertIn('verify-candidate --boxferry-root "$boxferry_root"', self.runner)
         self.assertIn('render-core-source', self.runner)

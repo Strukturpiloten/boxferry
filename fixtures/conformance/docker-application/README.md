@@ -156,6 +156,20 @@ and kill/reap uncertainty. Both core and volume readiness paths test observation
 before removal and preserve failure even if diagnostics fail. These source checks
 do not diagnose the historical failed run or provide fresh native evidence.
 
+The final existing `/_ping` poll additionally supplies `ping-curl-exit` (0–99, `not-run`, or
+`unknown`) and `ping-http-status` (exactly three digits, 000–599, or `unknown`) to the same
+failure report. Curl uses only fixed `%{http_code}` write-out; its response body and stderr are
+discarded. No socket means no curl request and reports `not-run`/`unknown`. Shell and helper
+independently validate these closed fields before emission; malformed input becomes `unknown`
+without being echoed, including the diagnostic-unavailable fallback. These are observations,
+not startup causes: `startup-cause=unestablished` remains mandatory. The five-second curl limit,
+180-second readiness deadline, two-second cadence, private socket URL, failure-before-apply and
+diagnostics-before-teardown order are unchanged; no extra probe, retry or host repair is added.
+Independent mocked connect-failure, curl-timeout, HTTP-error, unexpected-exit, missing-socket and
+privacy regressions establish only this diagnostic contract. The preserved historical receipt
+contains no such fields and remains untouched; these tests supply no fresh native admission,
+volume compatibility, application acceptance or explanation of that earlier failure.
+
 An isolated stopped-container probe on host Podman 6.0.2 confirmed that plain
 `{{.Id}}` is a compatibility alias, while JSON template arguments require the
 native Go field `{{json .ID}}`. The combined inspection uses that native field
