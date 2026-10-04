@@ -9,6 +9,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/lib/docker-application-ex
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-schedule.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-forgejo-authored-fields.py"
 bash "${script_directory}/test-application-export-privacy.sh"
-for application in forgejo nextcloud paperless immich; do
+for application in forgejo nextcloud paperless immich observability; do
   bash "${script_directory}/test-${application}-application-probes.sh"
 done

@@ -9,7 +9,9 @@ reviewed BoxFerry Compose application fixtures, not acquired runtime defaults.
 Source files and reusable probes are bound by SHA-256 of their actual bytes.
 This includes `scripts/lib/observability-application.sh`, which independently
 defines the observability boundary peer and behavior/persistence probes outside
-the Compose fixture. Its binding is checked without executing that harness.
+the Compose fixture, and `scripts/lib/observability-application-probes.sh`, which
+owns the shared application-semantic HTTP assertions. These bindings are checked
+without executing either the harness or any HTTP callback.
 `images.tsv` and `providers.tsv` in each original fixture directory remain the
 canonical software/version/integrity/provenance/license inventories. This contract
 duplicates no software pins, changes no dependency definition or Renovate owner,
@@ -254,3 +256,39 @@ Renovate definitions are unchanged. The new helper/tests contain no operational 
 download or package declaration and add no Renovate extraction match: existing native/custom
 managers, grouping and approval rules retain their canonical paths, with synthetic profile strings
 remaining offline test data rather than managed dependencies.
+
+## Shared observability HTTP assertions
+
+[`observability-application-probes.sh`](../../../scripts/lib/observability-application-probes.sh)
+is inert when sourced. Its caller supplies a semantic HTTP callback with exactly
+`context`, `prefix`, and `url` arguments. Context is opaque: the helper neither interprets
+sockets nor supplies native flags, probe placement, authentication, or runtime selection.
+The existing Podman wrapper entrypoints delegate through their existing backend HTTP transport.
+Provisioning, bounded readiness and wait deadlines, published-port/native-inspect checks,
+persistence operations, resource budgets and cleanup remain runtime-owned and unchanged.
+
+Shared assertions retain the exact authored PromQL value `42`, exactly one known LogQL line,
+Prometheus retention/remote-write flags, Grafana datasource identities and health, and dashboard
+UID/title/query expressions. Generic metric queries still take a caller-selected expected value
+for the existing historical-persistence checks; extraction does not observe persistence. HTTP
+callbacks and every parse/query/assertion explicitly return failures, including conditional
+shell contexts where `errexit` does not apply. Each HTTP reply must contain one JSON document;
+empty, malformed and multiple-document replies fail. Raw replies and parser errors are not
+printed by the assertions; callbacks own redacted transport diagnostics.
+
+The canonical `test-application-probes.sh` wrapper runs the new independently authored
+`test-observability-application-probes.sh` suite exactly once after the existing application
+probe suites. Its runner regression preserves all previous commands/failure cases and checks
+the added suite's order and failure propagation. Local `check-all.sh`, CI/PR/main/dispatch and
+Release's reusable CI consumer receive the suite through that existing wrapper. Existing
+observability offline/native-wrapper regressions and pre-release live task remain separate
+consumers; no live runner, workflow definition or cross-repository consumer is added.
+
+The changed observability wrapper and new shared helper are bound to their exact reviewed bytes
+in `expected-applications.json`; all other source records and topology/success-category values
+remain unchanged. These source-only assertions are not native Docker capability, compatibility,
+application execution, replay or admission evidence. #343 and #366 remain incomplete.
+Image/provider catalogues, manifests, lockfiles, operational pins, workflow definitions and
+Renovate configuration remain unchanged. Custom-manager file patterns match none of the changed
+paths; canonical image/provider extraction, grouping and approval rules stay intact. No native
+package-manager input or additional software dependency is introduced.

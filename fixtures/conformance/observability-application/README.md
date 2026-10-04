@@ -122,6 +122,47 @@ selects only `podman-6.1-rootless`, and calls `run_observability_application_cel
 deadline, cleanup, and evidence boundary as the established application profiles. The pre-release
 migration-readiness tier owns this live task; ordinary pull requests retain the offline scenario.
 
+## Runtime-independent HTTP assertions
+
+[`observability-application-probes.sh`](../../../scripts/lib/observability-application-probes.sh)
+contains the shared metric, known-log, retention/remote-write, Grafana datasource health/identity
+and dashboard assertions. Sourcing it performs no work. Callers supply an HTTP callback invoked
+with exactly `(context, prefix, url)`; context is opaque. The existing Podman entrypoints retain
+their signatures and delegate through `observability_backend_get`, preserving the existing
+private metrics-producer placement and command arguments. No Docker transport is implemented.
+
+The authored expressions and expected values are unchanged. Every callback and assertion failure
+is propagated explicitly, even when the function is invoked in an `if` or `&&` context that
+disables shell `errexit`. Replies must contain one JSON document, not empty or multiple documents.
+Assertions emit neither raw replies nor parser errors; callbacks remain responsible for redacted
+transport diagnostics. Readiness/state classification, bounded waits, authentication and transport,
+published-port/native-inspect checks, provisioning, historical-sample/volume-marker operations,
+resource budgets, cleanup and live evidence stay with the runtime-owned wrapper.
+
+Run the focused synthetic-response and existing offline wrapper regressions:
+
+```console
+bash scripts/test-observability-application-probes.sh
+bash scripts/test-observability-application.sh
+bash scripts/test-observability-grafana-network.sh
+```
+
+The shared probe regression independently authors replies and exact URL/argument order. It checks
+wrong/missing/type/malformed responses, every failed callback (including a valid body with a failed
+status), conditional-shell failure propagation, inert sourcing and Podman wrapper argument parity
+without invoking a runtime or HTTP client. The canonical `test-application-probes.sh` local/CI/main/
+Release consumer runs it exactly once; existing observability regressions and pre-release live
+task remain mandatory. This does not establish new Podman or Docker compatibility or application
+execution, and Docker #366 remains open.
+
+The Docker offline expectation catalogue now binds both the changed runtime wrapper and new
+shared helper bytes; other source records and topology expectations are unchanged. No image,
+provider, tool/package dependency, operational pin, workflow, or Renovate definition changes.
+None of the changed paths matches a custom-manager extraction pattern, and native manager inputs
+remain unchanged. The existing live-image and checksum-provider managers retain their canonical
+paths, grouping and approvals. Lens/Containers repositories do not consume this BoxFerry-owned
+application helper and require no coordinated product change.
+
 ## Live diagnostic contracts
 
 Expectation scope is explicit. `live-native-export` selects the native Podman importer/exporter

@@ -5,6 +5,8 @@
 
 # shellcheck source=scripts/lib/compose-provider.sh
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/compose-provider.sh" || return 1
+# shellcheck source=scripts/lib/observability-application-probes.sh
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/observability-application-probes.sh" || return 1
 
 readonly OBSERVABILITY_ADMIN_PASSWORD="boxferry-public-observability-admin-canary"
 readonly OBSERVABILITY_PROVIDER_VERSION="${BOXFERRY_COMPOSE_PROVIDER_VERSION}"
@@ -562,34 +564,15 @@ observability_report_pipeline_states() {
 }
 
 observability_prometheus_has_value() {
-  local socket=$1 prefix=$2 query=$3 expected=$4 response
-  response="$(observability_backend_get "${socket}" "${prefix}" \
-    "http://prometheus:9090/api/v1/query?query=${query}")"
-  jq --exit-status --arg expected "${expected}" '
-    .status == "success" and
-    any(.data.result[]?; .value[1] == $expected)
-  ' <<< "${response}" > /dev/null
+  observability_probe_prometheus_has_value observability_backend_get "$@"
 }
 
 observability_loki_has_known_log() {
-  local socket=$1 prefix=$2 response
-  response="$(observability_backend_get "${socket}" "${prefix}" \
-    'http://loki:3100/loki/api/v1/query_range?query=%7Bjob%3D%22boxferry_fixture%22%7D%20%7C%3D%20%22boxferry-observability-known-log%22&limit=20')"
-  jq --exit-status '
-    .status == "success" and
-    ([.data.result[]?.values[]? | select(.[1] | contains("boxferry-observability-known-log"))] | length) == 1
-  ' <<< "${response}" > /dev/null
+  observability_probe_loki_has_known_log observability_backend_get "$@"
 }
 
 observability_validate_prometheus_flags() {
-  local flags=${1:?Prometheus status flags response is required}
-
-  jq --exit-status '
-    .status == "success" and
-    (.data | type == "object") and
-    (.data["storage.tsdb.retention.time"] | type == "string" and . == "1d") and
-    (.data["web.enable-remote-write-receiver"] | type == "string" and . == "true")
-  ' <<< "${flags}" > /dev/null
+  observability_probe_validate_prometheus_flags "$@"
 }
 
 observability_grafana_api() {
@@ -757,42 +740,7 @@ observability_wait_application() {
 }
 
 observability_assert_queries_and_grafana() {
-  local socket=$1 prefix=$2 prometheus_flags prometheus_source loki_source dashboard
-  observability_prometheus_has_value "${socket}" "${prefix}" \
-    'boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D' 42
-  observability_loki_has_known_log "${socket}" "${prefix}"
-
-  prometheus_flags="$(observability_backend_get "${socket}" "${prefix}" \
-    http://prometheus:9090/api/v1/status/flags)"
-  observability_validate_prometheus_flags "${prometheus_flags}"
-
-  prometheus_source="$(observability_grafana_api "${socket}" "${prefix}" \
-    /api/datasources/uid/boxferry-prometheus)"
-  loki_source="$(observability_grafana_api "${socket}" "${prefix}" \
-    /api/datasources/uid/boxferry-loki)"
-  jq --exit-status '
-    .uid == "boxferry-prometheus" and .type == "prometheus" and
-    .url == "http://prometheus:9090" and .isDefault == true
-  ' <<< "${prometheus_source}" > /dev/null
-  jq --exit-status '
-    .uid == "boxferry-loki" and .type == "loki" and .url == "http://loki:3100"
-  ' <<< "${loki_source}" > /dev/null
-
-  observability_grafana_api "${socket}" "${prefix}" \
-    /api/datasources/uid/boxferry-prometheus/health |
-    jq --exit-status '.status == "OK"' > /dev/null
-  observability_grafana_api "${socket}" "${prefix}" \
-    /api/datasources/uid/boxferry-loki/health |
-    jq --exit-status '.status == "OK"' > /dev/null
-
-  dashboard="$(observability_grafana_api "${socket}" "${prefix}" \
-    /api/dashboards/uid/boxferry-observability)"
-  jq --exit-status '
-    .dashboard.uid == "boxferry-observability" and
-    .dashboard.title == "BoxFerry Observability Acceptance" and
-    any(.dashboard.panels[].targets[]?; .expr == "boxferry_fixture_temperature_celsius{source=\"controlled\"}") and
-    any(.dashboard.panels[].targets[]?; .expr == "{job=\"boxferry_fixture\"} |= \"boxferry-observability-known-log\"")
-  ' <<< "${dashboard}" > /dev/null
+  observability_probe_assert_queries_and_grafana observability_backend_get "$@"
 }
 
 observability_probe_published_grafana() {

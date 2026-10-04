@@ -787,17 +787,19 @@ fn live_podman_conformance_uses_one_checked_in_runner_and_reviewed_matrix() -> R
                 .map_err(|error| format!("failed to read live scenario module: {error}"))?,
         );
     }
-    for application in ["forgejo", "nextcloud", "paperless", "immich"] {
+    for application in ["forgejo", "nextcloud", "paperless", "immich", "observability"] {
         let adapter = fs::read_to_string(root.join("scripts/lib").join(format!("{application}-application.sh")))
             .map_err(|error| format!("failed to read {application} application adapter: {error}"))?;
         let helper = format!("{application}-application-probes.sh");
         if !adapter.contains(&format!("/{helper}")) {
             return Err(format!("{application} adapter must source its probe helper"));
         }
-        runner_contract.push_str(
-            &fs::read_to_string(root.join("scripts/lib").join(helper))
-                .map_err(|error| format!("failed to read {application} probe helper: {error}"))?,
-        );
+        let probes = fs::read_to_string(root.join("scripts/lib").join(helper))
+            .map_err(|error| format!("failed to read {application} probe helper: {error}"))?;
+        if application == "observability" {
+            validate_observability_probe_ownership(&adapter, &probes)?;
+        }
+        runner_contract.push_str(&probes);
     }
     for fixture in [
         "compose.yaml",
@@ -4387,6 +4389,113 @@ fn observability_withheld_snapshot_policy_rejects_counterexamples() -> Result<()
         assert!(
             validate_observability_withheld_snapshot(&changed, &snapshot).is_err(),
             "changed route consumer"
+        );
+    }
+    Ok(())
+}
+
+fn validate_observability_probe_ownership(adapter: &str, probes: &str) -> Result<(), String> {
+    let source = r#"source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/observability-application-probes.sh" || return 1"#;
+    if !adapter.lines().any(|line| line == source) {
+        return Err("observability adapter must source its canonical shared HTTP probe helper".to_owned());
+    }
+    for (entrypoint, delegation) in [
+        (
+            "observability_prometheus_has_value",
+            r#"observability_probe_prometheus_has_value observability_backend_get "$@""#,
+        ),
+        (
+            "observability_loki_has_known_log",
+            r#"observability_probe_loki_has_known_log observability_backend_get "$@""#,
+        ),
+        (
+            "observability_validate_prometheus_flags",
+            r#"observability_probe_validate_prometheus_flags "$@""#,
+        ),
+        (
+            "observability_assert_queries_and_grafana",
+            r#"observability_probe_assert_queries_and_grafana observability_backend_get "$@""#,
+        ),
+    ] {
+        let opening = format!("\n{entrypoint}() {{\n");
+        let body = adapter
+            .split_once(&opening)
+            .and_then(|(_, function)| function.split_once("\n}"))
+            .map(|(body, _)| body.trim());
+        if body != Some(delegation) {
+            return Err(format!(
+                "observability entrypoint must delegate to its shared semantic probe: {entrypoint}"
+            ));
+        }
+    }
+    for required in [
+        "boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D' 42",
+        ".value[1] == $expected",
+        "query_range?query=%7Bjob%3D%22boxferry_fixture%22%7D%20%7C%3D%20%22boxferry-observability-known-log%22",
+        r#"contains("boxferry-observability-known-log"))] | length) == 1"#,
+        r#".data["storage.tsdb.retention.time"] | type == "string" and . == "1d""#,
+        r#".data["web.enable-remote-write-receiver"] | type == "string" and . == "true""#,
+        r#".uid == "boxferry-prometheus" and .type == "prometheus""#,
+        r#".url == "http://prometheus:9090" and .isDefault == true"#,
+        r#".uid == "boxferry-loki" and .type == "loki" and .url == "http://loki:3100""#,
+        "http://grafana:3000/api/datasources/uid/boxferry-prometheus/health",
+        "http://grafana:3000/api/datasources/uid/boxferry-loki/health",
+        r#".status == "OK""#,
+        r#".dashboard.uid == "boxferry-observability""#,
+        r#".dashboard.title == "BoxFerry Observability Acceptance""#,
+        r#".expr == "boxferry_fixture_temperature_celsius{source=\"controlled\"}""#,
+        r#".expr == "{job=\"boxferry_fixture\"} |= \"boxferry-observability-known-log\"""#,
+    ] {
+        if !probes.contains(required) {
+            return Err(format!("shared observability probe owner must retain `{required}`"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn observability_probe_ownership_rejects_counterexamples() -> Result<(), String> {
+    let root = repository_root();
+    let adapter = fs::read_to_string(root.join("scripts/lib/observability-application.sh"))
+        .map_err(|error| format!("failed to read observability adapter: {error}"))?;
+    let probes = fs::read_to_string(root.join("scripts/lib/observability-application-probes.sh"))
+        .map_err(|error| format!("failed to read observability probes: {error}"))?;
+    validate_observability_probe_ownership(&adapter, &probes)?;
+    for changed in [
+        adapter.replace("/observability-application-probes.sh", "/wrong-probes.sh"),
+        adapter.replace("source \"$(cd --", "# source \"$(cd --"),
+        adapter.replace(
+            r#"observability_probe_prometheus_has_value observability_backend_get "$@""#,
+            "",
+        ),
+        adapter.replace(
+            "observability_probe_loki_has_known_log observability_backend_get",
+            "observability_probe_loki_has_known_log wrong_backend",
+        ),
+        adapter.replace(r#"observability_probe_validate_prometheus_flags "$@""#, "true"),
+        adapter.replace(
+            "observability_probe_assert_queries_and_grafana observability_backend_get",
+            "observability_probe_assert_queries_and_grafana wrong_backend",
+        ),
+    ] {
+        assert!(
+            validate_observability_probe_ownership(&changed, &probes).is_err(),
+            "missing or misdirected source/delegate"
+        );
+    }
+    for changed in [
+        probes.replace(
+            "boxferry_fixture_temperature_celsius%7Bsource%3D%22controlled%22%7D' 42",
+            "wrong-query' 42",
+        ),
+        probes.replace("boxferry-observability-known-log%22", "wrong-log%22"),
+        probes.replace(". == \"1d\"", ". == \"24h\""),
+        probes.replace("http://loki:3100\"", "http://wrong:3100\""),
+        probes.replace("BoxFerry Observability Acceptance", "Wrong dashboard"),
+    ] {
+        assert!(
+            validate_observability_probe_ownership(&adapter, &changed).is_err(),
+            "changed shared semantic assertion"
         );
     }
     Ok(())
