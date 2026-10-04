@@ -173,7 +173,7 @@ complete BoxFerry #366.
 ## Forgejo topology and dependency-sidecar review
 
 [`docker-application-schedule.py`](../../../scripts/lib/docker-application-schedule.py) adds one
-Forgejo-only offline check of the actual native plan, existing topology admission, and unpublished
+reviewed Forgejo/Nextcloud offline check of the actual native plan, existing topology admission, and unpublished
 BoxFerry dependency sidecar as an inseparable review set. It reuses `validate_application` above;
 there is no second native decoder, request renderer, or runtime client. The canonical CLI calls
 `check_sources` before reading artifacts. Its pure `validate_schedule` takes the three raw byte
@@ -243,6 +243,60 @@ and provider catalogues, and `.github/renovate.json` are unchanged. No operation
 path, manager, grouping, approval, or historical evidence is added, moved, or changed: existing
 Renovate ownership stays intact. Test Engine/profile strings and synthetic aliases are authored
 offline evidence, not downloaded software pins or native admission.
+
+## Nextcloud dependency schedule and authored init/cron intent
+
+The same canonical schedule validator accepts `--application nextcloud`; omitting that option keeps
+the existing Forgejo CLI and result unchanged. Other applications remain unreviewed. Nextcloud uses
+the same bounded parser, source-first CLI check, caller-selected authority, and three exact raw-byte
+bindings described above, with no separate decoder, renderer, interpolation engine, or runtime client.
+The independently literal contract contains exactly six app-owned services and five required,
+non-restarting dependency decisions:
+
+- `app` depends on `db` and `cache`, both `healthy`.
+- `init` depends on `app`, `healthy`.
+- `cron` depends on `init`, `completed_successfully`.
+- `frontend` depends on `app`, `healthy`.
+
+Conditions are explicitly authored; `required: true` and `restart: false` are implicit defaults in
+this fixture. The sidecar must retain those values and explicitness flags. Omitted-option provenance
+arrays may be empty; provenance retains the existing finite-category boundary rather than inventing
+origins. Missing, extra, repeated, self-referencing, reversed, or cyclic edges, altered conditions,
+runtime identities, flags, and unreviewed provenance categories are rejected.
+
+The validator separately requires init's native `Cmd` to be exactly
+`["php", "/var/www/html/occ", "status"]` and `User` to be `"www-data"`, and cron's native `Cmd` to be
+exactly `["/cron.sh"]`. These checks bind authored field intent only: they do not inspect or infer
+image-default `Entrypoint`, protected environment fidelity, health, successful initialization,
+successful exit status, actual cron execution, or runtime compatibility. Missing, null, wrong-type,
+changed, or exchanged authored fields fail without returning their values.
+
+The schema-1 result kind is `boxferry-docker-nextcloud-offline-schedule`. Its service review layers
+are `[["cache", "db"], ["app"], ["frontend", "init"], ["cron"]]`, never native start requests or
+observed readiness. `authored_checks` contains only `init.command`, `init.user`, and `cron.command`,
+not command/user bodies. `shared_service_expectations` retains only the shared proxy's prefixed
+identity, `ownership: "shared"`, and `runtime_evidence: "unmeasured"`; it proves neither existence nor
+ownership. The proxy remains a separately owned external declaration, not a seventh admitted
+container or attachment. Attempted proxy and excluded-peer create/connect requests are rejected
+by the unchanged topology boundary, never filtered or projected away. Every admitted native request
+index appears exactly once in `review_operations`, even when container requests or sidecar decisions
+are reordered; `native_request_order` retains the original indices.
+
+Rootful and rootless upstream profiles remain independently selected review inputs. Mismatched
+versions, API context, lanes, source digests, and raw plan/admission/sidecar bytes are rejected; these
+offline profile strings do not establish an Engine-version support catalogue or native admission.
+All result non-executing, non-replayable, non-admitting, unmeasured-runtime and null-budget markers
+remain unchanged. Provisioning, startup/readiness, one-shot completion, persistence, isolation,
+apply/reacquire, native capabilities, and measured budgets remain outstanding under #343/#366.
+
+The existing focused schedule suite independently authors the Nextcloud requests, five edges,
+commands, and review order, with positive rootful/rootless and mutation tests. The existing shared
+probe entry point and runner regression already execute this same suite with bytecode disabled and
+stop on failure; local complete-gate, hosted CI/main, and Release consumers therefore need no wiring
+change. No other repository, manifest, lockfile, provider/image catalogue, software pin, Renovate
+manager/extraction path/group/approval, or historical evidence changes for this extension. Existing
+Renovate ownership and Lens independence remain intact. This is an offline integration prerequisite,
+not a Docker adapter, new native lane, compatibility claim, or library release.
 
 ## Forgejo explicitly authored fields
 
