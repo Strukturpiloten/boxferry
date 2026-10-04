@@ -76,6 +76,45 @@ six-application acceptance or the complete repository gate. No operational image
 tool, dependency pin or Renovate definition is added or moved: the canonical
 DockerLens image assignments and their existing managers remain authoritative.
 
+## Closed outer-resource presence checks
+
+Container and storage-volume name preflight, initial cleanup selection and post-removal
+readback use the same bounded `podman-presence` helper. It reuses the readiness subprocess
+reader with both output streams combined under its existing 16-KiB cap, three-second read
+deadline and owned-process-group teardown. Only a completed read with empty stdout and
+stderr and native status 0 or 1 establishes `present` or `absent`, respectively. Warnings,
+configuration errors (including native exit 1 with diagnostics), other statuses, output
+overflow, timeout, cancellation and unverified termination remain `unknown`.
+Presence queries additionally require read-only process-group disappearance after
+leader reaping, bounded to 250 milliseconds within the helper deadline. A surviving
+group or lookup error leaves termination unverified. No group signal is sent after
+reaping; conservative group-identity reuse cannot establish presence or absence.
+
+The helper emits exactly one closed marker with matching status: `present`/0, `absent`/1
+or `unknown`/2. The shell requires the exact marker, newline and status together; launch
+errors, wrapper failures and malformed replies cannot impersonate absence. Existing
+runtime and aggregate cleanup budget wrappers enclose the helper. Native output and
+exception text never appear in the marker or harness diagnostics.
+
+Unknown presence fails preflight or cleanup and retains the run-private evidence directory,
+including storage-volume-only uncertainty. Cleanup still attempts later registered resources,
+checks each exact run label before removal and positively proves absence afterward. It removes
+only the run-owned temporary image archive when evidence must remain. Successful cleanup
+preserves the original failing exit status; no unknown outcome establishes acceptance.
+Offline regressions exercise actual fake-native diagnostics through the helper and shell,
+strict marker parsing, preflight and both cleanup phases, bounds and cancellation. They do
+not invoke a native runtime or supply live compatibility evidence.
+
+Consumer/Renovate no-change evidence: the existing application-probe wrapper registers
+`test-docker-application-contract.py` once and remains consumed by local `check-all.sh`,
+PR/main/dispatch CI and Release's reused CI. None of `.github/renovate.json`'s custom-manager
+file patterns matches the changed harness, helper, regression or this README. Application
+images remain extracted from the six `images.tsv` catalogues, Podman matrix images from
+`podman-live/matrix.tsv`, and Docker pins from the independently selected clean DockerLens
+catalogue. No operational pin, manager, manifest, lockfile, workflow or historical evidence
+changes. DockerLens's independently owned native harness coordinates the same closed
+presence protocol under [DockerLens #76](https://github.com/Strukturpiloten/docker-lens/issues/76).
+
 ## Readiness failure observations
 
 The unchanged 180-second private-socket readiness timeout and early outer-daemon

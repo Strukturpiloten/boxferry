@@ -1378,7 +1378,8 @@ READINESS_INSPECT_FORMAT = (
 )
 
 
-def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool = False) -> tuple[str, bytes]:
+def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool = False,
+                   presence: bool = False) -> tuple[str, bytes]:
     """Bound one read-only subprocess; neither stderr nor failed output escapes."""
     process = None
     outcome, raw = "read-failed", b""
@@ -1391,7 +1392,7 @@ def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool 
         if expires <= time.monotonic():
             return "timed-out", b""
         process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT if merge_output else subprocess.DEVNULL,
+                                   stderr=subprocess.STDOUT if merge_output or presence else subprocess.DEVNULL,
                                    start_new_session=True)
         assert process.stdout is not None
         descriptor = process.stdout.fileno()
@@ -1453,13 +1454,57 @@ def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool 
                         process.stdout.close()
                     except OSError:
                         termination_failed = True
+            if presence and not termination_failed:
+                # Reaping the leader alone does not prove that its descendants
+                # disappeared. After reaping, only read the group identity:
+                # never signal a numeric PGID that could have been reused.
+                group_deadline = min(deadline, time.monotonic() + 0.25)
+                try:
+                    for _attempt in range(26):
+                        try:
+                            os.killpg(process.pid, 0)
+                        except ProcessLookupError:
+                            break
+                        remaining = group_deadline - time.monotonic()
+                        if remaining <= 0:
+                            termination_failed = True
+                            break
+                        time.sleep(min(0.01, remaining))
+                    else:
+                        termination_failed = True
+                except (OSError, KeyboardInterrupt):
+                    termination_failed = True
     if termination_failed:
         return "termination-unverified", b""
     if interrupted:
         raise KeyboardInterrupt
     if completed:
+        if presence:
+            # Native exit 1 can also carry configuration errors. Only a fully
+            # captured empty combined stream establishes presence or absence.
+            return ({0: "present", 1: "absent"}.get(status, "unknown"), b"") if raw == b"" else ("unknown", b"")
         return ("read", raw) if status == 0 else ("read-failed", b"")
     return outcome, raw
+
+
+def podman_presence(kind: str, name: str, run: str) -> str:
+    """Observe only an exact run-owned name; return a closed, private result."""
+    prefix = {"container": "bf-docker-core-", "volume": "bf-docker-core-data-"}.get(kind)
+    if prefix is None or re.fullmatch(r"[A-Za-z0-9_]{1,64}", run) is None or name != prefix + run:
+        return "unknown"
+    previous = {}
+    def cancelled(_signum, _frame):
+        raise KeyboardInterrupt
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous[signum] = signal.signal(signum, cancelled)
+        outcome, _ = readiness_read(["podman", kind, "exists", name], time.monotonic() + 4, presence=True)
+        return outcome if outcome in ("present", "absent") else "unknown"
+    except (OSError, KeyboardInterrupt):
+        return "unknown"
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def readiness_log_category(raw: bytes) -> str:
@@ -1546,6 +1591,10 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    presence = commands.add_parser("podman-presence")
+    presence.add_argument("--kind", choices=("container", "volume"), required=True)
+    presence.add_argument("--name", required=True)
+    presence.add_argument("--run", required=True)
     readiness = commands.add_parser("readiness-diagnostics")
     readiness.add_argument("--outer", required=True)
     readiness.add_argument("--run", required=True)
@@ -1676,7 +1725,11 @@ def main() -> int:
     deadline.add_argument("--ready-file")
     args = parser.parse_args()
     try:
-        if args.command == "readiness-diagnostics":
+        if args.command == "podman-presence":
+            outcome = podman_presence(args.kind, args.name, args.run)
+            print(outcome)
+            return {"present": 0, "absent": 1, "unknown": 2}[outcome]
+        elif args.command == "readiness-diagnostics":
             result = readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered)
             print("readiness observations: " + " ".join(f"{key}={value}" for key, value in result.items())
                   + "; startup-cause=unestablished")

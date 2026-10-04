@@ -117,6 +117,7 @@ fi
 
 run_dir='' outer='' storage_volume='' watchdog_pid='' socket_path='' volume_path='' guard_pid='' guard_start=''
 registered=false
+presence_unverified=false
 volume_apply_attempted=false
 main_pid=$$
 main_start=$(python3 "$contract" parent-start --parent-pid "$main_pid")
@@ -157,6 +158,25 @@ cleanup_bounded() {
   limit=$maximum
   ((limit <= remaining)) || limit=$remaining
   timeout --signal=TERM --kill-after=5s "${limit}s" "$@"
+}
+podman_presence() {
+  local wrapper=$1 kind=$2 name=$3 observation status=0
+  observation=$(
+    "$wrapper" 15s python3 "$contract" podman-presence \
+      --kind "$kind" --name "$name" --run "$run_id" 2> /dev/null
+    status=$?
+    printf '#'
+    exit "$status"
+  ) || status=$?
+  # Both the marker and helper status must agree; wrapper failure, warnings,
+  # cancellation and malformed replies never establish native absence.
+  case "$status:$observation" in
+    $'0:present\n#') return 0 ;;
+    $'1:absent\n#') return 1 ;;
+  esac
+  presence_unverified=true
+  printf '%s presence unverified; retaining private evidence\n' "$kind" >&2
+  return 2
 }
 cleanup_owned() {
   local failure=0 observed state inner_status now monitor_joined=true
@@ -213,7 +233,7 @@ cleanup_owned() {
   if [[ $registered == true && -n $outer ]]; then
     outer_residual=$outer
     state=0
-    cleanup_bounded 15s podman container exists "$outer" || state=$?
+    podman_presence cleanup_bounded container "$outer" || state=$?
     if ((state == 0)); then
       if observed=$(cleanup_bounded 15s podman inspect --format '{{index .Config.Labels "io.boxferry.docker-core-run"}}' "$outer") && [[ $observed == "$run_id" ]]; then
         if [[ -n $socket_path && -S $socket_path ]]; then
@@ -247,7 +267,7 @@ cleanup_owned() {
         fi
         cleanup_bounded 60s podman rm --force --volumes "$outer" > /dev/null || failure=1
         state=0
-        cleanup_bounded 15s podman container exists "$outer" > /dev/null 2>&1 || state=$?
+        podman_presence cleanup_bounded container "$outer" || state=$?
         ((state == 1)) || failure=1
         if ((state == 1)); then outer_residual=none; fi
       else
@@ -263,12 +283,12 @@ cleanup_owned() {
   if [[ $registered == true && -n $storage_volume ]]; then
     volume_residual=$storage_volume
     state=0
-    cleanup_bounded 15s podman volume exists "$storage_volume" || state=$?
+    podman_presence cleanup_bounded volume "$storage_volume" || state=$?
     if ((state == 0)); then
       if observed=$(cleanup_bounded 15s podman volume inspect --format '{{index .Labels "io.boxferry.docker-core-run"}}' "$storage_volume") && [[ $observed == "$run_id" ]]; then
         cleanup_bounded 60s podman volume rm "$storage_volume" > /dev/null || failure=1
         state=0
-        cleanup_bounded 15s podman volume exists "$storage_volume" > /dev/null 2>&1 || state=$?
+        podman_presence cleanup_bounded volume "$storage_volume" || state=$?
         ((state == 1)) || failure=1
         if ((state == 1)); then volume_residual=none; fi
       else
@@ -286,12 +306,14 @@ cleanup_owned() {
     printf 'inner-volume cleanup/absence unverified; retaining private evidence\n' >&2
     failure=1
   fi
+  [[ ${presence_unverified:-false} == false ]] || failure=1
   if [[ -n $run_dir ]]; then
     # Only the exact mktemp-owned private directory is removed. It contains
     # synthetic request/state and image archive material for this run alone.
     directory_residual=$run_dir
     if [[ $run_dir == /tmp/boxferry-docker-core.* && -d $run_dir && ! -L $run_dir ]]; then
-      if [[ $outer_residual == none && $inner_volume_cleanup != unverified ]]; then
+      if [[ $outer_residual == none && $volume_residual == none &&
+        $inner_volume_cleanup != unverified && ${presence_unverified:-false} == false ]]; then
         cleanup_bounded 30s rm -r -- "$run_dir" || failure=1
         [[ -e $run_dir ]] || directory_residual=none
       else
@@ -416,13 +438,13 @@ fi
 }
 mkdir -m 0777 "$socket_dir"
 container_state=0
-bounded 15s podman container exists "$outer" || container_state=$?
+podman_presence bounded container "$outer" || container_state=$?
 ((container_state == 1)) || {
   printf 'outer container name is not demonstrably free\n' >&2
   exit 1
 }
 volume_state=0
-bounded 15s podman volume exists "$storage_volume" || volume_state=$?
+podman_presence bounded volume "$storage_volume" || volume_state=$?
 ((volume_state == 1)) || {
   printf 'outer storage name is not demonstrably free\n' >&2
   exit 1

@@ -1618,6 +1618,132 @@ class ParentLifetimeTests(unittest.TestCase):
             self.assertFalse(rejected.exists())
 
 
+class PresenceTests(unittest.TestCase):
+    def test_native_empty_status_only_and_complete_combined_stream_are_authoritative(self) -> None:
+        cases = [("import sys; sys.exit(0)", "present"),
+                 ("import sys; sys.exit(1)", "absent"),
+                 ("import sys; sys.stderr.write('DO-NOT-PRINT/config-error'); sys.exit(1)", "unknown"),
+                 ("import sys; sys.stderr.write('DO-NOT-PRINT/warning'); sys.exit(0)", "unknown"),
+                 ("print(' ')", "unknown"),
+                 ("import sys; sys.exit(2)", "unknown"),
+                 ("import sys; sys.exit(125)", "unknown"),
+                 ("import os, signal; os.kill(os.getpid(), signal.SIGTERM)", "unknown"),
+                 ("import sys; sys.stdout.write('x'*16385)", "oversized"),
+                 ("import sys; sys.stderr.write('x'*16385)", "oversized")]
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(contract.readiness_read([sys.executable, "-c", source],
+                                                        time.monotonic() + 2, presence=True), (expected, b""))
+
+    def test_presence_helper_closes_failures_cancellation_and_restores_handlers(self) -> None:
+        previous = {signum: contract.signal.getsignal(signum) for signum in
+                    (contract.signal.SIGTERM, contract.signal.SIGINT, contract.signal.SIGHUP)}
+        for kind, prefix in (("container", "bf-docker-core-"), ("volume", "bf-docker-core-data-")):
+            for outcome in ("present", "absent", "unknown", "read-failed", "oversized", "timed-out",
+                            "termination-unverified", KeyboardInterrupt, OSError):
+                with self.subTest(kind=kind, outcome=outcome):
+                    with mock.patch.object(contract, "readiness_read") as read:
+                        if isinstance(outcome, str):
+                            read.return_value = outcome, b""
+                        else:
+                            read.side_effect = outcome
+                        self.assertEqual(contract.podman_presence(kind, prefix + "test", "test"),
+                                         outcome if outcome in ("present", "absent") else "unknown")
+                        self.assertEqual(read.call_args.args[0], ["podman", kind, "exists", prefix + "test"])
+                        self.assertEqual(read.call_args.kwargs, {"presence": True})
+                    self.assertEqual(previous, {signum: contract.signal.getsignal(signum) for signum in previous})
+        with mock.patch.object(contract, "readiness_read") as read:
+            for kind, name, run in (("network", "bf-docker-core-test", "test"),
+                                    ("container", "ambient", "test"), ("volume", "bf-docker-core-test", "test"),
+                                    ("container", "bf-docker-core-../other", "../other")):
+                self.assertEqual(contract.podman_presence(kind, name, run), "unknown")
+            read.assert_not_called()
+
+    def test_presence_deadline_cancellation_and_unverified_teardown_cannot_report_absence(self) -> None:
+        started = time.monotonic()
+        self.assertEqual(contract.readiness_read([sys.executable, "-c", "import time; time.sleep(60)"],
+                                                started + 0.1, presence=True), ("timed-out", b""))
+        self.assertLess(time.monotonic() - started, 2)
+        with mock.patch.object(contract.subprocess, "Popen") as launched:
+            self.assertEqual(contract.readiness_read(["fake-read"], time.monotonic() - 1, presence=True),
+                             ("timed-out", b""))
+        launched.assert_not_called()
+        for action in ("timeout", "cancel", "kill-failed", "reap-failed"):
+            with self.subTest(action=action), tempfile.TemporaryFile() as stream:
+                child = mock.Mock(pid=12345, stdout=stream)
+                child.wait.return_value = 1
+                if action == "reap-failed":
+                    child.wait.side_effect = subprocess.TimeoutExpired("private-command", 1)
+                def kill_group(_pid, signum):
+                    if action == "kill-failed":
+                        raise PermissionError
+                    if signum == 0:
+                        raise ProcessLookupError
+                with mock.patch.object(contract.subprocess, "Popen", return_value=child), \
+                        mock.patch.object(contract.select, "select", side_effect=KeyboardInterrupt if action == "cancel" else None,
+                                          return_value=([] if action == "timeout" else [stream.fileno()], [], [])), \
+                        mock.patch.object(contract.os, "waitid", return_value=mock.Mock()), \
+                        mock.patch.object(contract.os, "killpg", side_effect=kill_group):
+                    if action == "cancel":
+                        with self.assertRaises(KeyboardInterrupt):
+                            contract.readiness_read(["fake-read"], time.monotonic() + 2, presence=True)
+                    else:
+                        self.assertEqual(contract.readiness_read(["fake-read"], time.monotonic() + 2, presence=True),
+                                         ("timed-out" if action == "timeout" else "termination-unverified", b""))
+                self.assertTrue(stream.closed)
+                child.wait.assert_called_once()
+
+    def test_reaped_empty_native_one_requires_bounded_positive_group_disappearance(self) -> None:
+        for readback in ("persists", "permission-error", "disappears"):
+            with self.subTest(readback=readback), tempfile.TemporaryFile() as stream:
+                child = mock.Mock(pid=12345, stdout=stream)
+                events = []
+                def reap(**_kwargs):
+                    events.append("reap")
+                    return 1
+                def kill_group(pid, signum):
+                    self.assertEqual(pid, 12345)
+                    if signum == contract.signal.SIGKILL:
+                        self.assertNotIn("reap", events)
+                        events.append("signal-owned-group")
+                    else:
+                        self.assertEqual(signum, 0)
+                        self.assertIn("reap", events)
+                        events.append("read-group")
+                        if readback == "permission-error":
+                            raise PermissionError("DO-NOT-PRINT")
+                        if readback == "disappears":
+                            raise ProcessLookupError
+                child.wait.side_effect = reap
+                started = time.monotonic()
+                with mock.patch.object(contract.subprocess, "Popen", return_value=child), \
+                        mock.patch.object(contract.os, "waitid", return_value=mock.Mock()), \
+                        mock.patch.object(contract.os, "killpg", side_effect=kill_group):
+                    result = contract.readiness_read(["fake-read"], time.monotonic() + 2, presence=True)
+                self.assertEqual(result, ("absent" if readback == "disappears" else "termination-unverified", b""))
+                self.assertLess(time.monotonic() - started, 0.75)
+                self.assertEqual(events[:2], ["signal-owned-group", "reap"])
+                self.assertIn("read-group", events)
+                self.assertLessEqual(events.count("read-group"), 26)
+                self.assertTrue(stream.closed)
+                child.wait.assert_called_once()
+
+    def test_cli_closed_markers_with_fake_native_tool_never_print_native_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            native = pathlib.Path(name) / "podman"
+            environment = dict(os.environ, PATH=name + os.pathsep + os.environ["PATH"])
+            for source, status, marker in (("exit 0", 0, "present"), ("exit 1", 1, "absent"),
+                                           ("printf 'DO-NOT-PRINT/config-error' >&2; exit 1", 2, "unknown"),
+                                           ("printf 'DO-NOT-PRINT/warning' >&2; exit 0", 2, "unknown")):
+                with self.subTest(source=source):
+                    native.write_text("#!/bin/sh\n" + source + "\n", encoding="ascii")
+                    native.chmod(0o700)
+                    result = subprocess.run([sys.executable, str(SOURCE), "podman-presence", "--kind", "container",
+                                             "--name", "bf-docker-core-test", "--run", "test"],
+                                            env=environment, capture_output=True, text=True, timeout=6, check=False)
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (status, marker + "\n", ""))
+
+
 class ReadinessDiagnosticTests(unittest.TestCase):
     def test_inspect_uses_native_go_id_field_not_plain_format_compatibility_alias(self) -> None:
         # Podman 6.0.2 accepts {{.Id}} but not {{json .Id}}. The native Go
@@ -1863,7 +1989,8 @@ class RunnerSafetyTests(unittest.TestCase):
         return self.runner[start:end]
 
     def bash(self, body: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["bash", "-c", "set -Eeuo pipefail\n" + body],
+        return subprocess.run(["bash", "-c", "set -Eeuo pipefail\ncontract=/unused\nprofile=replay-probe\n" +
+                               self.function("podman_presence") + body],
                               capture_output=True, text=True, timeout=8, check=False)
 
     def test_timeout_wrapper_ends_a_stalled_command_and_has_kill_after(self) -> None:
@@ -1874,6 +2001,145 @@ class RunnerSafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 124)
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_presence_protocol_requires_exact_marker_and_matching_wrapper_status(self) -> None:
+        cases = [(0, "present\n", 0), (1, "absent\n", 1), (2, "unknown\n", 2),
+                 (1, "", 2), (0, "absent\n", 2), (1, "present\n", 2),
+                 (124, "absent\n", 2), (125, "present\n", 2), (130, "absent\n", 2),
+                 (1, "absent\n\n", 2), (1, "absent", 2), (0, "present\nDO-NOT-PRINT", 2)]
+        for status, marker, expected in cases:
+            with self.subTest(status=status, marker=marker):
+                body = f"""run_id=test
+presence_unverified=false
+bounded() {{ printf '%s' {shlex.quote(marker)}; return {status}; }}
+state=0
+podman_presence bounded container bf-docker-core-test || state=$?
+printf 'state=%s unverified=%s\\n' "$state" "$presence_unverified"
+"""
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, f"state={expected} unverified={'true' if expected == 2 else 'false'}\n")
+                self.assertNotIn("DO-NOT-PRINT", result.stderr)
+
+    def test_unknown_preflight_retains_evidence_without_registering_or_mutating_resources(self) -> None:
+        start = self.runner.index("container_state=0\n")
+        preflight = self.runner[start:self.runner.index("registered=true\n", start)]
+        for kind in ("container", "volume"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
+                directory = pathlib.Path(name)
+                evidence = directory / "private-evidence"
+                evidence.write_bytes(b"DO-NOT-PRINT")
+                body = f"""run_id=test
+run_dir={shlex.quote(name)}
+registered=false
+outer=bf-docker-core-test
+storage_volume=bf-docker-core-data-test
+watchdog_pid=
+contract=/unused
+cleanup_now() {{ printf '1\\n'; }}
+bounded() {{
+  if [[ $6 == {kind} ]]; then printf 'unknown\\n'; return 2; fi
+  printf 'absent\\n'; return 1
+}}
+cleanup_bounded() {{ shift; "$@"; }}
+report_host_cache() {{ :; }}
+""" + self.function("cleanup_owned") + self.function("on_exit") + "trap on_exit EXIT\n" + preflight
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(evidence.read_bytes(), b"DO-NOT-PRINT")
+                self.assertIn(f"private-directory={name}", result.stderr)
+                self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+
+    def test_initial_and_post_removal_unknown_retain_evidence_for_each_resource(self) -> None:
+        for kind in ("container", "volume"):
+            for phase in ("initial", "post-removal"):
+                with self.subTest(kind=kind, phase=phase), \
+                        tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
+                    directory = pathlib.Path(name)
+                    evidence = directory / "private-evidence"
+                    evidence.write_bytes(b"DO-NOT-PRINT")
+                    (directory / "busybox.tar").write_bytes(b"owned archive")
+                    body = f"""registered=true
+run_id=test
+run_dir={shlex.quote(name)}
+outer=bf-docker-core-test
+storage_volume=bf-docker-core-data-test
+watchdog_pid=
+socket_path=
+removed=false
+cleanup_now() {{ printf '1\\n'; }}
+cleanup_bounded() {{
+  if [[ $2 == python3 && $4 == podman-presence ]]; then
+    if [[ $6 != {kind} ]]; then printf 'absent\\n'; return 1; fi
+    if [[ {phase} == initial || $removed == true ]]; then printf 'unknown\\n'; return 2; fi
+    printf 'present\\n'; return 0
+  fi
+  if [[ $2 == podman && ( $3 == inspect || $4 == inspect ) ]]; then printf 'test\\n'; return 0; fi
+  if [[ $2 == podman ]]; then removed=true; return 0; fi
+  shift; "$@"
+}}
+""" + self.function("cleanup_owned") + "state=0\ncleanup_owned || state=$?\nprintf 'state=%s removed=%s\\n' \"$state\" \"$removed\"\n"
+                    result = self.bash(body)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, f"state=1 removed={'true' if phase == 'post-removal' else 'false'}\n")
+                    self.assertEqual(evidence.read_bytes(), b"DO-NOT-PRINT")
+                    self.assertFalse((directory / "busybox.tar").exists())
+                    self.assertIn(f"private-directory={name}", result.stderr)
+                    self.assertIn("presence unverified", result.stderr)
+                    self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+
+    def test_cleanup_success_preserves_original_failure_status(self) -> None:
+        for cleanup_status, expected in ((0, 42), (1, 1)):
+            body = f"""run_dir=
+cleanup_owned() {{ return {cleanup_status}; }}
+report_host_cache() {{ :; }}
+""" + self.function("on_exit") + "trap on_exit EXIT\nexit 42\n"
+            result = self.bash(body)
+            self.assertEqual(result.returncode, expected, result.stderr)
+            self.assertIn("Docker core harness failed", result.stderr)
+
+    def test_real_presence_helper_rejects_native_diagnostics_through_cleanup(self) -> None:
+        for kind in ("container", "volume"):
+            for phase in ("initial", "post-removal"):
+                for native_status in (0, 1):
+                    with self.subTest(kind=kind, phase=phase, native_status=native_status), \
+                            tempfile.TemporaryDirectory(prefix="boxferry-presence-fake-") as fake_name, \
+                            tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
+                        directory = pathlib.Path(name)
+                        evidence = directory / "private-evidence"
+                        evidence.write_bytes(b"DO-NOT-PRINT/evidence")
+                        fake = pathlib.Path(fake_name)
+                        removed = fake / "removed"
+                        native = fake / "podman"
+                        native.write_text(f"""#!/bin/sh
+if [ "$2" = exists ]; then
+  if [ "$1" != {kind} ]; then exit 1; fi
+  if [ {phase} = post-removal ] && [ ! -e {shlex.quote(str(removed))} ]; then exit 0; fi
+  printf 'DO-NOT-PRINT/native-diagnostic' >&2
+  exit {native_status}
+fi
+if [ "$1" = inspect ] || [ "$2" = inspect ]; then printf 'test\\n'; exit 0; fi
+if [ "$1" = rm ] || [ "$2" = rm ]; then touch {shlex.quote(str(removed))}; exit 0; fi
+exit 125
+""", encoding="ascii")
+                        native.chmod(0o700)
+                        body = f"""export PATH={shlex.quote(fake_name)}:"$PATH"
+contract={shlex.quote(str(SOURCE))}
+registered=true
+run_id=test
+run_dir={shlex.quote(name)}
+outer=bf-docker-core-test
+storage_volume=bf-docker-core-data-test
+watchdog_pid=
+socket_path=
+cleanup_now() {{ printf '1\\n'; }}
+""" + self.function("cleanup_bounded") + self.function("cleanup_owned") + "cleanup_owned\n"
+                        result = self.bash(body)
+                        self.assertEqual(result.returncode, 1, result.stderr)
+                        self.assertEqual(evidence.read_bytes(), b"DO-NOT-PRINT/evidence")
+                        self.assertEqual(removed.exists(), phase == "post-removal", result.stderr)
+                        self.assertIn("presence unverified", result.stderr)
+                        self.assertIn(f"private-directory={name}", result.stderr)
+                        self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
     def test_readiness_failure_diagnostics_precede_teardown_for_core_and_volume_without_repair(self) -> None:
         start = self.runner.index("deadline=$((SECONDS + 180))")
         readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
@@ -2099,7 +2365,7 @@ cleanup_bounded() {{ printf 'unsafe deletion\\n'; return 1; }}
                 f"storage-volume=bf-docker-core-data-test private-directory={name}", result.stderr,
             )
 
-    def test_failed_volume_check_reports_name_but_removes_independent_private_directory(self) -> None:
+    def test_failed_volume_check_retains_private_evidence_and_reports_name(self) -> None:
         with tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
             directory = pathlib.Path(name)
             (directory / "busybox.tar").write_bytes(b"owned archive")
@@ -2112,17 +2378,17 @@ watchdog_pid=
 cleanup_now() {{ printf '1\\n'; }}
 socket_path=
 cleanup_bounded() {{
-  if [[ $2 == podman && $3 == container && $4 == exists ]]; then return 1; fi
-  if [[ $2 == podman && $3 == volume && $4 == exists ]]; then return 124; fi
+  if [[ $2 == python3 && $4 == podman-presence && $6 == container ]]; then printf 'absent\n'; return 1; fi
+  if [[ $2 == python3 && $4 == podman-presence && $6 == volume ]]; then return 124; fi
   shift
   "$@"
 }}
 """ + self.function("cleanup_owned") + "\ncleanup_owned\n"
             result = self.bash(body)
             self.assertEqual(result.returncode, 1)
-            self.assertFalse(directory.exists())
+            self.assertTrue(directory.exists())
             self.assertIn("storage-volume=bf-docker-core-data-test", result.stderr)
-            self.assertIn("private-directory=none", result.stderr)
+            self.assertIn(f"private-directory={name}", result.stderr)
 
     def test_unowned_outer_is_retained_but_its_private_archive_is_removed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
@@ -2138,7 +2404,7 @@ watchdog_pid=
 cleanup_now() {{ printf '1\\n'; }}
 socket_path=
 cleanup_bounded() {{
-  if [[ $2 == podman && $3 == container && $4 == exists ]]; then return 0; fi
+  if [[ $2 == python3 && $4 == podman-presence && $6 == container ]]; then printf 'present\n'; return 0; fi
   if [[ $2 == podman && $3 == inspect ]]; then printf '%s\\n' other-run; return 0; fi
   shift
   "$@"
@@ -2172,7 +2438,7 @@ watchdog_pid=
 socket_path=
 cleanup_now() {{ printf '1\\n'; }}
 cleanup_bounded() {{
-  if [[ $2 == podman && $3 == {resource} && $4 == exists ]]; then return 0; fi
+  if [[ $2 == python3 && $4 == podman-presence && $6 == {resource} ]]; then printf 'present\n'; return 0; fi
   if [[ $2 == podman && {inspect_prefix} ]]; then printf 'test\\n'; return {status}; fi
   if [[ $2 == podman ]]; then printf 'unsafe removal\\n' > {shlex.quote(str(attempted_removal))}; return 0; fi
   shift
@@ -2188,8 +2454,9 @@ cleanup_bounded() {{
                     self.assertFalse(archive.exists())
                     expected = f"outer-container={outer} storage-volume=none private-directory={name}"
                 else:
-                    self.assertFalse(directory.exists())
-                    expected = f"outer-container=none storage-volume={volume} private-directory=none"
+                    self.assertTrue(directory.exists())
+                    self.assertFalse(archive.exists())
+                    expected = f"outer-container=none storage-volume={volume} private-directory={name}"
                 self.assertIn("cleanup residuals: " + expected, result.stderr)
 
     def test_volume_profile_requires_inner_absence_proof_despite_successful_outer_teardown(self) -> None:
@@ -2238,8 +2505,9 @@ report_host_cache() {{ :; }}
 bounded() {{ :; }}
 python3() {{ printf 'candidate\\n'; }}
 cleanup_bounded() {{
-  if [[ $2 == podman && $3 == container && $4 == exists ]]; then
-    [[ {shlex.quote(scenario)} != outer-absent && $outer_removed == false ]]; return;
+  if [[ $2 == python3 && $4 == podman-presence && $6 == container ]]; then
+    if [[ {shlex.quote(scenario)} != outer-absent && $outer_removed == false ]]; then printf 'present\n'; return 0; fi
+    printf 'absent\n'; return 1
   fi
   if [[ $2 == podman && $3 == inspect ]]; then printf 'test\\n'; return 0; fi
   if [[ $2 == python3 && $4 == cleanup-volume-fixtures ]]; then
@@ -2247,8 +2515,9 @@ cleanup_bounded() {{
     [[ {shlex.quote(scenario)} == verified ]]; return;
   fi
   if [[ $2 == podman && $3 == rm ]]; then outer_removed=true; return 0; fi
-  if [[ $2 == podman && $3 == volume && $4 == exists ]]; then
-    [[ $storage_removed == false ]]; return;
+  if [[ $2 == python3 && $4 == podman-presence && $6 == volume ]]; then
+    if [[ $storage_removed == false ]]; then printf 'present\n'; return 0; fi
+    printf 'absent\n'; return 1
   fi
   if [[ $2 == podman && $3 == volume && $4 == inspect ]]; then printf 'test\\n'; return 0; fi
   if [[ $2 == podman && $3 == volume && $4 == rm ]]; then
@@ -2287,8 +2556,8 @@ cleanup_bounded() {{
             if "curl --" in line:
                 self.assertIn("--max-filesize 65536", line)
         self.assertIn("bounded 15s podman info --format '{{.Host.Security.Rootless}}'", self.runner)
-        self.assertIn('cleanup_bounded 15s podman container exists "$outer"', self.runner)
-        self.assertIn('cleanup_bounded 15s podman volume exists "$storage_volume"', self.runner)
+        self.assertIn('podman_presence cleanup_bounded container "$outer"', self.runner)
+        self.assertIn('podman_presence cleanup_bounded volume "$storage_volume"', self.runner)
 
     def test_retained_host_cache_report_names_exact_pinned_inputs(self) -> None:
         body = """outer_image=ghcr.io/example/engine:v1@sha256:aaaa
