@@ -1,5 +1,65 @@
 # Offline Docker application contract prerequisite
 
+## Authored core artifact prerequisite
+
+[`core.compose.yaml`](core.compose.yaml) and [`core-expectations.json`](core-expectations.json)
+are repository-authored, privacy-reviewed MPL-2.0 fixtures; redistribution is allowed.
+No external oracle, capture, downloaded image, or operational software pin is used. The
+literal placeholder is not a pullable image. The machine contract independently records the
+container identity, command, exact source-byte SHA-256, and four intended lane identities:
+Debian 11 and upstream, each rootful/rootless. These identities are authored expectations,
+not native catalogue admission, historical-engine evidence, or four-lane runtime test passes.
+
+[`docker-core-artifact.py`](../../../scripts/lib/docker-core-artifact.py) accepts exactly one
+complete version-1 artifact with zero prerequisites and one literal `POST` container-create
+request. Its `Image` must match the independently caller-selected private
+`registry.invalid/boxferry-core/busybox:<literal-tag>` alias, its `Cmd` must match the authored
+command, and `HostConfig` must be empty. Only that image substitution and the explicitly
+selected rendering API prefix vary. Extra requests, fields, methods, paths, defaults, identities,
+or prerequisites fail closed. The full context must exactly match the independently selected
+target profile, including build/package revision, engine release, all three API versions,
+root mode, and evidence digest. Lane checks constrain build kind/root mode only; no version
+string admits a native engine or claims supported-version coverage.
+
+The pure `validate_core` function requires raw plan, expectation, and source bytes, plus
+`expected_plan_sha256`, lane, profile, and image alias. The raw-plan SHA-256 must be supplied
+independently of the artifact under review; calculating it from an untrusted artifact alone
+does not establish review authority. Whitespace changes invalidate an old plan binding.
+Canonical source checking is mandatory in both the pure function and CLI. Expectations and
+caller selections are trust inputs, never inferred from the plan. JSON parsing and regular-file
+reads reuse the existing bounded helpers (1 MiB, depth 32, no duplicate keys/nonfinite numbers,
+nonblocking reads, final-component no-follow). Unknown schemas and source drift fail closed.
+
+The closed result contains byte hashes, lane, and offline metadata only, not raw request bodies,
+commands, private aliases, or context evidence. It always reports `native_execution: false`,
+`replay_authority: false`, `native_admission: false`, unmeasured runtime evidence, and null
+budget measurements. There is no executor import, Rust catalogue-source parsing, daemon/API
+access, image loading, apply/reacquire, migration, or dependency override. This is the core
+preparatory slice of BoxFerry #366, not completion of that parent or native/runtime acceptance.
+
+Run the independent literal positive/negative tests and exact source check:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-docker-core-artifact.py
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/lib/docker-core-artifact.py check-sources
+```
+
+The canonical `scripts/test-application-probes.sh` wrapper appends those two commands in that
+order after every existing suite, with bytecode writing disabled. Its runner regression checks
+exact argv, environment, order, and stop-on-failure for both, preserving every existing case.
+Local `scripts/check-all.sh`, PR/main/dispatch CI (`.github/workflows/ci.yml`), and Release's
+reused CI (`.github/workflows/release.yml`) consume that same wrapper; no workflow edit or
+Lens/native conformance consumer is needed. Focused tests do not replace the complete gate.
+
+Renovate no-change evidence: `.github/renovate.json` disables native Compose/Quadlet managers;
+none of its custom manager file patterns matches these seven changed paths. Its active image
+manager still owns only the six application `images.tsv` catalogues, not this authored core
+source/expectation. Existing software/version/integrity definitions, extraction, grouping,
+approval rules, historical evidence, and all their consumers remain unchanged. No new manager,
+pin, dependency, or download is introduced.
+
+## Six-application topology prerequisite
+
 [`expected-applications.json`](expected-applications.json) independently declares the
 application-owned service, network, volume, mount, ingress, alias, dependency,
 excluded-peer, and success-category inventories for Forgejo, Nextcloud,
