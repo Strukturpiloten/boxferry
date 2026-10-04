@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Forgejo-only offline topology/sidecar review; never replay or native admission."""
+"""Reviewed Forgejo/Nextcloud offline intent; never replay or native admission."""
 
 from __future__ import annotations
 
@@ -22,6 +22,13 @@ SPEC.loader.exec_module(topology)
 
 EXPECTED_EDGE = {"service": "forgejo", "dependency": "db", "condition": "healthy",
                  "required": True, "restart": False}
+NEXTCLOUD_EDGES = [
+    {"service": "app", "dependency": "db", "condition": "healthy", "required": True, "restart": False},
+    {"service": "app", "dependency": "cache", "condition": "healthy", "required": True, "restart": False},
+    {"service": "init", "dependency": "app", "condition": "healthy", "required": True, "restart": False},
+    {"service": "cron", "dependency": "init", "condition": "completed_successfully", "required": True, "restart": False},
+    {"service": "frontend", "dependency": "app", "condition": "healthy", "required": True, "restart": False},
+]
 PROVENANCE = {"source_document", "runtime_observation", "user_override",
               "implementation_default", "conversion_decision"}
 
@@ -50,21 +57,25 @@ def validate_schedule(
     catalogue_bytes: bytes, application: str, lane: str, profile: dict[str, Any],
     image_aliases: dict[str, str], prefix: str, run_id: str, fixture_root: str,
 ) -> dict[str, Any]:
-    """Pure, bounded Forgejo review of independently supplied contracts.
+    """Pure, bounded review of two independently authored application contracts.
 
     The CLI checks source bytes first; embedded callers must separately call
     topology.check_sources. Caller-selected profile/catalogue authority is not
     established by the artifact or this result. No native request is rendered,
-    applied or authorized, and command/environment/health fidelity is unproved.
+    applied or authorized. Only Nextcloud's authored init/cron fields are checked;
+    environment, image defaults, health and actual completion remain unproved.
     """
-    topology.require(application == "forgejo", "schedule supports only Forgejo")
+    topology.require(isinstance(application, str) and application in {"forgejo", "nextcloud"},
+                     "schedule application is unreviewed")
     topology.validate_application(plan_bytes, admission_bytes, catalogue_bytes=catalogue_bytes,
         application=application, lane=lane, profile=profile, image_aliases=image_aliases,
         prefix=prefix, run_id=run_id, fixture_root=fixture_root)
-    app = topology.catalogue(catalogue_bytes)["applications"]["forgejo"]
-    topology.require(set(app["services"]) == {"db", "forgejo"}
-                     and topology.same(app["dependencies"], [EXPECTED_EDGE]),
-                     "authored Forgejo service or dependency contract differs")
+    app = topology.catalogue(catalogue_bytes)["applications"][application]
+    expected_edges = [EXPECTED_EDGE] if application == "forgejo" else NEXTCLOUD_EDGES
+    expected_services = {"db", "forgejo"} if application == "forgejo" else {"db", "cache", "app", "init", "cron", "frontend"}
+    topology.require(set(app["services"]) == expected_services
+                     and topology.same(app["dependencies"], expected_edges),
+                     "authored service or dependency contract differs")
     services = {key: f"{prefix}-{value['runtime_suffix']}" for key, value in app["services"].items()}
     topology.require(sidecar_bytes is not None, "required dependency sidecar is missing")
     sidecar = topology.document(sidecar_bytes)
@@ -109,14 +120,27 @@ def validate_schedule(
             topology.require(isinstance(values, list) and len(values) <= 32
                              and all(isinstance(value, str) and value in PROVENANCE for value in values),
                              "dependency provenance contains an unreviewed category")
+        if application == "nextcloud":
+            topology.require(decision["condition_explicit"] and not decision["required_explicit"]
+                             and not decision["restart_explicit"], "authored dependency explicitness differs")
     layers = dependency_layers(decisions, services)
-    topology.require(len(decisions) == 1 and all(decisions[0][key] == value for key, value in EXPECTED_EDGE.items()),
-                     "dependency edges differ from authored Forgejo expectations")
+    projected_edges = [{key: decision[key] for key in EXPECTED_EDGE} for decision in decisions]
+    topology.require(len(decisions) == len(expected_edges)
+                     and all(edge in projected_edges for edge in expected_edges),
+                     "dependency edges differ from authored expectations")
 
     # Topology has already admitted the closed native operations. These are
     # references to existing requests for review, never new Engine requests.
     plan = topology.document(plan_bytes)
     api_prefix = f"/v{profile['rendering_api_version']}/"
+    if application == "nextcloud":
+        containers = {row["path"][len(api_prefix):].removeprefix("containers/create?name="): row["body"]
+                      for row in plan["requests"] if row["path"][len(api_prefix):].startswith("containers/create?name=")}
+        initialization, cron = containers[services["init"]], containers[services["cron"]]
+        topology.require(topology.same(initialization.get("Cmd"), ["php", "/var/www/html/occ", "status"]),
+                         "authored initialization command missing or differs")
+        topology.require(initialization.get("User") == "www-data", "authored initialization user missing or differs")
+        topology.require(topology.same(cron.get("Cmd"), ["/cron.sh"]), "authored cron command missing or differs")
     runtime_roles = {value: key for key, value in services.items()}
     creates: dict[str, list[dict[str, Any]]] = {kind: [] for kind in ("network", "volume", "container", "attachment")}
     for index, request in enumerate(plan["requests"]):
@@ -142,7 +166,7 @@ def validate_schedule(
                     *sorted(creates["volume"], key=lambda row: row["identity"]),
                     *sorted(creates["container"], key=lambda row: (rank[row["service"]], row["service"])),
                     *sorted(creates["attachment"], key=lambda row: (rank[row["service"]], row["identity"]))]
-    return {"schema_version": 1, "kind": "boxferry-docker-forgejo-offline-schedule",
+    result = {"schema_version": 1, "kind": f"boxferry-docker-{application}-offline-schedule",
             "evidence_kind": "offline-contract-prerequisite", "application": application, "lane": lane,
             "native_execution": False, "replay_authority": False, "native_admission": False,
             "runtime_evidence": "unmeasured", "budget_measurements": None,
@@ -153,6 +177,12 @@ def validate_schedule(
             "external_prerequisites": sorted(plan["prerequisites"], key=lambda row: row["identity"]),
             "native_request_order": list(range(len(plan["requests"]))), "review_operations": review_order,
             "service_review_layers": layers, "dependency_decisions": decisions}
+    if application == "nextcloud":
+        result["authored_checks"] = ["init.command", "init.user", "cron.command"]
+        result["shared_service_expectations"] = [
+            {"identity": f"{prefix}-{row['runtime_suffix']}", "ownership": "shared", "runtime_evidence": "unmeasured"}
+            for row in app["shared_services"]]
+    return result
 
 
 def read_document(path: pathlib.Path) -> bytes:
@@ -168,6 +198,7 @@ def read_document(path: pathlib.Path) -> bytes:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[2])
+    parser.add_argument("--application", default="forgejo")
     for name in ("plan", "admission", "sidecar", "profile", "image-aliases"):
         parser.add_argument(f"--{name}", type=pathlib.Path, required=True)
     for name in ("lane", "prefix", "run-id", "fixture-root"):
@@ -178,14 +209,15 @@ def main() -> int:
         catalogue_bytes = read_document(args.repository / topology.CATALOGUE_PATH)
         topology.check_sources(args.repository, catalogue_bytes)
         result = validate_schedule(read_document(args.plan), read_document(args.admission), read_document(args.sidecar),
-            catalogue_bytes=catalogue_bytes, application="forgejo", lane=args.lane,
+            catalogue_bytes=catalogue_bytes, application=args.application, lane=args.lane,
             profile=topology.document(read_document(args.profile)), image_aliases=topology.document(read_document(args.image_aliases)),
             prefix=args.prefix, run_id=args.run_id, fixture_root=args.fixture_root)
         print(json.dumps(result, sort_keys=True))
         return 0
     except (topology.ExpectationError, OSError) as error:
         category = str(error) if isinstance(error, topology.ExpectationError) else "input unavailable"
-        print(f"offline Forgejo schedule rejected: {category}", file=sys.stderr)
+        application_label = {"forgejo": "Forgejo", "nextcloud": "Nextcloud"}.get(args.application, "application")
+        print(f"offline {application_label} schedule rejected: {category}", file=sys.stderr)
         return 1
 
 
