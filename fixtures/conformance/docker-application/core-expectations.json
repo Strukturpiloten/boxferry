@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "kind": "boxferry-docker-core-expectations",
+  "evidence_kind": "offline-contract-prerequisite",
+  "source_kind": "authored-compose",
+  "native_execution": false,
+  "source": {
+    "path": "fixtures/conformance/docker-application/core.compose.yaml",
+    "sha256": "64c77d9c9f63f9dbdba21a61c0538acf4a2cdd59c4a4d8765d493c32ce2aff48"
+  },
+  "container_name": "bf-docker-core",
+  "image_placeholder": "BOXFERRY_CORE_IMAGE_LITERAL",
+  "command": [
+    "sh",
+    "-c",
+    "printf boxferry-core-ready > /tmp/boxferry-core-marker; exec sleep 3600"
+  ],
+  "lanes": {
+    "debian11-rootful": { "build_kind": "debian_package", "daemon_mode": "rootful" },
+    "debian11-rootless": { "build_kind": "debian_package", "daemon_mode": "rootless" },
+    "upstream-rootful": { "build_kind": "upstream", "daemon_mode": "rootful" },
+    "upstream-rootless": { "build_kind": "upstream", "daemon_mode": "rootless" }
+  }
+}

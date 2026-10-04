@@ -33,6 +33,10 @@ printf '%s\n' '#!/usr/bin/env bash' \
   '  name=test-docker-application-schedule.py' \
   'elif [[ "$#" -eq 1 && "$1" == "${PROBE_TEST_ROOT}/test-docker-forgejo-authored-fields.py" ]]; then' \
   '  name=test-docker-forgejo-authored-fields.py' \
+  'elif [[ "$#" -eq 1 && "$1" == "${PROBE_TEST_ROOT}/test-docker-core-artifact.py" ]]; then' \
+  '  name=test-docker-core-artifact.py' \
+  'elif [[ "$#" -eq 2 && "$1" == "${PROBE_TEST_ROOT}/lib/docker-core-artifact.py" && "$2" == check-sources ]]; then' \
+  '  name="docker-core-artifact.py check-sources"' \
   'else' \
   '  exit 42' \
   'fi' \
@@ -45,8 +49,9 @@ run_probe_test() {
   PROBE_TEST_LOG="${probe_log}" PROBE_TEST_ROOT="${test_root}" PROBE_FAIL="${1:-}" \
     PYTHONDONTWRITEBYTECODE=0 PATH="${test_root}/bin:${PATH}" bash "${test_root}/test-application-probes.sh"
 }
+readonly existing_order=$'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh'
 run_probe_test
-[[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh' ]]
+[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-docker-application-expectations.py || status=$?
@@ -77,3 +82,15 @@ status=0
 run_probe_test test-observability-application-probes.sh || status=$?
 [[ "${status}" == 37 ]]
 [[ "$(< "${probe_log}")" == $'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh' ]]
+
+: > "${probe_log}"
+status=0
+run_probe_test test-docker-core-artifact.py || status=$?
+[[ "${status}" == 37 ]]
+[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py' ]]
+
+: > "${probe_log}"
+status=0
+run_probe_test 'docker-core-artifact.py check-sources' || status=$?
+[[ "${status}" == 37 ]]
+[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources' ]]

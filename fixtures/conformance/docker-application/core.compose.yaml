@@ -1,0 +1,10 @@
+---
+name: bf-docker-core
+services:
+  bf-docker-core:
+    container_name: bf-docker-core
+    image: BOXFERRY_CORE_IMAGE_LITERAL
+    command:
+      - sh
+      - -c
+      - printf boxferry-core-ready > /tmp/boxferry-core-marker; exec sleep 3600
