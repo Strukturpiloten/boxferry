@@ -133,14 +133,18 @@ guard_alive() {
   fi
 }
 readiness_failure() {
+  local curl_exit=${ping_curl_exit:-not-run} http_status=${ping_http_status:-unknown}
+  [[ $curl_exit =~ ^([0-9]|[1-9][0-9]|not-run|unknown)$ ]] || curl_exit=unknown
+  [[ $http_status =~ ^([0-5][0-9]{2}|unknown)$ ]] || http_status=unknown
   printf '%s\n' "$1" >&2
   # Observation only, before EXIT teardown; bounded() preserves cleanup reserve.
   if [[ $registered == true ]]; then
     bounded 12s python3 "$contract" readiness-diagnostics --registered \
-      --outer "$outer" --run "$run_id" --socket "$socket_path" >&2 2> /dev/null ||
-      printf 'readiness observations: diagnostic=unavailable; startup-cause=unestablished\n' >&2
+      --outer "$outer" --run "$run_id" --socket "$socket_path" \
+      --ping-curl-exit="$curl_exit" --ping-http-status="$http_status" >&2 2> /dev/null ||
+      printf 'readiness observations: ping-curl-exit=%s ping-http-status=%s diagnostic=unavailable; startup-cause=unestablished\n' "$curl_exit" "$http_status" >&2
   else
-    printf 'readiness observations: outer=not-registered; startup-cause=unestablished\n' >&2
+    printf 'readiness observations: ping-curl-exit=%s ping-http-status=%s outer=not-registered; startup-cause=unestablished\n' "$curl_exit" "$http_status" >&2
   fi
 }
 cleanup_now() {
@@ -598,7 +602,22 @@ if [[ $lane == debian11-rootless ]]; then
   }
 fi
 deadline=$((SECONDS + 180))
-until [[ -S $socket_path ]] && curl --fail --silent --max-time 5 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/_ping > /dev/null; do
+ping_curl_exit=not-run
+ping_http_status=unknown
+while true; do
+  if [[ -S $socket_path ]]; then
+    ping_curl_exit=0
+    ping_http_status=$(
+      curl --fail --silent --max-time 5 --max-filesize 65536 \
+        --output /dev/null --write-out '%{http_code}' --unix-socket "$socket_path" http://localhost/_ping 2> /dev/null
+      poll_exit=$?
+      # Preserve trailing newlines so malformed write-out cannot become valid.
+      printf '#'
+      exit "$poll_exit"
+    ) || ping_curl_exit=$?
+    ping_http_status=${ping_http_status%#}
+    ((ping_curl_exit == 0)) && break
+  fi
   ((SECONDS < deadline)) || {
     readiness_failure 'nested Docker daemon did not become ready'
     exit 1
