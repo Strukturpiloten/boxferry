@@ -1664,8 +1664,11 @@ class PresenceTests(unittest.TestCase):
 
     def test_presence_deadline_cancellation_and_unverified_teardown_cannot_report_absence(self) -> None:
         started = time.monotonic()
-        self.assertEqual(contract.readiness_read([sys.executable, "-c", "import time; time.sleep(60)"],
-                                                started + 0.1, presence=True), ("timed-out", b""))
+        result = contract.readiness_read([sys.executable, "-c", "import time; time.sleep(60)"],
+                                         started + 0.1, presence=True)
+        # Scheduling may exhaust the same deadline before teardown is verified;
+        # neither failure may supply presence/absence or retain native output.
+        self.assertIn(result, (("timed-out", b""), ("termination-unverified", b"")))
         self.assertLess(time.monotonic() - started, 2)
         with mock.patch.object(contract.subprocess, "Popen") as launched:
             self.assertEqual(contract.readiness_read(["fake-read"], time.monotonic() - 1, presence=True),
@@ -1916,7 +1919,8 @@ class PingObservationTests(unittest.TestCase):
                         outcome, 0, stdout, stderr)):
                 result = contract.readiness_ping(path, "999999999.00")
             self.assertEqual(result, {"ping-curl-exit": "0", "ping-http-status": http,
-                                     "ping-curl-error": "unknown", "ping-collector": collector})
+                                     "ping-curl-error": "unknown", "ping-collector": collector,
+                                     "ping-teardown-signal": "unknown"})
             self.assertNotIn("DO-NOT-PRINT", str(result))
         self.assertEqual(self.collect("import sys; sys.stderr.write('x' * 200000); sys.stdout.write('200')"),
                          ("stderr-oversized", 0, b"200", b""))
@@ -1952,7 +1956,8 @@ class PingObservationTests(unittest.TestCase):
                             outcome, 7, b"", b"")):
                     result = contract.readiness_ping(path, "153.00")
                 self.assertEqual(result, {"ping-curl-exit": "7", "ping-http-status": "unknown",
-                                         "ping-curl-error": "unknown", "ping-collector": outcome})
+                                         "ping-curl-error": "unknown", "ping-collector": outcome,
+                                         "ping-teardown-signal": "unknown"})
                 self.assertEqual(clock.call_count, 1)
                 self.assertNotIn("DO-NOT-PRINT", str(result))
 
@@ -1990,9 +1995,208 @@ class PingObservationTests(unittest.TestCase):
                             si_code=os.CLD_EXITED, si_status=7)), \
                         mock.patch.object(contract.native_read.os, "killpg", side_effect=signal_group):
                     result = contract.native_read.native_poll_read(["fake"], 102)
-                self.assertEqual(result, ("timed-out" if boundary == "deadline" else "termination-unverified",
-                                          7, b"", b""))
+                self.assertEqual(result, ("termination-unverified", 7, b"", b""))
                 self.assertTrue(out.closed and err.closed)
+
+
+class PostReapTeardownTests(unittest.TestCase):
+    def collect(self, *, native_status=7, pre_signal="denied", lookup="absent", reap_failure=None,
+                close_failure=None, close_failure_stream="stdout", collection="completed", fallback_cancelled=False,
+                clock_failure=None, clock_failure_at=None):
+        now = [100.0]
+        metadata = {"signal": "stale-private-value"}
+        events = []
+        reaped = [False]
+        post_close_clock_calls = [0]
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            out.write(b"x" * 20_000 if collection == "stdout-oversized" else b"200" if native_status == 0 else b"000")
+            out.seek(0)
+            if collection == "stderr-oversized":
+                err.write(b"x" * 20_000); err.seek(0)
+            stdout = mock.Mock(wraps=out)
+            stderr = mock.Mock(wraps=err)
+            child = mock.Mock(pid=12345, stdout=stdout, stderr=stderr)
+            def close(stream, name):
+                events.append(name)
+                if name == f"{close_failure_stream}-close" and close_failure is not None:
+                    raise close_failure
+                stream.close()
+            stdout.close.side_effect = lambda: close(out, "stdout-close")
+            stderr.close.side_effect = lambda: close(err, "stderr-close")
+            def kill_leader():
+                self.assertFalse(reaped[0])
+                events.append("leader-signal")
+                if fallback_cancelled:
+                    raise KeyboardInterrupt
+            child.kill.side_effect = kill_leader
+            def reap(**kwargs):
+                self.assertFalse(reaped[0])
+                self.assertGreaterEqual(kwargs["timeout"], 0)
+                self.assertLessEqual(kwargs["timeout"], 0.25)
+                events.append("reap")
+                if reap_failure is not None:
+                    raise reap_failure
+                reaped[0] = True
+                if lookup == "already-expired":
+                    now[0] = 102.0
+                return native_status
+            child.wait.side_effect = reap
+            def signal_group(pid, sig):
+                self.assertEqual(pid, 12345)
+                if sig != 0:
+                    self.assertEqual(sig, contract.native_read.signal.SIGKILL)
+                    self.assertFalse(reaped[0])
+                    events.append("group-signal")
+                    failure = {"denied": PermissionError("DO-NOT-PRINT"), "failed": OSError("DO-NOT-PRINT"),
+                               "absent": ProcessLookupError(), "cancelled": KeyboardInterrupt()}.get(pre_signal)
+                    if failure is not None:
+                        raise failure
+                    return
+                self.assertTrue(reaped[0] and out.closed and err.closed)
+                self.assertLess(now[0], 102.0)
+                events.append("lookup")
+                if lookup in ("absent", "late-absence"):
+                    if lookup == "late-absence":
+                        now[0] = 102.0
+                    raise ProcessLookupError
+                failure = {"denied": PermissionError("DO-NOT-PRINT"), "failed": OSError("DO-NOT-PRINT"),
+                           "cancelled": KeyboardInterrupt()}.get(lookup)
+                if failure is not None:
+                    raise failure
+            real_select = contract.native_read.select.select
+            def select_streams(*args):
+                if collection == "timed-out":
+                    now[0] = 101.8
+                    return ([], [], [])
+                if collection == "cancelled":
+                    raise KeyboardInterrupt
+                if collection == "read-failed":
+                    raise OSError("DO-NOT-PRINT")
+                return real_select(*args)
+            def clock():
+                if reaped[0] and out.closed and err.closed:
+                    post_close_clock_calls[0] += 1
+                    if post_close_clock_calls[0] == clock_failure_at:
+                        events.append(f"clock-failure-{clock_failure_at}")
+                        raise clock_failure
+                return now[0]
+            with mock.patch.object(contract.native_read.subprocess, "Popen", return_value=child), \
+                    mock.patch.object(contract.native_read.time, "monotonic", side_effect=clock), \
+                    mock.patch.object(contract.native_read.time, "sleep", side_effect=lambda delay: now.__setitem__(0, now[0] + delay)), \
+                    mock.patch.object(contract.native_read.select, "select", side_effect=select_streams), \
+                    mock.patch.object(contract.native_read.os, "waitid", return_value=SimpleNamespace(
+                        si_code=os.CLD_EXITED, si_status=native_status)), \
+                    mock.patch.object(contract.native_read.os, "killpg", side_effect=signal_group):
+                result = contract.native_read.native_poll_read(["fake"], 102, teardown_observations=metadata)
+            child.wait.assert_called_once()
+            child.poll.assert_not_called()
+            stdout.close.assert_called_once()
+            stderr.close.assert_called_once()
+        self.assertNotIn("DO-NOT-PRINT", repr((result, metadata)))
+        return result, metadata, events
+
+    def test_denied_signal_then_verified_post_reap_absence_keeps_native_zero_and_seven(self) -> None:
+        for status, expected_stdout in ((0, b"200"), (7, b"000")):
+            with self.subTest(status=status):
+                result, metadata, events = self.collect(native_status=status)
+                self.assertEqual(result, ("completed", status, expected_stdout, b""))
+                self.assertEqual(metadata, {"signal": "denied"})
+                self.assertEqual(events, ["group-signal", "leader-signal", "reap", "stdout-close", "stderr-close", "lookup"])
+
+    def test_present_denied_failed_cancelled_or_late_lookup_never_verifies_absence(self) -> None:
+        for status in (0, 7):
+            for lookup in ("present", "denied", "failed", "cancelled", "late-absence", "already-expired"):
+                with self.subTest(status=status, lookup=lookup):
+                    result, metadata, events = self.collect(native_status=status, lookup=lookup)
+                    self.assertEqual(result, ("termination-unverified", status, b"", b""))
+                    self.assertEqual(metadata, {"signal": "denied"})
+                    self.assertEqual("lookup" in events, lookup != "already-expired")
+
+    def test_reap_or_either_stream_close_uncertainty_cannot_be_cleared(self) -> None:
+        for failure in (OSError("DO-NOT-PRINT"), KeyboardInterrupt(), subprocess.TimeoutExpired("fake", 0.25)):
+            with self.subTest(reap_failure=type(failure)):
+                result, metadata, events = self.collect(reap_failure=failure)
+                self.assertEqual(result, ("termination-unverified", 7, b"", b""))
+                self.assertNotIn("lookup", events)
+                self.assertEqual(metadata["signal"], "denied")
+        for stream in ("stdout", "stderr"):
+            for failure in (OSError("DO-NOT-PRINT"), KeyboardInterrupt()):
+                with self.subTest(stream=stream, close_failure=type(failure)):
+                    result, _, events = self.collect(close_failure=failure, close_failure_stream=stream)
+                    self.assertEqual(result, ("termination-unverified", 7, b"", b""))
+                    self.assertNotIn("lookup", events)
+                    self.assertIn("stdout-close", events)
+                    self.assertIn("stderr-close", events)
+
+    def test_signal_metadata_and_teardown_cancellation_stay_distinct_from_positive_absence(self) -> None:
+        for signal_observation in ("sent", "absent", "denied", "failed", "cancelled"):
+            with self.subTest(signal_observation=signal_observation):
+                result, metadata, events = self.collect(pre_signal=signal_observation)
+                self.assertEqual(metadata["signal"], signal_observation)
+                self.assertEqual(result, (("termination-unverified", 7, b"", b"") if signal_observation == "cancelled"
+                                          else ("completed", 7, b"000", b"")))
+                self.assertIn("lookup", events)
+        result, metadata, _ = self.collect(fallback_cancelled=True)
+        self.assertEqual(result, ("termination-unverified", 7, b"", b""))
+        self.assertEqual(metadata["signal"], "denied")
+
+    def test_positive_absence_preserves_underlying_collection_failures_and_resets_metadata(self) -> None:
+        for collection in ("timed-out", "cancelled", "read-failed", "stdout-oversized", "stderr-oversized"):
+            with self.subTest(collection=collection):
+                result, metadata, events = self.collect(collection=collection)
+                self.assertEqual(result[:2], (collection, 7))
+                self.assertEqual(metadata["signal"], "denied")
+                self.assertIn("lookup", events)
+        metadata = {"signal": "denied"}
+        with mock.patch.object(contract.native_read.subprocess, "Popen") as launch:
+            self.assertEqual(contract.native_read.native_poll_read(["fake"], time.monotonic() - 1,
+                teardown_observations=metadata), ("timed-out", None, b"", b""))
+        launch.assert_not_called()
+        self.assertEqual(metadata, {"signal": "not-run"})
+
+    def test_helper_and_diagnostic_metadata_is_closed_independent_and_private(self) -> None:
+        path = pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock")
+        for value in ("not-run", "sent", "absent", "denied", "failed", "cancelled", "unknown",
+                      "DO-NOT-PRINT/private", "denied\n", None, ["DO-NOT-PRINT"]):
+            for status in (0, 7):
+                with self.subTest(value=value, status=status):
+                    def collect(_arguments, _deadline, *, teardown_observations):
+                        teardown_observations["signal"] = value
+                        return ("completed", status, b"200" if status == 0 else b"000",
+                                b"" if status == 0 else b"curl: (7) Couldn't connect to server\n")
+                    with mock.patch.object(contract.native_read, "native_poll_read", side_effect=collect):
+                        result = contract.readiness_ping(path, "999999999.00")
+                    expected = value if isinstance(value, str) and value in {
+                        "not-run", "sent", "absent", "denied", "failed", "cancelled", "unknown"} else "unknown"
+                    self.assertEqual(result["ping-teardown-signal"], expected)
+                    self.assertEqual(result["ping-curl-exit"], str(status))
+                    self.assertEqual(result["ping-http-status"], "200" if status == 0 else "000")
+                    self.assertEqual(result["ping-collector"], "completed")
+                    validated = contract.readiness_ping_observations("7", "000", "unknown", "completed", value)
+                    self.assertEqual(validated["ping-teardown-signal"], expected)
+                    self.assertEqual(validated["ping-curl-exit"], "7")
+                    self.assertNotIn("DO-NOT-PRINT", repr((result, validated)))
+
+    def test_each_teardown_clock_boundary_retains_native_exit_and_signal_on_interruption_or_error(self) -> None:
+        # Clock calls are counted only after positive reap and BOTH closes:
+        # deadline creation=1, loop condition=2, lookup postcheck/remaining=3,
+        # final expiry after timely absence=4. No process mutation is permitted.
+        boundaries = [("group-deadline", 1, "absent"), ("while-condition", 2, "absent"),
+                      ("ESRCH-postcheck", 3, "absent"), ("late-ESRCH-postcheck", 3, "late-absence"),
+                      ("post-lookup-remaining", 3, "present"), ("final-expiry", 4, "absent")]
+        for boundary, clock_call, lookup in boundaries:
+            for native_status in (0, 7):
+                for failure in (KeyboardInterrupt(), OSError("DO-NOT-PRINT/private-clock")):
+                    with self.subTest(boundary=boundary, status=native_status, failure=type(failure)):
+                        result, metadata, events = self.collect(native_status=native_status, lookup=lookup,
+                            clock_failure=failure, clock_failure_at=clock_call)
+                        self.assertEqual(result, ("termination-unverified", native_status, b"", b""))
+                        self.assertEqual(metadata, {"signal": "denied"})
+                        self.assertEqual(events[-1], f"clock-failure-{clock_call}")
+                        self.assertEqual(events.count("reap"), 1)
+                        self.assertEqual(events.count("group-signal"), 1)
+                        self.assertEqual(events.count("leader-signal"), 1)
+                        self.assertEqual("lookup" in events, clock_call >= 3)
 
 
 class ReadinessDiagnosticTests(unittest.TestCase):
@@ -2458,7 +2662,7 @@ class ReadinessDiagnosticTests(unittest.TestCase):
                                 text=True, timeout=3, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "readiness observations: ping-curl-exit=not-run ping-http-status=unknown "
-                                       "ping-curl-error=unknown ping-collector=not-run "
+                                       "ping-curl-error=unknown ping-collector=not-run ping-teardown-signal=not-run "
                                        "socket=unavailable outer=not-registered state=unverified "
                                        "logs=not-read socket-owner=unknown socket-mode=unknown socket-lifetime=unknown "
                                        "socket-connect=not-checked outer-recheck=not-checked; startup-cause=unestablished\n")
@@ -2480,10 +2684,12 @@ class ReadinessDiagnosticTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(SOURCE), "readiness-diagnostics", "--outer", "bf-docker-core-test",
                                  "--run", "test", "--socket", str(self.socket_path),
                                  "--ping-curl-exit=DO-NOT-PRINT/private-exit",
-                                 "--ping-http-status=DO-NOT-PRINT/private-body"],
+                                 "--ping-http-status=DO-NOT-PRINT/private-body",
+                                 "--ping-teardown-signal=DO-NOT-PRINT/private-signal"],
                                 capture_output=True, text=True, timeout=3, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ping-curl-exit=unknown ping-http-status=unknown", result.stdout)
+        self.assertIn("ping-teardown-signal=unknown", result.stdout)
         self.assertIn("startup-cause=unestablished", result.stdout)
         self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
         self.assertEqual(result.stderr, "")
@@ -2674,7 +2880,7 @@ curl() {{
 }}
 bounded() {{
   if [[ $2 == podman ]]; then printf 'false\\n'; return 0; fi
-  if [[ $4 == readiness-ping ]]; then printf '7 000 unknown completed\\n'; return 0; fi
+  if [[ $4 == readiness-ping ]]; then printf '7 000 unknown completed unknown\\n'; return 0; fi
   [[ $1 == 12s && $2 == python3 && $4 == readiness-diagnostics && $5 == --registered ]] || return 99
   if (({diagnostic_status} == 0)); then
     printf 'readiness observations: outer=verified state=exited logs=empty; startup-cause=unestablished\\n'
@@ -2850,7 +3056,7 @@ read() {{
 bounded() {{
   if [[ $2 == podman ]]; then printf 'true\\n'; return 0; fi
   [[ $1 == 5s && $4 == readiness-ping && $7 == --deadline-boottime && $8 == 280.50 ]] || return 99
-  printf '7 000 connect-error-observed completed\\n'
+  printf '7 000 connect-error-observed completed denied\\n'
 }}
 sleep() {{
   [[ $1 == 2 ]] || return 99
@@ -2887,7 +3093,7 @@ read() {{
 }}
 bounded() {{
   [[ $1 == {expected or 'unused'} ]] || return 99
-  printf '0 200 unknown completed\\n'
+  printf '0 200 unknown completed unknown\\n'
 }}
 """ + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path") + \
                     '\nprintf "accepted=%s\\n" "$ping_collector"\n'
@@ -2911,6 +3117,7 @@ bounded() {{
         cases.extend((("0 200 unknown completed\nDO-NOT-PRINT/private", False),
                       ("0 200 DO-NOT-PRINT/private completed", False)))
         for record, accepted in cases:
+            record += " unknown"
             with self.subTest(record=record), tempfile.TemporaryDirectory() as name:
                 socket_path = pathlib.Path(name) / "socket"
                 socket_path.touch()
@@ -2941,6 +3148,7 @@ sleep() {{ return 99; }}
                  ("100.50", "7 000 connect-error-observed completed", 124, False, "wrapper-failed"),
                  ("100.50", "0 200 unknown completed", 124, False, "wrapper-failed")]
         for handoff, record, wrapper_status, accepted, collector in cases:
+            record += " denied"
             with self.subTest(handoff=handoff, wrapper_status=wrapper_status, record=record), \
                     tempfile.TemporaryDirectory() as name:
                 socket_path = pathlib.Path(name) / "socket"
@@ -2974,11 +3182,47 @@ trap cleanup_owned EXIT
                 self.assertEqual(result.stdout, "accepted\n" if accepted else "")
                 self.assertEqual(count_path.read_text(), "original-poll\n")
                 if not accepted:
-                    native_exit, http_status, error, _ = record.split()
+                    native_exit, http_status, error, _, teardown_signal = record.split()
                     self.assertIn(f"ping-curl-exit={native_exit} ping-http-status={http_status} "
-                                  f"ping-curl-error={error} ping-collector={collector}", result.stderr)
+                                  f"ping-curl-error={error} ping-collector={collector} "
+                                  f"ping-teardown-signal={teardown_signal}", result.stderr)
                     self.assertLess(result.stderr.index("readiness observations:"),
                                     result.stderr.index("exact-owned-teardown"))
+
+    def test_readiness_signal_field_is_independent_private_and_preserved_in_failure_fallback(self) -> None:
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        cases = [("7 000 connect-error-observed completed denied", 124, "7", "wrapper-failed", "denied"),
+                 ("0 200 unknown completed DO-NOT-PRINT/private", 0, "0", "unknown", "unknown"),
+                 ("DO-NOT-PRINT/private unknown unknown unknown denied", 0, "unknown", "unknown", "denied"),
+                 ("7 000 unknown completed", 0, "unknown", "unknown", "unknown"),
+                 ("7 000 unknown completed denied extra", 0, "unknown", "unknown", "unknown")]
+        for registered in (False, True):
+            for record, wrapper_status, native_exit, collector, signal_observation in cases:
+                with self.subTest(registered=registered, record=record), tempfile.TemporaryDirectory() as name:
+                    socket_path = pathlib.Path(name) / "socket"
+                    socket_path.touch()
+                    body = f"""registered={str(registered).lower()}
+socket_path={shlex.quote(str(socket_path))}
+outer=bf-docker-core-test
+run_id=test
+contract=unused
+bounded() {{
+  if [[ $2 == podman ]]; then printf 'false\\n'; return 0; fi
+  if [[ $4 == readiness-diagnostics ]]; then return 124; fi
+  printf '%s\\n' {shlex.quote(record)}
+  return {wrapper_status}
+}}
+sleep() {{ return 99; }}
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path")
+                    result = self.bash(body)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(f"ping-curl-exit={native_exit}", result.stderr)
+                    self.assertIn(f"ping-collector={collector} ping-teardown-signal={signal_observation}", result.stderr)
+                    self.assertIn("startup-cause=unestablished", result.stderr)
+                    self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+                    if registered:
+                        self.assertIn("diagnostic=unavailable", result.stderr)
 
     def test_core_journey_uses_exact_id_and_preserves_transport_only_result(self) -> None:
         self.assertIn('verify-candidate --boxferry-root "$boxferry_root"', self.runner)

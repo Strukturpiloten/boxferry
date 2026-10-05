@@ -135,6 +135,7 @@ guard_alive() {
 readiness_failure() {
   local curl_exit=${ping_curl_exit:-not-run} http_status=${ping_http_status:-unknown}
   local curl_error=${ping_curl_error:-unknown} collector=${ping_collector:-not-run}
+  local teardown_signal=${ping_teardown_signal:-not-run}
   [[ $curl_exit =~ ^([0-9]|[1-9][0-9]|not-run|unknown)$ ]] || curl_exit=unknown
   [[ $http_status =~ ^([0-5][0-9]{2}|unknown)$ ]] || http_status=unknown
   case $curl_error in
@@ -145,16 +146,20 @@ readiness_failure() {
     not-run | unknown | completed | oversized | timed-out | cancelled | termination-unverified | launch-failed | read-failed | wrapper-failed | invalid-boundary | invalid-output) ;;
     *) collector=unknown ;;
   esac
+  case $teardown_signal in
+    not-run | sent | absent | denied | failed | cancelled | unknown) ;;
+    *) teardown_signal=unknown ;;
+  esac
   printf '%s\n' "$1" >&2
   # Observation only, before EXIT teardown; bounded() preserves cleanup reserve.
   if [[ $registered == true ]]; then
     bounded 12s python3 "$contract" readiness-diagnostics --registered \
       --outer "$outer" --run "$run_id" --socket "$socket_path" \
       --ping-curl-exit="$curl_exit" --ping-http-status="$http_status" \
-      --ping-curl-error="$curl_error" --ping-collector="$collector" >&2 2> /dev/null ||
-      printf 'readiness observations: ping-curl-exit=%s ping-http-status=%s ping-curl-error=%s ping-collector=%s diagnostic=unavailable; startup-cause=unestablished\n' "$curl_exit" "$http_status" "$curl_error" "$collector" >&2
+      --ping-curl-error="$curl_error" --ping-collector="$collector" --ping-teardown-signal="$teardown_signal" >&2 2> /dev/null ||
+      printf 'readiness observations: ping-curl-exit=%s ping-http-status=%s ping-curl-error=%s ping-collector=%s ping-teardown-signal=%s diagnostic=unavailable; startup-cause=unestablished\n' "$curl_exit" "$http_status" "$curl_error" "$collector" "$teardown_signal" >&2
   else
-    printf 'readiness observations: ping-curl-exit=%s ping-http-status=%s ping-curl-error=%s ping-collector=%s outer=not-registered; startup-cause=unestablished\n' "$curl_exit" "$http_status" "$curl_error" "$collector" >&2
+    printf 'readiness observations: ping-curl-exit=%s ping-http-status=%s ping-curl-error=%s ping-collector=%s ping-teardown-signal=%s outer=not-registered; startup-cause=unestablished\n' "$curl_exit" "$http_status" "$curl_error" "$collector" "$teardown_signal" >&2
   fi
 }
 cleanup_now() {
@@ -619,6 +624,7 @@ ping_curl_exit=not-run
 ping_http_status=unknown
 ping_curl_error=unknown
 ping_collector=not-run
+ping_teardown_signal=not-run
 ping_wrapper_seconds=5
 while true; do
   if [[ -S $socket_path ]]; then
@@ -634,11 +640,19 @@ while true; do
       ping_record=$(bounded "${ping_wrapper_seconds}s" python3 "$contract" readiness-ping \
         --socket "$socket_path" --deadline-boottime "$ping_readiness_deadline" 2> /dev/null) || ping_wrapper_status=$?
       # The helper emits only one closed, atomic record, never native bytes.
-      if [[ $ping_record =~ ^([0-9]|[1-9][0-9]|unknown)\ ([0-5][0-9]{2}|unknown)\ (unknown|connect-error-observed|timeout-error-observed|http-error-observed|proxy-resolution-error-observed|host-resolution-error-observed)\ (completed|oversized|timed-out|cancelled|termination-unverified|launch-failed|read-failed|wrapper-failed|invalid-boundary|invalid-output|unknown)$ ]]; then
-        read -r ping_curl_exit ping_http_status ping_curl_error ping_collector <<< "$ping_record"
+      if [[ $ping_record =~ ^([0-9]|[1-9][0-9]|unknown)\ ([0-5][0-9]{2}|unknown)\ (unknown|connect-error-observed|timeout-error-observed|http-error-observed|proxy-resolution-error-observed|host-resolution-error-observed)\ (completed|oversized|timed-out|cancelled|termination-unverified|launch-failed|read-failed|wrapper-failed|invalid-boundary|invalid-output|unknown)\ ([^[:space:]]+)$ ]]; then
+        read -r ping_curl_exit ping_http_status ping_curl_error ping_collector ping_teardown_signal <<< "$ping_record"
       else
         ping_curl_exit=unknown ping_http_status=unknown ping_curl_error=unknown ping_collector=unknown
+        ping_teardown_signal=unknown
+        if [[ $ping_record =~ ^[^[:space:]]+\ [^[:space:]]+\ [^[:space:]]+\ [^[:space:]]+\ ([^[:space:]]+)$ ]]; then
+          ping_teardown_signal=${BASH_REMATCH[1]}
+        fi
       fi
+      case $ping_teardown_signal in
+        not-run | sent | absent | denied | failed | cancelled | unknown) ;;
+        *) ping_teardown_signal=unknown ping_collector=unknown ;;
+      esac
       ((ping_wrapper_status == 0)) || ping_collector="wrapper-failed"
       # Recheck absolute expiry after wrapper handoff, not only before launch.
       if ! read -r ping_handoff_uptime _ < /proc/uptime || [[ ! $ping_handoff_uptime =~ ^[0-9]{1,12}\.[0-9]{2}$ ]]; then

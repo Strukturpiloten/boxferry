@@ -187,7 +187,7 @@ do not diagnose the historical failed run or provide fresh native evidence.
 
 The last actual existing `/_ping` poll supplies one atomic record: `ping-curl-exit` (0–99,
 `not-run`, or `unknown`), `ping-http-status` (exactly three digits, 000–599, or `unknown`),
-`ping-curl-error`, and `ping-collector`. The only added curl argument is `--show-error`;
+`ping-curl-error`, `ping-collector`, and `ping-teardown-signal`. The only added curl argument is `--show-error`;
 executable selection and inherited environment stay unchanged. Curl still discards the response
 body and uses fixed `%{http_code}` write-out. Separate private stdout/stderr buffers retain at most
 16 KiB each. Overflow clears only the affected buffer and continues bounded draining rather than
@@ -204,6 +204,18 @@ failure, invalid boundary/output, wrapper failure or unverified teardown. A coll
 never reported as native curl exit 28. Shell and helper independently validate closed fields,
 including the diagnostic-unavailable fallback. A missing socket makes no request and preserves
 the last actual record; before any poll it remains `not-run`/`unknown`.
+
+`ping-teardown-signal` retains the original owned-group signal observation: `not-run`, `sent`,
+`absent`, `denied`, `failed`, `cancelled`, or `unknown`. Before any poll it is `not-run`; mocked or
+malformed observations are `unknown`, independently of native status. A denied or failed pre-reap
+signal does not suppress a bounded read-only signal-0 absence lookup after successful leader reap
+and both stream closes. Only ESRCH/`ProcessLookupError` before the lookup deadline proves absence;
+present, denied, failed, cancelled or late lookup remains unverified. No nonzero signal or second
+reap occurs after successful reap. Positive absence clears only group-teardown uncertainty and
+never erases the original signal observation, collection failures, timeout/overflow, teardown
+cancellation or uncertain reap/close. It changes neither curl privileges nor requests and does
+not establish a daemon startup cause or native admission. Failure fallbacks preserve the validated
+signal field; no exception, process identity or raw native text is emitted.
 
 The five-second curl request limit, 180-second readiness budget, two-second cadence, private
 socket URL, failure-before-apply and diagnostics-before-teardown order remain. The collector's
