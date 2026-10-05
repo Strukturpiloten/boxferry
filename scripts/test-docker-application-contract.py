@@ -1788,6 +1788,30 @@ class PingObservationTests(unittest.TestCase):
         self.assertEqual(self.collect("import sys; sys.stdout.write('000'); sys.exit(28)")[:2], ("completed", 28))
         self.assertEqual(self.collect("import sys; sys.stdout.write('200')"), ("completed", 0, b"200", b""))
 
+    def test_readiness_curl_has_exact_isolated_argv_and_one_original_invocation(self) -> None:
+        socket_path = pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock")
+        expected = ["curl", "-q", "--noproxy", "*", "--fail", "--silent", "--show-error", "--max-time", "5",
+                    "--max-filesize", "65536", "--output", "/dev/null", "--write-out", "%{http_code}",
+                    "--unix-socket", str(socket_path), "http://localhost/_ping"]
+        for native_status, http in ((0, "200"), (7, "000")):
+            with self.subTest(native_status=native_status):
+                def collect(arguments, deadline, *, teardown_observations):
+                    self.assertEqual(arguments, expected)
+                    self.assertEqual(deadline, 103)
+                    teardown_observations["signal"] = "denied"
+                    return ("completed", native_status, http.encode(),
+                            b"" if native_status == 0 else b"curl: (7) Couldn't connect to server\n")
+                with mock.patch.object(contract.time, "clock_gettime", return_value=150), \
+                        mock.patch.object(contract.time, "monotonic", return_value=100), \
+                        mock.patch.object(contract.native_read, "native_poll_read", side_effect=collect) as call:
+                    result = contract.readiness_ping(socket_path, "153.00")
+                call.assert_called_once()
+                self.assertEqual(set(call.call_args.kwargs), {"teardown_observations"})
+                self.assertEqual(result["ping-curl-exit"], str(native_status))
+                self.assertEqual(result["ping-http-status"], http)
+                self.assertEqual(result["ping-teardown-signal"], "denied")
+                self.assertEqual(result["ping-collector"], "completed")
+
     def test_overflow_continues_draining_both_streams_and_preserves_native_completion(self) -> None:
         for stream in ("stdout", "stderr", "both"):
             with self.subTest(stream=stream):
@@ -1886,7 +1910,7 @@ class PingObservationTests(unittest.TestCase):
                     b"curl: (7) Couldn't connect to server\n")) as collect:
             result = contract.readiness_ping(pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock"), "153.00")
         self.assertEqual(collect.call_args.args[1], 103)
-        self.assertEqual(collect.call_args.args[0], ["curl", "--fail", "--silent", "--show-error", "--max-time", "5",
+        self.assertEqual(collect.call_args.args[0], ["curl", "-q", "--noproxy", "*", "--fail", "--silent", "--show-error", "--max-time", "5",
                          "--max-filesize", "65536", "--output", "/dev/null", "--write-out", "%{http_code}",
                          "--unix-socket", "/tmp/boxferry-docker-core.test/socket/docker.sock", "http://localhost/_ping"])
         self.assertEqual(result["ping-curl-error"], "connect-error-observed")
@@ -2698,6 +2722,20 @@ class ReadinessDiagnosticTests(unittest.TestCase):
 class RunnerSafetyTests(unittest.TestCase):
     runner = (pathlib.Path(__file__).parent / "docker-application-conformance.sh").read_text(encoding="utf-8")
 
+    def curl_statements(self) -> list[str]:
+        """Collect literal call sites independently of their option spelling."""
+        statements = []
+        lines = self.runner.splitlines()
+        for index, line in enumerate(lines):
+            if "curl " not in line or line.strip().startswith("for tool in "):
+                continue
+            statement = line.strip()
+            while statement.endswith("\\"):
+                index += 1
+                statement = statement[:-1] + lines[index].strip()
+            statements.append(statement)
+        return statements
+
     def function(self, name: str) -> str:
         start = self.runner.index(f"{name}() {{")
         end = self.runner.index("\n}\n", start) + 3
@@ -2925,7 +2963,7 @@ bounded() {{
                         socket_path.write_bytes(b"")
                     count_path = directory / "curl-count"
                     curl_path = directory / "curl"
-                    expected_args = ["--fail", "--silent", "--show-error", "--max-time", "5", "--max-filesize", "65536",
+                    expected_args = ["-q", "--noproxy", "*", "--fail", "--silent", "--show-error", "--max-time", "5", "--max-filesize", "65536",
                                      "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket",
                                      str(socket_path), "http://localhost/_ping"]
                     curl_path.write_text(f"""#!{sys.executable}
@@ -3590,12 +3628,66 @@ cleanup_bounded() {{
         self.failed_ownership_cleanup("volume")
 
     def test_native_curl_responses_and_pre_watchdog_podman_calls_are_bounded(self) -> None:
-        for line in self.runner.splitlines():
-            if "curl --" in line:
-                self.assertIn("--max-filesize 65536", line)
+        curl_lines = self.curl_statements()
+        self.assertEqual(len(curl_lines), 4)
+        for line in curl_lines:
+            self.assertIn("curl -q --noproxy '*' ", line)
+            self.assertIn("--max-filesize 65536", line)
+            self.assertIn("--max-time 10", line)
         self.assertIn("bounded 15s podman info --format '{{.Host.Security.Rootless}}'", self.runner)
         self.assertIn('podman_presence cleanup_bounded container "$outer"', self.runner)
         self.assertIn('podman_presence cleanup_bounded volume "$storage_volume"', self.runner)
+
+    def test_all_four_shell_curl_sites_have_exact_isolated_get_argv_and_single_invocations(self) -> None:
+        statements = self.curl_statements()
+        self.assertEqual(len(statements), 4)
+        self.assertEqual(sum(statement.startswith("inner_status=") for statement in statements), 2)
+        self.assertEqual(sum(statement.startswith("version_json=") for statement in statements), 1)
+        self.assertEqual(sum(statement.startswith("info_json=") for statement in statements), 1)
+        with tempfile.TemporaryDirectory() as name:
+            directory = pathlib.Path(name)
+            socket_path = directory / "DO-NOT-CONNECT.sock"
+            calls = directory / "calls.jsonl"
+            wrapper_calls = directory / "wrappers"
+            # Entire argv literals assert default GET, URLs, counts and limits;
+            # each source call site is evaluated once without native resources.
+            cleanup = ["-q", "--noproxy", "*", "--silent", "--max-time", "10", "--max-filesize", "65536",
+                       "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket", str(socket_path),
+                       "http://localhost/v1.41/containers/bf-docker-core/json"]
+            version = ["-q", "--noproxy", "*", "--fail", "--silent", "--max-time", "10", "--max-filesize", "65536",
+                       "--unix-socket", str(socket_path), "http://localhost/version"]
+            info = ["-q", "--noproxy", "*", "--fail", "--silent", "--max-time", "10", "--max-filesize", "65536",
+                    "--unix-socket", str(socket_path), "http://localhost/info"]
+            expected = [cleanup, cleanup, version, info]
+            curl = directory / "curl"
+            curl.write_text(f"""#!{sys.executable}
+import json, pathlib, sys
+calls = pathlib.Path({str(calls)!r})
+observed = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+expected = {expected!r}
+with calls.open('a') as stream:
+    stream.write(json.dumps(sys.argv[1:]) + '\\n')
+if len(observed) >= len(expected) or sys.argv[1:] != expected[len(observed)]:
+    sys.exit(98)
+sys.stdout.write('200' if len(observed) == 0 else '404' if len(observed) == 1 else '{{}}')
+""", encoding="utf-8")
+            curl.chmod(0o700)
+            body = f"""PATH={shlex.quote(name)}:"$PATH"
+socket_path={shlex.quote(str(socket_path))}
+api_version=1.41
+failure=0
+cleanup_bounded() {{
+  printf '%s\\n' "$1" >> {shlex.quote(str(wrapper_calls))}
+  [[ $1 == 10s ]] || return 99
+  shift
+  "$@"
+}}
+""" + "\n".join(statements) + '\n[[ $failure == 0 && $inner_status == 404 && $version_json == "{}" && $info_json == "{}" ]]\n'
+            result = self.bash(body)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout + result.stderr, "")
+            self.assertEqual([json.loads(line) for line in calls.read_text().splitlines()], expected)
+            self.assertEqual(wrapper_calls.read_text(), "10s\n10s\n")
 
     def test_retained_host_cache_report_names_exact_pinned_inputs(self) -> None:
         body = """outer_image=ghcr.io/example/engine:v1@sha256:aaaa

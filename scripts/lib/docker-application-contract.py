@@ -1471,7 +1471,7 @@ def readiness_ping(socket_path: pathlib.Path, deadline_boottime: str) -> dict[st
         # Account Python/import/wrapper startup using the caller's absolute clock.
         remaining = float(deadline_boottime) - time.clock_gettime(time.CLOCK_BOOTTIME)
         outcome, status, stdout, stderr = native_read.native_poll_read(
-            ["curl", "--fail", "--silent", "--show-error", "--max-time", "5", "--max-filesize", "65536",
+            ["curl", "-q", "--noproxy", "*", "--fail", "--silent", "--show-error", "--max-time", "5", "--max-filesize", "65536",
              "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket", str(socket_path),
              "http://localhost/_ping"], time.monotonic() + remaining, teardown_observations=teardown)
         result["ping-teardown-signal"] = (teardown.get("signal") if isinstance(teardown.get("signal"), str)
