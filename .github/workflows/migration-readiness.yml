@@ -60,6 +60,9 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Check trusted-live smoke and apply profile contracts
+        run: python3 scripts/test-migration-readiness.py --coverage-contracts
+
       - id: selection
         name: Plan exact serial selection
         run: |
@@ -184,6 +187,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Check trusted-live smoke and apply profile contracts
+        run: python3 scripts/test-migration-readiness.py --coverage-contracts
+
       - id: plan
         name: Bind exact catalogue and worker descriptors
         run: |

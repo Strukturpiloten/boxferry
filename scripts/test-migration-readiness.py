@@ -340,6 +340,103 @@ class MigrationReadinessTests(unittest.TestCase):
             self.assertEqual(len(plan["gaps"]), 4)
             self.assertFalse(any(gap["state"] == "passed" for gap in plan["gaps"]))
 
+    def test_trusted_live_smoke_claims_match_the_unchanged_commands(self) -> None:
+        catalogue = MODULE.load_catalogue()
+        smoke_cells = {
+            "podman-api-5.4-rootless": "podman-5.4-rootless",
+            "podman-api-6.1-rootful": "podman-6.1-rootful",
+            "podman-api-6.1-rootless": "podman-6.1-rootless",
+        }
+        for task_id, cell in smoke_cells.items():
+            with self.subTest(task=task_id):
+                task = MODULE.by_id(catalogue["tasks"], task_id, "task")
+                self.assertEqual(
+                    task["command"],
+                    [
+                        "bash",
+                        "scripts/podman-live-conformance.sh",
+                        "--profile",
+                        "smoke",
+                        "--matrix-cell",
+                        cell,
+                        "--engine",
+                        "podman",
+                    ],
+                )
+                self.assertNotIn("apply/reacquire", task["runtime-claim"])
+                self.assertNotIn("disposable", task["runtime-claim"])
+        rootful = MODULE.by_id(catalogue["tasks"], "podman-api-6.1-rootful", "task")
+        self.assertEqual(
+            rootful["runtime-claim"],
+            "read-only acquisition, exporter and diagnostic smoke contracts; "
+            "generated output is not executed",
+        )
+
+    def test_apply_requires_the_real_complete_profile_gate(self) -> None:
+        runner = (ROOT / "scripts/podman-live-conformance.sh").read_text()
+        function = re.search(
+            r"(?ms)^is_complete_resource_profile\(\) \{\n.*?^\}", runner
+        )
+        self.assertIsNotNone(function)
+        assert function is not None
+        script = (
+            function.group(0)
+            + '\nprofile="$1"\n'
+            + "if is_complete_resource_profile; then printf enabled; "
+            + "else printf disabled; fi\n"
+        )
+        for profile, expected in (
+            ("smoke", "disabled"),
+            ("full-container", "enabled"),
+        ):
+            with self.subTest(profile=profile):
+                result = subprocess.run(
+                    ["bash", "-c", script, "complete-profile-contract", profile],
+                    cwd=ROOT,
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                )
+                self.assertEqual(result.stdout, expected)
+        complete_blocks = re.findall(
+            r"(?ms)^  if is_complete_resource_profile; then\n"
+            r"(?:(?!^  fi$).)*?^  fi$",
+            runner,
+        )
+        apply_blocks = [
+            block for block in complete_blocks if "run_external_apply_reacquire" in block
+        ]
+        self.assertEqual(len(apply_blocks), 1)
+        self.assertRegex(
+            apply_blocks[0],
+            r"if should_run_external_apply \"\$\{id\}\"; then\n"
+            r"\s+progress_run 'externally apply and reacquire Podman plan' \\\n"
+            r"\s+run_external_apply_reacquire \"\$\{socket\}\"",
+        )
+
+    def test_fast_coverage_contracts_run_in_every_migration_readiness_gate(self) -> None:
+        command = "python3 scripts/test-migration-readiness.py --coverage-contracts"
+        ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/migration-readiness.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(ci.count(command), 1)
+        self.assertEqual(workflow.count(command), 2)
+        for token in (
+            "name: Offline migration readiness",
+            "name: Plan exact serial selection",
+            "name: Pre-release exact-SHA plan",
+        ):
+            with self.subTest(gate=token):
+                self.assertIn(token, ci + workflow)
+        self.assertLess(ci.index(command), ci.index("Run shared offline tier"))
+        self.assertLess(workflow.index(command), workflow.index("Plan exact serial selection"))
+        pre_release_plan = workflow.index("name: Pre-release exact-SHA plan")
+        self.assertLess(
+            workflow.index(command, pre_release_plan),
+            workflow.index("name: Bind exact catalogue and worker descriptors", pre_release_plan),
+        )
+
     def test_supabase_task_retains_reviewed_bounds_and_runner_command(self) -> None:
         catalogue = MODULE.load_catalogue()
         task = MODULE.by_id(catalogue["tasks"], "supabase-application", "task")
@@ -2031,5 +2128,21 @@ class MigrationReadinessTests(unittest.TestCase):
                 MODULE.collect(args)
 
 
+FAST_COVERAGE_CONTRACTS = (
+    "test_trusted_live_smoke_claims_match_the_unchanged_commands",
+    "test_apply_requires_the_real_complete_profile_gate",
+    "test_fast_coverage_contracts_run_in_every_migration_readiness_gate",
+)
+
+
 if __name__ == "__main__":
-    unittest.main()
+    coverage_parser = argparse.ArgumentParser(add_help=False)
+    coverage_parser.add_argument("--coverage-contracts", action="store_true")
+    coverage_arguments, unittest_arguments = coverage_parser.parse_known_args()
+    if coverage_arguments.coverage_contracts:
+        suite = unittest.TestSuite(
+            MigrationReadinessTests(test_name) for test_name in FAST_COVERAGE_CONTRACTS
+        )
+        result = unittest.TextTestRunner().run(suite)
+        raise SystemExit(not result.wasSuccessful())
+    unittest.main(argv=[sys.argv[0], *unittest_arguments])

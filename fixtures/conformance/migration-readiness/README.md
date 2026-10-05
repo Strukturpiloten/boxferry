@@ -24,6 +24,12 @@ and retain catalogue, configured binary digest, budgets, outcome, and explicit g
 claim a GitHub attempt or hosted coordinator. `validate-evidence --task TASK` can inspect this
 diagnostic evidence; the hosted collector rejects it, even when the local task passes.
 
+The trusted-live `podman-api-*` tasks select the smoke profile: they prove read-only acquisition
+and exporter contracts, with additional diagnostics on the selected rootful cell, but do not
+execute generated output. Disposable apply/reacquire belongs to eligible cells of the complete
+`full-container` profile. A focused full-cell diagnostic can exercise that path; it still cannot
+replace the complete current-candidate pre-release catalogue.
+
 Serial `offline` and `trusted-live` runs each have an independent wall deadline below the enclosing
 GitHub job timeout. Their runner caps every task to the smaller of its own deadline and the tier
 time remaining, then writes failed and `not-run` evidence when the tier is exhausted. A focused
