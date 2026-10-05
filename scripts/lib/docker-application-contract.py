@@ -8,6 +8,7 @@ must explicitly opt in before this helper can replay one reviewed core request.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import http.client
 import importlib.util
@@ -1430,9 +1431,111 @@ def readiness_ping_observations(curl_exit: str, http_status: str) -> dict[str, s
     }
 
 
+def readiness_socket_observations(socket_path: pathlib.Path, deadline: float) -> dict[str, str]:
+    """Observe one owned-boundary node, never send bytes or authenticate its peer."""
+    result = {"socket": "unavailable", "socket-owner": "unknown", "socket-mode": "unknown",
+              "socket-lifetime": "unknown", "socket-connect": "not-checked"}
+    if sys.platform != "linux" or not hasattr(os, "O_PATH") or not pathlib.Path("/proc/self/fd").is_dir():
+        return result
+    descriptors = []
+    def stamp(metadata):
+        return (metadata.st_dev, metadata.st_ino, metadata.st_mode, metadata.st_uid, metadata.st_gid,
+                metadata.st_mtime_ns, metadata.st_ctime_ns)
+    try:
+        if time.monotonic() >= deadline:
+            result["socket-connect"] = "timed-out"
+            return result
+        root = os.open(socket_path.parent.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptors.append(root)
+        root_metadata = os.fstat(root)
+        require(stat.S_IMODE(root_metadata.st_mode) == 0o700 and root_metadata.st_uid == os.geteuid(),
+                "readiness private root differs")
+        directory = os.open("socket", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+        descriptors.append(directory)
+        directory_metadata = os.fstat(directory)
+        try:
+            leaf = os.open("docker.sock", os.O_PATH | os.O_NOFOLLOW, dir_fd=directory)
+        except FileNotFoundError:
+            result.update({"socket": "absent", "socket-connect": "missing"})
+            leaf_metadata = None
+        else:
+            descriptors.append(leaf)
+            leaf_metadata = os.fstat(leaf)
+            if not stat.S_ISSOCK(leaf_metadata.st_mode):
+                result.update({"socket": "not-socket", "socket-connect": "not-socket"})
+            else:
+                result.update({"socket": "socket",
+                               "socket-owner": "self" if leaf_metadata.st_uid == os.geteuid() else "other",
+                               "socket-mode": "owner-only" if stat.S_IMODE(leaf_metadata.st_mode) & 0o077 == 0
+                               else "shared"})
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    result["socket-connect"] = "timed-out"
+                else:
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                        probe.settimeout(min(1.0, remaining))
+                        try:
+                            # The held O_PATH leaf selects the original inode even
+                            # if the directory entry is replaced before connect.
+                            endpoint = f"/proc/self/fd/{leaf}"
+                            require(stamp(os.stat(endpoint)) == stamp(leaf_metadata),
+                                    "readiness held socket reference differs")
+                            probe.connect(endpoint)
+                            result["socket-connect"] = "connected"
+                        except TimeoutError:
+                            result["socket-connect"] = "timed-out"
+                        except OSError as error:
+                            result["socket-connect"] = {
+                                errno.ECONNREFUSED: "refused", errno.ENOENT: "missing",
+                                errno.EACCES: "permission-denied", errno.EPERM: "permission-denied",
+                                errno.ETIMEDOUT: "timed-out",
+                            }.get(error.errno, "unknown")
+        try:
+            current_leaf = os.stat("docker.sock", dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            current_leaf = None
+        stable = (stamp(socket_path.parent.parent.lstat()) == stamp(root_metadata)
+                  and stamp(os.stat("socket", dir_fd=root, follow_symlinks=False)) == stamp(directory_metadata)
+                  and (current_leaf is None and leaf_metadata is None
+                       or current_leaf is not None and leaf_metadata is not None
+                       and stamp(current_leaf) == stamp(leaf_metadata)))
+        if time.monotonic() >= deadline:
+            result.update({"socket": "unavailable", "socket-owner": "unknown", "socket-mode": "unknown",
+                           "socket-lifetime": "unknown", "socket-connect": "timed-out"})
+            return result
+        result["socket-lifetime"] = "stable" if stable else "changed"
+        if not stable:
+            result.update({"socket": "unavailable", "socket-owner": "unknown", "socket-mode": "unknown",
+                           "socket-connect": "unknown"})
+    except (OSError, ContractError):
+        result.update({"socket": "unavailable", "socket-owner": "unknown", "socket-mode": "unknown",
+                       "socket-lifetime": "unknown", "socket-connect": "unknown"})
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                result.update({"socket": "unavailable", "socket-owner": "unknown", "socket-mode": "unknown",
+                               "socket-lifetime": "unknown", "socket-connect": "unknown"})
+    return result
+
+
+def readiness_outer_record(raw: bytes, outer: str) -> dict:
+    record = volume_document(raw)
+    require(set(record) == {"id", "name", "labels", "state", "running"}
+            and isinstance(record["id"], str) and DIGEST_PATTERN.fullmatch(record["id"]) is not None
+            and record["name"] == outer and isinstance(record["labels"], dict)
+            and all(isinstance(key, str) and isinstance(value, str) for key, value in record["labels"].items())
+            and isinstance(record["state"], str) and type(record["running"]) is bool,
+            "readiness inspect shape differs")
+    return record
+
+
 def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, registered: bool) -> dict[str, str]:
     """Private observations only; this cannot establish startup cause or readiness."""
-    result = {"socket": "unavailable", "outer": "not-registered", "state": "unverified", "logs": "not-read"}
+    result = {"socket": "unavailable", "outer": "not-registered", "state": "unverified", "logs": "not-read",
+              "socket-owner": "unknown", "socket-mode": "unknown", "socket-lifetime": "unknown",
+              "socket-connect": "not-checked", "outer-recheck": "not-checked"}
     if not registered or re.fullmatch(r"[A-Za-z0-9_]{1,64}", run) is None or outer != f"bf-docker-core-{run}":
         return result
     if socket_path != pathlib.Path(f"/tmp/boxferry-docker-core.{run}/socket/docker.sock"):
@@ -1447,13 +1550,6 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
     except (OSError, ContractError):
         result["outer"] = "invalid-boundary"
         return result
-    try:
-        mode = socket_path.lstat().st_mode
-        result["socket"] = "socket" if stat.S_ISSOCK(mode) else "not-socket"
-    except FileNotFoundError:
-        result["socket"] = "absent"
-    except OSError:
-        pass
     previous = {}
     def cancelled(_signum, _frame):
         raise KeyboardInterrupt
@@ -1465,13 +1561,7 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
             result["outer"] = outcome
             return result
         try:
-            record = volume_document(raw)
-            require(set(record) == {"id", "name", "labels", "state", "running"}
-                    and isinstance(record["id"], str) and DIGEST_PATTERN.fullmatch(record["id"]) is not None
-                    and record["name"] == outer and isinstance(record["labels"], dict)
-                    and all(isinstance(key, str) and isinstance(value, str) for key, value in record["labels"].items())
-                    and isinstance(record["state"], str) and type(record["running"]) is bool,
-                    "readiness inspect shape differs")
+            record = readiness_outer_record(raw, outer)
         except ContractError:
             result["outer"] = "malformed"
             return result
@@ -1484,10 +1574,27 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
             result["state"] = state if record["running"] == (state == "running") else "inconsistent"
         else:
             result["state"] = "unknown"
+        result.update(readiness_socket_observations(socket_path, deadline))
         outcome, raw = readiness_read(["podman", "logs", "--tail", "80", record["id"]], deadline, merge_output=True)
         result["logs"] = readiness_log_category(raw) if outcome == "read" else outcome
+        outcome, raw = readiness_read(["podman", "inspect", "--format", READINESS_INSPECT_FORMAT,
+                                       record["id"]], deadline)
+        result["outer-recheck"] = outcome
+        if outcome == "read":
+            try:
+                current = readiness_outer_record(raw, outer)
+                result["outer-recheck"] = "stable" if (
+                    current["id"] == record["id"]
+                    and current["labels"].get("io.boxferry.docker-core-run") == run) else "changed"
+            except ContractError:
+                result["outer-recheck"] = "malformed"
+        if result["outer-recheck"] != "stable":
+            result.update({"socket": "unavailable", "socket-owner": "unknown", "socket-mode": "unknown",
+                           "socket-lifetime": "unknown", "socket-connect": "unknown"})
     except KeyboardInterrupt:
         result["logs"] = "cancelled"
+        result.update({"socket": "unavailable", "socket-owner": "unknown", "socket-mode": "unknown",
+                       "socket-lifetime": "unknown", "socket-connect": "unknown", "outer-recheck": "cancelled"})
         if result["outer"] != "verified":
             result["outer"] = "cancelled"
     finally:
