@@ -7,6 +7,17 @@ Prometheus metric and a second service writes one deterministic log line. Alloy 
 remote-writes that metric to Prometheus, tails the test-owned log volume, and pushes the line to
 Loki. It never mounts a host runtime socket, host log directory, or production collector path.
 
+Serialized OCI image-ID verification and stable-reference restoration remain nested CLI integrity
+steps before API activation. Loaded-image presence readbacks follow activation and use the bounded
+host client against the explicit owned Unix socket. Network and boundary-peer creation require
+confirmed absence; missing sockets,
+diagnostics, and unknown observations abort before the corresponding mutation, without an
+inner-exec fallback. Image loading and Alloy validation retain their original mutation wrappers.
+Offline mocks cover this boundary; native application validation must independently verify remote
+image-query compatibility on the reviewed 6.1 target.
+Configuration setup and fixture-copy failures retain their original status and stop API activation,
+including when callers invoke preparation conditionally.
+
 The authored Alloy scrape interval is two seconds and its explicit timeout is one second. The
 timeout remains strictly below the interval so the pinned Alloy release can load the configuration
 and the live acceptance can distinguish configuration failure from missing metric ingestion.

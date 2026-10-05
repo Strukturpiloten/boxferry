@@ -235,15 +235,38 @@ observability_prepare_image_archive() {
 }
 
 observability_assert_loaded_images() {
-  local outer=$1 fixture id nested_reference
+  local socket=$1 fixture id nested_reference status
   fixture="$(observability_fixture_root)" || return $?
   [[ -s "${fixture}/images.tsv" ]] || return 1
   while IFS=$'\t' read -r id _ _ _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     nested_reference="$(observability_image_reference "${id}")" || return $?
-    engine_operation "verify loaded observability ${id} image" \
-      exec "${outer}" podman image exists "${nested_reference}" || return $?
+    status=0
+    observability_presence "${socket}" image "${nested_reference}" || status=$?
+    if ((status != 0)); then
+      printf 'Could not verify loaded observability %s image.\n' "${id}" >&2
+      return "${status}"
+    fi
   done < "${fixture}/images.tsv" || return $?
+}
+
+observability_presence() {
+  local socket=$1 kind=$2 name=$3 status=0
+  if [[ ! -S "${socket}" ]]; then
+    # shellcheck disable=SC2034 # Shared presence state is sticky for the owning runner.
+    native_presence_unverified=true
+    printf '%s\n' 'Observability presence requires the explicit owned Unix socket.' >&2
+    return 2
+  fi
+  native_presence 90s "${engine}" "${kind}" "${name}" "${socket}" || status=$?
+  case "${status}" in
+    0 | 1) return "${status}" ;;
+    *)
+      # shellcheck disable=SC2034 # Shared presence state is consumed by cleanup.
+      native_presence_unverified=true
+      return 2
+      ;;
+  esac
 }
 
 observability_prepare_application_target() {
@@ -258,11 +281,11 @@ observability_prepare_application_target() {
   }
   engine_operation 'copy rootless observability network configuration' cp \
     "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" \
-    "${outer}:/tmp/99-boxferry-live.conf"
+    "${outer}:/tmp/99-boxferry-live.conf" || return $?
   # shellcheck disable=SC2016 # HOME expands inside the nested target.
   engine_operation 'prepare rootless observability network configuration' \
     exec "${outer}" /bin/sh -ceu \
-    'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"'
+    'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"' || return $?
   # shellcheck disable=SC2016 # Archive loop expands inside the nested target.
   timed_operation 15m 'load digest-pinned observability application archives' \
     "${engine}" exec "${target}" /bin/sh -ceu '
@@ -282,12 +305,11 @@ observability_prepare_application_target() {
     nested_reference="$(observability_image_reference "${id}")" || return $?
     restore_nested_archive_alias "${outer}" "${alias}" "${nested_reference}" || return $?
   done < "${fixture}/images.tsv" || return $?
-  observability_assert_loaded_images "${outer}" || return $?
   destination="/tmp/boxferry-fixture/${prefix}"
   engine_operation 'create disposable observability fixture directory' \
-    exec "${outer}" mkdir -p -- "${destination}"
+    exec "${outer}" mkdir -p -- "${destination}" || return $?
   engine_operation 'copy reviewed observability fixture' \
-    cp "${fixture}/." "${outer}:${destination}"
+    cp "${fixture}/." "${outer}:${destination}" || return $?
   if ! engine_operation 'validate reviewed observability Alloy configuration' \
     exec "${outer}" podman run --rm --pull=never --network none \
     --volume "${destination}/config.alloy:/etc/alloy/config.alloy:ro" \
@@ -296,7 +318,8 @@ observability_prepare_application_target() {
     printf '%s\n' 'Pinned Alloy configuration validation failed.' >&2
     return 1
   fi
-  activate_outer_runtime "${socket_directory}"
+  activate_outer_runtime "${socket_directory}" || return $?
+  observability_assert_loaded_images "${socket_directory}/podman.sock" || return $?
 }
 
 observability_remote() {
@@ -366,18 +389,31 @@ observability_expect_collision() {
 }
 
 observability_create_edge_and_peer() {
-  local socket=$1 prefix=$2 run=$3
-  observability_remote "${socket}" network exists "${prefix}-observability-edge" 2> /dev/null ||
-    observability_remote "${socket}" network create \
-      --label "io.boxferry.live-run=${run}" --label io.boxferry.shared=true \
-      "${prefix}-observability-edge" > /dev/null
-  observability_remote "${socket}" container exists "${prefix}-observability-boundary-peer" 2> /dev/null ||
-    observability_remote "${socket}" run --pull=never --detach \
-      --name "${prefix}-observability-boundary-peer" \
-      --label "io.boxferry.live-run=${run}" \
-      --label "io.boxferry.application=${prefix}-boundary" \
-      --network "${prefix}-observability-edge" \
-      "$(observability_image_reference producer)" sleep 86400 > /dev/null
+  local socket=$1 prefix=$2 run=$3 status=0
+  observability_presence "${socket}" network "${prefix}-observability-edge" || status=$?
+  case "${status}" in
+    0) ;;
+    1)
+      observability_remote "${socket}" network create \
+        --label "io.boxferry.live-run=${run}" --label io.boxferry.shared=true \
+        "${prefix}-observability-edge" > /dev/null || return $?
+      ;;
+    *) return 2 ;;
+  esac
+  status=0
+  observability_presence "${socket}" container "${prefix}-observability-boundary-peer" || status=$?
+  case "${status}" in
+    0) return 0 ;;
+    1)
+      observability_remote "${socket}" run --pull=never --detach \
+        --name "${prefix}-observability-boundary-peer" \
+        --label "io.boxferry.live-run=${run}" \
+        --label "io.boxferry.application=${prefix}-boundary" \
+        --network "${prefix}-observability-edge" \
+        "$(observability_image_reference producer)" sleep 86400 > /dev/null
+      ;;
+    *) return 2 ;;
+  esac
 }
 
 observability_create_cli_metrics_producer() {
