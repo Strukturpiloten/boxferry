@@ -99,7 +99,17 @@ def source_binding(args) -> dict:
     pins = contract.canonical_images(str(args.native_root), args.native_revision, args.native_script_sha256)
     source = contract.bounded_regular_bytes(args.native_root / "scripts/native-conformance.sh", 512 * 1024)
     literal = b'curl -q --noproxy \'*\' -fs --max-time 5 --unix-socket "$socket" http://localhost/_ping >/dev/null'
-    need(source.count(literal) == 1)
+    # The bound native runner has a loop poll AND a final confirmation. Admit
+    # those two literal call sites, not an arbitrary count or a comment match.
+    lines = source.splitlines()
+    loop_call = b"    if " + literal + b"; then break; fi"
+    final_call = b"[[ -S $socket ]] && " + literal + b" || {"
+    deadline = b"deadline=$((SECONDS + 360))"
+    loop = b"while (( SECONDS < deadline )); do"
+    need(source.count(literal) == 2 and all(lines.count(line) == 1 for line in (loop_call, final_call, deadline, loop)))
+    begin, first, final = lines.index(loop), lines.index(loop_call), lines.index(final_call)
+    need(begin == lines.index(deadline) + 1 and begin < first < final
+         and lines[first + 1:final].count(b"done") == 1 and lines[final - 1] == b"done")
     return {"native_revision": args.native_revision,
             "boxferry_revision": contract.git(HERE.parent.parent, "rev-parse", "HEAD"),
             "native_script_sha256": args.native_script_sha256,

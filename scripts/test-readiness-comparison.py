@@ -30,6 +30,19 @@ SPEC.loader.exec_module(comparison)
 CID = "a" * 64
 
 
+def native_readiness_layout() -> bytes:
+    """Independently authored source-shape data, not an oracle implementation.
+
+    Only the reviewed command literal and its two syntactic call-site envelopes
+    are represented. This is deliberately not executable native runner code;
+    no launcher, permissions, daemon checks or other oracle logic is copied.
+    """
+    command = b'curl -q --noproxy \'*\' -fs --max-time 5 --unix-socket "$socket" http://localhost/_ping >/dev/null'
+    return b"\n".join((b"deadline=$((SECONDS + 360))", b"while (( SECONDS < deadline )); do",
+                      b"    if " + command + b"; then break; fi", b"done",
+                      b"[[ -S $socket ]] && " + command + b" || {", b""))
+
+
 class ComparisonTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="boxferry-readiness-offline-")
@@ -189,7 +202,7 @@ class ComparisonTests(unittest.TestCase):
         self.assertNotIn("DO-NOT-PRINT", json.dumps(value))
 
     def test_initial_source_binding_uses_exact_catalogue_and_native_literal(self):
-        script = b'curl -q --noproxy \'*\' -fs --max-time 5 --unix-socket "$socket" http://localhost/_ping >/dev/null'
+        script = native_readiness_layout()
         with mock.patch.object(comparison, "host_prerequisite", return_value=[5, 12345]), \
                 mock.patch.object(comparison.contract, "canonical_images", return_value={"debian11-rootful": "image@sha256:" + CID}) as catalogue, \
                 mock.patch.object(comparison.contract, "bounded_regular_bytes", return_value=script), \
@@ -200,6 +213,35 @@ class ComparisonTests(unittest.TestCase):
                                        "--native-script-sha256", "c" * 64, "--expected-pid-namespace", "5:12345"), 0)
         catalogue.assert_called_once_with(str(ROOT), "b" * 40, "c" * 64)
         self.assertEqual(comparison.read_report(self.directory)["sources"]["image_sha256"], CID)
+
+    def test_source_binding_refuses_missing_extra_changed_or_misplaced_native_calls(self):
+        genuine = native_readiness_layout()
+        literal = b'curl -q --noproxy \'*\' -fs --max-time 5 --unix-socket "$socket" http://localhost/_ping >/dev/null'
+        first = b"    if " + literal + b"; then break; fi"
+        final = b"[[ -S $socket ]] && " + literal + b" || {"
+        variants = {
+            "missing-loop": genuine.replace(first, b"", 1),
+            "missing-final": genuine.replace(final, b"", 1),
+            "extra-call": genuine + literal + b"\n",
+            "extra-comment": genuine + b"# " + literal + b"\n",
+            "changed-loop": genuine.replace(literal, literal.replace(b"--max-time 5", b"--max-time 6"), 1),
+            "changed-final": genuine.replace(final, final.replace(b"http://localhost/_ping", b"http://localhost/info")),
+            "loop-as-comment": genuine.replace(first, b"# " + first),
+            "final-as-comment": genuine.replace(final, b"# " + final),
+            "wrong-budget": genuine.replace(b"SECONDS + 360", b"SECONDS + 180"),
+            "final-inside-loop": genuine.replace(b"done\n" + final, final + b"\ndone\n"),
+            "reversed-sites": genuine.replace(first, b"SWAP").replace(final, first).replace(b"SWAP", final),
+        }
+        args = SimpleNamespace(native_root=ROOT, native_revision="b" * 40, native_script_sha256="c" * 64)
+        for label, source in variants.items():
+            with self.subTest(label=label), \
+                    mock.patch.object(comparison.contract, "canonical_images", return_value={"debian11-rootful": "image@sha256:" + CID}) as catalogue, \
+                    mock.patch.object(comparison.contract, "bounded_regular_bytes", return_value=source), \
+                    mock.patch.object(comparison.contract, "git") as git, \
+                    self.assertRaises(comparison.Refused):
+                comparison.source_binding(args)
+            catalogue.assert_called_once_with(str(ROOT), "b" * 40, "c" * 64)
+            git.assert_not_called()
 
     def test_host_admission_requires_namespace_mapping_caps_and_rootful_info(self):
         caps = hex((1 << 12) | (1 << 21))[2:]
