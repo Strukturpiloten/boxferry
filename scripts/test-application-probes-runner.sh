@@ -6,11 +6,13 @@ script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 test_root="$(mktemp -d)"
 trap 'rm -r -- "${test_root}"' EXIT
 cp -- "${script_directory}/test-application-probes.sh" "${test_root}/"
-for application in runner export-privacy forgejo nextcloud paperless immich observability; do
+for application in runner export-privacy forgejo nextcloud paperless immich observability live-cleanup; do
   if [[ "${application}" == runner ]]; then
     stub="${test_root}/test-application-probes-runner.sh"
   elif [[ "${application}" == export-privacy ]]; then
     stub="${test_root}/test-application-export-privacy.sh"
+  elif [[ "${application}" == live-cleanup ]]; then
+    stub="${test_root}/test-podman-live-cleanup.sh"
   else
     stub="${test_root}/test-${application}-application-probes.sh"
   fi
@@ -39,6 +41,8 @@ printf '%s\n' '#!/usr/bin/env bash' \
   '  name="docker-core-artifact.py check-sources"' \
   'elif [[ "$#" -eq 1 && "$1" == "${PROBE_TEST_ROOT}/test-docker-application-contract.py" ]]; then' \
   '  name=test-docker-application-contract.py' \
+  'elif [[ "$#" -eq 1 && "$1" == "${PROBE_TEST_ROOT}/test-native-presence.py" ]]; then' \
+  '  name=test-native-presence.py' \
   'else' \
   '  exit 42' \
   'fi' \
@@ -53,7 +57,7 @@ run_probe_test() {
 }
 readonly existing_order=$'test-application-probes-runner.sh\ntest-docker-application-expectations.py\ndocker-application-expectations.py check-sources\ntest-docker-application-schedule.py\ntest-docker-forgejo-authored-fields.py\ntest-application-export-privacy.sh\ntest-forgejo-application-probes.sh\ntest-nextcloud-application-probes.sh\ntest-paperless-application-probes.sh\ntest-immich-application-probes.sh\ntest-observability-application-probes.sh'
 run_probe_test
-[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py' ]]
+[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py\ntest-native-presence.py\ntest-podman-live-cleanup.sh' ]]
 : > "${probe_log}"
 status=0
 run_probe_test test-docker-application-expectations.py || status=$?
@@ -102,3 +106,13 @@ status=0
 run_probe_test test-docker-application-contract.py || status=$?
 [[ "${status}" == 37 ]]
 [[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py' ]]
+: > "${probe_log}"
+status=0
+run_probe_test test-native-presence.py || status=$?
+[[ "${status}" == 37 ]]
+[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py\ntest-native-presence.py' ]]
+: > "${probe_log}"
+status=0
+run_probe_test test-podman-live-cleanup.sh || status=$?
+[[ "${status}" == 37 ]]
+[[ "$(< "${probe_log}")" == "${existing_order}"$'\ntest-docker-core-artifact.py\ndocker-core-artifact.py check-sources\ntest-docker-application-contract.py\ntest-native-presence.py\ntest-podman-live-cleanup.sh' ]]

@@ -15,3 +15,5 @@ done
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-core-artifact.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/lib/docker-core-artifact.py" check-sources
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-contract.py"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-native-presence.py"
+bash "${script_directory}/test-podman-live-cleanup.sh"

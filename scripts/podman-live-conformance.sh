@@ -517,6 +517,10 @@ declare -a mounted_images=()
 # a later matrix cell needlessly pull it again).
 declare -a run_owned_host_images=()
 declare -A run_owned_host_image_seen=()
+declare -A run_owned_host_image_id=()
+declare -A archive_image_id=()
+declare -A archive_loaded_image_id=()
+declare -A archive_target_expected_id=()
 discovery_parent_created=false
 started_outer=""
 apply_target_outer=""
@@ -760,34 +764,234 @@ boxferry_operation() {
   timed_operation 90s "${name}" "${boxferry_bin}" "$@"
 }
 
+host_image_id() {
+  local image=$1 observed
+  observed="$(engine_operation 'inspect exact host image ID' image inspect --format '{{.Id}}' "${image}" 2> /dev/null)" || return 2
+  [[ "${observed}" =~ ^(sha256:)?[0-9a-f]{64}$ ]] || return 2
+  printf '%s\n' "${observed#sha256:}"
+}
+
+archive_host_alias() {
+  local suite=$1 id=$2
+  [[ "${run_id}" =~ ^[a-z][a-z0-9-]{0,95}$ &&
+    "${suite}" =~ ^(workload|forgejo|nextcloud|paperless|immich|observability)$ &&
+    "${id}" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1
+  printf 'localhost/boxferry-archive/%s/%s:%s\n' "${run_id}" "${suite}" "${id}"
+}
+
 record_run_owned_host_image() {
-  local image=$1
+  local image=$1 expected_id=${2:-unknown} source_identity observed_digest
   if [[ -z "${run_owned_host_image_seen[${image}]:-}" ]]; then
     run_owned_host_images+=("${image}")
     run_owned_host_image_seen[${image}]=true
+    run_owned_host_image_id[${image}]=unknown
   fi
+  if [[ "${expected_id}" == unknown ]]; then
+    source_identity="$(engine_operation 'inspect owned source image identity' image inspect --format '{{.Id}} {{.Digest}}' "${image}" 2> /dev/null)" || {
+      native_presence_unverified=true
+      return 2
+    }
+    [[ "${source_identity}" =~ ^(sha256:)?[0-9a-f]{64}\ sha256:[0-9a-f]{64}$ ]] || {
+      native_presence_unverified=true
+      return 2
+    }
+    expected_id=${source_identity%% *}
+    expected_id=${expected_id#sha256:}
+    observed_digest=${source_identity#* }
+    [[ "${image}" =~ ^[a-z0-9][A-Za-z0-9./:_-]*@sha256:[0-9a-f]{64}$ && "${observed_digest}" == "${image##*@}" ]] || {
+      native_presence_unverified=true
+      return 2
+    }
+  fi
+  [[ "${expected_id}" =~ ^[0-9a-f]{64}$ &&
+    ("${run_owned_host_image_id[${image}]}" == unknown || "${run_owned_host_image_id[${image}]}" == "${expected_id}") ]] || {
+    native_presence_unverified=true
+    return 2
+  }
+  run_owned_host_image_id[${image}]="${expected_id}"
+}
+
+verify_run_owned_archive_alias() {
+  local alias=$1 observed status=0
+  engine_image_available 'verify run-owned archive alias presence' "${alias}" || status=$?
+  if ((status != 0)); then
+    native_presence_unverified=true
+    return 2
+  fi
+  observed="$(host_image_id "${alias}")" || {
+    native_presence_unverified=true
+    return 2
+  }
+  [[ "${archive_image_id[${alias}]:-unknown}" == "${observed}" ]] || {
+    printf 'Run-owned archive alias identity is unverified; preserving evidence.\n' >&2
+    native_presence_unverified=true
+    return 2
+  }
 }
 
 record_run_owned_archive_alias() {
-  local source=$1 alias=$2 description=$3 status=0
+  local source=$1 alias=$2 description=$3 status=0 source_id source_identity observed_digest alias_suffix
+  [[ "${run_id}" =~ ^[a-z][a-z0-9-]{0,95}$ && "${alias}" == "localhost/boxferry-archive/${run_id}/"* ]] || return 1
+  alias_suffix=${alias#"localhost/boxferry-archive/${run_id}/"}
+  [[ "${alias_suffix}" =~ ^(workload|forgejo|nextcloud|paperless|immich|observability):[a-z0-9][a-z0-9._-]{0,63}$ &&
+    "${source}" =~ ^[a-z0-9][A-Za-z0-9./:_-]*@sha256:[0-9a-f]{64}$ ]] || return 1
   engine_image_available "probe ${description} archive alias" "${alias}" || status=$?
   if ((status == 0)); then
     printf 'Refusing to overwrite existing %s archive alias %s.\n' "${description}" "${alias}" >&2
     return 1
   elif ((status != 1)); then
+    native_presence_unverified=true
     return "${status}"
   fi
-  engine_operation "tag ${description} image for nested archive" tag "${source}" "${alias}"
-  record_run_owned_host_image "${alias}"
+  source_identity="$(engine_operation 'verify archive source identity' image inspect --format '{{.Id}} {{.Digest}}' "${source}" 2> /dev/null)" || {
+    native_presence_unverified=true
+    return 2
+  }
+  [[ "${source_identity}" =~ ^(sha256:)?[0-9a-f]{64}\ sha256:[0-9a-f]{64}$ ]] || {
+    native_presence_unverified=true
+    return 2
+  }
+  source_id=${source_identity%% *}
+  source_id=${source_id#sha256:}
+  observed_digest=${source_identity#* }
+  [[ "${observed_digest}" == "${source##*@}" ]] || {
+    native_presence_unverified=true
+    return 2
+  }
+  # Register the attempted alias before tagging, including nonzero partial creates.
+  record_run_owned_host_image "${alias}" "${source_id}" || return $?
+  archive_image_id[${alias}]="${source_id}"
+  unset "archive_loaded_image_id[${alias}]"
+  engine_operation "tag ${description} image for nested archive" tag "${source_id}" "${alias}" || return $?
+  verify_run_owned_archive_alias "${alias}" || return $?
 }
 
 release_run_owned_host_image() {
-  local image=$1
+  local image=$1 status=0 observed
   [[ -n "${run_owned_host_image_seen[${image}]:-}" ]] || return 0
-
+  engine_image_available 'probe run-owned host image before release' "${image}" || status=$?
+  if ((status == 1)); then
+    unset "run_owned_host_image_seen[${image}]" "run_owned_host_image_id[${image}]"
+    return 0
+  elif ((status != 0)); then
+    native_presence_unverified=true
+    return 1
+  fi
+  observed="$(host_image_id "${image}")" || observed=unknown
+  if [[ "${run_owned_host_image_id[${image}]:-unknown}" != "${observed}" || "${observed}" == unknown ]]; then
+    printf 'Refusing host image removal without matching immutable ownership; preserving evidence.\n' >&2
+    native_presence_unverified=true
+    return 1
+  fi
   timed_operation 90s "release run-owned host image ${image}" \
-    "${engine}" image rm --ignore --no-prune -- "${image}" > /dev/null
-  unset "run_owned_host_image_seen[${image}]"
+    "${engine}" image rm --ignore --no-prune -- "${image}" > /dev/null || {
+    status=$?
+    native_presence_unverified=true
+    return "${status}"
+  }
+  status=0
+  engine_image_available 'verify released host image absence' "${image}" || status=$?
+  if ((status != 1)); then
+    native_presence_unverified=true
+    return 1
+  fi
+  unset "run_owned_host_image_seen[${image}]" "run_owned_host_image_id[${image}]"
+}
+
+bind_saved_docker_archive_identity() {
+  local alias=$1
+  [[ "${alias}" =~ /(workload|forgejo|nextcloud):[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1
+  unset "archive_loaded_image_id[${alias}]"
+  verify_run_owned_archive_alias "${alias}" || return $?
+  archive_loaded_image_id[${alias}]="${archive_image_id[${alias}]}"
+}
+
+bind_saved_oci_archive_identity() {
+  local alias=$1 archive=$2 serialized_id
+  [[ "${archive_image_id[${alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  unset "archive_loaded_image_id[${alias}]"
+  serialized_id="$(timed_operation 90s 'verify saved OCI archive identity' \
+    python3 "${script_directory}/lib/oci-archive-identity.py" "${archive}" "${alias}")" || {
+    native_presence_unverified=true
+    return 1
+  }
+  [[ "${serialized_id}" =~ ^[0-9a-f]{64}$ ]] || {
+    native_presence_unverified=true
+    return 1
+  }
+  verify_run_owned_archive_alias "${alias}" || return $?
+  archive_loaded_image_id[${alias}]="${serialized_id}"
+}
+
+archive_target_id() {
+  local outer=$1 registered_outer metadata
+  local registered=false
+  [[ "${run_id}" =~ ^[a-z][a-z0-9-]{0,95}$ ]] || return 1
+  for registered_outer in "${outer_containers[@]}"; do
+    [[ "${registered_outer}" != "${outer}" ]] || registered=true
+  done
+  [[ "${registered}" == true ]] || return 1
+  [[ "${archive_target_expected_id[${outer}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  metadata="$(engine_operation 'authenticate exact archive target' container inspect \
+    --format '{{.Id}} {{index .Config.Labels "io.boxferry.live.run"}}' "${outer}" 2> /dev/null)" || return 1
+  [[ "${metadata}" =~ ^[0-9a-f]{64}\ ${run_id}$ ]] || return 1
+  [[ "${metadata%% *}" == "${archive_target_expected_id[${outer}]}" ]] || return 1
+  printf '%s\n' "${metadata%% *}"
+}
+
+verify_archive_image_bindings() {
+  local suite=$1 fixture=$2 id alias count=0
+  [[ -s "${fixture}/images.tsv" ]] || return 1
+  while IFS=$'\t' read -r id _; do
+    [[ -z "${id}" || "${id}" == \#* ]] && continue
+    alias="$(archive_host_alias "${suite}" "${id}")" || return $?
+    [[ "${archive_image_id[${alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [[ "${archive_loaded_image_id[${alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    count=$((count + 1))
+  done < "${fixture}/images.tsv" || return $?
+  ((count > 0))
+}
+
+restore_nested_archive_alias() {
+  local outer=$1 alias=$2 nested_reference=$3 target observed expected_id status
+  expected_id=${archive_loaded_image_id[${alias}]:-unknown}
+  [[ "${expected_id}" =~ ^[0-9a-f]{64}$ &&
+    "${nested_reference}" =~ ^(registry.invalid/boxferry-test/[a-z-]+:[a-z0-9._-]+|localhost/boxferry-live/alpine:[0-9a-f]{64})$ ]] || return 1
+  target="$(archive_target_id "${outer}")" || {
+    native_presence_unverified=true
+    return 1
+  }
+  observed="$(engine_operation 'verify loaded archive image ID' exec "${target}" podman image inspect \
+    --format '{{.Id}}' "${alias}" 2> /dev/null)" || {
+    native_presence_unverified=true
+    return 1
+  }
+  [[ "${observed#sha256:}" == "${expected_id}" ]] || {
+    printf 'Loaded archive config identity mismatch for %s; preserving evidence.\n' "${alias}" >&2
+    native_presence_unverified=true
+    return 1
+  }
+  engine_operation 'restore stable nested image reference' exec "${target}" podman tag \
+    "${expected_id}" "${nested_reference}" || {
+    status=$?
+    native_presence_unverified=true
+    return "${status}"
+  }
+  observed="$(engine_operation 'verify stable nested image ID' exec "${target}" podman image inspect \
+    --format '{{.Id}}' "${nested_reference}" 2> /dev/null)" || {
+    native_presence_unverified=true
+    return 1
+  }
+  [[ "${observed#sha256:}" == "${expected_id}" ]] || {
+    native_presence_unverified=true
+    return 1
+  }
+  engine_operation 'drop host-only alias from nested image tags' exec "${target}" podman image rm \
+    --no-prune -- "${alias}" > /dev/null || {
+    status=$?
+    native_presence_unverified=true
+    return "${status}"
+  }
 }
 
 release_remaining_run_owned_host_images() {
@@ -1179,7 +1383,13 @@ activate_outer_runtime() {
 create_workloads() {
   local outer=$1 prefix=$2 scope=${3:-full} socket_directory=$4
   local include_canaries=${5:-true} deadline=5m deadline_seconds=300
-  local completion_file="${socket_directory}/resource-setup.status" setup_status
+  local completion_file="${socket_directory}/resource-setup.status" setup_status archive_alias target
+  archive_alias="$(archive_host_alias workload alpine)" || return $?
+  [[ "${archive_loaded_image_id[${archive_alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  target="$(archive_target_id "${outer}")" || {
+    native_presence_unverified=true
+    return 1
+  }
   if [[ "${scope}" == minimal ]]; then
     deadline=2m
     deadline_seconds=120
@@ -1191,8 +1401,9 @@ create_workloads() {
     timeout --signal=TERM --kill-after=10s 30s \
     "${engine}" exec --detach --env "BF_PREFIX=${prefix}" \
     --env "BF_WORKLOAD_IMAGE=${workload_local_tag}" --env "BF_WORKLOAD_SCOPE=${scope}" \
+    --env "BF_ARCHIVE_ALIAS=${archive_alias}" --env "BF_ARCHIVE_IMAGE_ID=${archive_loaded_image_id[${archive_alias}]}" \
     --env "BF_INCLUDE_CANARIES=${include_canaries}" \
-    "${outer}" /bin/sh -ceu '
+    "${target}" /bin/sh -ceu '
     image="${BF_WORKLOAD_IMAGE}"
     portable_image="registry.example.invalid/boxferry/${BF_PREFIX}:1"
     run_label="--label io.boxferry.live-run=${BF_PREFIX}"
@@ -1219,6 +1430,12 @@ create_workloads() {
 
     nested_begin "prepare workload image"
     podman load --input /boxferry-workload.tar
+    loaded_id="$(podman image inspect --format "{{.Id}}" "${BF_ARCHIVE_ALIAS}")"
+    [ "${loaded_id#sha256:}" = "${BF_ARCHIVE_IMAGE_ID}" ]
+    podman tag "${BF_ARCHIVE_IMAGE_ID}" "${image}"
+    loaded_id="$(podman image inspect --format "{{.Id}}" "${image}")"
+    [ "${loaded_id#sha256:}" = "${BF_ARCHIVE_IMAGE_ID}" ]
+    podman image rm --no-prune -- "${BF_ARCHIVE_ALIAS}"
     podman image exists "${image}"
     podman tag "${image}" "${portable_image}"
     major="$(podman version --format "{{.Client.Version}}" | cut -d. -f1)"
@@ -1393,31 +1610,34 @@ prepare_workload_archive() {
   if [[ -s "${workload_archive}" ]]; then
     return
   fi
-  local expected_digest="${workload_image##*@}" resolved_digest cache_status=0
+  local expected_digest="${workload_image##*@}" resolved_digest cache_status=0 archive_alias
   printf 'Live setup: prepare digest-pinned workload archive\n'
   engine_image_available 'probe workload image cache' "${workload_image}" || cache_status=$?
   if ((cache_status == 1)); then
     timed_operation 5m 'pull digest-pinned workload image' \
       "${engine}" pull --quiet "${workload_image}" \
-      > "${artifact_root}/workload-image.pull.log"
-    record_run_owned_host_image "${workload_image}"
+      > "${artifact_root}/workload-image.pull.log" || return $?
+    record_run_owned_host_image "${workload_image}" || return $?
   elif ((cache_status != 0)); then
     return "${cache_status}"
   fi
   resolved_digest="$(engine_operation 'inspect workload image digest' \
-    image inspect --format '{{.Digest}}' "${workload_image}")"
+    image inspect --format '{{.Digest}}' "${workload_image}")" || return $?
   if [[ "${resolved_digest}" != "${expected_digest}" ]]; then
     printf 'Resolved workload image digest mismatch: expected %s, observed %s\n' \
       "${expected_digest}" "${resolved_digest}" >&2
     return 1
   fi
-  record_run_owned_archive_alias "${workload_image}" "${workload_local_tag}" workload
+  archive_alias="$(archive_host_alias workload alpine)" || return $?
+  record_run_owned_archive_alias "${workload_image}" "${archive_alias}" workload || return $?
+  verify_run_owned_archive_alias "${archive_alias}" || return $?
   timed_operation 5m 'archive workload image for nested loading' \
     "${engine}" save --format docker-archive \
-    --output "${workload_archive}" "${workload_local_tag}"
-  chmod 0644 "${workload_archive}"
-  release_run_owned_host_image "${workload_local_tag}"
-  release_run_owned_host_image "${workload_image}"
+    --output "${workload_archive}" "${archive_alias}" || return $?
+  bind_saved_docker_archive_identity "${archive_alias}" || return $?
+  chmod 0644 "${workload_archive}" || return $?
+  release_run_owned_host_image "${archive_alias}" || return $?
+  release_run_owned_host_image "${workload_image}" || return $?
 }
 
 prepare_matrix_image() {
@@ -1436,7 +1656,7 @@ prepare_matrix_image() {
     timed_operation 5m "pull reviewed ${id} image" \
       "${engine}" pull --quiet "${image}" \
       > "${artifact_root}/${id}.pull.log"
-    record_run_owned_host_image "${image}"
+    record_run_owned_host_image "${image}" || return $?
     resolved_digest="$(engine_operation "inspect ${id} image digest" \
       image inspect --format '{{.Digest}}' "${image}")"
   else
@@ -1457,7 +1677,7 @@ start_outer_runtime() {
   local id=$1 image=$2 mode=$3 socket_directory=$4
   local nested_archive=${5:-${workload_archive}}
   local cleanup_role=${6:-}
-  local outer_digest
+  local outer_digest created_id
   case "${cleanup_role}" in
     "" | replacement | apply-target) ;;
     *)
@@ -1516,7 +1736,15 @@ start_outer_runtime() {
       exec podman system service --time 0 "unix://${BF_SOCKET}" \
         >> /boxferry-socket/bootstrap.log 2>&1
     ' \
-    > "${artifact_root}/${id}.outer.log"
+    > "${artifact_root}/${id}.outer.log" || return $?
+
+  created_id="$(< "${artifact_root}/${id}.outer.log")"
+  [[ "${created_id}" =~ ^[0-9a-f]{64}$ ]] || {
+    printf 'Outer creation did not return an immutable container ID; preserving evidence.\n' >&2
+    native_presence_unverified=true
+    return 1
+  }
+  archive_target_expected_id[${outer}]="${created_id}"
 
   case "${cleanup_role}" in
     replacement) revalidation_candidate_outer="${outer}" ;;
@@ -1688,11 +1916,19 @@ start_apply_target() {
   engine_operation 'copy apply-target network configuration' cp \
     "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" \
     "${apply_target_outer}:/etc/containers/containers.conf.d/99-boxferry-live.conf"
+  local archive_alias archive_target
+  archive_alias="$(archive_host_alias workload alpine)" || return $?
+  [[ "${archive_loaded_image_id[${archive_alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  archive_target="$(archive_target_id "${apply_target_outer}")" || {
+    native_presence_unverified=true
+    return 1
+  }
   engine_operation 'load digest-pinned apply-target workload image' \
-    exec "${apply_target_outer}" podman load --input /boxferry-workload.tar > /dev/null
+    exec "${archive_target}" podman load --input /boxferry-workload.tar > /dev/null || return $?
+  restore_nested_archive_alias "${apply_target_outer}" "${archive_alias}" "${workload_local_tag}" || return $?
   engine_operation 'tag apply-target workload with configured portable reference' \
     exec "${apply_target_outer}" podman tag "${workload_local_tag}" \
-    "registry.example.invalid/boxferry/${current_prefix}:1"
+    "registry.example.invalid/boxferry/${current_prefix}:1" || return $?
   verify_observed_version "${id}-apply-target" "${declared_version}" \
     "${artifact_root}/${id}-apply-target.podman-version"
   [[ "$(< "${artifact_root}/${id}-apply-target.architecture")" =~ ^(x86_64|amd64)$ ]]

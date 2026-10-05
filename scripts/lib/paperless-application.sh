@@ -134,9 +134,10 @@ paperless_prepare_image_archive() {
     fi
     return 0
   fi
-  local fixture id reference expected_digest observed_digest cache_status runtime_reference archive_directory
-  fixture="$(paperless_fixture_root)"
-  archive_directory="$(mktemp -d "${runtime_root}/paperless-image-archives.XXXXXX")"
+  local fixture id reference expected_digest observed_digest cache_status archive_alias archive_directory
+  fixture="$(paperless_fixture_root)" || return $?
+  [[ -s "${fixture}/images.tsv" ]] || return 1
+  archive_directory="$(mktemp -d "${runtime_root}/paperless-image-archives.XXXXXX")" || return $?
   while IFS=$'\t' read -r id reference _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     expected_digest="${reference##*@}"
@@ -145,32 +146,34 @@ paperless_prepare_image_archive() {
     if ((cache_status == 1)); then
       timed_operation 6m "pull digest-pinned Paperless ${id} image" \
         "${engine}" pull --quiet "${reference}" \
-        > "${artifact_root}/paperless-${id}.pull.log"
-      record_run_owned_host_image "${reference}"
+        > "${artifact_root}/paperless-${id}.pull.log" || return $?
+      record_run_owned_host_image "${reference}" || return $?
     elif ((cache_status != 0)); then
       return "${cache_status}"
     fi
     observed_digest="$(engine_operation "inspect Paperless ${id} image digest" \
-      image inspect --format '{{.Digest}}' "${reference}")"
+      image inspect --format '{{.Digest}}' "${reference}")" || return $?
     [[ "${observed_digest}" == "${expected_digest}" ]] || {
       printf 'Paperless image digest mismatch %s: expected %s, observed %s.\n' \
         "${id}" "${expected_digest}" "${observed_digest}" >&2
       return 1
     }
-    runtime_reference="$(paperless_image_reference "${id}")"
-    record_run_owned_archive_alias "${reference}" "${runtime_reference}" "Paperless ${id}"
+    archive_alias="$(archive_host_alias paperless "${id}")" || return $?
+    record_run_owned_archive_alias "${reference}" "${archive_alias}" "Paperless ${id}" || return $?
+    verify_run_owned_archive_alias "${archive_alias}" || return $?
     timed_operation 10m "archive compressed Paperless ${id} image" \
       "${engine}" save --format oci-archive \
-      --output "${archive_directory}/${id}.oci.tar" "${runtime_reference}"
-    release_run_owned_host_image "${runtime_reference}"
-    release_run_owned_host_image "${reference}"
-  done < "${fixture}/images.tsv"
+      --output "${archive_directory}/${id}.oci.tar" "${archive_alias}" || return $?
+    bind_saved_oci_archive_identity "${archive_alias}" "${archive_directory}/${id}.oci.tar" || return $?
+    release_run_owned_host_image "${archive_alias}" || return $?
+    release_run_owned_host_image "${reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
   timed_operation 10m 'bundle compressed digest-pinned Paperless image archives' \
-    tar --create --remove-files --file "${archive}" --directory "${archive_directory}" .
-  rm -rf -- "${archive_directory}"
-  chmod 0644 "${archive}"
+    tar --create --remove-files --file "${archive}" --directory "${archive_directory}" . || return $?
+  rm -rf -- "${archive_directory}" || return $?
+  chmod 0644 "${archive}" || return $?
   local archive_size
-  archive_size="$(stat -c '%s' "${archive}")"
+  archive_size="$(stat -c '%s' "${archive}")" || return $?
   [[ "${archive_size}" -le "${PAPERLESS_ARCHIVE_MAX_BYTES}" ]] || {
     printf 'Paperless image archive exceeds 2.5 GiB cap: %s bytes.\n' "${archive_size}" >&2
     return 1
@@ -178,17 +181,27 @@ paperless_prepare_image_archive() {
 }
 
 paperless_assert_loaded_images() {
-  local outer=$1 fixture id
-  fixture="$(paperless_fixture_root)"
+  local outer=$1 fixture id nested_reference
+  fixture="$(paperless_fixture_root)" || return $?
+  [[ -s "${fixture}/images.tsv" ]] || return 1
   while IFS=$'\t' read -r id _ _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
+    nested_reference="$(paperless_image_reference "${id}")" || return $?
     engine_operation "verify loaded Paperless ${id} image" \
-      exec "${outer}" podman image exists "$(paperless_image_reference "${id}")"
-  done < "${fixture}/images.tsv"
+      exec "${outer}" podman image exists "${nested_reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
 }
 
 paperless_prepare_application_target() {
   local outer=$1 prefix=$2 socket_directory=$3
+  local target fixture id alias nested_reference
+  fixture="$(paperless_fixture_root)" || return $?
+  verify_archive_image_bindings paperless "${fixture}" || return $?
+  target="$(archive_target_id "${outer}")" || {
+    # shellcheck disable=SC2034 # The owning live runner consumes this sticky cleanup flag.
+    native_presence_unverified=true
+    return 1
+  }
   engine_operation 'copy rootless Paperless network configuration' cp \
     "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" \
     "${outer}:/tmp/99-boxferry-live.conf"
@@ -198,7 +211,7 @@ paperless_prepare_application_target() {
     'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"'
   # shellcheck disable=SC2016 # $HOME expands inside the nested target.
   timed_operation 15m 'load digest-pinned Paperless application archives' \
-    "${engine}" exec "${outer}" /bin/sh -ceu '
+    "${engine}" exec "${target}" /bin/sh -ceu '
       directory=/tmp/boxferry-paperless-images
       mkdir -p "$directory"
       trap "rm -rf -- \"$directory\"" EXIT
@@ -208,10 +221,15 @@ paperless_prepare_application_target() {
     rm -f -- "$archive"
   done
   rmdir "$directory"
-    ' > /dev/null
-  paperless_assert_loaded_images "${outer}"
-  local fixture destination
-  fixture="$(paperless_fixture_root)"
+    ' > /dev/null || return $?
+  while IFS=$'\t' read -r id _ _ _ _ _; do
+    [[ -z "${id}" || "${id}" == \#* ]] && continue
+    alias="$(archive_host_alias paperless "${id}")" || return $?
+    nested_reference="$(paperless_image_reference "${id}")" || return $?
+    restore_nested_archive_alias "${outer}" "${alias}" "${nested_reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
+  paperless_assert_loaded_images "${outer}" || return $?
+  local destination
   destination="/tmp/boxferry-fixture/${prefix}"
   engine_operation 'create disposable Paperless fixture directory' \
     exec "${outer}" mkdir -p -- "${destination}"
