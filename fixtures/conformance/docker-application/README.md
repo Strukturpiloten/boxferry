@@ -185,20 +185,50 @@ Both core and volume readiness paths test observations
 before removal and preserve failure even if diagnostics fail. These source checks
 do not diagnose the historical failed run or provide fresh native evidence.
 
-The final existing `/_ping` poll additionally supplies `ping-curl-exit` (0–99, `not-run`, or
-`unknown`) and `ping-http-status` (exactly three digits, 000–599, or `unknown`) to the same
-failure report. Curl uses only fixed `%{http_code}` write-out; its response body and stderr are
-discarded. No socket means no curl request and reports `not-run`/`unknown`. Shell and helper
-independently validate these closed fields before emission; malformed input becomes `unknown`
-without being echoed, including the diagnostic-unavailable fallback. These are observations,
-not startup causes: `startup-cause=unestablished` remains mandatory. The five-second curl limit,
-180-second readiness deadline, two-second cadence, private socket URL, failure-before-apply and
-diagnostics-before-teardown order are unchanged. The failed-readiness connection
-observation above adds no readiness poll, retry or host repair.
-Independent mocked connect-failure, curl-timeout, HTTP-error, unexpected-exit, missing-socket and
-privacy regressions establish only this diagnostic contract. The preserved historical receipt
-contains no such fields and remains untouched; these tests supply no fresh native admission,
-volume compatibility, application acceptance or explanation of that earlier failure.
+The last actual existing `/_ping` poll supplies one atomic record: `ping-curl-exit` (0–99,
+`not-run`, or `unknown`), `ping-http-status` (exactly three digits, 000–599, or `unknown`),
+`ping-curl-error`, and `ping-collector`. The only added curl argument is `--show-error`;
+executable selection and inherited environment stay unchanged. Curl still discards the response
+body and uses fixed `%{http_code}` write-out. Separate private stdout/stderr buffers retain at most
+16 KiB each. Overflow clears only the affected buffer and continues bounded draining rather than
+inducing SIGPIPE; an independently observed native exit is retained even when payload collection
+fails. Stderr-only overflow retains valid HTTP stdout but leaves the text observation unknown;
+stdout overflow or malformed HTTP output cannot promote readiness.
+Raw stderr, response data, addresses, paths, protected values and exceptions are never emitted.
+
+`ping-curl-error` recognizes only whole, narrow English curl envelopes matching the actual native
+exit: connect, timeout, HTTP, proxy-resolution or host-resolution error observations. Empty,
+localized, malformed, ambiguous, conflicting, oversized or unavailable text remains `unknown`.
+`ping-collector` separately reports completion, overflow, timeout, cancellation, launch/read
+failure, invalid boundary/output, wrapper failure or unverified teardown. A collector-induced kill is
+never reported as native curl exit 28. Shell and helper independently validate closed fields,
+including the diagnostic-unavailable fallback. A missing socket makes no request and preserves
+the last actual record; before any poll it remains `not-run`/`unknown`.
+
+The five-second curl request limit, 180-second readiness budget, two-second cadence, private
+socket URL, failure-before-apply and diagnostics-before-teardown order remain. The collector's
+separate five-second cap also respects an absolute readiness deadline anchored before helper
+startup, with 250 ms reserved for teardown. Absolute BOOTTIME is checked again after helper
+collection and shell handoff, including BOOTTIME-only advancement; late or clock-uncertain
+completion retains actual native fields but cannot promote readiness. A nonzero wrapper status
+likewise preserves any validated native fields and forces collector uncertainty rather than
+replacing the complete record. The existing wrapper's five-second KILL fallback is
+reserved within that absolute budget; conservative rounding clips late polls, and exhausted
+reserve skips a new poll without replacing the last actual record. Wrapper startup, scheduling
+and teardown uncertainty can prevent complete collection of a native five-second timeout:
+unknown observations are honest, not evidence that curl returned 28. Deadline-expired or
+unverified teardown cannot promote readiness; normally completed native-zero polls retain
+their existing acceptance when HTTP stdout is valid, including stderr-only overflow. The shared
+presence/default reader keeps its separate three-second
+contract unchanged.
+
+These are text observations, not causes: `startup-cause=unestablished` remains mandatory. No
+readiness poll, retry, environment/configuration inspection or host repair is added. Independent
+offline classifier, stream overflow, native-status, deadline, cancellation, descendant-pipe,
+missing-socket and privacy regressions establish only this diagnostic contract. The preserved
+historical receipt remains untouched; these tests supply no Engine authentication, fresh native
+readiness/admission, volume compatibility, application acceptance, Release evidence or explanation
+of that earlier failure.
 
 An isolated stopped-container probe on host Podman 6.0.2 confirmed that plain
 `{{.Id}}` is a compatibility alias, while JSON template arguments require the

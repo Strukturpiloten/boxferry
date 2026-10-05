@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -1746,6 +1747,254 @@ class PresenceTests(unittest.TestCase):
                     self.assertEqual((result.returncode, result.stdout, result.stderr), (status, marker + "\n", ""))
 
 
+class PingObservationTests(unittest.TestCase):
+    def test_literal_envelopes_and_native_status_are_independent_of_phrase_like_paths(self) -> None:
+        cases = [(7, "000", b"curl: (7) Couldn't connect to server\n", "connect-error-observed"),
+                 (7, "000", b"curl: (7) Could not connect to server\n", "connect-error-observed"),
+                 (7, "000", b"curl: (7) Failed to connect to localhost port 80 after 0 ms: Could not connect to server\n",
+                  "connect-error-observed"),
+                 (7, "000", b"curl: (7) Failed to connect to localhost:80 after 0 ms: Could not connect to server\n",
+                  "connect-error-observed"),
+                 (7, "000", b"curl: (7) Failed to connect to localhost port 80 after 12 ms: Connection refused\n",
+                  "connect-error-observed"),
+                 (28, "000", b"curl: (28) Operation timed out after 5000 milliseconds with 0 bytes received\n",
+                  "timeout-error-observed"),
+                 (22, "503", b"curl: (22) The requested URL returned error: 503\n", "http-error-observed"),
+                 (5, "000", b"curl: (5) Could not resolve proxy: private.invalid\n", "proxy-resolution-error-observed"),
+                 (6, "000", b"curl: (6) Could not resolve host: localhost\n", "host-resolution-error-observed")]
+        for status, http, raw, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(contract.readiness_ping_error(raw, status, http), expected)
+                self.assertEqual(contract.readiness_ping_error(raw, 0, http), "unknown")
+                for altered in (b"/private/" + raw, raw + b"DO-NOT-PRINT", raw + raw, raw + b"\x00",
+                                raw.replace(b"curl:", b"path-curl:"), b"DO-NOT-PRINT " + raw):
+                    self.assertEqual(contract.readiness_ping_error(altered, status, http), "unknown")
+        for raw in (b"", b"\n", "curl: (7) Verbindung verweigert".encode(),
+                    b"curl: (7) Failed to connect to /private/Connection refused\n", b"x" * 16_385):
+            self.assertEqual(contract.readiness_ping_error(raw, 7, "000"), "unknown")
+        self.assertEqual(contract.readiness_ping_error(b"curl: (22) The requested URL returned error: 503\n",
+                                                     22, "404"), "unknown")
+        self.assertEqual(contract.readiness_ping_error(cases[0][2], 7, "\u2603"), "unknown")
+
+    def collect(self, source: str, *, seconds: float = 2):
+        return contract.native_read.native_poll_read([sys.executable, "-c", source], time.monotonic() + seconds)
+
+    def test_separate_streams_preserve_completed_nonzero_native_status(self) -> None:
+        self.assertEqual(self.collect("import sys; sys.stdout.write('000'); sys.stderr.write('private-error'); sys.exit(7)"),
+                         ("completed", 7, b"000", b"private-error"))
+        self.assertEqual(self.collect("import sys; sys.stdout.write('000'); sys.exit(28)")[:2], ("completed", 28))
+        self.assertEqual(self.collect("import sys; sys.stdout.write('200')"), ("completed", 0, b"200", b""))
+
+    def test_overflow_continues_draining_both_streams_and_preserves_native_completion(self) -> None:
+        for stream in ("stdout", "stderr", "both"):
+            with self.subTest(stream=stream):
+                writes = "; ".join(f"sys.{target}.write('x' * 200000); sys.{target}.flush()"
+                                   for target in (("stdout", "stderr") if stream == "both" else (stream,)))
+                source = f"import sys; {writes}; sys.stdout.write('000'); sys.stderr.write('private-tail'); sys.exit(7)"
+                self.assertEqual(self.collect(source), (f"{stream}-oversized", 7,
+                    b"000" if stream == "stderr" else b"", b"private-tail" if stream == "stdout" else b""))
+
+    def test_eof_before_exit_and_cutoff_do_not_manufacture_curl_timeout_status(self) -> None:
+        started = time.monotonic()
+        result = self.collect("import os,time; os.close(1); os.close(2); time.sleep(60)", seconds=0.4)
+        self.assertEqual(result, ("timed-out", None, b"", b""))
+        self.assertLess(time.monotonic() - started, 1)
+        with mock.patch.object(contract.native_read.subprocess, "Popen") as launched:
+            self.assertEqual(self.collect("unused", seconds=0.2), ("timed-out", None, b"", b""))
+        launched.assert_not_called()
+
+    def test_descendant_pipe_does_not_erase_already_observed_native_exit(self) -> None:
+        source = ("import os,time; child=os.fork(); "
+                  "time.sleep(60) if child == 0 else os._exit(7)")
+        result = self.collect(source, seconds=0.45)
+        self.assertIn(result[0], ("timed-out", "termination-unverified"))
+        self.assertEqual(result[1:], (7, b"", b""))
+
+    def test_waitnowait_identity_precedes_group_signal_and_teardown_uses_remaining_budget(self) -> None:
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            out.write(b"000"); out.seek(0)
+            events = []
+            child = mock.Mock(pid=12345, stdout=out, stderr=err)
+            def observe(*args):
+                self.assertEqual(args, (os.P_PID, 12345, os.WEXITED | os.WNOHANG | os.WNOWAIT))
+                events.append("observe")
+                return SimpleNamespace(si_code=os.CLD_EXITED, si_status=7)
+            def signal_group(_pid, sig):
+                if sig == 0:
+                    raise ProcessLookupError
+                events.append("signal")
+            def reap(**kwargs):
+                self.assertGreaterEqual(kwargs["timeout"], 0)
+                self.assertLessEqual(kwargs["timeout"], 0.25)
+                events.append("reap")
+                return 7
+            child.wait.side_effect = reap
+            with mock.patch.object(contract.native_read.subprocess, "Popen", return_value=child), \
+                    mock.patch.object(contract.native_read.os, "waitid", side_effect=observe), \
+                    mock.patch.object(contract.native_read.os, "killpg", side_effect=signal_group):
+                result = self.collect("fake")
+            self.assertEqual(result, ("completed", 7, b"000", b""))
+            self.assertLess(events.index("observe"), events.index("signal"))
+            self.assertLess(events.index("signal"), events.index("reap"))
+            child.poll.assert_not_called()
+            self.assertTrue(out.closed and err.closed)
+
+    def test_cancellation_and_termination_uncertainty_never_supply_induced_native_exit(self) -> None:
+        for failure in (KeyboardInterrupt(), PermissionError("DO-NOT-PRINT")):
+            with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+                child = mock.Mock(pid=12345, stdout=out, stderr=err)
+                child.wait.return_value = -9
+                with mock.patch.object(contract.native_read.subprocess, "Popen", return_value=child), \
+                        mock.patch.object(contract.native_read.os, "waitid", side_effect=failure), \
+                        mock.patch.object(contract.native_read.os, "killpg", side_effect=ProcessLookupError):
+                    result = self.collect("fake")
+                self.assertEqual(result, ("cancelled" if isinstance(failure, KeyboardInterrupt) else "read-failed",
+                                          None, b"", b""))
+                self.assertTrue(out.closed and err.closed)
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            child = mock.Mock(pid=12345, stdout=out, stderr=err)
+            child.wait.side_effect = subprocess.TimeoutExpired("DO-NOT-PRINT", 0.25)
+            with mock.patch.object(contract.native_read.subprocess, "Popen", return_value=child), \
+                    mock.patch.object(contract.native_read.os, "waitid", side_effect=KeyboardInterrupt), \
+                    mock.patch.object(contract.native_read.os, "killpg", side_effect=PermissionError):
+                self.assertEqual(self.collect("fake"), ("termination-unverified", None, b"", b""))
+
+    def test_absolute_readiness_deadline_accounts_startup_without_six_second_window(self) -> None:
+        now = [100.0]
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            child = mock.Mock(pid=12345, stdout=out, stderr=err)
+            def startup(*_args, **_kwargs):
+                now[0] = 101.8
+                return child
+            def elapsed(*_args):
+                now[0] = 102
+                return ([], [], [])
+            with mock.patch.object(contract.native_read.subprocess, "Popen", side_effect=startup), \
+                    mock.patch.object(contract.native_read.time, "monotonic", side_effect=lambda: now[0]), \
+                    mock.patch.object(contract.native_read.select, "select", side_effect=elapsed), \
+                    mock.patch.object(contract.native_read.os, "waitid", return_value=None), \
+                    mock.patch.object(contract.native_read.os, "killpg", side_effect=ProcessLookupError):
+                result = contract.native_read.native_poll_read(["fake"], 102)
+            self.assertEqual(result, ("timed-out", None, b"", b""))
+            self.assertAlmostEqual(child.wait.call_args.kwargs["timeout"], 0.2)
+        with mock.patch.object(contract.time, "clock_gettime", return_value=150), \
+                mock.patch.object(contract.time, "monotonic", return_value=100), \
+                mock.patch.object(contract.native_read, "native_poll_read", return_value=("completed", 7, b"000",
+                    b"curl: (7) Couldn't connect to server\n")) as collect:
+            result = contract.readiness_ping(pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock"), "153.00")
+        self.assertEqual(collect.call_args.args[1], 103)
+        self.assertEqual(collect.call_args.args[0], ["curl", "--fail", "--silent", "--show-error", "--max-time", "5",
+                         "--max-filesize", "65536", "--output", "/dev/null", "--write-out", "%{http_code}",
+                         "--unix-socket", "/tmp/boxferry-docker-core.test/socket/docker.sock", "http://localhost/_ping"])
+        self.assertEqual(result["ping-curl-error"], "connect-error-observed")
+
+    def test_atomic_poll_fields_do_not_survive_incomplete_oversized_or_malformed_streams(self) -> None:
+        path = pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock")
+        for outcome, status, stdout in (("completed", 7, b"000\n"), ("stdout-oversized", 7, b""),
+                                       ("timed-out", None, b"000"), ("termination-unverified", 7, b"000")):
+            with mock.patch.object(contract.native_read, "native_poll_read", return_value=(outcome, status, stdout,
+                    b"curl: (7) Couldn't connect to server\n")):
+                result = contract.readiness_ping(path, "999999999.00")
+            self.assertEqual(result["ping-http-status"], "unknown")
+            self.assertEqual(result["ping-curl-error"], "unknown")
+            self.assertEqual(result["ping-curl-exit"], "7" if status == 7 else "unknown")
+        with mock.patch.object(contract.native_read, "native_poll_read") as collect:
+            result = contract.readiness_ping(pathlib.Path("/ambient/DO-NOT-PRINT"), "DO-NOT-PRINT")
+        collect.assert_not_called()
+        self.assertNotIn("DO-NOT-PRINT", str(result))
+
+    def test_stderr_overflow_keeps_http_but_stdout_overflow_and_malformed_output_fail_closed(self) -> None:
+        path = pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock")
+        cases = [("stderr-oversized", b"200", b"", "200", "oversized"),
+                 ("stdout-oversized", b"", b"private-tail", "unknown", "oversized"),
+                 ("both-oversized", b"", b"", "unknown", "oversized"),
+                 ("completed", b"200\n", b"", "unknown", "invalid-output"),
+                 ("completed", b"DO-NOT-PRINT/private", b"", "unknown", "invalid-output")]
+        for outcome, stdout, stderr, http, collector in cases:
+            with self.subTest(outcome=outcome, stdout=stdout), \
+                    mock.patch.object(contract.native_read, "native_poll_read", return_value=(
+                        outcome, 0, stdout, stderr)):
+                result = contract.readiness_ping(path, "999999999.00")
+            self.assertEqual(result, {"ping-curl-exit": "0", "ping-http-status": http,
+                                     "ping-curl-error": "unknown", "ping-collector": collector})
+            self.assertNotIn("DO-NOT-PRINT", str(result))
+        self.assertEqual(self.collect("import sys; sys.stderr.write('x' * 200000); sys.stdout.write('200')"),
+                         ("stderr-oversized", 0, b"200", b""))
+        self.assertEqual(self.collect("import sys; sys.stdout.write('x' * 200000); sys.stderr.write('private')"),
+                         ("stdout-oversized", 0, b"", b"private"))
+
+    def test_boottime_only_expiry_or_unavailable_completion_clock_keeps_native_fields_not_readiness(self) -> None:
+        path = pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock")
+        for status in (0, 7):
+            for final_clock in (153.0, 154.0, OSError("DO-NOT-PRINT")):
+                with self.subTest(status=status, final_clock=final_clock), \
+                        mock.patch.object(contract.time, "monotonic", return_value=100), \
+                        mock.patch.object(contract.time, "clock_gettime", side_effect=[150, final_clock]), \
+                        mock.patch.object(contract.native_read, "native_poll_read", return_value=(
+                            "completed", status, b"200" if status == 0 else b"000",
+                            b"" if status == 0 else b"curl: (7) Couldn't connect to server\n")) as collect:
+                    result = contract.readiness_ping(path, "153.00")
+                self.assertEqual(collect.call_args.args[1], 103)
+                self.assertEqual(result["ping-curl-exit"], str(status))
+                self.assertEqual(result["ping-http-status"], "200" if status == 0 else "000")
+                self.assertEqual(result["ping-curl-error"], "unknown" if status == 0 else "connect-error-observed")
+                self.assertEqual(result["ping-collector"], "read-failed" if isinstance(final_clock, OSError)
+                                 else "timed-out")
+                self.assertNotIn("DO-NOT-PRINT", str(result))
+
+    def test_failed_collection_keeps_teardown_uncertainty_instead_of_later_clock_outcome(self) -> None:
+        path = pathlib.Path("/tmp/boxferry-docker-core.test/socket/docker.sock")
+        for outcome in ("termination-unverified", "cancelled", "read-failed", "timed-out", "launch-failed"):
+            for final_clock in (153.0, OSError("DO-NOT-PRINT"), KeyboardInterrupt()):
+                with self.subTest(outcome=outcome, final_clock=final_clock), \
+                        mock.patch.object(contract.time, "clock_gettime", side_effect=[150, final_clock]) as clock, \
+                        mock.patch.object(contract.native_read, "native_poll_read", return_value=(
+                            outcome, 7, b"", b"")):
+                    result = contract.readiness_ping(path, "153.00")
+                self.assertEqual(result, {"ping-curl-exit": "7", "ping-http-status": "unknown",
+                                         "ping-curl-error": "unknown", "ping-collector": outcome})
+                self.assertEqual(clock.call_count, 1)
+                self.assertNotIn("DO-NOT-PRINT", str(result))
+
+    def test_collection_stops_at_five_seconds_even_with_a_long_absolute_budget(self) -> None:
+        now = [100.0]
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            child = mock.Mock(pid=12345, stdout=out, stderr=err)
+            def elapsed(_read, _write, _error, timeout):
+                self.assertLessEqual(timeout, 0.05)
+                now[0] = 105.0
+                return ([], [], [])
+            with mock.patch.object(contract.native_read.subprocess, "Popen", return_value=child), \
+                    mock.patch.object(contract.native_read.time, "monotonic", side_effect=lambda: now[0]), \
+                    mock.patch.object(contract.native_read.select, "select", side_effect=elapsed), \
+                    mock.patch.object(contract.native_read.os, "waitid", return_value=None), \
+                    mock.patch.object(contract.native_read.os, "killpg", side_effect=ProcessLookupError):
+                result = contract.native_read.native_poll_read(["fake"], 280)
+            self.assertEqual(result, ("timed-out", None, b"", b""))
+            child.wait.assert_called_once_with(timeout=0.25)
+
+    def test_completed_native_status_survives_absolute_deadline_or_teardown_cancellation(self) -> None:
+        for boundary in ("deadline", "cancelled"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+                now = [100.0]
+                out.write(b"000"); out.seek(0)
+                child = mock.Mock(pid=12345, stdout=out, stderr=err)
+                def signal_group(_pid, sig):
+                    if sig == 0 and boundary == "deadline":
+                        now[0] = 102.0
+                        raise ProcessLookupError
+                with mock.patch.object(contract.native_read.subprocess, "Popen", return_value=child), \
+                        mock.patch.object(contract.native_read.time, "monotonic", side_effect=lambda: now[0]), \
+                        mock.patch.object(contract.native_read.time, "sleep", side_effect=KeyboardInterrupt), \
+                        mock.patch.object(contract.native_read.os, "waitid", return_value=SimpleNamespace(
+                            si_code=os.CLD_EXITED, si_status=7)), \
+                        mock.patch.object(contract.native_read.os, "killpg", side_effect=signal_group):
+                    result = contract.native_read.native_poll_read(["fake"], 102)
+                self.assertEqual(result, ("timed-out" if boundary == "deadline" else "termination-unverified",
+                                          7, b"", b""))
+                self.assertTrue(out.closed and err.closed)
+
+
 class ReadinessDiagnosticTests(unittest.TestCase):
     def test_inspect_uses_native_go_id_field_not_plain_format_compatibility_alias(self) -> None:
         # Podman 6.0.2 accepts {{.Id}} but not {{json .Id}}. The native Go
@@ -2209,6 +2458,7 @@ class ReadinessDiagnosticTests(unittest.TestCase):
                                 text=True, timeout=3, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "readiness observations: ping-curl-exit=not-run ping-http-status=unknown "
+                                       "ping-curl-error=unknown ping-collector=not-run "
                                        "socket=unavailable outer=not-registered state=unverified "
                                        "logs=not-read socket-owner=unknown socket-mode=unknown socket-lifetime=unknown "
                                        "socket-connect=not-checked outer-recheck=not-checked; startup-cause=unestablished\n")
@@ -2400,7 +2650,7 @@ cleanup_now() {{ printf '1\\n'; }}
                         self.assertIn(f"private-directory={name}", result.stderr)
                         self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
     def test_readiness_failure_diagnostics_precede_teardown_for_core_and_volume_without_repair(self) -> None:
-        start = self.runner.index("deadline=$((SECONDS + 180))")
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
         readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
         self.assertEqual(self.runner.count("readiness_failure 'nested Docker daemon did not become ready'"), 1)
         for profile in ("core-journey", "volume-fixtures"):
@@ -2424,6 +2674,7 @@ curl() {{
 }}
 bounded() {{
   if [[ $2 == podman ]]; then printf 'false\\n'; return 0; fi
+  if [[ $4 == readiness-ping ]]; then printf '7 000 unknown completed\\n'; return 0; fi
   [[ $1 == 12s && $2 == python3 && $4 == readiness-diagnostics && $5 == --registered ]] || return 99
   if (({diagnostic_status} == 0)); then
     printf 'readiness observations: outer=verified state=exited logs=empty; startup-cause=unestablished\\n'
@@ -2447,7 +2698,7 @@ bounded() {{
                     self.assertNotIn("CHECKS-PASSED", result.stdout + result.stderr)
                     self.assertEqual(result.stderr.count("readiness observations:"), 1)
     def test_failed_ping_poll_records_only_existing_curl_exit_and_fixed_http_status(self) -> None:
-        start = self.runner.index("deadline=$((SECONDS + 180))")
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
         readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
         cases = (("connect-failure", 7, "000", True, "7", "000"),
                  ("curl-timeout", 28, "000", True, "28", "000"),
@@ -2468,7 +2719,7 @@ bounded() {{
                         socket_path.write_bytes(b"")
                     count_path = directory / "curl-count"
                     curl_path = directory / "curl"
-                    expected_args = ["--fail", "--silent", "--max-time", "5", "--max-filesize", "65536",
+                    expected_args = ["--fail", "--silent", "--show-error", "--max-time", "5", "--max-filesize", "65536",
                                      "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket",
                                      str(socket_path), "http://localhost/_ping"]
                     curl_path.write_text(f"""#!{sys.executable}
@@ -2536,23 +2787,36 @@ bounded() {{
                 self.assertNotIn("BAD-ARGS", result.stdout + result.stderr)
 
     def test_readiness_keeps_final_poll_and_cadence_without_extra_request(self) -> None:
-        start = self.runner.index("deadline=$((SECONDS + 180))")
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
         readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
         for final_exit in (0, 22):
-            with self.subTest(final_exit=final_exit), tempfile.TemporaryDirectory(prefix="boxferry-ping-fake-") as name:
+            with self.subTest(final_exit=final_exit), tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
                 count_path = pathlib.Path(name) / "count"
-                body = f"""registered=false
+                socket_path = pathlib.Path(name) / "socket/docker.sock"
+                socket_path.parent.mkdir()
+                socket_path.touch()
+                curl_path = pathlib.Path(name) / "curl"
+                curl_path.write_text(f"""#!/bin/sh
+if [ ! -e {shlex.quote(str(count_path))} ]; then
+  printf 'first\\n' > {shlex.quote(str(count_path))}; printf '000'; exit 7
+fi
+printf 'second\\n' >> {shlex.quote(str(count_path))}
+printf '503'; exit {final_exit}
+""")
+                curl_path.chmod(0o700)
+                body = f"""PATH={shlex.quote(name)}:"$PATH"
+registered=false
 outer=bf-docker-core-test
-socket_path={shlex.quote(name)}
+socket_path={shlex.quote(str(socket_path))}
+contract={shlex.quote(str(SOURCE))}
 count_path={shlex.quote(str(count_path))}
-curl() {{
-  if [[ ! -e $count_path ]]; then printf 'first\\n' > "$count_path"; printf '000'; return 7; fi
-  printf 'second\\n' >> "$count_path"
-  printf '503'; return {final_exit}
+bounded() {{
+  if [[ $2 == podman ]]; then
+    [[ $(wc -l < "$count_path") == 1 ]] && printf 'true\\n' || printf 'false\\n'
+  else shift; "$@"; fi
 }}
-bounded() {{ [[ $(wc -l < "$count_path") == 1 ]] && printf 'true\\n' || printf 'false\\n'; }}
 sleep() {{ [[ $1 == 2 ]] || return 99; printf 'cadence=2\\n'; }}
-""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-d $socket_path") + \
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path") + \
                     "\nprintf 'ready\\n'\n"
                 result = self.bash(body)
                 self.assertEqual(result.returncode, 0 if final_exit == 0 else 1, result.stderr)
@@ -2562,6 +2826,159 @@ sleep() {{ [[ $1 == 2 ]] || return 99; printf 'cadence=2\\n'; }}
                     self.assertEqual(result.stderr, "")
                 else:
                     self.assertIn("ping-curl-exit=22 ping-http-status=503", result.stderr)
+
+    def test_readiness_exhausted_wrapper_reserve_preserves_last_actual_poll_atomically(self) -> None:
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        for missing in (False, True):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as name:
+                socket_path = pathlib.Path(name) / "socket"
+                socket_path.touch()
+                body = f"""registered=false
+socket_path={shlex.quote(str(socket_path))}
+outer=bf-docker-core-test
+contract=unused
+polls=0
+read() {{
+  case "$2" in
+    ping_readiness_uptime) ping_readiness_uptime=100.50 ;;
+    ping_poll_uptime) ping_poll_uptime=100.50; ((polls == 0)) || ping_poll_uptime=275.50 ;;
+    ping_handoff_uptime) ping_handoff_uptime=100.50 ;;
+    *) builtin read "$@" ;;
+  esac
+}}
+bounded() {{
+  if [[ $2 == podman ]]; then printf 'true\\n'; return 0; fi
+  [[ $1 == 5s && $4 == readiness-ping && $7 == --deadline-boottime && $8 == 280.50 ]] || return 99
+  printf '7 000 connect-error-observed completed\\n'
+}}
+sleep() {{
+  [[ $1 == 2 ]] || return 99
+  polls=1
+  if [[ {str(missing).lower()} == true ]]; then rm -f "$socket_path"; SECONDS=$deadline; fi
+}}
+cleanup_owned() {{ printf 'exact-owned-teardown\\n' >&2; }}
+trap cleanup_owned EXIT
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path")
+                result = self.bash(body)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("ping-curl-exit=7 ping-http-status=000 ping-curl-error=connect-error-observed ping-collector=completed",
+                          result.stderr)
+            self.assertLess(result.stderr.index("readiness observations:"), result.stderr.index("exact-owned-teardown"))
+
+    def test_readiness_poll_wrapper_clips_native_wait_and_kill_reserve_inside_absolute_deadline(self) -> None:
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        for now, expected in (("100.50", "5s"), ("271.90", "3s"), ("274.90", None)):
+            with self.subTest(now=now), tempfile.TemporaryDirectory() as name:
+                socket_path = pathlib.Path(name) / "socket"
+                socket_path.touch()
+                body = f"""registered=false
+socket_path={shlex.quote(str(socket_path))}
+outer=bf-docker-core-test
+contract=unused
+read() {{
+  case "$2" in
+    ping_readiness_uptime) ping_readiness_uptime=100.50 ;;
+    ping_poll_uptime) ping_poll_uptime={now} ;;
+    ping_handoff_uptime) ping_handoff_uptime={now} ;;
+    *) builtin read "$@" ;;
+  esac
+}}
+bounded() {{
+  [[ $1 == {expected or 'unused'} ]] || return 99
+  printf '0 200 unknown completed\\n'
+}}
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path") + \
+                    '\nprintf "accepted=%s\\n" "$ping_collector"\n'
+                result = self.bash(body)
+            if expected is None:
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("ping-curl-exit=not-run", result.stderr)
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, "")
+                self.assertEqual(result.stdout, "accepted=completed\n")
+
+    def test_readiness_accepts_native_zero_only_after_verified_collection(self) -> None:
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        cases = [("0 200 unknown completed", True), ("0 200 unknown oversized", True),
+                 ("0 unknown unknown oversized", False), ("0 unknown unknown completed", False),
+                 ("0 unknown unknown invalid-output", False)]
+        cases.extend((f"0 unknown unknown {outcome}", False) for outcome in
+                     ("timed-out", "cancelled", "termination-unverified", "wrapper-failed", "unknown"))
+        cases.extend((("0 200 unknown completed\nDO-NOT-PRINT/private", False),
+                      ("0 200 DO-NOT-PRINT/private completed", False)))
+        for record, accepted in cases:
+            with self.subTest(record=record), tempfile.TemporaryDirectory() as name:
+                socket_path = pathlib.Path(name) / "socket"
+                socket_path.touch()
+                body = f"""registered=false
+socket_path={shlex.quote(str(socket_path))}
+outer=bf-docker-core-test
+contract=unused
+bounded() {{
+  if [[ $2 == podman ]]; then printf 'false\\n'; else printf '%s\\n' {shlex.quote(record)}; fi
+}}
+sleep() {{ return 99; }}
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path") + \
+                    '\nprintf "accepted\\n"\n'
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 0 if accepted else 1, result.stderr)
+                self.assertEqual(result.stdout, "accepted\n" if accepted else "")
+                self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+                if not accepted:
+                    self.assertIn("startup-cause=unestablished", result.stderr)
+
+    def test_readiness_rechecks_absolute_handoff_and_keeps_wrapper_uncertain_native_fields(self) -> None:
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
+        readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        cases = [("280.49", "0 200 unknown completed", 0, True, "completed"),
+                 ("280.50", "0 200 unknown completed", 0, False, "timed-out"),
+                 ("280.51", "0 200 unknown completed", 0, False, "timed-out"),
+                 ("invalid", "0 200 unknown completed", 0, False, "wrapper-failed"),
+                 ("100.50", "7 000 connect-error-observed completed", 124, False, "wrapper-failed"),
+                 ("100.50", "0 200 unknown completed", 124, False, "wrapper-failed")]
+        for handoff, record, wrapper_status, accepted, collector in cases:
+            with self.subTest(handoff=handoff, wrapper_status=wrapper_status, record=record), \
+                    tempfile.TemporaryDirectory() as name:
+                socket_path = pathlib.Path(name) / "socket"
+                socket_path.touch()
+                count_path = pathlib.Path(name) / "polls"
+                body = f"""registered=false
+socket_path={shlex.quote(str(socket_path))}
+outer=bf-docker-core-test
+contract=unused
+read() {{
+  case "$2" in
+    ping_readiness_uptime) ping_readiness_uptime=100.50 ;;
+    ping_poll_uptime) ping_poll_uptime=100.50 ;;
+    ping_handoff_uptime) ping_handoff_uptime={handoff} ;;
+    *) builtin read "$@" ;;
+  esac
+}}
+bounded() {{
+  if [[ $2 == podman ]]; then printf 'false\\n'; return 0; fi
+  printf 'original-poll\\n' >> {shlex.quote(str(count_path))}
+  printf '%s\\n' {shlex.quote(record)}
+  return {wrapper_status}
+}}
+sleep() {{ return 99; }}
+cleanup_owned() {{ printf 'exact-owned-teardown\\n' >&2; }}
+trap cleanup_owned EXIT
+""" + self.function("readiness_failure") + readiness.replace("-S $socket_path", "-f $socket_path") + \
+                    '\nprintf "accepted\\n"\n'
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 0 if accepted else 1, result.stderr)
+                self.assertEqual(result.stdout, "accepted\n" if accepted else "")
+                self.assertEqual(count_path.read_text(), "original-poll\n")
+                if not accepted:
+                    native_exit, http_status, error, _ = record.split()
+                    self.assertIn(f"ping-curl-exit={native_exit} ping-http-status={http_status} "
+                                  f"ping-curl-error={error} ping-collector={collector}", result.stderr)
+                    self.assertLess(result.stderr.index("readiness observations:"),
+                                    result.stderr.index("exact-owned-teardown"))
 
     def test_core_journey_uses_exact_id_and_preserves_transport_only_result(self) -> None:
         self.assertIn('verify-candidate --boxferry-root "$boxferry_root"', self.runner)

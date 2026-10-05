@@ -116,3 +116,112 @@ def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool 
             return ({0: "present", 1: "absent"}.get(status, "unknown"), b"") if raw == b"" else ("unknown", b"")
         return ("read", raw) if status == 0 else ("read-failed", b"")
     return outcome, raw
+
+
+def native_poll_read(arguments: list[str], deadline: float) -> tuple[str, int | None, bytes, bytes]:
+    """Collect separate private streams without replacing a native failure status.
+
+    Overflow discards only that stream but continues draining both. Only WNOWAIT evidence
+    before group teardown supplies a native exit; our own signals supply none.
+    The caller's absolute deadline includes startup and all teardown; collection
+    leaves a 250 ms reserve, and teardown waits use only the remaining budget.
+    """
+    process = None
+    outcome, native_status = "launch-failed", None
+    payloads = [bytearray(), bytearray()]
+    overflow = [False, False]
+    terminated = True
+    try:
+        if deadline - time.monotonic() <= 0.25:
+            return "timed-out", None, b"", b""
+        process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, start_new_session=True)
+        assert process.stdout is not None and process.stderr is not None
+        streams = {process.stdout.fileno(): 0, process.stderr.fileno(): 1}
+        for descriptor in streams:
+            os.set_blocking(descriptor, False)
+        # Start the request window after launch, but never borrow from the
+        # caller's absolute startup/readiness/teardown deadline.
+        expires = min(time.monotonic() + 5, deadline - 0.25)
+        outcome = "timed-out"
+        while time.monotonic() < expires:
+            observed = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            if observed is not None:
+                native_status = observed.si_status if observed.si_code == os.CLD_EXITED else -observed.si_status
+            if not streams and observed is not None:
+                outcome = ("both-oversized" if all(overflow) else "stdout-oversized" if overflow[0]
+                           else "stderr-oversized" if overflow[1] else "completed")
+                break
+            remaining = expires - time.monotonic()
+            if remaining <= 0:
+                break
+            if not streams:
+                time.sleep(min(0.01, remaining))
+                continue
+            ready = select.select(list(streams), [], [], min(0.05, remaining))[0]
+            for descriptor in ready:
+                chunk = os.read(descriptor, 4096)
+                if not chunk:
+                    del streams[descriptor]
+                elif not overflow[streams[descriptor]]:
+                    stream_index = streams[descriptor]
+                    output = payloads[stream_index]
+                    if len(output) + len(chunk) > 16_384:
+                        overflow[stream_index] = True
+                        payloads[stream_index] = bytearray()
+                    else:
+                        output.extend(chunk)
+    except KeyboardInterrupt:
+        outcome = "cancelled"
+    except (OSError, subprocess.SubprocessError):
+        outcome = "read-failed"
+    finally:
+        if process is not None:
+            # Never poll()/reap before signaling: the unreaped leader owns PGID.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except (OSError, KeyboardInterrupt):
+                terminated = False
+                try:
+                    process.kill()
+                except (OSError, KeyboardInterrupt):
+                    pass
+            try:
+                process.wait(timeout=max(0, min(0.25, deadline - time.monotonic())))
+            except (OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
+                terminated = False
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        terminated = False
+            # Read-only identity check after reap; never signal a reused PGID.
+            group_deadline = min(deadline, time.monotonic() + 0.25)
+            while terminated:
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    break
+                except (OSError, KeyboardInterrupt):
+                    terminated = False
+                    break
+                remaining = group_deadline - time.monotonic()
+                if remaining <= 0:
+                    terminated = False
+                    break
+                try:
+                    time.sleep(min(0.01, remaining))
+                except KeyboardInterrupt:
+                    terminated = False
+                    break
+    if not terminated:
+        outcome = "termination-unverified"
+    elif outcome in {"completed", "stdout-oversized", "stderr-oversized", "both-oversized"} \
+            and time.monotonic() >= deadline:
+        outcome = "timed-out"
+    if outcome not in {"completed", "stdout-oversized", "stderr-oversized", "both-oversized"}:
+        return outcome, native_status, b"", b""
+    return outcome, native_status, bytes(payloads[0]), bytes(payloads[1])
