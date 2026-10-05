@@ -59,6 +59,7 @@ active table; superseded records are history and are read only when that history
 | [0062](0062-unambiguous-compose-cli-document-discovery.md) | Unambiguous current-directory Compose document discovery |
 | [0063](0063-sole-quadlet-unit-application-identity.md) | Sole-unit Quadlet application identity and explicit names for document sets |
 | [0066](0066-metadata-only-reviewed-pr-catalogue-admission.md) | Trusted reviewed-PR application diagnostics and metadata-only catalogue admission |
+| [0067](0067-run-owned-host-archive-aliases.md) | Run-owned host archive aliases and unchanged nested fixture references |
 
 ## Superseded history
 

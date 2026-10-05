@@ -24,6 +24,45 @@ It does not establish conformance under an enforcing workload security profile.
 
 ## Active patches and retained evidence
 
+### Run-owned host archive aliases
+
+The common workload and Forgejo, Nextcloud, Paperless, Immich and observability archive paths use
+validated, invocation-specific `localhost/boxferry-archive/<run>/<suite>:<id>` host tags. Existing
+stable fixture references are never tagged or removed on the host. Exact alias absence is required
+before tagging a verified digest-pinned source's immutable ID; attempted alias ownership is
+registered before tagging, and matching ID readback is required before saving. The image ledger
+also binds any source image pulled after confirmed absence to its immutable ID, never claiming a
+pre-existing cached image. Cleanup rechecks the exact ID before non-force/non-pruning removal and
+requires confirmed absence afterward. Unknown or changed identity preserves the resource and
+private recovery evidence, fails closure and does not prevent later owned-resource attempts.
+
+Archives load only into a registered disposable target whose inspected run label and immutable
+ID match the validated ID returned by successful creation. Unbound targets and same-run-label
+name replacements are refused. Loaded IDs are checked
+and retagged to the original stable nested references before API activation/provisioning. Host-only
+tags are removed inside that target, so application intent and acquired image metadata do not gain
+run-specific tags. Supabase's direct digest-preserving Skopeo path creates no host store alias and
+is unchanged. See [ADR 0067](../../../docs/decisions/0067-run-owned-host-archive-aliases.md) for the
+explicit non-atomic boundary against arbitrary external retaggers; no global lock or historical
+deletion is introduced.
+
+The existing `test-native-presence.py` fake-engine vectors and `test-podman-live-cleanup.sh` source
+contracts cover uniqueness, bounded grammar, collision/unknown refusal, source/alias ID drift,
+partial tag and save/load/retag failures, exact cleanup and stable nested references. They are
+offline evidence only; historical receipts and Paperless/Immich cassettes remain unchanged.
+Runtime budgets, application assertions and pins are not relaxed. The current-authored Docker
+application topology contract alone updates its observability helper source-byte prerequisite.
+
+Consumer/Renovate no-change evidence: the shared live runner remains the only entry point for
+local invocation, CI's native/application jobs, migration-readiness and Release's reused gates.
+The canonical `scripts/test-application-probes.sh` offline wrapper now registers both archive
+regression suites for local `check-all`, hosted PR/main/dispatch CI and Release CI reuse; existing
+standalone cleanup and outer-storage registrations remain unchanged. The
+workload-image assignment and its manager remain byte-identical at the same path; matrix pins
+remain in `matrix.tsv`, application pins in the five existing `images.tsv` catalogues, and the
+Supabase Skopeo path retains its own catalogue. No new software/version/integrity definition,
+workflow, dependency or Renovate manager is introduced; host-only run tags are not software pins.
+
 ### Closed local and socket presence queries
 
 The outer-storage helper and live runner use one typed, read-only presence query for

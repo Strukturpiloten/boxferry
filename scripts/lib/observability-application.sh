@@ -185,10 +185,11 @@ observability_prepare_image_archive() {
     return 0
   fi
 
-  local fixture id reference expected_digest observed_digest cache_status runtime_reference
-  local archive_directory archive_size observed_architecture observed_os
-  fixture="$(observability_fixture_root)"
-  archive_directory="$(mktemp -d "${runtime_root}/observability-image-archives.XXXXXX")"
+  local fixture id reference expected_digest observed_digest cache_status archive_alias
+  local archive_directory archive_size observed_architecture observed_os observed_identity
+  fixture="$(observability_fixture_root)" || return $?
+  [[ -s "${fixture}/images.tsv" ]] || return 1
+  archive_directory="$(mktemp -d "${runtime_root}/observability-image-archives.XXXXXX")" || return $?
   while IFS=$'\t' read -r id reference _ _ _ _ platform; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     [[ "${platform}" == linux/amd64 ]] || return 1
@@ -198,34 +199,34 @@ observability_prepare_image_archive() {
     if ((cache_status == 1)); then
       timed_operation 8m "pull digest-pinned observability ${id} image" \
         "${engine}" pull --quiet --platform linux/amd64 "${reference}" \
-        > "${artifact_root}/observability-${id}.pull.log"
-      record_run_owned_host_image "${reference}"
+        > "${artifact_root}/observability-${id}.pull.log" || return $?
+      record_run_owned_host_image "${reference}" || return $?
     elif ((cache_status != 0)); then
       return "${cache_status}"
     fi
-    read -r observed_digest observed_architecture observed_os < <(
-      engine_operation "inspect observability ${id} image identity" image inspect \
-        --format '{{.Digest}} {{.Architecture}} {{.Os}}' "${reference}"
-    )
+    observed_identity="$(engine_operation "inspect observability ${id} image identity" image inspect \
+      --format '{{.Digest}} {{.Architecture}} {{.Os}}' "${reference}")" || return $?
+    read -r observed_digest observed_architecture observed_os <<< "${observed_identity}" || return $?
     [[ "${observed_digest}" == "${expected_digest}" &&
       "${observed_architecture}" == amd64 && "${observed_os}" == linux ]] || {
       printf 'Observability image identity mismatch for %s: %s %s/%s.\n' \
         "${id}" "${observed_digest}" "${observed_os}" "${observed_architecture}" >&2
       return 1
     }
-    runtime_reference="$(observability_image_reference "${id}")"
-    record_run_owned_archive_alias "${reference}" "${runtime_reference}" "observability ${id}"
+    archive_alias="$(archive_host_alias observability "${id}")" || return $?
+    record_run_owned_archive_alias "${reference}" "${archive_alias}" "observability ${id}" || return $?
+    verify_run_owned_archive_alias "${archive_alias}" || return $?
     timed_operation 10m "archive observability ${id} image" \
       "${engine}" save --format oci-archive \
-      --output "${archive_directory}/${id}.oci.tar" "${runtime_reference}"
-    release_run_owned_host_image "${runtime_reference}"
-    release_run_owned_host_image "${reference}"
-  done < "${fixture}/images.tsv"
+      --output "${archive_directory}/${id}.oci.tar" "${archive_alias}" || return $?
+    release_run_owned_host_image "${archive_alias}" || return $?
+    release_run_owned_host_image "${reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
   timed_operation 10m 'bundle digest-pinned observability image archives' \
-    tar --create --remove-files --file "${archive}" --directory "${archive_directory}" .
-  rm -rf -- "${archive_directory}"
-  chmod 0644 "${archive}"
-  archive_size="$(stat -c '%s' "${archive}")"
+    tar --create --remove-files --file "${archive}" --directory "${archive_directory}" . || return $?
+  rm -rf -- "${archive_directory}" || return $?
+  chmod 0644 "${archive}" || return $?
+  archive_size="$(stat -c '%s' "${archive}")" || return $?
   [[ "${archive_size}" -le "${OBSERVABILITY_ARCHIVE_MAX_BYTES}" ]] || {
     printf 'Observability image archive exceeds 2 GiB cap: %s bytes.\n' "${archive_size}" >&2
     return 1
@@ -233,17 +234,27 @@ observability_prepare_image_archive() {
 }
 
 observability_assert_loaded_images() {
-  local outer=$1 fixture id
-  fixture="$(observability_fixture_root)"
+  local outer=$1 fixture id nested_reference
+  fixture="$(observability_fixture_root)" || return $?
+  [[ -s "${fixture}/images.tsv" ]] || return 1
   while IFS=$'\t' read -r id _ _ _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
+    nested_reference="$(observability_image_reference "${id}")" || return $?
     engine_operation "verify loaded observability ${id} image" \
-      exec "${outer}" podman image exists "$(observability_image_reference "${id}")"
-  done < "${fixture}/images.tsv"
+      exec "${outer}" podman image exists "${nested_reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
 }
 
 observability_prepare_application_target() {
   local outer=$1 prefix=$2 socket_directory=$3 fixture destination
+  local target id alias nested_reference
+  fixture="$(observability_fixture_root)" || return $?
+  verify_archive_image_bindings observability "${fixture}" || return $?
+  target="$(archive_target_id "${outer}")" || {
+    # shellcheck disable=SC2034 # The owning live runner consumes this sticky cleanup flag.
+    native_presence_unverified=true
+    return 1
+  }
   engine_operation 'copy rootless observability network configuration' cp \
     "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" \
     "${outer}:/tmp/99-boxferry-live.conf"
@@ -253,7 +264,7 @@ observability_prepare_application_target() {
     'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"'
   # shellcheck disable=SC2016 # Archive loop expands inside the nested target.
   timed_operation 15m 'load digest-pinned observability application archives' \
-    "${engine}" exec "${outer}" /bin/sh -ceu '
+    "${engine}" exec "${target}" /bin/sh -ceu '
       directory=/tmp/boxferry-observability-images
       mkdir -p "$directory"
       trap "rm -rf -- \"$directory\"" EXIT
@@ -263,9 +274,14 @@ observability_prepare_application_target() {
    rm -f -- "$archive"
  done
  rmdir "$directory"
-    ' > /dev/null
-  observability_assert_loaded_images "${outer}"
-  fixture="$(observability_fixture_root)"
+    ' > /dev/null || return $?
+  while IFS=$'\t' read -r id _ _ _ _ _ _; do
+    [[ -z "${id}" || "${id}" == \#* ]] && continue
+    alias="$(archive_host_alias observability "${id}")" || return $?
+    nested_reference="$(observability_image_reference "${id}")" || return $?
+    restore_nested_archive_alias "${outer}" "${alias}" "${nested_reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
+  observability_assert_loaded_images "${outer}" || return $?
   destination="/tmp/boxferry-fixture/${prefix}"
   engine_operation 'create disposable observability fixture directory' \
     exec "${outer}" mkdir -p -- "${destination}"

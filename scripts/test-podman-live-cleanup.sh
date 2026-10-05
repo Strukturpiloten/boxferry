@@ -75,7 +75,7 @@ absent_branch_line="$(grep -n --fixed-strings -- 'elif ((cache_status == 1)); th
 pull_line="$(grep -n --fixed-strings -- '"${engine}" pull --quiet "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
 record_line="$(grep -n --fixed-strings -- 'record_run_owned_host_image "${image}"' "${runner}" | tail -n 1 | cut -d: -f1)"
 remove_line="$(grep -n --fixed-strings -- '"${engine}" image rm --ignore --no-prune -- "${image}"' "${runner}" | cut -d: -f1)"
-unset_line="$(grep -n --fixed-strings -- 'unset "run_owned_host_image_seen[${image}]"' "${runner}" | cut -d: -f1)"
+unset_line="$(grep -n --fixed-strings -- 'unset "run_owned_host_image_seen[${image}]"' "${runner}" | tail -n 1 | cut -d: -f1)"
 [[ "${absent_branch_line}" -lt "${pull_line}" && "${pull_line}" -lt "${record_line}" ]]
 [[ "${remove_line}" -lt "${unset_line}" ]]
 
@@ -239,12 +239,27 @@ supabase_validate_line="$(grep -n --fixed-strings -- 'supabase_validate_image_ar
   "${supabase_module}" | tail -n 1 | cut -d: -f1)"
 [[ "${supabase_copy_line}" -lt "${supabase_validate_line}" ]]
 
-# Aliases are never overwritten: the helper probes first and records only after tag succeeds.
+# A run-specific alias must be absent before its attempted ID-bound ownership
+# is registered; a failed partial tag still has an exact cleanup candidate.
 grep --fixed-strings --quiet -- 'Refusing to overwrite existing %s archive alias %s.' "${runner}"
 alias_probe_line="$(grep -n --fixed-strings -- 'engine_image_available "probe ${description} archive alias"' "${runner}" | cut -d: -f1)"
 alias_tag_line="$(grep -n --fixed-strings -- 'engine_operation "tag ${description} image for nested archive"' "${runner}" | cut -d: -f1)"
 alias_record_line="$(grep -n --fixed-strings -- 'record_run_owned_host_image "${alias}"' "${runner}" | cut -d: -f1)"
-[[ "${alias_probe_line}" -lt "${alias_tag_line}" && "${alias_tag_line}" -lt "${alias_record_line}" ]]
+[[ "${alias_probe_line}" -lt "${alias_record_line}" && "${alias_record_line}" -lt "${alias_tag_line}" ]]
+grep --fixed-strings --quiet -- 'tag "${source_id}" "${alias}" || return $?' "${runner}"
+grep --fixed-strings --quiet -- 'verify_run_owned_archive_alias "${alias}" || return $?' "${runner}"
+grep --fixed-strings --quiet -- 'run_owned_host_image_id[${image}]="${expected_id}"' "${runner}"
+grep --fixed-strings --quiet -- 'archive_image_id[${alias}]="${source_id}"' "${runner}"
+grep --fixed-strings --quiet -- 'Refusing host image removal without matching immutable ownership' "${runner}"
+for application in "${applications[@]}"; do
+  module="${script_directory}/lib/${application}-application.sh"
+  grep --fixed-strings --quiet -- "archive_host_alias ${application}" "${module}"
+  grep --fixed-strings --quiet -- 'restore_nested_archive_alias "${outer}" "${alias}" "${nested_reference}" || return $?' "${module}"
+  if grep --fixed-strings --quiet -- 'record_run_owned_archive_alias "${reference}" "${runtime_reference}"' "${module}"; then
+    printf 'Application %s still uses a stable fixture ref as a host alias.\n' "${application}" >&2
+    exit 1
+  fi
+done
 
 # Large OCI bundles never retain all source members alongside their completed tarball,
 # and the nested target drops each extracted member immediately after loading it.

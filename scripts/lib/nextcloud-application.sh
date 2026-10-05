@@ -82,9 +82,10 @@ nextcloud_prepare_image_archive() {
   [[ -s "${archive}" ]] && return 0
   local fixture id reference
   local expected_digest observed_digest cache_status
-  local runtime_reference
+  local archive_alias
   local -a references=()
-  fixture="$(nextcloud_fixture_root)"
+  fixture="$(nextcloud_fixture_root)" || return $?
+  [[ -s "${fixture}/images.tsv" ]] || return 1
   while IFS=$'\t' read -r id reference _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     expected_digest="${reference##*@}"
@@ -93,51 +94,69 @@ nextcloud_prepare_image_archive() {
     if ((cache_status == 1)); then
       timed_operation 8m "pull digest-pinned Nextcloud ${id} image" \
         "${engine}" pull --quiet "${reference}" \
-        > "${artifact_root}/nextcloud-${id}.pull.log"
-      record_run_owned_host_image "${reference}"
+        > "${artifact_root}/nextcloud-${id}.pull.log" || return $?
+      record_run_owned_host_image "${reference}" || return $?
     elif ((cache_status != 0)); then
       return "${cache_status}"
     fi
     observed_digest="$(engine_operation "inspect Nextcloud ${id} image digest" \
-      image inspect --format '{{.Digest}}' "${reference}")"
+      image inspect --format '{{.Digest}}' "${reference}")" || return $?
     [[ "${observed_digest}" == "${expected_digest}" ]] || {
       printf 'Nextcloud image digest mismatch for %s: expected %s, observed %s.\n' \
         "${id}" "${expected_digest}" "${observed_digest}" >&2
       return 1
     }
-    runtime_reference="$(nextcloud_image_reference "${id}")"
-    record_run_owned_archive_alias "${reference}" "${runtime_reference}" "Nextcloud ${id}"
-    references+=("${runtime_reference}")
-  done < "${fixture}/images.tsv"
+    archive_alias="$(archive_host_alias nextcloud "${id}")" || return $?
+    record_run_owned_archive_alias "${reference}" "${archive_alias}" "Nextcloud ${id}" || return $?
+    references+=("${archive_alias}")
+  done < "${fixture}/images.tsv" || return $?
+  for archive_alias in "${references[@]}"; do
+    verify_run_owned_archive_alias "${archive_alias}" || return $?
+  done
   timed_operation 10m 'archive digest-pinned Nextcloud images for nested loading' \
     "${engine}" save --multi-image-archive --format docker-archive \
-    --output "${archive}" "${references[@]}"
-  chmod 0644 "${archive}"
-  for runtime_reference in "${references[@]}"; do
-    release_run_owned_host_image "${runtime_reference}"
+    --output "${archive}" "${references[@]}" || return $?
+  chmod 0644 "${archive}" || return $?
+  for archive_alias in "${references[@]}"; do
+    release_run_owned_host_image "${archive_alias}" || return $?
   done
   while IFS=$'\t' read -r id reference _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
-    release_run_owned_host_image "${reference}"
-  done < "${fixture}/images.tsv"
+    release_run_owned_host_image "${reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
 }
 
 nextcloud_assert_loaded_images() {
   local outer=$1
-  local fixture id reference
-  fixture="$(nextcloud_fixture_root)"
+  local fixture id reference nested_reference
+  fixture="$(nextcloud_fixture_root)" || return $?
+  [[ -s "${fixture}/images.tsv" ]] || return 1
   while IFS=$'\t' read -r id reference _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
+    nested_reference="$(nextcloud_image_reference "${id}")" || return $?
     engine_operation "verify offline Nextcloud ${id} image alias" \
-      exec "${outer}" podman image inspect "$(nextcloud_image_reference "${id}")" > /dev/null
-  done < "${fixture}/images.tsv"
+      exec "${outer}" podman image inspect "${nested_reference}" > /dev/null || return $?
+  done < "${fixture}/images.tsv" || return $?
 }
 
 nextcloud_load_image_archive() {
-  local outer=$1
+  local outer=$1 target fixture id alias nested_reference
+  fixture="$(nextcloud_fixture_root)" || return $?
+  verify_archive_image_bindings nextcloud "${fixture}" || return $?
+  target="$(archive_target_id "${outer}")" || {
+    # shellcheck disable=SC2034 # The owning live runner consumes this sticky cleanup flag.
+    native_presence_unverified=true
+    return 1
+  }
   timed_operation 10m 'load Nextcloud images without nested registry access' \
-    "${engine}" exec "${outer}" podman load --input /boxferry-workload.tar
-  nextcloud_assert_loaded_images "${outer}"
+    "${engine}" exec "${target}" podman load --input /boxferry-workload.tar || return $?
+  while IFS=$'\t' read -r id _ _ _ _ _; do
+    [[ -z "${id}" || "${id}" == \#* ]] && continue
+    alias="$(archive_host_alias nextcloud "${id}")" || return $?
+    nested_reference="$(nextcloud_image_reference "${id}")" || return $?
+    restore_nested_archive_alias "${outer}" "${alias}" "${nested_reference}" || return $?
+  done < "${fixture}/images.tsv" || return $?
+  nextcloud_assert_loaded_images "${outer}" || return $?
 }
 
 nextcloud_remote() {
