@@ -10,8 +10,10 @@ import time
 
 
 def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool = False,
-                   presence: bool = False) -> tuple[str, bytes]:
+                   presence: bool = False, launcher=None) -> tuple[str, bytes]:
     """Bound one read-only subprocess; neither stderr nor failed output escapes."""
+    # Default consumers retain their Popen lifecycle. A supplied single-thread
+    # Linux owner explicitly covers acquisition, bootstrap, observation and reap.
     process = None
     outcome, raw = "read-failed", b""
     interrupted = False
@@ -22,9 +24,13 @@ def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool 
     try:
         if expires <= time.monotonic():
             return "timed-out", b""
-        process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT if merge_output or presence else subprocess.DEVNULL,
-                                   start_new_session=True)
+        if launcher is None:
+            process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT if merge_output or presence else subprocess.DEVNULL,
+                                       start_new_session=True)
+        else:
+            process = launcher.acquire(arguments, merge_output=merge_output or presence)
+            launcher.prepare(process, expires)
         assert process.stdout is not None
         descriptor = process.stdout.fileno()
         os.set_blocking(descriptor, False)
@@ -42,7 +48,8 @@ def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool 
                 # WNOWAIT keeps the leader PID reserved until its owned group
                 # has been terminated. Never reap and then signal a numeric PGID.
                 while True:
-                    observed = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                    observed = (os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                                if launcher is None else launcher.observe(process))
                     if observed is not None:
                         completed, raw = True, bytes(output)
                         break
@@ -63,7 +70,12 @@ def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool 
     except KeyboardInterrupt:
         interrupted = True
     finally:
-        if process is not None:
+        if launcher is not None:
+            try:
+                status = launcher.teardown(process)
+            except (OSError, KeyboardInterrupt):
+                termination_failed = True
+        elif process is not None:
             # This session belongs only to this diagnostic read, not the daemon.
             try:
                 os.killpg(process.pid, signal.SIGKILL)
