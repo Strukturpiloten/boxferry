@@ -1466,7 +1466,7 @@ class VolumeFixtureTests(unittest.TestCase):
         runner = (SOURCE.parent.parent / "docker-application-conformance.sh").read_text()
         self.assertIn('--profile volume-fixtures --destination "$boxferry_snapshot"', runner)
         self.assertIn('--lane "$lane" --run "$volume_run" --prefix "$volume_prefix"', runner)
-        self.assertRegex(runner, r'if \[\[ \$profile != volume-fixtures \]\]; then\n\s+fixture_pull_attempted=true')
+        self.assertRegex(runner, r'if \[\[ \$profile != volume-fixtures && \$profile != readiness-comparison \]\]; then\n\s+fixture_pull_attempted=true')
         begin = runner.index('if [[ $profile == volume-fixtures ]]; then\n  bounded 30s python3 "$contract" verify-candidate')
         end = runner.index('\nelse\n', begin)
         volume_branch = runner[begin:end]
