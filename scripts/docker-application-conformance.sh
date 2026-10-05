@@ -8,9 +8,10 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 contract="${script_dir}/lib/docker-application-contract.py"
 profile='' lane='' lens_root='' lens_revision='' script_sha='' artifact='' artifact_sha256='' api_version=''
 boxferry_root='' boxferry_binary='' boxferry_receipt=''
+evidence_directory='' evidence_identity='' volume_input_proof='' volume_cleanup_proof=''
 
 usage() {
-  printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH]\n' "$0" >&2
+  printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--evidence-directory PATH (required for volume-fixtures only)]\n' "$0" >&2
   exit 2
 }
 
@@ -27,12 +28,18 @@ while (($#)); do
     --boxferry-root) boxferry_root=$2 ;;
     --boxferry-binary) boxferry_binary=$2 ;;
     --boxferry-receipt) boxferry_receipt=$2 ;;
+    --evidence-directory) evidence_directory=$2 ;;
     *) usage ;;
   esac
   shift 2
 done
 [[ -n $lens_root && -n $lens_revision && -n $script_sha ]] || usage
 [[ $profile == catalogue || $profile == replay-probe || $profile == core-journey || $profile == volume-fixtures ]] || usage
+if [[ $profile == volume-fixtures ]]; then
+  [[ -n $evidence_directory ]] || usage
+else
+  [[ -z $evidence_directory ]] || usage
+fi
 for tool in python3 git; do command -v "$tool" > /dev/null || {
   printf 'missing required tool: %s\n' "$tool" >&2
   exit 1
@@ -197,8 +204,31 @@ podman_presence() {
   printf '%s presence unverified; retaining private evidence\n' "$kind" >&2
   return 2
 }
+finish_volume_evidence() {
+  local write_status=0
+  [[ ${cleanup_interrupted:-true} == false && $registered == true &&
+    -n $volume_input_proof && -n $volume_cleanup_proof ]] || return 1
+  # Keep the interruption trap through the private evidence handoff. The writer
+  # repeats final candidate/receipt/native validation after all resource closure.
+  evidence_file_identity=$(bounded 30s python3 "$contract" write-volume-evidence \
+    --evidence-directory "$evidence_directory" --evidence-identity "$evidence_identity" \
+    --disposable-directory "$run_dir" --boxferry-root "$boxferry_root" --binary "$boxferry_binary" \
+    --receipt "$boxferry_receipt" --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+    --native-script-sha256 "$script_sha" --input-proof "$volume_input_proof" --cleanup-proof "$volume_cleanup_proof" \
+    --outer-absent --storage-absent --not-interrupted) || write_status=$?
+  if ((write_status != 0)) || [[ $cleanup_interrupted == true ]]; then
+    if [[ -n $evidence_file_identity ]]; then
+      cleanup_bounded 5s python3 "$contract" remove-volume-evidence --evidence-directory "$evidence_directory" \
+        --evidence-identity "$evidence_identity" --file-identity "$evidence_file_identity" > /dev/null ||
+        printf 'volume evidence revocation unverified; inspect private destination\n' >&2
+    fi
+    printf 'volume evidence handoff failed or interrupted; no acceptance recorded\n' >&2
+    return 1
+  fi
+}
 cleanup_owned() {
   local failure=0 observed state inner_status now monitor_joined=true
+  local disposable_identity_verified=true
   local outer_residual=none volume_residual=none directory_residual=none
   local inner_volume_cleanup=not-required
   if [[ ${profile:-} == volume-fixtures ]] &&
@@ -214,6 +244,13 @@ cleanup_owned() {
     failure=1
   }
   cleanup_deadline=$((now + 95))
+  if [[ ${profile:-} == volume-fixtures && -n ${evidence_identity:-} ]]; then
+    if ! cleanup_bounded 5s python3 "$contract" check-volume-disposable-identity \
+      --disposable-directory "$run_dir" --evidence-identity "$evidence_identity" > /dev/null; then
+      disposable_identity_verified=false
+      failure=1
+    fi
+  fi
   if [[ -n $watchdog_pid ]]; then
     if [[ -n $run_dir && -d $run_dir ]] && : > "$run_dir/stop-watchdog"; then
       # Let bounded scans finish, but retain their paths if the monitor does
@@ -257,10 +294,12 @@ cleanup_owned() {
       if observed=$(cleanup_bounded 15s podman inspect --format '{{index .Config.Labels "io.boxferry.docker-core-run"}}' "$outer") && [[ $observed == "$run_id" ]]; then
         if [[ -n $socket_path && -S $socket_path ]]; then
           if [[ $profile == volume-fixtures ]]; then
-            if [[ $inner_volume_cleanup == unverified ]]; then
-              if cleanup_bounded 30s python3 "$contract" cleanup-volume-fixtures --allow-isolated-apply \
+            if [[ $inner_volume_cleanup == unverified && $disposable_identity_verified == true ]]; then
+              local evidence_args=()
+              [[ -z ${volume_input_proof:-} ]] || evidence_args=(--evidence-json)
+              if volume_cleanup_proof=$(cleanup_bounded 30s python3 "$contract" cleanup-volume-fixtures --allow-isolated-apply \
                 --socket "$socket_path" --state "$run_dir/volume-ledger.json" --lane "$lane" \
-                --run "$volume_run" --prefix "$volume_prefix" --api-version "$api_version" > /dev/null; then
+                --run "$volume_run" --prefix "$volume_prefix" --api-version "$api_version" "${evidence_args[@]}"); then
                 inner_volume_cleanup=verified
               else
                 failure=1
@@ -331,11 +370,19 @@ cleanup_owned() {
     # synthetic request/state and image archive material for this run alone.
     directory_residual=$run_dir
     if [[ $run_dir == /tmp/boxferry-docker-core.* && -d $run_dir && ! -L $run_dir ]]; then
+      if [[ ${profile:-} == volume-fixtures && -n ${evidence_identity:-} ]]; then
+        if ! cleanup_bounded 5s python3 "$contract" check-volume-disposable-identity \
+          --disposable-directory "$run_dir" --evidence-identity "$evidence_identity" > /dev/null; then
+          disposable_identity_verified=false
+          failure=1
+        fi
+      fi
       if [[ $outer_residual == none && $volume_residual == none &&
-        $inner_volume_cleanup != unverified && ${presence_unverified:-false} == false ]]; then
+        $inner_volume_cleanup != unverified && ${presence_unverified:-false} == false &&
+        $disposable_identity_verified == true ]]; then
         cleanup_bounded 30s rm -r -- "$run_dir" || failure=1
         [[ -e $run_dir ]] || directory_residual=none
-      else
+      elif [[ $disposable_identity_verified == true ]]; then
         # Keep the socket/ledger for precise recovery or uncertain inner cleanup, but
         # discard only run-owned temporary archive bytes independently.
         cleanup_bounded 10s rm -f -- "$run_dir/busybox.tar" || failure=1
@@ -371,6 +418,10 @@ trap 'exit 1' HUP INT TERM
 
 run_dir=$(mktemp -d /tmp/boxferry-docker-core.XXXXXXXX)
 chmod 0700 "$run_dir"
+if [[ $profile == volume-fixtures ]]; then
+  evidence_identity=$(python3 "$contract" check-volume-evidence-directory --evidence-directory "$evidence_directory" \
+    --disposable-directory "$run_dir" --boxferry-root "$boxferry_root" --docker-lens-root "$lens_root")
+fi
 run_id=${run_dir##*.}
 volume_run="bf-${run_id,,}"
 volume_prefix="bf-volume-${run_id,,}"
@@ -730,6 +781,13 @@ if [[ $profile == volume-fixtures ]]; then
   python3 "$contract" validate-volume-fixtures --directory "$run_dir/volume-output" \
     --boxferry-root "$boxferry_root" --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
     --receipt-sha256 "$receipt_sha256" --api-version "$api_version" --catalogue-json "$catalogue" > /dev/null
+  volume_input_proof=$(bounded 30s python3 "$contract" capture-volume-evidence \
+    --directory "$run_dir/volume-output" --boxferry-root "$boxferry_root" --binary "$boxferry_binary" \
+    --receipt "$boxferry_receipt" --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+    --native-script-sha256 "$script_sha" --state "$run_dir/volume-ledger.json" \
+    --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" --outer-run "$run_id" \
+    --receipt-sha256 "$receipt_sha256" --api-version "$api_version" \
+    --observed-release "$observed_release" --observed-api "$observed_api" --observed-package "$installed_package")
 else
   python3 "$contract" validate-artifact --artifact "$artifact" --image "$core_alias" \
     --artifact-sha256 "$artifact_sha256" \
@@ -848,20 +906,29 @@ if [[ $cleanup_interrupted == true ]]; then
   printf 'Docker core harness interrupted during cleanup; no migration acceptance recorded\n' >&2
   exit 1
 fi
-trap - EXIT HUP INT TERM
-report_host_cache
 if [[ $profile == volume-fixtures ]]; then
-  # Cleanup is part of closure, not permission to accept changed source/receipt.
-  bounded 30s python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
-    --binary "$boxferry_binary" --receipt "$boxferry_receipt" --profile volume-fixtures \
-    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" > /dev/null
-  [[ $(python3 "$contract" artifact-identity --artifact "$boxferry_receipt") == "$receipt_sha256" ]] || {
-    printf 'volume candidate receipt bytes changed after cleanup; refusing success\n' >&2
+  if ! finish_volume_evidence; then
+    trap - EXIT HUP INT TERM
+    report_host_cache
     exit 1
-  }
+  fi
+  # End the catchable interval first; the flag is then stable. A signal caught
+  # before this reset must revoke the new inode, never be discarded by success.
+  trap - EXIT HUP INT TERM
+  if [[ $cleanup_interrupted == true ]]; then
+    cleanup_bounded 5s python3 "$contract" remove-volume-evidence --evidence-directory "$evidence_directory" \
+      --evidence-identity "$evidence_identity" --file-identity "$evidence_file_identity" > /dev/null ||
+      printf 'volume evidence revocation unverified; inspect private destination\n' >&2
+    report_host_cache
+    printf 'volume evidence handoff interrupted before acknowledgement; no acceptance recorded\n' >&2
+    exit 1
+  fi
+  report_host_cache
   printf 'VOLUME-ONLY REHEARSAL CHECKS-PASSED: lane=%s fixtures=6 volumes=23 cleanup=verified acceptance=pending-reviewed-native-evidence; no container/image workload or six-application acceptance\n' "$lane"
   exit 0
 fi
+trap - EXIT HUP INT TERM
+report_host_cache
 if [[ $profile == core-journey ]]; then
   printf 'CORE-JOURNEY-SCAFFOLD CHECKS-PASSED: lane=%s docker-release=%s advertised-api=%s docker-lens-revision=%s candidate-receipt=operator-attested loaded-image-id=%s peak-disk-growth-kib=%s cleanup=verified acceptance=pending-reviewed-native-evidence; one core service only, no six-application acceptance\n' \
     "$lane" "$observed_release" "$observed_api" "$lens_revision" \

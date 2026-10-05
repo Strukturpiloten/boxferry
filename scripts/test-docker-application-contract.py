@@ -1263,8 +1263,8 @@ class VolumeFixtureTests(unittest.TestCase):
             target.parent.mkdir(parents=True)
             target.write_bytes(source)
             requests = [{"method": "POST", "path": "/v1.56/volumes/create",
-                         "body": {"Name": f"test-prefix-{suffix}", "Labels": {
-                             "io.boxferry.live-run": "test-run", "io.boxferry.application": f"test-prefix-{owner}"}}}
+                         "body": {"Name": f"{self.prefix}-{suffix}", "Labels": {
+                             "io.boxferry.live-run": self.run_id, "io.boxferry.application": f"{self.prefix}-{owner}"}}}
                         for suffix in suffixes]
             artifact = {"schema_version": 1, "context": copy.deepcopy(self.profile),
                         "requests": requests, "prerequisites": []}
@@ -1475,7 +1475,10 @@ class VolumeFixtureTests(unittest.TestCase):
         self.assertNotIn("load --input", volume_branch)
         self.assertNotIn("convert docker compose", volume_branch)
         self.assertIn("cleanup-volume-fixtures --allow-isolated-apply", runner)
-        self.assertIn("receipt bytes changed after cleanup; refusing success", runner)
+        self.assertIn("write-volume-evidence", runner)
+        self.assertIn("volume_candidate_proof(args.boxferry_root", SOURCE.read_text())
+        self.assertLess(runner.index("apply-volume-fixtures --allow-isolated-apply"), runner.index("capture-volume-evidence"))
+        self.assertLess(runner.rindex("cleanup_owned ||"), runner.rindex("if ! finish_volume_evidence"))
         self.assertEqual(contract.CORE_REACQUIRE_REPORT_EXPECTATIONS, {})
         self.assertIn("no container/image workload or six-application acceptance", runner)
 
@@ -2719,6 +2722,257 @@ class ReadinessDiagnosticTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
 
 
+class VolumeEvidenceTests(unittest.TestCase):
+    fixtures = VolumeFixtureTests.fixtures
+    lane = "upstream-rootless"
+    api = "1.56"
+    receipt = "a" * 64
+    save_manifest = VolumeFixtureTests.save_manifest
+    validate = VolumeFixtureTests.validate
+    apply = VolumeFixtureTests.apply
+    run_id = "bf-a1b2c3d4"
+    prefix = "bf-volume-a1b2c3d4"
+    outer_run = "A1b2C3d4"
+    source_hashes = (
+        "2d7e81eeefc7060812900791db0a3a9fef08b748779f8697fef12f0cced4d5be",
+        "ca714ddfe9b64620faf47c714db6be2907f7ec6428529c3e041bfd123bdd4761",
+        "f22f0e4194db3b907cdb0845045339f8561ad830407acf66f6f1063fcca6f762",
+        "a1ca57ad8d5342aafa2e947c9ed657b6006e89288c97d1d12166ddc86b55755d",
+        "d66a018d9c3cfe804ab594ad6a1bcbe89e366ac1780422efa90ef3fca3143cbc",
+        "9dd2e33343e8cf00836d783fb25d6488dcc0b958f68472dafa4b6d7b24c8a42b",
+    )
+
+    def setUp(self) -> None:
+        VolumeFixtureTests.setUp(self)
+        self.record = {"schema_version": 2, "boxferry_revision": "1" * 40,
+                       "boxferry_source_sha256": "2" * 64, "boxferry_lock_sha256": "3" * 64,
+                       "docker_lens_revision": "4" * 40, "docker_lens_source_sha256": "5" * 64,
+                       "docker_lens_lock_sha256": "6" * 64, "binary_sha256": "7" * 64,
+                       "override_identity": {"path": "protected-private-source-canary"}}
+        self.receipt_path = self.root / "candidate-receipt.json"
+        self.receipt_path.write_text(json.dumps(self.record))
+        self.receipt_path.chmod(0o600)
+        self.receipt = hashlib.sha256(self.receipt_path.read_bytes()).hexdigest()
+        self.manifest["candidate_receipt_sha256"] = self.receipt
+        self.save_manifest()
+        self.created = {}
+        self.state = self.apply(self.native)
+        self.disposable = pathlib.Path("/tmp/boxferry-docker-core.A1b2C3d4")
+        self.native_proof = {"native_script_sha256": "8" * 64,
+                             "catalogue_sha256": "9" * 64, "target": self.profile}
+
+    def native(self, _socket, method, path, body=None, **_kwargs):
+        if method == "POST":
+            value = json.loads(body)
+            self.created[value["Name"]] = value
+            return 201, json.dumps({**value, "Private": "protected-runtime-body-canary"}).encode()
+        name = path.rsplit("/", 1)[-1]
+        if method == "DELETE":
+            self.created.pop(name)
+            return 204, b"protected-delete-body-canary"
+        return ((200, json.dumps({**self.created[name], "Private": "protected-runtime-body-canary"}).encode())
+                if name in self.created else (404, b"protected-absent-body-canary"))
+
+    def capture(self):
+        with mock.patch.object(contract, "verify_candidate", return_value=self.record), \
+             mock.patch.object(contract, "volume_native_proof", return_value=({"profiles": self.profiles}, self.native_proof)):
+            return contract.capture_volume_evidence(self.output, self.root, self.root / "binary", self.receipt_path,
+                self.root / "lens", "4" * 40, "8" * 64, self.state, lane=self.lane, run=self.run_id,
+                prefix=self.prefix, outer_run=self.outer_run, receipt_sha256=self.receipt, api_version=self.api,
+                observed_release="29.8.1", observed_api=self.api, observed_package="")
+
+    def cleanup_proof(self):
+        with mock.patch.object(contract, "volume_socket"), \
+             mock.patch.object(contract, "engine_request", side_effect=self.native):
+            return contract.cleanup_volume_fixtures(self.root / "socket", self.state, run=self.run_id,
+                                                    prefix=self.prefix, lane=self.lane, api_version=self.api)
+
+    def complete(self, stage, outcomes, **changes):
+        options = {"candidate": stage["candidate"], "native": self.native_proof,
+                   "disposable": self.disposable, "disposable_identity": {"device": 11, "inode": 12},
+                   "interrupted": False, "outer_absent": True, "storage_absent": True, **changes}
+        return contract.completed_volume_evidence(stage, outcomes, **options)
+
+    def test_literal_proof_bindings_and_privacy_survive_disposable_deletion(self) -> None:
+        stage = self.capture()
+        self.assertNotIn("result", stage)
+        self.assertEqual(set(stage), {"schema", "scope", "lane", "outer_run", "volume_run", "volume_prefix",
+                                     "api_version", "candidate", "native", "observed", "manifest_sha256", "fixtures"})
+        self.assertEqual((stage["schema"], stage["scope"], stage["outer_run"], stage["volume_run"], stage["volume_prefix"]),
+                         (1, "volume-only", "A1b2C3d4", "bf-a1b2c3d4", "bf-volume-a1b2c3d4"))
+        self.assertEqual(stage["candidate"], {"receipt_schema": 2, "receipt_sha256": self.receipt,
+            "build_profile": "volume-fixtures", "boxferry_revision": "1" * 40,
+            "boxferry_source_sha256": "2" * 64, "boxferry_lock_sha256": "3" * 64, "binary_sha256": "7" * 64,
+            "docker_lens_revision": "4" * 40, "docker_lens_source_sha256": "5" * 64, "docker_lens_lock_sha256": "6" * 64})
+        self.assertEqual([row["source_sha256"] for row in stage["fixtures"]], list(self.source_hashes))
+        self.assertEqual([row["volume_count"] for row in stage["fixtures"]], [2, 3, 6, 4, 5, 3])
+        for row, (identity, _owner, _suffixes) in zip(stage["fixtures"], self.fixtures, strict=True):
+            self.assertEqual(row["id"], identity)
+            self.assertEqual(row["artifact_sha256"], hashlib.sha256((self.output / f"{identity}-volumes.json").read_bytes()).hexdigest())
+        self.assertEqual(stage["manifest_sha256"], hashlib.sha256((self.output / "manifest.json").read_bytes()).hexdigest())
+        outcomes = self.cleanup_proof()
+        self.assertFalse(self.created)
+        # Only sanitized shell-held input/cleanup records survive producer teardown.
+        for path in self.output.iterdir():
+            path.unlink()
+        self.output.rmdir()
+        self.state.unlink()
+        proof = self.complete(stage, outcomes)
+        self.assertEqual(proof["result"], "checks-passed")
+        expected_first = hashlib.sha256(b'{"Labels":{"io.boxferry.application":"bf-volume-a1b2c3d4-forgejo",'
+            b'"io.boxferry.live-run":"bf-a1b2c3d4"},"Name":"bf-volume-a1b2c3d4-forge-db"}').hexdigest()
+        self.assertEqual(proof["volumes"][0], {"identity_sha256": expected_first, "cleanup": "removed", "absence": "verified"})
+        self.assertEqual(len(proof["volumes"]), 23)
+        self.assertEqual(proof["closure"]["outer"], {"ownership_sha256": hashlib.sha256(
+            b'{"kind":"container","name":"bf-docker-core-A1b2C3d4","run":"A1b2C3d4"}').hexdigest(), "absence": "verified"})
+        encoded = json.dumps(proof)
+        for value in ("protected-", "Name", "Labels", "io.boxferry", str(self.root)):
+            self.assertNotIn(value, encoded)
+
+    def test_capture_rejects_receipt_artifact_source_and_complete_ledger_tampering(self) -> None:
+        original = self.state.read_bytes()
+        for mutation in (lambda value: value["volumes"].pop(),
+                         lambda value: value["volumes"][0]["Labels"].update(extra="protected-label-canary")):
+            value = json.loads(original)
+            mutation(value)
+            self.state.write_text(json.dumps(value))
+            with self.assertRaises(contract.ContractError):
+                self.capture()
+        self.state.write_bytes(original)
+        artifact = self.output / "forgejo-volumes.json"
+        old_artifact = artifact.read_bytes()
+        artifact.write_bytes(old_artifact + b" ")
+        with self.assertRaisesRegex(contract.ContractError, "artifact hash differs"):
+            self.capture()
+        artifact.write_bytes(old_artifact)
+        source = self.root / "fixtures/conformance/forgejo-application/compose.yaml"
+        old_source = source.read_bytes()
+        source.write_bytes(old_source + b"\n# source drift\n")
+        with self.assertRaisesRegex(contract.ContractError, "original fixture source differs"):
+            self.capture()
+        source.write_bytes(old_source)
+        self.receipt_path.write_text("{}")
+        with self.assertRaisesRegex(contract.ContractError, "receipt bytes differ"):
+            self.capture()
+
+    def test_cleanup_distinguishes_preexisting_absence_and_failure_cannot_emit_outcomes(self) -> None:
+        stage = self.capture()
+        self.created.pop(f"{self.prefix}-forge-db")
+        proof = self.complete(stage, self.cleanup_proof())
+        self.assertEqual(proof["volumes"][0]["cleanup"], "already-absent")
+        with mock.patch.object(contract, "volume_socket"), \
+             mock.patch.object(contract, "engine_request", return_value=(500, b"protected-native-canary")), \
+             self.assertRaises(contract.ContractError):
+            contract.cleanup_volume_fixtures(self.root / "socket", self.state, run=self.run_id,
+                                            prefix=self.prefix, lane=self.lane, api_version=self.api)
+
+    def test_negative_closure_interruption_or_tampering_cannot_complete(self) -> None:
+        stage = self.capture()
+        outcomes = self.cleanup_proof()
+        for changes in ({"interrupted": True}, {"outer_absent": False}, {"storage_absent": False},
+                        {"candidate": {}}, {"native": {}}, {"disposable": self.root}):
+            with self.subTest(changes=changes), self.assertRaises(contract.ContractError):
+                self.complete(stage, outcomes, **changes)
+        for mutate in (lambda value: value[0].update(absence="unknown"), lambda value: value.pop(),
+                       lambda value: value.append(value[0]), lambda value: value[0].update(identity_sha256="a" * 64),
+                       lambda value: value[0].update(raw_body="protected-cleanup-canary")):
+            value = copy.deepcopy(outcomes)
+            mutate(value)
+            with self.assertRaises(contract.ContractError):
+                self.complete(stage, value)
+        changed = copy.deepcopy(stage)
+        changed["fixtures"][0]["source_sha256"] = "0" * 64
+        with self.assertRaises(contract.ContractError):
+            self.complete(changed, outcomes)
+
+    def evidence(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        directory = pathlib.Path(temporary.name)
+        # Portable offline positive fixtures model the live harness's root owner.
+        real_fstat = os.fstat
+        def metadata(fd):
+            value = real_fstat(fd)
+            return SimpleNamespace(st_dev=value.st_dev, st_ino=value.st_ino, st_mode=value.st_mode, st_uid=0,
+                                   st_size=value.st_size, st_nlink=value.st_nlink)
+        patcher = mock.patch.object(contract.os, "fstat", side_effect=metadata)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        identity = contract.volume_evidence_directory(directory, self.disposable, (self.root,))
+        return directory, identity
+
+    def test_private_destination_no_overwrite_and_failure_revoke_only_original_inode(self) -> None:
+        proof = self.complete(self.capture(), self.cleanup_proof())
+        directory, identity = self.evidence()
+        contract.write_volume_evidence(directory, self.disposable, (self.root,), identity, proof)
+        output = directory / "volume-proof.json"
+        self.assertEqual(json.loads(output.read_bytes()), proof)
+        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        with self.assertRaises(contract.ContractError):
+            contract.write_volume_evidence(directory, self.disposable, (self.root,), identity, proof)
+        output.unlink()
+        with mock.patch.object(contract.os, "fsync", side_effect=OSError("protected-write-error")), self.assertRaises(OSError):
+            contract.write_volume_evidence(directory, self.disposable, (self.root,), identity, proof)
+        self.assertEqual(list(directory.iterdir()), [])
+        replacement = b"pre-existing-substituted-file"
+        def replaced(_fd):
+            output.unlink()
+            output.write_bytes(replacement)
+            raise OSError("protected-write-error")
+        with mock.patch.object(contract.os, "fsync", side_effect=replaced), self.assertRaises(OSError):
+            contract.write_volume_evidence(directory, self.disposable, (self.root,), identity, proof)
+        self.assertEqual(output.read_bytes(), replacement)
+
+    def test_destination_path_owner_mode_symlink_staleness_and_changed_identity_refused(self) -> None:
+        directory, identity = self.evidence()
+        for path in (directory / "missing", pathlib.Path("relative"), self.root, self.output):
+            with self.subTest(path=path), self.assertRaises((contract.ContractError, OSError)):
+                contract.volume_evidence_directory(path, self.disposable, (self.root,))
+        linked = directory.parent / (directory.name + "-link")
+        linked.symlink_to(directory)
+        self.addCleanup(linked.unlink)
+        with self.assertRaises(contract.ContractError):
+            contract.volume_evidence_directory(linked, self.disposable, (self.root,))
+        directory.chmod(0o755)
+        with self.assertRaises(contract.ContractError):
+            contract.volume_evidence_directory(directory, self.disposable, (self.root,))
+
+    def test_catchable_writer_interruption_revokes_new_proof_and_preserves_replacement(self) -> None:
+        proof = self.complete(self.capture(), self.cleanup_proof())
+        directory, identity = self.evidence()
+        handlers = {}
+        def installed(signum, handler):
+            previous = handlers.get(signum)
+            handlers[signum] = handler
+            return previous
+        def interrupt(_identity):
+            handlers[contract.signal.SIGTERM](contract.signal.SIGTERM, None)
+        with mock.patch.object(contract.signal, "signal", side_effect=installed), self.assertRaises(contract.ContractError):
+            contract.write_volume_evidence(directory, self.disposable, (self.root,), identity, proof, announce=interrupt)
+        self.assertEqual(list(directory.iterdir()), [])
+        token = {}
+        contract.write_volume_evidence(directory, self.disposable, (self.root,), identity, proof, announce=token.update)
+        original = directory / "volume-proof.json"
+        # Retain the original inode so a replacement cannot reuse its number.
+        held = os.open(original, os.O_RDONLY)
+        try:
+            original.unlink()
+            original.write_text("protected-replacement-canary")
+            contract.remove_volume_evidence(directory, identity, token)
+            self.assertEqual(original.read_text(), "protected-replacement-canary")
+        finally:
+            os.close(held)
+        directory.chmod(0o700)
+        with self.assertRaises(contract.ContractError):
+            contract.volume_evidence_directory(directory, self.disposable, (self.root,), {"device": 0, "inode": 0})
+        with mock.patch.object(contract.os, "fstat", return_value=SimpleNamespace(st_uid=123, st_mode=0o40700)):
+            with self.assertRaises(contract.ContractError):
+                contract.volume_evidence_directory(directory, self.disposable, (self.root,))
+        (directory / "stale").write_text("protected-stale-canary")
+        with self.assertRaises(contract.ContractError):
+            contract.volume_evidence_directory(directory, self.disposable, (self.root,))
+
+
 class RunnerSafetyTests(unittest.TestCase):
     runner = (pathlib.Path(__file__).parent / "docker-application-conformance.sh").read_text(encoding="utf-8")
 
@@ -2753,6 +3007,120 @@ class RunnerSafetyTests(unittest.TestCase):
         result = self.bash(wrapper + "\nbounded 0.1s sleep 3\n")
         self.assertEqual(result.returncode, 124)
         self.assertLess(time.monotonic() - started, 2)
+
+    def test_volume_evidence_handoff_requires_all_gates_and_revokes_failed_or_interrupted_write(self) -> None:
+        for status, interrupted in ((0, False), (1, False), (0, True)):
+            body = """cleanup_interrupted=false
+registered=true
+volume_input_proof='input-proof'
+volume_cleanup_proof='cleanup-proof'
+evidence_directory=/unused
+evidence_identity='private-directory-token'
+run_dir=/unused
+boxferry_root=/unused
+boxferry_binary=/unused
+boxferry_receipt=/unused
+lens_root=/unused
+lens_revision=unused
+script_sha=unused
+trap 'cleanup_interrupted=true' HUP INT TERM
+""" + self.function("finish_volume_evidence") + f"""
+bounded() {{
+  [[ $1 == 30s && $4 == write-volume-evidence ]] || return 99
+  printf '{{"device":1,"inode":2}}'
+  {('kill -HUP "$$"' if interrupted else ':')}
+  return {status}
+}}
+cleanup_bounded() {{
+  [[ $1 == 5s && $4 == remove-volume-evidence ]] || return 99
+  printf 'revoked\\n' >&2
+}}
+finish_volume_evidence
+"""
+            result = self.bash(body)
+            with self.subTest(status=status, interrupted=interrupted):
+                self.assertEqual(result.returncode, 0 if status == 0 and not interrupted else 1, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual("revoked" in result.stderr, status != 0 or interrupted)
+        body = """cleanup_interrupted=true
+registered=true
+volume_input_proof='input'
+volume_cleanup_proof='cleanup'
+bounded() { printf 'must-not-run'; return 99; }
+""" + self.function("finish_volume_evidence") + "\nfinish_volume_evidence\n"
+        result = self.bash(body)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+
+    def test_evidence_option_is_required_only_for_volume_profile_before_any_tool_call(self) -> None:
+        script = SOURCE.parent.parent / "docker-application-conformance.sh"
+        for profile in ("catalogue", "replay-probe", "core-journey", "volume-fixtures"):
+            command = ["bash", str(script), "--profile", profile, "--docker-lens-root", "/protected-private-canary",
+                       "--docker-lens-revision", "1" * 40, "--native-script-sha256", "2" * 64]
+            if profile != "volume-fixtures":
+                command.extend(["--evidence-directory", "/protected-destination-canary"])
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=False)
+            with self.subTest(profile=profile):
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("protected-", result.stderr)
+
+    def test_interrupt_at_final_trap_reset_after_successful_finalizer_return_revokes(self) -> None:
+        start = self.runner.rindex("if [[ $profile == volume-fixtures ]]; then")
+        stop = self.runner.index("\nfi\n", start) + len("\nfi\n")
+        final_block = self.runner[start:stop]
+        for interrupted in (False, True):
+            with tempfile.TemporaryDirectory() as name:
+                proof = pathlib.Path(name) / "proof-created"
+                body = f"""profile=volume-fixtures
+lane=upstream-rootless
+registered=true
+cleanup_interrupted=false
+volume_input_proof=input-proof
+volume_cleanup_proof=cleanup-proof
+evidence_directory=unused
+evidence_identity=directory-token
+run_dir=unused
+boxferry_root=unused
+boxferry_binary=unused
+boxferry_receipt=unused
+lens_root=unused
+lens_revision=unused
+script_sha=unused
+report_host_cache() {{ :; }}
+trap 'cleanup_interrupted=true' HUP INT TERM
+bounded() {{
+  [[ $1 == 30s && $4 == write-volume-evidence ]] || return 99
+  printf 'created' > {shlex.quote(str(proof))}
+  printf '{{"device":1,"inode":2}}'
+}}
+cleanup_bounded() {{
+  [[ $1 == 5s && $4 == remove-volume-evidence ]] || return 99
+  [[ ${{*: -1}} == '{{"device":1,"inode":2}}' ]] || return 98
+  rm -- {shlex.quote(str(proof))}
+  printf 'revoked\\n' >&2
+}}
+""" + self.function("finish_volume_evidence")
+                if interrupted:
+                    # DEBUG is not inherited by the function. This hook is reached
+                    # after successful finalizer return but BEFORE the caller's
+                    # handler reset, closing the last catchable-command boundary.
+                    body += """
+injected=false
+late_interrupt() {
+  if [[ $injected == false && $1 == 'trap - EXIT HUP INT TERM' ]]; then
+    injected=true
+    kill -HUP "$$"
+  fi
+}
+trap 'late_interrupt "$BASH_COMMAND"' DEBUG
+"""
+                result = self.bash(body + "\n" + final_block)
+                with self.subTest(interrupted=interrupted):
+                    self.assertEqual(result.returncode, 1 if interrupted else 0, result.stderr)
+                    self.assertEqual(proof.exists(), not interrupted)
+                    self.assertEqual("CHECKS-PASSED" in result.stdout, not interrupted)
+                    self.assertEqual("revoked" in result.stderr, interrupted)
 
     def test_presence_protocol_requires_exact_marker_and_matching_wrapper_status(self) -> None:
         cases = [(0, "present\n", 0), (1, "absent\n", 1), (2, "unknown\n", 2),
@@ -3576,6 +3944,7 @@ lens_revision=unused
 receipt_sha256=candidate
 outer_removed=false
 storage_removed=false
+finish_volume_evidence() {{ :; }}  # This control isolates inner-cleanup admission; handoff has separate controls.
 cleanup_now() {{ printf '1\\n'; }}
 report_host_cache() {{ :; }}
 bounded() {{ :; }}

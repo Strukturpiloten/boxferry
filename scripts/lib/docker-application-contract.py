@@ -1305,16 +1305,19 @@ def apply_volume_fixtures(socket_path: pathlib.Path, state: pathlib.Path, reques
 
 
 def cleanup_volume_fixtures(socket_path: pathlib.Path, state: pathlib.Path, *, run: str, prefix: str,
-                            lane: str, api_version: str) -> None:
+                            lane: str, api_version: str) -> list[dict[str, str]]:
     ledger = volume_ledger(state, run=run, prefix=prefix, lane=lane, api_version=api_version)
     volume_socket(socket_path)
     deadline = time.monotonic() + 25
     failed = False
+    outcomes = []
     for body in reversed(ledger["volumes"]):
         path = f"/v{api_version}/volumes/{body['Name']}"
         try:
             status, response = volume_call(socket_path, "GET", path, None, deadline)
             if status == 404:
+                outcomes.append({"identity_sha256": volume_identity_digest(body),
+                                 "cleanup": "already-absent", "absence": "verified"})
                 continue
             require(status == 200, "volume cleanup inspection failed")
             volume_native_identity(response, body)
@@ -1322,9 +1325,233 @@ def cleanup_volume_fixtures(socket_path: pathlib.Path, state: pathlib.Path, *, r
             require(status == 204, "owned volume removal failed")
             status, _ = volume_call(socket_path, "GET", path, None, deadline)
             require(status == 404, "owned volume absence is unverified")
+            outcomes.append({"identity_sha256": volume_identity_digest(body),
+                             "cleanup": "removed", "absence": "verified"})
         except (ContractError, OSError, ValueError, http.client.HTTPException):
             failed = True
     require(not failed, "volume cleanup is incomplete or ownership unavailable")
+    return outcomes
+
+
+def volume_identity_digest(value: Any) -> str:
+    """Hash canonical approved identity bytes; never retain native bodies/labels."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def volume_evidence_directory(directory: pathlib.Path, disposable: pathlib.Path,
+                              roots: tuple[pathlib.Path, ...], identity: dict[str, int] | None = None) -> dict[str, int]:
+    require(directory.is_absolute() and directory.resolve(strict=True) == directory
+            and directory.is_dir() and not any(directory.is_relative_to(root) for root in (*roots, disposable)),
+            "volume evidence destination must be canonical and outside source/disposable roots")
+    require(disposable.is_absolute() and disposable.parent == pathlib.Path("/tmp")
+            and re.fullmatch(r"boxferry-docker-core\.[A-Za-z0-9]{8}", disposable.name) is not None,
+            "volume disposable directory identity differs")
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        require(metadata.st_uid == 0 and stat.S_IMODE(metadata.st_mode) == 0o700,
+                "volume evidence directory must be root-owned mode 0700")
+        current = {"device": metadata.st_dev, "inode": metadata.st_ino}
+        require(identity is None or current == identity, "volume evidence directory identity changed")
+        require(os.listdir(descriptor) == [], "volume evidence destination must be empty")
+        observed = directory.stat()
+        require((observed.st_dev, observed.st_ino) == (metadata.st_dev, metadata.st_ino),
+                "volume evidence directory path changed")
+        return current
+    finally:
+        os.close(descriptor)
+
+
+def volume_candidate_proof(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.Path,
+                           lens: pathlib.Path, revision: str, receipt_sha: str) -> dict[str, Any]:
+    record = verify_candidate(root, binary, receipt, lens, revision, profile="volume-fixtures")
+    require(hashlib.sha256(read_private_artifact(receipt).encode()).hexdigest() == receipt_sha,
+            "volume evidence candidate receipt bytes differ")
+    keys = ("boxferry_revision", "boxferry_source_sha256", "boxferry_lock_sha256", "binary_sha256",
+            "docker_lens_revision", "docker_lens_source_sha256", "docker_lens_lock_sha256")
+    return {"receipt_schema": 2, "receipt_sha256": receipt_sha, "build_profile": "volume-fixtures",
+            **{key: record[key] for key in keys}}
+
+
+def volume_disposable_identity(directory: pathlib.Path, identity: dict[str, int]) -> None:
+    require(directory.is_absolute() and directory.resolve(strict=True) == directory,
+            "volume disposable path changed")
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        require({"device": metadata.st_dev, "inode": metadata.st_ino} == identity
+                and metadata.st_uid == 0 and stat.S_IMODE(metadata.st_mode) == 0o700,
+                "volume disposable directory identity changed")
+    finally:
+        os.close(descriptor)
+
+
+def volume_native_proof(lens: pathlib.Path, revision: str, script_sha: str, lane: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    catalogue: dict[str, Any] = canonical_images(str(lens), revision, script_sha)
+    catalogue["profiles"] = reviewed_profiles(str(lens))
+    require(lane in CORE_PRESETS, "volume evidence lane differs")
+    return catalogue, {"native_script_sha256": script_sha, "catalogue_sha256": volume_identity_digest(catalogue),
+                       "target": catalogue["profiles"][lane]}
+
+
+def capture_volume_evidence(directory: pathlib.Path, root: pathlib.Path, binary: pathlib.Path,
+                            receipt: pathlib.Path, lens: pathlib.Path, revision: str, script_sha: str,
+                            state: pathlib.Path, *, lane: str, run: str, prefix: str, outer_run: str,
+                            receipt_sha256: str, api_version: str, observed_release: str,
+                            observed_api: str, observed_package: str) -> dict[str, Any]:
+    """Capture sanitized validated inputs only; this object is NOT passing evidence."""
+    require(re.fullmatch(r"[A-Za-z0-9]{8}", outer_run) is not None
+            and run == f"bf-{outer_run.lower()}" and prefix == f"bf-volume-{outer_run.lower()}",
+            "volume evidence run bindings differ")
+    candidate = volume_candidate_proof(root, binary, receipt, lens, revision, receipt_sha256)
+    catalogue, native = volume_native_proof(lens, revision, script_sha, lane)
+    validate_volume_fixtures(directory, root, lane=lane, run=run, prefix=prefix, receipt_sha256=receipt_sha256,
+                             api_version=api_version, profiles=catalogue["profiles"], observed_release=observed_release,
+                             observed_api=observed_api, observed_package=observed_package)
+    ledger = volume_ledger(state, run=run, prefix=prefix, lane=lane, api_version=api_version)
+    require(len(ledger["volumes"]) == 23, "volume evidence requires the complete registered inventory")
+    manifest_bytes = read_private_artifact(directory / "manifest.json").encode()
+    manifest = volume_document(manifest_bytes)
+    return {"schema": 1, "scope": "volume-only", "lane": lane, "outer_run": outer_run,
+            "volume_run": run, "volume_prefix": prefix, "api_version": api_version,
+            "candidate": candidate, "native": native,
+            "observed": {"release": observed_release, "api": observed_api, "package": observed_package},
+            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "fixtures": [{key: row[key] for key in ("id", "source_sha256", "artifact_sha256", "volume_count")}
+                         for row in manifest["fixtures"]]}
+
+
+def completed_volume_evidence(stage: dict[str, Any], outcomes: list[dict[str, str]], *,
+                              candidate: dict[str, Any], native: dict[str, Any], disposable: pathlib.Path,
+                              disposable_identity: dict[str, int], interrupted: bool,
+                              outer_absent: bool, storage_absent: bool) -> dict[str, Any]:
+    require(isinstance(disposable_identity, dict) and set(disposable_identity) == {"device", "inode"}
+            and type(disposable_identity["device"]) is int and disposable_identity["device"] >= 0
+            and type(disposable_identity["inode"]) is int and disposable_identity["inode"] > 0,
+            "volume disposable evidence identity shape differs")
+    require(type(interrupted) is bool and not interrupted and outer_absent is True and storage_absent is True
+            and not os.path.lexists(disposable), "volume evidence closure is incomplete or interrupted")
+    require(isinstance(stage, dict) and set(stage) == {
+            "schema", "scope", "lane", "outer_run", "volume_run", "volume_prefix", "api_version",
+            "candidate", "native", "observed", "manifest_sha256", "fixtures"}
+            and type(stage["schema"]) is int and stage["schema"] == 1 and stage["scope"] == "volume-only",
+            "volume evidence input proof shape differs")
+    token = stage["outer_run"]
+    require(isinstance(token, str) and re.fullmatch(r"[A-Za-z0-9]{8}", token) is not None
+            and disposable == pathlib.Path(f"/tmp/boxferry-docker-core.{token}")
+            and stage["volume_run"] == f"bf-{token.lower()}"
+            and stage["volume_prefix"] == f"bf-volume-{token.lower()}"
+            and stage["lane"] in CORE_PRESETS and API_PATTERN.fullmatch(stage["api_version"]) is not None,
+            "volume evidence run or target binding differs")
+    require(stage["candidate"] == candidate and stage["native"] == native
+            and DIGEST_PATTERN.fullmatch(stage["manifest_sha256"]) is not None,
+            "volume evidence candidate or native binding differs")
+    target = native["target"]
+    observed = stage["observed"]
+    releases = {target["engine_release"], target["engine_release"].removesuffix("+dfsg1")}
+    require(isinstance(observed, dict) and set(observed) == {"release", "api", "package"}
+            and observed["release"] in releases and observed["api"] == target["advertised_api_version"]
+            and observed["package"] == target["build"].get("revision", "")
+            and stage["api_version"] == target["rendering_api_version"], "volume observed target differs")
+    rows = stage["fixtures"]
+    require(isinstance(rows, list) and len(rows) == 6, "volume evidence fixture count differs")
+    for row, (fixture, _owner, source_sha, suffixes) in zip(rows, VOLUME_FIXTURES, strict=True):
+        require(isinstance(row, dict) and set(row) == {"id", "source_sha256", "artifact_sha256", "volume_count"}
+                and row["id"] == fixture and row["source_sha256"] == source_sha
+                and type(row["volume_count"]) is int and row["volume_count"] == len(suffixes)
+                and DIGEST_PATTERN.fullmatch(row["artifact_sha256"]) is not None,
+                "volume evidence fixture binding differs")
+    expected = [volume_identity_digest(body) for body in expected_volumes(stage["volume_run"], stage["volume_prefix"])]
+    require(isinstance(outcomes, list) and len(outcomes) == 23, "volume evidence cleanup inventory differs")
+    remaining = set(expected)
+    by_identity = {}
+    for row in outcomes:
+        require(isinstance(row, dict) and set(row) == {"identity_sha256", "cleanup", "absence"}
+                and row["identity_sha256"] in remaining and row["cleanup"] in {"removed", "already-absent"}
+                and row["absence"] == "verified", "volume evidence cleanup outcome differs")
+        remaining.remove(row["identity_sha256"])
+        by_identity[row["identity_sha256"]] = row
+    require(not remaining, "volume evidence cleanup inventory is incomplete")
+    return {**stage, "result": "checks-passed", "volumes": [by_identity[value] for value in expected],
+            "closure": {
+                "outer": {"ownership_sha256": volume_identity_digest({"kind": "container", "name": f"bf-docker-core-{token}", "run": token}), "absence": "verified"},
+                "storage": {"ownership_sha256": volume_identity_digest({"kind": "volume", "name": f"bf-docker-core-data-{token}", "run": token}), "absence": "verified"},
+                "disposable": {"identity_sha256": volume_identity_digest({"run": token, **disposable_identity}), "absence": "verified"},
+                "interruption": "none"}}
+
+
+def remove_volume_evidence(directory: pathlib.Path, directory_identity: dict[str, int], file_identity: dict[str, int]) -> None:
+    require(directory.is_absolute() and directory.resolve(strict=True) == directory,
+            "volume evidence revocation path changed")
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(descriptor)
+        require({"device": metadata.st_dev, "inode": metadata.st_ino} == directory_identity
+                and metadata.st_uid == 0 and stat.S_IMODE(metadata.st_mode) == 0o700,
+                "volume evidence revocation directory differs")
+        try:
+            current = os.stat("volume-proof.json", dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if {"device": current.st_dev, "inode": current.st_ino} == file_identity and stat.S_ISREG(current.st_mode):
+            os.unlink("volume-proof.json", dir_fd=descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_volume_evidence(directory: pathlib.Path, disposable: pathlib.Path, roots: tuple[pathlib.Path, ...],
+                          directory_identity: dict[str, int], proof: dict[str, Any], announce=None) -> None:
+    volume_evidence_directory(directory, disposable, roots, directory_identity)
+    raw = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    require(0 < len(raw) <= 16_384, "volume evidence proof exceeds budget")
+    parent = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    file_identity = None
+    handlers = {}
+    writing_cancelled = False
+    def cancelled(_signum, _frame):
+        nonlocal writing_cancelled
+        if not writing_cancelled:
+            writing_cancelled = True
+            raise ContractError("volume evidence writing interrupted")
+    try:
+        for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            handlers[signum] = signal.signal(signum, cancelled)
+        metadata = os.fstat(parent)
+        require({"device": metadata.st_dev, "inode": metadata.st_ino} == directory_identity
+                and metadata.st_uid == 0 and stat.S_IMODE(metadata.st_mode) == 0o700
+                and os.listdir(parent) == [], "volume evidence destination changed before writing")
+        descriptor = os.open("volume-proof.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        metadata = os.fstat(descriptor)
+        file_identity = {"device": metadata.st_dev, "inode": metadata.st_ino}
+        with os.fdopen(descriptor, "wb") as output:
+            os.fchmod(output.fileno(), 0o600)
+            if announce is not None:
+                announce(file_identity)  # Private token allows the shell to revoke an interrupted handoff.
+            require(output.write(raw) == len(raw), "volume evidence write was incomplete")
+            output.flush()
+            os.fsync(output.fileno())
+        os.fsync(parent)
+        observed = directory.stat()
+        require({"device": observed.st_dev, "inode": observed.st_ino} == directory_identity
+                and directory.resolve(strict=True) == directory, "volume evidence destination path changed during writing")
+        readback = os.open("volume-proof.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        with os.fdopen(readback, "rb") as source:
+            metadata = os.fstat(source.fileno())
+            require({"device": metadata.st_dev, "inode": metadata.st_ino} == file_identity
+                    and stat.S_ISREG(metadata.st_mode) and metadata.st_uid == 0
+                    and stat.S_IMODE(metadata.st_mode) == 0o600 and metadata.st_size == len(raw)
+                    and metadata.st_nlink == 1 and source.read(16_385) == raw,
+                    "volume evidence proof readback differs")
+    except BaseException:
+        if file_identity is not None:
+            current = os.stat("volume-proof.json", dir_fd=parent, follow_symlinks=False)
+            if {"device": current.st_dev, "inode": current.st_ino} == file_identity:
+                os.unlink("volume-proof.json", dir_fd=parent)
+        raise
+    finally:
+        for signum, handler in handlers.items():
+            signal.signal(signum, handler)
+        os.close(parent)
 
 
 def replay(
@@ -1736,7 +1963,7 @@ def main() -> int:
     snapshot.add_argument("--docker-lens-revision", required=True)
     snapshot.add_argument("--destination", required=True)
     snapshot.add_argument("--profile", choices=("core-journey", "volume-fixtures"), default="core-journey")
-    for name in ("validate-volume-fixtures", "apply-volume-fixtures"):
+    for name in ("validate-volume-fixtures", "apply-volume-fixtures", "capture-volume-evidence"):
         volumes = commands.add_parser(name)
         volumes.add_argument("--directory", type=pathlib.Path, required=True)
         volumes.add_argument("--boxferry-root", type=pathlib.Path, required=True)
@@ -1745,7 +1972,7 @@ def main() -> int:
         volumes.add_argument("--prefix", required=True)
         volumes.add_argument("--receipt-sha256", required=True)
         volumes.add_argument("--api-version", required=True)
-        volumes.add_argument("--catalogue-json", required=True)
+        volumes.add_argument("--catalogue-json", required=name != "capture-volume-evidence")
         volumes.add_argument("--observed-release")
         volumes.add_argument("--observed-api")
         volumes.add_argument("--observed-package")
@@ -1753,6 +1980,11 @@ def main() -> int:
             volumes.add_argument("--socket", type=pathlib.Path, required=True)
             volumes.add_argument("--state", type=pathlib.Path, required=True)
             volumes.add_argument("--allow-isolated-apply", action="store_true")
+        if name == "capture-volume-evidence":
+            for option in ("binary", "receipt", "docker-lens-root", "docker-lens-revision",
+                           "native-script-sha256", "outer-run"):
+                volumes.add_argument(f"--{option}", required=True)
+            volumes.add_argument("--state", type=pathlib.Path, required=True)
     volumes_cleanup = commands.add_parser("cleanup-volume-fixtures")
     volumes_cleanup.add_argument("--socket", type=pathlib.Path, required=True)
     volumes_cleanup.add_argument("--state", type=pathlib.Path, required=True)
@@ -1761,6 +1993,27 @@ def main() -> int:
     volumes_cleanup.add_argument("--prefix", required=True)
     volumes_cleanup.add_argument("--api-version", required=True)
     volumes_cleanup.add_argument("--allow-isolated-apply", action="store_true")
+    volumes_cleanup.add_argument("--evidence-json", action="store_true")
+    for name in ("check-volume-evidence-directory", "write-volume-evidence", "remove-volume-evidence"):
+        evidence = commands.add_parser(name)
+        evidence.add_argument("--evidence-directory", type=pathlib.Path, required=True)
+        if name == "remove-volume-evidence":
+            evidence.add_argument("--evidence-identity", required=True)
+            evidence.add_argument("--file-identity", required=True)
+        else:
+            evidence.add_argument("--disposable-directory", type=pathlib.Path, required=True)
+            evidence.add_argument("--boxferry-root", type=pathlib.Path, required=True)
+            evidence.add_argument("--docker-lens-root", type=pathlib.Path, required=True)
+        if name == "write-volume-evidence":
+            for option in ("binary", "receipt", "docker-lens-revision", "native-script-sha256",
+                           "evidence-identity", "input-proof", "cleanup-proof"):
+                evidence.add_argument(f"--{option}", required=True)
+            evidence.add_argument("--outer-absent", action="store_true")
+            evidence.add_argument("--storage-absent", action="store_true")
+            evidence.add_argument("--not-interrupted", action="store_true")
+    disposable = commands.add_parser("check-volume-disposable-identity")
+    disposable.add_argument("--disposable-directory", type=pathlib.Path, required=True)
+    disposable.add_argument("--evidence-identity", required=True)
     source_digest = commands.add_parser("candidate-source-digest")
     source_digest.add_argument("--boxferry-root", required=True)
     sample = commands.add_parser("sample-owned-storage")
@@ -1883,6 +2136,14 @@ def main() -> int:
                                                pathlib.Path(args.binary), pathlib.Path(args.receipt),
                                                pathlib.Path(args.docker_lens_root), args.docker_lens_revision,
                                                pathlib.Path(args.destination), profile=args.profile), sort_keys=True))
+        elif args.command == "capture-volume-evidence":
+            proof = capture_volume_evidence(
+                args.directory, args.boxferry_root, pathlib.Path(args.binary), pathlib.Path(args.receipt),
+                pathlib.Path(args.docker_lens_root), args.docker_lens_revision, args.native_script_sha256,
+                args.state, lane=args.lane, run=args.run, prefix=args.prefix, outer_run=args.outer_run,
+                receipt_sha256=args.receipt_sha256, api_version=args.api_version,
+                observed_release=args.observed_release, observed_api=args.observed_api, observed_package=args.observed_package)
+            print(json.dumps(proof, sort_keys=True, separators=(",", ":")))
         elif args.command in {"validate-volume-fixtures", "apply-volume-fixtures"}:
             catalogue = json.loads(args.catalogue_json, object_pairs_hook=no_duplicate_keys)
             requests = validate_volume_fixtures(
@@ -1899,9 +2160,42 @@ def main() -> int:
             print("volume-only fixture contract verified; no application acceptance")
         elif args.command == "cleanup-volume-fixtures":
             require(args.allow_isolated_apply, "volume cleanup requires explicit isolated permission")
-            cleanup_volume_fixtures(args.socket, args.state, run=args.run, prefix=args.prefix,
-                                    lane=args.lane, api_version=args.api_version)
-            print("volume-only owned cleanup and absence verified")
+            proof = cleanup_volume_fixtures(args.socket, args.state, run=args.run, prefix=args.prefix,
+                                            lane=args.lane, api_version=args.api_version)
+            print(json.dumps(proof, sort_keys=True) if args.evidence_json else "volume-only owned cleanup and absence verified")
+        elif args.command == "check-volume-evidence-directory":
+            metadata = args.disposable_directory.stat()
+            require(args.disposable_directory.resolve(strict=True) == args.disposable_directory
+                    and stat.S_ISDIR(metadata.st_mode) and metadata.st_uid == 0
+                    and stat.S_IMODE(metadata.st_mode) == 0o700, "volume disposable directory must be root-private")
+            identity = volume_evidence_directory(args.evidence_directory, args.disposable_directory,
+                                                 (args.boxferry_root, args.docker_lens_root))
+            print(json.dumps({"evidence": identity, "disposable": {"device": metadata.st_dev, "inode": metadata.st_ino}}))
+        elif args.command == "check-volume-disposable-identity":
+            require(len(args.evidence_identity.encode()) <= 16_384, "volume identity argument exceeds budget")
+            identity = json.loads(args.evidence_identity, object_pairs_hook=no_duplicate_keys)
+            volume_disposable_identity(args.disposable_directory, identity["disposable"])
+        elif args.command in {"write-volume-evidence", "remove-volume-evidence"}:
+            def argument(value):
+                require(len(value.encode()) <= 16_384, "volume evidence argument exceeds budget")
+                return json.loads(value, object_pairs_hook=no_duplicate_keys)
+            identity = argument(args.evidence_identity)
+            if args.command == "remove-volume-evidence":
+                remove_volume_evidence(args.evidence_directory, identity["evidence"], argument(args.file_identity))
+            else:
+                stage = argument(args.input_proof)
+                candidate = volume_candidate_proof(args.boxferry_root, pathlib.Path(args.binary), pathlib.Path(args.receipt),
+                                                   args.docker_lens_root, args.docker_lens_revision,
+                                                   stage["candidate"]["receipt_sha256"])
+                _catalogue, native = volume_native_proof(args.docker_lens_root, args.docker_lens_revision,
+                                                        args.native_script_sha256, stage["lane"])
+                proof = completed_volume_evidence(stage, argument(args.cleanup_proof), candidate=candidate, native=native,
+                                                  disposable=args.disposable_directory, disposable_identity=identity["disposable"],
+                                                  interrupted=not args.not_interrupted, outer_absent=args.outer_absent,
+                                                  storage_absent=args.storage_absent)
+                write_volume_evidence(args.evidence_directory, args.disposable_directory,
+                                      (args.boxferry_root, args.docker_lens_root), identity["evidence"], proof,
+                                      announce=lambda value: print(json.dumps(value), flush=True))
         elif args.command == "candidate-source-digest":
             root = pathlib.Path(args.boxferry_root)
             print(json.dumps({"revision": git(root, "rev-parse", "HEAD"),
