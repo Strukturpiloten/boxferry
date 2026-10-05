@@ -132,14 +132,18 @@ forgejo_prepare_image_archive() {
 }
 
 forgejo_assert_loaded_images() {
-  local outer=$1 fixture id nested_reference
+  local socket=$1 fixture id nested_reference status
   fixture="$(forgejo_fixture_root)" || return $?
   [[ -s "${fixture}/images.tsv" ]] || return 1
   while IFS=$'\t' read -r id _ _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     nested_reference="$(forgejo_image_reference "${id}")" || return $?
-    engine_operation "verify loaded Forgejo ${id} image" \
-      exec "${outer}" podman image exists "${nested_reference}" || return $?
+    status=0
+    forgejo_presence "${socket}" image "${nested_reference}" || status=$?
+    if ((status != 0)); then
+      printf 'Could not verify loaded Forgejo %s image.\n' "${id}" >&2
+      return "${status}"
+    fi
   done < "${fixture}/images.tsv" || return $?
 }
 
@@ -160,19 +164,37 @@ forgejo_load_image_archive() {
     nested_reference="$(forgejo_image_reference "${id}")" || return $?
     restore_nested_archive_alias "${outer}" "${alias}" "${nested_reference}" || return $?
   done < "${fixture}/images.tsv" || return $?
-  forgejo_assert_loaded_images "${outer}" || return $?
+}
+
+forgejo_presence() {
+  local socket=$1 kind=$2 name=$3 status=0
+  if [[ ! -S "${socket}" ]]; then
+    # shellcheck disable=SC2034 # Shared presence state is sticky for the owning runner.
+    native_presence_unverified=true
+    printf '%s\n' 'Forgejo presence requires the explicit owned Unix socket.' >&2
+    return 2
+  fi
+  native_presence 90s "${engine}" "${kind}" "${name}" "${socket}" || status=$?
+  case "${status}" in
+    0 | 1) return "${status}" ;;
+    *)
+      # shellcheck disable=SC2034 # Shared presence state is consumed by cleanup.
+      native_presence_unverified=true
+      return 2
+      ;;
+  esac
 }
 
 forgejo_copy_fixture() {
   local outer=$1 prefix=$2 fixture destination
-  fixture="$(forgejo_fixture_root)"
+  fixture="$(forgejo_fixture_root)" || return $?
   destination="/tmp/boxferry-fixture/${prefix}"
   engine_operation 'create disposable Forgejo fixture directory' \
-    exec "${outer}" mkdir -p -- "${destination}"
+    exec "${outer}" mkdir -p -- "${destination}" || return $?
   engine_operation 'copy reviewed Forgejo Git probe' \
-    cp "${fixture}/git-probe.sh" "${outer}:${destination}/git-probe.sh"
+    cp "${fixture}/git-probe.sh" "${outer}:${destination}/git-probe.sh" || return $?
   engine_operation 'copy deterministic Forgejo repository proof' \
-    cp "${fixture}/repository-proof.txt" "${outer}:${destination}/repository-proof.txt"
+    cp "${fixture}/repository-proof.txt" "${outer}:${destination}/repository-proof.txt" || return $?
 }
 
 forgejo_prepare_application_target() {
@@ -180,22 +202,23 @@ forgejo_prepare_application_target() {
   if [[ "${mode}" == rootless ]]; then
     engine_operation 'copy rootless Forgejo network configuration' cp \
       "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" \
-      "${outer}:/tmp/99-boxferry-live.conf"
+      "${outer}:/tmp/99-boxferry-live.conf" || return $?
     # shellcheck disable=SC2016 # $HOME expands inside the nested target.
     engine_operation 'prepare rootless Forgejo network configuration' \
       exec "${outer}" /bin/sh -ceu \
-      'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"'
+      'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"' || return $?
   else
     # Rootful publication needs Netavark's stock firewall path. The rootless
     # firewall_driver=none drop-in would prevent real HTTP and SSH DNAT.
     # The selected Arch target includes nft for stock Netavark publication.
     # The upstream-source 6.1 rootful target omits nft and cannot install real DNAT.
     engine_operation 'verify rootful Forgejo target uses stock firewall configuration' \
-      exec "${outer}" test ! -e /root/.config/containers/containers.conf.d/99-boxferry-live.conf
+      exec "${outer}" test ! -e /root/.config/containers/containers.conf.d/99-boxferry-live.conf || return $?
   fi
-  forgejo_load_image_archive "${outer}"
-  forgejo_copy_fixture "${outer}" "${prefix}"
-  activate_outer_runtime "${socket_directory}"
+  forgejo_load_image_archive "${outer}" || return $?
+  forgejo_copy_fixture "${outer}" "${prefix}" || return $?
+  activate_outer_runtime "${socket_directory}" || return $?
+  forgejo_assert_loaded_images "${socket_directory}/podman.sock" || return $?
 }
 
 forgejo_remote() {
@@ -220,11 +243,17 @@ forgejo_wait_for() {
 }
 
 forgejo_create_edge_network() {
-  local socket=$1 prefix=$2 run=$3
-  forgejo_remote "${socket}" network exists "${prefix}-shared-edge" 2> /dev/null ||
-    forgejo_remote "${socket}" network create \
-      --label "io.boxferry.live-run=${run}" --label io.boxferry.shared=true \
-      "${prefix}-shared-edge" > /dev/null
+  local socket=$1 prefix=$2 run=$3 status=0
+  forgejo_presence "${socket}" network "${prefix}-shared-edge" || status=$?
+  case "${status}" in
+    0) return 0 ;;
+    1)
+      forgejo_remote "${socket}" network create \
+        --label "io.boxferry.live-run=${run}" --label io.boxferry.shared=true \
+        "${prefix}-shared-edge" > /dev/null
+      ;;
+    *) return 2 ;;
+  esac
 }
 
 forgejo_assert_clean_prefix() {

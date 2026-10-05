@@ -847,7 +847,7 @@
         },
         {
           "path": "scripts/lib/observability-application.sh",
-          "sha256": "1adf4312166012d67d7cba42d9109e7cd9125e6bca959d1e6034fd49f2d2c6c9"
+          "sha256": "cfb85772546136159ff213fce0e78f0f9495063e51ca3cb6c49a65bbdf30fc6d"
         },
         {
           "path": "scripts/lib/observability-application-probes.sh",

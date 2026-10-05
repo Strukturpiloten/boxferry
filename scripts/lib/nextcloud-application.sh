@@ -128,15 +128,19 @@ nextcloud_prepare_image_archive() {
 }
 
 nextcloud_assert_loaded_images() {
-  local outer=$1
-  local fixture id reference nested_reference
+  local socket=$1
+  local fixture id nested_reference status
   fixture="$(nextcloud_fixture_root)" || return $?
   [[ -s "${fixture}/images.tsv" ]] || return 1
-  while IFS=$'\t' read -r id reference _ _ _ _; do
+  while IFS=$'\t' read -r id _ _ _ _ _; do
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     nested_reference="$(nextcloud_image_reference "${id}")" || return $?
-    engine_operation "verify offline Nextcloud ${id} image alias" \
-      exec "${outer}" podman image inspect "${nested_reference}" > /dev/null || return $?
+    status=0
+    nextcloud_presence "${socket}" image "${nested_reference}" || status=$?
+    if ((status != 0)); then
+      printf 'Could not verify offline Nextcloud %s image alias.\n' "${id}" >&2
+      return "${status}"
+    fi
   done < "${fixture}/images.tsv" || return $?
 }
 
@@ -157,7 +161,25 @@ nextcloud_load_image_archive() {
     nested_reference="$(nextcloud_image_reference "${id}")" || return $?
     restore_nested_archive_alias "${outer}" "${alias}" "${nested_reference}" || return $?
   done < "${fixture}/images.tsv" || return $?
-  nextcloud_assert_loaded_images "${outer}" || return $?
+}
+
+nextcloud_presence() {
+  local socket=$1 kind=$2 name=$3 status=0
+  if [[ ! -S "${socket}" ]]; then
+    # shellcheck disable=SC2034 # Shared presence state is sticky for the owning runner.
+    native_presence_unverified=true
+    printf '%s\n' 'Nextcloud presence requires the explicit owned Unix socket.' >&2
+    return 2
+  fi
+  native_presence 90s "${engine}" "${kind}" "${name}" "${socket}" || status=$?
+  case "${status}" in
+    0 | 1) return "${status}" ;;
+    *)
+      # shellcheck disable=SC2034 # Shared presence state is consumed by cleanup.
+      native_presence_unverified=true
+      return 2
+      ;;
+  esac
 }
 
 nextcloud_remote() {
@@ -194,25 +216,31 @@ nextcloud_container_completed() {
 
 nextcloud_copy_configs() {
   local outer=$1 prefix=$2 fixture destination
-  fixture="$(nextcloud_fixture_root)"
+  fixture="$(nextcloud_fixture_root)" || return $?
   destination="/tmp/boxferry-fixture/${prefix}"
   engine_operation 'create disposable Nextcloud fixture directory' \
-    exec "${outer}" mkdir -p -- "${destination}"
+    exec "${outer}" mkdir -p -- "${destination}" || return $?
   engine_operation 'copy reviewed Nextcloud frontend configuration' \
-    cp "${fixture}/frontend.conf" "${outer}:${destination}/frontend.conf"
+    cp "${fixture}/frontend.conf" "${outer}:${destination}/frontend.conf" || return $?
   engine_operation 'copy reviewed Nextcloud proxy configuration' \
-    cp "${fixture}/proxy.conf" "${outer}:${destination}/proxy.conf"
-  engine_operation "copy reviewed second application content" cp "${fixture}/second-index.html" "${outer}:${destination}/second-index.html"
-  engine_operation "copy reviewed WebDAV probe" cp "${fixture}/webdav-probe.php" "${outer}:${destination}/webdav-probe.php"
-  engine_operation "copy reviewed publication probe" cp "${fixture}/published-probe.php" "${outer}:${destination}/published-probe.php"
+    cp "${fixture}/proxy.conf" "${outer}:${destination}/proxy.conf" || return $?
+  engine_operation "copy reviewed second application content" cp "${fixture}/second-index.html" "${outer}:${destination}/second-index.html" || return $?
+  engine_operation "copy reviewed WebDAV probe" cp "${fixture}/webdav-probe.php" "${outer}:${destination}/webdav-probe.php" || return $?
+  engine_operation "copy reviewed publication probe" cp "${fixture}/published-probe.php" "${outer}:${destination}/published-probe.php" || return $?
 }
 
 nextcloud_create_edge_network() {
-  local socket=$1 prefix=$2 run=$3
-  nextcloud_remote "${socket}" network exists "${prefix}-shared-edge" 2> /dev/null ||
-    nextcloud_remote "${socket}" network create \
-      --label "io.boxferry.live-run=${run}" --label io.boxferry.shared=true \
-      "${prefix}-shared-edge" > /dev/null
+  local socket=$1 prefix=$2 run=$3 status=0
+  nextcloud_presence "${socket}" network "${prefix}-shared-edge" || status=$?
+  case "${status}" in
+    0) return 0 ;;
+    1)
+      nextcloud_remote "${socket}" network create \
+        --label "io.boxferry.live-run=${run}" --label io.boxferry.shared=true \
+        "${prefix}-shared-edge" > /dev/null
+      ;;
+    *) return 2 ;;
+  esac
 }
 
 nextcloud_assert_clean_prefix() {
@@ -520,12 +548,13 @@ nextcloud_assert_published_routes() {
 
 nextcloud_prepare_application_target() {
   local outer=$1 prefix=$2 socket_directory=$3
-  engine_operation "copy rootless Nextcloud network configuration" cp "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" "${outer}:/tmp/99-boxferry-live.conf"
+  engine_operation "copy rootless Nextcloud network configuration" cp "${repository_root}/fixtures/conformance/podman-live/apply-target-containers.conf" "${outer}:/tmp/99-boxferry-live.conf" || return $?
   # shellcheck disable=SC2016 # $HOME expands inside the nested target.
-  engine_operation "prepare rootless Nextcloud network configuration" exec "${outer}" /bin/sh -ceu 'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"'
-  nextcloud_load_image_archive "${outer}"
-  nextcloud_copy_configs "${outer}" "${prefix}"
-  activate_outer_runtime "${socket_directory}"
+  engine_operation "prepare rootless Nextcloud network configuration" exec "${outer}" /bin/sh -ceu 'mkdir -p "$HOME/.config/containers/containers.conf.d"; cp /tmp/99-boxferry-live.conf "$HOME/.config/containers/containers.conf.d/99-boxferry-live.conf"' || return $?
+  nextcloud_load_image_archive "${outer}" || return $?
+  nextcloud_copy_configs "${outer}" "${prefix}" || return $?
+  activate_outer_runtime "${socket_directory}" || return $?
+  nextcloud_assert_loaded_images "${socket_directory}/podman.sock" || return $?
 }
 
 nextcloud_assert_application_behavior() {

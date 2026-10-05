@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
@@ -386,6 +387,7 @@ release_outer() {{
 
 
 class ArchiveAliasTests(unittest.TestCase):
+    socket_suites = ("forgejo", "nextcloud", "observability")
     runner = LiveConsumerTests.runner
     function = LiveConsumerTests.function
     bash = LiveConsumerTests.bash
@@ -404,6 +406,10 @@ class ArchiveAliasTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="boxferry-archive-fake-")
         self.addCleanup(temporary.cleanup)
         self.root = pathlib.Path(temporary.name)
+        self.socket_path = self.root / "podman.sock"
+        self.owned_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(self.owned_socket.close)
+        self.owned_socket.bind(str(self.socket_path))
         self.state = self.root / "state.json"
         self.log = self.root / "calls.jsonl"
         self.engine = self.root / "engine"
@@ -421,6 +427,18 @@ images = state['host']
 def finish(status=0):
     state_path.write_text(json.dumps(state))
     sys.exit(status)
+if args and args[0] == 'boxferry-test-activate':
+    if args[1] != str(root): finish(99)
+    if scenario == 'activation-failed': finish(42)
+    state['active'] = True
+    print('activated')
+    finish()
+if args and args[0] == 'boxferry-test-provision': finish()
+if args and args[0] == 'cp': finish()
+if args and args[0] == '--url':
+    if args[1] != 'unix://' + str(root / 'podman.sock') or not state.get('active', False): finish(42)
+    args = args[2:]
+    images = state['nested']
 if args[:2] == ['container', 'inspect']:
     if scenario == 'target-inspect-failed': finish(42)
     observed_id = {'e' * 64!r} if scenario == 'target-replaced' else {self.outer_id!r}
@@ -533,6 +551,7 @@ native_presence_unverified=false
 engine_operation() {{ shift; "$engine" "$@"; }}
 engine_image_available() {{ shift; "$engine" image exists "$1"; }}
 timed_operation() {{ shift 2; "$@"; }}
+source {shlex.quote(str(LIB / 'native-presence.sh'))}
 """ + "".join(self.function(name) for name in self.helpers) + body)
 
     def calls(self):
@@ -642,26 +661,32 @@ printf 'release=%s owned=%s uncertain=%s\\n' "$state" "${{run_owned_host_image_s
         archive = self.root / "archive"
         if archive.exists(): archive.unlink()
         historical = f"registry.invalid/boxferry-test/{suite}-application:fixture"
-        self.state.write_text(json.dumps({"host": {self.source: self.image_id, historical: "c" * 64}, "nested": {}}))
+        self.state.write_text(json.dumps({"host": {self.source: self.image_id, historical: "c" * 64}, "nested": {}, "active": False}))
         (self.root / "images.tsv").write_text("".join(f"{identity}\t{self.source}\tlicense\tprovenance\turl\tpolicy" +
                                               ("\tlinux/amd64" if suite == "observability" else "") + "\n" for identity in rows))
-        load_function = f"{suite}_load_image_archive" if suite in ("forgejo", "nextcloud") else f"{suite}_prepare_application_target"
-        body = "".join(self.module_function(suite, name) for name in
-                       (f"{suite}_prepare_image_archive", f"{suite}_image_reference", f"{suite}_assert_loaded_images", load_function))
+        functions = [f"{suite}_prepare_image_archive", f"{suite}_image_reference", f"{suite}_assert_loaded_images",
+                     f"{suite}_prepare_application_target"]
+        if suite in self.socket_suites:
+            functions.append(f"{suite}_presence")
+        if suite in ("forgejo", "nextcloud"):
+            functions.extend((f"{suite}_load_image_archive",
+                              "forgejo_copy_fixture" if suite == "forgejo" else "nextcloud_copy_configs"))
+        body = "".join(self.module_function(suite, name) for name in functions)
         body += f"""
 {suite.upper()}_ARCHIVE_MAX_BYTES=2684354560
 repository_root={shlex.quote(str(self.root))}
 {suite}_fixture_root() {{ printf '%s\\n' {shlex.quote(str(self.root))}; }}
-activate_outer_runtime() {{ printf 'activated\\n'; }}
+activate_outer_runtime() {{ "$engine" boxferry-test-activate "$1"; }}
 prepare_status=0
 {suite}_prepare_image_archive {shlex.quote(str(archive))} || prepare_status=$?
 printf 'prepare=%s\\n' "$prepare_status"
 if ((prepare_status != 0)); then exit "$prepare_status"; fi
 export SCENARIO={shlex.quote(load_scenario)}
 load_status=0
-{load_function} owned-outer prefix /unused || load_status=$?
+{suite}_prepare_application_target owned-outer prefix {shlex.quote(str(self.root))} rootless || load_status=$?
 printf 'load=%s\\n' "$load_status"
 if ((load_status != 0)); then exit "$load_status"; fi
+"$engine" boxferry-test-provision
 printf 'provisioning-admitted\\n'
 """
         return self.script(body, preparation_scenario)
@@ -742,21 +767,58 @@ release_run_owned_host_image {alias}
                 with self.subTest(suite=suite, scenario=scenario):
                     before = len(self.calls())
                     result = self.application_script(suite, load_scenario=scenario, rows=("fixture", "later"))
-                    self.assertEqual(result.returncode, expected, result.stderr)
+                    status = 2 if expected == 42 and suite in self.socket_suites else expected
+                    self.assertEqual(result.returncode, status, result.stderr)
                     stable_prefix = f"registry.invalid/boxferry-test/{suite}-application:"
                     expected_id = self.serialized_id if suite in ("paperless", "immich", "observability") else self.image_id
                     self.assertEqual(json.loads(self.state.read_text())["nested"],
                                      {stable_prefix + identity: expected_id for identity in ("fixture", "later")})
-                    assertions = [call for call in self.calls()[before:] if len(call) >= 6 and call[:3] == ["exec", "owned-outer", "podman"]
-                                  and call[3:5] in (["image", "exists"], ["image", "inspect"]) and '--format' not in call]
+                    calls = self.calls()[before:]
+                    if suite in self.socket_suites:
+                        assertions = [call for call in calls if call[:1] == ["--url"]]
+                        self.assertTrue(all(call[:4] == ["--url", "unix://" + str(self.socket_path), "image", "exists"]
+                                            for call in assertions))
+                        activation = calls.index(["boxferry-test-activate", str(self.root)])
+                        drops = [index for index, call in enumerate(calls) if call[:5] ==
+                                 ["exec", self.outer_id, "podman", "image", "rm"]]
+                        self.assertEqual(len(drops), 2)
+                        self.assertLess(max(drops), activation)
+                        self.assertLess(activation, min(calls.index(call) for call in assertions))
+                    else:
+                        assertions = [call for call in calls if len(call) >= 6 and call[:3] == ["exec", "owned-outer", "podman"]
+                                      and call[3:5] in (["image", "exists"], ["image", "inspect"]) and '--format' not in call]
                     self.assertEqual([call[-1] for call in assertions],
                                      [stable_prefix + identity for identity in (("fixture",) if expected else ("fixture", "later"))])
                     if expected:
-                        self.assertNotIn("activated", result.stdout)
+                        if suite not in self.socket_suites:
+                            self.assertNotIn("activated", result.stdout)
                         self.assertNotIn("provisioning-admitted", result.stdout)
-                        copies = [call for call in self.calls()[before:] if call and call[0] == "cp"
-                                  and "/tmp/boxferry-fixture/" in call[-1]]
-                        self.assertEqual(copies, [])
+                        self.assertNotIn(["boxferry-test-provision"], calls)
+                        if suite not in self.socket_suites:
+                            copies = [call for call in calls if call and call[0] == "cp"
+                                      and "/tmp/boxferry-fixture/" in call[-1]]
+                            self.assertEqual(copies, [])
+                    self.assertNotIn("PRIVATE", result.stdout + result.stderr)
+
+    def test_socket_assertion_discovery_and_reference_errors_fail_before_queries(self) -> None:
+        for suite in self.socket_suites:
+            for failure in ("discovery", "missing-catalogue", "reference"):
+                with self.subTest(suite=suite, failure=failure):
+                    catalogue = self.root / "images.tsv"
+                    catalogue.write_text("fixture\tpin\nlater\tpin\n")
+                    if failure == "missing-catalogue": catalogue.unlink()
+                    before = len(self.calls())
+                    body = self.module_function(suite, f"{suite}_assert_loaded_images") + self.module_function(suite, f"{suite}_presence") + f"""
+{suite}_fixture_root() {{ printf '%s\\n' {shlex.quote(str(self.root))}; return {54 if failure == 'discovery' else 0}; }}
+{suite}_image_reference() {{ printf ignored; return {54 if failure == 'reference' else 0}; }}
+status=0
+{suite}_assert_loaded_images {shlex.quote(str(self.socket_path))} || status=$?
+printf 'status=%s\\n' "$status"
+"""
+                    result = self.script(body)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, f"status={1 if failure == 'missing-catalogue' else 54}\n")
+                    self.assertEqual(self.calls()[before:], [])
 
     def test_workload_archive_uses_only_unique_host_alias_and_identity_bound_save(self) -> None:
         body = self.function("prepare_workload_archive") + f"""
