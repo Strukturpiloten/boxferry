@@ -76,6 +76,63 @@ six-application acceptance or the complete repository gate. No operational image
 tool, dependency pin or Renovate definition is added or moved: the canonical
 DockerLens image assignments and their existing managers remain authoritative.
 
+## Private volume-only closure proof
+
+`volume-fixtures` requires `--evidence-directory`: an existing, empty, canonical,
+root-owned mode-0700 directory outside both source checkouts and the disposable run
+directory. Other profiles reject this option. The helper records the destination's
+device/inode and the original disposable directory's device/inode before runtime
+mutation. It rechecks directory identity through a no-follow directory descriptor;
+replacement, symlink ancestry, stale files or wrong ownership/mode fail admission.
+Core/replay behavior, runtime requests, limits and cleanup ownership remain unchanged.
+
+The only final file is `volume-proof.json`, schema 1, scope `volume-only`, result
+`checks-passed`, bounded to 16 KiB and created exclusively mode 0600. Its closed fields
+retain the exact case-preserved outer run token, separate volume run/prefix, selected
+lane/API, schema-2 candidate receipt digest and source/lock/binary/revision hashes,
+the selected native-script/catalogue digests and reviewed target context, validated
+observed versions, manifest digest, and six ordered fixture source/artifact digests
+with counts 2/3/6/4/5/3. All 23 unique approved volume identities are SHA-256 hashes of
+canonical JSON (`sort_keys=True`, compact separators) containing the exact native
+`Name` and complete expected `Labels`; no raw labels or runtime response bodies survive.
+Each has a distinct `removed` (identity-gated GET, DELETE 204, GET 404) or
+`already-absent` (initial GET 404) cleanup outcome and verified absence.
+
+Outer/storage `ownership_sha256` hashes bind canonical `{kind,name,run}` objects for
+the exact derived container/storage names and run label. They are name/ownership
+bindings plus positive exact-name absence, **not immutable-ID deletion proof**. The
+disposable identity hash binds its original device/inode and run token. The approved
+outer token permits an independent auditor to derive both exact native names without
+retaining private paths. Concurrent replacement/transient state between observations
+is not ruled out; none of these hashes expands deletion authority.
+
+Sanitized input and inner-cleanup records remain bounded shell-held values while the
+disposable files are removed. No passing proof is written until all 23 inner absences,
+outer/container storage absence and disposable-directory removal have succeeded,
+no catchable interruption was observed, and final candidate/receipt/native bindings
+have been revalidated. Writing, fsync or readback failure fails the run after safe
+teardown and revokes only the exact newly created proof inode. An interrupted shell
+handoff uses the same private inode token. After the finalizer returns, the caller
+first resets interruption traps to end the catchable interval, then checks the now
+stable flag and revokes/fails before acknowledging success if it was set. This is
+not immunity from signals after reset; replaced files are never deleted. The
+proof survives disposable-directory deletion. SIGKILL, host failure and power loss
+cannot guarantee trap cleanup or an acknowledged handoff; retained private evidence
+requires review rather than automatic acceptance. This is volume-only development
+evidence, not a full repository/publication gate, native capability qualification or
+six-application acceptance.
+
+Canonical consumers remain the opt-in `scripts/docker-application-conformance.sh`
+volume profile and its `scripts/lib/docker-application-contract.py` helper. Offline
+controls remain in `scripts/test-docker-application-contract.py`, registered once by
+`scripts/test-application-probes.sh` and consumed by local `check-all.sh`, PR/main/
+dispatch CI and Release's reused CI. No workflow/native consumer is silently opted in.
+Renovate no-change review: none of the current custom-manager file patterns matches
+these four changed paths; application pins remain in the six `images.tsv` catalogues,
+Podman pins in its matrix, and Docker pins in the selected clean DockerLens script.
+No package/tool/image/Action pin, extraction path, grouping, approval, historical
+artifact or manager changes. This is static ownership evidence, not a Renovate run.
+
 ## Closed outer-resource presence checks
 
 Container and storage-volume name preflight, initial cleanup selection and post-removal
