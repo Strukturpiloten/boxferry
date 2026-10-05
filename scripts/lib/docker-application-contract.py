@@ -1423,11 +1423,92 @@ def readiness_log_category(raw: bytes) -> str:
     return matched[0] if len(matched) == 1 else "multiple-errors-observed" if matched else "content-present"
 
 
-def readiness_ping_observations(curl_exit: str, http_status: str) -> dict[str, str]:
+PING_ERRORS = {"unknown", "connect-error-observed", "timeout-error-observed", "http-error-observed",
+               "proxy-resolution-error-observed", "host-resolution-error-observed"}
+PING_COLLECTORS = {"not-run", "unknown", "completed", "oversized", "timed-out", "cancelled",
+                   "termination-unverified", "launch-failed", "read-failed", "wrapper-failed", "invalid-boundary",
+                   "invalid-output"}
+
+
+def readiness_ping_error(raw: bytes, native_exit: int | None, http_status: str) -> str:
+    """Recognize whole authored English envelopes, never arbitrary phrases/paths."""
+    if not raw or len(raw) > 16_384 or re.fullmatch(r"[0-5][0-9]{2}", http_status) is None \
+            or native_exit == 22 and not "400" <= http_status <= "599":
+        return "unknown"
+    envelopes = {
+        7: (rb"curl: \(7\) (?:(?:Couldn't|Could not) connect to server|Failed to connect to localhost(?: port 80|:80)"
+            rb"(?: after [0-9]{1,9} ms)?: (?:(?:Couldn't|Could not) connect to server|Connection refused))\n?",
+            "connect-error-observed"),
+        28: (rb"curl: \(28\) (?:Operation timed out after [0-9]{1,9} milliseconds with [0-9]{1,9} bytes received"
+             rb"|Connection timed out after [0-9]{1,9} milliseconds)\n?", "timeout-error-observed"),
+        22: (rb"curl: \(22\) The requested URL returned error: " + http_status.encode("ascii") + rb"\n?",
+             "http-error-observed"),
+        5: (rb"curl: \(5\) Could not resolve proxy: [A-Za-z0-9][A-Za-z0-9.-]{0,252}\n?",
+            "proxy-resolution-error-observed"),
+        6: (rb"curl: \(6\) Could not resolve host: localhost\n?", "host-resolution-error-observed"),
+    }
+    if native_exit not in envelopes:
+        return "unknown"
+    expression, category = envelopes[native_exit]
+    return category if re.fullmatch(expression, raw) is not None else "unknown"
+
+
+def readiness_ping(socket_path: pathlib.Path, deadline_boottime: str) -> dict[str, str]:
+    """Replace only the actual original curl poll; collect no configuration."""
+    result = {"ping-curl-exit": "unknown", "ping-http-status": "unknown",
+              "ping-curl-error": "unknown", "ping-collector": "invalid-boundary"}
+    if re.fullmatch(r"/tmp/boxferry-docker-core\.[A-Za-z0-9_]{1,64}/socket/docker\.sock", str(socket_path)) is None \
+            or re.fullmatch(r"[0-9]{1,12}\.[0-9]{2}", deadline_boottime) is None:
+        return result
+    previous = {}
+    def cancelled(_signum, _frame):
+        raise KeyboardInterrupt
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous[signum] = signal.signal(signum, cancelled)
+        # Account Python/import/wrapper startup using the caller's absolute clock.
+        remaining = float(deadline_boottime) - time.clock_gettime(time.CLOCK_BOOTTIME)
+        outcome, status, stdout, stderr = native_read.native_poll_read(
+            ["curl", "--fail", "--silent", "--show-error", "--max-time", "5", "--max-filesize", "65536",
+             "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket", str(socket_path),
+             "http://localhost/_ping"], time.monotonic() + remaining)
+        result["ping-collector"] = ("oversized" if outcome in {
+            "stdout-oversized", "stderr-oversized", "both-oversized"} else outcome if outcome in PING_COLLECTORS
+            else "unknown")
+        if type(status) is int and 0 <= status <= 99:
+            result["ping-curl-exit"] = str(status)
+        if outcome in {"completed", "stderr-oversized"}:
+            if re.fullmatch(rb"[0-5][0-9]{2}", stdout) is not None:
+                result["ping-http-status"] = stdout.decode("ascii")
+                if outcome == "completed":
+                    result["ping-curl-error"] = readiness_ping_error(stderr, status, result["ping-http-status"])
+            else:
+                result["ping-collector"] = "invalid-output"
+        # BOOTTIME can advance independently of MONOTONIC (for example suspend).
+        # Keep observed native fields, but never treat late completion as readiness.
+        # Existing failures already forbid promotion; retain teardown uncertainty
+        # rather than replacing it with a later deadline/clock observation.
+        if result["ping-collector"] in {"completed", "oversized"} \
+                and time.clock_gettime(time.CLOCK_BOOTTIME) >= float(deadline_boottime):
+            result["ping-collector"] = "timed-out"
+    except KeyboardInterrupt:
+        result["ping-collector"] = "cancelled"
+    except (OSError, AttributeError):
+        result["ping-collector"] = "read-failed"
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    return result
+
+
+def readiness_ping_observations(curl_exit: str, http_status: str, error: str = "unknown",
+                                collector: str = "not-run") -> dict[str, str]:
     """Validate only the final existing poll's closed fields; never infer a cause."""
     return {
         "ping-curl-exit": curl_exit if re.fullmatch(r"[0-9]|[1-9][0-9]|not-run|unknown", curl_exit) else "unknown",
         "ping-http-status": http_status if re.fullmatch(r"[0-5][0-9]{2}|unknown", http_status) else "unknown",
+        "ping-curl-error": error if error in PING_ERRORS else "unknown",
+        "ping-collector": collector if collector in PING_COLLECTORS else "unknown",
     }
 
 
@@ -1617,6 +1698,11 @@ def main() -> int:
     readiness.add_argument("--registered", action="store_true")
     readiness.add_argument("--ping-curl-exit", default="not-run")
     readiness.add_argument("--ping-http-status", default="unknown")
+    readiness.add_argument("--ping-curl-error", default="unknown")
+    readiness.add_argument("--ping-collector", default="not-run")
+    ping = commands.add_parser("readiness-ping")
+    ping.add_argument("--socket", type=pathlib.Path, required=True)
+    ping.add_argument("--deadline-boottime", required=True)
     catalogue = commands.add_parser("catalogue")
     catalogue.add_argument("--docker-lens-root", required=True)
     catalogue.add_argument("--docker-lens-revision", required=True)
@@ -1746,8 +1832,11 @@ def main() -> int:
             outcome = podman_presence(args.kind, args.name, args.run)
             print(outcome)
             return {"present": 0, "absent": 1, "unknown": 2}[outcome]
+        elif args.command == "readiness-ping":
+            print(" ".join(readiness_ping(args.socket, args.deadline_boottime).values()))
         elif args.command == "readiness-diagnostics":
-            result = readiness_ping_observations(args.ping_curl_exit, args.ping_http_status)
+            result = readiness_ping_observations(args.ping_curl_exit, args.ping_http_status,
+                                                 args.ping_curl_error, args.ping_collector)
             result.update(readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered))
             print("readiness observations: " + " ".join(f"{key}={value}" for key, value in result.items())
                   + "; startup-cause=unestablished")
