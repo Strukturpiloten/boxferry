@@ -118,7 +118,8 @@ def readiness_read(arguments: list[str], deadline: float, *, merge_output: bool 
     return outcome, raw
 
 
-def native_poll_read(arguments: list[str], deadline: float) -> tuple[str, int | None, bytes, bytes]:
+def native_poll_read(arguments: list[str], deadline: float, *,
+                     teardown_observations: dict[str, str] | None = None) -> tuple[str, int | None, bytes, bytes]:
     """Collect separate private streams without replacing a native failure status.
 
     Overflow discards only that stream but continues draining both. Only WNOWAIT evidence
@@ -131,6 +132,8 @@ def native_poll_read(arguments: list[str], deadline: float) -> tuple[str, int | 
     payloads = [bytearray(), bytearray()]
     overflow = [False, False]
     terminated = True
+    if teardown_observations is not None:
+        teardown_observations["signal"] = "not-run"
     try:
         if deadline - time.monotonic() <= 0.25:
             return "timed-out", None, b"", b""
@@ -177,51 +180,74 @@ def native_poll_read(arguments: list[str], deadline: float) -> tuple[str, int | 
         outcome = "read-failed"
     finally:
         if process is not None:
+            signal_observation = "unknown"
+            teardown_cancelled = False
+            reaped = False
+            closed = process.stdout is not None and process.stderr is not None
             # Never poll()/reap before signaling: the unreaped leader owns PGID.
             try:
                 os.killpg(process.pid, signal.SIGKILL)
+                signal_observation = "sent"
             except ProcessLookupError:
-                pass
-            except (OSError, KeyboardInterrupt):
-                terminated = False
+                signal_observation = "absent"
+            except (OSError, KeyboardInterrupt) as failure:
+                signal_observation = ("cancelled" if isinstance(failure, KeyboardInterrupt) else
+                                      "denied" if isinstance(failure, PermissionError) else "failed")
+                teardown_cancelled = isinstance(failure, KeyboardInterrupt)
                 try:
                     process.kill()
-                except (OSError, KeyboardInterrupt):
+                except KeyboardInterrupt:
+                    teardown_cancelled = True
+                except OSError:
                     pass
+            if teardown_observations is not None:
+                teardown_observations["signal"] = signal_observation
             try:
                 process.wait(timeout=max(0, min(0.25, deadline - time.monotonic())))
-            except (OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
-                terminated = False
+                reaped = True
+            except KeyboardInterrupt:
+                teardown_cancelled = True
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             for stream in (process.stdout, process.stderr):
                 if stream is not None:
                     try:
                         stream.close()
+                    except (OSError, KeyboardInterrupt) as failure:
+                        closed = False
+                        teardown_cancelled |= isinstance(failure, KeyboardInterrupt)
+            # Successful reap AND both closes authorize only read-only lookup,
+            # independently of earlier signal denial. Never mutate/reap again.
+            absent = False
+            try:
+                group_deadline = min(deadline, time.monotonic() + 0.25)
+                while reaped and closed and time.monotonic() < group_deadline:
+                    try:
+                        os.killpg(process.pid, 0)
+                    except ProcessLookupError:
+                        absent = time.monotonic() < group_deadline
+                        break
+                    except KeyboardInterrupt:
+                        teardown_cancelled = True
+                        break
                     except OSError:
-                        terminated = False
-            # Read-only identity check after reap; never signal a reused PGID.
-            group_deadline = min(deadline, time.monotonic() + 0.25)
-            while terminated:
-                try:
-                    os.killpg(process.pid, 0)
-                except ProcessLookupError:
-                    break
-                except (OSError, KeyboardInterrupt):
-                    terminated = False
-                    break
-                remaining = group_deadline - time.monotonic()
-                if remaining <= 0:
-                    terminated = False
-                    break
-                try:
+                        break
+                    remaining = group_deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
                     time.sleep(min(0.01, remaining))
-                except KeyboardInterrupt:
-                    terminated = False
-                    break
+            except (OSError, KeyboardInterrupt) as failure:
+                absent = False
+                teardown_cancelled |= isinstance(failure, KeyboardInterrupt)
+            terminated = reaped and closed and absent and not teardown_cancelled
     if not terminated:
         outcome = "termination-unverified"
-    elif outcome in {"completed", "stdout-oversized", "stderr-oversized", "both-oversized"} \
-            and time.monotonic() >= deadline:
-        outcome = "timed-out"
+    elif outcome in {"completed", "stdout-oversized", "stderr-oversized", "both-oversized"}:
+        try:
+            if time.monotonic() >= deadline:
+                outcome = "timed-out"
+        except (OSError, KeyboardInterrupt):
+            outcome = "termination-unverified"
     if outcome not in {"completed", "stdout-oversized", "stderr-oversized", "both-oversized"}:
         return outcome, native_status, b"", b""
     return outcome, native_status, bytes(payloads[0]), bytes(payloads[1])

@@ -1428,6 +1428,7 @@ PING_ERRORS = {"unknown", "connect-error-observed", "timeout-error-observed", "h
 PING_COLLECTORS = {"not-run", "unknown", "completed", "oversized", "timed-out", "cancelled",
                    "termination-unverified", "launch-failed", "read-failed", "wrapper-failed", "invalid-boundary",
                    "invalid-output"}
+PING_TEARDOWN_SIGNALS = {"not-run", "sent", "absent", "denied", "failed", "cancelled", "unknown"}
 
 
 def readiness_ping_error(raw: bytes, native_exit: int | None, http_status: str) -> str:
@@ -1456,11 +1457,12 @@ def readiness_ping_error(raw: bytes, native_exit: int | None, http_status: str) 
 def readiness_ping(socket_path: pathlib.Path, deadline_boottime: str) -> dict[str, str]:
     """Replace only the actual original curl poll; collect no configuration."""
     result = {"ping-curl-exit": "unknown", "ping-http-status": "unknown",
-              "ping-curl-error": "unknown", "ping-collector": "invalid-boundary"}
+              "ping-curl-error": "unknown", "ping-collector": "invalid-boundary", "ping-teardown-signal": "not-run"}
     if re.fullmatch(r"/tmp/boxferry-docker-core\.[A-Za-z0-9_]{1,64}/socket/docker\.sock", str(socket_path)) is None \
             or re.fullmatch(r"[0-9]{1,12}\.[0-9]{2}", deadline_boottime) is None:
         return result
     previous = {}
+    teardown = {}
     def cancelled(_signum, _frame):
         raise KeyboardInterrupt
     try:
@@ -1471,7 +1473,10 @@ def readiness_ping(socket_path: pathlib.Path, deadline_boottime: str) -> dict[st
         outcome, status, stdout, stderr = native_read.native_poll_read(
             ["curl", "--fail", "--silent", "--show-error", "--max-time", "5", "--max-filesize", "65536",
              "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket", str(socket_path),
-             "http://localhost/_ping"], time.monotonic() + remaining)
+             "http://localhost/_ping"], time.monotonic() + remaining, teardown_observations=teardown)
+        result["ping-teardown-signal"] = (teardown.get("signal") if isinstance(teardown.get("signal"), str)
+                                          and teardown.get("signal") in PING_TEARDOWN_SIGNALS
+                                          else "unknown")
         result["ping-collector"] = ("oversized" if outcome in {
             "stdout-oversized", "stderr-oversized", "both-oversized"} else outcome if outcome in PING_COLLECTORS
             else "unknown")
@@ -1498,17 +1503,23 @@ def readiness_ping(socket_path: pathlib.Path, deadline_boottime: str) -> dict[st
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
+        if "signal" in teardown:
+            result["ping-teardown-signal"] = (teardown["signal"] if isinstance(teardown["signal"], str)
+                                              and teardown["signal"] in PING_TEARDOWN_SIGNALS
+                                              else "unknown")
     return result
 
 
 def readiness_ping_observations(curl_exit: str, http_status: str, error: str = "unknown",
-                                collector: str = "not-run") -> dict[str, str]:
+                                collector: str = "not-run", teardown_signal: str = "not-run") -> dict[str, str]:
     """Validate only the final existing poll's closed fields; never infer a cause."""
     return {
         "ping-curl-exit": curl_exit if re.fullmatch(r"[0-9]|[1-9][0-9]|not-run|unknown", curl_exit) else "unknown",
         "ping-http-status": http_status if re.fullmatch(r"[0-5][0-9]{2}|unknown", http_status) else "unknown",
         "ping-curl-error": error if error in PING_ERRORS else "unknown",
         "ping-collector": collector if collector in PING_COLLECTORS else "unknown",
+        "ping-teardown-signal": teardown_signal if isinstance(teardown_signal, str)
+        and teardown_signal in PING_TEARDOWN_SIGNALS else "unknown",
     }
 
 
@@ -1700,6 +1711,7 @@ def main() -> int:
     readiness.add_argument("--ping-http-status", default="unknown")
     readiness.add_argument("--ping-curl-error", default="unknown")
     readiness.add_argument("--ping-collector", default="not-run")
+    readiness.add_argument("--ping-teardown-signal", default="not-run")
     ping = commands.add_parser("readiness-ping")
     ping.add_argument("--socket", type=pathlib.Path, required=True)
     ping.add_argument("--deadline-boottime", required=True)
@@ -1836,7 +1848,7 @@ def main() -> int:
             print(" ".join(readiness_ping(args.socket, args.deadline_boottime).values()))
         elif args.command == "readiness-diagnostics":
             result = readiness_ping_observations(args.ping_curl_exit, args.ping_http_status,
-                                                 args.ping_curl_error, args.ping_collector)
+                                                args.ping_curl_error, args.ping_collector, args.ping_teardown_signal)
             result.update(readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered))
             print("readiness observations: " + " ".join(f"{key}={value}" for key, value in result.items())
                   + "; startup-cause=unestablished")
