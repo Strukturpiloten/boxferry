@@ -269,12 +269,12 @@ cleanup_owned() {
           else
             # Only remove the fixed name if this run actually created it. A
             # failed removal is still failure even though outer storage goes.
-            inner_status=$(cleanup_bounded 10s curl --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
+            inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
               --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
             if [[ $inner_status == 200 ]]; then
               cleanup_bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
                 rm --force bf-docker-core > /dev/null 2>&1 || failure=1
-              inner_status=$(cleanup_bounded 10s curl --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
+              inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
                 --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
               [[ $inner_status == 404 ]] || failure=1
             elif [[ $inner_status != 404 ]]; then
@@ -675,8 +675,8 @@ while true; do
   sleep 2
 done
 chmod 0666 "$socket_path"
-version_json=$(curl --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/version)
-info_json=$(curl --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/info)
+version_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/version)
+info_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/info)
 observed_release=$(jq -er '.Version' <<< "$version_json")
 observed_api=$(jq -er '.ApiVersion' <<< "$version_json")
 observed_rootless=$(jq -r '(.Rootless == true) or any(.SecurityOptions[]?; . == "name=rootless" or startswith("name=rootless,"))' <<< "$info_json")

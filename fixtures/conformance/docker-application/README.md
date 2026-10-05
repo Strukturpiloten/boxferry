@@ -187,14 +187,27 @@ do not diagnose the historical failed run or provide fresh native evidence.
 
 The last actual existing `/_ping` poll supplies one atomic record: `ping-curl-exit` (0–99,
 `not-run`, or `unknown`), `ping-http-status` (exactly three digits, 000–599, or `unknown`),
-`ping-curl-error`, `ping-collector`, and `ping-teardown-signal`. The only added curl argument is `--show-error`;
-executable selection and inherited environment stay unchanged. Curl still discards the response
+`ping-curl-error`, `ping-collector`, and `ping-teardown-signal`. Readiness uses `--show-error` for
+bounded error observations; executable selection and inherited environment stay unchanged.
+Curl still discards the response
 body and uses fixed `%{http_code}` write-out. Separate private stdout/stderr buffers retain at most
 16 KiB each. Overflow clears only the affected buffer and continues bounded draining rather than
 inducing SIGPIPE; an independently observed native exit is retained even when payload collection
 fails. Stderr-only overflow retains valid HTTP stdout but leaves the text observation unknown;
 stdout overflow or malformed HTTP output cannot promote readiness.
 Raw stderr, response data, addresses, paths, protected values and exceptions are never emitted.
+
+All five existing local Docker curl call sites (readiness, version, info, and the two exact-owned
+cleanup GETs) deliberately harden the private-socket transport boundary with first-option `-q`
+and explicit `--noproxy '*'`. `-q` disables default curl configuration; proxy bypass is explicit
+because `-q` alone does not suppress environment-selected proxies. No environment/configuration
+values are read or cleared. Selected executables, inherited environment, URLs, default GET methods,
+conditional invocation counts, limits, readiness cadence and cleanup ownership remain unchanged;
+no request, probe, retry, privilege change or deadline extension is added. Independently authored
+offline expectations cover the complete readiness argv and all four shell call sites, exact
+per-site invocation counts and unchanged limits, including literal wildcard quoting. This is
+reviewed trust-boundary hardening, not evidence that ambient configuration or a proxy caused any
+historical native exit 7. Historical failed receipts remain failed and immutable.
 
 `ping-curl-error` recognizes only whole, narrow English curl envelopes matching the actual native
 exit: connect, timeout, HTTP, proxy-resolution or host-resolution error observations. Empty,
@@ -263,6 +276,16 @@ extraction path, grouping or approval rule changes. The existing Python standard
 library supplies the Linux socket/descriptor calls. Independently published Lens
 products retain their native suites and do not consume this BoxFerry-owned
 application diagnostic helper, so no Lens consumer or manager change is needed.
+
+For #420, the four owned helper/harness/test/documentation paths likewise match none of the
+Renovate custom-manager file patterns. No dependency, software/image/tool pin, canonical pin
+location, extraction rule, manager, manifest, lockfile, workflow, grouping or approval definition
+changes. The unchanged wrapper registrations cover the new argv regressions in local,
+PR/main/dispatch CI and Release; the shared bounded-native reader remains byte-for-byte unchanged.
+Equivalent native-harness hardening is independently tracked in
+[DockerLens #78](https://github.com/Strukturpiloten/docker-lens/issues/78). DockerLens remains the
+independent native catalogue owner; that follow-up is not a completed cross-repository rollout,
+and the immutable producer/candidate and historical receipts are not modified by this change.
 
 ## Authored core artifact prerequisite
 
