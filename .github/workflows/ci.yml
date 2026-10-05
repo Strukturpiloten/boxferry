@@ -355,6 +355,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Check trusted-live smoke and apply profile contracts
+        run: python3 scripts/test-migration-readiness.py --coverage-contracts
       - name: Run shared offline tier
         run: >-
           python3 scripts/migration-readiness.py run
