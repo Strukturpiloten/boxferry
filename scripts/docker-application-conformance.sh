@@ -426,9 +426,16 @@ cleanup_owned() {
 }
 on_exit() {
   local status=$? cleanup_status=0 cleanup_cancelled=false
-  trap - EXIT HUP INT TERM
   if [[ ${comparison_initialized:-false} == true ]]; then
     trap 'cleanup_cancelled=true' HUP INT TERM
+    trap - EXIT
+    # Optional closed log observation after route sampling, before teardown.
+    # Its separate 12s TERM/5s KILL bound never extends readiness or authorizes
+    # acceptance. Catchable cancellation remains armed for mandatory cleanup.
+    bounded 12s python3 "$comparison" logs --directory "$diagnostic_directory" \
+      --outer "${outer:-}" --run "${run_id:-}" --socket "${socket_path:-}" || true
+  else
+    trap - EXIT HUP INT TERM
   fi
   cleanup_owned || cleanup_status=$?
   [[ $cleanup_cancelled == false ]] || cleanup_status=1

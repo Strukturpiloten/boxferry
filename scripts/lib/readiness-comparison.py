@@ -14,6 +14,7 @@ import signal
 import stat
 import sys
 import time
+from contextlib import ExitStack, contextmanager
 from fractions import Fraction
 
 
@@ -22,6 +23,10 @@ SPEC = importlib.util.spec_from_file_location("comparison_contract", HERE / "doc
 assert SPEC is not None and SPEC.loader is not None
 contract = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(contract)
+LAUNCH_SPEC = importlib.util.spec_from_file_location("owned_native_launch", HERE / "owned-native-launch.py")
+assert LAUNCH_SPEC is not None and LAUNCH_SPEC.loader is not None
+owned_native_launch = importlib.util.module_from_spec(LAUNCH_SPEC)
+LAUNCH_SPEC.loader.exec_module(owned_native_launch)
 REPORT = "readiness-comparison.json"
 INSPECT = ('{"id":{{json .ID}},"name":{{json .Name}},"owner":'
            '{{json (index .Config.Labels "io.boxferry.docker-core-run")}},'
@@ -32,6 +37,10 @@ NATIVE_COMMAND = ('exec curl -q --noproxy \'*\' -fs --max-time 5 --unix-socket "
 PHASES = {"host-prerequisite", "native-binding", "bridge-prerequisite", "outer-admission",
           "endpoint-binding", "permission-transition", "baseline", "harmonized", "native-before",
           "native-after", "native-later", "clock", "cleanup", "record"}
+LOG_CATEGORIES = {"empty", "content-present", "permission-error-observed", "storage-error-observed",
+                  "network-error-observed", "socket-error-observed", "startup-error-observed",
+                  "multiple-errors-observed"}
+LOG_WORK_SECONDS = 7
 
 
 class Refused(Exception):
@@ -118,7 +127,8 @@ def source_binding(args) -> dict:
             "harness_sha256": digest(HERE.parent / "docker-application-conformance.sh"),
             "contract_sha256": digest(HERE / "docker-application-contract.py"),
             "observer_sha256": digest(pathlib.Path(__file__)),
-            "collector_sha256": digest(HERE / "bounded-native-read.py")}
+            "collector_sha256": digest(HERE / "bounded-native-read.py"),
+            "launcher_sha256": digest(HERE / "owned-native-launch.py")}
 
 
 def host_prerequisite(expected_namespace: str) -> list[int]:
@@ -156,7 +166,7 @@ def initialize(args) -> dict:
     need(args.native_root is not None and args.directory != pathlib.Path("/tmp"))
     for source in (args.native_root.resolve(strict=True), HERE.parent.parent.resolve(strict=True)):
         need(args.directory != source and source not in args.directory.parents)
-    return {"schema_version": 1, "qualification": "none", "status": "pending",
+    return {"schema_version": 2, "qualification": "none", "status": "pending",
             "directory": identity, "phase": "host-prerequisite", "errno": None,
             "prerequisite": "unknown", "namespace": None, "sources": {}, "outer": None, "socket": None,
             "origin": None, "consumer_budget_ms": 180000, "native_budget_ms": 360000,
@@ -168,7 +178,8 @@ def initialize(args) -> dict:
                             "socket": "baseline-original-then-native-0666-transition",
                             "supervision": "native-literal-curl-under-shared-bounded-observer",
                             "scheduling": "serial-observers-consume-startup-budgets"},
-            "uncertain": False, "cleanup": "not-created", "classification": "indeterminate"}
+            "uncertain": False, "cleanup": "not-created", "classification": "indeterminate",
+            "startup_logs": {"status": "not-run", "category": None}}
 
 
 def validate_report(value: dict) -> None:
@@ -176,8 +187,8 @@ def validate_report(value: dict) -> None:
     need(type(value) is dict and set(value) == {
         "schema_version", "qualification", "status", "directory", "phase", "errno", "prerequisite",
         "namespace", "sources", "outer", "socket", "origin", "consumer_budget_ms", "native_budget_ms",
-        "consumer", "native", "differences", "uncertain", "cleanup", "classification"})
-    need(value["schema_version"] == 1 and value["qualification"] == "none"
+        "consumer", "native", "differences", "uncertain", "cleanup", "classification", "startup_logs"})
+    need(type(value["schema_version"]) is int and value["schema_version"] == 2 and value["qualification"] == "none"
          and value["status"] in {"pending", "completed", "withheld"} and value["phase"] in PHASES
          and value["prerequisite"] in {"unknown", "ready"} and type(value["uncertain"]) is bool
          and value["cleanup"] in {"not-created", "verified", "unknown"}
@@ -185,6 +196,10 @@ def validate_report(value: dict) -> None:
              "consumer-only-ready-observed", "early-native-only-ready-observed",
              "native-ready-after-consumer-budget", "shared-no-ready-observed"}
          and value["consumer_budget_ms"] == 180000 and value["native_budget_ms"] == 360000)
+    logs = value["startup_logs"]
+    need(type(logs) is dict and set(logs) == {"status", "category"}
+         and logs["status"] in {"not-run", "observed", "withheld"})
+    need(logs["category"] in LOG_CATEGORIES if logs["status"] == "observed" else logs["category"] is None)
     need(value["errno"] is None or type(value["errno"]) is int and 1 <= value["errno"] <= 4095)
     need(value["origin"] is None or type(value["origin"]) is int and value["origin"] >= 0)
     need(type(value["directory"]) is list and len(value["directory"]) == 3
@@ -193,7 +208,7 @@ def validate_report(value: dict) -> None:
          and all(type(x) is int and x > 0 for x in value["namespace"]))
     sources = value["sources"]
     need(sources == {} or set(sources) == {"native_revision", "boxferry_revision", "native_script_sha256", "image_sha256",
-         "bridge_sha256", "harness_sha256", "contract_sha256", "observer_sha256", "collector_sha256"})
+         "bridge_sha256", "harness_sha256", "contract_sha256", "observer_sha256", "collector_sha256", "launcher_sha256"})
     for key, item in sources.items():
         need(type(item) is str and re.fullmatch(r"[0-9a-f]{40}" if key.endswith("_revision") else r"[0-9a-f]{64}", item) is not None)
     for route, keys in (("consumer", {"baseline", "first_failure", "first_harmonized_failure", "last", "first_ready_ms", "polls", "budget_closed"}),
@@ -243,15 +258,188 @@ def validate_report(value: dict) -> None:
              and node["native_mode"] in {None, 0o666})
 
 
-def inspect_outer(outer: str, run: str) -> dict:
+def inspect_outer(outer: str, run: str, *, cid: str | None = None, deadline: float | None = None, launcher=None) -> dict:
     need(re.fullmatch(r"[A-Za-z0-9_]{1,64}", run) is not None and outer == "bf-docker-core-" + run)
-    outcome, raw = contract.readiness_read(["podman", "inspect", "--format", INSPECT, outer], time.monotonic() + 4)
+    need(cid is None or re.fullmatch(r"[0-9a-f]{64}", cid) is not None)
+    if deadline is None:
+        deadline = time.monotonic() + 4
+    need(time.monotonic() < deadline)
+    options = {} if launcher is None else {"launcher": launcher}
+    outcome, raw = contract.readiness_read(["podman", "inspect", "--format", INSPECT, cid or outer], deadline, **options)
     need(outcome == "read")
     record = json.loads(raw, object_pairs_hook=contract.no_duplicate_keys)
     need(set(record) == {"id", "name", "owner", "running", "pid", "privileged"})
     need(re.fullmatch(r"[0-9a-f]{64}", record["id"]) is not None
          and record["name"] == outer and record["owner"] == run)
     return record
+
+
+def node_identity(metadata) -> tuple:
+    return (metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_gid, metadata.st_mode)
+
+
+class LogBudget:
+    def __init__(self):
+        self.boot_deadline = time.clock_gettime(time.CLOCK_BOOTTIME) + LOG_WORK_SECONDS
+        self.monotonic_deadline = time.monotonic() + LOG_WORK_SECONDS
+        self.expired = False
+        self.launcher = None
+
+    def check(self):
+        need(not self.expired and time.clock_gettime(time.CLOCK_BOOTTIME) < self.boot_deadline)
+
+    def reader_deadline(self):
+        self.check()
+        # BOOTTIME advances through suspend; translate its remaining budget to
+        # the canonical reader's MONOTONIC domain, never resetting either end.
+        remaining = self.boot_deadline - time.clock_gettime(time.CLOCK_BOOTTIME)
+        need(remaining > 0)
+        return min(self.monotonic_deadline, time.monotonic() + remaining)
+
+
+@contextmanager
+def log_budget():
+    """Interrupt blocking brackets as well as subprocess collection.
+
+    An occupied/blocked alarm facility is refused without stealing caller state.
+    KeyboardInterrupt enters the canonical reader's owned-process teardown; its
+    existing <=1s handoff reserve remains separate from the collection alarm.
+    """
+    budget = LogBudget()
+    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    installed = False
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        need(signal.SIGALRM not in previous_mask and previous_timer == (0.0, 0.0)
+             and signal.SIGALRM not in signal.sigpending())
+        def expired(_signum, _frame):
+            budget.expired = True
+            raise KeyboardInterrupt
+        signal.signal(signal.SIGALRM, expired)
+        installed = True
+        budget.check()
+        signal.setitimer(signal.ITIMER_REAL, budget.boot_deadline - time.clock_gettime(time.CLOCK_BOOTTIME))
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        budget.launcher = owned_native_launch.OwnedLauncher(budget.boot_deadline, budget.boot_deadline + 1)
+        yield budget
+        budget.check()
+    finally:
+        # Defer cancellation only during finite teardown, without blocking
+        # waits under a signal mask or losing a cancellation observation.
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM, signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        cleanup_failed = False
+        cancel_handlers = {}
+        try:
+            if installed:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                def cancelled(_signum, _frame):
+                    budget.expired = True
+                for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                    cancel_handlers[signum] = signal.signal(signum, cancelled)
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+                try:
+                    if budget.launcher is not None:
+                        budget.launcher.close_all()
+                except (OSError, KeyboardInterrupt):
+                    cleanup_failed = True
+                finally:
+                    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM, signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+                if signal.SIGALRM in signal.sigpending():
+                    signal.sigtimedwait({signal.SIGALRM}, 0)
+                    budget.expired = True
+                signal.signal(signal.SIGALRM, previous_handler)
+        finally:
+            for signum, handler in cancel_handlers.items():
+                signal.signal(signum, handler)
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        need(not cleanup_failed)
+    budget.check()
+
+
+def log_binding(value: dict, outer: str, run: str, socket: pathlib.Path, budget: LogBudget,
+                held: dict) -> tuple:
+    """Recheck only the admitted daemon and held task directories; never connect."""
+    budget.check()
+    binding = value["outer"]
+    record = inspect_outer(outer, run, cid=binding["id"], deadline=budget.reader_deadline(), launcher=budget.launcher)
+    need(record == {"id": binding["id"], "name": outer, "owner": run, "running": True,
+                    "pid": binding["pid"], "privileged": True})
+    identity = process(binding["pid"])
+    need(identity == {key: binding[key] for key in ("pid", "start", "namespace")})
+    host = os.stat("/proc/self/ns/pid")
+    need([host.st_dev, host.st_ino] == value["namespace"])
+    root = cgroup_path(binding)
+    expected_cgroup = "0::/" + str(root.relative_to("/sys/fs/cgroup")) + "\n"
+    need(pathlib.Path(f'/proc/{binding["pid"]}/cgroup').read_text() == expected_cgroup)
+    need(binding["pid"] in {int(x) for x in (root / "cgroup.procs").read_text().split()})
+    need(effective_limits(root) == binding["limits"])
+    need(private_directory(socket.parent.parent) == binding["directory"])
+    directories = []
+    for path, descriptor in held.items():
+        need(path.resolve(strict=True) == path)
+        metadata = path.lstat()
+        need(stat.S_ISDIR(metadata.st_mode)
+             and node_identity(os.fstat(descriptor)) == node_identity(metadata))
+        directories.append(node_identity(metadata))
+    socket_directory = socket.parent.lstat()
+    need(socket_directory.st_uid == 0)
+    try:
+        node = socket.lstat()
+    except FileNotFoundError:
+        need(value["socket"] is None)
+        endpoint_identity = None
+    else:
+        need(stat.S_ISSOCK(node.st_mode) and node.st_uid == 0)
+        endpoint_identity = node_identity(node)
+        if value["socket"] is not None:
+            previous = value["socket"]
+            need([node.st_dev, node.st_ino, node.st_uid, node.st_gid] ==
+                 [previous[key] for key in ("device", "inode", "uid", "gid")]
+                 and stat.S_IMODE(node.st_mode) ==
+                 (previous["original_mode"] if previous["native_mode"] is None else previous["native_mode"]))
+    budget.check()
+    return record, identity, tuple(directories), endpoint_identity
+
+
+def startup_logs(value: dict, outer: str, run: str, socket: pathlib.Path) -> None:
+    """Optional observation: seven seconds shared work plus one second handoff.
+
+    Failure only withholds this category. It cannot change readiness samples,
+    classification, qualification, uncertainty or cleanup authority.
+    """
+    with log_budget() as budget, ExitStack() as stack:
+        need(value["startup_logs"]["status"] == "withheld")
+        binding = value["outer"]
+        need(binding is not None and "limits" in binding and binding["pid"] is not None
+             and binding["layout"] is not None and value["prerequisite"] == "ready")
+        need(isinstance(socket, pathlib.Path) and
+             re.fullmatch(r"/tmp/boxferry-docker-core\.[A-Za-z0-9_]{1,64}/socket/docker\.sock", str(socket)) is not None
+             and socket == pathlib.Path(f"/tmp/boxferry-docker-core.{run}/socket/docker.sock")
+             and hashlib.sha256(str(socket).encode()).hexdigest() == binding["path_sha256"])
+        held = {}
+        for path in (socket.parent.parent, socket.parent, cgroup_path(binding)):
+            with owned_native_launch.critical():
+                descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    stack.callback(os.close, descriptor)
+                except BaseException:
+                    os.close(descriptor)
+                    raise
+                held[path] = descriptor
+            budget.check()
+        before = log_binding(value, outer, run, socket, budget, held)
+        outcome, raw = contract.readiness_read(["podman", "logs", "--tail", "80", binding["id"]],
+                                             budget.reader_deadline(), merge_output=True, launcher=budget.launcher)
+        budget.check()
+        need(outcome == "read" and type(raw) is bytes and len(raw) <= 16384)
+        after = log_binding(value, outer, run, socket, budget, held)
+        budget.check()
+        need(after == before)
+        category = contract.readiness_log_category(raw)
+        need(category in LOG_CATEGORIES)
+    value["startup_logs"] = {"status": "observed", "category": category}
 
 
 def process(pid: int) -> dict:
@@ -465,7 +653,7 @@ def classify(value: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("init", "start", "bind", "endpoint", "transition", "box", "consumer-expired", "native", "native-ready", "cleanup-check", "finish"))
+    parser.add_argument("operation", choices=("init", "start", "bind", "endpoint", "transition", "box", "consumer-expired", "native", "native-ready", "logs", "cleanup-check", "finish"))
     parser.add_argument("--directory", type=pathlib.Path, required=True)
     parser.add_argument("--native-root", type=pathlib.Path)
     parser.add_argument("--native-revision")
@@ -502,6 +690,16 @@ def main() -> int:
             value["prerequisite"] = "ready"
         else:
             value = read_report(args.directory)
+            if args.operation == "logs":
+                need(value["startup_logs"]["status"] == "not-run")
+                writable = True
+                # Durable withholding precedes any observation. Timeout/KILL
+                # cannot leave a partially classified category looking verified.
+                value["startup_logs"] = {"status": "withheld", "category": None}
+                write_report(args.directory, value)
+                startup_logs(value, args.outer, args.run, args.socket)
+                write_report(args.directory, value)
+                return 0
             writable = True
             value["phase"] = args.phase or {"bind": "outer-admission", "endpoint": "endpoint-binding",
                                            "transition": "permission-transition"}.get(args.operation, "cleanup")
@@ -545,10 +743,13 @@ def main() -> int:
         return result
     except (Exception, KeyboardInterrupt) as error:
         if value is not None and writable:
-            value["errno"] = number(error)
-            value["uncertain"] = True
-            value["status"] = "withheld"
-            value["classification"] = classify(value)
+            if args.operation == "logs":
+                value["startup_logs"] = {"status": "withheld", "category": None}
+            else:
+                value["errno"] = number(error)
+                value["uncertain"] = True
+                value["status"] = "withheld"
+                value["classification"] = classify(value)
             try:
                 write_report(args.directory, value)
             except Exception:

@@ -861,16 +861,78 @@ redistributed by this change; the bound bridge helper is read from that external
 checkout at runtime. Exact source version and command binding reside in the
 private report's revision/script/helper hashes.
 
-The only retained file is private mode-0600 `readiness-comparison.json`, bounded
+The only retained file is private mode-0600 schema-2 `readiness-comparison.json`, bounded
 to 64 KiB, exclusively created to refuse historical-file overwrite. It contains
 closed phases/statuses, source/native revisions and hashes, selected image
 digest, namespace/daemon/socket identities, elapsed times and actual numeric
 errno only when available. Endpoint paths are hashed; no arbitrary native
 stderr, exception text, environment, credentials or request/response body is
 retained. Native HTTP is always null: curl exit 7 is not errno 111 or an inferred
-HTTP status. Invalid/truncated collector records, unverified child teardown and
+HTTP status. Invalid/truncated readiness collector records, unverified child teardown and
 uncertain resource closure withhold the final result. Source hashes and the
 clean native binding are rechecked after teardown.
+
+After route sampling ends and before teardown, one optional source-owned operation
+reads `podman logs --tail 80` using only the exact creation-bound immutable CID.
+Both streams share the canonical reader's private 16-KiB combined cap; nonzero,
+unknown, truncated, late or cancelled reads provide no category. CID/name/run,
+running privileged PID/start/namespace, host namespace, exact cgroup membership,
+unchanged effective limits, held root/socket/cgroup directories and any previously
+bound socket node are checked before and after collection. Directory/node checks
+send no bytes and add no curl, connection or guest execution. These checks are
+bounded snapshots, not atomic protection against every transient replacement.
+
+The shared internal work deadline is seven seconds across both brackets and the
+log read, with one second reserved for handoff. A whole-operation SIGALRM guard
+interrupts blocking metadata reads as well as subprocess collection through the
+canonical reader's cancellation/owned-child teardown path. The short
+fork/PID/pipe publication masks ALRM/TERM/INT/HUP briefly, with no bootstrap or exec
+wait masked. The child sets up its own session, sends a fixed READY marker and waits
+for ACK; the parent authenticates and publishes session ownership before ACK can
+authorize exact exec. Bootstrap waits remain interruptible within the same work
+deadline. Until ACK, only the held direct child can be terminated. After ACK, group
+signals require current parent WNOWAIT ownership and original PID/start/session/group
+identity; ECHILD or identity drift forbids numeric rescue. Nonblocking reaping and
+state publication are cancellation/SIGCHLD-masked; no group signal follows reaping.
+Bounded shutdown defers catchable cancellation until exact state and owned FD closure
+are published, then restores handlers and propagates uncertainty. All registry
+children share at most one second of teardown, not one second per child.
+Every outer shutdown scope charges entry through exit, including handler setup and
+restoration, all owned FD/pidfd closes, cached reaped-child returns and registry
+retries. Nested registry loops share one fixed scope end and are not double-charged;
+legitimate work gaps between the sequential readers do not consume teardown time.
+Both remaining cumulative allowance and the absolute work-plus-handoff deadline
+must hold at final handoff. Late finite closure latches timing uncertainty and
+forbids subsequent acquisition or category promotion, even when the child was
+positively reaped and its FDs physically closed. Physical closure and verified
+timeliness are separate facts; a kernel-D-state close can return late but cannot
+be reported as a timely diagnostic. There is no ordinary userspace blocking
+exception to this admission rule.
+The previous alarm handler, inactive timer and signal mask are restored. An already
+active timer or blocked alarm facility is refused without stealing caller state.
+BOOTTIME expiry is checked through setup, collection and restoration, including
+suspend; remaining time is translated to the reader's MONOTONIC deadline without
+resetting the shared budget. Kernel uninterruptible I/O cannot be synchronously
+bounded or cleaned beyond the caller's recovery reserve. Interruptible blocked
+bootstrap is not an exception to the work deadline.
+The existing outer wrapper supplies
+a separate 12-second TERM bound and five-second KILL reserve. This diagnostic
+reserve never extends the original readiness budgets or changes their timestamps.
+Catchable-cancellation cleanup handlers are armed before the diagnostic; refusal
+or timeout cannot skip mandatory cleanup or clear an earlier failure.
+
+Only `startup_logs.status` (`not-run`, `observed`, `withheld`) and its nullable
+category are retained. The shared classifier's closed categories are `empty`,
+`content-present`, `permission-error-observed`, `storage-error-observed`,
+`network-error-observed`, `socket-error-observed`, `startup-error-observed` and
+`multiple-errors-observed`. A category is text observation, not a daemon cause.
+Raw logs, exception text and extra native fields are never written. Diagnostic
+withholding affects only this category, not comparison uncertainty or readiness
+classification; it cannot grant native/application acceptance, and qualification
+remains `none`. Schema-1 and unknown-version historical reports are refused without
+rewriting or upgrading their bytes.
+Duplicate log operations, whether a category was observed or withheld, are refused
+before any write or native call and leave the existing report bytes unchanged.
 
 Classifications distinguish early native-only readiness, native readiness after
 the consumer budget, both routes ready, consumer-only readiness and
@@ -892,12 +954,34 @@ Offline `scripts/test-readiness-comparison.py` controls cover profile isolation,
 literal observer ordering, exact deadlines/suspend, expected classification,
 rootful and bridge refusal, source binding, cgroup admission, permission/inode
 transition, privacy, historical-report refusal and resource-closure uncertainty.
+Log controls independently assert categories, exact-CID invocation, shared deadline,
+before/after binding and effective-limit drift, cancellation, cleanup ordering and
+privacy. Real bounded-reader subprocess controls cover merged streams, native
+nonzero status, overflow and TERM without starting Podman or a daemon.
+Real blocking-pipe metadata and aggregate-alarm controls check interruption,
+owned-reader reaping, acquisition-time cancellation and alarm-state restoration;
+separate clock controls cover BOOTTIME-only suspend and exact expiry.
+The explicit `readiness_read(..., launcher=...)` seam is opt-in only for the log
+operation's inspect/log/inspect chain; the default Popen collector, presence reader
+and native curl collector retain their existing launch/collection behavior. The
+small `scripts/lib/owned-native-launch.py` helper is Linux/main-thread/single-thread
+only, owns at most three children and is not a product execution API. Schema 2's
+closed `sources` object now explicitly includes `launcher_sha256` alongside the
+other nine source fingerprints; old shapes are refused, never silently upgraded.
+Real fork controls cover all four cancellation signals at publication/bootstrap,
+READY/ACK isolation, blocked-bootstrap expiry, external reap/ECHILD, shutdown wait
+and reap-state races, thread refusal and pipe/fork failure closure.
 It is registered once in `scripts/test-application-probes.sh`; the runner-order
 regression preserves all existing suites and failure propagation. Canonical
 consumers remain local `scripts/check-all.sh`, PR/main/dispatch
 `.github/workflows/ci.yml`, and Release's reusable deterministic CI gate. None
 automatically launches this opt-in diagnostic. Lens native suites remain
 independent; no cross-repository runtime consumer is changed.
+Canonical collector consumers in this repository are the Docker contract and
+`native-presence.py` (including Podman/application harness calls), plus this
+comparison. Targeted source inventory in the approved ComposeLens, PodmanLens,
+QuadletLens, DockerLens and website checkouts found no `bounded-native-read.py` or
+`readiness_read` consumer. No other consumer opts into the new launcher.
 
 Renovate no-change review: `.github/renovate.json` custom-manager patterns do not
 match these changed scripts or this README. No software, operational image pin,
