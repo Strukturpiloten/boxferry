@@ -122,6 +122,7 @@ forgejo_prepare_image_archive() {
     --output "${archive}" "${references[@]}" || return $?
   chmod 0644 "${archive}" || return $?
   for archive_alias in "${references[@]}"; do
+    bind_saved_docker_archive_identity "${archive_alias}" || return $?
     release_run_owned_host_image "${archive_alias}" || return $?
   done
   while IFS=$'\t' read -r id reference _ _ _ _; do

@@ -164,6 +164,7 @@ paperless_prepare_image_archive() {
     timed_operation 10m "archive compressed Paperless ${id} image" \
       "${engine}" save --format oci-archive \
       --output "${archive_directory}/${id}.oci.tar" "${archive_alias}" || return $?
+    bind_saved_oci_archive_identity "${archive_alias}" "${archive_directory}/${id}.oci.tar" || return $?
     release_run_owned_host_image "${archive_alias}" || return $?
     release_run_owned_host_image "${reference}" || return $?
   done < "${fixture}/images.tsv" || return $?

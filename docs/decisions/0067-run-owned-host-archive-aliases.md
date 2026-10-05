@@ -32,10 +32,28 @@ Only the explicitly registered disposable outer target with an authenticated exa
 the immutable container ID returned by successful creation may load the archive. The runner
 validates and records creation stdout before loading; an absent binding or even a same-run-label
 name replacement is refused. Before API activation or provisioning, loaded image
-IDs must match the host ledger; the runner tags those immutable IDs with the original stable
+IDs must match the separately bound serialized-config ledger; the runner tags those immutable IDs with the original stable
 fixture references and verifies them. It removes the host-only tag inside that target without
 force or pruning. Thus dynamic host tags do not enter acquired nested image metadata, fixture
 definitions, or historical cassettes. Nested loading does not access a registry.
+
+Host image identity and serialized image identity are distinct. The common workload, Forgejo and
+Nextcloud bind their original IDs only after successful identity-preserving Docker-archive save
+and host alias re-verification. Paperless, Immich and observability retain compressed OCI
+archives; a trusted host engine save can serialize a different config (as observed for Gotenberg).
+Those paths independently bind the saved config ID before releasing any source or alias. There
+is no OCI host-ID fallback. Original host IDs continue to authorize host readback and cleanup
+and are never replaced with converted IDs.
+
+The stdlib metadata helper reads only the private run-owned save artifact. It requires one exact
+run-alias index annotation, OCI index/manifest/config schemas and media types, and verified
+manifest/config SHA-256 hashes and declared sizes. It rechecks the host alias after binding.
+It accepts only bounded plain tar regular files and canonical directories: symlinks, special,
+GNU/PAX extension records, duplicate paths/JSON keys and ambiguous descriptors fail closed.
+Limits are 2.5 GiB per archive, 8192 members, 4 MiB per metadata object and 60 seconds internally,
+with a 90-second outer deadline. Layer payloads are neither read nor extracted by this helper;
+the native loader retains layer blob and rootfs integrity validation. Failed verification never
+learns an expected identity from the live target and does not clear sticky uncertainty.
 
 Host cleanup requires confirmed presence and matching immutable image ownership before exact,
 non-force, non-pruning removal, then confirmed absence. Confirmed initial absence clears the
@@ -57,6 +75,11 @@ run-specific archive aliases are not software pins and introduce no Renovate man
 ## Limits
 
 Host inspection, tagging, saving and named-tag removal are not one atomic runtime transaction.
+The serialized-config binding trusts the engine's successful save into the private run-owned
+artifact directory, not an arbitrary supplied archive or an untrusted concurrent artifact writer.
+The helper closes the verified file and does not retain its inode through later bundling, copying
+or loading. A privileged writer can replace that path after verification and before use; the
+private run directory limits ordinary access but does not establish atomic exclusion.
 Unique run aliases prevent normal independent invocations from sharing a tag. They cannot prevent
 an arbitrary external writer from retagging the exact same alias between a check and mutation.
 Readbacks detect observed drift but do not establish atomic exclusion; no global lock, prune,

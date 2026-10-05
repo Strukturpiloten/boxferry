@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import io
 import json
 import os
 import pathlib
@@ -10,6 +12,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 import unittest
 from unittest import mock
@@ -19,6 +22,139 @@ SPEC = importlib.util.spec_from_file_location("native_presence", LIB / "native-p
 assert SPEC is not None and SPEC.loader is not None
 presence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(presence)
+OCI_SPEC = importlib.util.spec_from_file_location("oci_archive_identity", LIB / "oci-archive-identity.py")
+assert OCI_SPEC is not None and OCI_SPEC.loader is not None
+oci = importlib.util.module_from_spec(OCI_SPEC)
+OCI_SPEC.loader.exec_module(oci)
+
+
+class OciArchiveIdentityTests(unittest.TestCase):
+    reference = "localhost/boxferry-archive/test/paperless:gotenberg"
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="boxferry-oci-metadata-")
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        self.path = self.root / "image.tar"
+        self.config = json.dumps({"architecture": "amd64", "os": "linux",
+                                  "rootfs": {"type": "layers", "diff_ids": []}}).encode()
+        self.config_id = hashlib.sha256(self.config).hexdigest()
+        self.manifest = {"schemaVersion": 2, "mediaType": oci.MANIFEST, "layers": [],
+                         "config": {"mediaType": oci.CONFIG, "digest": "sha256:" + self.config_id,
+                                    "size": len(self.config)}}
+
+    def entries(self):
+        manifest = json.dumps(self.manifest).encode()
+        manifest_id = hashlib.sha256(manifest).hexdigest()
+        self.index = {"schemaVersion": 2, "manifests": [{"mediaType": oci.MANIFEST,
+                      "digest": "sha256:" + manifest_id, "size": len(manifest),
+                      "annotations": {"org.opencontainers.image.ref.name": self.reference}}]}
+        return [("oci-layout", b'{"imageLayoutVersion":"1.0.0"}'),
+                ("index.json", json.dumps(self.index).encode()),
+                ("blobs/sha256/" + manifest_id, manifest),
+                ("blobs/sha256/" + self.config_id, self.config)]
+
+    def write(self, entries=None, special=None):
+        with tarfile.open(self.path, "w", format=tarfile.USTAR_FORMAT) as archive:
+            for name, data in self.entries() if entries is None else entries:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+            if special is not None:
+                archive.addfile(special)
+
+    def rejected(self):
+        result = subprocess.run([sys.executable, str(LIB / "oci-archive-identity.py"),
+                                 str(self.path), self.reference], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "OCI archive identity verification failed.\n")
+
+    def test_verified_config_identity_is_not_inferred_from_host_identity(self) -> None:
+        self.write()
+        self.assertEqual(oci.identity(str(self.path), self.reference), self.config_id)
+        self.assertNotEqual(self.config_id, "b" * 64)
+
+    def test_hash_size_schema_reference_and_nonunique_failures(self) -> None:
+        for failure in ("config-hash", "manifest-hash", "config-size", "manifest-size", "schema",
+                        "reference", "nonunique", "duplicate-json", "invalid-descriptor", "invalid-config"):
+            with self.subTest(failure=failure):
+                self.setUp()
+                if failure == "config-size": self.manifest["config"]["size"] += 1
+                if failure == "schema": self.manifest["schemaVersion"] = True
+                if failure == "invalid-descriptor": self.manifest["config"]["mediaType"] = oci.MANIFEST
+                if failure == "invalid-config":
+                    self.config = b'{}'
+                    self.config_id = hashlib.sha256(self.config).hexdigest()
+                    self.manifest["config"].update(digest="sha256:" + self.config_id, size=len(self.config))
+                entries = self.entries()
+                if failure == "config-hash": entries[3] = (entries[3][0], b"x" * len(self.config))
+                if failure == "manifest-hash": entries[2] = (entries[2][0], b"x" * len(entries[2][1]))
+                if failure == "manifest-size": self.index["manifests"][0]["size"] += 1
+                if failure == "reference": self.index["manifests"][0]["annotations"]["org.opencontainers.image.ref.name"] += "-other"
+                if failure == "nonunique": self.index["manifests"] *= 2
+                entries[1] = ("index.json", json.dumps(self.index).encode())
+                if failure == "duplicate-json": entries[1] = ("index.json", b'{"schemaVersion":2,"schemaVersion":2}')
+                self.write(entries)
+                self.rejected()
+
+    def test_duplicate_paths_symlink_special_truncation_and_ambiguity_refused(self) -> None:
+        for failure in ("duplicate", "normalized-duplicate", "symlink", "fifo", "pax", "truncated", "trailing"):
+            with self.subTest(failure=failure):
+                entries, special = self.entries(), None
+                if failure == "duplicate": entries.append(entries[0])
+                if failure == "normalized-duplicate": entries.append(("./oci-layout", entries[0][1]))
+                if failure in ("symlink", "fifo", "pax"):
+                    special = tarfile.TarInfo("private-evidence")
+                    special.type = {"symlink": tarfile.SYMTYPE, "fifo": tarfile.FIFOTYPE, "pax": tarfile.XHDTYPE}[failure]
+                    if failure == "symlink": special.linkname = "index.json"
+                self.write(entries, special)
+                if failure == "truncated": self.path.write_bytes(self.path.read_bytes()[:100])
+                if failure == "trailing": self.path.write_bytes(self.path.read_bytes() + b"unexpected")
+                self.rejected()
+        self.write()
+        link = self.root / "link"
+        link.symlink_to(self.path)
+        with self.assertRaises(OSError): oci.identity(str(link), self.reference)
+
+    def test_metadata_member_archive_and_time_budgets(self) -> None:
+        self.write()
+        for constant, limit in (("MAX_METADATA", 1), ("MAX_MEMBERS", 1), ("MAX_ARCHIVE", 512)):
+            with self.subTest(constant=constant), mock.patch.object(oci, constant, limit):
+                with self.assertRaises(oci.InvalidArchive): oci.identity(str(self.path), self.reference)
+        with mock.patch.object(oci.time, "monotonic", side_effect=[0, 61]):
+            with self.assertRaises(oci.InvalidArchive): oci.identity(str(self.path), self.reference)
+
+    def test_layer_payloads_are_not_read_and_native_loader_retains_integrity_role(self) -> None:
+        layer = b"layer payload is intentionally not metadata"
+        layer_id = hashlib.sha256(layer).hexdigest()
+        config = json.loads(self.config)
+        config["rootfs"]["diff_ids"] = ["sha256:" + "a" * 64]
+        self.config = json.dumps(config).encode()
+        self.config_id = hashlib.sha256(self.config).hexdigest()
+        self.manifest["config"].update(digest="sha256:" + self.config_id, size=len(self.config))
+        self.manifest["layers"] = [{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                                   "digest": "sha256:" + layer_id, "size": len(layer)}]
+        entries = self.entries() + [("blobs/sha256/" + layer_id, layer)]
+        self.write(entries)
+        with tarfile.open(self.path) as archive:
+            layer_offset = archive.getmember("blobs/sha256/" + layer_id).offset_data
+        original_fdopen = os.fdopen
+
+        class MetadataOnlyFile:
+            def __init__(self, descriptor, mode):
+                self.file = original_fdopen(descriptor, mode)
+
+            def __enter__(self): return self
+            def __exit__(self, *args): self.file.close()
+            def __getattr__(self, name): return getattr(self.file, name)
+            def read(self, size):
+                if layer_offset <= self.file.tell() < layer_offset + len(layer):
+                    raise AssertionError("layer payload read")
+                return self.file.read(size)
+
+        with mock.patch.object(oci.os, "fdopen", MetadataOnlyFile):
+            self.assertEqual(oci.identity(str(self.path), self.reference), self.config_id)
 
 
 class NativePresenceTests(unittest.TestCase):
@@ -254,13 +390,15 @@ class ArchiveAliasTests(unittest.TestCase):
     function = LiveConsumerTests.function
     bash = LiveConsumerTests.bash
     image_id = "b" * 64
+    serialized_config = {"architecture": "amd64", "os": "linux", "rootfs": {"type": "layers", "diff_ids": []}}
+    serialized_id = hashlib.sha256(json.dumps(serialized_config).encode()).hexdigest()
     outer_id = "d" * 64
     source = "example.invalid/source:1@sha256:" + "a" * 64
     alias = "localhost/boxferry-archive/test/forgejo:forgejo"
     helpers = ("host_image_id", "archive_host_alias", "record_run_owned_host_image",
                "verify_run_owned_archive_alias", "record_run_owned_archive_alias", "release_run_owned_host_image",
                "release_remaining_run_owned_host_images", "archive_target_id", "verify_archive_image_bindings",
-               "restore_nested_archive_alias")
+               "restore_nested_archive_alias", "bind_saved_oci_archive_identity", "bind_saved_docker_archive_identity")
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="boxferry-archive-fake-")
@@ -271,7 +409,7 @@ class ArchiveAliasTests(unittest.TestCase):
         self.engine = self.root / "engine"
         self.state.write_text(json.dumps({"host": {self.source: self.image_id}, "nested": {}}))
         self.engine.write_text(f"""#!{sys.executable}
-import json, os, pathlib, sys, tarfile
+import hashlib, io, json, os, pathlib, sys, tarfile
 root = pathlib.Path({str(self.root)!r})
 state_path = root / 'state.json'
 state = json.loads(state_path.read_text())
@@ -337,7 +475,26 @@ if args[:2] == ['image', 'rm']:
 if args and args[0] == 'save':
     if scenario == 'save-failed': finish(42)
     output_index = args.index('--output')
-    pathlib.Path(args[output_index + 1]).write_text(json.dumps({{ref: images[ref] for ref in args[output_index + 2:]}}))
+    output = pathlib.Path(args[output_index + 1])
+    if args[args.index('--format') + 1] == 'oci-archive':
+        config = json.dumps({self.serialized_config!r}).encode()
+        config_id = hashlib.sha256(config).hexdigest()
+        manifest = json.dumps({{'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.manifest.v1+json',
+            'config': {{'mediaType': 'application/vnd.oci.image.config.v1+json', 'digest': 'sha256:' + config_id, 'size': len(config)}},
+            'layers': []}}).encode()
+        manifest_id = hashlib.sha256(manifest).hexdigest()
+        index = json.dumps({{'schemaVersion': 2, 'manifests': [{{'mediaType': 'application/vnd.oci.image.manifest.v1+json',
+            'digest': 'sha256:' + manifest_id, 'size': len(manifest),
+            'annotations': {{'org.opencontainers.image.ref.name': args[-1]}}}}]}}).encode()
+        with tarfile.open(output, 'w', format=tarfile.USTAR_FORMAT) as bundle:
+            for name, data in [('oci-layout', b'{{"imageLayoutVersion":"1.0.0"}}'), ('index.json', index),
+                               ('blobs/sha256/' + manifest_id, manifest), ('blobs/sha256/' + config_id,
+                                config + b' ' if scenario == 'oci-save-tampered' else config)]:
+                member = tarfile.TarInfo(name); member.size = len(data)
+                bundle.addfile(member, io.BytesIO(data))
+        if scenario == 'oci-save-alias-drift': images[args[-1]] = 'c' * 64
+    else:
+        output.write_text(json.dumps({{ref: images[ref] for ref in args[output_index + 2:]}}))
     finish()
 if args and args[0] == 'load':
     if scenario == 'load-failed': finish(42)
@@ -345,7 +502,13 @@ if args and args[0] == 'load':
     if tarfile.is_tarfile(archive):
         with tarfile.open(archive) as bundle:
             for member in bundle:
-                if member.isfile(): state['nested'].update(json.load(bundle.extractfile(member)))
+                if member.isfile():
+                    raw = bundle.extractfile(member).read()
+                    with tarfile.open(fileobj=io.BytesIO(raw)) as image:
+                        index = json.load(image.extractfile('index.json'))
+                        descriptor = index['manifests'][0]
+                        manifest = json.load(image.extractfile('blobs/sha256/' + descriptor['digest'][7:]))
+                        state['nested'][descriptor['annotations']['org.opencontainers.image.ref.name']] = manifest['config']['digest'][7:]
     else: state['nested'].update(json.loads(archive.read_text()))
     finish()
 if args and args[0] == 'pull': finish(42)
@@ -361,9 +524,10 @@ export TEST_ARCHIVE={shlex.quote(str(self.root / 'archive'))}
 run_id=test
 runtime_root={shlex.quote(str(self.root))}
 artifact_root={shlex.quote(str(self.root))}
+script_directory={shlex.quote(str(LIB.parent))}
 outer_containers=(owned-outer)
 declare -a run_owned_host_images=()
-declare -A run_owned_host_image_seen=() run_owned_host_image_id=() archive_image_id=()
+declare -A run_owned_host_image_seen=() run_owned_host_image_id=() archive_image_id=() archive_loaded_image_id=()
 declare -A archive_target_expected_id=([owned-outer]={self.outer_id})
 native_presence_unverified=false
 engine_operation() {{ shift; "$engine" "$@"; }}
@@ -441,14 +605,14 @@ printf 'release=%s owned=%s uncertain=%s\\n' "$state" "${{run_owned_host_image_s
     def test_loaded_alias_retags_only_authenticated_target_and_removes_host_only_tag(self) -> None:
         stable = "registry.invalid/boxferry-test/forgejo-application:forgejo"
         self.state.write_text(json.dumps({"host": {self.source: self.image_id}, "nested": {self.alias: self.image_id}}))
-        result = self.script(f"archive_image_id[{self.alias}]={self.image_id}\nrestore_nested_archive_alias owned-outer {self.alias} {stable}\n")
+        result = self.script(f"archive_loaded_image_id[{self.alias}]={self.image_id}\nrestore_nested_archive_alias owned-outer {self.alias} {stable}\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(self.state.read_text())["nested"], {stable: self.image_id})
         self.assertIn(["exec", self.outer_id, "podman", "tag", self.image_id, stable], self.calls())
         for scenario in ("target-inspect-failed", "target-malformed", "target-wrong-owner", "target-replaced", "alias-drift", "retag-failed"):
             with self.subTest(scenario=scenario):
                 self.state.write_text(json.dumps({"host": {}, "nested": {self.alias: self.image_id}}))
-                result = self.script(f"archive_image_id[{self.alias}]={self.image_id}\nstate=0\nrestore_nested_archive_alias owned-outer {self.alias} {stable} || state=$?\nprintf 'state=%s\\n' \"$state\"\n", scenario)
+                result = self.script(f"archive_loaded_image_id[{self.alias}]={self.image_id}\nstate=0\nrestore_nested_archive_alias owned-outer {self.alias} {stable} || state=$?\nprintf 'state=%s\\n' \"$state\"\n", scenario)
                 self.assertNotIn("state=0", result.stdout)
                 self.assertNotIn(stable, json.loads(self.state.read_text())["nested"])
 
@@ -510,7 +674,8 @@ printf 'provisioning-admitted\\n'
                 self.assertEqual(result.returncode, 0, result.stderr)
                 alias = f"localhost/boxferry-archive/test/{suite}:fixture"
                 stable = f"registry.invalid/boxferry-test/{suite}-application:fixture"
-                self.assertEqual(json.loads(self.state.read_text())["nested"], {stable: self.image_id})
+                expected_id = self.serialized_id if suite in ("paperless", "immich", "observability") else self.image_id
+                self.assertEqual(json.loads(self.state.read_text())["nested"], {stable: expected_id})
                 self.assertEqual(json.loads(self.state.read_text())["host"], {self.source: self.image_id, stable: "c" * 64})
                 saves = [call for call in self.calls()[before:] if call[0] == "save"]
                 self.assertEqual(len(saves), 1)
@@ -528,6 +693,49 @@ printf 'provisioning-admitted\\n'
                     if preparation_scenario: self.assertNotIn("load=", result.stdout)
                     else: self.assertIn("load=42", result.stdout)
 
+    def test_oci_consumers_refuse_tampered_save_and_post_save_host_drift(self) -> None:
+        for suite in ("paperless", "immich", "observability"):
+            for failure in ("oci-save-tampered", "oci-save-alias-drift"):
+                with self.subTest(suite=suite, failure=failure):
+                    before = len(self.calls())
+                    result = self.application_script(suite, failure)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn("provisioning-admitted", result.stdout)
+                    self.assertEqual(json.loads(self.state.read_text())["nested"], {})
+                    self.assertFalse(any(call[0] == "exec" for call in self.calls()[before:]))
+
+    def test_oci_host_identity_without_serialized_binding_never_authorizes_load(self) -> None:
+        for suite in ("paperless", "immich", "observability"):
+            with self.subTest(suite=suite):
+                alias = f"localhost/boxferry-archive/test/{suite}:fixture"
+                (self.root / "images.tsv").write_text(f"fixture\t{self.source}\n")
+                before = len(self.calls())
+                body = self.module_function(suite, f"{suite}_prepare_application_target") + f"""
+{suite}_fixture_root() {{ printf '%s\\n' {shlex.quote(str(self.root))}; }}
+archive_image_id[{alias}]={self.image_id}
+{suite}_prepare_application_target owned-outer prefix /unused
+"""
+                result = self.script(body)
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.calls()[before:], [])
+
+    def test_saved_oci_binding_keeps_pure_stdout_and_original_host_cleanup_identity(self) -> None:
+        alias = "localhost/boxferry-archive/test/paperless:fixture"
+        result = self.script(f"""
+record_run_owned_archive_alias {shlex.quote(self.source)} {alias} fixture
+"$engine" save --format oci-archive --output "$TEST_ARCHIVE" {alias}
+source {shlex.quote(str(LIB / 'timed-operation.sh'))}
+timestamp() {{ printf test; }}
+format_duration() {{ printf '0s'; }}
+bind_saved_oci_archive_identity {alias} "$TEST_ARCHIVE"
+printf 'host=%s loaded=%s\\n' "${{archive_image_id[{alias}]}}" "${{archive_loaded_image_id[{alias}]}}"
+release_run_owned_host_image {alias}
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, f"host={self.image_id} loaded={self.serialized_id}\n")
+        self.assertIn("STEP PASS", result.stderr)
+        self.assertEqual(json.loads(self.state.read_text())["host"], {self.source: self.image_id})
+
     def test_real_multi_row_loaded_assertions_stop_on_first_absence_or_query_error(self) -> None:
         for suite in ("forgejo", "nextcloud", "paperless", "immich", "observability"):
             for scenario, expected in (("", 0), ("assert-first-absent", 1), ("assert-first-error", 42)):
@@ -536,8 +744,9 @@ printf 'provisioning-admitted\\n'
                     result = self.application_script(suite, load_scenario=scenario, rows=("fixture", "later"))
                     self.assertEqual(result.returncode, expected, result.stderr)
                     stable_prefix = f"registry.invalid/boxferry-test/{suite}-application:"
+                    expected_id = self.serialized_id if suite in ("paperless", "immich", "observability") else self.image_id
                     self.assertEqual(json.loads(self.state.read_text())["nested"],
-                                     {stable_prefix + identity: self.image_id for identity in ("fixture", "later")})
+                                     {stable_prefix + identity: expected_id for identity in ("fixture", "later")})
                     assertions = [call for call in self.calls()[before:] if len(call) >= 6 and call[:3] == ["exec", "owned-outer", "podman"]
                                   and call[3:5] in (["image", "exists"], ["image", "inspect"]) and '--format' not in call]
                     self.assertEqual([call[-1] for call in assertions],

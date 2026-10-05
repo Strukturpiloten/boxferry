@@ -519,6 +519,7 @@ declare -a run_owned_host_images=()
 declare -A run_owned_host_image_seen=()
 declare -A run_owned_host_image_id=()
 declare -A archive_image_id=()
+declare -A archive_loaded_image_id=()
 declare -A archive_target_expected_id=()
 discovery_parent_created=false
 started_outer=""
@@ -860,6 +861,7 @@ record_run_owned_archive_alias() {
   # Register the attempted alias before tagging, including nonzero partial creates.
   record_run_owned_host_image "${alias}" "${source_id}" || return $?
   archive_image_id[${alias}]="${source_id}"
+  unset "archive_loaded_image_id[${alias}]"
   engine_operation "tag ${description} image for nested archive" tag "${source_id}" "${alias}" || return $?
   verify_run_owned_archive_alias "${alias}" || return $?
 }
@@ -896,6 +898,31 @@ release_run_owned_host_image() {
   unset "run_owned_host_image_seen[${image}]" "run_owned_host_image_id[${image}]"
 }
 
+bind_saved_docker_archive_identity() {
+  local alias=$1
+  [[ "${alias}" =~ /(workload|forgejo|nextcloud):[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1
+  unset "archive_loaded_image_id[${alias}]"
+  verify_run_owned_archive_alias "${alias}" || return $?
+  archive_loaded_image_id[${alias}]="${archive_image_id[${alias}]}"
+}
+
+bind_saved_oci_archive_identity() {
+  local alias=$1 archive=$2 serialized_id
+  [[ "${archive_image_id[${alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  unset "archive_loaded_image_id[${alias}]"
+  serialized_id="$(timed_operation 90s 'verify saved OCI archive identity' \
+    python3 "${script_directory}/lib/oci-archive-identity.py" "${archive}" "${alias}")" || {
+    native_presence_unverified=true
+    return 1
+  }
+  [[ "${serialized_id}" =~ ^[0-9a-f]{64}$ ]] || {
+    native_presence_unverified=true
+    return 1
+  }
+  verify_run_owned_archive_alias "${alias}" || return $?
+  archive_loaded_image_id[${alias}]="${serialized_id}"
+}
+
 archive_target_id() {
   local outer=$1 registered_outer metadata
   local registered=false
@@ -919,6 +946,7 @@ verify_archive_image_bindings() {
     [[ -z "${id}" || "${id}" == \#* ]] && continue
     alias="$(archive_host_alias "${suite}" "${id}")" || return $?
     [[ "${archive_image_id[${alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [[ "${archive_loaded_image_id[${alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
     count=$((count + 1))
   done < "${fixture}/images.tsv" || return $?
   ((count > 0))
@@ -926,7 +954,7 @@ verify_archive_image_bindings() {
 
 restore_nested_archive_alias() {
   local outer=$1 alias=$2 nested_reference=$3 target observed expected_id status
-  expected_id=${archive_image_id[${alias}]:-unknown}
+  expected_id=${archive_loaded_image_id[${alias}]:-unknown}
   [[ "${expected_id}" =~ ^[0-9a-f]{64}$ &&
     "${nested_reference}" =~ ^(registry.invalid/boxferry-test/[a-z-]+:[a-z0-9._-]+|localhost/boxferry-live/alpine:[0-9a-f]{64})$ ]] || return 1
   target="$(archive_target_id "${outer}")" || {
@@ -939,6 +967,7 @@ restore_nested_archive_alias() {
     return 1
   }
   [[ "${observed#sha256:}" == "${expected_id}" ]] || {
+    printf 'Loaded archive config identity mismatch for %s; preserving evidence.\n' "${alias}" >&2
     native_presence_unverified=true
     return 1
   }
@@ -1356,7 +1385,7 @@ create_workloads() {
   local include_canaries=${5:-true} deadline=5m deadline_seconds=300
   local completion_file="${socket_directory}/resource-setup.status" setup_status archive_alias target
   archive_alias="$(archive_host_alias workload alpine)" || return $?
-  [[ "${archive_image_id[${archive_alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "${archive_loaded_image_id[${archive_alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
   target="$(archive_target_id "${outer}")" || {
     native_presence_unverified=true
     return 1
@@ -1372,7 +1401,7 @@ create_workloads() {
     timeout --signal=TERM --kill-after=10s 30s \
     "${engine}" exec --detach --env "BF_PREFIX=${prefix}" \
     --env "BF_WORKLOAD_IMAGE=${workload_local_tag}" --env "BF_WORKLOAD_SCOPE=${scope}" \
-    --env "BF_ARCHIVE_ALIAS=${archive_alias}" --env "BF_ARCHIVE_IMAGE_ID=${archive_image_id[${archive_alias}]}" \
+    --env "BF_ARCHIVE_ALIAS=${archive_alias}" --env "BF_ARCHIVE_IMAGE_ID=${archive_loaded_image_id[${archive_alias}]}" \
     --env "BF_INCLUDE_CANARIES=${include_canaries}" \
     "${target}" /bin/sh -ceu '
     image="${BF_WORKLOAD_IMAGE}"
@@ -1605,6 +1634,7 @@ prepare_workload_archive() {
   timed_operation 5m 'archive workload image for nested loading' \
     "${engine}" save --format docker-archive \
     --output "${workload_archive}" "${archive_alias}" || return $?
+  bind_saved_docker_archive_identity "${archive_alias}" || return $?
   chmod 0644 "${workload_archive}" || return $?
   release_run_owned_host_image "${archive_alias}" || return $?
   release_run_owned_host_image "${workload_image}" || return $?
@@ -1888,7 +1918,7 @@ start_apply_target() {
     "${apply_target_outer}:/etc/containers/containers.conf.d/99-boxferry-live.conf"
   local archive_alias archive_target
   archive_alias="$(archive_host_alias workload alpine)" || return $?
-  [[ "${archive_image_id[${archive_alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "${archive_loaded_image_id[${archive_alias}]:-unknown}" =~ ^[0-9a-f]{64}$ ]] || return 1
   archive_target="$(archive_target_id "${apply_target_outer}")" || {
     native_presence_unverified=true
     return 1

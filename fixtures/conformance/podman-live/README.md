@@ -38,13 +38,23 @@ private recovery evidence, fails closure and does not prevent later owned-resour
 
 Archives load only into a registered disposable target whose inspected run label and immutable
 ID match the validated ID returned by successful creation. Unbound targets and same-run-label
-name replacements are refused. Loaded IDs are checked
+name replacements are refused. Host ownership retains the original source ID. For the three
+compressed OCI paths, a bounded stdlib helper independently verifies the saved alias's unique
+index annotation, manifest/config hashes and sizes, then rechecks host alias identity. The
+separate serialized config ID can differ after trusted engine conversion; loaded IDs are checked
 and retagged to the original stable nested references before API activation/provisioning. Host-only
 tags are removed inside that target, so application intent and acquired image metadata do not gain
 run-specific tags. Supabase's direct digest-preserving Skopeo path creates no host store alias and
 is unchanged. See [ADR 0067](../../../docs/decisions/0067-run-owned-host-archive-aliases.md) for the
 explicit non-atomic boundary against arbitrary external retaggers; no global lock or historical
 deletion is introduced.
+
+Serialized IDs are unbound until successful save and verification; OCI paths never fall back to
+the host ID or learn an expected ID from the loaded target. Docker-archive paths explicitly bind
+the original ID after save and host alias readback. The metadata helper accepts plain regular
+tar entries only, rejects GNU/PAX extensions, special/symlink/duplicate records and ambiguous
+metadata, and bounds archive size, member count, metadata reads and time. It seeks over layer
+payloads without extraction; native loading retains blob/rootfs integrity responsibility.
 
 The existing `test-native-presence.py` fake-engine vectors and `test-podman-live-cleanup.sh` source
 contracts cover uniqueness, bounded grammar, collision/unknown refusal, source/alias ID drift,
