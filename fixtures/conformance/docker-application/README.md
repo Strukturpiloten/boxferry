@@ -133,11 +133,35 @@ The helper authenticates a successful bounded narrow Podman inspection: exact
 outer name, complete immutable container ID and exact run label. Wrong ownership,
 malformed inspection or failed status with matching stdout never authorizes log
 reading. Logs use only that authenticated ID, never ambient names or prefix scans.
+Only after this ownership check does the helper observe socket metadata or attempt
+a connection. The canonical harness has already checked its exact mounts; these
+diagnostics do not independently authenticate a mount, daemon, or Engine peer.
+
+On Linux, no-follow descriptors hold the private root, socket directory and socket
+node. A bounded `AF_UNIX` connection addresses that exact held node through
+`/proc/self/fd`, never a replacement pathname, and sends no bytes: no HTTP or
+mutating request is added. `socket-connect` distinguishes `connected`, `refused`,
+`missing`, `not-socket`, `permission-denied`, `timed-out`, `unknown` and
+`not-checked`. Connected is transport observation only, not Engine authentication,
+readiness, a startup cause, compatibility or application proof. Unsupported
+platforms or unavailable held-node references have no ordinary-path fallback.
+
+`socket-owner` reports only `self`, `other` or `unknown`; `socket-mode` reports
+`owner-only`, `shared` or `unknown`, not access permission. No UID, GID, inode,
+mode number or private path is printed. Root/directory/node identity and metadata
+are rechecked after the connection interval. `socket-lifetime` is `stable`,
+`changed` or `unknown`; replacement, unlink or metadata drift invalidates even a
+successful connection. A final narrow outer inspection targets only the original
+immutable ID and rechecks name/run ownership. `outer-recheck` distinguishes stable
+identity from changed, malformed, failed, expired or cancelled observations; any
+unverified recheck invalidates socket metadata and transport. These are bounded,
+non-atomic snapshots, not protection against every transient external change.
 
 Each read subprocess has a three-second limit and a 16-KiB output cap. Inspection
 stderr is discarded; the last 80 log lines combine both streams under the same
-cap, and any failed log status discards all bytes. The two reads and their process
-teardown share an eight-second budget, enclosed by the existing runtime-budget
+cap, and any failed log status discards all bytes. Inspection, socket metadata,
+the at-most-one-second connection, logs, identity recheck and process teardown
+share one eight-second budget, enclosed by the existing runtime-budget
 wrapper at 12 seconds with its unchanged kill-after and cleanup reserve. Timeout
 or cancellation kills only diagnostic process groups, waits boundedly and closes
 output handles. Kill/reap uncertainty is explicitly `termination-unverified`, not
@@ -152,7 +176,12 @@ error, absolute private path, protected value or exception text is emitted.
 
 Independent offline fakes cover wrong owner/status, immutable-ID selection,
 closed parsing, protected/oversized output, both log streams, deadline/cancellation
-and kill/reap uncertainty. Both core and volume readiness paths test observations
+and kill/reap uncertainty. Real disposable local Unix sockets independently prove
+positive/refused/held-node replacement behavior and that no bytes are sent; they
+are not Docker or Podman runtime probes. Negative controls cover permission,
+timeout, invalid boundaries, missing/non-socket nodes, ownership and lifetime
+drift, descriptor closure, unsupported platforms and private CLI output.
+Both core and volume readiness paths test observations
 before removal and preserve failure even if diagnostics fail. These source checks
 do not diagnose the historical failed run or provide fresh native evidence.
 
@@ -164,7 +193,8 @@ independently validate these closed fields before emission; malformed input beco
 without being echoed, including the diagnostic-unavailable fallback. These are observations,
 not startup causes: `startup-cause=unestablished` remains mandatory. The five-second curl limit,
 180-second readiness deadline, two-second cadence, private socket URL, failure-before-apply and
-diagnostics-before-teardown order are unchanged; no extra probe, retry or host repair is added.
+diagnostics-before-teardown order are unchanged. The failed-readiness connection
+observation above adds no readiness poll, retry or host repair.
 Independent mocked connect-failure, curl-timeout, HTTP-error, unexpected-exit, missing-socket and
 privacy regressions establish only this diagnostic contract. The preserved historical receipt
 contains no such fields and remains untouched; these tests supply no fresh native admission,
@@ -185,6 +215,12 @@ No gate wiring, workflow, operational image assignment, package/lockfile or tool
 pin changes. `.github/renovate.json` retains its existing application-image,
 Podman-matrix/provider and Lens-revision extraction paths; Docker image pins remain
 only in the selected clean DockerLens catalogue, with no duplicate manager added.
+For #413, the three changed helper/test/documentation paths match none of the
+Renovate custom-manager file patterns; no software assignment, dependency, pin,
+extraction path, grouping or approval rule changes. The existing Python standard
+library supplies the Linux socket/descriptor calls. Independently published Lens
+products retain their native suites and do not consume this BoxFerry-owned
+application diagnostic helper, so no Lens consumer or manager change is needed.
 
 ## Authored core artifact prerequisite
 

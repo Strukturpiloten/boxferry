@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import importlib.util
 import json
 import os
 import pathlib
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1764,6 +1766,9 @@ class ReadinessDiagnosticTests(unittest.TestCase):
             "state": "exited", "running": False}
 
     def diagnose(self, responses, *, registered: bool = True):
+        responses = list(responses)
+        if len(responses) == 2:
+            responses.append(("read", json.dumps(self.record).encode()))
         with mock.patch.object(contract, "readiness_read", side_effect=responses) as calls:
             result = contract.readiness_diagnostics(self.outer, self.run_id, self.socket_path,
                                                    registered=registered)
@@ -1773,11 +1778,15 @@ class ReadinessDiagnosticTests(unittest.TestCase):
         result, calls = self.diagnose([("read", json.dumps(self.record).encode()),
                                       ("read", b"permission denied DO-NOT-PRINT /private/path")])
         self.assertEqual(result, {"socket": "absent", "outer": "verified", "state": "exited",
-                                  "logs": "permission-error-observed"})
+                                  "logs": "permission-error-observed", "socket-owner": "unknown",
+                                  "socket-mode": "unknown", "socket-lifetime": "stable",
+                                  "socket-connect": "missing", "outer-recheck": "stable"})
         self.assertEqual(calls.call_args_list[0].args[0], ["podman", "inspect", "--format",
                                                         contract.READINESS_INSPECT_FORMAT, self.outer])
         self.assertEqual(calls.call_args_list[1].args[0], ["podman", "logs", "--tail", "80", "a" * 64])
         self.assertEqual(calls.call_args_list[1].kwargs, {"merge_output": True})
+        self.assertEqual(calls.call_args_list[2].args[0], ["podman", "inspect", "--format",
+                                                        contract.READINESS_INSPECT_FORMAT, "a" * 64])
         self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
         self.assertEqual(calls.call_args_list[0].args[1], calls.call_args_list[1].args[1])
 
@@ -1816,7 +1825,9 @@ class ReadinessDiagnosticTests(unittest.TestCase):
         self.record["state"] = "/private-path/DO-NOT-PRINT"
         result, _ = self.diagnose([("read", json.dumps(self.record).encode()), ("read", b"DO-NOT-PRINT")])
         self.assertEqual(result, {"socket": "not-socket", "outer": "verified", "state": "unknown",
-                                  "logs": "content-present"})
+                                  "logs": "content-present", "socket-owner": "unknown", "socket-mode": "unknown",
+                                  "socket-lifetime": "stable", "socket-connect": "not-socket",
+                                  "outer-recheck": "stable"})
         self.record["state"] = "running"
         result, _ = self.diagnose([("read", json.dumps(self.record).encode()), ("read-failed", b"DO-NOT-PRINT")])
         self.assertEqual(result["state"], "inconsistent")
@@ -1836,6 +1847,228 @@ class ReadinessDiagnosticTests(unittest.TestCase):
         for raw, expected in cases:
             with self.subTest(expected=expected):
                 self.assertEqual(contract.readiness_log_category(raw), expected)
+
+    def observe_socket(self):
+        return contract.readiness_socket_observations(self.socket_path, time.monotonic() + 2)
+
+    def test_real_pinned_socket_connects_without_sending_bytes_and_closed_metadata(self) -> None:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(self.socket_path))
+            os.chmod(self.socket_path, 0o600)
+            listener.listen(1)
+            result = self.observe_socket()
+            listener.settimeout(1)
+            accepted, _ = listener.accept()
+            with accepted:
+                accepted.settimeout(1)
+                self.assertEqual(accepted.recv(1), b"")
+        self.assertEqual(result, {"socket": "socket", "socket-owner": "self", "socket-mode": "owner-only",
+                                  "socket-lifetime": "stable", "socket-connect": "connected"})
+        self.assertNotIn(str(self.socket_path), json.dumps(result))
+
+    def test_real_pinned_socket_distinguishes_refused_missing_and_non_socket(self) -> None:
+        result = self.observe_socket()
+        self.assertEqual((result["socket"], result["socket-connect"], result["socket-lifetime"]),
+                         ("absent", "missing", "stable"))
+        self.socket_path.write_text("DO-NOT-PRINT/private-data")
+        result = self.observe_socket()
+        self.assertEqual((result["socket"], result["socket-connect"]), ("not-socket", "not-socket"))
+        self.socket_path.unlink()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(self.socket_path))
+            os.chmod(self.socket_path, 0o666)
+        result = self.observe_socket()
+        self.assertEqual((result["socket-connect"], result["socket-mode"], result["socket-lifetime"]),
+                         ("refused", "shared", "stable"))
+        self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+
+    def test_pinned_socket_replacement_never_contacts_replacement_and_invalidates_observation(self) -> None:
+        real_connect = socket.socket.connect
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as original, \
+                socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as replacement:
+            original.bind(str(self.socket_path))
+            original.listen(1)
+            def replace_then_connect(probe, endpoint):
+                self.assertRegex(endpoint, r"^/proc/self/fd/[0-9]+$")
+                self.socket_path.unlink()
+                replacement.bind(str(self.socket_path))
+                replacement.listen(1)
+                return real_connect(probe, endpoint)
+            with mock.patch.object(socket.socket, "connect", replace_then_connect):
+                result = self.observe_socket()
+            original.settimeout(1)
+            accepted, _ = original.accept()
+            accepted.close()
+            replacement.settimeout(0.02)
+            with self.assertRaises(TimeoutError):
+                replacement.accept()
+        self.assertEqual(result["socket-lifetime"], "changed")
+        self.assertEqual(result["socket-connect"], "unknown")
+        self.assertEqual(result["socket-owner"], "unknown")
+        self.assertEqual(result["socket-mode"], "unknown")
+
+    def test_pinned_socket_permission_timeout_unknown_and_shared_deadline_are_closed(self) -> None:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(self.socket_path))
+            for failure, expected in ((PermissionError(errno.EACCES, "DO-NOT-PRINT/private-path"), "permission-denied"),
+                                      (OSError(errno.EPERM, "DO-NOT-PRINT/private-path"), "permission-denied"),
+                                      (TimeoutError("DO-NOT-PRINT/private-path"), "timed-out"),
+                                      (OSError(errno.EIO, "DO-NOT-PRINT/private-path"), "unknown")):
+                with self.subTest(expected=expected), \
+                        mock.patch.object(socket.socket, "connect", side_effect=failure), \
+                        mock.patch.object(socket.socket, "settimeout") as timeout:
+                    result = self.observe_socket()
+                self.assertEqual(result["socket-connect"], expected)
+                self.assertEqual(result["socket-lifetime"], "stable")
+                self.assertGreater(timeout.call_args.args[0], 0)
+                self.assertLessEqual(timeout.call_args.args[0], 1)
+                self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+            with mock.patch.object(contract.time, "monotonic", side_effect=[100, 100.1, 100.2]), \
+                    mock.patch.object(socket.socket, "connect", side_effect=TimeoutError), \
+                    mock.patch.object(socket.socket, "settimeout") as timeout:
+                result = contract.readiness_socket_observations(self.socket_path, 100.25)
+            self.assertAlmostEqual(timeout.call_args.args[0], 0.15)
+            self.assertEqual(result["socket-connect"], "timed-out")
+            with mock.patch.object(contract.os, "open") as opened:
+                result = contract.readiness_socket_observations(self.socket_path, time.monotonic() - 1)
+            opened.assert_not_called()
+            self.assertEqual(result["socket-connect"], "timed-out")
+
+    def test_boundary_and_ownership_failure_never_authorize_socket_connect(self) -> None:
+        cases = [(self.outer, self.run_id, pathlib.Path("/ambient/socket"), True, []),
+                 (self.outer, self.run_id, self.socket_path, False, []),
+                 (self.outer, self.run_id, self.socket_path, True, [("read-failed", b"private")]),
+                 (self.outer, self.run_id, self.socket_path, True, [("read", b"private")])]
+        foreign = copy.deepcopy(self.record)
+        foreign["labels"]["io.boxferry.docker-core-run"] = "other"
+        cases.append((self.outer, self.run_id, self.socket_path, True, [("read", json.dumps(foreign).encode())]))
+        for outer, run, path, registered, responses in cases:
+            with self.subTest(registered=registered, responses=responses), \
+                    mock.patch.object(contract, "readiness_read", side_effect=responses), \
+                    mock.patch.object(contract, "readiness_socket_observations") as observe:
+                result = contract.readiness_diagnostics(outer, run, path, registered=registered)
+            observe.assert_not_called()
+            self.assertEqual(result["socket-connect"], "not-checked")
+            self.assertEqual(result["socket-owner"], "unknown")
+
+    def test_outer_identity_recheck_invalidates_socket_observations_without_discarding_logs(self) -> None:
+        for change, expected in ((lambda row: row.update(id="b" * 64), "changed"),
+                                 (lambda row: row["labels"].update({"io.boxferry.docker-core-run": "other"}), "changed"),
+                                 (lambda row: row.update(name="DO-NOT-PRINT"), "malformed")):
+            current = copy.deepcopy(self.record)
+            change(current)
+            with self.subTest(expected=expected):
+                result, _ = self.diagnose([("read", json.dumps(self.record).encode()), ("read", b""),
+                                          ("read", json.dumps(current).encode())])
+            self.assertEqual(result["outer-recheck"], expected)
+            self.assertEqual(result["logs"], "empty")
+            self.assertEqual(result["socket-connect"], "unknown")
+            self.assertEqual(result["socket-lifetime"], "unknown")
+            self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+        for outcome in ("timed-out", "read-failed", "oversized", "termination-unverified"):
+            result, _ = self.diagnose([("read", json.dumps(self.record).encode()), ("read", b""), (outcome, b"private")])
+            self.assertEqual(result["outer-recheck"], outcome)
+            self.assertEqual(result["socket-connect"], "unknown")
+
+    def test_socket_unsupported_platform_and_symlink_boundary_have_no_path_fallback(self) -> None:
+        with mock.patch.object(contract.sys, "platform", "not-linux"), \
+                mock.patch.object(contract.os, "open") as opened:
+            result = self.observe_socket()
+        opened.assert_not_called()
+        self.assertEqual(result["socket-connect"], "not-checked")
+        self.socket_path.symlink_to("/ambient/DO-NOT-PRINT")
+        with mock.patch.object(socket.socket, "connect") as connect:
+            result = self.observe_socket()
+        connect.assert_not_called()
+        self.assertEqual(result["socket-connect"], "not-socket")
+        self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+
+    def test_directory_lifetime_changes_and_node_disappearance_invalidate_connected_result(self) -> None:
+        real_connect = socket.socket.connect
+        for change in ("root-mode", "directory-mode", "unlink"):
+            with self.subTest(change=change), socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                self.socket_path.unlink(missing_ok=True)
+                listener.bind(str(self.socket_path))
+                listener.listen(1)
+                def connect_then_change(probe, endpoint):
+                    real_connect(probe, endpoint)
+                    if change == "unlink":
+                        self.socket_path.unlink()
+                    else:
+                        os.chmod(self.socket_path.parent.parent if change == "root-mode"
+                                 else self.socket_path.parent, 0o755 if change == "root-mode" else 0o700)
+                with mock.patch.object(socket.socket, "connect", connect_then_change):
+                    result = self.observe_socket()
+                os.chmod(self.socket_path.parent.parent, 0o700)
+                os.chmod(self.socket_path.parent, 0o755)
+                self.assertEqual(result["socket-lifetime"], "changed")
+                self.assertEqual(result["socket-connect"], "unknown")
+
+    def test_socket_descriptors_close_on_success_permission_and_connect_exception(self) -> None:
+        real_open = os.open
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(self.socket_path))
+            listener.listen(1)
+            for failure in (None, PermissionError(errno.EACCES, "DO-NOT-PRINT"), KeyboardInterrupt()):
+                opened = []
+                def remember_open(*args, **kwargs):
+                    descriptor = real_open(*args, **kwargs)
+                    opened.append(descriptor)
+                    return descriptor
+                with self.subTest(failure=type(failure)), mock.patch.object(contract.os, "open", remember_open):
+                    if failure is None:
+                        self.observe_socket()
+                        listener.settimeout(1)
+                        accepted, _ = listener.accept()
+                        accepted.close()
+                    else:
+                        with mock.patch.object(socket.socket, "connect", side_effect=failure):
+                            if isinstance(failure, KeyboardInterrupt):
+                                with self.assertRaises(KeyboardInterrupt):
+                                    self.observe_socket()
+                            else:
+                                self.observe_socket()
+                self.assertEqual(len(opened), 3)
+                for descriptor in opened:
+                    with self.assertRaises(OSError) as closed:
+                        os.fstat(descriptor)
+                    self.assertEqual(closed.exception.errno, errno.EBADF)
+
+    def test_invalid_private_directory_and_socket_directory_symlink_prevent_inspection(self) -> None:
+        os.chmod(self.socket_path.parent.parent, 0o755)
+        with mock.patch.object(contract, "readiness_read") as read:
+            result = contract.readiness_diagnostics(self.outer, self.run_id, self.socket_path, registered=True)
+        read.assert_not_called()
+        self.assertEqual(result["outer"], "invalid-boundary")
+        os.chmod(self.socket_path.parent.parent, 0o700)
+        self.socket_path.parent.rmdir()
+        self.socket_path.parent.symlink_to("/tmp")
+        with mock.patch.object(contract, "readiness_read") as read:
+            result = contract.readiness_diagnostics(self.outer, self.run_id, self.socket_path, registered=True)
+        read.assert_not_called()
+        self.assertEqual(result["outer"], "invalid-boundary")
+        self.assertEqual(result["socket-connect"], "not-checked")
+
+    def test_registered_cli_socket_observation_keeps_native_values_and_paths_private(self) -> None:
+        native = pathlib.Path(self.temporary.name) / "podman"
+        native.write_text("#!/bin/sh\nif [ \"$1\" = inspect ]; then\n"
+                          "printf '%s\\n' " + shlex.quote(json.dumps(self.record)) + "\n"
+                          "else printf 'permission denied DO-NOT-PRINT/private-log' >&2; fi\n")
+        native.chmod(0o700)
+        environment = os.environ.copy()
+        environment["PATH"] = str(native.parent) + os.pathsep + environment["PATH"]
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(self.socket_path))
+            listener.listen(1)
+            result = subprocess.run([sys.executable, str(SOURCE), "readiness-diagnostics", "--registered",
+                                     "--outer", self.outer, "--run", self.run_id, "--socket", str(self.socket_path)],
+                                    env=environment, capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn("socket-connect=connected outer-recheck=stable", result.stdout)
+        self.assertIn("startup-cause=unestablished", result.stdout)
+        for private in ("DO-NOT-PRINT", "a" * 64, self.outer, self.run_id, str(self.socket_path)):
+            self.assertNotIn(private, result.stdout)
 
     def test_bounded_subprocess_output_status_combined_streams_and_timeout(self) -> None:
         cases = [("print('safe')", False, "read", b"safe\n"),
@@ -1958,7 +2191,7 @@ class ReadinessDiagnosticTests(unittest.TestCase):
         result, calls = self.diagnose([("read", json.dumps(self.record).encode()),
                                       ("read-failed", b"permission denied /private")])
         self.assertEqual(result["logs"], "read-failed")
-        self.assertEqual(calls.call_count, 2)
+        self.assertEqual(calls.call_count, 3)
         with mock.patch.object(contract, "readiness_read") as calls, mock.patch.object(pathlib.Path, "lstat") as lstat:
             result = contract.readiness_diagnostics(self.outer, self.run_id, pathlib.Path("/ambient/socket"), registered=True)
         self.assertEqual(result["outer"], "invalid-boundary")
@@ -1977,7 +2210,8 @@ class ReadinessDiagnosticTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "readiness observations: ping-curl-exit=not-run ping-http-status=unknown "
                                        "socket=unavailable outer=not-registered state=unverified "
-                                       "logs=not-read; startup-cause=unestablished\n")
+                                       "logs=not-read socket-owner=unknown socket-mode=unknown socket-lifetime=unknown "
+                                       "socket-connect=not-checked outer-recheck=not-checked; startup-cause=unestablished\n")
         self.assertEqual(result.stderr, "")
 
     def test_ping_observations_accept_only_closed_numeric_ranges_and_markers(self) -> None:
