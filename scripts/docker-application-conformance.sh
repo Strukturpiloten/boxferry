@@ -6,12 +6,15 @@ umask 077
 # proves catalogue/replay safety; it is not a Docker route or application gate.
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 contract="${script_dir}/lib/docker-application-contract.py"
+comparison="${script_dir}/lib/readiness-comparison.py"
 profile='' lane='' lens_root='' lens_revision='' script_sha='' artifact='' artifact_sha256='' api_version=''
 boxferry_root='' boxferry_binary='' boxferry_receipt=''
 evidence_directory='' evidence_identity='' volume_input_proof='' volume_cleanup_proof=''
+diagnostic_directory='' expected_pid_namespace='' comparison_initialized=false comparison_baseline=false
+comparison_bracketed=false comparison_origin=''
 
 usage() {
-  printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--evidence-directory PATH (required for volume-fixtures only)]\n' "$0" >&2
+  printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures|readiness-comparison} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--evidence-directory PATH (volume-fixtures only)] [--diagnostic-directory PATH --expected-pid-namespace DEV:INO (readiness-comparison only)]\n' "$0" >&2
   exit 2
 }
 
@@ -29,12 +32,21 @@ while (($#)); do
     --boxferry-binary) boxferry_binary=$2 ;;
     --boxferry-receipt) boxferry_receipt=$2 ;;
     --evidence-directory) evidence_directory=$2 ;;
+    --diagnostic-directory) diagnostic_directory=$2 ;;
+    --expected-pid-namespace) expected_pid_namespace=$2 ;;
     *) usage ;;
   esac
   shift 2
 done
 [[ -n $lens_root && -n $lens_revision && -n $script_sha ]] || usage
-[[ $profile == catalogue || $profile == replay-probe || $profile == core-journey || $profile == volume-fixtures ]] || usage
+[[ $profile == catalogue || $profile == replay-probe || $profile == core-journey || $profile == volume-fixtures || $profile == readiness-comparison ]] || usage
+if [[ $profile == readiness-comparison ]]; then
+  [[ -n $diagnostic_directory && $expected_pid_namespace =~ ^[1-9][0-9]{0,19}:[1-9][0-9]{0,19}$ &&
+    $lane == debian11-rootful && -z $artifact && -z $api_version && -z $boxferry_root &&
+    -z $boxferry_binary && -z $boxferry_receipt ]] || usage
+else
+  [[ -z $diagnostic_directory && -z $expected_pid_namespace ]] || usage
+fi
 if [[ $profile == volume-fixtures ]]; then
   [[ -n $evidence_directory ]] || usage
 else
@@ -55,13 +67,13 @@ if [[ $profile == catalogue ]]; then
   exit 0
 fi
 
-[[ -n $lane && -n $api_version ]] || usage
+[[ -n $lane && ($profile == readiness-comparison || -n $api_version) ]] || usage
 if [[ $profile == core-journey || $profile == volume-fixtures ]]; then
   [[ -z $artifact && -n $boxferry_root && -n $boxferry_binary && -n $boxferry_receipt ]] || usage
   python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
     --binary "$boxferry_binary" --receipt "$boxferry_receipt" \
     --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" --profile "$profile" > /dev/null
-else
+elif [[ $profile != readiness-comparison ]]; then
   [[ -n $artifact && -z $boxferry_root && -z $boxferry_binary && -z $boxferry_receipt ]] || usage
 fi
 case "$lane" in
@@ -292,42 +304,54 @@ cleanup_owned() {
     podman_presence cleanup_bounded container "$outer" || state=$?
     if ((state == 0)); then
       if observed=$(cleanup_bounded 15s podman inspect --format '{{index .Config.Labels "io.boxferry.docker-core-run"}}' "$outer") && [[ $observed == "$run_id" ]]; then
-        if [[ -n $socket_path && -S $socket_path ]]; then
-          if [[ $profile == volume-fixtures ]]; then
-            if [[ $inner_volume_cleanup == unverified && $disposable_identity_verified == true ]]; then
-              local evidence_args=()
-              [[ -z ${volume_input_proof:-} ]] || evidence_args=(--evidence-json)
-              if volume_cleanup_proof=$(cleanup_bounded 30s python3 "$contract" cleanup-volume-fixtures --allow-isolated-apply \
-                --socket "$socket_path" --state "$run_dir/volume-ledger.json" --lane "$lane" \
-                --run "$volume_run" --prefix "$volume_prefix" --api-version "$api_version" "${evidence_args[@]}"); then
-                inner_volume_cleanup=verified
-              else
+        local comparison_identity_verified=true
+        if [[ $profile == readiness-comparison ]]; then
+          if ! cleanup_bounded 6s python3 "$comparison" cleanup-check --directory "$diagnostic_directory" \
+            --outer "$outer" --run "$run_id"; then
+            comparison_identity_verified=false
+            failure=1
+          fi
+        fi
+        if [[ $comparison_identity_verified == false ]]; then
+          printf 'exact comparison daemon identity unverified; refusing removal\n' >&2
+        else
+          if [[ -n $socket_path && -S $socket_path ]]; then
+            if [[ $profile == volume-fixtures ]]; then
+              if [[ $inner_volume_cleanup == unverified && $disposable_identity_verified == true ]]; then
+                local evidence_args=()
+                [[ -z ${volume_input_proof:-} ]] || evidence_args=(--evidence-json)
+                if volume_cleanup_proof=$(cleanup_bounded 30s python3 "$contract" cleanup-volume-fixtures --allow-isolated-apply \
+                  --socket "$socket_path" --state "$run_dir/volume-ledger.json" --lane "$lane" \
+                  --run "$volume_run" --prefix "$volume_prefix" --api-version "$api_version" "${evidence_args[@]}"); then
+                  inner_volume_cleanup=verified
+                else
+                  failure=1
+                fi
+              fi
+            elif [[ $profile != readiness-comparison ]]; then
+              # Only remove the fixed name if this run actually created it. A
+              # failed removal is still failure even though outer storage goes.
+              inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
+                --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
+              if [[ $inner_status == 200 ]]; then
+                cleanup_bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+                  rm --force bf-docker-core > /dev/null 2>&1 || failure=1
+                inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
+                  --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
+                [[ $inner_status == 404 ]] || failure=1
+              elif [[ $inner_status != 404 ]]; then
                 failure=1
               fi
             fi
-          else
-            # Only remove the fixed name if this run actually created it. A
-            # failed removal is still failure even though outer storage goes.
-            inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
-              --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
-            if [[ $inner_status == 200 ]]; then
-              cleanup_bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
-                rm --force bf-docker-core > /dev/null 2>&1 || failure=1
-              inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
-                --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
-              [[ $inner_status == 404 ]] || failure=1
-            elif [[ $inner_status != 404 ]]; then
-              failure=1
-            fi
+          elif [[ $profile == volume-fixtures && -e $run_dir/volume-ledger.json ]]; then
+            failure=1
           fi
-        elif [[ $profile == volume-fixtures && -e $run_dir/volume-ledger.json ]]; then
-          failure=1
+          cleanup_bounded 60s podman rm --force --volumes "$outer" > /dev/null || failure=1
+          state=0
+          podman_presence cleanup_bounded container "$outer" || state=$?
+          ((state == 1)) || failure=1
+          if ((state == 1)); then outer_residual=none; fi
         fi
-        cleanup_bounded 60s podman rm --force --volumes "$outer" > /dev/null || failure=1
-        state=0
-        podman_presence cleanup_bounded container "$outer" || state=$?
-        ((state == 1)) || failure=1
-        if ((state == 1)); then outer_residual=none; fi
       else
         printf 'outer container ownership unverified; refusing removal\n' >&2
         failure=1
@@ -401,11 +425,28 @@ cleanup_owned() {
   return "$failure"
 }
 on_exit() {
-  local status=$? cleanup_status=0
+  local status=$? cleanup_status=0 cleanup_cancelled=false
   trap - EXIT HUP INT TERM
+  if [[ ${comparison_initialized:-false} == true ]]; then
+    trap 'cleanup_cancelled=true' HUP INT TERM
+  fi
   cleanup_owned || cleanup_status=$?
+  [[ $cleanup_cancelled == false ]] || cleanup_status=1
   ((cleanup_status == 0)) || status=1
   [[ ! -e ${run_dir:-/nonexistent}/guard-failure ]] || status=1
+  if [[ ${comparison_initialized:-false} == true ]]; then
+    local comparison_cleanup=unknown
+    ((cleanup_status != 0)) || comparison_cleanup=verified
+    cleanup_bounded 6s python3 "$comparison" finish --directory "$diagnostic_directory" \
+      --native-root "$lens_root" --native-revision "$lens_revision" --native-script-sha256 "$script_sha" \
+      --cleanup "$comparison_cleanup" --run-status "$status" || status=1
+    if [[ $cleanup_cancelled == true ]]; then
+      cleanup_bounded 6s python3 "$comparison" finish --directory "$diagnostic_directory" \
+        --native-root "$lens_root" --native-revision "$lens_revision" --native-script-sha256 "$script_sha" \
+        --cleanup unknown --run-status 1 || true
+      status=1
+    fi
+  fi
   report_host_cache
   if ((status != 0)); then
     ((cleanup_status == 0)) && printf 'cleanup residuals: outer-container=none storage-volume=none private-directory=none\n' >&2
@@ -415,6 +456,13 @@ on_exit() {
 }
 trap on_exit EXIT
 trap 'exit 1' HUP INT TERM
+
+if [[ $profile == readiness-comparison ]]; then
+  bounded 30s python3 "$comparison" init --directory "$diagnostic_directory" \
+    --native-root "$lens_root" --native-revision "$lens_revision" --native-script-sha256 "$script_sha" \
+    --expected-pid-namespace "$expected_pid_namespace"
+  comparison_initialized=true
+fi
 
 run_dir=$(mktemp -d /tmp/boxferry-docker-core.XXXXXXXX)
 chmod 0700 "$run_dir"
@@ -619,7 +667,7 @@ watchdog_pid=$!
 # host-side prerequisites; the nested Engine is never asked to pull an image.
 outer_pull_attempted=true
 bounded 180s podman pull "$outer_image" > /dev/null
-if [[ $profile != volume-fixtures ]]; then
+if [[ $profile != volume-fixtures && $profile != readiness-comparison ]]; then
   fixture_pull_attempted=true
   bounded 180s podman pull "$fixture_image" > /dev/null
   host_image_id=$(bounded 15s podman image inspect --format '{{.Id}}' "$fixture_image")
@@ -644,11 +692,24 @@ if [[ $lane == debian11-rootless ]]; then
   # These reviewed nesting exceptions apply only to the historical native lane.
   nesting_flags+=(--oom-score-adj=0 --security-opt apparmor=unconfined)
 fi
+outer_creation_output=/dev/null
+if [[ $profile == readiness-comparison ]]; then
+  outer_creation_output="$run_dir/outer-created"
+  read -r comparison_origin _ < /proc/uptime
+  [[ $comparison_origin =~ ^[0-9]{1,12}\.[0-9]{2}$ ]] || exit 1
+  bounded 6s python3 "$comparison" start --directory "$diagnostic_directory" --origin "$comparison_origin"
+fi
+outer_launch_status=0
 bounded 120s podman run --pull=never --detach --name "$outer" \
   --label "io.boxferry.docker-core-run=$run_id" \
   --privileged --pids-limit=512 --memory=4g --cpus=2 --image-volume=ignore \
   "${nesting_flags[@]}" --volume "$storage_mount" --volume "$socket_dir:/boxferry-core" \
-  "$outer_image" /usr/local/bin/start-dockerd --host=unix:///boxferry-core/docker.sock > /dev/null
+  "$outer_image" /usr/local/bin/start-dockerd --host=unix:///boxferry-core/docker.sock > "$outer_creation_output" || outer_launch_status=$?
+if [[ $profile == readiness-comparison ]]; then
+  bounded 15s python3 "$comparison" bind --directory "$diagnostic_directory" --outer "$outer" --run "$run_id" \
+    --socket "$socket_path" --created "$outer_creation_output" --origin "$comparison_origin"
+fi
+((outer_launch_status == 0)) || exit "$outer_launch_status"
 [[ $(bounded 15s podman inspect --format '{{.HostConfig.Privileged}}' "$outer") == true ]] || {
   printf 'reviewed outer nesting privilege was not applied\n' >&2
   exit 1
@@ -668,6 +729,7 @@ if [[ $lane == debian11-rootless ]]; then
   }
 fi
 read -r ping_readiness_uptime _ < /proc/uptime
+[[ $profile != readiness-comparison ]] || ping_readiness_uptime=$comparison_origin
 [[ $ping_readiness_uptime =~ ^[0-9]{1,12}\.[0-9]{2}$ ]] || exit 1
 ping_readiness_deadline="$((10#${ping_readiness_uptime%.*} + 180)).${ping_readiness_uptime#*.}"
 deadline=$((SECONDS + 180))
@@ -677,6 +739,20 @@ ping_curl_error=unknown
 ping_collector=not-run
 ping_teardown_signal=not-run
 ping_wrapper_seconds=5
+comparison_native_poll() {
+  local phase=$1 now native_wrapper_seconds poll_status=0
+  read -r now _ < /proc/uptime
+  [[ $now =~ ^[0-9]{1,12}\.[0-9]{2}$ ]] || return 2
+  # Preserve the timeout wrapper's KILL reserve inside the original native
+  # budget. A skipped late poll cannot replace an earlier actual observation.
+  native_wrapper_seconds=$((10#${comparison_origin%.*} + 360 - 10#${now%.*} - 1 - 5))
+  ((native_wrapper_seconds > 0)) || return 1
+  ((native_wrapper_seconds <= 12)) || native_wrapper_seconds=12
+  bounded "${native_wrapper_seconds}s" python3 "$comparison" native --directory "$diagnostic_directory" \
+    --phase "$phase" --socket "$socket_path" || poll_status=$?
+  ((poll_status <= 1)) || return 2
+  return "$poll_status"
+}
 while true; do
   if [[ -S $socket_path ]]; then
     # The existing wrapper's five-second KILL reserve belongs inside readiness.
@@ -686,6 +762,9 @@ while true; do
     # Round remaining time down, including the clock's fractional second.
     ping_wrapper_seconds=$((10#${ping_readiness_deadline%.*} - 10#${ping_poll_uptime%.*} - 1 - 5))
     if ((ping_wrapper_seconds > 0)); then
+      if [[ $profile == readiness-comparison ]]; then
+        bounded 6s python3 "$comparison" endpoint --directory "$diagnostic_directory" --socket "$socket_path"
+      fi
       ((ping_wrapper_seconds <= 5)) || ping_wrapper_seconds=5
       ping_wrapper_status=0
       ping_record=$(bounded "${ping_wrapper_seconds}s" python3 "$contract" readiness-ping \
@@ -712,10 +791,46 @@ while true; do
         ping_wrapper_seconds=0
         [[ $ping_collector != completed && $ping_collector != oversized ]] || ping_collector="timed-out"
       fi
-      [[ $ping_curl_exit == 0 && $ping_http_status != unknown && ($ping_collector == completed || $ping_collector == oversized) ]] && break
+      if [[ $profile == readiness-comparison ]]; then
+        comparison_phase=harmonized
+        [[ $comparison_baseline == true ]] || comparison_phase=baseline
+        bounded 6s python3 "$comparison" box --directory "$diagnostic_directory" --phase "$comparison_phase" \
+          --record "$ping_curl_exit $ping_http_status $ping_curl_error $ping_collector $ping_teardown_signal" \
+          --handoff-boottime "$ping_handoff_uptime" \
+          --wrapper-status "$ping_wrapper_status"
+        if [[ $comparison_baseline == false ]]; then
+          comparison_baseline=true
+          bounded 6s python3 "$comparison" transition --directory "$diagnostic_directory" --socket "$socket_path"
+          comparison_native_status=0
+          comparison_native_poll native-before || comparison_native_status=$?
+          ((comparison_native_status <= 1)) || exit 1
+        else
+          comparison_native_status=0
+          comparison_native_poll native-after || comparison_native_status=$?
+          ((comparison_native_status <= 1)) || exit 1
+          comparison_bracketed=true
+        fi
+        # Always obtain the harmonized bracket, even if the baseline was ready.
+        if [[ $comparison_bracketed == true && $ping_curl_exit == 0 && $ping_http_status != unknown &&
+          ($ping_collector == completed || $ping_collector == oversized) ]] &&
+          bounded 6s python3 "$comparison" native-ready --directory "$diagnostic_directory"; then
+          break
+        fi
+      else
+        [[ $ping_curl_exit == 0 && $ping_http_status != unknown && ($ping_collector == completed || $ping_collector == oversized) ]] && break
+      fi
+    fi
+  fi
+  if [[ $profile == readiness-comparison ]]; then
+    read -r comparison_now _ < /proc/uptime
+    [[ $comparison_now =~ ^[0-9]{1,12}\.[0-9]{2}$ ]] || exit 1
+    if ((10#${comparison_now%.*} * 100 + 10#${comparison_now#*.} >= \
+      10#${ping_readiness_deadline%.*} * 100 + 10#${ping_readiness_deadline#*.})); then
+      break
     fi
   fi
   ((SECONDS < deadline && ping_wrapper_seconds > 0)) || {
+    [[ $profile != readiness-comparison ]] || break
     readiness_failure 'nested Docker daemon did not become ready'
     exit 1
   }
@@ -725,6 +840,35 @@ while true; do
   }
   sleep 2
 done
+if [[ $profile == readiness-comparison ]]; then
+  bounded 6s python3 "$comparison" consumer-expired --directory "$diagnostic_directory"
+  # The consumer stops at its original budget. Only the exit-only native route
+  # may continue under the separate, startup-anchored 360-second budget.
+  while true; do
+    comparison_ready_status=0
+    bounded 6s python3 "$comparison" native-ready --directory "$diagnostic_directory" || comparison_ready_status=$?
+    ((comparison_ready_status != 0)) || break
+    ((comparison_ready_status == 1)) || exit 1
+    read -r comparison_now _ < /proc/uptime
+    [[ $comparison_now =~ ^[0-9]{1,12}\.[0-9]{2}$ ]] || exit 1
+    ((10#${comparison_now%.*} < 10#${comparison_origin%.*} + 360 - 6)) || break
+    if [[ -S $socket_path ]]; then
+      if [[ $comparison_baseline == false ]]; then
+        bounded 6s python3 "$comparison" endpoint --directory "$diagnostic_directory" --socket "$socket_path"
+        bounded 6s python3 "$comparison" transition --directory "$diagnostic_directory" --socket "$socket_path"
+        comparison_baseline=true
+      fi
+      comparison_native_status=0
+      comparison_native_poll native-later || comparison_native_status=$?
+      ((comparison_native_status <= 1)) || exit 1
+      ((comparison_native_status != 0)) || break
+    fi
+    [[ $(bounded 15s podman inspect --format '{{.State.Running}}' "$outer" 2> /dev/null) == true ]] || exit 1
+    sleep 2
+  done
+  # No version/info read, acceptance, workload, fixture mutation or receipt.
+  exit 0
+fi
 chmod 0666 "$socket_path"
 version_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/version)
 info_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/info)

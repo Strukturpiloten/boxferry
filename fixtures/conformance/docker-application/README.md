@@ -785,3 +785,122 @@ extract these new scripts or this fixture README; native package inputs are
 unchanged. Existing image/provider owners, grouping and approval rules therefore
 need no configuration change. Updating that historical expectation in the future
 requires independent native source review, not an automated silent refresh.
+
+## Opt-in startup-only readiness comparison (#425)
+
+`scripts/docker-application-conformance.sh --profile readiness-comparison` is a
+development diagnostic on one owned, pinned `debian11-rootful` daemon. It is not
+a BoxFerry executor, native admission, migration receipt, compatibility result,
+or six-application acceptance. No other lane is admitted. Supply an existing
+fresh, canonical root-owned mode-0700 diagnostic directory outside both source
+checkouts, and the independently established rootful host PID namespace's
+device/inode identity; the namespace is not inferred from the current caller.
+
+```text
+sudo scripts/docker-application-conformance.sh \
+  --profile readiness-comparison --lane debian11-rootful \
+  --docker-lens-root CLEAN_ABSOLUTE_NATIVE_CHECKOUT \
+  --docker-lens-revision EXACT_NATIVE_COMMIT \
+  --native-script-sha256 EXACT_NATIVE_SCRIPT_SHA256 \
+  --diagnostic-directory FRESH_PRIVATE_ABSOLUTE_DIRECTORY \
+  --expected-pid-namespace EXPECTED_HOST_DEVICE:EXPECTED_HOST_INODE
+```
+
+The profile rejects artifact, API-version, candidate/binary/receipt and volume
+evidence arguments; other profiles reject its two diagnostic arguments. Before
+any runtime mutation it verifies UID 0, the explicit PID namespace, initial UID
+mapping, effective NET_ADMIN/SYS_ADMIN, rootful Podman, the clean exact native
+checkout/script and read-only native bridge prerequisites. The native helper is
+imported with an empty policy environment, so inherited hosted-job settings
+cannot authorize module loading. Missing prerequisites produce a closed refusal,
+not a workaround. There is no module loading, host configuration change, cgroup
+disablement or custom native network/egress sidecar creation.
+
+The canonical pinned image catalogue, single daemon launcher, owned storage and
+socket, two-CPU/4-GiB/512-PID envelope, independent deadline guard and storage
+watchdog are reused. Exact creation CID, run label/name, running privileged
+process/PID/start/namespace and physical cgroup-v2 limits are admitted before
+probing. Only the known `machine.slice/libpod-CID.scope[/container]` and
+`libpod_parent/libpod-CID[/container]` layouts are accepted. Delegated leaves
+must inherit effective finite limits from their physical ancestors; unknown
+layouts or missing controllers fail closed. No fixture image pull/save/import,
+core workload, fixture POST, version/info acceptance or candidate verification
+is performed.
+
+Both deadlines start before the daemon launcher: 180 seconds for the actual
+BoxFerry helper/wrapper/five-field parser and 360 seconds for the native literal
+curl route. Launcher/admission time, serial observers and supervision reserve
+consume those original budgets. BOOTTIME elapsed measurements include suspend;
+completion exactly at a budget boundary is not readiness. Late polls are skipped
+when the wrapper's KILL reserve cannot fit, without replacing prior observations.
+BoxFerry elapsed time comes from the literal canonical wrapper/parser handoff
+sample, not the later recording helper's clock. Recorder startup or suspend
+cannot reclassify an already completed pre-budget poll as late. The handoff is
+bound to the original anchor and checked against the recorder clock and prior
+observations; malformed, future, pre-anchor or impossible out-of-order samples
+are refused. Cross-route same-centisecond ordering is not invented because the
+shell clock sample is coarser than the native observer's nanosecond clock.
+The first actual BoxFerry poll is recorded before changing socket permissions.
+After authenticating the same owned socket inode, an explicit mode-0666
+transition precedes native-before, harmonized BoxFerry and native-after polls.
+The original failure and first harmonized failure remain separate from later
+readiness. If no original poll fits before the consumer closes, its baseline is
+null (not a fabricated curl failure); a late socket may still be observed by the
+native route. No original-permission causality is inferred from the harmonized
+bracket. Native custom-network/sidecar omissions and shared bounded supervision
+of the otherwise literal exit-only native command are recorded differences.
+
+Oracle provenance is the caller-selected exact clean
+`Strukturpiloten/docker-lens` revision's `scripts/native-conformance.sh` and its
+canonical Debian 11 rootful image tag/digest, not a copied fixture or captured
+response. Its observed command is `curl -q --noproxy '*' -fs --max-time 5
+--unix-socket "$socket" http://localhost/_ping >/dev/null`; the diagnostic
+independently supplies the argument and discards output under its bounded
+supervisor. DockerLens's source license is MPL-2.0. No native source or image is
+redistributed by this change; the bound bridge helper is read from that external
+checkout at runtime. Exact source version and command binding reside in the
+private report's revision/script/helper hashes.
+
+The only retained file is private mode-0600 `readiness-comparison.json`, bounded
+to 64 KiB, exclusively created to refuse historical-file overwrite. It contains
+closed phases/statuses, source/native revisions and hashes, selected image
+digest, namespace/daemon/socket identities, elapsed times and actual numeric
+errno only when available. Endpoint paths are hashed; no arbitrary native
+stderr, exception text, environment, credentials or request/response body is
+retained. Native HTTP is always null: curl exit 7 is not errno 111 or an inferred
+HTTP status. Invalid/truncated collector records, unverified child teardown and
+uncertain resource closure withhold the final result. Source hashes and the
+clean native binding are rechecked after teardown.
+
+Classifications distinguish early native-only readiness, native readiness after
+the consumer budget, both routes ready, consumer-only readiness and
+`shared-no-ready-observed`. The last is an observation, not a shared-cause
+diagnosis; late native success cannot negate earlier consumer success. All
+classifications retain `qualification: none`. A nonzero harness exit or
+`status: withheld` is not a completed diagnostic.
+
+Canonical cleanup runs after success, failure and catchable cancellation. It
+requires the exact created CID before removal, positive owned outer/storage
+absence, watchdog closure and private-run-directory closure; final PID and
+physical cgroup absence are separately required. Unknown identity/absence
+retains task-owned resources and withholds completion. No pruning or historical
+resource deletion is authorized. SIGKILL, host loss or interruption beyond the
+independent guard's recovery cannot guarantee cleanup; a pending/withheld report
+requires independently reviewed exact-resource recovery, never broader cleanup.
+
+Offline `scripts/test-readiness-comparison.py` controls cover profile isolation,
+literal observer ordering, exact deadlines/suspend, expected classification,
+rootful and bridge refusal, source binding, cgroup admission, permission/inode
+transition, privacy, historical-report refusal and resource-closure uncertainty.
+It is registered once in `scripts/test-application-probes.sh`; the runner-order
+regression preserves all existing suites and failure propagation. Canonical
+consumers remain local `scripts/check-all.sh`, PR/main/dispatch
+`.github/workflows/ci.yml`, and Release's reusable deterministic CI gate. None
+automatically launches this opt-in diagnostic. Lens native suites remain
+independent; no cross-repository runtime consumer is changed.
+
+Renovate no-change review: `.github/renovate.json` custom-manager patterns do not
+match these changed scripts or this README. No software, operational image pin,
+package declaration/lock, workflow or provider definition is added, moved or
+changed. The exact caller-selected DockerLens catalogue remains the sole image
+owner; existing extraction, grouping and approval rules therefore remain intact.
