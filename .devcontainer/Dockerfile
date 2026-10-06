@@ -1,14 +1,14 @@
 # renovate: datasource=docker depName=docker.io/library/node
 # release: 24.21.0-bookworm-slim
-FROM docker.io/library/node@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node_toolchain
+FROM docker.io/library/node:24.21.0-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS node_toolchain
 
 # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
-# release: 0.12.5
-FROM ghcr.io/astral-sh/uv@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 AS uv_toolchain
+# release: 0.12.22
+FROM ghcr.io/astral-sh/uv:0.12.22@sha256:f513a91fc62fe7c17567eee97230dd198e43edb8a9fbecca843714a4358fe1bc AS uv_toolchain
 
 # renovate: datasource=docker depName=mcr.microsoft.com/devcontainers/rust
 # release: 2.0.14-bookworm
-FROM mcr.microsoft.com/devcontainers/rust@sha256:d599b1bc98c3fc53825462ebf1610f39ef9145aeab485deffb8aaef44f349fe1
+FROM mcr.microsoft.com/devcontainers/rust:2.0.14-bookworm@sha256:d599b1bc98c3fc53825462ebf1610f39ef9145aeab485deffb8aaef44f349fe1
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

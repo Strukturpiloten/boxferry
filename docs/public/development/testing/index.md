@@ -22,7 +22,9 @@ MSRV, audits dependencies, builds documentation, verifies coverage floors, and c
 
 Run `./scripts/check-cli-usability.sh` or the VS Code task **BoxFerry: Fast offline CLI usability**.
 It uses at most two Cargo build jobs by default and runs the CLI integration tests on one test
-thread. The authored route matrix exercises both `validate` and `convert` for all nine
+thread.
+
+The authored route matrix exercises both `validate` and `convert` for all nine
 Compose/Podman/Quadlet source-target pairs, checks that their semantic decisions agree, and
 inspects planned and written artifacts against independent fixture intent. Authored runtime
 names and restart behavior must survive document targets; Podman output must report its
@@ -38,6 +40,7 @@ ambiguous Quadlet inputs and unsupported Podman targets, exact-policy refusal ve
 approximation, and Compose interpolation implied by `--env-file`/`--env` with later-file and
 explicit-assignment precedence. Explicit same-host bind promotion checks each source, target,
 and read-only mode as one association rather than independent substring presence.
+
 The minimal Compose journeys also exercise current-directory discovery on `validate` and `convert`
 for Compose, Quadlet, and Podman output. They compare planned and written decisions, verify the
 selected input is reported without leaking its absolute path or an implicit `.env` value, and

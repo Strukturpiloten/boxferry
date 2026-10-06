@@ -80,7 +80,9 @@
       "managerFilePatterns": ["/^\\.devcontainer/Dockerfile$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\n# release: (?<currentValue>[^\\s]+)\\nFROM [^\\s]+@(?<currentDigest>sha256:[a-f0-9]{64})"
-      ]
+      ],
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "# renovate: datasource={{{datasource}}} depName={{{depName}}}\n# release: {{{newValue}}}\nFROM {{{depName}}}:{{{newValue}}}@{{{newDigest}}}"
     },
     {
       "customType": "regex",
@@ -149,6 +151,13 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Keep non-major Dev Container image and tool updates together",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
+      "groupName": "Dev Container toolchain"
+    },
     {
       "description": "Group compatible Rust dependency updates",
       "matchManagers": ["cargo"],
@@ -248,6 +257,16 @@
       "automerge": false,
       "prBodyNotes": [
         "Regenerate and commit the Dev Container feature lock as documented in docs/development-environment.md."
+      ]
+    },
+    {
+      "description": "Require manual review of Dev Container image and tool updates",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [".devcontainer/Dockerfile"],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "Review all shared workspace consumers, exact versions and image digests, then rebuild and validate the Dev Container before merging."
       ]
     },
     {
