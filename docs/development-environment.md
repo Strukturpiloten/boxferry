@@ -16,6 +16,15 @@ cargo build --release --locked --package boxferry
 After pulling from an older workspace, run **Dev Containers: Rebuild Container** in VS Code.
 Existing terminals may use `unset CARGO_TARGET_DIR` until rebuilt.
 
+## Shared website toolchain
+
+The uv image in `.devcontainer/Dockerfile` must match the website's exact
+`tool.uv.required-version` in `boxferry-website/pyproject.toml` and its CI/deployment inputs.
+Renovate tracks all nine Dockerfile pins, grouping non-major toolchain updates and preserving
+image release/tag/digest pairs and stage aliases. Website uv pins form a separate group:
+coordinate cross-repository updates, retain its exact requirement, and rebuild the Dev Container
+after Dockerfile changes.
+
 ## Rust toolchain components
 
 `rust-toolchain.toml` selects Rust, Clippy, rustfmt, and LLVM coverage tools. The Dev Container
@@ -97,10 +106,8 @@ deterministic validation; `main` pushes and releases always run the complete pla
 The resource-constrained contributor option above does not waive the coding-agent rule in
 `AGENTS.md`: agents must complete the local gate before committing, pushing, or creating a PR.
 
-The primary agent uses GPT-6 Sol with `xhigh` reasoning and owns the final diff, complete gate, staging,
-commit, push, and GitHub readback. Worker agents may perform bounded work.
-Worker agents never perform Git or GitHub writes.
-The complete gate remains the primary agent's final responsibility.
+The primary agent uses GPT-6 Sol with `xhigh` reasoning. Worker agents never perform Git or GitHub
+writes. The complete gate remains the primary agent's final responsibility. See [`AGENTS.md`](../AGENTS.md).
 
 ## GitHub authentication
 

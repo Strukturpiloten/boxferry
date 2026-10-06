@@ -8221,6 +8221,22 @@ fn renovate_tracks_every_directly_pinned_development_tool() -> Result<(), String
 }
 
 #[test]
+fn devcontainer_renovate_extraction_and_replacement_are_complete() -> Result<(), String> {
+    let output = Command::new("python3")
+        .args(["-B", "scripts/test-devcontainer-renovate.py"])
+        .current_dir(repository_root())
+        .output()
+        .map_err(|error| format!("failed to run Dev Container pin regressions: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Dev Container pin regressions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn renovate_policy_rejects_unmanaged_workflow_pin_counterexamples() -> Result<(), String> {
     for (description, workflow) in [
         (
