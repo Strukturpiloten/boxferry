@@ -124,7 +124,11 @@ def candidate_source_digest(root: pathlib.Path) -> str:
 
 
 def expected_build_command(lens_root: pathlib.Path, profile: str = "core-journey") -> list[str]:
-    require(profile in {"core-journey", "volume-fixtures"}, "candidate profile is unreviewed")
+    require(profile in {"core-journey", "volume-fixtures", "host-metadata"}, "candidate profile is unreviewed")
+    if profile == "host-metadata":
+        return ["cargo", "build", "--locked", "--package", "boxferry", "--example",
+                "docker-host-metadata", "--no-default-features", "--features", "docker", "--jobs", "2",
+                "--config", f'patch.crates-io.docker-lens.path="{lens_root}"']
     if profile == "volume-fixtures":
         return ["cargo", "build", "--locked", "--package", "boxferry", "--example",
                 "docker-volume-fixture-rehearsal", "--no-default-features", "--features", "compose,docker",
@@ -134,7 +138,8 @@ def expected_build_command(lens_root: pathlib.Path, profile: str = "core-journey
 
 
 def verify_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.Path,
-                     lens_root: pathlib.Path, lens_revision: str, *, profile: str = "core-journey") -> dict[str, Any]:
+                     lens_root: pathlib.Path, lens_revision: str, *, profile: str = "core-journey",
+                     receipt_sha256: str | None = None) -> dict[str, Any]:
     require(root.is_absolute() and lens_root.is_absolute()
             and root.resolve(strict=True) == root and lens_root.resolve(strict=True) == lens_root
             and re.fullmatch(r"[A-Za-z0-9_./-]+", str(lens_root)) is not None,
@@ -160,7 +165,12 @@ def verify_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.
         while chunk := source.read(1024 * 1024):
             binary_digest.update(chunk)
         require(source.tell() == metadata.st_size, "BoxFerry binary changed during hashing")
-    record = json.loads(read_private_artifact(receipt), object_pairs_hook=no_duplicate_keys)
+    raw_receipt = read_private_artifact(receipt)
+    if receipt_sha256 is not None:
+        require(DIGEST_PATTERN.fullmatch(receipt_sha256) is not None
+                and hashlib.sha256(raw_receipt.encode()).hexdigest() == receipt_sha256,
+                "candidate receipt bytes changed")
+    record = json.loads(raw_receipt, object_pairs_hook=no_duplicate_keys)
     require(isinstance(record, dict) and set(record) == {
             "schema_version", "boxferry_revision", "boxferry_source_sha256", "boxferry_lock_sha256",
             "docker_lens_revision", "docker_lens_source_sha256", "docker_lens_lock_sha256",
@@ -201,7 +211,8 @@ def capture_candidate(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib
                       destination: pathlib.Path, *, profile: str = "core-journey") -> dict[str, Any]:
     """Execute only an owner-private snapshot of the attested input bytes."""
     record = verify_candidate(root, binary, receipt, lens_root, lens_revision, profile=profile)
-    require(destination.is_absolute() and destination.name == "boxferry-candidate"
+    snapshot_name = "boxferry-host-metadata" if profile == "host-metadata" else "boxferry-candidate"
+    require(destination.is_absolute() and destination.name == snapshot_name
             and not destination.exists() and destination.parent.is_dir()
             and not destination.parent.is_symlink()
             and destination.parent.stat().st_uid == os.geteuid()
@@ -828,11 +839,12 @@ def reviewed_profiles(root_text: str) -> dict[str, dict[str, Any]]:
 
 def verify_daemon_mode(lane: str, marker: str, uid_report: str) -> None:
     require(lane in IMAGE_KEYS and lane != "fixture", "unknown daemon lane")
-    require(marker in ("true", "false"), "rootless marker is not a Boolean")
+    require(marker in ("true", "false", "unknown"), "rootless marker is not finite")
     match = re.fullmatch(r"1:([0-9]+)\n?", uid_report)
     require(match is not None, "expected exactly one dockerd effective UID")
     rootless = lane.endswith("-rootless")
-    require((int(match[1]) != 0) == rootless and (marker == "true") == rootless,
+    require((int(match[1]) != 0) == rootless and
+            ((marker == "unknown" and not rootless) or (marker != "unknown" and (marker == "true") == rootless)),
             "daemon process UID and rootless marker disagree with lane")
 
 
@@ -1364,7 +1376,7 @@ def volume_evidence_directory(directory: pathlib.Path, disposable: pathlib.Path,
 
 def volume_candidate_proof(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.Path,
                            lens: pathlib.Path, revision: str, receipt_sha: str) -> dict[str, Any]:
-    record = verify_candidate(root, binary, receipt, lens, revision, profile="volume-fixtures")
+    record = verify_candidate(root, binary, receipt, lens, revision, profile="volume-fixtures", receipt_sha256=receipt_sha)
     require(hashlib.sha256(read_private_artifact(receipt).encode()).hexdigest() == receipt_sha,
             "volume evidence candidate receipt bytes differ")
     keys = ("boxferry_revision", "boxferry_source_sha256", "boxferry_lock_sha256", "binary_sha256",
@@ -1613,6 +1625,84 @@ native_read = importlib.util.module_from_spec(NATIVE_READ_SPEC)
 NATIVE_READ_SPEC.loader.exec_module(native_read)
 # Preserve the existing diagnostic/presence call and mock seam.
 readiness_read = native_read.readiness_read
+
+
+def host_metadata_proof(root: pathlib.Path, binary: pathlib.Path, receipt: pathlib.Path,
+                        lens: pathlib.Path, revision: str, expected_sha: str,
+                        producer: dict[str, Any] | None = None) -> dict[str, Any]:
+    record = verify_candidate(root, binary, receipt, lens, revision, profile="host-metadata", receipt_sha256=expected_sha)
+    keys = ("boxferry_revision", "boxferry_source_sha256", "boxferry_lock_sha256",
+            "docker_lens_revision", "docker_lens_source_sha256", "docker_lens_lock_sha256")
+    if producer is not None:
+        require(all(record[key] == producer[key] for key in keys), "helper and producer identities differ")
+        require("override_identity" not in producer or record["override_identity"] == producer["override_identity"],
+                "helper and producer override identities differ")
+    return {"receipt_schema": 2, "receipt_sha256": expected_sha, "build_profile": "host-metadata",
+            "binary_sha256": record["binary_sha256"], **{key: record[key] for key in keys}}
+
+
+def application_metadata(outer: str, run: str, socket_path: pathlib.Path,
+                         helper: pathlib.Path, deadline_boottime: str, binary_sha256: str) -> str:
+    """Independent CLI SERVER evidence plus the attested public Lens helper; no curl."""
+    require(outer == f"bf-docker-core-{run}" and re.fullmatch(r"[A-Za-z0-9_]{1,64}", run) is not None
+            and socket_path == pathlib.Path(f"/tmp/boxferry-docker-core.{run}/socket/docker.sock")
+            and helper == socket_path.parents[1] / "boxferry-host-metadata"
+            and re.fullmatch(r"[0-9]{1,12}\.[0-9]{2}", deadline_boottime) is not None,
+            "application metadata boundary differs")
+    previous = {}
+    def cancelled(_signum, _frame):
+        raise KeyboardInterrupt
+    try:
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous[signum] = signal.signal(signum, cancelled)
+        remaining = min(4.0, float(deadline_boottime) - time.clock_gettime(time.CLOCK_BOOTTIME))
+        require(remaining > 0.5, "application metadata deadline expired")
+        deadline = time.monotonic() + remaining
+        require(DIGEST_PATTERN.fullmatch(binary_sha256) is not None, "helper binary digest differs")
+        descriptor = os.open(helper, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as source:
+            metadata = os.fstat(source.fileno())
+            require(stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.geteuid()
+                    and stat.S_IMODE(metadata.st_mode) == 0o500 and 0 < metadata.st_size <= 512 * 1024 * 1024,
+                    "helper snapshot boundary differs")
+            digest = hashlib.sha256()
+            while chunk := source.read(1024 * 1024):
+                require(time.monotonic() < deadline, "helper snapshot validation expired")
+                digest.update(chunk)
+            require(digest.hexdigest() == binary_sha256, "helper snapshot bytes differ")
+        version_template = "{{with .Server}}{{.Version}} {{.APIVersion}}{{end}}"
+        info_template = "{{println .ServerVersion}}{{println .DockerRootDir}}{{range .SecurityOptions}}{{println .}}{{end}}"
+        outcome, cli_version = readiness_read(["podman", "exec", outer, "docker", "--host", "unix:///boxferry-core/docker.sock",
+                                              "version", "--format", version_template], deadline)
+        require(outcome == "read", "CLI server version unavailable")
+        outcome, cli_info = readiness_read(["podman", "exec", outer, "docker", "--host", "unix:///boxferry-core/docker.sock",
+                                           "info", "--format", info_template], deadline)
+        require(outcome == "read", "CLI server info unavailable")
+        milliseconds = min(3500, int((deadline - time.monotonic() - 0.25) * 1000))
+        require(milliseconds > 0, "application metadata deadline expired")
+        outcome, host = readiness_read([str(helper), "--socket", str(socket_path),
+                                       "--timeout-ms", str(milliseconds)], deadline)
+        require(outcome == "read" and time.monotonic() < deadline
+                and time.clock_gettime(time.CLOCK_BOOTTIME) < float(deadline_boottime),
+                "host metadata unavailable or late")
+        match = re.fullmatch(rb"([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(?:\+dfsg1)?) (1\.[4-9][0-9]) (1\.4[1-9]) (rootful|rootless|unknown)\n", host)
+        require(match is not None, "host metadata shape differs")
+        release, api, negotiated, mode = (value.decode("ascii") for value in match.groups())
+        require(int(negotiated[2:]) == min(49, int(api[2:])), "acquisition API ceiling differs")
+        require(cli_version == f"{release} {api}\n".encode(), "CLI SERVER and Lens version disagree")
+        info = cli_info.decode("ascii").splitlines()
+        require(len(info) >= 2 and info[0] == release, "CLI SERVER and Lens info disagree")
+        root = info[1]
+        require(re.fullmatch(r"/[A-Za-z0-9_./-]{1,128}", root) is not None, "CLI data root shape differs")
+        cli_rootless = any(value == "name=rootless" or value.startswith("name=rootless,") for value in info[2:])
+        require(not cli_rootless or mode == "rootless", "CLI and Lens rootless evidence disagree")
+        require(mode != "rootless" or cli_rootless, "Lens rootless evidence lacks CLI confirmation")
+        return f"{release} {api} {mode} {root}"
+    except (UnicodeError, OSError, KeyboardInterrupt, ValueError) as error:
+        raise ContractError("application metadata unavailable") from error
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def podman_presence(kind: str, name: str, run: str) -> str:
@@ -1942,6 +2032,17 @@ def main() -> int:
     ping = commands.add_parser("readiness-ping")
     ping.add_argument("--socket", type=pathlib.Path, required=True)
     ping.add_argument("--deadline-boottime", required=True)
+    metadata = commands.add_parser("application-metadata")
+    metadata.add_argument("--outer", required=True)
+    metadata.add_argument("--run", required=True)
+    metadata.add_argument("--socket", type=pathlib.Path, required=True)
+    metadata.add_argument("--helper", type=pathlib.Path, required=True)
+    metadata.add_argument("--deadline-boottime", required=True)
+    metadata.add_argument("--binary-sha256", required=True)
+    helper_proof = commands.add_parser("verify-host-metadata")
+    for option in ("boxferry-root", "binary", "receipt", "docker-lens-root", "docker-lens-revision", "receipt-sha256"):
+        helper_proof.add_argument(f"--{option}", required=True)
+    helper_proof.add_argument("--producer-receipt", type=pathlib.Path)
     catalogue = commands.add_parser("catalogue")
     catalogue.add_argument("--docker-lens-root", required=True)
     catalogue.add_argument("--docker-lens-revision", required=True)
@@ -1954,7 +2055,7 @@ def main() -> int:
     candidate.add_argument("--receipt", required=True)
     candidate.add_argument("--docker-lens-root", required=True)
     candidate.add_argument("--docker-lens-revision", required=True)
-    candidate.add_argument("--profile", choices=("core-journey", "volume-fixtures"), default="core-journey")
+    candidate.add_argument("--profile", choices=("core-journey", "volume-fixtures", "host-metadata"), default="core-journey")
     snapshot = commands.add_parser("capture-candidate")
     snapshot.add_argument("--boxferry-root", required=True)
     snapshot.add_argument("--binary", required=True)
@@ -1962,7 +2063,7 @@ def main() -> int:
     snapshot.add_argument("--docker-lens-root", required=True)
     snapshot.add_argument("--docker-lens-revision", required=True)
     snapshot.add_argument("--destination", required=True)
-    snapshot.add_argument("--profile", choices=("core-journey", "volume-fixtures"), default="core-journey")
+    snapshot.add_argument("--profile", choices=("core-journey", "volume-fixtures", "host-metadata"), default="core-journey")
     for name in ("validate-volume-fixtures", "apply-volume-fixtures", "capture-volume-evidence"):
         volumes = commands.add_parser(name)
         volumes.add_argument("--directory", type=pathlib.Path, required=True)
@@ -2099,6 +2200,14 @@ def main() -> int:
             return {"present": 0, "absent": 1, "unknown": 2}[outcome]
         elif args.command == "readiness-ping":
             print(" ".join(readiness_ping(args.socket, args.deadline_boottime).values()))
+        elif args.command == "application-metadata":
+            print(application_metadata(args.outer, args.run, args.socket, args.helper, args.deadline_boottime, args.binary_sha256))
+        elif args.command == "verify-host-metadata":
+            producer = (json.loads(read_private_artifact(args.producer_receipt), object_pairs_hook=no_duplicate_keys)
+                        if args.producer_receipt is not None else None)
+            print(json.dumps(host_metadata_proof(pathlib.Path(args.boxferry_root), pathlib.Path(args.binary),
+                             pathlib.Path(args.receipt), pathlib.Path(args.docker_lens_root), args.docker_lens_revision,
+                             args.receipt_sha256, producer), sort_keys=True))
         elif args.command == "readiness-diagnostics":
             result = readiness_ping_observations(args.ping_curl_exit, args.ping_http_status,
                                                 args.ping_curl_error, args.ping_collector, args.ping_teardown_signal)

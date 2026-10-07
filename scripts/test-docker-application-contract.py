@@ -156,6 +156,49 @@ class CoreJourneyBoundaryTests(unittest.TestCase):
                     contract.verify_candidate(root, binary, receipt, lens, "c" * 40)
                 with self.assertRaises(contract.ContractError):
                     contract.expected_build_command(lens, "arbitrary")
+                literal_helper_recipe = ["cargo", "build", "--locked", "--package", "boxferry", "--example",
+                    "docker-host-metadata", "--no-default-features", "--features", "docker", "--jobs", "2",
+                    "--config", f'patch.crates-io.docker-lens.path="{lens}"']
+                self.assertEqual(contract.expected_build_command(lens, "host-metadata"), literal_helper_recipe)
+                record["build_command"] = literal_helper_recipe
+                receipt.write_text(json.dumps(record))
+                self.assertEqual(contract.verify_candidate(root, binary, receipt, lens, "c" * 40,
+                                                          profile="host-metadata"), record)
+                helper_receipt_sha = hashlib.sha256(receipt.read_bytes()).hexdigest()
+                self.assertEqual(contract.verify_candidate(root, binary, receipt, lens, "c" * 40,
+                    profile="host-metadata", receipt_sha256=helper_receipt_sha), record)
+                with self.assertRaises(contract.ContractError):
+                    contract.verify_candidate(root, binary, receipt, lens, "c" * 40,
+                        profile="host-metadata", receipt_sha256="e" * 64)
+                swapped = {**record, "binary_sha256": "f" * 64}
+                swapped_raw = json.dumps(swapped)
+                swapped_sha = hashlib.sha256(swapped_raw.encode()).hexdigest()
+                with mock.patch.object(contract, "read_private_artifact",
+                                       side_effect=[receipt.read_text(), swapped_raw]) as read_receipt:
+                    with self.assertRaises(contract.ContractError):
+                        contract.host_metadata_proof(root, binary, receipt, lens, "c" * 40, swapped_sha, record)
+                    self.assertEqual(read_receipt.call_count, 1)
+                volume_record = {**record, "build_command": literal_volume_recipe}
+                receipt.write_text(json.dumps(volume_record))
+                spliced_record = {**volume_record, "binary_sha256": "f" * 64}
+                spliced_raw = json.dumps(spliced_record)
+                spliced_sha = hashlib.sha256(spliced_raw.encode()).hexdigest()
+                with mock.patch.object(contract, "read_private_artifact",
+                        side_effect=[receipt.read_text(), spliced_raw]) as read_receipt:
+                    with self.assertRaises(contract.ContractError):
+                        contract.volume_candidate_proof(root, binary, receipt, lens, "c" * 40, spliced_sha)
+                    self.assertEqual(read_receipt.call_count, 1)
+                receipt.write_text(json.dumps(record))
+                helper_snapshot = root / "boxferry-host-metadata"
+                contract.capture_candidate(root, binary, receipt, lens, "c" * 40, helper_snapshot, profile="host-metadata")
+                self.assertEqual(helper_snapshot.read_bytes(), binary.read_bytes())
+                self.assertEqual(helper_snapshot.stat().st_mode & 0o777, 0o500)
+                with self.assertRaises(contract.ContractError):
+                    contract.verify_candidate(root, binary, receipt, lens, "c" * 40, profile="volume-fixtures")
+                binary.write_bytes(b"changed helper binary")
+                with self.assertRaises(contract.ContractError):
+                    contract.verify_candidate(root, binary, receipt, lens, "c" * 40, profile="host-metadata")
+                binary.write_bytes(b"worktree-local candidate")
                 record["build_command"] = contract.expected_build_command(lens)
                 receipt.write_text(json.dumps(record))
                 (lens / "Cargo.lock").write_bytes(b"changed lock")
@@ -1350,12 +1393,39 @@ class VolumeFixtureTests(unittest.TestCase):
                 self.validate()
 
     def test_all_23_requests_checked_before_engine_mutation(self) -> None:
-        requests = copy.deepcopy(self.requests)
-        requests[-1]["path"] = "/v1.56/containers/create"
-        with mock.patch.object(contract, "engine_request") as native, self.assertRaises(contract.ContractError):
-            contract.apply_volume_fixtures(self.root / "socket", self.root / "ledger", requests,
-                                          run=self.run_id, prefix=self.prefix, lane=self.lane, api_version=self.api)
-        native.assert_not_called()
+        mutations = (
+            lambda rows: rows[-1].update(path="/v1.56/containers/create"),
+            lambda rows: rows[-1]["body"].update(Driver="local"),
+            lambda rows: rows[-1]["body"].update(Name="ambient"),
+            lambda rows: rows[-1]["body"]["Labels"].update({"io.boxferry.live-run": "other"}),
+            lambda rows: rows.pop(),
+        )
+        for mutation in mutations:
+            requests = copy.deepcopy(self.requests)
+            mutation(requests)
+            with mock.patch.object(contract, "engine_request") as native, self.assertRaises(contract.ContractError):
+                contract.apply_volume_fixtures(self.root / "socket", self.root / "ledger", requests,
+                                              run=self.run_id, prefix=self.prefix, lane=self.lane, api_version=self.api)
+            native.assert_not_called()
+
+    def test_observed_identity_and_catalogue_refusals_precede_all_volume_requests(self) -> None:
+        options = {"api_version": self.api, "profiles": self.profiles,
+                   "observed_release": "29.8.1", "observed_api": "1.56", "observed_package": ""}
+        changes = (
+            {"observed_release": "29.8.2"}, {"observed_api": "1.55"},
+            {"observed_package": "DO-NOT-PRINT/private"}, {"api_version": "1.55"},
+            {"profiles": {}},
+            {"profiles": {self.lane: {**self.profile, "evidence_sha256": "c" * 64}}},
+            {"profiles": {self.lane: {**self.profile, "daemon_mode": "rootful"}}},
+        )
+        for change in changes:
+            with self.subTest(change=change), mock.patch.object(contract, "engine_request") as native:
+                with self.assertRaises(contract.ContractError):
+                    requests = contract.validate_volume_fixtures(self.output, self.root, lane=self.lane,
+                        run=self.run_id, prefix=self.prefix, receipt_sha256=self.receipt, **{**options, **change})
+                    contract.apply_volume_fixtures(self.root / "socket", self.root / "ledger", requests,
+                        run=self.run_id, prefix=self.prefix, lane=self.lane, api_version=self.api)
+                native.assert_not_called()
 
     def apply(self, native) -> pathlib.Path:
         state = self.root / "ledger.json"
@@ -1622,6 +1692,116 @@ class ParentLifetimeTests(unittest.TestCase):
                 contract.guard_parent(os.getpid(), contract.process_start(os.getpid()) + 1,
                                       1, 1, str(rejected))
             self.assertFalse(rejected.exists())
+
+
+class HostMetadataTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp")
+        self.root = pathlib.Path(self.temporary.name)
+        self.root.chmod(0o700)
+        self.run = self.root.name.removeprefix("boxferry-docker-core.")
+        self.helper = self.root / "boxferry-host-metadata"
+        self.helper.write_bytes(b"attested helper bytes")
+        self.helper.chmod(0o500)
+        self.digest = hashlib.sha256(self.helper.read_bytes()).hexdigest()
+        self.socket = self.root / "socket/docker.sock"
+        self.responses = [("read", b"29.8.1 1.56\n"),
+                          ("read", b"29.8.1\n/var/lib/docker\nname=seccomp,profile=builtin\n"),
+                          ("read", b"29.8.1 1.56 1.49 unknown\n")]
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def acquire(self):
+        return contract.application_metadata(f"bf-docker-core-{self.run}", self.run, self.socket,
+                                             self.helper, "999999999.00", self.digest)
+
+    def test_independent_server_cli_and_public_lens_unknown_are_required(self) -> None:
+        with mock.patch.object(contract, "readiness_read", side_effect=self.responses) as read:
+            self.assertEqual(self.acquire(), "29.8.1 1.56 unknown /var/lib/docker")
+        self.assertEqual(len(read.call_args_list), 3)
+        version = read.call_args_list[0].args[0]
+        self.assertEqual(version[:7], ["podman", "exec", f"bf-docker-core-{self.run}", "docker", "--host",
+                                      "unix:///boxferry-core/docker.sock", "version"])
+        self.assertEqual(version[-1], "{{with .Server}}{{.Version}} {{.APIVersion}}{{end}}")
+        self.assertIn(".ServerVersion", read.call_args_list[1].args[0][-1])
+        self.assertEqual(read.call_args_list[2].args[0][:3], [str(self.helper), "--socket", str(self.socket)])
+        self.assertTrue(0 < int(read.call_args_list[2].args[0][-1]) <= 3500)
+
+    def test_client_only_or_cli_ready_lens_fail_never_accepts(self) -> None:
+        cases = [(0, ("read", b"\n")), (0, ("read-failed", b"29.8.1 1.56\n")),
+                 (0, ("read", b"29.8.1 1.55\n")),
+                 (1, ("read", b"20.10.5\n/var/lib/docker\n")),
+                 (1, ("read", b"DO-NOT-PRINT/private\n/var/lib/docker\n"))]
+        cases.extend((2, (outcome, b"29.8.1 1.56 1.49 unknown\n")) for outcome in
+                     ("read-failed", "oversized", "timed-out", "cancelled", "termination-unverified"))
+        cases.extend((2, ("read", value)) for value in
+                     (b"29.8.1 1.56 1.56 unknown\n", b"29.8.1 1.56 1.49 unknown", b"private-canary\n",
+                      b"29.8.1 1.56 1.49 rootless\n", b"20.10.5 1.41 1.41 unknown\n"))
+        for index, response in cases:
+            responses = self.responses.copy()
+            responses[index] = response
+            with self.subTest(response=response), mock.patch.object(contract, "readiness_read", side_effect=responses):
+                with self.assertRaises(contract.ContractError) as error:
+                    self.acquire()
+                self.assertNotIn("DO-NOT-PRINT", str(error.exception))
+
+    def test_positive_rootless_matches_and_unknown_requires_uid_lane_gate(self) -> None:
+        responses = [self.responses[0], ("read", b"29.8.1\n/home/docker/.local/share/docker\nname=rootless,other\n"),
+                     ("read", b"29.8.1 1.56 1.49 rootless\n")]
+        with mock.patch.object(contract, "readiness_read", side_effect=responses):
+            self.assertEqual(self.acquire(), "29.8.1 1.56 rootless /home/docker/.local/share/docker")
+        contract.verify_daemon_mode("upstream-rootful", "unknown", "1:0")
+        contract.verify_daemon_mode("upstream-rootless", "true", "1:1000")
+        for lane, uid in (("upstream-rootless", "1:0"), ("upstream-rootful", "1:1000"),
+                          ("upstream-rootful", "2:0"), ("upstream-rootless", "1:1000")):
+            with self.subTest(lane=lane, uid=uid), self.assertRaises(contract.ContractError):
+                contract.verify_daemon_mode(lane, "unknown", uid)
+
+    def test_snapshot_drift_and_expired_deadline_precede_any_cli(self) -> None:
+        for change in ("bytes", "mode", "deadline"):
+            with self.subTest(change=change):
+                self.helper.chmod(0o700)
+                self.helper.write_bytes(b"changed" if change == "bytes" else b"attested helper bytes")
+                self.helper.chmod(0o700 if change == "mode" else 0o500)
+                with mock.patch.object(contract, "readiness_read") as read:
+                    with mock.patch.object(contract.time, "clock_gettime", return_value=1_000_000_000 if change == "deadline" else 1):
+                        with self.assertRaises(contract.ContractError):
+                            self.acquire()
+                    read.assert_not_called()
+
+    def test_late_completion_and_cancellation_are_not_success(self) -> None:
+        with mock.patch.object(contract, "readiness_read", side_effect=self.responses), \
+             mock.patch.object(contract.time, "clock_gettime", side_effect=[1, 1_000_000_000]):
+            with self.assertRaises(contract.ContractError):
+                self.acquire()
+        with mock.patch.object(contract, "readiness_read", side_effect=KeyboardInterrupt):
+            with self.assertRaises(contract.ContractError):
+                self.acquire()
+
+    def test_helper_receipt_binding_and_producer_source_drift(self) -> None:
+        receipt = self.root / "receipt.json"
+        receipt.write_text("{}")
+        receipt.chmod(0o600)
+        record = {key: "a" * 64 for key in ("boxferry_revision", "boxferry_source_sha256", "boxferry_lock_sha256",
+                    "docker_lens_revision", "docker_lens_source_sha256", "docker_lens_lock_sha256", "binary_sha256")}
+        record["override_identity"] = {"path": "selected-clean-lens"}
+        digest = hashlib.sha256(receipt.read_bytes()).hexdigest()
+        with mock.patch.object(contract, "verify_candidate", return_value=record) as verify:
+            proof = contract.host_metadata_proof(self.root, self.helper, receipt, self.root, "b" * 40, digest, record)
+            self.assertEqual(proof["receipt_sha256"], digest)
+            self.assertEqual(verify.call_args.kwargs, {"profile": "host-metadata", "receipt_sha256": digest})
+            with mock.patch.object(contract, "verify_candidate", side_effect=contract.ContractError("candidate receipt bytes changed")):
+                with self.assertRaises(contract.ContractError):
+                    contract.host_metadata_proof(self.root, self.helper, receipt, self.root, "b" * 40, "c" * 64, record)
+            for key in ("boxferry_revision", "boxferry_source_sha256", "boxferry_lock_sha256",
+                        "docker_lens_revision", "docker_lens_source_sha256", "docker_lens_lock_sha256"):
+                changed = {**record, key: "c" * 64}
+                with self.subTest(key=key), self.assertRaises(contract.ContractError):
+                    contract.host_metadata_proof(self.root, self.helper, receipt, self.root, "b" * 40, digest, changed)
+            changed = {**record, "override_identity": {"path": "different-lens"}}
+            with self.assertRaises(contract.ContractError):
+                contract.host_metadata_proof(self.root, self.helper, receipt, self.root, "b" * 40, digest, changed)
 
 
 class PresenceTests(unittest.TestCase):
@@ -3008,6 +3188,206 @@ class RunnerSafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 124)
         self.assertLess(time.monotonic() - started, 2)
 
+    def readiness_unit(self) -> str:
+        """The production readiness block, without rewriting its branches."""
+        start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
+        return self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+
+    def readiness_socket(self, path: pathlib.Path) -> None:
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        listener.bind(str(path))
+
+    def volume_metadata_case(self, *, record="29.8.1 1.56 unknown /var/lib/docker", status=0,
+                             poll="100.51", handoff="100.52", now="100.53", retry=False,
+                             uid="1:0", lane="upstream-rootful", verify_status=0):
+        """Authored process/clock seams; actual readiness and mode gates execute."""
+        with tempfile.TemporaryDirectory(prefix="boxferry-volume-readiness-") as directory:
+            root = pathlib.Path(directory)
+            path, ledger = root / "socket", root / "calls"
+            self.readiness_socket(path)
+            body = f"""profile=volume-fixtures
+registered=false
+outer=bf-docker-core-test
+run_id=test
+socket_path={shlex.quote(str(path))}
+host_metadata_snapshot=/unused
+host_metadata_binary_sha256=unused
+attempt=0
+record_call() {{ printf '%s\\t%s\\n' "$1" "$2" >> {shlex.quote(str(ledger))}; }}
+read() {{
+  case "$2" in
+    ping_readiness_uptime) ping_readiness_uptime=100.50 ;;
+    ping_poll_uptime) ping_poll_uptime={poll} ;;
+    ping_handoff_uptime) ping_handoff_uptime={handoff} ;;
+    metadata_now) metadata_now={now} ;;
+    *) builtin read "$@" ;;
+  esac
+}}
+bounded() {{
+  if [[ $2 == podman ]]; then
+    record_call inspect "$1"; printf '%s\\n' {str(retry).lower()}; return 0
+  fi
+  if [[ $4 == application-metadata ]]; then
+    record_call metadata "$1"
+    if [[ {str(retry).lower()} == true && $attempt == 0 ]]; then return 1; fi
+    printf '%s\\n' {shlex.quote(record)}; return {status}
+  fi
+  record_call forbidden "$4"; return 99
+}}
+curl() {{ record_call curl forbidden; return 99; }}
+sleep() {{ record_call sleep "$1"; [[ $1 == 2 ]]; attempt=$((attempt + 1)); ((attempt <= 1)); }}
+""" + self.function("readiness_failure") + self.readiness_unit() + f"""
+case $observed_mode in
+  rootless) marker=true ;;
+  rootful) marker=false ;;
+  unknown) marker=unknown ;;
+  *) exit 1 ;;
+esac
+python3 {shlex.quote(str(SOURCE))} verify-docker-root --lane {shlex.quote(lane)} \\
+  --observed "$observed_docker_root" > /dev/null
+python3 {shlex.quote(str(SOURCE))} verify-mode --lane {shlex.quote(lane)} --rootless-marker "$marker" \\
+  --uid-report {shlex.quote(uid)} > /dev/null
+(( {verify_status} == 0 )) || exit 1
+record_call POST approved
+"""
+            result = self.bash(body)
+            calls = [tuple(line.split("\t", 1)) for line in ledger.read_text().splitlines()] if ledger.exists() else []
+            return result, calls
+
+    def test_volume_readiness_requires_only_on_time_closed_success_metadata_and_no_curl(self) -> None:
+        cases = [
+            ({}, True, 1, None),
+            ({"record": "29.8.1 1.56 rootful /var/lib/docker"}, True, 1, None),
+            ({"record": "29.8.1 1.56 rootless /home/docker/.local/share/docker",
+              "lane": "upstream-rootless", "uid": "1:1000"}, True, 1, None),
+            ({"status": 1}, False, 1, "unavailable"),
+            ({"status": 124}, False, 1, "unavailable"),
+            ({"record": "available"}, False, 1, "unavailable"),
+            ({"record": "DO-NOT-PRINT/private"}, False, 1, "unavailable"),
+            ({"record": "29.8.1 1.56 unknown /var/lib/docker extra"}, False, 1, "unavailable"),
+            ({"record": "29.8.1 1.56 unknown /var/lib/docker\nextra"}, False, 1, "unavailable"),
+            ({"handoff": "280.50"}, False, 1, "late"),
+            ({"handoff": "280.51"}, False, 1, "late"),
+            ({"handoff": "invalid"}, False, 1, "unavailable"),
+            ({"poll": "274.90"}, False, 0, "unavailable"),
+            ({"now": "280.50", "status": 1}, False, 1, "late"),
+            ({"record": "29.8.1 1.56 rootless /var/lib/docker"}, False, 1, None),
+            ({"record": "29.8.1 1.56 unknown /var/lib/other"}, False, 1, None),
+            ({"uid": "1:1000"}, False, 1, None),
+            ({"lane": "upstream-rootless", "uid": "1:1000"}, False, 1, None),
+        ]
+        for options, accepted, probes, diagnostic in cases:
+            with self.subTest(options=options):
+                result, calls = self.volume_metadata_case(**options)
+                self.assertEqual(result.returncode, 0 if accepted else 1, result.stderr)
+                self.assertEqual(sum(action == "metadata" for action, _ in calls), probes)
+                self.assertEqual(sum(action == "POST" for action, _ in calls), int(accepted))
+                self.assertFalse(any(action in ("curl", "forbidden") for action, _ in calls))
+                if diagnostic is not None:
+                    self.assertIn(f"application-metadata={diagnostic}", result.stderr)
+                    self.assertIn("ping-curl-exit=not-run ping-http-status=unknown", result.stderr)
+                self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
+
+    def test_volume_metadata_uses_original_boottime_budget_reserve_and_retry_cadence(self) -> None:
+        result, calls = self.volume_metadata_case(poll="271.90", handoff="272.10")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [("metadata", "3s"), ("POST", "approved")])
+        result, calls = self.volume_metadata_case(retry=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [("metadata", "5s"), ("inspect", "15s"), ("sleep", "2"),
+                                 ("metadata", "5s"), ("POST", "approved")])
+        volume = self.readiness_unit().split('  elif [[ -S $socket_path ]]; then', 1)[0]
+        self.assertIn('ping_readiness_deadline="$((10#${ping_readiness_uptime%.*} + 180)).${ping_readiness_uptime#*.}"', volume)
+        self.assertIn(' - 1 - 5))', volume)
+        self.assertNotIn("SECONDS", volume[volume.index("while true; do"):])
+        self.assertNotIn("time.monotonic", volume)
+        self.assertIn("--kill-after=5s", self.function("bounded"))
+        self.assertIn("guard_alive || return 125", self.function("bounded"))
+
+    def test_real_application_metadata_result_passes_volume_gate_without_launching_curl(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as directory:
+            root = pathlib.Path(directory)
+            root.chmod(0o700)
+            run = root.name.removeprefix("boxferry-docker-core.")
+            path = root / "socket/docker.sock"
+            path.parent.mkdir()
+            self.readiness_socket(path)
+            helper = root / "boxferry-host-metadata"
+            helper.write_text("#!/bin/sh\nprintf '20.10.5 1.41 1.41 unknown\\n'\n", encoding="ascii")
+            helper.chmod(0o500)
+            native = root / "podman"
+            native.write_text("""#!/bin/sh
+case "$6" in
+  version) printf '20.10.5 1.41\\n' ;;
+  info) printf '20.10.5\\n/var/lib/docker\\nname=seccomp,profile=builtin\\n' ;;
+  *) exit 99 ;;
+esac
+""", encoding="ascii")
+            native.chmod(0o700)
+            curl_calls = root / "curl-calls"
+            curl = root / "curl"
+            curl.write_text(f"#!/bin/sh\nprintf 'unexpected' > {shlex.quote(str(curl_calls))}\nexit 99\n", encoding="ascii")
+            curl.chmod(0o700)
+            body = f"""PATH={shlex.quote(directory)}:"$PATH"
+profile=volume-fixtures
+registered=false
+outer=bf-docker-core-{run}
+run_id={run}
+socket_path={shlex.quote(str(path))}
+host_metadata_snapshot={shlex.quote(str(helper))}
+host_metadata_binary_sha256={hashlib.sha256(helper.read_bytes()).hexdigest()}
+contract={shlex.quote(str(SOURCE))}
+bounded() {{ shift; "$@"; }}
+sleep() {{ return 99; }}
+""" + self.function("readiness_failure") + self.readiness_unit() + """
+printf '%s %s %s %s\\n' "$observed_release" "$observed_api" "$observed_mode" "$observed_docker_root"
+"""
+            result = self.bash(body)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "20.10.5 1.41 unknown /var/lib/docker\n")
+            self.assertFalse(curl_calls.exists())
+
+    def test_volume_helper_binding_drift_blocks_apply_and_final_proof(self) -> None:
+        for status, proof, accepted in ((0, "initial", True), (1, "initial", False),
+                                        (124, "initial", False), (0, "changed", False)):
+            with self.subTest(status=status, proof=proof):
+                body = f"""boxferry_root=/unused
+host_metadata_binary=/unused
+host_metadata_receipt=/unused
+host_metadata_sha256=unused
+lens_root=/unused
+lens_revision=unused
+host_metadata_proof=initial
+helper_identity_args=()
+bounded() {{
+  [[ $1 == 30s && $4 == verify-host-metadata ]] || return 99
+  printf '%s' {shlex.quote(proof)}; return {status}
+}}
+""" + self.function("verify_host_metadata_binding") + """
+verify_host_metadata_binding
+printf 'POST-approved\\n'
+"""
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 0 if accepted else 1)
+                self.assertEqual(result.stdout, "POST-approved\n" if accepted else "")
+        self.assertIn("verify_host_metadata_binding\n  volume_apply_attempted=true", self.runner)
+        self.assertIn("verify_host_metadata_binding || return 1", self.function("finish_volume_evidence"))
+
+    def test_other_profiles_preserve_curl_metadata_and_historical_observer(self) -> None:
+        block = self.readiness_unit()
+        volume, original = block.split('  elif [[ -S $socket_path ]]; then', 1)
+        self.assertNotIn("readiness-ping", volume)
+        self.assertNotIn("application-metadata", original)
+        self.assertIn('python3 "$contract" readiness-ping', original)
+        self.assertIn('python3 "$comparison" box', original)
+        self.assertIn('python3 "$comparison" native-ready', original)
+        metadata = self.runner[self.runner.index('\nchmod 0666 "$socket_path"'):self.runner.index('\npython3 "$contract" verify-docker-root')]
+        self.assertRegex(metadata, r'if \[\[ \$profile == volume-fixtures \]\]; then')
+        self.assertIn('else\n  version_json=$(curl ', metadata)
+        self.assertIn('info_json=$(curl ', metadata)
+        self.assertEqual(len(self.curl_statements()), 4)
+
     def test_volume_evidence_handoff_requires_all_gates_and_revokes_failed_or_interrupted_write(self) -> None:
         for status, interrupted in ((0, False), (1, False), (0, True)):
             body = """cleanup_interrupted=false
@@ -3024,6 +3404,7 @@ lens_root=/unused
 lens_revision=unused
 script_sha=unused
 trap 'cleanup_interrupted=true' HUP INT TERM
+verify_host_metadata_binding() { :; }
 """ + self.function("finish_volume_evidence") + f"""
 bounded() {{
   [[ $1 == 30s && $4 == write-volume-evidence ]] || return 99
@@ -3088,6 +3469,7 @@ lens_root=unused
 lens_revision=unused
 script_sha=unused
 report_host_cache() {{ :; }}
+verify_host_metadata_binding() {{ :; }}
 trap 'cleanup_interrupted=true' HUP INT TERM
 bounded() {{
   [[ $1 == 30s && $4 == write-volume-evidence ]] || return 99
@@ -3278,7 +3660,14 @@ outer=bf-docker-core-test
 run_id=test
 socket_path={shlex.quote(str(sentinel))}
 contract=unused
+host_metadata_snapshot=/unused
+host_metadata_binary_sha256=unused
 SECONDS=0
+read() {{
+  if [[ $2 == metadata_now && {str(reason == "timeout").lower()} == true ]]; then
+    metadata_now="$ping_readiness_deadline"
+  else builtin read "$@"; fi
+}}
 cleanup_owned() {{ printf 'exact-owned-teardown\\n' >&2; }}
 trap cleanup_owned EXIT
 curl() {{
@@ -3308,7 +3697,7 @@ bounded() {{
                     self.assertNotIn("DO-NOT-PRINT", result.stdout + result.stderr)
                     self.assertNotIn("private-error-path", result.stdout + result.stderr)
                     self.assertNotIn("CHECKS-PASSED", result.stdout + result.stderr)
-                    self.assertEqual(result.stderr.count("readiness observations:"), 1)
+                    self.assertEqual(result.stderr.count("readiness observations:"), 2 if profile == "volume-fixtures" else 1)
     def test_failed_ping_poll_records_only_existing_curl_exit_and_fixed_http_status(self) -> None:
         start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
         readiness = self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
@@ -3320,7 +3709,7 @@ bounded() {{
                  ("malformed-http", 7, "DO-NOT-PRINT/private-http", True, "7", "unknown"),
                  ("http-newline", 7, "000\n", True, "7", "unknown"),
                  ("missing-socket", 7, "000", False, "not-run", "unknown"))
-        for profile in ("core-journey", "volume-fixtures"):
+        for profile in ("core-journey", "replay-probe"):
             for reason, status, http, socket_exists, expected_exit, expected_http in cases:
                 with self.subTest(profile=profile, reason=reason), \
                         tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:

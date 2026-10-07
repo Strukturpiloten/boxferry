@@ -9,12 +9,13 @@ contract="${script_dir}/lib/docker-application-contract.py"
 comparison="${script_dir}/lib/readiness-comparison.py"
 profile='' lane='' lens_root='' lens_revision='' script_sha='' artifact='' artifact_sha256='' api_version=''
 boxferry_root='' boxferry_binary='' boxferry_receipt=''
+host_metadata_binary='' host_metadata_receipt='' host_metadata_sha256='' host_metadata_proof=''
 evidence_directory='' evidence_identity='' volume_input_proof='' volume_cleanup_proof=''
 diagnostic_directory='' expected_pid_namespace='' comparison_initialized=false comparison_baseline=false
 comparison_bracketed=false comparison_origin=''
 
 usage() {
-  printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures|readiness-comparison} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--evidence-directory PATH (volume-fixtures only)] [--diagnostic-directory PATH --expected-pid-namespace DEV:INO (readiness-comparison only)]\n' "$0" >&2
+  printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures|readiness-comparison} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--host-metadata-binary PATH --host-metadata-receipt PATH --evidence-directory PATH (volume-fixtures only)] [--diagnostic-directory PATH --expected-pid-namespace DEV:INO (readiness-comparison only)]\n' "$0" >&2
   exit 2
 }
 
@@ -31,6 +32,8 @@ while (($#)); do
     --boxferry-root) boxferry_root=$2 ;;
     --boxferry-binary) boxferry_binary=$2 ;;
     --boxferry-receipt) boxferry_receipt=$2 ;;
+    --host-metadata-binary) host_metadata_binary=$2 ;;
+    --host-metadata-receipt) host_metadata_receipt=$2 ;;
     --evidence-directory) evidence_directory=$2 ;;
     --diagnostic-directory) diagnostic_directory=$2 ;;
     --expected-pid-namespace) expected_pid_namespace=$2 ;;
@@ -48,9 +51,9 @@ else
   [[ -z $diagnostic_directory && -z $expected_pid_namespace ]] || usage
 fi
 if [[ $profile == volume-fixtures ]]; then
-  [[ -n $evidence_directory ]] || usage
+  [[ -n $evidence_directory && -n $host_metadata_binary && -n $host_metadata_receipt ]] || usage
 else
-  [[ -z $evidence_directory ]] || usage
+  [[ -z $evidence_directory && -z $host_metadata_binary && -z $host_metadata_receipt ]] || usage
 fi
 for tool in python3 git; do command -v "$tool" > /dev/null || {
   printf 'missing required tool: %s\n' "$tool" >&2
@@ -75,6 +78,14 @@ if [[ $profile == core-journey || $profile == volume-fixtures ]]; then
     --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" --profile "$profile" > /dev/null
 elif [[ $profile != readiness-comparison ]]; then
   [[ -n $artifact && -z $boxferry_root && -z $boxferry_binary && -z $boxferry_receipt ]] || usage
+fi
+if [[ $profile == volume-fixtures ]]; then
+  host_metadata_sha256=$(python3 "$contract" artifact-identity --artifact "$host_metadata_receipt")
+  helper_identity_args=(--producer-receipt "$boxferry_receipt")
+  host_metadata_proof=$(python3 "$contract" verify-host-metadata --boxferry-root "$boxferry_root" \
+    --binary "$host_metadata_binary" --receipt "$host_metadata_receipt" --receipt-sha256 "$host_metadata_sha256" \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" "${helper_identity_args[@]}")
+  host_metadata_binary_sha256=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["binary_sha256"])' <<< "$host_metadata_proof")
 fi
 case "$lane" in
   debian11-rootful | debian11-rootless | upstream-rootful | upstream-rootless) ;;
@@ -170,6 +181,11 @@ readiness_failure() {
     *) teardown_signal=unknown ;;
   esac
   printf '%s\n' "$1" >&2
+  if [[ $profile == volume-fixtures ]]; then
+    local metadata_status=${application_metadata_status:-unavailable}
+    case $metadata_status in unavailable | late) ;; *) metadata_status=unavailable ;; esac
+    printf 'readiness observations: application-metadata=%s; startup-cause=unestablished\n' "$metadata_status" >&2
+  fi
   # Observation only, before EXIT teardown; bounded() preserves cleanup reserve.
   if [[ $registered == true ]]; then
     bounded 12s python3 "$contract" readiness-diagnostics --registered \
@@ -220,6 +236,7 @@ finish_volume_evidence() {
   local write_status=0
   [[ ${cleanup_interrupted:-true} == false && $registered == true &&
     -n $volume_input_proof && -n $volume_cleanup_proof ]] || return 1
+  verify_host_metadata_binding || return 1
   # Keep the interruption trap through the private evidence handoff. The writer
   # repeats final candidate/receipt/native validation after all resource closure.
   evidence_file_identity=$(bounded 30s python3 "$contract" write-volume-evidence \
@@ -237,6 +254,19 @@ finish_volume_evidence() {
     printf 'volume evidence handoff failed or interrupted; no acceptance recorded\n' >&2
     return 1
   fi
+}
+verify_host_metadata_binding() {
+  local observed
+  if ! observed=$(bounded 30s python3 "$contract" verify-host-metadata --boxferry-root "$boxferry_root" \
+    --binary "$host_metadata_binary" --receipt "$host_metadata_receipt" --receipt-sha256 "$host_metadata_sha256" \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" "${helper_identity_args[@]}"); then
+    printf 'host metadata attestation unavailable; no acceptance recorded\n' >&2
+    return 1
+  fi
+  [[ $observed == "$host_metadata_proof" ]] || {
+    printf 'host metadata attestation changed; no acceptance recorded\n' >&2
+    return 1
+  }
 }
 cleanup_owned() {
   local failure=0 observed state inner_status now monitor_joined=true
@@ -484,6 +514,14 @@ outer="bf-docker-core-${run_id}"
 storage_volume="bf-docker-core-data-${run_id}"
 socket_dir="$run_dir/socket"
 socket_path="$socket_dir/docker.sock"
+if [[ $profile == volume-fixtures ]]; then
+  host_metadata_snapshot="$run_dir/boxferry-host-metadata"
+  bounded 45s python3 "$contract" capture-candidate --boxferry-root "$boxferry_root" \
+    --binary "$host_metadata_binary" --receipt "$host_metadata_receipt" \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+    --profile host-metadata --destination "$host_metadata_snapshot" > /dev/null
+  verify_host_metadata_binding
+fi
 python3 "$contract" parent-alive --parent-pid "$main_pid" --parent-start "$main_start"
 python3 "$contract" deadline-guard --parent-pid "$main_pid" --parent-start "$main_start" \
   --execution-seconds 780 --cleanup-seconds 120 --ready-file "$run_dir/deadline-guard-ready" &
@@ -746,6 +784,7 @@ ping_curl_error=unknown
 ping_collector=not-run
 ping_teardown_signal=not-run
 ping_wrapper_seconds=5
+application_metadata_status=unavailable
 comparison_native_poll() {
   local phase=$1 now native_wrapper_seconds poll_status=0
   read -r now _ < /proc/uptime
@@ -761,7 +800,34 @@ comparison_native_poll() {
   return "$poll_status"
 }
 while true; do
-  if [[ -S $socket_path ]]; then
+  if [[ $profile == volume-fixtures && -S $socket_path ]]; then
+    # The metadata probe shares the original BOOTTIME deadline and the existing
+    # wrapper's five-second KILL reserve.
+    read -r ping_poll_uptime _ < /proc/uptime
+    [[ $ping_poll_uptime =~ ^[0-9]{1,12}\.[0-9]{2}$ ]] || exit 1
+    ping_wrapper_seconds=$((10#${ping_readiness_deadline%.*} - 10#${ping_poll_uptime%.*} - 1 - 5))
+    if ((ping_wrapper_seconds > 0)); then
+      ((ping_wrapper_seconds <= 5)) || ping_wrapper_seconds=5
+      application_metadata_record='' metadata_wrapper_status=0
+      application_metadata_status=unavailable
+      application_metadata_record=$(bounded "${ping_wrapper_seconds}s" python3 "$contract" application-metadata \
+        --outer "$outer" --run "$run_id" --socket "$socket_path" --helper "$host_metadata_snapshot" \
+        --binary-sha256 "$host_metadata_binary_sha256" \
+        --deadline-boottime "$ping_readiness_deadline" 2> /dev/null) || metadata_wrapper_status=$?
+      # Exit zero, closed fields and a strictly on-time handoff are all required.
+      if ! read -r ping_handoff_uptime _ < /proc/uptime ||
+        [[ ! $ping_handoff_uptime =~ ^[0-9]{1,12}\.[0-9]{2}$ ]]; then
+        ping_wrapper_seconds=0
+      elif ((10#${ping_handoff_uptime%.*} * 100 + 10#${ping_handoff_uptime#*.} >= \
+        10#${ping_readiness_deadline%.*} * 100 + 10#${ping_readiness_deadline#*.})); then
+        application_metadata_status=late ping_wrapper_seconds=0
+      elif ((metadata_wrapper_status == 0)) &&
+        [[ $application_metadata_record =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(\+dfsg1)?\ 1\.[4-9][0-9]\ (rootful|rootless|unknown)\ /[A-Za-z0-9_./-]{1,128}$ ]]; then
+        read -r observed_release observed_api observed_mode observed_docker_root <<< "$application_metadata_record"
+        break
+      fi
+    fi
+  elif [[ -S $socket_path ]]; then
     # The existing wrapper's five-second KILL reserve belongs inside readiness.
     # An exhausted reserve preserves the last actual poll instead of replacing it.
     read -r ping_poll_uptime _ < /proc/uptime
@@ -836,11 +902,22 @@ while true; do
       break
     fi
   fi
-  ((SECONDS < deadline && ping_wrapper_seconds > 0)) || {
+  readiness_budget_available=true
+  if [[ $profile == volume-fixtures ]]; then
+    read -r metadata_now _ < /proc/uptime
+    [[ $metadata_now =~ ^[0-9]{1,12}\.[0-9]{2}$ ]] || exit 1
+    if ((10#${metadata_now%.*} * 100 + 10#${metadata_now#*.} >= \
+      10#${ping_readiness_deadline%.*} * 100 + 10#${ping_readiness_deadline#*.})); then
+      application_metadata_status=late readiness_budget_available=false
+    fi
+  elif ((SECONDS >= deadline)); then
+    readiness_budget_available=false
+  fi
+  if [[ $readiness_budget_available != true ]] || ((ping_wrapper_seconds <= 0)); then
     [[ $profile != readiness-comparison ]] || break
     readiness_failure 'nested Docker daemon did not become ready'
     exit 1
-  }
+  fi
   [[ $(bounded 15s podman inspect --format '{{.State.Running}}' "$outer" 2> /dev/null) == true ]] || {
     readiness_failure 'outer Docker daemon exited before readiness'
     exit 1
@@ -877,12 +954,22 @@ if [[ $profile == readiness-comparison ]]; then
   exit 0
 fi
 chmod 0666 "$socket_path"
-version_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/version)
-info_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/info)
-observed_release=$(jq -er '.Version' <<< "$version_json")
-observed_api=$(jq -er '.ApiVersion' <<< "$version_json")
-observed_rootless=$(jq -r '(.Rootless == true) or any(.SecurityOptions[]?; . == "name=rootless" or startswith("name=rootless,"))' <<< "$info_json")
-observed_docker_root=$(jq -er '.DockerRootDir' <<< "$info_json")
+if [[ $profile == volume-fixtures ]]; then
+  case $observed_mode in
+    rootless) observed_rootless=true ;;
+    rootful) observed_rootless=false ;;
+    unknown) observed_rootless=unknown ;;
+    *) exit 1 ;;
+  esac
+  verify_host_metadata_binding
+else
+  version_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/version)
+  info_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/info)
+  observed_release=$(jq -er '.Version' <<< "$version_json")
+  observed_api=$(jq -er '.ApiVersion' <<< "$version_json")
+  observed_rootless=$(jq -r '(.Rootless == true) or any(.SecurityOptions[]?; . == "name=rootless" or startswith("name=rootless,"))' <<< "$info_json")
+  observed_docker_root=$(jq -er '.DockerRootDir' <<< "$info_json")
+fi
 python3 "$contract" verify-docker-root --lane "$lane" --observed "$observed_docker_root" > /dev/null
 # These variables expand only in the isolated guest shell, never on the host.
 # shellcheck disable=SC2016
@@ -915,6 +1002,7 @@ if [[ $profile == volume-fixtures ]]; then
     printf 'volume candidate receipt bytes changed; refusing apply\n' >&2
     exit 1
   }
+  verify_host_metadata_binding
   volume_apply_attempted=true
   bounded 45s python3 "$contract" apply-volume-fixtures --allow-isolated-apply \
     --directory "$run_dir/volume-output" --boxferry-root "$boxferry_root" \
@@ -929,6 +1017,7 @@ if [[ $profile == volume-fixtures ]]; then
     printf 'volume candidate receipt bytes changed; refusing closure\n' >&2
     exit 1
   }
+  verify_host_metadata_binding
   python3 "$contract" validate-volume-fixtures --directory "$run_dir/volume-output" \
     --boxferry-root "$boxferry_root" --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
     --receipt-sha256 "$receipt_sha256" --api-version "$api_version" --catalogue-json "$catalogue" > /dev/null
