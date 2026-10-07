@@ -76,6 +76,78 @@ six-application acceptance or the complete repository gate. No operational image
 tool, dependency pin or Renovate definition is added or moved: the canonical
 DockerLens image assignments and their existing managers remain authoritative.
 
+## Volume-only metadata readiness
+
+Only `volume-fixtures` uses `application-metadata` as its primary readiness
+probe. This removes the host curl ping and subsequent host curl version/info
+reads from this profile. Core/replay retain their original curl readiness and
+metadata reads; the historical `readiness-comparison` observer, phases and
+five-field curl observations are unchanged.
+
+The volume caller must supply `--host-metadata-binary` and
+`--host-metadata-receipt` as well as its producer inputs. Other profiles reject
+those options. The existing schema-2 receipt verifier now admits the independently
+selected helper recipe:
+
+```text
+cargo build --locked --package boxferry --example docker-host-metadata --no-default-features --features docker --jobs 2 --config 'patch.crates-io.docker-lens.path="CLEAN_ABS_LENS"'
+```
+
+This is a preparatory harness port of the reviewed candidate metadata boundary,
+not delivery of that example or a Docker product API. Runtime use still requires
+the matching independently reviewed candidate helper and producer. It adds no Rust
+example, public API, package feature, dependency or unpublished dependency to this
+checkout. It does not establish live acceptance or resolve other candidate gates.
+The helper receipt binds actual source, lockfile, revision, override and binary
+bytes to the same producer and exact clean DockerLens checkout. Its initial
+receipt digest is checked against the same bytes used for verification. A bounded
+copy creates only the run-owned mode-0500 `boxferry-host-metadata` snapshot;
+each metadata poll verifies its digest before execution. Receipt/source/lock/helper
+bindings are rechecked after snapshotting, before volume apply, after apply and
+before writing the existing final closure proof.
+
+The command reads the isolated guest's Docker CLI `version` SERVER fields and
+`info` SERVER release, data root and security options, then reads through the
+attested helper's read-only DockerLens boundary. Client-only output, nonzero,
+unavailable, truncated or late reads, CLI/Lens release/API/rootless disagreement,
+wrong negotiated acquisition API, changed helper bytes and malformed/private
+output fail closed. Only exit zero and the complete closed four-field result
+`release advertised-api mode data-root` can complete readiness; the word
+`available` is not a result. An unknown Lens mode remains unknown, and the
+downstream process-UID gate admits it only for a rootful lane with exactly one
+UID-0 dockerd. Rootless requires positive independent rootless confirmation.
+
+The original 180-second BOOTTIME deadline is shared by all retries and the
+strictly earlier final handoff. Each wrapper retains its five-second TERM limit
+and five-second KILL reserve inside that deadline, rounding remaining time down;
+late launch or completion cannot reset the budget. The volume retry decision
+uses the same BOOTTIME clock, retains the two-second cadence and still requires
+the outer daemon to be running. Parent/deadline guards, storage watchdog and
+execution/cleanup reserves remain mandatory. Failure reports metadata as
+`unavailable` or `late`; curl stays `not-run` with unknown HTTP status.
+Read-only failure diagnostics and exact-owned teardown remain mandatory.
+
+Successful metadata readiness still precedes every existing data-root, process
+mode, installed-package, release/API, catalogue, producer/receipt/source and
+23-request/body validation. It cannot authorize a POST by itself. Volume
+ownership, inner absence, outer/storage cleanup and schema-1 closure proof are
+unchanged. No host policy, AppArmor profile, daemon configuration or privilege
+setting is modified by this readiness change.
+
+Independent offline controls exercise the real metadata command with authored
+CLI/helper processes, actual socket inodes and a no-curl sentinel, plus failed
+status, wrapper 124, exact/late handoff, malformed/private/unavailable output,
+CLI/Lens disagreement, wrong mode, receipt/source/lock/helper drift, original
+budget/reserve/retry behavior and downstream identity/all-23-body refusals before
+any POST. These are development controls, not live Docker oracle evidence.
+The existing canonical `scripts/test-application-probes.sh` registration and
+local/PR/main/dispatch/Release consumers need no definition change. This remains
+a BoxFerry-only application test boundary; Lens native suites are independent.
+No tool, image, package, Action, workflow, operational pin or extraction path
+changes. Existing Renovate ownership, grouping, approvals and historical
+evidence remain authoritative; the four changed paths match no current custom
+manager pattern.
+
 ## Private volume-only closure proof
 
 `volume-fixtures` requires `--evidence-directory`: an existing, empty, canonical,
@@ -181,7 +253,8 @@ The unchanged 180-second private-socket readiness timeout and early outer-daemon
 exit path collect read-only observations before mandatory teardown. Diagnostics
 never turn that original failure into success, retry a lane, repair the host,
 change launcher privileges or establish a startup cause. Core and volume profiles
-share this same boundary; their native/application acceptance remains unchanged.
+share this diagnostic/cleanup boundary; volume readiness uses the independently
+attested metadata probe described above. Native/application acceptance is unchanged.
 
 Only an explicitly registered outer name/run can be observed. Socket metadata is
 limited to the exact run-private `/tmp/boxferry-docker-core.<run>/socket/docker.sock`
