@@ -780,6 +780,7 @@ reimport_argument_log="${test_root}/reimport-semantics.tsv"
 bash -c '
   set -Eeuo pipefail
   source "$1"
+  repository_root="$(cd -- "$(dirname -- "$1")/../.." && pwd -P)"
   current_case=$2
   argument_log=$3
   boxferry_bin=unused
@@ -808,6 +809,17 @@ bash -c '
       "$8" =~ ^(cli|compose)$ ]]
   }
   supabase_assert_output_membership() { :; }
+  # This seam verifies all command arguments, not physical source documents.
+  # The independent inventory and physical-reimport controls below own that proof.
+  supabase_assert_realtime_output_aliases() {
+    [[ "$#" == 4 && "$1" == quadlet && "$3" == test-prefix &&
+      "$4" =~ ^(cli|compose)$ ]]
+  }
+  supabase_protected_service_alias_inventory() {
+    [[ "$#" == 3 && "$1" =~ ^(cli|compose)$ && "$3" == test-prefix &&
+      "$2" == "${current_case}/outputs/"* ]]
+    printf "%s\n" "{\"subjects\":[],\"source_sha256\":\"argument-only-mock\"}"
+  }
   supabase_assert_direct_export_environment() {
     [[ "$#" == 3 && "$1" =~ ^(compose|quadlet|podman)$ &&
       "$2" == "${current_case}/reimports/"* && "$3" == test-prefix ]]
@@ -3445,3 +3457,163 @@ while True:
 PY
 
 printf '%s\n' 'Supabase application timeout-boundary regression tests passed.'
+
+# Closed negative report controls are independent of the live runtime and its source assertions.
+python3 - "${script_directory}/lib/supabase-application.sh" "${test_root}" << 'PY'
+import ast
+import copy
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+library, root = Path(sys.argv[1]), Path(sys.argv[2])
+ast.parse((library.parent / "protected-service-alias-contract.py").read_text())
+destination = root / "supabase-alias-refusal-output"
+report_path = root / "supabase-alias-refusal-report.json"
+subjects = ["services.fixture.networks.backend.aliases[0]", "services.fixture.networks.backend.aliases[1]"]
+inventory = {"subjects": subjects, "source_sha256": "a" * 64}
+expected = {"diagnostics": [], "fidelity": {"approximate": 0, "unsupported": 0, "invalid": 0, "other": 0}}
+reason = "protected network aliases cannot retain sensitivity in fresh Compose text; keep protected alias configuration outside this generated document"
+help_text = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
+report = {"schema_version": 1, "status": "blocked", "exit_category": "policy-blocked",
+          "source_type": "quadlet", "target_type": "compose", "fix_first": {"code": "BFC0007", "help": help_text},
+          "output_artifacts": [], "fidelity": {"exact": 0, "approximate": 0, "unsupported": 2, "invalid": 0, "other": 0},
+          "diagnostics": [{"code": "BFC0007", "severity": "warning", "name": "Unsupported", "help": help_text,
+                           "fields": [{"name": "subject", "value": subject}, {"name": "reason", "value": reason}]}
+                          for subject in subjects]}
+def accepted(value, write_report=True):
+    if write_report:
+        report_path.write_text(json.dumps(value))
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; supabase_assert_protected_service_alias_refusal "$2" "$3" "$4" "$5"',
+         "refusal-control", str(library), str(report_path), str(destination),
+         json.dumps(inventory), json.dumps(expected)], capture_output=True, check=False, timeout=5)
+    assert "protected-alias-canary-never-print" not in (result.stdout + result.stderr).decode()
+    assert "unexpected-private-value" not in (result.stdout + result.stderr).decode()
+    assert "Traceback" not in result.stderr.decode()
+    return result.returncode == 0
+assert accepted(report)
+for fault in ("missing", "duplicate", "reordered", "extra", "wrong-code", "wrong-subject",
+              "wrong-severity", "wrong-reason", "wrong-help", "missing-help", "wrong-fix-help", "missing-fix-help",
+              "wrong-fix-code", "missing-fix", "source-type", "target-type", "status", "exit", "fidelity", "output", "leak", "extra-field"):
+    changed = copy.deepcopy(report)
+    if fault == "missing": changed["diagnostics"].pop()
+    elif fault == "duplicate": changed["diagnostics"].append(changed["diagnostics"][0])
+    elif fault == "reordered": changed["diagnostics"].reverse()
+    elif fault == "extra": changed["diagnostics"].append({"code": "BFC0007", "severity": "warning", "name": "Unsupported",
+        "fields": [{"name":"subject", "value":"services.other.networks.backend.aliases[0]"}, {"name":"reason", "value":reason}]})
+    elif fault == "wrong-code": changed["diagnostics"][0]["code"] = "BFP0007"
+    elif fault == "wrong-subject": changed["diagnostics"][0]["fields"][0]["value"] = "services.fixture.networks.backend.aliases[2]"
+    elif fault == "wrong-severity": changed["diagnostics"][0]["severity"] = "error"
+    elif fault == "wrong-reason": changed["diagnostics"][0]["fields"][1]["value"] = "omit aliases"
+    elif fault == "wrong-help": changed["diagnostics"][0]["help"] = "use --loss-policy partial"
+    elif fault == "missing-help": del changed["diagnostics"][0]["help"]
+    elif fault == "wrong-fix-help": changed["fix_first"]["help"] = "use --loss-policy partial"
+    elif fault == "missing-fix-help": del changed["fix_first"]["help"]
+    elif fault == "wrong-fix-code": changed["fix_first"]["code"] = "BFP0007"
+    elif fault == "missing-fix": del changed["fix_first"]
+    elif fault == "source-type": changed["source_type"] = "podman"
+    elif fault == "target-type": changed["target_type"] = "quadlet"
+    elif fault == "status": changed["status"] = "success"
+    elif fault == "exit": changed["exit_category"] = "success"
+    elif fault == "fidelity": changed["fidelity"]["unsupported"] = 1
+    elif fault == "output": changed["output_artifacts"] = [{"name":"compose.yaml"}]
+    elif fault == "leak": changed["diagnostics"][0]["fields"][1]["value"] += " protected-alias-canary-never-print"
+    elif fault == "extra-field": changed["diagnostics"][0]["fields"].append({"name":"native_value", "value":"unexpected-private-value"})
+    assert not accepted(changed), fault
+destination.mkdir()
+(destination / "compose.yaml").write_text("---\n")
+assert not accepted(report), "unreported accidental output"
+(destination / "compose.yaml").unlink()
+destination.rmdir()
+live_destination = root / "supabase-alias-refusal-live-empty-directory"
+live_destination.mkdir()
+for fault in ("dangling-symlink", "live-empty-directory-symlink", "empty-directory"):
+    if fault == "dangling-symlink": destination.symlink_to(root / "protected-alias-canary-never-print-absent")
+    elif fault == "live-empty-directory-symlink": destination.symlink_to(live_destination, target_is_directory=True)
+    else: destination.mkdir()
+    assert not accepted(report), fault
+    if fault == "empty-directory": destination.rmdir()
+    else: destination.unlink()
+assert accepted(report), "absent destination keeps refusal control valid"
+report_target = root / "supabase-alias-refusal-regular-report.json"
+report_target.write_text(json.dumps(report))
+for fault in ("report-fifo", "report-symlink", "report-oversized"):
+    report_path.unlink()
+    if fault == "report-fifo": os.mkfifo(report_path)
+    elif fault == "report-symlink": report_path.symlink_to(report_target)
+    else: report_path.write_bytes(b"x" * 8388609)
+    assert not accepted(report, write_report=False), fault
+    report_path.unlink()
+    report_path.write_text(json.dumps(report))
+assert accepted(report), "regular bounded report keeps refusal control valid"
+PY
+
+python3 - "${library}" "${test_root}" << 'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+library, root = Path(sys.argv[1]), Path(sys.argv[2])
+source = root / "ordered-service-aliases"
+source.mkdir()
+unit = source / "test-supabase-realtime.container"
+literal = "[Container]\nImage=example.invalid/realtime:1\nNetwork=test-supabase-backend.network\nNetworkAlias=realtime-dev.supabase-realtime\nNetworkAlias=realtime\n"
+def inventory(mode="cli"):
+    return subprocess.run(["bash", "-c", 'source "$1"; supabase_protected_service_alias_inventory "$3" "$2" test',
+        "inventory-control", str(library), str(source), mode], capture_output=True, check=False, timeout=5)
+unit.write_text(literal)
+good = inventory()
+assert good.returncode == 0
+assert json.loads(good.stdout)["subjects"] == [
+    "services.test-supabase-realtime.networks.test-supabase-backend.aliases[0]",
+    "services.test-supabase-realtime.networks.test-supabase-backend.aliases[1]"]
+for changed in (
+    literal.replace("NetworkAlias=realtime\n", ""),
+    literal.replace("NetworkAlias=realtime\n", "NetworkAlias=realtime\nNetworkAlias=realtime\n"),
+    literal.replace("NetworkAlias=realtime-dev.supabase-realtime\nNetworkAlias=realtime\n",
+                    "NetworkAlias=realtime\nNetworkAlias=realtime-dev.supabase-realtime\n"),
+    literal.replace("Network=test-supabase-backend.network", "Network=unexpected.network"),
+    literal.replace("realtime-dev.supabase-realtime", "protected-alias-canary-never-print"),
+):
+    unit.write_text(changed)
+    result = inventory()
+    assert result.returncode != 0
+    assert b"protected-alias-canary-never-print" not in result.stdout + result.stderr
+for fault in ("fifo", "directory", "symlink", "empty", "oversized", "invalid-utf8"):
+    unit.unlink()
+    if fault == "fifo": os.mkfifo(unit)
+    elif fault == "directory": unit.mkdir()
+    elif fault == "symlink": unit.symlink_to(root / "protected-alias-canary-never-print")
+    elif fault == "empty": unit.write_bytes(b"")
+    elif fault == "oversized": unit.write_bytes(b"x" * 1048577)
+    elif fault == "invalid-utf8": unit.write_bytes(b"protected-alias-canary-never-print\xff")
+    result = inventory()
+    assert result.returncode != 0 and result.stdout == b"", fault
+    assert b"Traceback" not in result.stderr, fault
+    assert b"protected-alias-canary-never-print" not in result.stderr, fault
+    if fault == "directory": unit.rmdir()
+    else: unit.unlink()
+    unit.write_text(literal)
+compose_literal = literal.replace("NetworkAlias=realtime-dev.supabase-realtime\nNetworkAlias=realtime\n",
+    "NetworkAlias=test-supabase-realtime\nNetworkAlias=realtime\nNetworkAlias=realtime-dev.supabase-realtime\n")
+unit.write_text(compose_literal)
+compose_good = inventory("compose")
+assert compose_good.returncode == 0
+assert json.loads(compose_good.stdout)["subjects"] == [
+    f"services.test-supabase-realtime.networks.test-supabase-backend.aliases[{index}]" for index in range(3)]
+unit.write_text(compose_literal.replace("NetworkAlias=realtime\nNetworkAlias=realtime-dev.supabase-realtime\n",
+    "NetworkAlias=realtime-dev.supabase-realtime\nNetworkAlias=realtime\n"))
+assert inventory("compose").returncode != 0, "Compose-mode alias order changed"
+unit.unlink()
+# A service without aliases stays positive; pod/group aliases are not service obligations.
+(source / "test-supabase-kong.container").write_text(
+    "[Container]\nImage=example.invalid/kong:1\nNetwork=test-supabase-backend.network\nNetwork=test-supabase-edge\n[Pod]\nNetworkAlias=group-only\n")
+(source / "group.pod").write_text("[Pod]\nNetworkAlias=group-only\n")
+zero = inventory()
+assert zero.returncode == 0 and json.loads(zero.stdout)["subjects"] == []
+PY

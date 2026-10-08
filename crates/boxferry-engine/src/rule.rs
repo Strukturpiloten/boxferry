@@ -213,7 +213,7 @@ pub const RULES: &[DiagnosticRule] = &[
         "compose-output-unsupported",
         Warning,
         "Neutral application intent is not represented in generated Compose output.",
-        "Review the named subject; use --loss-policy partial only when the omitted intent is acceptable."
+        "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
     ),
     rule!(
         ComposeGenerationFailed,
@@ -732,6 +732,15 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{RULES, RuleId, find_rule};
+
+    #[test]
+    fn compose_output_help_distinguishes_privacy_refusal_from_authorized_omission() {
+        let help = RuleId::ComposeOutputUnsupported.definition().help();
+        assert!(help.contains("Protected service network aliases block every loss policy"));
+        assert!(help.contains("keep private alias configuration outside the generated document"));
+        assert!(help.contains("Otherwise, use --loss-policy partial only when a candidate exists"));
+        assert!(help.contains("omitted intent is acceptable"));
+    }
 
     #[test]
     fn catalogue_codes_names_and_typed_indices_are_unique_and_valid() -> Result<(), String> {

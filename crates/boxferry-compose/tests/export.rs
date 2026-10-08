@@ -1482,6 +1482,71 @@ fn plain_alias(value: &str, origin: &Provenance) -> Sourced<ProtectedString> {
     Sourced::from_source(ProtectedString::plain(value), origin.clone())
 }
 
+#[test]
+fn protected_aliases_suppress_entire_compose_candidate_for_every_target_and_loss_policy() -> Result<(), Box<dyn Error>>
+{
+    let origin = Provenance::source(SourceId::new("protected-alias.yaml")?);
+    let mut application = minimal_application()?;
+    let mut service = Service::new(Identifier::new("private-service")?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/private:1")?));
+    service.add_network(Sourced::from_source(
+        NetworkAttachment::new(
+            Identifier::new("front")?,
+            vec![
+                plain_alias("public-before", &origin),
+                Sourced::from_source(
+                    ProtectedString::sensitive("private-alias-canary-never-log"),
+                    origin.clone(),
+                ),
+                plain_alias("public-after", &origin),
+            ],
+        ),
+        origin.clone(),
+    ));
+    application.add_service(Sourced::from_source(service, origin.clone()))?;
+    application.add_network(Sourced::generated(Network::new(
+        Identifier::new("front")?,
+        ResourceOwnership::Application,
+    )))?;
+    let before = application.clone();
+    for target in [
+        exact_target(DOCKER_COMPOSE_TARGET, version(2, 30, 0))?,
+        exact_target(PODMAN_COMPOSE_TARGET, version(1, 5, 0))?,
+        exact_target(COMPOSE_SPECIFICATION_TARGET, COMPOSE_SPECIFICATION_PROFILE_REVISION)?,
+    ] {
+        for policy in [
+            LossPolicy::ExactOnly,
+            LossPolicy::AllowApproximate,
+            LossPolicy::AllowPartial,
+        ] {
+            let plan = ComposeExporter::new()?.plan(&application, &target)?;
+            assert!(
+                plan.candidate().is_none(),
+                "protected aliases cannot leave a partial topology preview"
+            );
+            let outcome = plan
+                .outcomes()
+                .iter()
+                .find(|outcome| outcome.subject() == "services.private-service.networks.front.aliases[1]")
+                .ok_or("protected alias outcome missing")?;
+            assert_eq!(outcome.kind(), ConversionKind::Unsupported);
+            assert!(outcome.diagnostic().is_some_and(|code| code.as_str() == "BFC0007"));
+            assert_eq!(outcome.origins(), std::slice::from_ref(&origin));
+            assert!(plan.diagnostics().iter().any(|diagnostic| {
+                diagnostic.fields().iter().any(|field| {
+                    field.name() == "reason" && field.value().expose().contains("outside this generated document")
+                })
+            }));
+            assert!(!format!("{plan:?}").contains("private-alias-canary-never-log"));
+            let result = plan.authorize(policy);
+            assert!(result.is_blocked() && result.output().is_none());
+            assert!(!format!("{result:?}").contains("private-alias-canary-never-log"));
+        }
+    }
+    assert!(application == before, "export mutated neutral aliases or provenance");
+    Ok(())
+}
+
 fn assert_sensitive_debug(debug: &str) {
     assert!(debug.contains("<redacted>"));
     assert!(!debug.contains("production-secret"));

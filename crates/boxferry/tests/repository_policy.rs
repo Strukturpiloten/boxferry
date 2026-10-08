@@ -5101,7 +5101,7 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         ".fidelity.invalid == $fidelity.invalid",
         "expected_success_fidelity",
         "exact_fidelity_shape",
-        "length(seen) != 9 || success != 9 || rejected != 0",
+        "length(seen) != 9 || success != 8 || gaps != 1 || rejected != 0",
     ] {
         if !runner.contains(fixture_contract) {
             return Err(format!(
@@ -5116,13 +5116,114 @@ fn validate_live_supabase_application_cell(runner: &str, matrix: &str) -> Result
         "podman\tpodman\tmigration-success\tlive-unperformed\tBFP0002,BFP0003,BFP0009,BFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "compose\tcompose\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
         "compose\tquadlet\tmigration-success\tlive-unperformed\tBFQ0003\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
-        "quadlet\tcompose\tmigration-success\tlive-unperformed\tBFC0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
+        "quadlet\tcompose\tknown-migration-gap\tlive-unperformed\tBFC0007\tprotected-service-alias-refusal-or-zero-alias-positive-v1",
         "quadlet\tquadlet\tmigration-success\tlive-unperformed\t-\tzero-loss-zero-diagnostic-reimport",
         "compose\tpodman\tmigration-success\tlive-unperformed\tBFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
         "quadlet\tpodman\tmigration-success\tlive-unperformed\tBFP0007\texact-diagnostic-tuple-multiset-plus-loss-fidelity-v1",
     ] {
         if !runner.contains(route) {
             return Err(format!("Supabase route catalogue is missing exact row `{route}`"));
+        }
+    }
+    validate_supabase_conditional_reimports(runner)?;
+    Ok(())
+}
+
+fn validate_supabase_conditional_reimports(runner: &str) -> Result<(), String> {
+    for contract in [
+        "length(seen) != 9 || success != 8 || gaps != 1 || rejected != 0",
+        "quadlet\tcompose\tknown-migration-gap\tlive-unperformed\tBFC0007\tprotected-service-alias-refusal-or-zero-alias-positive-v1",
+    ] {
+        if !runner.contains(contract) {
+            return Err(format!("Supabase conditional route contract is missing `{contract}`"));
+        }
+    }
+    let reimports = runner
+        .split_once("supabase_run_reimports() {")
+        .and_then(|(_, following)| following.split_once("\nsupabase_assert_report_privacy() {"))
+        .map(|(body, _)| body)
+        .ok_or("Supabase conditional reimport function could not be isolated")?;
+    for contract in [
+        "for selection in exact storage label all; do",
+        "for input in compose quadlet; do",
+        "for output in compose quadlet podman; do",
+        r#"supabase_assert_output_membership "${selection}" quadlet "${source}" "${prefix}" "${include_system_network}" || return"#,
+        r#"supabase_assert_realtime_output_aliases quadlet "${source}" "${prefix}" "${mode}" || return"#,
+        r#"alias_inventory="$(supabase_protected_service_alias_inventory "${mode}" "${source}" "${prefix}")" || return"#,
+        r#"[[ "${status}" == 2 ]] || return 1"#,
+        r#"[[ "${alias_inventory}" == "$(supabase_protected_service_alias_inventory "${mode}" "${source}" "${prefix}")" ]] || return 1"#,
+        r#"supabase_assert_protected_service_alias_refusal "${report}" "${result}" "${alias_inventory}" "${expected_refusal}" || return"#,
+        r#"$(jq '.subjects | length' <<< "${alias_inventory}")" != 0"#,
+        "known-migration-gap; protected service aliases cannot retain confidentiality",
+        "assert_successful_conversion",
+        "supabase_assert_success_contract",
+        "supabase_assert_output_semantics",
+        "supabase_assert_direct_export_environment",
+    ] {
+        if !reimports.contains(contract) {
+            return Err(format!("Supabase conditional reimport proof is missing `{contract}`"));
+        }
+    }
+    let (preflight, conversion) = reimports
+        .split_once("timed_operation 120s")
+        .ok_or("Supabase conditional reimport conversion is missing")?;
+    for source_proof in [
+        r#"supabase_assert_output_membership "${selection}" quadlet"#,
+        "supabase_assert_realtime_output_aliases quadlet",
+        r#"alias_inventory="$(supabase_protected_service_alias_inventory"#,
+    ] {
+        if !preflight.contains(source_proof) {
+            return Err(format!(
+                "Supabase source proof must precede conversion: `{source_proof}`"
+            ));
+        }
+    }
+    if preflight.contains("continue") || conversion.matches("continue").count() != 1 {
+        return Err(
+            "Supabase conditional refusal must execute every route before its sole negative-branch continuation"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn supabase_conditional_reimports_reject_shortcuts_and_obsolete_success() -> Result<(), String> {
+    let root = repository_root();
+    let mut runner = fs::read_to_string(root.join("scripts/lib/supabase-application.sh"))
+        .map_err(|error| format!("failed to read Supabase runner: {error}"))?;
+    runner.push_str(
+        &fs::read_to_string(root.join("fixtures/conformance/supabase-application/routes.tsv"))
+            .map_err(|error| format!("failed to read Supabase routes: {error}"))?,
+    );
+    validate_supabase_conditional_reimports(&runner)?;
+    for (original, replacement) in [
+        ("success != 8 || gaps != 1", "success != 9"),
+        (
+            "quadlet\tcompose\tknown-migration-gap",
+            "quadlet\tcompose\tmigration-success",
+        ),
+        ("for input in compose quadlet; do", "for input in compose; do"),
+        (
+            r#"supabase_assert_output_membership "${selection}" quadlet"#,
+            r#": "${selection}" quadlet"#,
+        ),
+        ("supabase_assert_realtime_output_aliases quadlet", ": quadlet"),
+        (
+            r#"[[ "${status}" == 2 ]] || return 1"#,
+            r#"[[ "${status}" == 0 ]] || return 1"#,
+        ),
+        (
+            r#"supabase_assert_protected_service_alias_refusal "${report}" "${result}""#,
+            r#": "${report}" "${result}""#,
+        ),
+        ("timed_operation 120s", "continue\n        timed_operation 120s"),
+    ] {
+        let changed = replace_first(&runner, original, replacement)?;
+        if validate_supabase_conditional_reimports(&changed).is_ok() {
+            return Err(format!(
+                "Supabase conditional contract accepted mutation of `{original}`"
+            ));
         }
     }
     Ok(())

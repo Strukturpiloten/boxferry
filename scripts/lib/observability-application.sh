@@ -1616,6 +1616,58 @@ observability_prepare_export_paths() {
   mkdir -p -- "${export_root}" "${reimports_root}"
 }
 
+observability_protected_service_alias_inventory() {
+  local mode=$1 source=$2 prefix=$3
+  local specification='{
+  "cli": {
+    "alloy": [],
+    "log-producer": [],
+    "loki": [
+      "loki"
+    ],
+    "metrics-producer": [
+      "metrics-producer"
+    ],
+    "prometheus": [
+      "prometheus"
+    ],
+    "grafana": [],
+    "boundary-peer": []
+  },
+  "compose": {
+    "alloy": [
+      "@service",
+      "alloy"
+    ],
+    "log-producer": [
+      "@service",
+      "log-producer"
+    ],
+    "loki": [
+      "@service",
+      "loki"
+    ],
+    "metrics-producer": [
+      "@service",
+      "metrics-producer"
+    ],
+    "prometheus": [
+      "@service",
+      "prometheus"
+    ],
+    "grafana": [],
+    "boundary-peer": []
+  }
+}'
+  python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/protected-service-alias-contract.py" \
+    inventory "${mode}" "${source}" "${prefix}-observability-" "${specification}"
+}
+
+observability_assert_protected_service_alias_refusal() {
+  python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/protected-service-alias-contract.py" \
+    report-refusal "$1" "$2" "$3" "$4"
+}
+
 observability_run_reimports() {
   local mode=$1 selection=$2 source=$3 prefix=$4 input output result report file
   for input in compose quadlet; do
@@ -1640,9 +1692,29 @@ observability_run_reimports() {
       [[ "${output}" == podman ]] && command+=(--podman-target-context rootless)
       [[ "${output}" != podman ]] && command+=(--environment-values include)
       command+=(--output-directory "${result}" --console-format json)
+      local status=0 alias_inventory='' expected_refusal='' expected_tuples=''
+      if [[ "${input}:${output}" == quadlet:compose ]]; then
+        observability_assert_output_membership "${selection}" quadlet "${source}/quadlet" "${prefix}" || return
+        observability_assert_output_aliases "${mode}" quadlet quadlet "${source}/quadlet" "${prefix}" || return
+        alias_inventory="$(observability_protected_service_alias_inventory "${mode}" "${source}/quadlet" "${prefix}")" || return
+        expected_tuples="${report}.refusal-baseline.tsv"
+        observability_write_expected_diagnostics live-reimport "${mode}" "${selection}" quadlet compose "${prefix}-observability-" "${expected_tuples}" || return
+        expected_refusal="$(jq --raw-input --slurp '
+          split("\n") | map(select(length > 0) | split("\t") |
+            {code:.[0], subject:.[1], severity:.[2], decision:(if .[3] == "-" or .[3] == "" then null else .[3] end)}) |
+          {diagnostics:., fidelity:{approximate:0, unsupported:length, invalid:0, other:0}}' "${expected_tuples}")" || return
+      fi
       timed_operation 90s \
         "Observability ${mode} ${selection} ${input}-to-${output} reimport" \
-        "${command[@]}" > "${report}"
+        "${command[@]}" > "${report}" || status=$?
+      if [[ -n "${alias_inventory}" && "$(jq '.subjects | length' <<< "${alias_inventory}")" != 0 ]]; then
+        [[ "${status}" == 2 ]] || return 1
+        [[ "${alias_inventory}" == "$(observability_protected_service_alias_inventory "${mode}" "${source}/quadlet" "${prefix}")" ]] || return 1
+        observability_assert_protected_service_alias_refusal "${report}" "${result}" "${alias_inventory}" "${expected_refusal}" || return
+        printf '%s\n' 'Quadlet-to-Compose: known-migration-gap; protected service aliases cannot retain confidentiality in fresh Compose text.'
+        continue
+      fi
+      [[ "${status}" == 0 ]] || return 1
       jq --exit-status '
         .schema_version == 1 and .status == "success" and .exit_category == "success" and
         ([.diagnostics[]? | select(.severity == "error")] | length == 0) and

@@ -15,6 +15,8 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use boxferry::quadlet::quadlet_lens::source::SourceId as QuadletSourceId;
+use boxferry::{Identifier, ImportAdapter, ProvenanceKind, QuadletDocumentInput, QuadletImporter, QuadletSource};
 use podman_cassette::{PodmanCassette, PodmanCassetteServer};
 use serde::Deserialize;
 
@@ -439,13 +441,18 @@ fn assert_document_reimports(name: &str, context: &str, root: &Path) -> Result<(
     for input in ["compose", "quadlet"] {
         let source = root.join(format!("{name}-{input}"));
         for output in OUTPUTS {
+            if input == "quadlet" && output == "compose" {
+                assert_protected_alias_reimport(name, context, &source, root)?;
+                // The refusal was exercised above; there is no output to canonicalize or chain.
+                continue;
+            }
             let route = format!("{input}-to-{output}");
             let first = root.join(format!("{name}-{route}-reimport"));
-            let result = run_document_conversion(input, output, &source, &first, context)?;
+            let result = run_document_conversion(input, output, &source, &first, context, "partial")?;
             let first_report = assert_document_route(&result, name, input, output, &first)?;
 
             let repeated = root.join(format!("{name}-{route}-repeat"));
-            let result = run_document_conversion(input, output, &source, &repeated, context)?;
+            let result = run_document_conversion(input, output, &source, &repeated, context, "partial")?;
             let repeated_report = assert_document_route(&result, name, input, output, &repeated)?;
             assert_eq!(
                 repeated_report["fidelity"], first_report["fidelity"],
@@ -471,7 +478,7 @@ fn assert_document_reimports(name: &str, context: &str, root: &Path) -> Result<(
 
             if output != "podman" {
                 let canonical = root.join(format!("{name}-{route}-canonical"));
-                let result = run_document_conversion(output, output, &first, &canonical, context)?;
+                let result = run_document_conversion(output, output, &first, &canonical, context, "partial")?;
                 let canonical_report = assert_document_route(&result, name, output, output, &canonical)?;
                 assert_eq!(
                     artifact_snapshot(&canonical)?,
@@ -480,7 +487,7 @@ fn assert_document_reimports(name: &str, context: &str, root: &Path) -> Result<(
                 );
 
                 let fixed = root.join(format!("{name}-{route}-fixed"));
-                let result = run_document_conversion(output, output, &canonical, &fixed, context)?;
+                let result = run_document_conversion(output, output, &canonical, &fixed, context, "partial")?;
                 let fixed_report = assert_document_route(&result, name, output, output, &fixed)?;
                 assert_eq!(
                     fixed_report["fidelity"], canonical_report["fidelity"],
@@ -499,6 +506,108 @@ fn assert_document_reimports(name: &str, context: &str, root: &Path) -> Result<(
         }
     }
     Ok(())
+}
+
+fn assert_protected_alias_reimport(
+    name: &str,
+    context: &str,
+    source: &Path,
+    root: &Path,
+) -> Result<(), Box<dyn Error>> {
+    assert_protected_quadlet_alias_source(source)?;
+    let before = artifact_snapshot(source)?;
+    for policy in ["exact", "approximate", "partial"] {
+        let mut reports = Vec::new();
+        for attempt in ["reimport", "repeat"] {
+            let directory = root.join(format!("{name}-quadlet-to-compose-{policy}-{attempt}"));
+            let result = run_document_conversion("quadlet", "compose", source, &directory, context, policy)?;
+            reports.push(assert_protected_alias_refusal(&result, &directory)?);
+        }
+        assert_eq!(reports[0]["fidelity"], reports[1]["fidelity"]);
+        assert_eq!(reports[0]["diagnostics"], reports[1]["diagnostics"]);
+    }
+    assert_eq!(artifact_snapshot(source)?, before, "refusal changed source artifacts");
+    Ok(())
+}
+
+fn assert_protected_quadlet_alias_source(directory: &Path) -> Result<(), Box<dyn Error>> {
+    let mut inputs = Vec::new();
+    for (index, path) in artifact_paths(directory)?.into_iter().enumerate() {
+        inputs.push(QuadletDocumentInput::new(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("Quadlet basename")?,
+            QuadletSourceId::new(u32::try_from(index + 1)?),
+            fs::read_to_string(&path)?,
+        ));
+    }
+    let source = QuadletSource::parse(Identifier::new("complex")?, inputs)?.into_source();
+    assert!(source.documents().is_valid(), "generated Quadlet source is invalid");
+    let imported = QuadletImporter::new()?.import(&source);
+    let observer = imported
+        .application()
+        .ok_or("Quadlet application missing")?
+        .services()
+        .iter()
+        .find(|service| service.value().name().as_str() == "observer")
+        .ok_or("Quadlet observer missing")?;
+    let attachment = observer
+        .value()
+        .networks()
+        .iter()
+        .find(|network| network.value().network().as_str() == "app-net")
+        .ok_or("Quadlet observer app-net attachment missing")?
+        .value();
+    assert_eq!(attachment.aliases(), ["observer"]);
+    assert_eq!(attachment.alias_sensitivities(), [true]);
+    assert!(format!("{attachment:?}").contains("aliases: [\"[REDACTED]\"]"));
+    let origins = &attachment.alias_origins()[0];
+    assert_eq!(origins.len(), 1);
+    assert_eq!(origins[0].kind(), ProvenanceKind::SourceDocument);
+    assert_eq!(origins[0].source_id().as_str(), "observer.container");
+    let span = origins[0].span().ok_or("Quadlet alias span missing")?;
+    let text = fs::read_to_string(directory.join("observer.container"))?;
+    assert!(
+        text.get(span.start()..span.end())
+            .is_some_and(|value| value.contains("observer"))
+    );
+    Ok(())
+}
+
+fn assert_protected_alias_refusal(result: &Output, directory: &Path) -> Result<serde_json::Value, Box<dyn Error>> {
+    assert_failed_without_output(result, directory, None)?;
+    assert_eq!(result.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout)?;
+    assert_eq!(report["status"], "blocked");
+    assert_eq!(report["source_type"], "quadlet");
+    assert_eq!(report["target_type"], "compose");
+    assert_eq!(report["application"], "complex");
+    let refusals = report["diagnostics"]
+        .as_array()
+        .ok_or("refusal diagnostics missing")?
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic["code"] == "BFC0007"
+                && diagnostic["fields"].as_array().is_some_and(|fields| {
+                    fields.iter().any(|field| {
+                        field["name"] == "subject" && field["value"] == "services.observer.networks.app-net.aliases[0]"
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    let [refusal] = refusals.as_slice() else {
+        return Err("expected exactly one indexed protected-alias refusal".into());
+    };
+    let fields = refusal["fields"].as_array().ok_or("refusal fields missing")?;
+    assert_eq!(fields.len(), 2);
+    assert!(fields.iter().any(|field| {
+        field["name"] == "reason"
+            && field["value"] == "protected network aliases cannot retain sensitivity in fresh Compose text; keep protected alias configuration outside this generated document"
+    }));
+    // The alias equals a public service identity. Test field values, not whole-report name absence.
+    assert!(fields.iter().all(|field| field["value"] != "observer"));
+    assert!(!String::from_utf8_lossy(&result.stdout).contains(".sock"));
+    Ok(report)
 }
 
 fn assert_document_route(
@@ -833,6 +942,7 @@ fn run_document_conversion(
     source_directory: &Path,
     output_directory: &Path,
     context: &str,
+    loss_policy: &str,
 ) -> Result<Output, Box<dyn Error>> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
     command.args(["convert", input, output]);
@@ -846,7 +956,7 @@ fn run_document_conversion(
         command.args(["--podman-target-context", context]);
     }
     command
-        .args(["--loss-policy", "partial", "--output-directory"])
+        .args(["--loss-policy", loss_policy, "--output-directory"])
         .arg(output_directory)
         .args(["--console-format", "json"]);
     Ok(command.output()?)

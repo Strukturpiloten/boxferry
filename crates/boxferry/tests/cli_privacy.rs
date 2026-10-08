@@ -161,6 +161,11 @@ fn supabase_chained_helper_authorizes_document_canaries_without_relaxing_privacy
         supabase_assert_success_contract() { :; }
         supabase_assert_output_membership() { :; }
         supabase_assert_output_semantics() { :; }
+        # This one-service privacy mock is not live application/source-inventory evidence.
+        supabase_assert_realtime_output_aliases() { :; }
+        supabase_protected_service_alias_inventory() {
+            printf '%s\n' '{"subjects":[],"source_sha256":"privacy-mock-only"}'
+        }
         supabase_run_reimports cli policy
         supabase_run_reimports compose policy
         supabase_assert_report_privacy "$current_case"
@@ -942,5 +947,88 @@ fn invalid_document_cannot_echo_a_neighboring_environment_value() -> Result<(), 
             .any(|window| window == DOCUMENT_SECRET.as_bytes())
     );
     assert!(!destination.exists());
+    Ok(())
+}
+
+#[test]
+fn protected_service_alias_refusal_has_actionable_help_even_under_partial() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new()?;
+    let source = scratch.0.join("protected-alias.yaml");
+    fs::write(
+        &source,
+        "---\nservices:\n  web:\n    image: example.invalid/web:1\n    networks:\n      app:\n        aliases: [\"${ALIAS}\"]\nnetworks:\n  app: {}\n",
+    )?;
+    for policy in ["exact", "approximate", "partial"] {
+        let destination = scratch.0.join(format!("protected-alias-{policy}"));
+        let output = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args(["convert", "compose", "compose", "--input-file"])
+            .arg(&source)
+            .arg("--env")
+            .arg(format!("ALIAS={DOCUMENT_SECRET}"))
+            .args(["--loss-policy", policy, "--console-format", "json"])
+            .arg("--output-directory")
+            .arg(&destination)
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(!destination.exists());
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(DOCUMENT_SECRET));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains(DOCUMENT_SECRET));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(report["status"], "blocked");
+        assert_eq!(report["output_artifacts"], serde_json::json!([]));
+        assert_eq!(report["fix_first"]["code"], "BFC0007");
+        let help = report["fix_first"]["help"].as_str().ok_or("missing refusal help")?;
+        assert!(help.contains("Protected service network aliases block every loss policy"));
+        assert!(help.contains("keep private alias configuration outside the generated document"));
+        assert!(help.contains("partial only when a candidate exists"));
+        let diagnostics = report["diagnostics"].as_array().ok_or("missing refusal diagnostics")?;
+        let [diagnostic] = diagnostics.as_slice() else {
+            return Err("protected alias must have one independent refusal".into());
+        };
+        assert_eq!(diagnostic["code"], "BFC0007");
+        assert_eq!(diagnostic["help"], report["fix_first"]["help"]);
+        assert!(diagnostic["fields"].as_array().is_some_and(|fields| {
+            fields
+                .iter()
+                .any(|field| field["name"] == "subject" && field["value"] == "services.web.networks.app.aliases[0]")
+        }));
+    }
+
+    // Ordinary unsupported omissions still offer an actual candidate under partial.
+    let ordinary = scratch.0.join("health.yaml");
+    fs::write(
+        &ordinary,
+        "---\nservices:\n  web:\n    image: example.invalid/web:1\n    healthcheck:\n      test: [CMD, /bin/health]\n",
+    )?;
+    for (policy, expected_status) in [("exact", 2), ("partial", 0)] {
+        let destination = scratch.0.join(format!("health-{policy}"));
+        let output = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args(["convert", "compose", "compose", "--input-file"])
+            .arg(&ordinary)
+            .args(["--loss-policy", policy, "--console-format", "json"])
+            .arg("--output-directory")
+            .arg(&destination)
+            .output()?;
+        assert_eq!(output.status.code(), Some(expected_status));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert!(
+            report["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
+                    diagnostic["code"] == "BFC0007"
+                        && diagnostic["help"]
+                            .as_str()
+                            .is_some_and(|help| help.contains("partial only when a candidate exists"))
+                }))
+        );
+        if expected_status == 0 {
+            assert_eq!(report["status"], "success");
+            assert!(destination.join("compose.yaml").is_file());
+            assert!(report["fix_first"].is_null());
+        } else {
+            assert_eq!(report["fix_first"]["code"], "BFC0007");
+            assert!(!destination.exists());
+        }
+    }
     Ok(())
 }

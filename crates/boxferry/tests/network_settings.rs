@@ -7,14 +7,14 @@ use std::error::Error;
 use boxferry::compose::compose_lens::{
     loader::{DocumentInput, DocumentOrigin, LoadedProject},
     merge::merge_project,
-    model::ServiceNetworks,
     source::SourceId as ComposeSourceId,
 };
 use boxferry::quadlet::quadlet_lens::source::SourceId as QuadletSourceId;
 use boxferry::{
-    ComposeExporter, ComposeImporter, ComposeSource, ConversionKind, DOCKER_COMPOSE_TARGET, Identifier, ImportAdapter,
-    LossPolicy, NetworkDriverOption, NetworkIpamConfig, PlatformVersion, QuadletDocumentInput, QuadletExporter,
-    QuadletFile, QuadletImporter, QuadletSource, SourceId, TargetProfile, convert,
+    ComposeExporter, ComposeImporter, ComposeSource, ConversionKind, DOCKER_COMPOSE_TARGET, ExportAdapter, Identifier,
+    ImportAdapter, LossPolicy, NetworkDriverOption, NetworkIpamConfig, PlatformVersion, ProvenanceKind,
+    QuadletDocumentInput, QuadletExporter, QuadletFile, QuadletImporter, QuadletSource, SourceId, TargetProfile,
+    convert,
 };
 
 fn parse_source(
@@ -168,7 +168,7 @@ fn quadlet_network_resets_duplicates_and_multi_row_ipam_stay_explicit() -> Resul
 }
 
 #[test]
-fn compose_and_quadlet_facade_reimports_preserve_protected_realtime_aliases() -> Result<(), Box<dyn Error>> {
+fn public_compose_aliases_fresh_reload_while_protected_quadlet_aliases_refuse_compose() -> Result<(), Box<dyn Error>> {
     let compose = compose_realtime_alias_source()?;
     let quadlet = parse_source(
         Identifier::new("realtime-aliases")?,
@@ -194,50 +194,99 @@ fn compose_and_quadlet_facade_reimports_preserve_protected_realtime_aliases() ->
         &target,
         LossPolicy::ExactOnly,
     )?;
-    let quadlet_result = convert(
-        &QuadletImporter::new()?,
-        &quadlet,
-        &exporter,
-        &target,
-        LossPolicy::ExactOnly,
-    )?;
+    assert!(!compose_result.is_blocked());
+    assert!(
+        compose_result
+            .outcomes()
+            .iter()
+            .all(|outcome| outcome.kind() == ConversionKind::Exact)
+    );
+    let output = compose_result
+        .output()
+        .ok_or("ordinary public Compose output missing")?;
+    assert!(!output.is_sensitive());
+    let fresh_id = ComposeSourceId::new(143);
+    let loaded = LoadedProject::load([DocumentInput::new(
+        fresh_id,
+        DocumentOrigin::new("fresh-realtime.compose.yaml", "/fresh-compose-offline"),
+        output.text(),
+    )])?;
+    let merged = merge_project(&loaded, None);
+    assert!(merged.is_valid());
+    let fresh_source = ComposeSource::new(
+        merged.project().ok_or("fresh merged project missing")?.clone(),
+        Identifier::new("realtime-aliases")?,
+    )?
+    .with_source_id(fresh_id, SourceId::new("fresh-realtime.compose.yaml")?);
+    let fresh = ComposeImporter::new()?.import(&fresh_source);
+    let fresh_application = fresh.application().ok_or("fresh application missing")?;
+    let attachment = fresh_application.services()[0].value().networks()[0].value();
+    assert_eq!(attachment.aliases(), ["realtime-dev.supabase-realtime", "realtime"]);
+    assert_eq!(attachment.alias_sensitivities(), [false, false]);
+    for (index, expected) in ["realtime-dev.supabase-realtime", "realtime"].iter().enumerate() {
+        let origins = &attachment.alias_origins()[index];
+        assert_eq!(origins.len(), 1);
+        assert_eq!(origins[0].kind(), ProvenanceKind::SourceDocument);
+        assert_eq!(origins[0].source_id().as_str(), "fresh-realtime.compose.yaml");
+        let span = origins[0].span().ok_or("fresh alias span missing")?;
+        assert!(
+            output
+                .text()
+                .get(span.start()..span.end())
+                .is_some_and(|text| text.contains(expected))
+        );
+    }
 
-    for (route, result) in [
-        ("compose-to-compose", compose_result),
-        ("quadlet-to-compose", quadlet_result),
-    ] {
-        assert!(!result.is_blocked(), "{route}: {:#?}", result.diagnostics());
-        assert_eq!(result.diagnostics(), &[], "{route}");
-        assert!(
-            result
-                .outcomes()
-                .iter()
-                .all(|outcome| outcome.kind() == ConversionKind::Exact),
-            "{route}: {:#?}",
-            result.outcomes()
-        );
-        let output = result.output().ok_or("exact Compose output expected")?;
-        assert!(
-            output.is_sensitive(),
-            "{route} must retain protected alias classification"
-        );
-        let service = output
-            .document()
-            .service("realtime")
-            .ok_or("generated realtime service expected")?;
-        let ServiceNetworks::Long { networks, .. } = service.networks().ok_or("generated service networks expected")?
-        else {
-            return Err(format!("{route} did not generate long network syntax").into());
-        };
-        let aliases = networks
-            .first()
-            .ok_or("generated backend attachment expected")?
+    assert_protected_quadlet_alias_compose_refusal(&quadlet, &exporter, &target)?;
+    Ok(())
+}
+
+fn assert_protected_quadlet_alias_compose_refusal(
+    source: &QuadletSource,
+    exporter: &ComposeExporter,
+    target: &TargetProfile,
+) -> Result<(), Box<dyn Error>> {
+    let imported = QuadletImporter::new()?.import(source);
+    let application = imported.application().ok_or("Quadlet application missing")?;
+    let before = application.clone();
+    let attachment = application.services()[0].value().networks()[0].value();
+    assert_eq!(attachment.alias_sensitivities(), [true, true]);
+    assert!(
+        attachment
             .aliases()
             .iter()
-            .map(|alias| alias.value().as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(aliases, ["realtime-dev.supabase-realtime", "realtime"], "{route}");
+            .map(String::as_str)
+            .eq(["realtime-dev.supabase-realtime", "realtime"])
+    );
+    assert!(attachment.alias_origins().iter().all(|origins| !origins.is_empty()));
+    for policy in [
+        LossPolicy::ExactOnly,
+        LossPolicy::AllowApproximate,
+        LossPolicy::AllowPartial,
+    ] {
+        let plan = exporter.plan(application, target)?;
+        assert!(
+            plan.candidate().is_none(),
+            "protected aliases cannot become unmarked Compose text"
+        );
+        for index in 0..2 {
+            let loss = plan
+                .outcomes()
+                .iter()
+                .find(|outcome| outcome.subject() == format!("services.realtime.networks.backend.aliases[{index}]"))
+                .ok_or("protected alias loss missing")?;
+            assert_eq!(loss.kind(), ConversionKind::Unsupported);
+            assert_eq!(loss.origins(), attachment.alias_origins()[index].as_slice());
+        }
+        assert!(!format!("{plan:?}").contains("realtime-dev.supabase-realtime"));
+        let result = plan.authorize(policy);
+        assert!(result.is_blocked() && result.output().is_none());
+        assert!(!format!("{result:?}").contains("realtime-dev.supabase-realtime"));
     }
+    assert!(
+        *application == before,
+        "Compose refusal changed neutral Quadlet aliases or origins"
+    );
     Ok(())
 }
 

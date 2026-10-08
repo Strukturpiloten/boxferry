@@ -212,7 +212,7 @@ supabase_validate_catalogues() {
     contract["compose compose"] = "zero-loss-zero-diagnostic-reimport"
     contract["compose quadlet"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
     contract["compose podman"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
-    contract["quadlet compose"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
+    contract["quadlet compose"] = "protected-service-alias-refusal-or-zero-alias-positive-v1"
 		contract["quadlet quadlet"] = "zero-loss-zero-diagnostic-reimport"
     contract["quadlet podman"] = "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1"
     }
@@ -221,10 +221,14 @@ supabase_validate_catalogues() {
       route = $1 " " $2
       if (NF != 6 || seen[key]++ || $4 != "live-unperformed" ||
           !(route in approved) || $5 != approved[route] || $6 != contract[route]) bad = 1
+      if (route == "quadlet compose") {
+        if ($3 != "known-migration-gap") bad = 1
+        gaps++
+      } else if ($3 != "migration-success") bad = 1
       success += ($3 == "migration-success")
       rejected += ($3 == "expected-rejection")
     }
-    END { exit bad || length(seen) != 9 || success != 9 || rejected != 0 }
+    END { exit bad || length(seen) != 9 || success != 8 || gaps != 1 || rejected != 0 }
 	' "${fixture}/routes.tsv"
   while IFS=$'\t' read -r source target _outcome _evidence allowed_codes _contract; do
     [[ -z "${source}" || "${source}" == \#* ]] && continue
@@ -2952,7 +2956,8 @@ supabase_run_exports() {
   done
 }
 
-# Generated Compose and Quadlet artifacts use digest-only image references, so every reimport succeeds.
+# Digest-only images remain valid. Protected Quadlet service aliases deliberately block Compose
+# reimport; the route is exercised as a migration gap, not omitted or counted as success.
 
 supabase_reimport_dependency_order_required() {
   case "$1:$2" in
@@ -2974,6 +2979,81 @@ supabase_reimport_dependency_order_required() {
       return 2
       ;;
   esac
+}
+
+supabase_protected_service_alias_inventory() {
+  local mode=$1 source=$2 prefix=$3
+  local specification='{
+  "cli": {
+    "auth": [],
+    "db": [],
+    "functions": [],
+    "imgproxy": [],
+    "kong": [],
+    "meta": [],
+    "realtime": [
+      "realtime-dev.supabase-realtime",
+      "realtime"
+    ],
+    "rest": [],
+    "storage": [],
+    "studio": [],
+    "supavisor": [],
+    "boundary-peer": []
+  },
+  "compose": {
+    "auth": [
+      "@service",
+      "auth"
+    ],
+    "db": [
+      "@service",
+      "db"
+    ],
+    "functions": [
+      "@service",
+      "functions"
+    ],
+    "imgproxy": [
+      "@service",
+      "imgproxy"
+    ],
+    "kong": [],
+    "meta": [
+      "@service",
+      "meta"
+    ],
+    "realtime": [
+      "@service",
+      "realtime",
+      "realtime-dev.supabase-realtime"
+    ],
+    "rest": [
+      "@service",
+      "rest"
+    ],
+    "storage": [
+      "@service",
+      "storage"
+    ],
+    "studio": [
+      "@service",
+      "studio"
+    ],
+    "supavisor": [
+      "@service",
+      "supavisor"
+    ],
+    "boundary-peer": []
+  }
+}'
+  python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/protected-service-alias-contract.py" \
+    inventory "${mode}" "${source}" "${prefix}-supabase-" "${specification}"
+}
+
+supabase_assert_protected_service_alias_refusal() {
+  python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/protected-service-alias-contract.py" \
+    report-refusal "$1" "$2" "$3" "$4"
 }
 
 supabase_run_reimports() {
@@ -3007,10 +3087,25 @@ supabase_run_reimports() {
         # artifacts. Each chained invocation needs its own explicit inclusion.
         [[ "${output}" != podman ]] && command+=(--environment-values include)
         command+=(--output-directory "${result}" --console-format json)
-        local status=0
+        local status=0 alias_inventory='' expected_refusal=''
+        if [[ "${input}:${output}" == quadlet:compose ]]; then
+          supabase_assert_output_membership "${selection}" quadlet "${source}" "${prefix}" "${include_system_network}" || return
+          supabase_assert_realtime_output_aliases quadlet "${source}" "${prefix}" "${mode}" || return
+          alias_inventory="$(supabase_protected_service_alias_inventory "${mode}" "${source}" "${prefix}")" || return
+          expected_refusal="$(supabase_success_contract_example_report quadlet compose "${selection}" "${prefix}" "${include_system_network}" not-podman "${mode}" | jq '{diagnostics: [.diagnostics[] | {
+              code, severity, subject: (.fields[] | select(.name == "subject") | .value),
+              decision: (.fields[] | select(.name == "decision") | .value)}], fidelity}')" || return
+        fi
         timed_operation 120s \
           "BoxFerry Supabase ${mode} ${selection} ${input}-to-${output} reimport" \
           "${command[@]}" > "${report}" || status=$?
+        if [[ -n "${alias_inventory}" && "$(jq '.subjects | length' <<< "${alias_inventory}")" != 0 ]]; then
+          [[ "${status}" == 2 ]] || return 1
+          [[ "${alias_inventory}" == "$(supabase_protected_service_alias_inventory "${mode}" "${source}" "${prefix}")" ]] || return 1
+          supabase_assert_protected_service_alias_refusal "${report}" "${result}" "${alias_inventory}" "${expected_refusal}" || return
+          printf '%s\n' 'Quadlet-to-Compose: known-migration-gap; protected service aliases cannot retain confidentiality in fresh Compose text.'
+          continue
+        fi
         if ((status != 0)); then
           supabase_report_conversion_failure "${report}"
           return "${status}"

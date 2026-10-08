@@ -182,7 +182,10 @@ contract; `live-reimport` selects independently authored Compose/Quadlet reimpor
 kind. The eight `reimport-*.tsv` templates cover all 36 live reimport combinations: two
 provisioners, three selectors, two inputs, and three outputs. Compose-to-Compose and
 Quadlet-to-Quadlet have empty multisets; Compose-to-Quadlet retains the reviewed network-alias
-omission, and remaining routes retain exact duplicate-sensitive omissions. Their sole
+omission. Protected-service-alias Quadlet-to-Compose cells add their exact
+indexed whole-candidate refusals to the existing duplicate-sensitive diagnostic
+baseline and emit no artifact; zero-alias cells retain positive generation.
+Other routes retain exact duplicate-sensitive omissions. Their sole
 interpolation is `{{resource_prefix}}`, which is the complete
 `<run-prefix>-observability-` resource stem; templates must not append another application
 segment. Static reviewed templates never derive expectations from reports or artifacts. Exact and
@@ -242,10 +245,39 @@ PodmanLens 0.2.5 and the active Podman 6.1.2 rootless lane. Exact-head acceptanc
 provisioners, every selector, and every exporter/reimport without relabelling the historical review.
 The six application logging observations and the all-selector peer logging observation remain
 non-promoted, not neutral logging intent.
-All 36 document-reimport combinations retain their separately authored contracts: Podman outputs
+All 36 document-reimport combinations remain exercised, including the protected
+Quadlet-to-Compose refusal cells recorded as known migration gaps. Other
+combinations retain their separately authored positive contracts: Podman outputs
 require named exporter omissions, never native-importer omissions or observation-only logging rows.
 
 `{{resource_prefix}}` is the only supported template marker. The harness validates its generated
 prefix and every row before substitution; malformed templates and reports fail closed. Reports and
 diagnostic TSVs must not contain the protected-value canary. Deployable Compose and Quadlet artifacts
 may retain it as explicitly authorized protected configuration; Podman plans must not.
+
+## Conditional protected-alias reimport
+
+ADR 0073 narrows the generated service-alias Quadlet-to-Compose branch. Every
+mode, selection and route is still executed. Independently authored per-role
+alias expectations bind the actual generated container units; their ordered
+indexed refusal subjects and source digest are fixed before conversion and
+checked unchanged afterward. Pod/group aliases do not trigger this service guard.
+
+A nonempty protected service-alias inventory requires exit 2, a blocked policy
+report, exact value-free BFC0007 indexed unsupported diagnostics and actionable
+help, unchanged other diagnostic/fidelity expectations, and no output artifacts
+or files. The prior exact mapped-attachment outcome is not claimed when its
+protected aliases prevent construction; the exact implementation counter remains
+non-negative rather than an invented fixed total. Non-exact fidelity is checked
+against the independently authored baseline plus indexed alias refusals.
+It is recorded as a known migration gap because fresh Compose text
+cannot retain alias confidentiality. It is never counted as successful migration.
+A genuinely zero-alias source retains the positive branch; missing, reordered or
+substituted expected aliases do not manufacture that control. Direct explicitly
+promoted Podman-to-Compose aliases remain positive.
+
+Native application startup, readiness, traffic, persistence, all other routes,
+resource/time budgets, thresholds and cleanup remain mandatory. Offline report
+mutations and physical document reimport controls prove the branch contract only;
+fresh exact-revision live evidence is still required. No consent, declassification,
+artifact sidecar, native parser or executor is added.

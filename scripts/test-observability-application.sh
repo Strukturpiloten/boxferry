@@ -1304,3 +1304,138 @@ observability_assert_persistence /tmp/observability.sock bf-private
 [[ -f "${persistence_log_producer_marker}" ]]
 
 printf '%s\n' 'Observability Alloy timing, persistence, and bounded diagnostics tests passed.'
+
+# Closed negative report controls are independent of the live runtime and its source assertions.
+python3 - "${script_directory}/lib/observability-application.sh" "${test_root}" << 'PY'
+import ast
+import copy
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+library, root = Path(sys.argv[1]), Path(sys.argv[2])
+ast.parse((library.parent / "protected-service-alias-contract.py").read_text())
+destination = root / "observability-alias-refusal-output"
+report_path = root / "observability-alias-refusal-report.json"
+subjects = ["services.fixture.networks.backend.aliases[0]", "services.fixture.networks.backend.aliases[1]"]
+inventory = {"subjects": subjects, "source_sha256": "a" * 64}
+expected = {"diagnostics": [], "fidelity": {"approximate": 0, "unsupported": 0, "invalid": 0, "other": 0}}
+reason = "protected network aliases cannot retain sensitivity in fresh Compose text; keep protected alias configuration outside this generated document"
+help_text = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
+report = {"schema_version": 1, "status": "blocked", "exit_category": "policy-blocked",
+          "source_type": "quadlet", "target_type": "compose", "fix_first": {"code": "BFC0007", "help": help_text},
+          "output_artifacts": [], "fidelity": {"exact": 0, "approximate": 0, "unsupported": 2, "invalid": 0, "other": 0},
+          "diagnostics": [{"code": "BFC0007", "severity": "warning", "name": "Unsupported", "help": help_text,
+                           "fields": [{"name": "subject", "value": subject}, {"name": "reason", "value": reason}]}
+                          for subject in subjects]}
+def accepted(value, write_report=True):
+    if write_report:
+        report_path.write_text(json.dumps(value))
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; observability_assert_protected_service_alias_refusal "$2" "$3" "$4" "$5"',
+         "refusal-control", str(library), str(report_path), str(destination),
+         json.dumps(inventory), json.dumps(expected)], capture_output=True, check=False, timeout=5)
+    assert "protected-alias-canary-never-print" not in (result.stdout + result.stderr).decode()
+    assert "unexpected-private-value" not in (result.stdout + result.stderr).decode()
+    assert "Traceback" not in result.stderr.decode()
+    return result.returncode == 0
+assert accepted(report)
+for fault in ("missing", "duplicate", "reordered", "extra", "wrong-code", "wrong-subject",
+              "wrong-severity", "wrong-reason", "wrong-help", "missing-help", "wrong-fix-help", "missing-fix-help",
+              "wrong-fix-code", "missing-fix", "source-type", "target-type", "status", "exit", "fidelity", "output", "leak", "extra-field"):
+    changed = copy.deepcopy(report)
+    if fault == "missing": changed["diagnostics"].pop()
+    elif fault == "duplicate": changed["diagnostics"].append(changed["diagnostics"][0])
+    elif fault == "reordered": changed["diagnostics"].reverse()
+    elif fault == "extra": changed["diagnostics"].append({"code": "BFC0007", "severity": "warning", "name": "Unsupported",
+        "fields": [{"name":"subject", "value":"services.other.networks.backend.aliases[0]"}, {"name":"reason", "value":reason}]})
+    elif fault == "wrong-code": changed["diagnostics"][0]["code"] = "BFP0007"
+    elif fault == "wrong-subject": changed["diagnostics"][0]["fields"][0]["value"] = "services.fixture.networks.backend.aliases[2]"
+    elif fault == "wrong-severity": changed["diagnostics"][0]["severity"] = "error"
+    elif fault == "wrong-reason": changed["diagnostics"][0]["fields"][1]["value"] = "omit aliases"
+    elif fault == "wrong-help": changed["diagnostics"][0]["help"] = "use --loss-policy partial"
+    elif fault == "missing-help": del changed["diagnostics"][0]["help"]
+    elif fault == "wrong-fix-help": changed["fix_first"]["help"] = "use --loss-policy partial"
+    elif fault == "missing-fix-help": del changed["fix_first"]["help"]
+    elif fault == "wrong-fix-code": changed["fix_first"]["code"] = "BFP0007"
+    elif fault == "missing-fix": del changed["fix_first"]
+    elif fault == "source-type": changed["source_type"] = "podman"
+    elif fault == "target-type": changed["target_type"] = "quadlet"
+    elif fault == "status": changed["status"] = "success"
+    elif fault == "exit": changed["exit_category"] = "success"
+    elif fault == "fidelity": changed["fidelity"]["unsupported"] = 1
+    elif fault == "output": changed["output_artifacts"] = [{"name":"compose.yaml"}]
+    elif fault == "leak": changed["diagnostics"][0]["fields"][1]["value"] += " protected-alias-canary-never-print"
+    elif fault == "extra-field": changed["diagnostics"][0]["fields"].append({"name":"native_value", "value":"unexpected-private-value"})
+    assert not accepted(changed), fault
+destination.mkdir()
+(destination / "compose.yaml").write_text("---\n")
+assert not accepted(report), "unreported accidental output"
+(destination / "compose.yaml").unlink()
+destination.rmdir()
+live_destination = root / "observability-alias-refusal-live-empty-directory"
+live_destination.mkdir()
+for fault in ("dangling-symlink", "live-empty-directory-symlink", "empty-directory"):
+    if fault == "dangling-symlink": destination.symlink_to(root / "protected-alias-canary-never-print-absent")
+    elif fault == "live-empty-directory-symlink": destination.symlink_to(live_destination, target_is_directory=True)
+    else: destination.mkdir()
+    assert not accepted(report), fault
+    if fault == "empty-directory": destination.rmdir()
+    else: destination.unlink()
+assert accepted(report), "absent destination keeps refusal control valid"
+report_target = root / "observability-alias-refusal-regular-report.json"
+report_target.write_text(json.dumps(report))
+for fault in ("report-fifo", "report-symlink", "report-oversized"):
+    report_path.unlink()
+    if fault == "report-fifo": os.mkfifo(report_path)
+    elif fault == "report-symlink": report_path.symlink_to(report_target)
+    else: report_path.write_bytes(b"x" * 8388609)
+    assert not accepted(report, write_report=False), fault
+    report_path.unlink()
+    report_path.write_text(json.dumps(report))
+assert accepted(report), "regular bounded report keeps refusal control valid"
+PY
+
+python3 - "${script_directory}/lib/observability-application.sh" "${test_root}" << 'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+library, root = Path(sys.argv[1]), Path(sys.argv[2])
+source = root / "ordered-service-aliases"
+source.mkdir()
+unit = source / "test-observability-loki.container"
+literal = "[Container]\nImage=example.invalid/loki:1\nNetwork=test-observability-backend.network\nNetworkAlias=loki\n"
+def inventory():
+    return subprocess.run(["bash", "-c", 'source "$1"; observability_protected_service_alias_inventory cli "$2" test',
+        "inventory-control", str(library), str(source)], capture_output=True, check=False, timeout=5)
+unit.write_text(literal)
+good = inventory()
+assert good.returncode == 0
+assert json.loads(good.stdout)["subjects"] == ["services.test-observability-loki.networks.test-observability-backend.aliases[0]"]
+for fault in ("fifo", "directory", "symlink", "empty", "oversized", "invalid-utf8"):
+    unit.unlink()
+    if fault == "fifo": os.mkfifo(unit)
+    elif fault == "directory": unit.mkdir()
+    elif fault == "symlink": unit.symlink_to(root / "protected-alias-canary-never-print")
+    elif fault == "empty": unit.write_bytes(b"")
+    elif fault == "oversized": unit.write_bytes(b"x" * 1048577)
+    elif fault == "invalid-utf8": unit.write_bytes(b"protected-alias-canary-never-print\xff")
+    result = inventory()
+    assert result.returncode != 0 and result.stdout == b"", fault
+    assert b"Traceback" not in result.stderr, fault
+    assert b"protected-alias-canary-never-print" not in result.stderr, fault
+    if fault == "directory": unit.rmdir()
+    else: unit.unlink()
+    unit.write_text(literal)
+unit.unlink()
+# Pod/group aliases do not become service obligations in an alias-free unit.
+(source / "test-observability-grafana.container").write_text(
+    "[Container]\nImage=example.invalid/grafana:1\n[Pod]\nNetworkAlias=group-only\n")
+zero = inventory()
+assert zero.returncode == 0 and json.loads(zero.stdout)["subjects"] == []
+PY

@@ -94,6 +94,24 @@ class ApplicationExpectations(unittest.TestCase):
         self.assertEqual(result["runtime_evidence"], "unmeasured")
         self.assertEqual(result["evidence_kind"], "offline-contract-prerequisite")
 
+    def assert_superseded_admission_bindings_reject(self):
+        # Exact pre-ADR-0073 prospective bindings, not rewritten historical receipts.
+        old_sources = {
+            "observability": "7e0a2db171dda5fde3558b259b80aadc2888dc2fa9d7e219fd2f8ba416d8a6c9",
+            "supabase": "0b1b5272a6bd98038098cc54808bffd9234c9de6a3ae630470aade7a78974b3d",
+        }
+        raw = encode(self.plan)
+        for field, old_digest in (
+            ("expectations_sha256", "81788c41a28c8950fdd6fc59ca3ab54cb247ee0a7841f6f77839e4a318196687"),
+            ("source_sha256", old_sources[self.application]),
+        ):
+            with self.subTest(application=self.application, stale_binding=field):
+                admission = self.admission(raw)
+                self.assertNotEqual(admission[field], old_digest)
+                admission[field] = old_digest
+                with self.assertRaisesRegex(contract.ExpectationError, "identity binding differs"):
+                    self.validate(admission=admission)
+
     def test_independent_six_application_inventories(self):
         inventories = {
             "forgejo": {"db", "forgejo"},
@@ -153,6 +171,7 @@ class ApplicationExpectations(unittest.TestCase):
     def test_full_eleven_service_supabase_and_shared_mount_access(self):
         self.supabase()
         self.assertEqual(len(self.validate()["services"]), 11)
+        self.assert_superseded_admission_bindings_reject()
         for missing in ["db", "auth", "rest", "realtime", "functions", "supavisor", "studio", "imgproxy", "meta", "storage", "kong"]:
             with self.subTest(missing=missing):
                 plan = copy.deepcopy(self.plan)
@@ -243,6 +262,8 @@ class ApplicationExpectations(unittest.TestCase):
                 self.plan = {"schema_version": 1, "context": copy.deepcopy(self.profile), "requests": requests,
                              "prerequisites": [{"kind": "network", "reference": "0", "identity": edge_name, "expected_driver": "bridge"}] if shared else []}
                 self.assertEqual(len(self.validate()["services"]), len(services))
+                if app == "observability":
+                    self.assert_superseded_admission_bindings_reject()
                 alias_free = {"immich": ["immich-server"], "observability": [
                     "observability-log-producer", "observability-alloy", "observability-grafana"]}.get(app, [])
                 for suffix in alias_free:
@@ -436,6 +457,35 @@ class ApplicationExpectations(unittest.TestCase):
         with self.assertRaisesRegex(contract.ExpectationError, "source bytes differ"):
             contract.check_sources(ROOT, encode(changed))
 
+    def test_protected_alias_semantic_sources_are_required_and_mutation_bound(self):
+        sources = [
+            ("observability", "scripts/lib/protected-service-alias-contract.py",
+             b"os.path.lexists(destination)", b"False"),
+            ("supabase", "scripts/lib/protected-service-alias-contract.py",
+             b"read_regular(report, 8388608)", b"read_regular(report, 16777216)"),
+            ("supabase", "scripts/lib/supabase-application.sh",
+             b'supabase_assert_protected_service_alias_refusal "${report}"', b': "${report}"'),
+        ]
+        for app, path, original_policy, replacement in sources:
+            with self.subTest(application=app, source=path):
+                records = [row for row in EXPECTED["applications"][app]["sources"] if row["path"] == path]
+                self.assertEqual(len(records), 1)
+                source_path = ROOT / path
+                original = source_path.read_bytes()
+                self.assertEqual(records[0]["sha256"], hashlib.sha256(original).hexdigest())
+                changed = original.replace(original_policy, replacement, 1)
+                self.assertNotEqual(original, changed)
+                read_bytes = pathlib.Path.read_bytes
+                with mock.patch.object(pathlib.Path, "read_bytes", autospec=True,
+                                       side_effect=lambda candidate: changed if candidate == source_path else read_bytes(candidate)):
+                    with self.assertRaisesRegex(contract.ExpectationError, "source bytes differ"):
+                        contract.check_sources(ROOT, RAW)
+                missing = copy.deepcopy(EXPECTED)
+                missing["applications"][app]["sources"] = [row for row in missing["applications"][app]["sources"]
+                                                         if row["path"] != path]
+                with self.assertRaisesRegex(contract.ExpectationError, "semantic source binding is absent"):
+                    contract.catalogue(encode(missing))
+
     def test_observability_boundary_peer_and_probe_source_mutation_invalidates_binding(self):
         path = "scripts/lib/observability-application.sh"
         records = [row for row in EXPECTED["applications"]["observability"]["sources"] if row["path"] == path]
@@ -475,7 +525,9 @@ class ApplicationExpectations(unittest.TestCase):
             ("quadlet", "podman", "BFP0007"),
         ]
         expected = [
-            (source, target, "migration-success", "live-unperformed", codes,
+            (source, target, "known-migration-gap" if (source, target) == ("quadlet", "compose") else "migration-success",
+             "live-unperformed", codes,
+             "protected-service-alias-refusal-or-zero-alias-positive-v1" if (source, target) == ("quadlet", "compose") else
              "zero-loss-zero-diagnostic-reimport" if codes == "-" else
              "exact-diagnostic-tuple-multiset-plus-loss-fidelity-v1")
             for source, target, codes in routes
@@ -483,6 +535,16 @@ class ApplicationExpectations(unittest.TestCase):
         actual = [tuple(line.split("\t")) for line in original.decode().splitlines()
                   if line and not line.startswith("#")]
         self.assertEqual(actual, expected)
+        self.assertEqual(sum(row[2] == "migration-success" for row in actual), 8)
+        self.assertEqual(sum(row[2] == "known-migration-gap" for row in actual), 1)
+        obsolete_success = original.replace(
+            b"quadlet\tcompose\tknown-migration-gap", b"quadlet\tcompose\tmigration-success", 1)
+        self.assertNotEqual(original, obsolete_success)
+        read_bytes = pathlib.Path.read_bytes
+        with mock.patch.object(pathlib.Path, "read_bytes", autospec=True,
+                               side_effect=lambda candidate: obsolete_success if candidate == source_path else read_bytes(candidate)):
+            with self.assertRaisesRegex(contract.ExpectationError, "source bytes differ"):
+                contract.check_sources(ROOT, RAW)
         changed = original.replace(b"live-unperformed", b"live-success", 1)
         self.assertNotEqual(original, changed, "mutation must change the actual evidence claim")
         read_bytes = pathlib.Path.read_bytes
