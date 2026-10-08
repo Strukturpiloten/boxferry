@@ -1,7 +1,13 @@
 # Development environment
 
 Use the Dev Container. It provides the pinned Rust, Node, documentation, audit, and GitHub tools
-used by CI for the six-repository workspace, including the DockerLens checkout.
+used by CI for the seven-repository workspace, including the DockerLens and KubernetesLens checkouts.
+
+Keep each sibling checkout beside `boxferry`, then open `boxferry-lenses.code-workspace`
+in the Dev Container. KubernetesLens is mounted for editing only until it has its own
+project and verification scripts; the existing aggregate check task remains unchanged.
+After sibling mounts change, use **Dev Containers: Rebuild and Reopen in Container**
+so the new checkout becomes available. Reloading VS Code alone does not add a container mount.
 
 ## Build the CLI
 

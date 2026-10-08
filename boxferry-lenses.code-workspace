@@ -13,6 +13,10 @@
       "path": ".boxferry-workspace/docker-lens",
     },
     {
+      "name": "KubernetesLens",
+      "path": ".boxferry-workspace/kubernetes-lens",
+    },
+    {
       "name": "PodmanLens",
       "path": ".boxferry-workspace/podman-lens",
     },
