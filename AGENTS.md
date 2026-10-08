@@ -77,6 +77,7 @@ workspace repositories:
 - `Strukturpiloten/quadlet-lens`
 - `Strukturpiloten/boxferry-website`
 - `Strukturpiloten/docker-lens`
+- `Strukturpiloten/kubernetes-lens`
 
 Do not work on or modify any repository outside this explicit allowlist, including its issues,
 pull requests, branches, settings, or workflows. An upstream documentation reference is not

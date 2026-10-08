@@ -6389,6 +6389,8 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "\"path\": \".boxferry-workspace/compose-lens\"",
         "\"name\": \"DockerLens\"",
         "\"path\": \".boxferry-workspace/docker-lens\"",
+        "\"name\": \"KubernetesLens\"",
+        "\"path\": \".boxferry-workspace/kubernetes-lens\"",
         "\"name\": \"PodmanLens\"",
         "\"path\": \".boxferry-workspace/podman-lens\"",
         "\"name\": \"QuadletLens\"",
@@ -6417,6 +6419,7 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
         "source=boxferry-gh-${devcontainerId},target=/workspaces/.boxferry-gh,type=volume",
         "source=${localWorkspaceFolder}/../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens,type=bind",
         "source=${localWorkspaceFolder}/../docker-lens,target=/workspaces/boxferry/.boxferry-workspace/docker-lens,type=bind",
+        "source=${localWorkspaceFolder}/../kubernetes-lens,target=/workspaces/boxferry/.boxferry-workspace/kubernetes-lens,type=bind",
         "source=${localWorkspaceFolder}/../podman-lens,target=/workspaces/boxferry/.boxferry-workspace/podman-lens,type=bind",
         "source=${localWorkspaceFolder}/../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens,type=bind",
     ] {
@@ -6432,6 +6435,7 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
             [
                 "\"path\": \".boxferry-workspace/compose-lens\"",
                 "\"path\": \".boxferry-workspace/docker-lens\"",
+                "\"path\": \".boxferry-workspace/kubernetes-lens\"",
                 "\"path\": \".boxferry-workspace/podman-lens\"",
                 "\"path\": \".boxferry-workspace/quadlet-lens\"",
             ],
@@ -6442,6 +6446,7 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
             [
                 "../compose-lens,target=/workspaces/boxferry/.boxferry-workspace/compose-lens",
                 "../docker-lens,target=/workspaces/boxferry/.boxferry-workspace/docker-lens",
+                "../kubernetes-lens,target=/workspaces/boxferry/.boxferry-workspace/kubernetes-lens",
                 "../podman-lens,target=/workspaces/boxferry/.boxferry-workspace/podman-lens",
                 "../quadlet-lens,target=/workspaces/boxferry/.boxferry-workspace/quadlet-lens",
             ],
@@ -6453,7 +6458,7 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
             .collect::<Result<Vec<_>, _>>()?;
         if !positions.windows(2).all(|pair| pair[0] < pair[1]) {
             return Err(format!(
-                "{label} must order ComposeLens, DockerLens, PodmanLens, and QuadletLens"
+                "{label} must order ComposeLens, DockerLens, KubernetesLens, PodmanLens, and QuadletLens"
             ));
         }
     }
@@ -6515,7 +6520,7 @@ fn devcontainer_lifecycle_check_uses_the_remote_user_without_sudo_user_switching
         "installed_components=\"$(rustup component list --installed)\"",
         "$(rustup show active-toolchain)",
         "From the BoxFerry repository root, run: rustup component add llvm-tools-preview",
-        "for repository in compose-lens docker-lens podman-lens quadlet-lens boxferry-website; do",
+        "for repository in compose-lens docker-lens kubernetes-lens podman-lens quadlet-lens boxferry-website; do",
     ] {
         if !script.contains(required) {
             return Err(format!("Dev Container lifecycle check is missing `{required}`"));
@@ -9471,6 +9476,7 @@ fn workspace_git_authorization_and_agent_limits_are_bounded() -> Result<(), Box<
             "- `Strukturpiloten/quadlet-lens`",
             "- `Strukturpiloten/boxferry-website`",
             "- `Strukturpiloten/docker-lens`",
+            "- `Strukturpiloten/kubernetes-lens`",
         ]
     );
     let flattened = instructions.split_whitespace().collect::<Vec<_>>().join(" ");
