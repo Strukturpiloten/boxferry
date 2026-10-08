@@ -60,6 +60,7 @@ active table; superseded records are history and are read only when that history
 | [0063](0063-sole-quadlet-unit-application-identity.md) | Sole-unit Quadlet application identity and explicit names for document sets |
 | [0066](0066-metadata-only-reviewed-pr-catalogue-admission.md) | Trusted reviewed-PR application diagnostics and metadata-only catalogue admission |
 | [0067](0067-run-owned-host-archive-aliases.md) | Run-owned host archive aliases and unchanged nested fixture references |
+| [0073](0073-compose-alias-sensitivity-and-export-refusal.md) | Scalar-specific Compose alias sensitivity and whole-candidate protected-alias export refusal |
 
 ## Superseded history
 

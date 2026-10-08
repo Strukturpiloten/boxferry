@@ -76,10 +76,11 @@ There is no image-grammar approximation: generated Supabase Compose images are d
 Compose-to-Compose reimports therefore have zero diagnostics and zero loss.
 CLI-origin generated Quadlet retains native Podman `Dependencies` evidence, so
 its reimports keep the reviewed dependency diagnostics and ordering assertion.
-Compose-origin generated Quadlet has no dependency evidence; Quadlet-to-Compose
-and Quadlet-to-Podman omit only those dependency diagnostics and do not require
-dependency order. Quadlet-to-Compose otherwise retains its `BFC0007`
-healthcheck and managed-backend IPAM losses. Its loss-fidelity totals fix the
+Compose-origin generated Quadlet has no dependency evidence; its reimports
+retain the corresponding dependency-diagnostic baseline without requiring
+dependency order. Quadlet-to-Compose with protected service aliases adds exact
+indexed BFC0007 refusals to the existing healthcheck/IPAM diagnostic baseline
+and emits no artifact. Its non-exact loss-fidelity totals fix the
 `approximate`, `unsupported`, `invalid`, and `other` counts, including repeated
 native-finding occurrences. The silent
 `exact` implementation counter has no independent semantic oracle and is
@@ -155,7 +156,10 @@ and reviewed dependency graph. Collision refusal, structured report redaction,
 and prefix-scoped cleanup are hard assertions.
 
 Podman-origin Compose and Quadlet artifacts carry digest-only platform references accepted by the
-Podman target. All nine route families must therefore succeed. Every Podman-target reimport checks
+Podman target. All nine route families remain exercised. The protected-service-alias
+Quadlet-to-Compose cells must refuse the complete candidate and are recorded as
+known migration gaps; digest-qualified images do not authorize alias disclosure.
+Zero-alias cells keep the positive contract. Every Podman-target reimport checks
 its exact `BFP0007` target-loss tuple multiset, fidelity counts, and generated artifact projection;
 the harness never executes those generated deployment artifacts.
 
@@ -238,3 +242,30 @@ storage, arbitrary Edge functions, GPU behavior, Logflare/Vector analytics,
 Quadlet systemd execution, ComposeLens provider conformance, or execution of
 BoxFerry-generated plans. An essential failure in any of the eleven services
 fails the profile; no component is silently removed to obtain a partial pass.
+
+## Conditional protected-alias reimport
+
+ADR 0073 narrows the generated service-alias Quadlet-to-Compose branch. Every
+mode, selection and route is still executed. Independently authored per-role
+alias expectations bind the actual generated container units; their ordered
+indexed refusal subjects and source digest are fixed before conversion and
+checked unchanged afterward. Pod/group aliases do not trigger this service guard.
+
+A nonempty protected service-alias inventory requires exit 2, a blocked policy
+report, exact value-free BFC0007 indexed unsupported diagnostics and actionable
+help, unchanged other diagnostic/fidelity expectations, and no output artifacts
+or files. The prior exact mapped-attachment outcome is not claimed when its
+protected aliases prevent construction; the exact implementation counter remains
+non-negative rather than an invented fixed total. Non-exact fidelity is checked
+against the independently authored baseline plus indexed alias refusals.
+It is recorded as a known migration gap because fresh Compose text
+cannot retain alias confidentiality. It is never counted as successful migration.
+A genuinely zero-alias source retains the positive branch; missing, reordered or
+substituted expected aliases do not manufacture that control. Direct explicitly
+promoted Podman-to-Compose aliases remain positive.
+
+Native application startup, readiness, traffic, persistence, all other routes,
+resource/time budgets, thresholds and cleanup remain mandatory. Offline report
+mutations and physical document reimport controls prove the branch contract only;
+fresh exact-revision live evidence is still required. No consent, declassification,
+artifact sidecar, native parser or executor is added.

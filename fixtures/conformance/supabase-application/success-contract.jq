@@ -34,7 +34,9 @@ def tuple($code; $subject; $decision):
     decision: $decision,
   };
 
-# All nine route families are successful; diagnostics include loss and exact reconstruction notes.
+# Positive branches retain this exact diagnostic/fidelity contract. Protected service aliases on
+# physical Quadlet->Compose reimport instead require the runner's whole-candidate refusal contract;
+# they are known migration gaps, never successful migration. Zero-alias sources retain this oracle.
 
 def selected_services:
   if $selection == "exact" then

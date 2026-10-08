@@ -20,6 +20,10 @@ from typing import Any
 
 
 APPLICATIONS = {"forgejo", "nextcloud", "paperless-ngx", "immich", "observability", "supabase"}
+REVIEWED_ALIAS_SOURCES = {
+    "observability": {"scripts/lib/observability-application.sh", "scripts/lib/protected-service-alias-contract.py"},
+    "supabase": {"scripts/lib/supabase-application.sh", "scripts/lib/protected-service-alias-contract.py"},
+}
 IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 API = re.compile(r"1\.[0-9]{2}")
@@ -155,6 +159,8 @@ def catalogue(raw: bytes) -> dict[str, Any]:
                     and path not in paths and isinstance(row["sha256"], str)
                     and DIGEST.fullmatch(row["sha256"]) is not None, "source binding differs")
             paths.add(path)
+        require(REVIEWED_ALIAS_SOURCES.get(app, set()) <= paths,
+                "reviewed protected-alias semantic source binding is absent")
         require(expected["image_catalogue"] == f"fixtures/conformance/{app}-application/images.tsv"
                 and expected["provider_catalogue"] == f"fixtures/conformance/{app}-application/providers.tsv"
                 and {expected["image_catalogue"], expected["provider_catalogue"],

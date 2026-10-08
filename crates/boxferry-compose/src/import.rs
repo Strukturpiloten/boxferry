@@ -20,7 +20,7 @@ use boxferry_model::{
     ServiceDependency, ServiceDependencyCondition, SourceBuildSecret, SourceBuildSetting, SourceSpan, Sourced,
     StopTimeout, Volume,
 };
-use compose_lens::merge::MergeProvenance;
+use compose_lens::merge::{MergeProvenance, MergedProject};
 use compose_lens::model::{
     BooleanValue, ComposeScalar, ConfigDefinition, DependencyCondition as ComposeDependencyCondition,
     Entrypoint as ComposeEntrypoint, EnvironmentFileFormatKind, ExposeItemKind, ExposeProtocol,
@@ -338,7 +338,13 @@ impl<'a> Mapping<'a> {
             self.map_service_grants(&subject, "secrets", secrets, true, &mut service);
         }
         if let Some(networks) = native.networks() {
-            self.map_service_networks(&subject, networks.value(), networks.provenance(), &mut service);
+            self.map_service_networks(
+                &subject,
+                native.name().value(),
+                networks.value(),
+                networks.provenance(),
+                &mut service,
+            );
         }
         if let Some(profiles) = native.profiles() {
             if !profiles.value().is_empty() {
@@ -2766,6 +2772,7 @@ impl<'a> Mapping<'a> {
     fn map_service_networks(
         &mut self,
         service_subject: &str,
+        service_name: &str,
         networks: &ServiceNetworks,
         provenance: &MergeProvenance,
         service: &mut Service,
@@ -2785,7 +2792,7 @@ impl<'a> Mapping<'a> {
             }
             ServiceNetworks::Long { networks, .. } => {
                 for network in networks {
-                    self.map_service_network(service_subject, network, provenance, service);
+                    self.map_service_network(service_subject, service_name, network, provenance, service);
                 }
             }
         }
@@ -2794,6 +2801,7 @@ impl<'a> Mapping<'a> {
     fn map_service_network(
         &mut self,
         service_subject: &str,
+        service_name: &str,
         network: &ServiceNetwork,
         provenance: &MergeProvenance,
         service: &mut Service,
@@ -2802,10 +2810,13 @@ impl<'a> Mapping<'a> {
         let Some(identifier) = self.identifier(&subject, network.name().value(), network.name().span()) else {
             return;
         };
+        let sensitivities = corroborated_alias_sensitivities(self.source.project(), service_name, network)
+            .unwrap_or_else(|| vec![true; network.aliases().len()]);
         let aliases = network
             .aliases()
             .iter()
-            .map(|alias| self.sourced_spans(Self::protected(alias.value(), true), &[alias.span()]))
+            .zip(sensitivities)
+            .map(|(alias, sensitive)| self.sourced_spans(Self::protected(alias.value(), sensitive), &[alias.span()]))
             .collect();
         let mut attachment = NetworkAttachment::new(identifier, aliases);
         if let Some(address) = network.ipv4_address() {
@@ -4285,6 +4296,33 @@ fn first_compose_variable(value: &str) -> Option<&str> {
         .then_some(variable)
 }
 
+/// Correlates the typed ordered aliases with scalar evidence in their original merged project.
+/// The complete tuple must agree before any scalar flag can authorize an ordinary alias. Missing
+/// or malformed metadata never falls back to aggregate sensitivity, value guesses, or YAML parsing.
+fn corroborated_alias_sensitivities(
+    project: &MergedProject,
+    service_name: &str,
+    network: &ServiceNetwork,
+) -> Option<Vec<bool>> {
+    let values = project
+        .value(&["services", service_name, "networks", network.name().value(), "aliases"])?
+        .as_sequence()?;
+    if values.len() != network.aliases().len() {
+        return None;
+    }
+    values
+        .iter()
+        .zip(network.aliases())
+        .map(|(value, alias)| {
+            let scalar = value.as_scalar()?;
+            if scalar.value() != alias.value() || value.provenance().effective_source() != Some(alias.span()) {
+                return None;
+            }
+            Some(scalar.is_sensitive())
+        })
+        .collect()
+}
+
 fn map_protocol(protocol: Option<&str>) -> Protocol {
     match protocol.unwrap_or("tcp").to_ascii_lowercase().as_str() {
         "tcp" => Protocol::Tcp,
@@ -4307,3 +4345,7 @@ fn is_host_path(value: &str) -> bool {
             .get(0..2)
             .is_some_and(|prefix| prefix[0].is_ascii_alphabetic() && prefix[1] == b':')
 }
+
+#[cfg(test)]
+#[path = "import_alias_tests.rs"]
+mod alias_tests;

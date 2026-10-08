@@ -52,7 +52,7 @@
       "code": "BFC0007",
       "default_severity": "warning",
       "description": "Neutral application intent is not represented in generated Compose output.",
-      "help": "Review the named subject; use --loss-policy partial only when the omitted intent is acceptable.",
+      "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
       "name": "compose-output-unsupported",
       "owner": "Compose adapter"
     },

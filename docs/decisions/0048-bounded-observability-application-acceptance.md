@@ -1,6 +1,12 @@
 # ADR 0048: Bounded observability application acceptance
 
 - Status: accepted
+- Partially superseded by [ADR 0073](0073-compose-alias-sensitivity-and-export-refusal.md)
+  only for generated protected-service-alias Quadlet-to-Compose successful
+  reimport. That route remains exercised as a known migration gap; safe
+  zero-alias reimport and explicitly promoted direct Podman-to-Compose stay
+  positive. All independent application runtime, budget and cleanup requirements
+  remain unchanged.
 - Date: 2026-09-10
 - Builds on: [ADR 0037](0037-finite-podman-input-and-live-conformance.md),
   [ADR 0039](0039-independent-migration-scenarios.md),

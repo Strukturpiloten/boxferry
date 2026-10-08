@@ -496,6 +496,21 @@ and leaves admitted historical native evidence unchanged. Canonical fixture
 updates require deliberate review of the affected contract and source hashes;
 do not silently refresh hashes to make a changed graph pass.
 
+ADR 0073 deliberately narrows protected-service-alias Quadlet-to-Compose
+reimports to a conditional known migration gap, while retaining every route and
+all independent application probes. The prospective source inventory now binds
+the reviewed shared refusal helper in both Observability and Supabase, plus
+Supabase's ordered-alias wrapper; Observability's existing wrapper and Supabase's
+route catalogue retain their bindings to the newly reviewed bytes. Independent
+tests reject obsolete unconditional success, missing or mutated semantic source
+bindings, and admissions carrying the superseded source or catalogue digests.
+Topology, aliases, dependencies, excluded peers, required checks, software pins,
+schema and `native_execution: false` remain unchanged. Fresh offline admissions
+must use the current bindings; historical admissions, native evidence and receipts
+are neither rewritten nor relabelled. These authored source bindings are not
+downloaded-software pins, so existing unique Renovate managers, extraction paths,
+grouping and approvals need no change.
+
 The app-owned service counts are 2, 6, 5, 4, 6, and 11, respectively. Nextcloud's
 shared proxy is declared separately from its six application services; the
 second application stays excluded. Forgejo, observability, and Supabase also

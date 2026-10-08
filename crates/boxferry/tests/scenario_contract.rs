@@ -5108,3 +5108,105 @@ impl Drop for TemporaryDirectory {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[test]
+fn physical_quadlet_service_alias_reimport_refuses_sensitive_text_but_keeps_alias_free_positive()
+-> Result<(), Box<dyn Error>> {
+    let compose_target = boxferry::TargetProfile::new(
+        boxferry::COMPOSE_SPECIFICATION_TARGET,
+        boxferry::COMPOSE_SPECIFICATION_PROFILE_REVISION,
+        Some(boxferry::COMPOSE_SPECIFICATION_PROFILE_REVISION),
+    )?;
+    let quadlet_target = boxferry::TargetProfile::new(
+        "podman",
+        boxferry::PlatformVersion::new(5, 4, 0),
+        Some(boxferry::PlatformVersion::new(6, 1, 2)),
+    )?;
+    for aliased in [false, true] {
+        let text = if aliased {
+            "---\nservices:\n  web:\n    image: example.invalid/web:1\n    networks:\n      backend:\n        aliases: [protected-alias-canary-never-print, second-alias]\nnetworks:\n  backend: {}\n"
+        } else {
+            "---\nservices:\n  web:\n    image: example.invalid/web:1\n    networks: [backend]\nnetworks:\n  backend: {}\n"
+        };
+        let imported = import_compose(text, "physical-alias-chain")?;
+        let direct = convert_imported(
+            imported.clone(),
+            &ComposeExporter::new()?,
+            &compose_target,
+            boxferry::LossPolicy::AllowPartial,
+        )?;
+        assert!(!direct.is_blocked(), "public aliases keep direct Compose generation");
+        let generated = convert_imported(
+            imported,
+            &QuadletExporter::new()?,
+            &quadlet_target,
+            boxferry::LossPolicy::AllowPartial,
+        )?;
+        assert!(!generated.is_blocked());
+        let directory = TemporaryDirectory::new("physical-alias-reimport")?;
+        let files = generated.output().ok_or("Quadlet output missing")?;
+        let mut inputs = Vec::new();
+        for (index, file) in files.files().iter().enumerate() {
+            let path = directory.path().join(file.name().as_str());
+            fs::write(&path, file.text())?;
+            let physical = fs::read_to_string(path)?;
+            if file.name().as_str().ends_with(".container") {
+                assert_eq!(
+                    physical.contains("NetworkAlias=protected-alias-canary-never-print"),
+                    aliased
+                );
+            }
+            inputs.push(QuadletDocumentInput::new(
+                file.name().as_str(),
+                boxferry::quadlet::quadlet_lens::source::SourceId::new(u32::try_from(index + 1)?),
+                physical,
+            ));
+        }
+        let native = QuadletSource::parse(Identifier::new("physical-alias-chain")?, inputs)?;
+        let reimport = QuadletImporter::new()?.import(native.source());
+        let application = reimport.application().ok_or("Quadlet application missing")?;
+        let aliases = application
+            .services()
+            .iter()
+            .flat_map(|service| service.value().networks())
+            .flat_map(|network| network.value().alias_sensitivities())
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(aliases, if aliased { vec![true, true] } else { vec![] });
+        for policy in [
+            boxferry::LossPolicy::ExactOnly,
+            boxferry::LossPolicy::AllowApproximate,
+            boxferry::LossPolicy::AllowPartial,
+        ] {
+            let result = convert_imported(reimport.clone(), &ComposeExporter::new()?, &compose_target, policy)?;
+            if aliased {
+                assert!(result.is_blocked() && result.output().is_none());
+                let refusals = result
+                    .outcomes()
+                    .iter()
+                    .filter(|outcome| outcome.subject().contains(".aliases["))
+                    .collect::<Vec<_>>();
+                assert_eq!(refusals.len(), 2);
+                for (index, outcome) in refusals.iter().enumerate() {
+                    assert_eq!(
+                        outcome.subject(),
+                        format!("services.web.networks.backend.aliases[{index}]")
+                    );
+                    assert_eq!(outcome.kind(), ConversionKind::Unsupported);
+                    assert!(!outcome.origins().is_empty());
+                    assert_eq!(
+                        outcome.diagnostic().map(boxferry::DiagnosticCode::as_str),
+                        Some("BFC0007")
+                    );
+                }
+                assert!(!format!("{:?}", result.diagnostics()).contains("protected-alias-canary-never-print"));
+            } else if policy == boxferry::LossPolicy::AllowPartial {
+                assert!(
+                    !result.is_blocked() && result.output().is_some(),
+                    "zero-alias physical reimport retains the positive route"
+                );
+            }
+        }
+    }
+    Ok(())
+}

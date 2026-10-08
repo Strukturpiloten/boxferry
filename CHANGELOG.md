@@ -7,6 +7,11 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Reconcile Supabase and Observability live reimport contracts with protected
+  service-alias refusal: retain every route and runtime probe, and record the
+  affected Quadlet-to-Compose cells as known migration gaps rather than successes.
+- Clarify Compose unsupported-output remediation: protected service aliases block
+  every loss policy; partial omission applies only when a candidate exists.
 - Extend the default Quadlet target range through 6.1.2, matching QuadletLens evidence while
   retaining the separate 6.1.0 Podman deployment target ([#335](https://github.com/Strukturpiloten/boxferry/issues/335)).
 
@@ -44,6 +49,14 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
   search, converter, persistence, privacy, and resource-budget evidence ([#135](https://github.com/Strukturpiloten/boxferry/issues/135)).
 
 ### Fixed
+
+- Preserve Compose service-network aliases' native per-scalar sensitivity: retain public aliases
+  without taint from protected siblings, keep sensitive substitutions protected, and fail closed when
+  native metadata cannot be corroborated. Refuse the entire Compose candidate for protected aliases
+  in service network attachments under every loss policy instead of losing confidentiality after
+  fresh text reload; successful protected-service-alias Compose export is no longer supported.
+  Group-network aliases remain unrendered under the existing unsupported/partial-loss contract
+  ([#432](https://github.com/Strukturpiloten/boxferry/issues/432)).
 
 - Preserve explicitly promoted typed Podman network aliases through every exporter and require
   Supabase Realtime tenant DNS plus acknowledged PostgreSQL subscriptions before accepting live

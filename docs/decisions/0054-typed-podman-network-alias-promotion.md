@@ -1,6 +1,9 @@
 # ADR 0054: Promote typed Podman network aliases explicitly
 
 - Status: accepted
+- Partially superseded by [ADR 0073](0073-compose-alias-sensitivity-and-export-refusal.md):
+  only decision 4's protected-service-alias Compose export/fresh-text reimport branch. Native alias
+  classification, topology correlation, promotion permissions and other exporters remain unchanged.
 - Date: 2026-09-13
 - Amends: [ADR 0034](0034-podman-lens-adapter-boundary.md) and
   [ADR 0042](0042-bounded-podman-creation-evidence-and-intent-promotion.md)

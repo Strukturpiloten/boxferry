@@ -60,6 +60,11 @@ pub enum ComposeRuntime {
 }
 
 /// Loss-aware exporter for deterministic, parse-back-validated Compose YAML.
+///
+/// Protected aliases in service network attachments block the entire candidate under every loss
+/// policy. Plain Compose text cannot carry their sensitivity into a fresh importer; no service
+/// alias omission or declassification is authorized by partial loss policy. Group-network aliases
+/// are not serialized; their existing structured unsupported/partial-loss contract is unchanged.
 #[derive(Clone, Debug)]
 pub struct ComposeExporter {
     codes: Codes,
@@ -107,6 +112,7 @@ impl ExportAdapter for ComposeExporter {
         target: &TargetProfile,
     ) -> Result<ConversionPlan<Self::Output>, PlanError> {
         let mut mapping = Mapping::new(self, application, target);
+        mapping.reject_protected_aliases();
         if mapping.validate_target() {
             mapping.map_application();
         }
@@ -136,6 +142,7 @@ struct Mapping<'a> {
     outcomes: Vec<ConversionOutcome>,
     diagnostics: Vec<Diagnostic>,
     generation_failed: bool,
+    protected_aliases: bool,
 }
 
 impl<'a> Mapping<'a> {
@@ -149,6 +156,35 @@ impl<'a> Mapping<'a> {
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
             generation_failed: false,
+            protected_aliases: false,
+        }
+    }
+
+    fn reject_protected_aliases(&mut self) {
+        for service in self.application.services() {
+            for network in service.value().networks() {
+                for index in 0..network.value().aliases().len() {
+                    if network
+                        .value()
+                        .alias_sensitivities()
+                        .get(index)
+                        .copied()
+                        .unwrap_or(true)
+                    {
+                        self.protected_aliases = true;
+                        let origins = network
+                            .value()
+                            .alias_origins()
+                            .get(index)
+                            .map_or(network.origins(), Vec::as_slice);
+                        self.unsupported(
+                            &format!("services.{}.networks.{}.aliases[{index}]", service.value().name().as_str(), network.value().network().as_str()),
+                            "protected network aliases cannot retain sensitivity in fresh Compose text; keep protected alias configuration outside this generated document",
+                            origins,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -1382,18 +1418,19 @@ impl<'a> Mapping<'a> {
                 Ok(mut value) => {
                     let mut valid = true;
                     for (index, alias) in network.value().aliases().iter().enumerate() {
-                        let alias = if network
+                        if network
                             .value()
                             .alias_sensitivities()
                             .get(index)
                             .copied()
-                            .unwrap_or(false)
+                            .unwrap_or(true)
                         {
-                            ProtectedString::sensitive(alias)
-                        } else {
-                            ProtectedString::plain(alias)
-                        };
-                        if let Err(error) = generated_string(&alias).and_then(|alias| value.add_alias_value(&alias)) {
+                            valid = false;
+                            continue;
+                        }
+                        if let Err(error) =
+                            GeneratedString::plain(alias).and_then(|alias| value.add_alias_value(&alias))
+                        {
                             self.generation_error(&subject, &error, network.origins());
                             valid = false;
                             break;
@@ -2192,7 +2229,7 @@ impl<'a> Mapping<'a> {
         Vec<ConversionOutcome>,
         Vec<Diagnostic>,
     ) {
-        let candidate = if self.compatibility.is_some() && !self.generation_failed {
+        let candidate = if self.compatibility.is_some() && !self.generation_failed && !self.protected_aliases {
             match self.builder.take().unwrap_or_default().build(SourceId::new(1)) {
                 Ok(document) => Some(document),
                 Err(error) => {
