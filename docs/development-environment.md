@@ -1,18 +1,16 @@
 # Development environment
 
-Use the Dev Container. It provides the pinned Rust, Node, documentation, audit, and GitHub tools
-used by CI for the seven-repository workspace, including the DockerLens and KubernetesLens checkouts.
+Use the Dev Container's pinned Rust, Node, documentation, audit, and GitHub tools, shared with CI
+across the seven-repository workspace, including DockerLens and KubernetesLens.
 
-Keep each sibling checkout beside `boxferry`, then open `boxferry-lenses.code-workspace`
-in the Dev Container. KubernetesLens is mounted for editing only until it has its own
-project and verification scripts; the existing aggregate check task remains unchanged.
-After sibling mounts change, use **Dev Containers: Rebuild and Reopen in Container**
-so the new checkout becomes available. Reloading VS Code alone does not add a container mount.
+Keep sibling checkouts beside `boxferry`; open `boxferry-lenses.code-workspace` in the Dev Container.
+KubernetesLens remains editing-only until it has project and verification scripts; aggregate checks
+remain unchanged. After mount changes, use **Dev Containers: Rebuild and Reopen in Container**;
+reloading VS Code alone cannot add mounts.
 
 ## Build the CLI
 
-Cargo uses its default workspace target directory. Build the release binary and run it from the
-expected repository-local path:
+Cargo uses its default workspace target directory. Build and run the repository-local release binary:
 
 ```console
 cargo build --release --locked --package boxferry
@@ -24,20 +22,18 @@ Existing terminals may use `unset CARGO_TARGET_DIR` until rebuilt.
 
 ## Shared website toolchain
 
-The uv image in `.devcontainer/Dockerfile` must match the website's exact
-`tool.uv.required-version` in `boxferry-website/pyproject.toml` and its CI/deployment inputs.
-Renovate tracks all nine Dockerfile pins, grouping non-major toolchain updates and preserving
-image release/tag/digest pairs and stage aliases. Website uv pins form a separate group:
-coordinate cross-repository updates, retain its exact requirement, and rebuild the Dev Container
-after Dockerfile changes.
+The `.devcontainer/Dockerfile` uv image must match the website's exact `tool.uv.required-version`
+in `boxferry-website/pyproject.toml` and CI/deployment inputs. Renovate tracks all nine Dockerfile
+pins, grouping non-major toolchain updates while preserving image release/tag/digest pairs and
+stage aliases. Website uv pins are grouped separately: coordinate repository updates, retain
+the exact requirement, and rebuild after Dockerfile changes.
 
 ## Rust toolchain components
 
-`rust-toolchain.toml` selects Rust, Clippy, rustfmt, and LLVM coverage tools. The Dev Container
-preinstalls them; Rustup installs components for later pinned versions.
+`rust-toolchain.toml` selects Rust, Clippy, rustfmt, and LLVM coverage tools, preinstalled in the
+Dev Container. Rustup installs later pinned components.
 
-If an older container reports missing `llvm-tools-preview`, run these commands from the
-BoxFerry repository root **inside the container**:
+For missing `llvm-tools-preview` in older containers, run from the BoxFerry root **inside the container**:
 
 ```console
 rustup component add llvm-tools-preview
@@ -48,8 +44,8 @@ Rebuild the Dev Container after pulling the fix.
 
 ## Refresh the Dev Container feature lock
 
-Renovate proposes Dev Container feature updates without rewriting the checksum-bearing lock file.
-From the repository root, regenerate it with the pinned CLI before reviewing the resulting diff:
+Renovate's Dev Container feature updates leave the checksum-bearing lock unchanged.
+Regenerate it from the repository root with the pinned CLI before reviewing:
 
 ```console
 npx --yes @devcontainers/cli@0.89.0 upgrade --workspace-folder .
@@ -60,45 +56,42 @@ Commit the manifest and lock file together; never replace the Renovate-managed C
 
 ## Local verification
 
-For fast pre-push cleanup on a smaller computer, run:
+For lightweight pre-push cleanup, run:
 
 ```console
 ./scripts/format-lint.sh --fix
 ```
 
-The matching VS Code task is **BoxFerry: Format and lint only (no tests)**. It checks files,
-Actions, Clippy and whitespace without tests. Clippy defaults to two jobs; use
-`BOXFERRY_LINT_JOBS=1 ./scripts/format-lint.sh --fix` on a particularly constrained machine.
-`--check` verifies without formatting. Run it in the Dev Container so every pinned linter is
-available.
+VS Code task **BoxFerry: Format and lint only (no tests)** checks files, Actions, Clippy and
+whitespace without tests. Clippy defaults to two jobs; constrained machines can use
+`BOXFERRY_LINT_JOBS=1 ./scripts/format-lint.sh --fix`. `--check` skips formatting.
+Run in the Dev Container for pinned linters.
 
 `python3 scripts/validation-plan.py run-local` provides change-aware feedback; `plan --event local`
-previews it. Use `--docs-only` or `--full`; VS Code tasks match. For this task and the complete
-gate, unset a shared `CARGO_TARGET_DIR`: explicit targets must be inside this worktree to prevent
-stale fixture paths. Cargo download caches remain reusable.
+previews it. Use `--docs-only` or `--full`; VS Code tasks match. Unset shared `CARGO_TARGET_DIR`
+for this task and the complete gate: explicit targets must stay inside this worktree to avoid
+stale fixture paths. Download caches remain reusable.
 
-This task is a cleanliness aid, not evidence that tests passed. Run the complete gate after the
-final edit when local resources permit:
+Cleanup is not test evidence. Run the complete gate after the final edit when resources permit:
 
 ```console
 ./scripts/check-all.sh
 ```
 
-It formats first; later edits invalidate the result. Focused aliases and tasks cannot replace
-the complete gate. Contributors whose machines cannot
-complete the gate may push after the lightweight task succeeds and rely on required GitHub checks;
-the pull request is not ready to merge until those checks pass.
+It formats first; edits invalidate results. Focused checks cannot replace it. Contributors unable
+to complete it may push after lightweight cleanup succeeds and rely on required GitHub checks;
+merging requires those checks to pass.
 
 ## Issue-to-PR contribution workflow
 
 1. Inspect the worktree and preserve unrelated changes.
 2. Create or reuse one focused GitHub issue.
 3. Synchronize `main` and create `TheRealBecks/issue<NUMBER>`.
-4. Implement and review the complete scoped diff.
+4. Implement and review the scoped diff.
 5. Run `./scripts/format-lint.sh --fix`; run `./scripts/check-all.sh` locally when resources permit.
-6. Stage explicit paths, run `git diff --cached --check`, and review the staged diff.
+6. Stage explicit paths; run `git diff --cached --check` and review.
 7. Commit once, push, and open a ready pull request containing `Closes #<NUMBER>`.
-8. Read the issue and pull request back and monitor required checks.
+8. Read back the issue and pull request; monitor required checks.
 9. After a verified merge, return the primary checkout to synchronized `main`, remove any temporary
    worktree with `git worktree remove <recorded-path>`, delete the verified merged local issue branch
    with `git branch --delete --force TheRealBecks/issue<NUMBER>`, and run
@@ -109,8 +102,8 @@ Run the lightweight task before pushing. The selected GitHub checks and
 fail-closed `PR gate` must pass before merge. Code and unknown changes still require complete
 deterministic validation; `main` pushes and releases always run the complete plan.
 
-The resource-constrained contributor option above does not waive the coding-agent rule in
-`AGENTS.md`: agents must complete the local gate before committing, pushing, or creating a PR.
+The contributor exception does not waive `AGENTS.md`: agents must complete the local gate
+before committing, pushing, or creating a PR.
 
 The primary agent uses GPT-6 Sol with `xhigh` reasoning. Worker agents never perform Git or GitHub
 writes. The complete gate remains the primary agent's final responsibility. See [`AGENTS.md`](../AGENTS.md).
@@ -118,18 +111,17 @@ writes. The complete gate remains the primary agent's final responsibility. See 
 ## GitHub authentication
 
 The Dev Container stores `gh` authentication in a dedicated persistent volume. Run the workspace
-authentication task when the token changes. No token is copied into the repository or host CLI
-configuration.
+authentication task after token changes. Tokens never enter repository or host CLI configuration.
 
 ## Agent-assisted verification
 
-Models and roles: [`.codex/`](../.codex/); permissions and workflow: [`AGENTS.md`](../AGENTS.md).
-Reload or start a trusted session after configuration changes. Keep explicit primary-session
-overrides aligned with Sol/xhigh.
+Models/roles: [`.codex/`](../.codex/); permissions/workflow: [`AGENTS.md`](../AGENTS.md).
+Reload or start a trusted session after configuration changes; align primary-session overrides
+with Sol/xhigh.
 
-`./scripts/check-all.sh --check` runs the full gate without formatting; the default or `--fix`
-formats first. Ignored caches/build artifacts may change in either mode. Verifiers report failures
-without edits; the primary owns the final gate and standing-authorized merges.
+`./scripts/check-all.sh --check` runs the full gate without formatting; default/`--fix` formats
+first. Both modes may change ignored caches/build artifacts. Verifiers report failures without
+edits; the primary owns the final gate and standing-authorized merges.
 
 Shell-runner regression tests require the Linux Dev Container. Agent-configuration checks remain
 platform-independent; hosted validation runs on Linux only.
