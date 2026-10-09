@@ -28,6 +28,14 @@ pins, grouping non-major toolchain updates while preserving image release/tag/di
 stage aliases. Website uv pins are grouped separately: coordinate repository updates, retain
 the exact requirement, and rebuild after Dockerfile changes.
 
+## Kubernetes tooling
+
+Git comes from the pinned base; `gh` uses the locked feature. Rebuild after updates.
+[The installer](../scripts/install-kubernetes-tools.sh) supplies checksum-pinned kind, kubectl,
+Helm, and Kustomize. [Provisioning and consumer audit](https://github.com/Strukturpiloten/boxferry/issues/445)
+covers Renovate, host/CI reuse, and separate Podman access;
+[arm64 execution](https://github.com/Strukturpiloten/boxferry/issues/446) remains pending.
+
 ## Rust toolchain components
 
 `rust-toolchain.toml` selects Rust, Clippy, rustfmt, and LLVM coverage tools, preinstalled in the

@@ -31,7 +31,11 @@ tools=(
   gh
   git
   hadolint
+  helm
   jq
+  kind
+  kubectl
+  kustomize
   lychee
   markdownlint-cli2
   node
@@ -53,6 +57,14 @@ for tool in "${tools[@]}"; do
     exit 1
   fi
 done
+
+# Execute client-only commands as the development user; no runtime or credentials needed.
+git --version > /dev/null
+gh --version > /dev/null
+kind version > /dev/null
+kubectl version --client=true > /dev/null
+helm version --short > /dev/null
+kustomize version > /dev/null
 
 installed_components="$(rustup component list --installed)"
 if ! grep -q '^llvm-tools-' <<< "${installed_components}"; then
