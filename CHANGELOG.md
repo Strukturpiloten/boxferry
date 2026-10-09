@@ -7,6 +7,9 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Preserve explicit runtime network names during Compose export without assigning the
+  observed-name fallback twice; retain protected-name refusal and ownership diagnostics
+  ([#436](https://github.com/Strukturpiloten/boxferry/issues/436)).
 - Reconcile Supabase and Observability live reimport contracts with protected
   service-alias refusal: retain every route and runtime probe, and record the
   affected Quadlet-to-Compose cells as known migration gaps rather than successes.

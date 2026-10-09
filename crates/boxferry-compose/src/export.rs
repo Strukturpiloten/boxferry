@@ -485,22 +485,13 @@ impl<'a> Mapping<'a> {
                 GeneratedResource::external(name)
             }
         };
-        let mut resource = match resource {
+        let resource = match resource {
             Ok(resource) => resource,
             Err(error) => {
                 self.generation_error(subject, &error, origins);
                 return None;
             }
         };
-        if origins
-            .iter()
-            .any(|origin| origin.kind() == ProvenanceKind::RuntimeObservation)
-        {
-            if let Err(error) = resource.set_custom_name(name) {
-                self.generation_error(subject, &error, origins);
-                return None;
-            }
-        }
         if matches!(ownership, ResourceOwnership::Application | ResourceOwnership::External) {
             self.exact(subject, origins);
         }
@@ -532,6 +523,17 @@ impl<'a> Mapping<'a> {
                     self.generation_error(&format!("{subject}.name"), &error, runtime_name.origins());
                 } else {
                     self.exact(format!("{subject}.name"), runtime_name.origins());
+                }
+            } else if sourced
+                .origins()
+                .iter()
+                .any(|origin| origin.kind() == ProvenanceKind::RuntimeObservation)
+            {
+                // ComposeLens names are single-assignment. Only an absent explicit name
+                // permits the observed logical-name fallback; a protected name does not.
+                if let Err(error) = generated.set_custom_name(network.name().as_str()) {
+                    self.generation_error(&subject, &error, sourced.origins());
+                    return;
                 }
             }
             self.report_external_network_configuration(network, &subject);
