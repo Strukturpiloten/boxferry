@@ -15,9 +15,15 @@
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "timezone": "Europe/Berlin",
-  "dockerfile": { "enabled": false },
-  "docker-compose": { "enabled": false },
-  "quadlet": { "enabled": false },
+  "dockerfile": {
+    "enabled": false
+  },
+  "docker-compose": {
+    "enabled": false
+  },
+  "quadlet": {
+    "enabled": false
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -148,13 +154,30 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)\\nworkload_image=\"[^@\"]+@(?<currentDigest>sha256:[a-f0-9]{64})\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Signal updates for checksum-pinned Kubernetes development tools",
+      "managerFilePatterns": ["/^scripts/install-kubernetes-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>kubernetes-sigs/kind|kubernetes/kubernetes|helm/helm)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track Kustomize releases separately from kyaml and API releases",
+      "managerFilePatterns": ["/^scripts/install-kubernetes-tools\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>kubernetes-sigs/kustomize)\\nreadonly [a-z0-9_]+_version=\"(?<currentValue>[^\"]+)\""
+      ],
+      "extractVersionTemplate": "^kustomize/v(?<version>\\d+\\.\\d+\\.\\d+)$"
     }
   ],
   "packageRules": [
     {
       "description": "Keep non-major Dev Container image and tool updates together",
       "matchManagers": ["custom.regex"],
-      "matchFileNames": [".devcontainer/Dockerfile"],
+      "matchFileNames": [".devcontainer/Dockerfile", "scripts/install-kubernetes-tools.sh"],
       "matchUpdateTypes": ["minor", "patch", "pin", "digest", "pinDigest"],
       "groupName": "Dev Container toolchain"
     },
@@ -317,6 +340,15 @@
       "automerge": false,
       "prBodyNotes": [
         "Review both Linux release assets and update their SHA-256 checksums before merging."
+      ]
+    },
+    {
+      "description": "Require checksum review for Kubernetes development tools",
+      "matchFileNames": ["scripts/install-kubernetes-tools.sh"],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "prBodyNotes": [
+        "Review both Linux architectures and update their SHA-256 checksums from official release assets. Rebuild the Dev Container and validate every shared consumer; do not change historical compatibility profiles."
       ]
     }
   ]

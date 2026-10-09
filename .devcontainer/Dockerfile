@@ -66,6 +66,16 @@ RUN set -eux; \
     install -m 0755 "${temporary_directory}/actionlint" /usr/local/bin/actionlint; \
     rm -r "${temporary_directory}"
 
+# Git is provided by the digest-pinned Rust base; gh is a locked Dev Container feature.
+COPY scripts/install-kubernetes-tools.sh /tmp/install-kubernetes-tools.sh
+RUN git --version \
+    && bash /tmp/install-kubernetes-tools.sh /usr/local/bin \
+    && kind version \
+    && kubectl version --client=true \
+    && helm version --short \
+    && kustomize version \
+    && rm /tmp/install-kubernetes-tools.sh
+
 # Install the workspace toolchain as well as the image default. Components belong
 # to individual toolchains; a Renovate update must not lose coverage tooling.
 COPY rust-toolchain.toml /opt/boxferry-toolchain/rust-toolchain.toml

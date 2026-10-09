@@ -5,8 +5,14 @@ from __future__ import annotations
 
 import copy
 import fnmatch
+import hashlib
+import io
 import json
+import os
 import re
+import subprocess
+import tarfile
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -30,13 +36,15 @@ def python_pattern(pattern: str) -> str:
     return re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", pattern)
 
 
-def extracted_pins(configuration: dict, dockerfile: str) -> list[tuple[dict, re.Match]]:
+def extracted_pins(
+    configuration: dict, dockerfile: str, path: str = DOCKERFILE_PATH
+) -> list[tuple[dict, re.Match]]:
     pins = []
     for manager in configuration["customManagers"]:
         if manager["customType"] != "regex":
             continue
         if not any(
-            re.search(pattern[1:-1], DOCKERFILE_PATH) for pattern in manager["managerFilePatterns"]
+            re.search(pattern[1:-1], path) for pattern in manager["managerFilePatterns"]
         ):
             continue
         for pattern in manager["matchStrings"]:
@@ -204,7 +212,9 @@ class DevContainerRenovateTests(unittest.TestCase):
         ]
         self.assertEqual(len(rules), 1)
         self.assertEqual(rules[0]["matchManagers"], ["custom.regex"])
-        self.assertEqual(rules[0]["matchFileNames"], [DOCKERFILE_PATH])
+        self.assertEqual(
+            rules[0]["matchFileNames"], [DOCKERFILE_PATH, "scripts/install-kubernetes-tools.sh"]
+        )
         self.assertEqual(
             set(rules[0]["matchUpdateTypes"]), {"minor", "patch", "pin", "digest", "pinDigest"}
         )
@@ -280,6 +290,177 @@ class DevContainerRenovateTests(unittest.TestCase):
                 self.assertEqual(
                     re.findall(r" AS [a-z_]+", source), re.findall(r" AS [a-z_]+", self.dockerfile)
                 )
+
+
+class KubernetesToolRenovateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.path = "scripts/install-kubernetes-tools.sh"
+        self.source = (ROOT / self.path).read_text(encoding="utf-8")
+        self.configuration = json.loads(
+            (ROOT / ".github/renovate.json").read_text(encoding="utf-8")
+        )
+
+    def validate(self, configuration: dict, source: str) -> list[tuple[dict, re.Match]]:
+        pins = extracted_pins(configuration, source, self.path)
+        expected = {
+            ("github-releases", "kubernetes-sigs/kind"),
+            ("github-releases", "kubernetes/kubernetes"),
+            ("github-releases", "helm/helm"),
+            ("github-releases", "kubernetes-sigs/kustomize"),
+        }
+        identities = [(match["datasource"], match["depName"]) for _, match in pins]
+        if len(identities) != len(expected) or set(identities) != expected:
+            raise ValueError("each Kubernetes tool needs exactly one extraction owner")
+        return pins
+
+    def test_each_tool_has_one_owner_and_two_reviewed_checksums(self) -> None:
+        pins = self.validate(self.configuration, self.source)
+        self.assertEqual(len(pins), len(re.findall(r'^readonly \w+_version=', self.source, re.M)))
+        for tool in ("kind", "kubectl", "helm", "kustomize"):
+            self.assertEqual(
+                len(re.findall(rf'readonly {tool}_checksum="[a-f0-9]{{64}}"', self.source)), 2
+            )
+
+    def test_missing_and_duplicate_extraction_are_rejected(self) -> None:
+        for manager, match in self.validate(self.configuration, self.source):
+            with self.subTest(dependency=match["depName"]):
+                marker = f'# renovate: datasource={match["datasource"]} depName={match["depName"]}'
+                with self.assertRaises(ValueError):
+                    self.validate(self.configuration, self.source.replace(marker, "", 1))
+                duplicate = copy.deepcopy(self.configuration)
+                duplicate["customManagers"].append(copy.deepcopy(manager))
+                with self.assertRaises(ValueError):
+                    self.validate(duplicate, self.source)
+
+    def test_kustomize_nested_release_tag_is_normalized(self) -> None:
+        manager, _ = next(
+            item for item in self.validate(self.configuration, self.source)
+            if item[1]["depName"] == "kubernetes-sigs/kustomize"
+        )
+        pattern = python_pattern(manager["extractVersionTemplate"])
+        self.assertEqual(re.fullmatch(pattern, "kustomize/v99.2.3")["version"], "99.2.3")
+        self.assertIsNone(re.fullmatch(pattern, "kyaml/v99.2.3"))
+
+    def test_checksum_updates_always_require_review_and_nonmajor_grouping(self) -> None:
+        for _, match in self.validate(self.configuration, self.source):
+            for update_type in ("major", "minor", "patch", "pin", "digest", "pinDigest"):
+                with self.subTest(dependency=match["depName"], update=update_type):
+                    policy = effective_policy(self.configuration, {
+                        "matchManagers": "custom.regex",
+                        "matchDatasources": match["datasource"],
+                        "matchPackageNames": match["depName"],
+                        "matchFileNames": self.path,
+                        "matchDepTypes": None,
+                        "matchUpdateTypes": update_type,
+                    })
+                    self.assertIs(policy["automerge"], False)
+                    self.assertIs(policy["dependencyDashboardApproval"], True)
+                    self.assertEqual(policy["minimumReleaseAge"], "3 days")
+                    self.assertTrue(any("checksum" in note for note in policy["prBodyNotes"]))
+                    if update_type != "major":
+                        self.assertEqual(policy["groupName"], "Dev Container toolchain")
+
+
+class KubernetesInstallerTests(unittest.TestCase):
+    def exercise(self, machine: str, failure: str = "", system: str = "Linux") -> None:
+        source = (ROOT / "scripts/install-kubernetes-tools.sh").read_text(encoding="utf-8")
+        versions = dict(re.findall(r'readonly (\w+)_version="([^"]+)"', source))
+        architecture = "arm64" if machine in ("arm64", "aarch64") else "amd64"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shim = root / "shim"
+            shim.mkdir()
+            assets = {}
+            binaries = {tool: f"#!/bin/sh\necho {tool}\n".encode() for tool in versions}
+            urls = {
+                "kind": f'https://github.com/kubernetes-sigs/kind/releases/download/v{versions["kind"]}/kind-linux-{architecture}',
+                "kubectl": f'https://dl.k8s.io/release/v{versions["kubectl"]}/bin/linux/{architecture}/kubectl',
+                "helm": f'https://get.helm.sh/helm-v{versions["helm"]}-linux-{architecture}.tar.gz',
+                "kustomize": f'https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v{versions["kustomize"]}/kustomize_v{versions["kustomize"]}_linux_{architecture}.tar.gz',
+            }
+            for tool, payload in binaries.items():
+                asset = root / f"{tool}.asset"
+                if tool in ("helm", "kustomize"):
+                    with tarfile.open(asset, "w:gz") as archive:
+                        member = tarfile.TarInfo(
+                            f"linux-{architecture}/helm" if tool == "helm" else tool
+                        )
+                        member.size = len(payload)
+                        member.mode = 0o755
+                        archive.addfile(member, io.BytesIO(payload))
+                else:
+                    asset.write_bytes(payload)
+                checksum = hashlib.sha256(asset.read_bytes()).hexdigest()
+                source = re.sub(
+                    rf'{tool}_checksum="[a-f0-9]+"', f'{tool}_checksum="{checksum}"', source
+                )
+                assets[urls[tool]] = str(asset)
+            if failure == "checksum":
+                (root / "helm.asset").write_bytes(b"corrupt release asset")
+            installer = root / "install.sh"
+            installer.write_text(source, encoding="utf-8")
+            (shim / "uname").write_text(
+                '#!/bin/sh\ncase "$1" in -s) echo "$TEST_SYSTEM";; -m) echo "$TEST_MACHINE";; esac\n',
+                encoding="utf-8",
+            )
+            (shim / "curl").write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, shutil, sys\n"
+                "from pathlib import Path\n"
+                "with open(os.environ['TEST_LOG'], 'a') as log: log.write(sys.argv[-1] + '\\n')\n"
+                "if os.environ['TEST_FAILURE'] == 'download' and 'get.helm.sh' in sys.argv[-1]: sys.exit(22)\n"
+                "assets = json.loads(os.environ['TEST_ASSETS'])\n"
+                "shutil.copyfile(assets[sys.argv[-1]], sys.argv[sys.argv.index('--output') + 1])\n",
+                encoding="utf-8",
+            )
+            for executable in shim.iterdir():
+                executable.chmod(0o755)
+            target = root / "tools with spaces"
+            target.mkdir()
+            (target / "kind").write_bytes(b"existing installation")
+            log = root / "downloads.log"
+            result = subprocess.run(
+                ["bash", str(installer), str(target)],
+                env={
+                    **os.environ,
+                    "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+                    "TEST_SYSTEM": system,
+                    "TEST_MACHINE": machine,
+                    "TEST_FAILURE": failure,
+                    "TEST_ASSETS": json.dumps(assets),
+                    "TEST_LOG": str(log),
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            unsupported = system != "Linux" or machine not in ("x86_64", "aarch64", "arm64")
+            if failure or unsupported:
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(list(target.iterdir()), [target / "kind"])
+                self.assertEqual((target / "kind").read_bytes(), b"existing installation")
+                if unsupported:
+                    self.assertFalse(log.exists(), "unsupported platforms must not download")
+            else:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(set(log.read_text().splitlines()), set(urls.values()))
+                for tool, payload in binaries.items():
+                    self.assertEqual((target / tool).read_bytes(), payload)
+                    self.assertEqual((target / tool).stat().st_mode & 0o777, 0o755)
+
+    def test_install_both_architectures_and_arm64_alias(self) -> None:
+        for architecture in ("x86_64", "aarch64", "arm64"):
+            with self.subTest(architecture=architecture):
+                self.exercise(architecture)
+
+    def test_corrupt_and_failed_downloads_preserve_existing_installation(self) -> None:
+        for failure in ("checksum", "download"):
+            with self.subTest(failure=failure):
+                self.exercise("x86_64", failure=failure)
+
+    def test_unsupported_platforms_fail_before_download(self) -> None:
+        self.exercise("s390x")
+        self.exercise("x86_64", system="Darwin")
 
 
 if __name__ == "__main__":
