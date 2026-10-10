@@ -94,7 +94,7 @@ jobs:
       - name: Build BoxFerry
         run: cargo build --locked --package boxferry --bin boxferry --features podman
       - name: Upload BoxFerry binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boxferry-live-binary
           path: target/debug/boxferry
@@ -130,7 +130,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman
       - name: Download BoxFerry binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: boxferry-live-binary
           path: target/debug
@@ -171,7 +171,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman
       - name: Download BoxFerry binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: boxferry-live-binary
           path: target/debug
@@ -202,7 +202,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman
       - name: Download BoxFerry binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: boxferry-live-binary
           path: target/debug
@@ -241,7 +241,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman
       - name: Download BoxFerry binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: boxferry-live-binary
           path: target/debug
@@ -279,7 +279,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman
       - name: Download BoxFerry binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: boxferry-live-binary
           path: target/debug
@@ -306,7 +306,7 @@ jobs:
           --matrix-cell podman-6.1-rootless --engine podman
       - name: Upload sanitized Paperless native capture candidate
         if: github.event_name == 'workflow_dispatch' && inputs.profile == 'paperless-capture' && success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: paperless-native-capture-candidate
           path: ${{ runner.temp }}/paperless-capture-parent/candidate
@@ -332,7 +332,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libcap2-bin podman
       - name: Download BoxFerry binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: boxferry-live-binary
           path: target/debug
@@ -360,7 +360,7 @@ jobs:
               --matrix-cell podman-6.1-rootless --engine podman
       - name: Upload sanitized Immich native capture candidate
         if: github.event_name == 'workflow_dispatch' && inputs.profile == 'immich-capture' && success()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: immich-native-capture-candidate
           path: ${{ runner.temp }}/immich-capture-parent/candidate
