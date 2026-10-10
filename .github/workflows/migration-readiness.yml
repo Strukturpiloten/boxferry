@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload bounded serial evidence
         if: always() && steps.selection.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.selection.outputs.artifact }}
           path: ${{ env.EVIDENCE_PATH }}
@@ -237,7 +237,7 @@ jobs:
           printf 'name=migration-readiness-boxferry-%s-%s\n' \
             "${GITHUB_SHA}" "${GITHUB_RUN_ID}" >> "${GITHUB_OUTPUT}"
       - name: Upload bound BoxFerry binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: target/migration-readiness/build
@@ -271,7 +271,7 @@ jobs:
 
       - name: Download bound BoxFerry binary
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.build.outputs.artifact }}
           path: target/migration-readiness/build
@@ -343,7 +343,7 @@ jobs:
 
       - name: Upload bounded worker evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-${{ matrix.task }}
           path: ${{ env.EVIDENCE_PATH }}
@@ -370,7 +370,7 @@ jobs:
           persist-credentials: false
       - name: Download every available worker fragment
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: migration-readiness-worker-${{ github.sha }}-${{ github.run_id }}-*
           path: target/migration-readiness/workers
@@ -402,7 +402,7 @@ jobs:
           printf 'name=migration-readiness-pre-release-%s-%s\n' \
             "${GITHUB_SHA}" "${GITHUB_RUN_ID}" >> "${GITHUB_OUTPUT}"
       - name: Upload complete aggregate evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: target/migration-readiness/evidence-v2.json
