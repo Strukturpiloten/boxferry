@@ -188,16 +188,10 @@
       "groupName": "Rust dependencies"
     },
     {
-      "description": "Keep ZIP compatible with the workspace MSRV",
+      "description": "Keep ZIP on advisory-fixed releases after the reviewed Rust baseline increase",
       "matchManagers": ["cargo"],
       "matchPackageNames": ["zip"],
-      "allowedVersions": "<8.0.0"
-    },
-    {
-      "description": "Exclude yoke-derive 0.8.3 while it fails the workspace MSRV",
-      "matchManagers": ["cargo"],
-      "matchPackageNames": ["yoke-derive"],
-      "allowedVersions": "!/^(0\\.8\\.3)$/"
+      "allowedVersions": ">=9.0.3"
     },
     {
       "description": "Group repository Node development-tool updates",

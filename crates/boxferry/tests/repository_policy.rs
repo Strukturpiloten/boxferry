@@ -94,14 +94,13 @@ fn run_bounded_command(command: &mut Command, timeout: Duration, description: &s
                 .map_err(|error| format!("failed to collect {description} output: {error}"));
         }
         if started.elapsed() >= timeout {
-            if let Err(error) = child.kill() {
-                if child
+            if let Err(error) = child.kill()
+                && child
                     .try_wait()
                     .map_err(|poll_error| format!("failed to poll timed-out {description}: {poll_error}"))?
                     .is_none()
-                {
-                    return Err(format!("failed to stop timed-out {description}: {error}"));
-                }
+            {
+                return Err(format!("failed to stop timed-out {description}: {error}"));
             }
             let output = child
                 .wait_with_output()
@@ -4281,18 +4280,17 @@ fn inspect_redacted_capture(
                     "captured {display_name} evidence contains a forbidden header name"
                 ));
             }
-            if let Some((name, environment_value)) = text.split_once('=') {
-                if !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|character| character.is_ascii_alphanumeric() || character == '_')
-                {
-                    *environment_count += 1;
-                    if environment_value != "redacted" {
-                        return Err(format!(
-                            "captured {display_name} environment value was not redacted: {name}"
-                        ));
-                    }
+            if let Some((name, environment_value)) = text.split_once('=')
+                && !name.is_empty()
+                && name
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
+            {
+                *environment_count += 1;
+                if environment_value != "redacted" {
+                    return Err(format!(
+                        "captured {display_name} environment value was not redacted: {name}"
+                    ));
                 }
             }
         }
@@ -6467,6 +6465,53 @@ fn multi_root_workspace_uses_boxferry_as_the_container_owner() -> Result<(), Str
 }
 
 #[test]
+fn workspace_rust_baseline_and_clippy_agree() -> Result<(), String> {
+    let root = repository_root();
+    let read_toml = |path: &str| -> Result<toml::Value, String> {
+        let text = fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        toml::from_str(&text).map_err(|error| format!("invalid {path}: {error}"))
+    };
+    let manifest = read_toml("Cargo.toml")?;
+    let minimum = manifest["workspace"]["package"]["rust-version"]
+        .as_str()
+        .ok_or("workspace must declare its minimum Rust version")?;
+    let parse_version = |text: &str| -> Result<Vec<u32>, String> {
+        let version = text
+            .split('.')
+            .map(|part| {
+                part.parse::<u32>()
+                    .map_err(|error| format!("invalid Rust release {text}: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if version.len() != 3 {
+            return Err(format!("Rust version must be an exact release: {text}"));
+        }
+        Ok(version)
+    };
+    let minimum_version = parse_version(minimum)?;
+    if minimum_version.as_slice() < [1, 98, 1].as_slice() {
+        return Err("workspace must not restore the retired Rust 1.85 support floor".to_owned());
+    }
+    if read_toml("clippy.toml")?["msrv"].as_str() != Some(minimum) {
+        return Err("Clippy MSRV must match the canonical workspace minimum".to_owned());
+    }
+    let toolchain = read_toml("rust-toolchain.toml")?;
+    let channel = toolchain["toolchain"]["channel"]
+        .as_str()
+        .ok_or("normal Rust compiler must be pinned")?;
+    if parse_version(channel)? < minimum_version {
+        return Err("normal Rust compiler must not be older than the advertised minimum".to_owned());
+    }
+    for package in PUBLISHED_PACKAGES {
+        let path = format!("crates/{package}/Cargo.toml");
+        if read_toml(&path)?["package"]["rust-version"]["workspace"].as_bool() != Some(true) {
+            return Err(format!("{package} must inherit the workspace minimum Rust version"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn workspace_toolchain_includes_all_devcontainer_rust_components() -> Result<(), String> {
     let path = repository_root().join("rust-toolchain.toml");
     let text = fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -7544,15 +7589,15 @@ fn validate_release_plz_workflow(root: &Path, repository: &str) -> Result<(), St
 }
 
 #[test]
-fn yoke_derive_msrv_exclusion_is_owned_by_cargo_and_renovate() -> Result<(), String> {
+fn obsolete_yoke_derive_msrv_constraints_are_removed() -> Result<(), String> {
     let root = repository_root();
     let manifest_path = root.join("crates/boxferry-podman/Cargo.toml");
     let manifest = fs::read_to_string(&manifest_path)
         .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
     let manifest: toml::Value =
         toml::from_str(&manifest).map_err(|error| format!("failed to parse {}: {error}", manifest_path.display()))?;
-    if manifest["dev-dependencies"]["yoke-derive"].as_str() != Some("=0.8.2") {
-        return Err("boxferry-podman must constrain yoke-derive to the Rust 1.85-compatible release".to_owned());
+    if manifest["dev-dependencies"].get("yoke-derive").is_some() {
+        return Err("boxferry-podman must not retain the obsolete Rust-1.85-only yoke-derive constraint".to_owned());
     }
 
     let renovate_path = root.join(".github/renovate.json");
@@ -7571,15 +7616,15 @@ fn yoke_derive_msrv_exclusion_is_owned_by_cargo_and_renovate() -> Result<(), Str
                 .as_array()
                 .is_some_and(|packages| packages.iter().any(|package| package == "yoke-derive"))
     });
-    if exclusion.and_then(|rule| rule["allowedVersions"].as_str()) != Some(r"!/^(0\.8\.3)$/") {
-        return Err("Renovate must exclude the yoke-derive release known to fail on Rust 1.85".to_owned());
+    if exclusion.is_some() {
+        return Err("Renovate must not retain the obsolete Rust-1.85-only yoke-derive exclusion".to_owned());
     }
 
     let policy = fs::read_to_string(root.join("docs/dependency-policy.md"))
         .map_err(|error| format!("failed to read dependency policy: {error}"))?;
     for required in [
-        "exact development-only `yoke-derive` constraint",
-        "Remove both constraints only after a newer upstream release passes the unchanged MSRV gate",
+        "former Rust-1.85-only direct `yoke-derive`",
+        "full MSRV and dependency gates",
     ] {
         if !policy.contains(required) {
             return Err(format!("dependency policy missing `{required}`"));
@@ -9214,7 +9259,7 @@ fn renovate_tracks_every_live_podman_matrix_image_under_manual_review() -> Resul
 }
 
 #[test]
-fn renovate_keeps_zip_compatible_with_the_workspace_msrv() -> Result<(), String> {
+fn renovate_keeps_zip_on_the_reviewed_advisory_fixed_release_line() -> Result<(), String> {
     let path = repository_root().join(".github/renovate.json");
     let renovate = fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let renovate: serde_json::Value =
@@ -9234,8 +9279,32 @@ fn renovate_keeps_zip_compatible_with_the_workspace_msrv() -> Result<(), String>
         })
         .ok_or_else(|| "Renovate must define a Cargo package rule for zip".to_owned())?;
 
-    if zip_rule["allowedVersions"] != "<8.0.0" {
-        return Err("Renovate must keep zip below its Rust 1.88 release line".to_owned());
+    if zip_rule["allowedVersions"] != ">=9.0.3" {
+        return Err("Renovate must not offer ZIP versions below the reviewed advisory-fixed baseline".to_owned());
+    }
+
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(repository_root().join("crates/boxferry/Cargo.toml"))
+            .map_err(|error| format!("failed to read facade manifest: {error}"))?,
+    )
+    .map_err(|error| format!("invalid facade manifest: {error}"))?;
+    let zip = &manifest["dependencies"]["zip"];
+    let version = zip["version"].as_str().ok_or("ZIP version must be explicit")?;
+    let version = version
+        .split('.')
+        .map(|part| {
+            part.parse::<u32>()
+                .map_err(|error| format!("invalid ZIP release: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if version.len() != 3 || version.as_slice() < [9, 0, 3].as_slice() {
+        return Err("ZIP must remain on or above the reviewed advisory-fixed release".to_owned());
+    }
+    if zip["default-features"].as_bool() != Some(false) {
+        return Err("ZIP must retain disabled default features".to_owned());
+    }
+    if zip["optional"].as_bool() != Some(true) {
+        return Err("ZIP must remain optional at the CLI feature boundary".to_owned());
     }
 
     Ok(())

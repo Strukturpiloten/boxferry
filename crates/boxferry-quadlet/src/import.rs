@@ -1818,10 +1818,10 @@ impl<'a> Mapping<'a> {
         }
         let mut mounts = Vec::new();
         for (mount, external_volume, origin) in pending_mounts {
-            if let Some(name) = external_volume {
-                if !self.ensure_external_volume(application, &name, filename, origin.clone()) {
-                    continue;
-                }
+            if let Some(name) = external_volume
+                && !self.ensure_external_volume(application, &name, filename, origin.clone())
+            {
+                continue;
             }
             mounts.push(Sourced::from_source(mount, origin.clone()));
             origins.push(origin.clone());
@@ -3247,10 +3247,10 @@ impl<'a> Mapping<'a> {
             }
         }
         for (mount, external_volume, origin) in pending_mounts {
-            if let Some(name) = external_volume {
-                if !self.ensure_external_volume(application, &name, filename, origin.clone()) {
-                    continue;
-                }
+            if let Some(name) = external_volume
+                && !self.ensure_external_volume(application, &name, filename, origin.clone())
+            {
+                continue;
             }
             service.add_mount(Sourced::from_source(mount, origin.clone()));
         }

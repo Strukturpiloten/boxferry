@@ -36,14 +36,15 @@ versioned, and explained where it is configured. Never add an exception only to 
 - Clap supplies the optional `cli` feature; embedded callers can disable defaults.
 - PodmanLens owns Podman acquisition, observations, evidence, planning, and rendering.
   `boxferry-podman` owns only semantic mapping.
-- ZIP and Jiff are CLI-only implementation details for privacy-safe diagnostic archives and local
-  filenames. They do not enter no-default embedded builds. ZIP stays on the newest release line
-  compatible with Rust 1.85.0; its Renovate ceiling moves only with an intentional MSRV review.
-- `boxferry-podman` carries an exact development-only `yoke-derive` constraint so Cargo lock-file
-  maintenance cannot select the upstream release that fails on Rust 1.85.0. The Cargo native
-  manager owns the manifest pin, and a matching Renovate exclusion suppresses known-broken proposals.
-  Remove both constraints only after a newer upstream release passes the unchanged MSRV gate;
-  never replace the constraint by making that gate optional.
+- ZIP and Jiff stay CLI-only for diagnostic archives and local filenames, excluded from no-default
+  builds. ZIP uses advisory-fixed 9.x with Renovate floor 9.0.3; complete online audits have no ZIP
+  exceptions.
+- Cargo owns the Rust 1.98.1 minimum, aligned with the Lens repositories. Clippy agrees;
+  local/CI/release checks read Cargo metadata. The normal compiler in `rust-toolchain.toml` has one
+  Renovate `rust-toolchain` owner; updates never implicitly raise the minimum.
+- Remove the former Rust-1.85-only direct `yoke-derive` constraint and Renovate exclusion.
+  Retain transitive lock resolutions and the full MSRV and dependency gates; claim no new native
+  compatibility.
 - ComposeLens and QuadletLens own their native document semantics.
 
 Review the relevant manifest and ADR for exact features and constraints.

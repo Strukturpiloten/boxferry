@@ -1759,18 +1759,17 @@ impl<'a> Mapping<'a> {
 
         let mut builder = QuadletDocumentBuilder::new(QuadletUnitType::Pod);
         if let Some(runtime) = plan.runtime.as_ref() {
-            if let Some(runtime_name) = runtime.value().runtime_name() {
-                if !self.capability("quadlet.pod.name", subject, runtime_name.origins())
+            if let Some(runtime_name) = runtime.value().runtime_name()
+                && (!self.capability("quadlet.pod.name", subject, runtime_name.origins())
                     || !self.push_pod(
                         &mut builder,
                         PodKey::PodName,
                         runtime_name.value().expose(),
                         subject,
                         runtime_name.origins(),
-                    )
-                {
-                    return;
-                }
+                    ))
+            {
+                return;
             }
             self.map_group_runtime(subject, runtime, &mut builder);
             self.exact(subject, origins);
@@ -2494,17 +2493,17 @@ impl<'a> Mapping<'a> {
                 );
             }
         }
-        if let Some(user_namespace) = service.user_namespace() {
-            if !grouped {
-                self.map_protected_container_value(
-                    service_subject,
-                    "user_namespace",
-                    user_namespace,
-                    "quadlet.container.userns",
-                    ContainerKey::UserNS,
-                    builder,
-                );
-            }
+        if let Some(user_namespace) = service.user_namespace()
+            && !grouped
+        {
+            self.map_protected_container_value(
+                service_subject,
+                "user_namespace",
+                user_namespace,
+                "quadlet.container.userns",
+                ContainerKey::UserNS,
+                builder,
+            );
         }
         for (index, group) in service.supplementary_groups().iter().enumerate() {
             self.map_protected_container_value(
@@ -3702,12 +3701,11 @@ impl<'a> Mapping<'a> {
                 None
             }
         };
-        if let Some(value) = value {
-            if self.capability("quadlet.container.exec", &subject, command.origins())
-                && self.push_container(builder, ContainerKey::Exec, value, &subject, command.origins())
-            {
-                self.exact(subject, command.origins());
-            }
+        if let Some(value) = value
+            && self.capability("quadlet.container.exec", &subject, command.origins())
+            && self.push_container(builder, ContainerKey::Exec, value, &subject, command.origins())
+        {
+            self.exact(subject, command.origins());
         }
     }
 
@@ -3742,10 +3740,8 @@ impl<'a> Mapping<'a> {
             }
         }
 
-        if !disabled {
-            if let Some(command) = healthcheck.value().command() {
-                self.map_healthcheck_command(service_subject, command, builder);
-            }
+        if !disabled && let Some(command) = healthcheck.value().command() {
+            self.map_healthcheck_command(service_subject, command, builder);
         }
         if let Some(interval) = healthcheck.value().interval() {
             self.map_healthcheck_scalar(
@@ -4262,18 +4258,17 @@ impl<'a> Mapping<'a> {
         let name = network.value().network().as_str();
         let subject = format!("{service_subject}.networks.{name}");
         let source = self.network_source(&subject, name, network.origins());
-        if let Some(source) = source {
-            if self.capability("quadlet.container.network", &subject, network.origins())
-                && self.push_container(
-                    builder,
-                    ContainerKey::Network,
-                    source.value,
-                    &subject,
-                    network.origins(),
-                )
-            {
-                self.record_reference_outcome(&subject, source.approximation, network.origins());
-            }
+        if let Some(source) = source
+            && self.capability("quadlet.container.network", &subject, network.origins())
+            && self.push_container(
+                builder,
+                ContainerKey::Network,
+                source.value,
+                &subject,
+                network.origins(),
+            )
+        {
+            self.record_reference_outcome(&subject, source.approximation, network.origins());
         }
     }
 
@@ -4373,12 +4368,11 @@ impl<'a> Mapping<'a> {
         let name = network.value().network().as_str();
         let subject = format!("application.pod.networks.{name}");
         let source = self.network_source(&subject, name, network.origins());
-        if let Some(source) = source {
-            if self.capability("quadlet.pod.network", &subject, network.origins())
-                && self.push_pod(builder, PodKey::Network, source.value, &subject, network.origins())
-            {
-                self.record_reference_outcome(&subject, source.approximation, network.origins());
-            }
+        if let Some(source) = source
+            && self.capability("quadlet.pod.network", &subject, network.origins())
+            && self.push_pod(builder, PodKey::Network, source.value, &subject, network.origins())
+        {
+            self.record_reference_outcome(&subject, source.approximation, network.origins());
         }
     }
 

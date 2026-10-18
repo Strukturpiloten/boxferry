@@ -13,7 +13,7 @@ default-members = ["crates/boxferry"]
 [workspace.package]
 version = "0.9.0"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.98.1"
 homepage = "https://boxferry.dev/"
 repository = "https://github.com/Strukturpiloten/boxferry"
 license = "MPL-2.0"

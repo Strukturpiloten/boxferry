@@ -140,10 +140,10 @@ fn validate_project(
     if path.is_some_and(|value| !safe_relative_path(value)) {
         errors.push(format!("{subject}: `path` must be a safe relative repository path"));
     }
-    if let (Some(repository), Some(path)) = (repository, path) {
-        if !sources.insert((repository.to_owned(), path.to_owned())) {
-            errors.push(format!("{subject}: duplicate repository path `{repository}/{path}`"));
-        }
+    if let (Some(repository), Some(path)) = (repository, path)
+        && !sources.insert((repository.to_owned(), path.to_owned()))
+    {
+        errors.push(format!("{subject}: duplicate repository path `{repository}/{path}`"));
     }
 
     for field in ["revision", "blob_sha"] {

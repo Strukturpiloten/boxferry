@@ -170,13 +170,13 @@ impl<T> ConversionPlan<T> {
         diagnostics: Vec<Diagnostic>,
     ) -> Result<Self, PlanError> {
         for outcome in &outcomes {
-            if let Some(code) = outcome.diagnostic() {
-                if !diagnostics.iter().any(|diagnostic| diagnostic.code() == code) {
-                    return Err(PlanError::MissingDiagnostic {
-                        subject: outcome.subject().to_owned(),
-                        code: code.clone(),
-                    });
-                }
+            if let Some(code) = outcome.diagnostic()
+                && !diagnostics.iter().any(|diagnostic| diagnostic.code() == code)
+            {
+                return Err(PlanError::MissingDiagnostic {
+                    subject: outcome.subject().to_owned(),
+                    code: code.clone(),
+                });
             }
         }
         Ok(Self {
@@ -211,13 +211,13 @@ impl<T> ConversionPlan<T> {
     ) -> Result<(), PlanError> {
         self.diagnostics.extend(diagnostics);
         for outcome in &outcomes {
-            if let Some(code) = outcome.diagnostic() {
-                if !self.diagnostics.iter().any(|diagnostic| diagnostic.code() == code) {
-                    return Err(PlanError::MissingDiagnostic {
-                        subject: outcome.subject().to_owned(),
-                        code: code.clone(),
-                    });
-                }
+            if let Some(code) = outcome.diagnostic()
+                && !self.diagnostics.iter().any(|diagnostic| diagnostic.code() == code)
+            {
+                return Err(PlanError::MissingDiagnostic {
+                    subject: outcome.subject().to_owned(),
+                    code: code.clone(),
+                });
             }
         }
         self.outcomes.splice(0..0, outcomes);

@@ -7,6 +7,11 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- [**breaking**] Require Rust 1.98.1 across BoxFerry and the Lens repositories, replacing the
+  Rust 1.85 minimum. Update diagnostic-bundle ZIP generation to the advisory-fixed 9.0.3 line,
+  without enabling extraction or changing archive privacy and size limits
+  ([#455](https://github.com/Strukturpiloten/boxferry/issues/455)).
+
 - Preserve explicit runtime network names during Compose export without assigning the
   observed-name fallback twice; retain protected-name refusal and ownership diagnostics
   ([#436](https://github.com/Strukturpiloten/boxferry/issues/436)).

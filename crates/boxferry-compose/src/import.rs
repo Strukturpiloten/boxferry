@@ -117,31 +117,31 @@ impl ImportAdapter for ComposeImporter {
         let profiles_valid = mapping.validate_profiles(view, source);
 
         for definition in view.volumes() {
-            if let Some(volume) = mapping.map_volume_definition(definition) {
-                if let Err(error) = application.add_volume(volume) {
-                    mapping.invalid_model_optional("volumes", &error, definition.definition().effective_source());
-                }
+            if let Some(volume) = mapping.map_volume_definition(definition)
+                && let Err(error) = application.add_volume(volume)
+            {
+                mapping.invalid_model_optional("volumes", &error, definition.definition().effective_source());
             }
         }
         for definition in view.networks() {
-            if let Some(network) = mapping.map_network_definition(definition) {
-                if let Err(error) = application.add_network(network) {
-                    mapping.invalid_model_optional("networks", &error, definition.definition().effective_source());
-                }
+            if let Some(network) = mapping.map_network_definition(definition)
+                && let Err(error) = application.add_network(network)
+            {
+                mapping.invalid_model_optional("networks", &error, definition.definition().effective_source());
             }
         }
         for definition in view.configs() {
-            if let Some(config) = mapping.map_config_definition(definition) {
-                if let Err(error) = application.add_config(config) {
-                    mapping.invalid_model_optional("configs", &error, definition.definition().effective_source());
-                }
+            if let Some(config) = mapping.map_config_definition(definition)
+                && let Err(error) = application.add_config(config)
+            {
+                mapping.invalid_model_optional("configs", &error, definition.definition().effective_source());
             }
         }
         for definition in view.secrets() {
-            if let Some(secret) = mapping.map_secret_definition(definition) {
-                if let Err(error) = application.add_secret(secret) {
-                    mapping.invalid_model_optional("secrets", &error, definition.definition().effective_source());
-                }
+            if let Some(secret) = mapping.map_secret_definition(definition)
+                && let Err(error) = application.add_secret(secret)
+            {
+                mapping.invalid_model_optional("secrets", &error, definition.definition().effective_source());
             }
         }
         for native_service in view.services() {
@@ -272,11 +272,11 @@ impl<'a> Mapping<'a> {
         self.map_runtime_name(&subject, native, &mut service);
         self.map_restart_policy(&subject, native, &mut service);
         self.map_service_image(&subject, native, &mut service);
-        if let Some(command) = native.command() {
-            if let Some(value) = Self::map_command(command.value(), command.is_sensitive()) {
-                service.set_command(self.sourced_provenance(value, command.provenance()));
-                self.exact_provenance(format!("{subject}.command"), command.provenance());
-            }
+        if let Some(command) = native.command()
+            && let Some(value) = Self::map_command(command.value(), command.is_sensitive())
+        {
+            service.set_command(self.sourced_provenance(value, command.provenance()));
+            self.exact_provenance(format!("{subject}.command"), command.provenance());
         }
         if let Some(healthcheck) = native.healthcheck() {
             service.set_healthcheck(self.map_healthcheck(&subject, healthcheck));
@@ -346,10 +346,10 @@ impl<'a> Mapping<'a> {
                 &mut service,
             );
         }
-        if let Some(profiles) = native.profiles() {
-            if !profiles.value().is_empty() {
-                self.exact_provenance(format!("{subject}.profiles"), profiles.provenance());
-            }
+        if let Some(profiles) = native.profiles()
+            && !profiles.value().is_empty()
+        {
+            self.exact_provenance(format!("{subject}.profiles"), profiles.provenance());
         }
         if let Some(dependencies) = native.depends_on() {
             self.map_service_dependencies(&subject, dependencies, &mut service);
@@ -3246,25 +3246,25 @@ impl<'a> Mapping<'a> {
                                 continue;
                             }
                         };
-                        if let Some(gateway) = config.gateway() {
-                            if let Err(error) = mapped.set_gateway(self.sourced_spans(
+                        if let Some(gateway) = config.gateway()
+                            && let Err(error) = mapped.set_gateway(self.sourced_spans(
                                 Self::protected(gateway.value(), definition_sensitive),
                                 &[gateway.span()],
-                            )) {
-                                self.invalid_model(&config_subject, &error, gateway.span());
-                                exact = false;
-                                continue;
-                            }
+                            ))
+                        {
+                            self.invalid_model(&config_subject, &error, gateway.span());
+                            exact = false;
+                            continue;
                         }
-                        if let Some(ip_range) = config.ip_range() {
-                            if let Err(error) = mapped.set_ip_range(self.sourced_spans(
+                        if let Some(ip_range) = config.ip_range()
+                            && let Err(error) = mapped.set_ip_range(self.sourced_spans(
                                 Self::protected(ip_range.value(), definition_sensitive),
                                 &[ip_range.span()],
-                            )) {
-                                self.invalid_model(&config_subject, &error, ip_range.span());
-                                exact = false;
-                                continue;
-                            }
+                            ))
+                        {
+                            self.invalid_model(&config_subject, &error, ip_range.span());
+                            exact = false;
+                            continue;
                         }
                         if !config.aux_addresses().is_empty() {
                             self.unsupported(
@@ -4036,10 +4036,10 @@ impl<'a> Mapping<'a> {
         );
         if let Ok(mut outcome) = ConversionOutcome::loss(subject, ConversionKind::Unsupported, code) {
             for span in spans {
-                if let Some(origin) = self.origin(*span) {
-                    if !outcome.origins().contains(&origin) {
-                        outcome = outcome.with_origin(origin);
-                    }
+                if let Some(origin) = self.origin(*span)
+                    && !outcome.origins().contains(&origin)
+                {
+                    outcome = outcome.with_origin(origin);
                 }
             }
             self.outcomes.push(outcome);

@@ -81,10 +81,10 @@ fn validate_manifest_file(
     validate_location(path, fixtures_root, &table, errors);
     validate_referenced_files(path, &table, errors);
 
-    if let Some(id) = string_field(&table, "id") {
-        if !ids.insert(id.to_owned()) {
-            errors.push(format!("{}: duplicate fixture id `{id}`", path.display()));
-        }
+    if let Some(id) = string_field(&table, "id")
+        && !ids.insert(id.to_owned())
+    {
+        errors.push(format!("{}: duplicate fixture id `{id}`", path.display()));
     }
 }
 

@@ -189,7 +189,7 @@ complete profile totals 1,322 checks; there is deliberately no nightly schedule.
 ## Gate contents
 
 `./scripts/format-lint.sh --fix` formats and lints without tests. `./scripts/check-all.sh` also tests
-every Cargo target and feature boundary, checks Rust 1.85.0, audits dependencies, builds Rustdoc,
+every Cargo target and feature boundary, checks Rust 1.98.1, audits dependencies, builds Rustdoc,
 checks coverage floors and local links, and validates publishable packages.
 Changelog validation is a dedicated job required by the aggregate gate.
 
