@@ -246,12 +246,10 @@ impl<'a> Mapping<'a> {
                 &format!("{row_subject}.gateway"),
                 authorized,
                 "effective network gateway needs explicit promotion policy",
-            ) {
-                if let Err(error) =
-                    config.set_gateway(self.portable_sourced(ProtectedString::plain(gateway.to_string()), promoted))
-                {
-                    self.model_error(format!("{row_subject}.gateway"), &error);
-                }
+            ) && let Err(error) =
+                config.set_gateway(self.portable_sourced(ProtectedString::plain(gateway.to_string()), promoted))
+            {
+                self.model_error(format!("{row_subject}.gateway"), &error);
             }
 
             self.map_network_lease_range(&row_subject, subnet.lease_range(), authorized, promoted, &mut config);

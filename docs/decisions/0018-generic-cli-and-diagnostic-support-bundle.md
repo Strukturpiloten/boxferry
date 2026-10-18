@@ -8,6 +8,7 @@
 - Amended by: [ADR 0026](0026-typed-diagnostic-rule-catalogue.md)
 - Amended by: [ADR 0038](0038-bounded-human-diagnostic-presentation.md)
 - Interpolation decision 4 amended by: [ADR 0061](0061-compose-interpolation-input-authorization.md)
+- Rust baseline and ZIP dependency decision 17 amended by: [ADR 0077](0077-workspace-rust198-baseline.md)
 
 ## Context
 

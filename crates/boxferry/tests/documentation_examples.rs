@@ -354,7 +354,7 @@ fn assert_artifact_contract(
                 entry?
                     .file_name()
                     .into_string()
-                    .map_err(|name| std::io::Error::other(format!("non-UTF-8 artifact name: {name:?}")))
+                    .map_err(|_| std::io::Error::other("non-UTF-8 artifact name"))
             })
             .collect::<Result<BTreeSet<_>, _>>()?;
         assert_eq!(

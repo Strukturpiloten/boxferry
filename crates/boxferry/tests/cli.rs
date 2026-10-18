@@ -3916,7 +3916,7 @@ fn support_bundle_has_only_fixed_deflated_entries_and_is_independent_of_presenta
         assert_eq!(zip.len(), 2);
         for (index, name) in ["README.md", "report.json"].iter().enumerate() {
             let mut entry = zip.by_index(index)?;
-            assert_eq!(entry.name(), *name);
+            assert_eq!(entry.name()?, *name);
             assert_eq!(entry.compression(), CompressionMethod::Deflated);
             let mut contents = String::new();
             std::io::Read::read_to_string(&mut entry, &mut contents)?;
@@ -4800,8 +4800,8 @@ fn quadlet_to_compose_support_bundle_excludes_source_canaries() -> Result<(), Bo
     assert!(!report.contains(canary));
     assert!(!report.contains("raw-path-canary"));
     assert_eq!(archive.len(), 2);
-    assert_eq!(archive.by_index(0)?.name(), "README.md");
-    assert_eq!(archive.by_index(1)?.name(), "report.json");
+    assert_eq!(archive.by_index(0)?.name()?, "README.md");
+    assert_eq!(archive.by_index(1)?.name()?, "report.json");
     Ok(())
 }
 

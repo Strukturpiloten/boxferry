@@ -83,10 +83,10 @@ impl VersionRange {
     ///
     /// Returns [`TargetProfileError::MaximumBeforeMinimum`] for an inverted range.
     pub const fn new(minimum: PlatformVersion, maximum: Option<PlatformVersion>) -> Result<Self, TargetProfileError> {
-        if let Some(maximum) = maximum {
-            if version_is_before(maximum, minimum) {
-                return Err(TargetProfileError::MaximumBeforeMinimum { minimum, maximum });
-            }
+        if let Some(maximum) = maximum
+            && version_is_before(maximum, minimum)
+        {
+            return Err(TargetProfileError::MaximumBeforeMinimum { minimum, maximum });
         }
         Ok(Self { minimum, maximum })
     }

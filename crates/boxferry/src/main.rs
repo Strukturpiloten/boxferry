@@ -5638,10 +5638,10 @@ fn append_numeric_total(
         .filter(|field| field.name == field_name)
         .map(|field| field.value.parse::<usize>())
         .collect::<Result<Vec<_>, _>>();
-    if let Ok(values) = values {
-        if !values.is_empty() {
-            details.push((human_name.into(), values.into_iter().sum::<usize>().to_string()));
-        }
+    if let Ok(values) = values
+        && !values.is_empty()
+    {
+        details.push((human_name.into(), values.into_iter().sum::<usize>().to_string()));
     }
 }
 

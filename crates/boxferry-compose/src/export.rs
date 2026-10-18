@@ -644,10 +644,8 @@ impl<'a> Mapping<'a> {
                 &collection_or_item_origins(configs, network.ipam_configs_origins()),
             );
         }
-        if valid {
-            if let Err(error) = builder.add_network_definition(generated) {
-                self.generation_error(&subject, &error, sourced.origins());
-            }
+        if valid && let Err(error) = builder.add_network_definition(generated) {
+            self.generation_error(&subject, &error, sourced.origins());
         }
     }
 
@@ -771,10 +769,8 @@ impl<'a> Mapping<'a> {
                 }
             }
         }
-        if valid {
-            if let Err(error) = builder.add_volume_definition(generated) {
-                self.generation_error(&subject, &error, sourced.origins());
-            }
+        if valid && let Err(error) = builder.add_volume_definition(generated) {
+            self.generation_error(&subject, &error, sourced.origins());
         }
     }
 
@@ -823,11 +819,10 @@ impl<'a> Mapping<'a> {
             .iter()
             .any(|origin| origin.kind() == ProvenanceKind::RuntimeObservation)
             && volume.runtime_name().is_none()
+            && let Err(error) = generated.set_custom_name(volume.name().as_str())
         {
-            if let Err(error) = generated.set_custom_name(volume.name().as_str()) {
-                self.generation_error(subject, &error, origins);
-                return None;
-            }
+            self.generation_error(subject, &error, origins);
+            return None;
         }
         if matches!(volume.ownership(), ResourceOwnership::External) {
             self.exact(subject, origins);
@@ -1438,21 +1433,19 @@ impl<'a> Mapping<'a> {
                             break;
                         }
                     }
-                    if let Some(address) = network.value().ipv4_address() {
-                        if let Err(error) =
+                    if let Some(address) = network.value().ipv4_address()
+                        && let Err(error) =
                             generated_string(address.value()).and_then(|address| value.set_ipv4_address(address))
-                        {
-                            self.generation_error(&subject, &error, address.origins());
-                            valid = false;
-                        }
+                    {
+                        self.generation_error(&subject, &error, address.origins());
+                        valid = false;
                     }
-                    if let Some(address) = network.value().ipv6_address() {
-                        if let Err(error) =
+                    if let Some(address) = network.value().ipv6_address()
+                        && let Err(error) =
                             generated_string(address.value()).and_then(|address| value.set_ipv6_address(address))
-                        {
-                            self.generation_error(&subject, &error, address.origins());
-                            valid = false;
-                        }
+                    {
+                        self.generation_error(&subject, &error, address.origins());
+                        valid = false;
                     }
                     if valid {
                         match generated.add_network(value) {

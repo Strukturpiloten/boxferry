@@ -8,6 +8,9 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0077](0077-workspace-rust198-baseline.md) raises the workspace Rust baseline and updates
+the diagnostic ZIP dependency without changing its privacy or writer-only boundaries.
+
 | ADR                                                                   | Decision                                                                     |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | [0001](0001-project-boundaries-and-origin.md)                         | Repository boundaries, dependency direction, and from-scratch implementation |

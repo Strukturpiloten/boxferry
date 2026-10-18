@@ -5,6 +5,8 @@ set -Eeuo pipefail
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # Capture the selected Bash before PATH is populated with mocks (macOS ships an older /bin/bash).
 bash_executable="$(command -v bash)"
+# Deliberately synthetic: prove the gate follows Cargo metadata, not a copied pin.
+readonly mock_msrv=9.8.7
 test_root="$(mktemp -d)"
 trap 'rm -r -- "${test_root}"' EXIT
 mkdir -p "${test_root}/repository/scripts/lib" "${test_root}/repository/site" "${test_root}/bin"
@@ -45,7 +47,7 @@ if [[ "${CHECK_ALL_TEST_FAIL:-}" == "${command_name}" ]]; then
 fi
 case "${command_name}:$*" in
   git:ls-files*) printf 'README.md\0' ;;
-  jq:*) printf '1.85.0\n' ;;
+  jq:*) printf '%s\n' "${CHECK_ALL_TEST_MSRV}" ;;
 esac
 MOCK
 chmod +x "${test_root}/bin/mock"
@@ -62,6 +64,7 @@ run_gate() {
   : > "${test_root}/${label}.commands"
   PATH="${test_root}/bin:${PATH}" \
     CHECK_ALL_TEST_LOG="${test_root}/${label}.commands" \
+    CHECK_ALL_TEST_MSRV="${CHECK_ALL_TEST_MSRV:-${mock_msrv}}" \
     CARGO_TARGET_DIR="${mock_target}" \
     BOXFERRY_SEMVER_RELEASE_TYPE="" PODMAN_LENS_SEMVER_CHECK=0 \
     BOXFERRY_WEBSITE_SOURCE_MODE=local \
@@ -103,6 +106,11 @@ assert_contains check "python3 scripts/test-reviewed-application-catalogue.py"
 diff -u "${test_root}/default.commands" "${test_root}/fix.commands"
 assert_contains fix "bash scripts/check-files.sh --fix"
 assert_contains check "bash scripts/check-files.sh --check"
+assert_contains check "cargo +${mock_msrv} ci-check"
+assert_contains check "cargo +${mock_msrv} ci-policy"
+CHECK_ALL_TEST_MSRV=9.8.8 run_gate metadata --check
+assert_contains metadata "cargo +9.8.8 ci-check"
+assert_contains metadata "cargo +9.8.8 ci-policy"
 if grep -q '^cargo fmt' "${test_root}/fix.commands"; then
   assert_contains fix "cargo fmt --all"
   assert_contains check "cargo fmt --all -- --check"

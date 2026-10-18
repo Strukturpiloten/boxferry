@@ -41,7 +41,7 @@ version, command, provenance, license, and redistribution status.
 
 ## Verification
 
-Rust 2024; MSRV 1.85.0. Focused `ci-*` aliases: `.cargo/config.toml`.
+Rust 2024; MSRV 1.98.1. Focused `ci-*` aliases: `.cargo/config.toml`.
 `./scripts/format-lint.sh --fix` formats and lints without tests; it is not validation evidence.
 Run `./scripts/check-all.sh` after the final edit. Never weaken lints or substitute focused checks
 for the complete pre-publication gate.

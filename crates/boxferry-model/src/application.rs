@@ -3785,21 +3785,21 @@ impl Application {
     /// Returns the matching unknown-reference error for a service or image-backed volume.
     pub fn validate_image_artifact_references(&self) -> Result<(), ModelError> {
         for service in &self.services {
-            if let Some(acquisition) = service.value().image_acquisition() {
-                if !self.contains_image_acquisition(acquisition.value()) {
-                    return Err(ModelError::UnknownImageAcquisitionReference {
-                        service: service.value().name().as_str().to_owned(),
-                        acquisition: acquisition.value().as_str().to_owned(),
-                    });
-                }
+            if let Some(acquisition) = service.value().image_acquisition()
+                && !self.contains_image_acquisition(acquisition.value())
+            {
+                return Err(ModelError::UnknownImageAcquisitionReference {
+                    service: service.value().name().as_str().to_owned(),
+                    acquisition: acquisition.value().as_str().to_owned(),
+                });
             }
-            if let Some(build) = service.value().image_build() {
-                if !self.contains_image_build(build.value()) {
-                    return Err(ModelError::UnknownImageBuildReference {
-                        service: service.value().name().as_str().to_owned(),
-                        build: build.value().as_str().to_owned(),
-                    });
-                }
+            if let Some(build) = service.value().image_build()
+                && !self.contains_image_build(build.value())
+            {
+                return Err(ModelError::UnknownImageBuildReference {
+                    service: service.value().name().as_str().to_owned(),
+                    build: build.value().as_str().to_owned(),
+                });
             }
         }
         for volume in &self.volumes {
@@ -3913,29 +3913,27 @@ impl Application {
             self.services.iter().map(|candidate| candidate.value().name()),
         )?;
         service.value().validate_image_source_exclusivity()?;
-        if let Some(acquisition) = service.value().image_acquisition() {
-            if !self
+        if let Some(acquisition) = service.value().image_acquisition()
+            && !self
                 .image_acquisitions
                 .iter()
                 .any(|candidate| candidate.value().name() == acquisition.value())
-            {
-                return Err(ModelError::UnknownImageAcquisitionReference {
-                    service: service.value().name().as_str().to_owned(),
-                    acquisition: acquisition.value().as_str().to_owned(),
-                });
-            }
+        {
+            return Err(ModelError::UnknownImageAcquisitionReference {
+                service: service.value().name().as_str().to_owned(),
+                acquisition: acquisition.value().as_str().to_owned(),
+            });
         }
-        if let Some(build) = service.value().image_build() {
-            if !self
+        if let Some(build) = service.value().image_build()
+            && !self
                 .image_builds
                 .iter()
                 .any(|candidate| candidate.value().name() == build.value())
-            {
-                return Err(ModelError::UnknownImageBuildReference {
-                    service: service.value().name().as_str().to_owned(),
-                    build: build.value().as_str().to_owned(),
-                });
-            }
+        {
+            return Err(ModelError::UnknownImageBuildReference {
+                service: service.value().name().as_str().to_owned(),
+                build: build.value().as_str().to_owned(),
+            });
         }
         self.services.push(service);
         Ok(())

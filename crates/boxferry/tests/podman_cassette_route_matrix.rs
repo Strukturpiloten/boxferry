@@ -217,7 +217,7 @@ fn opted_in_support_bundle_contains_only_redacted_podman_snapshots() -> Result<(
         let mut entry = zip.by_index(index)?;
         let mut text = String::new();
         entry.read_to_string(&mut text)?;
-        entries.insert(entry.name().to_owned(), text);
+        entries.insert(entry.name()?.into_owned(), text);
     }
     assert_eq!(
         entries.keys().map(String::as_str).collect::<BTreeSet<_>>(),
@@ -304,7 +304,7 @@ fn blocked_exact_validation_still_writes_the_opted_in_support_bundle() -> Result
     };
     let mut zip = zip::ZipArchive::new(fs::File::open(archive.path())?)?;
     let entries = (0..zip.len())
-        .map(|index| zip.by_index(index).map(|entry| entry.name().to_owned()))
+        .map(|index| zip.by_index(index)?.name().map(std::borrow::Cow::into_owned))
         .collect::<Result<BTreeSet<_>, _>>()?;
     assert_eq!(
         entries,

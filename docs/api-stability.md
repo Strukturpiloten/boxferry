@@ -25,7 +25,8 @@ RUSTDOCFLAGS="-D warnings" cargo ci-doc
 - Minor releases may replace or remove APIs and include concise migration notes.
 - Compatibility shims require a demonstrated user need.
 - Public enums are non-exhaustive when new variants are expected.
-- Raising Rust 1.85.0 requires a minor release, release notes, and CI evidence.
+- Rust 1.98.1 is the minimum supported compiler, aligned with the Lens repositories.
+  Raising that minimum requires a minor release, release notes, and CI evidence.
 - Native catalogue updates are evidence changes and do not by themselves break the Rust API.
 
 CLI-only conversion behavior that an embedded caller cannot obtain is an architecture defect.

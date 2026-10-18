@@ -671,10 +671,10 @@ fn plain_text_looks_protected(value: &str) -> bool {
     if lowered.starts_with("authorization:") || lowered.contains("\nauthorization:") {
         return true;
     }
-    if let Some(scheme) = value.find("://") {
-        if value[scheme + 3..].contains('@') {
-            return true;
-        }
+    if let Some(scheme) = value.find("://")
+        && value[scheme + 3..].contains('@')
+    {
+        return true;
     }
     value
         .split_whitespace()
