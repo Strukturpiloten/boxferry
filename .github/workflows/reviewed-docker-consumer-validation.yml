@@ -1,0 +1,233 @@
+---
+name: Reviewed Docker consumer validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      box_pr:
+        description: Open same-repository BoxFerry PR explicitly authorized on trusted main.
+        required: true
+        type: string
+      box_sha:
+        description: Full current published BoxFerry head SHA authorized on trusted main.
+        required: true
+        type: string
+      lens_pr:
+        description: Open same-repository DockerLens dependency PR authorized on trusted main.
+        required: true
+        type: string
+      lens_sha:
+        description: Full current published DockerLens head SHA authorized on trusted main.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: reviewed-docker-consumer-${{ inputs.box_pr }}-${{ inputs.lens_pr }}
+  cancel-in-progress: false
+
+env:
+  # Reviewed DockerLens #42 merge; unreleased shared CI helper, not a release pin.
+  # renovate: datasource=github-digest depName=Strukturpiloten/docker-lens currentValue=main
+  ADMISSION_REVISION: c1b79d6af1b29f036b7704efc225fbd648e0b1cc
+  BOX_PR: ${{ inputs.box_pr }}
+  BOX_SHA: ${{ inputs.box_sha }}
+  LENS_PR: ${{ inputs.lens_pr }}
+  LENS_SHA: ${{ inputs.lens_sha }}
+
+jobs:
+  admission:
+    name: Admit both exact reviewed published heads
+    if: github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted dispatcher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out independently pinned admission helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ env.ADMISSION_REVISION }}
+          path: admission
+          persist-credentials: false
+      - name: Admit manifest pair and both real actors for both repositories
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 trusted/scripts/reviewed-docker-consumer-admission.py \
+            --trusted-root "$PWD/trusted" --admission-root "$PWD/admission" \
+            --admission-revision "$ADMISSION_REVISION" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA"
+
+  lanes:
+    name: Volume-only native / ${{ matrix.lane }} / inert binds and constraints
+    needs: admission
+    if: github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        lane: [debian11-rootful, debian11-rootless, upstream-rootful, upstream-rootless]
+    env:
+      LANE: ${{ matrix.lane }}
+    steps:
+      - name: Check out trusted dispatcher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out independently pinned admission helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ env.ADMISSION_REVISION }}
+          path: admission
+          persist-credentials: false
+      - name: Re-admit both heads and actors before privileged prerequisites
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 trusted/scripts/reviewed-docker-consumer-admission.py \
+            --trusted-root "$PWD/trusted" --admission-root "$PWD/admission" \
+            --admission-revision "$ADMISSION_REVISION" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA"
+      - name: Check out exact BoxFerry build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.box_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Check out real clean exact Lens execution and build dependency
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ inputs.lens_sha }}
+          path: lens-execution
+          persist-credentials: false
+      - name: Install existing isolated native prerequisites
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes libcap2-bin podman skopeo jq
+      - name: Authorize complete copied closure and build exact bounded candidates
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/reviewed-docker-consumer-run.py build \
+            --trusted-root "$PWD/trusted" --box-root "$PWD/candidate" --lens-root "$PWD/lens-execution" \
+            --execution-root "$PWD/execution" --private "$PWD/private" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA" \
+            --trusted-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Re-admit both exact heads immediately before isolated runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/reviewed-docker-consumer-admission.py \
+            --trusted-root "$PWD/trusted" --admission-root "$PWD/admission" \
+            --admission-revision "$ADMISSION_REVISION" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA"
+      - name: Run only six-fixture 23-volume profile under existing owned watchdog
+        run: |
+          set -euo pipefail
+          install -d -m 0700 staged
+          sudo env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME=/root PYTHONDONTWRITEBYTECODE=1 \
+            python3 "$PWD/trusted/scripts/reviewed-docker-consumer-run.py" run \
+            --trusted-root "$PWD/trusted" --box-root "$PWD/candidate" --lens-root "$PWD/lens-execution" \
+            --execution-root "$PWD/execution" --private "$PWD/private" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA" \
+            --trusted-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --lane "$LANE" --output "$PWD/staged/$LANE"
+          sudo chown -- "$(id -u):$(id -g)" "staged/$LANE" \
+            "staged/$LANE/consumer.json" "staged/$LANE/volume-proof.json"
+      - name: Upload only trusted-validated sanitized volume and inert receipts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reviewed-docker-consumer-${{ matrix.lane }}-${{ inputs.box_sha }}-${{ inputs.lens_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            staged/${{ matrix.lane }}/consumer.json
+            staged/${{ matrix.lane }}/volume-proof.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  aggregate:
+    name: Fresh trusted Docker consumer result
+    needs: [admission, lanes]
+    if: always() && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted dispatcher anew
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out independently pinned admission helper anew
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ env.ADMISSION_REVISION }}
+          path: admission
+          persist-credentials: false
+      - name: Freshly re-admit both exact heads and both actors
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 trusted/scripts/reviewed-docker-consumer-admission.py \
+            --trusted-root "$PWD/trusted" --admission-root "$PWD/admission" \
+            --admission-revision "$ADMISSION_REVISION" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA"
+      - name: Reject failed skipped cancelled or missing lane jobs
+        env:
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          LANES_RESULT: ${{ needs.lanes.result }}
+        run: |
+          test "$ADMISSION_RESULT" = success
+          test "$LANES_RESULT" = success
+      - name: Check out exact BoxFerry inputs for independent validation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.box_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Reconstruct fresh real clean exact Lens dependency tree
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ inputs.lens_sha }}
+          path: lens-execution
+          persist-credentials: false
+      - name: Download only current-pair current-attempt sanitized lane artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: reviewed-docker-consumer-*-${{ inputs.box_sha }}-${{ inputs.lens_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts
+          merge-multiple: false
+      - name: Independently reconstruct approved verifier and require all four complete lanes
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/reviewed-docker-consumer-evidence.py \
+            --trusted-root "$PWD/trusted" --box-root "$PWD/candidate" --lens-root "$PWD/lens-execution" \
+            --verifier-root "$PWD/verifier" --artifacts "$PWD/artifacts" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA" \
+            --trusted-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"

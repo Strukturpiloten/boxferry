@@ -1,7 +1,7 @@
 # Releases
 
-Release-plz prepares release pull requests. The protected release workflow publishes the lockstep
-crate set, tag, checksums, and GitHub release after that pull request is merged.
+Release-plz prepares release PRs. After merge, the protected Release workflow publishes
+the lockstep crates, tag, checksums and GitHub release.
 
 ## Commit classification contract
 
@@ -23,14 +23,18 @@ Use `validation_only: true` to exercise the identical validation path without ta
 releases, crate publication, release credentials, or another mutating publication step. Manually
 dispatched full and focused migration-readiness artifacts remain diagnostic only.
 
-`Reviewed PR application validation` dispatches one trusted-main, exact-head Nextcloud, Paperless,
-or Immich diagnostic. Record its URL, SHA, task, and bounded JSON. Rechecks cover the open
-same-repository PR and both actors before execution and afterward; failed/skipped persistence
-fails. Trusted catalogue admission permits source/target metadata and full-SHA revisions of
-unselected Lens tasks; the final validator binds the exact candidate catalogue. Its pinned
-DockerLens helper alone proves no BoxFerry runtime result. Complete PR/main/Release gates remain
-mandatory; no publication/deployment authority is granted.
+`Reviewed PR application validation` selects one trusted-main/exact-head Nextcloud,
+Paperless or Immich diagnostic; record URL, SHA, task and bounded JSON.
+Before/after rechecks cover both actors and the open same-repository PR.
+Failed/skipped persistence fails. Allowed source/target metadata and unselected-Lens
+full-SHA changes remain bound to the exact candidate catalogue.
+Helpers establish no runtime result or publication/deployment authority; complete
+PR/main/Release gates remain mandatory.
 See [ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md).
+
+The [proposed Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md)
+needs explicit exact-pair authorization. Workflow definitions prove neither native
+acceptance nor release readiness.
 
 ## Automatic release validation
 
@@ -40,7 +44,7 @@ and Release validation therefore share one complete Linux task definition, inclu
 documentation links. Ordinary pull requests may use a narrower
 change-aware plan, but every `main` push, manual CI
 dispatch, and `Release` invocation selects all deterministic jobs. A narrow PR result cannot
-authorize publication; the always-running `PR gate` rejects unexpected skips and missing results.
+authorize publication; the always-running `Required CI` gate rejects unexpected skips and missing results.
 Conformance uses the same reusable definition as
 manual diagnosis; the one-build/four-worker cap, exact-SHA/binary binding, budgets, privacy,
 cleanup, and explicit limitations remain unchanged. Failed, timed-out, cancelled, missing, or
@@ -67,7 +71,7 @@ actual release or deployment.
 
 ## Release notes
 
-Release notes come only from `CHANGELOG.md`. The PR gate runs its validator as a dedicated job
+Release notes come only from `CHANGELOG.md`. The aggregate runs its validator as a dedicated job
 required by the aggregate gate. Yank a version only when it is unsafe or unusable.
 
 Record user-visible changes in the single `Unreleased` section. Ordinary product pull requests

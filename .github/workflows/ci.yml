@@ -420,7 +420,7 @@ jobs:
           --minimum-age-hours 72
 
   pr-gate:
-    name: PR gate
+    name: Required CI
     if: always()
     needs:
       [
