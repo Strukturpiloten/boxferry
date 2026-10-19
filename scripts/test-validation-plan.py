@@ -285,6 +285,24 @@ class ValidationPlanTests(unittest.TestCase):
                 with self.assertRaises(planner.PlanError):
                     planner.verify_gate(plan, needs, POLICY, args)
 
+    def test_required_ci_is_the_real_always_running_aggregate(self) -> None:
+        workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        aggregates = re.findall(
+            r"(?ms)^  pr-gate:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow,
+        )
+        self.assertEqual(len(aggregates), 1)
+        aggregate = aggregates[0]
+        self.assertIn("    name: Required CI\n", aggregate)
+        self.assertEqual(workflow.count("    name: Required CI\n"), 1)
+        self.assertIn("    if: always()\n", aggregate)
+        dependencies = re.search(r"(?s)    needs:\n\s*\[(.*?)\]", aggregate)
+        self.assertIsNotNone(dependencies)
+        assert dependencies is not None
+        jobs = [name.strip() for name in dependencies[1].split(",") if name.strip()]
+        self.assertEqual(len(jobs), len(set(jobs)))
+        self.assertEqual(set(jobs), {"validation-plan", *POLICY["jobs"]})
+        self.assertIn('python3 "${verifier}" gate --policy-root "${policy_root}"', aggregate)
+
     def test_first_rollout_never_executes_candidate_classifier_or_accepts_a_skip(self) -> None:
         workflow = (SOURCE_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("run: bash scripts/test-application-probes.sh", workflow)

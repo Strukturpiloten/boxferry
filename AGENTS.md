@@ -162,8 +162,8 @@ jobs unless `BOXFERRY_LINT_JOBS` is set, and runs no tests. Any edit invalidates
 results. Neither mode grants release, publication, or deployment authority.
 
 `scripts/validation-plan.py` provides change-aware development feedback, not publication proof.
-The `PR gate` verifies selected jobs and planned skips; agent pre-PR, main, dispatch, and Release
-validation remain complete.
+The `Required CI` gate verifies selected jobs and planned skips; agent pre-PR, main, dispatch and
+Release validation remain complete.
 
 ## Code discovery
 

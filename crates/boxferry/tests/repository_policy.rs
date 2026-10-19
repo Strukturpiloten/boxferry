@@ -6092,7 +6092,7 @@ fn issue_to_pr_workflow_requires_primary_ownership_and_the_complete_local_gate()
             &[
                 "## Issue-to-PR contribution workflow",
                 "./scripts/check-all.sh",
-                "selected GitHub checks and fail-closed `PR gate`",
+                "selected GitHub checks and fail-closed `Required CI`",
                 "primary agent uses GPT-6 Sol with `xhigh` reasoning",
                 "Worker agents",
                 "never perform Git or GitHub writes",
@@ -6645,7 +6645,7 @@ fn ci_workflow_enforces_coverage_linux_only_and_pr_gate_contract() -> Result<(),
         "run: cargo ci-test",
         "  release-metadata:\n    name: Release metadata and changelog",
         "run: bash scripts/validate-release-metadata.sh",
-        "  pr-gate:\n    name: PR gate\n    if: always()",
+        "  pr-gate:\n    name: Required CI\n    if: always()",
         "needs:\n      [\n        validation-plan,\n        rust,\n        msrv,\n        dependencies,\n        documentation,\n        release-metadata,\n        semver-release-type,\n        semver,\n        coverage,\n        migration-readiness,\n        lockfile-release-age,\n      ]",
         "PLAN_JSON: ${{ needs.validation-plan.outputs.plan }}",
         "NEEDS_JSON: ${{ toJSON(needs) }}",
@@ -6716,7 +6716,7 @@ fn release_workflow_reuses_the_complete_ci_contract() -> Result<(), String> {
         "  migration-readiness:\n    name: Offline migration readiness",
         "name: migration-readiness-offline-${{ github.sha }}-${{ github.run_id }}",
         "overwrite: true",
-        "  pr-gate:\n    name: PR gate\n    if: always()",
+        "  pr-gate:\n    name: Required CI\n    if: always()",
     ] {
         if !ci.contains(required) {
             return Err(format!("reusable CI workflow missing complete gate `{required}`"));

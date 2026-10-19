@@ -44,7 +44,7 @@ and Release validation therefore share one complete Linux task definition, inclu
 documentation links. Ordinary pull requests may use a narrower
 change-aware plan, but every `main` push, manual CI
 dispatch, and `Release` invocation selects all deterministic jobs. A narrow PR result cannot
-authorize publication; the always-running `PR gate` rejects unexpected skips and missing results.
+authorize publication; the always-running `Required CI` gate rejects unexpected skips and missing results.
 Conformance uses the same reusable definition as
 manual diagnosis; the one-build/four-worker cap, exact-SHA/binary binding, budgets, privacy,
 cleanup, and explicit limitations remain unchanged. Failed, timed-out, cancelled, missing, or
@@ -71,7 +71,7 @@ actual release or deployment.
 
 ## Release notes
 
-Release notes come only from `CHANGELOG.md`. The PR gate runs its validator as a dedicated job
+Release notes come only from `CHANGELOG.md`. The aggregate runs its validator as a dedicated job
 required by the aggregate gate. Yank a version only when it is unsafe or unusable.
 
 Record user-visible changes in the single `Unreleased` section. Ordinary product pull requests

@@ -107,7 +107,7 @@ merging requires those checks to pass.
    `git status --short --branch` show no stale issue checkout.
 
 Run the lightweight task before pushing. The selected GitHub checks and
-fail-closed `PR gate` must pass before merge. Code and unknown changes still require complete
+fail-closed `Required CI` aggregate must pass before merge. Code and unknown changes still require complete
 deterministic validation; `main` pushes and releases always run the complete plan.
 
 The contributor exception does not waive `AGENTS.md`: agents must complete the local gate
