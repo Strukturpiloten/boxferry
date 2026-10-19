@@ -8760,7 +8760,7 @@ fn validate_reviewed_application_renovate(renovate: &serde_json::Value, workflow
     if owner["customType"] != "regex"
         || owner["datasourceTemplate"] != "github-digest"
         || owner["managerFilePatterns"]
-            != serde_json::json!([r"/^\.github/workflows/reviewed-application-validation\.yml$/"])
+            != serde_json::json!([r"/^\.github/workflows/reviewed-(?:application|docker-consumer)-validation\.yml$/"])
     {
         return Err("DockerLens admission manager has the wrong ownership scope".to_owned());
     }
@@ -8811,7 +8811,11 @@ fn validate_reviewed_application_renovate(renovate: &serde_json::Value, workflow
         || lock.is_none_or(|index| position <= index)
         || rule["matchDatasources"] != serde_json::json!(["github-digest"])
         || rule["matchPackageNames"] != serde_json::json!(["Strukturpiloten/docker-lens"])
-        || rule["matchFileNames"] != serde_json::json!([".github/workflows/reviewed-application-validation.yml"])
+        || rule["matchFileNames"]
+            != serde_json::json!([
+                ".github/workflows/reviewed-application-validation.yml",
+                ".github/workflows/reviewed-docker-consumer-validation.yml"
+            ])
         || rule["dependencyDashboardApproval"] != true
         || rule["automerge"] != false
     {
@@ -9028,32 +9032,67 @@ fn reviewed_application_aggregate_rejects_unsafe_counterexamples() -> Result<(),
 #[test]
 fn renovate_owns_reviewed_application_admission_pin_once() -> Result<(), String> {
     let root = repository_root();
-    let workflow = fs::read_to_string(root.join(".github/workflows/reviewed-application-validation.yml"))
-        .map_err(|error| format!("failed to read reviewed application workflow: {error}"))?;
     let renovate = fs::read_to_string(root.join(".github/renovate.json"))
         .map_err(|error| format!("failed to read Renovate configuration: {error}"))?;
     let renovate: serde_json::Value =
         serde_json::from_str(&renovate).map_err(|error| format!("failed to parse Renovate configuration: {error}"))?;
-    validate_reviewed_application_renovate(&renovate, &workflow)?;
+    for path in [
+        ".github/workflows/reviewed-application-validation.yml",
+        ".github/workflows/reviewed-docker-consumer-validation.yml",
+    ] {
+        let workflow =
+            fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}"))?;
+        validate_reviewed_application_renovate(&renovate, &workflow)?;
 
-    let duplicated = format!(
-        "{workflow}\n  # renovate: datasource=github-digest depName=Strukturpiloten/docker-lens currentValue=main\n  ADMISSION_REVISION: 0123456789abcdef0123456789abcdef01234567\n"
-    );
-    if validate_reviewed_application_renovate(&renovate, &duplicated).is_ok() {
-        return Err("Renovate accepted a duplicate DockerLens admission pin".to_owned());
-    }
-    let mut automatic = renovate.clone();
-    let rule = automatic["packageRules"]
-        .as_array_mut()
-        .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?
-        .iter_mut()
-        .find(|rule| {
-            rule["description"] == "Require explicit security review for the DockerLens application admission pin"
-        })
-        .ok_or_else(|| "DockerLens security review rule missing".to_owned())?;
-    rule["automerge"] = serde_json::json!(true);
-    if validate_reviewed_application_renovate(&automatic, &workflow).is_ok() {
-        return Err("Renovate accepted automatic admission-pin updates".to_owned());
+        let duplicated = format!(
+            "{workflow}\n  # renovate: datasource=github-digest depName=Strukturpiloten/docker-lens currentValue=main\n  ADMISSION_REVISION: 0123456789abcdef0123456789abcdef01234567\n"
+        );
+        if validate_reviewed_application_renovate(&renovate, &duplicated).is_ok() {
+            return Err(format!(
+                "Renovate accepted a duplicate DockerLens admission pin in {path}"
+            ));
+        }
+        let mut automatic = renovate.clone();
+        let rule = automatic["packageRules"]
+            .as_array_mut()
+            .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?
+            .iter_mut()
+            .find(|rule| {
+                rule["description"] == "Require explicit security review for the DockerLens application admission pin"
+            })
+            .ok_or_else(|| "DockerLens security review rule missing".to_owned())?;
+        rule["automerge"] = serde_json::json!(true);
+        if validate_reviewed_application_renovate(&automatic, &workflow).is_ok() {
+            return Err(format!("Renovate accepted automatic admission-pin updates in {path}"));
+        }
+        let mut missing_consumer = renovate.clone();
+        let rule = missing_consumer["packageRules"]
+            .as_array_mut()
+            .ok_or_else(|| "Renovate packageRules must be an array".to_owned())?
+            .iter_mut()
+            .find(|rule| {
+                rule["description"] == "Require explicit security review for the DockerLens application admission pin"
+            })
+            .ok_or_else(|| "DockerLens security review rule missing".to_owned())?;
+        rule["matchFileNames"] = serde_json::json!([path]);
+        if validate_reviewed_application_renovate(&missing_consumer, &workflow).is_ok() {
+            return Err(format!(
+                "Renovate accepted admission-pin review missing a consumer beside {path}"
+            ));
+        }
+        let mut duplicate_manager = renovate.clone();
+        let managers = duplicate_manager["customManagers"]
+            .as_array_mut()
+            .ok_or_else(|| "Renovate customManagers must be an array".to_owned())?;
+        let owner = managers
+            .iter()
+            .find(|manager| manager["description"] == "Track the immutable DockerLens application admission commit")
+            .cloned()
+            .ok_or_else(|| "DockerLens admission manager missing".to_owned())?;
+        managers.push(owner);
+        if validate_reviewed_application_renovate(&duplicate_manager, &workflow).is_ok() {
+            return Err(format!("Renovate accepted duplicate admission managers for {path}"));
+        }
     }
     Ok(())
 }

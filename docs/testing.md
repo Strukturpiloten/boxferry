@@ -1,5 +1,9 @@
 # Testing
 
+The [proposed Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md)
+has mandatory offline adversarial controls, not native acceptance. Existing gates
+remain unchanged.
+
 Run the complete deterministic gate before every pull request:
 
 ```console
@@ -178,10 +182,9 @@ Resume a transiently interrupted complete run at the first unproved cell:
 BOXFERRY_BIN="$PWD/target/debug/boxferry" sudo env BOXFERRY_BIN="$BOXFERRY_BIN" bash scripts/podman-live-conformance.sh --profile full-container --matrix-start-at podman-alpine-3.24-rootful --engine podman
 ```
 
-Every profile prints a plan and timestamped start, pass, or fail event with elapsed time.
-Nested resource setup, runtime calls, BoxFerry calls, and cleanup have named deadlines. The
-host verifies image digests and passes archives to nested engines, so nested resource creation
-does not need registry access.
+Every profile prints its plan and timestamped start/pass/fail events with elapsed time.
+Named deadlines bound setup, runtime/BoxFerry calls and cleanup. Host-verified image
+digests and transferred archives avoid nested registry access.
 
 Manual `workflow_dispatch` runs the same smoke profile or all 48 container cells. The current
 complete profile totals 1,322 checks; there is deliberately no nightly schedule.

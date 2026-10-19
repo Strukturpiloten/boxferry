@@ -1,7 +1,7 @@
 # Releases
 
-Release-plz prepares release pull requests. The protected release workflow publishes the lockstep
-crate set, tag, checksums, and GitHub release after that pull request is merged.
+Release-plz prepares release PRs. After merge, the protected Release workflow publishes
+the lockstep crates, tag, checksums and GitHub release.
 
 ## Commit classification contract
 
@@ -23,14 +23,18 @@ Use `validation_only: true` to exercise the identical validation path without ta
 releases, crate publication, release credentials, or another mutating publication step. Manually
 dispatched full and focused migration-readiness artifacts remain diagnostic only.
 
-`Reviewed PR application validation` dispatches one trusted-main, exact-head Nextcloud, Paperless,
-or Immich diagnostic. Record its URL, SHA, task, and bounded JSON. Rechecks cover the open
-same-repository PR and both actors before execution and afterward; failed/skipped persistence
-fails. Trusted catalogue admission permits source/target metadata and full-SHA revisions of
-unselected Lens tasks; the final validator binds the exact candidate catalogue. Its pinned
-DockerLens helper alone proves no BoxFerry runtime result. Complete PR/main/Release gates remain
-mandatory; no publication/deployment authority is granted.
+`Reviewed PR application validation` selects one trusted-main/exact-head Nextcloud,
+Paperless or Immich diagnostic; record URL, SHA, task and bounded JSON.
+Before/after rechecks cover both actors and the open same-repository PR.
+Failed/skipped persistence fails. Allowed source/target metadata and unselected-Lens
+full-SHA changes remain bound to the exact candidate catalogue.
+Helpers establish no runtime result or publication/deployment authority; complete
+PR/main/Release gates remain mandatory.
 See [ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md).
+
+The [proposed Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md)
+needs explicit exact-pair authorization. Workflow definitions prove neither native
+acceptance nor release readiness.
 
 ## Automatic release validation
 

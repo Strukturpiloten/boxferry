@@ -64,6 +64,7 @@ the diagnostic ZIP dependency without changing its privacy or writer-only bounda
 | [0066](0066-metadata-only-reviewed-pr-catalogue-admission.md) | Trusted reviewed-PR application diagnostics and metadata-only catalogue admission |
 | [0067](0067-run-owned-host-archive-aliases.md) | Run-owned host archive aliases and unchanged nested fixture references |
 | [0073](0073-compose-alias-sensitivity-and-export-refusal.md) | Scalar-specific Compose alias sensitivity and whole-candidate protected-alias export refusal |
+| [0078](0078-trusted-docker-consumer-validation.md) | Proposed trusted exact-pair Docker volume-consumer diagnostic; production authorization pending |
 
 ## Superseded history
 

@@ -73,7 +73,9 @@
     {
       "customType": "regex",
       "description": "Track the immutable DockerLens application admission commit",
-      "managerFilePatterns": ["/^\\.github/workflows/reviewed-application-validation\\.yml$/"],
+      "managerFilePatterns": [
+        "/^\\.github/workflows/reviewed-(?:application|docker-consumer)-validation\\.yml$/"
+      ],
       "matchStrings": [
         "(?<indentation>[ \\t]*)# renovate: datasource=github-digest depName=(?<depName>Strukturpiloten/docker-lens) currentValue=(?<currentValue>main)\\n[ \\t]*ADMISSION_REVISION:\\s*(?<currentDigest>[a-f0-9]{40})"
       ],
@@ -240,7 +242,10 @@
       "description": "Require explicit security review for the DockerLens application admission pin",
       "matchDatasources": ["github-digest"],
       "matchPackageNames": ["Strukturpiloten/docker-lens"],
-      "matchFileNames": [".github/workflows/reviewed-application-validation.yml"],
+      "matchFileNames": [
+        ".github/workflows/reviewed-application-validation.yml",
+        ".github/workflows/reviewed-docker-consumer-validation.yml"
+      ],
       "dependencyDashboardApproval": true,
       "automerge": false,
       "prBodyNotes": [

@@ -1,6 +1,6 @@
 # Dependency and license policy
 
-Keep dependency versions in their manifest, lockfile, workflow, or installer.
+Canonical manifests, lockfiles, workflows and installers own dependency versions.
 
 ## Sources of truth
 
@@ -20,16 +20,16 @@ Keep dependency versions in their manifest, lockfile, workflow, or installer.
 - Prefer the standard library and focused, actively maintained crates.
 - Use explicit compatible Cargo requirements; wildcard requirements are denied.
 - Use crates.io releases unless an accepted decision records another source.
-- Keep default features only when their behavior is understood and needed.
-- Avoid multiple crates for the same role without a documented reason.
-- Record dependencies that shape architecture, representation, or public APIs in an ADR.
+- Enable only understood, necessary default features.
+- Justify duplicate crate roles.
+- Record architectural, representation and public-API dependencies in an ADR.
 - Commit the lock file and use locked resolution in CI.
 
 `deny.toml` allows only Apache-2.0, MIT, MPL-2.0, and Unicode-3.0. Additional licenses require reviewed
 dependencies and understood obligations. This policy is project intent, not legal advice.
 
-An advisory, license clarification, duplicate allowance, or source exception must be narrow,
-versioned, and explained where it is configured. Never add an exception only to make CI green.
+Exceptions must be narrow, versioned and explained beside their configuration.
+Passing CI alone never justifies one.
 
 ## Architectural dependencies
 
@@ -77,6 +77,12 @@ commit: unreleased infrastructure, not a package release. No helper tag or downl
 exists; invent neither. One `github-digest` manager owns this pin; a later rule requires Dashboard
 approval and disables automerge. Review producer/consumer together: both actors' permissions,
 exact-head admission, privacy, and fail-closed cases.
+
+The Docker consumer bridge reuses this pin, manager and approval rule.
+Its `.github/workflows/reviewed-docker-consumer-validation.yml` adds no image pins.
+Exact-pair execution authorization needs renewed source/closure review, never
+automatic dependency updates or generated receipts. Other Lens products and
+the website are nonconsumers.
 
 Captured cassettes, generated expectations, historical observations, and the Podman compatibility
 matrix remain evidence; version changes require owning evidence/version-boundary revalidation.
