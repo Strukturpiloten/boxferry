@@ -79,6 +79,24 @@ def same(left: Any, right: Any) -> bool:
     return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
 
 
+def decimal(value: Any) -> bool:
+    """Canonical opaque u64 labels, never floating-point resource identifiers."""
+    return (isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", value) is not None
+            and int(value) <= 18446744073709551615)
+
+
+def bind_expectation(name: str, index: int, mount: dict[str, Any], source: str) -> dict[str, Any]:
+    """Authored intent and unsatisfied obligations, not observed host facts."""
+    require(all(":" not in path and "\x00" not in path for path in (source, mount["target"])),
+            "legacy relabel bind paths are not representable")
+    return {"kind": "bind_source", "identity": name, "mount_index": str(index),
+            "source": source, "target": mount["target"], "read_only": mount["read_only"],
+            "relabel": mount["selinux_relabel"],
+            "source_conditions": ["exists", "type_reviewed", "contents_reviewed", "ownership_reviewed", "permissions_reviewed"],
+            "selinux_effect": "unverified",
+            "selinux_conditions": ["daemon_selinux_enabled", "container_mount_label_present", "policy_filesystem_support", "relabel_authority"]}
+
+
 def unique_list(value: Any, message: str, maximum: int = 256) -> None:
     require(isinstance(value, list) and len(value) <= maximum, message)
     require(len({json.dumps(item, sort_keys=True) for item in value}) == len(value), message)
@@ -88,7 +106,7 @@ def identity(value: Any) -> bool:
     return isinstance(value, str) and IDENTITY.fullmatch(value) is not None
 
 
-def container_fields(body: dict[str, Any]) -> None:
+def container_fields(body: dict[str, Any], *, allow_legacy_binds: bool = False) -> None:
     """Close the native field boundary without claiming deferred semantic fidelity."""
     required = {"Image", "Labels", "HostConfig", "NetworkingConfig"}
     deferred = {"Env", "Entrypoint", "Cmd", "Healthcheck", "User", "WorkingDir", "StopSignal", "StopTimeout"}
@@ -118,7 +136,7 @@ def container_fields(body: dict[str, Any]) -> None:
                     for key, value in health.items() if key != "Test"), "deferred native health number is malformed")
     host = body["HostConfig"]
     require(isinstance(host, dict) and "NetworkMode" in host
-            and set(host) <= {"NetworkMode", "Mounts", "PortBindings"},
+            and set(host) <= {"NetworkMode", "Mounts", "PortBindings"} | ({"Binds"} if allow_legacy_binds else set()),
             "container host fields are outside topology prerequisite")
 
 
@@ -198,12 +216,17 @@ def catalogue(raw: bytes) -> dict[str, Any]:
             unique_list(service["mounts"], "mount inventory differs")
             targets = set()
             for mount in service["mounts"]:
-                fields(mount, {"kind", "source", "target", "read_only"}, "mount fields differ")
+                require(isinstance(mount, dict), "mount fields differ")
+                fields(mount, {"kind", "source", "target", "read_only"}
+                       | ({"selinux_relabel"} if "selinux_relabel" in mount else set()), "mount fields differ")
                 require(isinstance(mount["kind"], str) and mount["kind"] in {"bind", "volume"} and type(mount["read_only"]) is bool
                         and isinstance(mount["target"], str) and mount["target"].startswith("/")
                         and mount["target"] not in targets, "mount contract differs")
                 targets.add(mount["target"])
                 require(isinstance(mount["source"], str), "mount source differs")
+                if "selinux_relabel" in mount:
+                    require(mount["kind"] == "bind" and isinstance(mount["selinux_relabel"], str)
+                            and mount["selinux_relabel"] in {"shared", "private"}, "bind relabel intent differs")
                 if mount["kind"] == "volume":
                     require(mount["source"] in expected["volumes"], "mount volume differs")
                 else:
@@ -353,7 +376,9 @@ def validate_application(
         require(same(admission[key], app[key]), "offline declared application requirements differ")
     plan = document(plan_bytes)
     fields(plan, {"schema_version", "context", "requests", "prerequisites"}, "complete artifact fields differ")
-    require(type(plan["schema_version"]) is int and plan["schema_version"] == 1
+    has_bind_obligations = any("selinux_relabel" in mount
+                               for service in app["services"].values() for mount in service["mounts"])
+    require(type(plan["schema_version"]) is int and plan["schema_version"] == (2 if has_bind_obligations else 1)
             and same(plan["context"], profile), "complete artifact target context differs")
     unique_list(plan["requests"], "native requests repeat or exceed bound", 4096)
     unique_list(plan["prerequisites"], "native prerequisites repeat or exceed bound", 256)
@@ -362,22 +387,45 @@ def validate_application(
     network_names = {key: runtime(row["runtime_suffix"]) for key, row in app["networks"].items()}
     volume_names = {key: runtime(row["runtime_suffix"]) for key, row in app["volumes"].items()}
     service_names = {key: runtime(row["runtime_suffix"]) for key, row in app["services"].items()}
+    expected_binds = {}
+    for key, service in app["services"].items():
+        for index, mount in enumerate(service["mounts"]):
+            if "selinux_relabel" in mount:
+                source = fixture_root if mount["source"] == "." else f"{fixture_root}/{mount['source']}"
+                expected_binds[(service_names[key], str(index))] = bind_expectation(service_names[key], index, mount, source)
     require(all(identity(name) for name in [*network_names.values(), *volume_names.values(), *service_names.values()]),
             "expanded runtime identity differs")
     expected_prerequisites = {name for key, name in network_names.items()
                               if app["networks"][key]["ownership"] == "shared"}
-    references, prerequisites = set(), set()
+    references, prerequisites, seen_binds = set(), set(), set()
+    bind_groups, bind_owners = {}, {}
     for row in plan["prerequisites"]:
+        require(isinstance(row, dict), "native prerequisite fields differ")
+        if row.get("kind") == "bind_source":
+            fields(row, {"reference", "kind", "identity", "mount_index", "source", "target", "read_only", "relabel",
+                         "source_conditions", "selinux_effect", "selinux_conditions"}, "bind prerequisite fields differ")
+            reference, name, index = row["reference"], row["identity"], row["mount_index"]
+            require(decimal(reference) and decimal(index) and isinstance(name, str), "bind prerequisite association differs")
+            association = (name, index)
+            require(association in expected_binds and association not in seen_binds,
+                    "bind prerequisite inventory or original mount index differs")
+            require(same({key: value for key, value in row.items() if key != "reference"}, expected_binds[association]),
+                    "bind prerequisite intent or unverified obligations differ")
+            require(bind_groups.setdefault(name, reference) == reference and bind_owners.setdefault(reference, name) == name,
+                    "opaque bind reference groups differ")
+            seen_binds.add(association)
+            continue
         fields(row, {"kind", "reference", "identity", "expected_driver"}, "external prerequisite fields differ")
         reference = row["reference"]
         require(row["kind"] == "network" and row["expected_driver"] == "bridge"
-                and isinstance(reference, str) and re.fullmatch(r"0|[1-9][0-9]{0,19}", reference) is not None
-                and int(reference) <= 18446744073709551615 and reference not in references
+                and decimal(reference) and reference not in references
                 and isinstance(row["identity"], str) and row["identity"] not in prerequisites,
                 "external prerequisite identity differs")
         references.add(reference)
         prerequisites.add(row["identity"])
     require(prerequisites == expected_prerequisites, "external prerequisite inventory differs")
+    require(seen_binds == set(expected_binds) and not references.intersection(bind_owners),
+            "bind prerequisite inventory or external reference collision differs")
     api_prefix = f"/v{profile['rendering_api_version']}/"
     created_networks, created_volumes, containers, attachments = set(), set(), {}, {}
     available_networks = set(prerequisites)
@@ -409,22 +457,30 @@ def validate_application(
             require(name in service_names.values() and name not in containers, "container inventory differs")
             key = next(key for key, value in service_names.items() if value == name)
             service = app["services"][key]
-            container_fields(body)
+            container_fields(body, allow_legacy_binds=any("selinux_relabel" in mount for mount in service["mounts"]))
             expected_labels = dict(labels)
             if application == "supabase" and key == "storage":
                 expected_labels["io.boxferry.selection"] = "storage"
             require(same(body.get("Labels"), expected_labels), "container ownership differs")
             require(body.get("Image") == image_aliases[service["image_key"]], "container image role differs")
             host = body.get("HostConfig")
-            expected_mounts = []
+            expected_mounts, expected_literals = [], []
             for mount in service["mounts"]:
                 source = volume_names[mount["source"]] if mount["kind"] == "volume" else (
                     fixture_root if mount["source"] == "." else f"{fixture_root}/{mount['source']}")
                 if mount["kind"] == "volume":
                     require(source in created_volumes, "named volume was not explicitly created before mount")
-                expected_mounts.append({"Type": mount["kind"], "Source": source,
-                                        "Target": mount["target"], "ReadOnly": mount["read_only"]})
+                if "selinux_relabel" in mount:
+                    # Exact independently expected native literals; no native mode parser.
+                    access = "ro" if mount["read_only"] else "rw"
+                    relabel = "z" if mount["selinux_relabel"] == "shared" else "Z"
+                    expected_literals.append(f"{source}:{mount['target']}:{access},{relabel}")
+                else:
+                    expected_mounts.append({"Type": mount["kind"], "Source": source,
+                                            "Target": mount["target"], "ReadOnly": mount["read_only"]})
             require(same(host.get("Mounts", []), expected_mounts), "container mount inventory or access differs")
+            require(same(host.get("Binds"), expected_literals) if expected_literals else "Binds" not in host,
+                    "container legacy bind inventory or authored relabel intent differs")
             ports = {f"{row['container_port']}/tcp": [{"HostIp": row["host_ip"], "HostPort": str(row["host_port"])}]
                      for row in service["ingress"]}
             require(same(host.get("PortBindings", {}), ports)

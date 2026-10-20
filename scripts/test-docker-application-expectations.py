@@ -138,7 +138,7 @@ class ApplicationExpectations(unittest.TestCase):
         self.labels = {"io.boxferry.live-run": "offline-run", "io.boxferry.application": "unit-supabase"}
         names = ["db", "auth", "rest", "realtime", "imgproxy", "storage", "meta", "supavisor", "functions", "studio", "kong"]
         self.images = {key: f"registry.invalid/offline/{key}:reviewed" for key in names}
-        self.plan = {"schema_version": 1, "context": copy.deepcopy(self.profile), "requests": [
+        self.plan = {"schema_version": 2, "context": copy.deepcopy(self.profile), "requests": [
             request("networks/create", {"Name": "unit-supabase-backend", "Driver": "bridge", "Internal": True, "Labels": self.labels}),
             *[request("volumes/create", {"Name": f"unit-supabase-{name}", "Labels": self.labels}) for name in ["deno-cache", "pgdata", "storage"]]],
             "prerequisites": [{"kind": "network", "reference": "2", "identity": "unit-supabase-edge", "expected_driver": "bridge"}]}
@@ -157,8 +157,22 @@ class ApplicationExpectations(unittest.TestCase):
                     "NetworkingConfig": {"EndpointsConfig": {"unit-supabase-backend": {
                         "Aliases": ["realtime-dev.supabase-realtime", "realtime"] if name == "realtime" else [name]}}}}
             if name in mounts:
-                body["HostConfig"]["Mounts"] = [{"Type": kind, "Source": source, "Target": target, "ReadOnly": ro}
-                                                for kind, source, target, ro in mounts[name]]
+                structured = [{"Type": kind, "Source": source, "Target": target, "ReadOnly": ro}
+                              for kind, source, target, ro in mounts[name] if kind == "volume"]
+                if structured:
+                    body["HostConfig"]["Mounts"] = structured
+                literals = [f"{source}:{target}:ro,z" for kind, source, target, ro in mounts[name] if kind == "bind"]
+                if literals:
+                    body["HostConfig"]["Binds"] = literals
+                for index, (kind, source, target, ro) in enumerate(mounts[name]):
+                    if kind == "bind":
+                        self.plan["prerequisites"].append({
+                            "kind": "bind_source", "reference": {"db": "17", "functions": "9", "studio": "31", "kong": "5"}[name],
+                            "identity": f"unit-supabase-{name}", "mount_index": str(index),
+                            "source": source, "target": target, "read_only": ro, "relabel": "shared",
+                            "source_conditions": ["exists", "type_reviewed", "contents_reviewed", "ownership_reviewed", "permissions_reviewed"],
+                            "selinux_effect": "unverified",
+                            "selinux_conditions": ["daemon_selinux_enabled", "container_mount_label_present", "policy_filesystem_support", "relabel_authority"]})
             if name == "storage":
                 body["Labels"]["io.boxferry.selection"] = "storage"
             if name == "kong":
@@ -182,9 +196,228 @@ class ApplicationExpectations(unittest.TestCase):
             with self.subTest(read_only=service):
                 plan = copy.deepcopy(self.plan)
                 body = next(row["body"] for row in plan["requests"] if row["path"].endswith(f"name=unit-supabase-{service}"))
-                next(mount for mount in body["HostConfig"]["Mounts"] if mount["Target"] == target)["ReadOnly"] = False
+                if service == "functions":
+                    body["HostConfig"]["Binds"][0] = body["HostConfig"]["Binds"][0].replace(":ro,z", ":rw,z")
+                else:
+                    next(mount for mount in body["HostConfig"]["Mounts"] if mount["Target"] == target)["ReadOnly"] = False
                 with self.assertRaises(contract.ExpectationError):
                     self.validate(plan)
+
+    def test_supabase_four_authored_shared_binds_are_independently_expected(self):
+        # Literal source evidence, not inspect RW facts or a native-mode parser.
+        source_path = ROOT / "fixtures/conformance/supabase-application/compose.yaml"
+        source = source_path.read_bytes()
+        self.assertEqual([line.strip() for line in source.splitlines() if b":ro,z" in line], [
+            b"- ${BF_FIXTURE_ROOT:?required}/db-init.sql:/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql:ro,z",
+            b"- ${BF_FIXTURE_ROOT}/functions:/home/deno/functions:ro,z",
+            b"- ${BF_FIXTURE_ROOT}:/boxferry-fixture:ro,z",
+            b"- ${BF_FIXTURE_ROOT}/kong.yml:/etc/kong/kong.yml:ro,z"])
+        actual = [(name, index, mount) for name, service in EXPECTED["applications"]["supabase"]["services"].items()
+                  for index, mount in enumerate(service["mounts"]) if mount["kind"] == "bind"]
+        self.assertEqual(actual, [
+            ("db", 1, {"kind": "bind", "source": "db-init.sql", "target": "/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql",
+                       "read_only": True, "selinux_relabel": "shared"}),
+            ("functions", 0, {"kind": "bind", "source": "functions", "target": "/home/deno/functions",
+                              "read_only": True, "selinux_relabel": "shared"}),
+            ("studio", 0, {"kind": "bind", "source": ".", "target": "/boxferry-fixture",
+                           "read_only": True, "selinux_relabel": "shared"}),
+            ("kong", 0, {"kind": "bind", "source": "kong.yml", "target": "/etc/kong/kong.yml",
+                         "read_only": True, "selinux_relabel": "shared"})])
+        read_bytes = pathlib.Path.read_bytes
+        for replacement in (b":ro", b":ro,Z", b":rw,z"):
+            with self.subTest(source_mutation=replacement):
+                changed = source.replace(b":ro,z", replacement, 1)
+                with mock.patch.object(pathlib.Path, "read_bytes", autospec=True,
+                                       side_effect=lambda path: changed if path == source_path else read_bytes(path)):
+                    with self.assertRaisesRegex(contract.ExpectationError, "source bytes differ"):
+                        contract.check_sources(ROOT, RAW)
+
+    def test_supabase_exact_legacy_bind_inventory_and_intent_reject_mutations(self):
+        self.supabase()
+        for service in ("db", "functions", "studio", "kong"):
+            def host(plan):
+                return next(row["body"]["HostConfig"] for row in plan["requests"]
+                            if row["path"].endswith(f"name=unit-supabase-{service}"))
+            original = host(self.plan)["Binds"][0]
+            mutations = {
+                "omitted z": lambda h: h.update(Binds=[original.removesuffix(",z")]),
+                "private Z": lambda h: h.update(Binds=[original.removesuffix("z") + "Z"]),
+                "read write": lambda h: h.update(Binds=[original.replace(":ro,z", ":rw,z")]),
+                "source": lambda h: h.update(Binds=["/other" + original]),
+                "target": lambda h: h.update(Binds=[original.replace(":ro,z", "-other:ro,z")]),
+                "mode order": lambda h: h.update(Binds=[original.replace(":ro,z", ":z,ro")]),
+                "missing": lambda h: h.pop("Binds"),
+                "extra": lambda h: h["Binds"].append("/other:/other:ro,z"),
+                "duplicate": lambda h: h["Binds"].append(original),
+                "not list": lambda h: h.update(Binds=original),
+                "duplicate structured": lambda h: h.setdefault("Mounts", []).append({
+                    "Type": "bind", "Source": original.split(":")[0], "Target": original.split(":")[1], "ReadOnly": True}),
+            }
+            for name, mutate in mutations.items():
+                with self.subTest(service=service, mutation=name):
+                    plan = copy.deepcopy(self.plan)
+                    mutate(host(plan))
+                    with self.assertRaises(contract.ExpectationError):
+                        self.validate(plan)
+        for schema in (1, 3, True, "2"):
+            with self.subTest(schema=schema), self.assertRaises(contract.ExpectationError):
+                self.validate(dict(self.plan, schema_version=schema))
+
+    def test_supabase_bind_prerequisites_keep_closed_unverified_obligations(self):
+        self.supabase()
+        for index in range(1, 5):
+            original = self.plan["prerequisites"][index]
+            for field in original:
+                for omit in (False, True):
+                    with self.subTest(bind=index, field=field, omitted=omit):
+                        plan = copy.deepcopy(self.plan)
+                        row = plan["prerequisites"][index]
+                        row.pop(field) if omit else row.update({field: None})
+                        with self.assertRaises(contract.ExpectationError):
+                            self.validate(plan)
+            mutations = [("kind", "unknown"), ("identity", "unit-supabase-auth"), ("mount_index", "9"),
+                         ("source", "/other"), ("target", "/other"), ("read_only", False), ("relabel", "private"),
+                         ("selinux_effect", "verified"), ("selinux_effect", True), ("authority", "granted"),
+                         ("source_conditions", []), ("selinux_conditions", []),
+                         ("source_conditions", "satisfied"), ("selinux_conditions", {"verified": True})]
+            for conditions in ("source_conditions", "selinux_conditions"):
+                for position in range(len(original[conditions])):
+                    changed = list(original[conditions])
+                    changed[position] = "verified"
+                    mutations.append((conditions, changed))
+                    mutations.append((conditions, original[conditions][:position] + original[conditions][position + 1:]))
+                mutations.append((conditions, original[conditions] + ["unknown"]))
+                mutations.append((conditions, original[conditions] + original[conditions][:1]))
+            for field, value in mutations:
+                with self.subTest(bind=index, field=field, value=value):
+                    plan = copy.deepcopy(self.plan)
+                    plan["prerequisites"][index][field] = value
+                    with self.assertRaises(contract.ExpectationError):
+                        self.validate(plan)
+        for mutation in ("missing", "extra", "duplicate", "wrong original index"):
+            with self.subTest(inventory=mutation):
+                plan = copy.deepcopy(self.plan)
+                if mutation == "missing":
+                    plan["prerequisites"].pop()
+                elif mutation == "extra":
+                    plan["prerequisites"].append(dict(plan["prerequisites"][1], identity="unit-supabase-auth"))
+                elif mutation == "duplicate":
+                    plan["prerequisites"].append(dict(plan["prerequisites"][1], reference="99"))
+                else:
+                    # DB's bind follows a volume: its original index is 1, not its Binds index 0.
+                    plan["prerequisites"][1]["mount_index"] = "0"
+                with self.assertRaises(contract.ExpectationError):
+                    self.validate(plan)
+
+    def test_supabase_opaque_u64_references_can_rename_but_not_share_or_collide(self):
+        self.supabase()
+        plan = copy.deepcopy(self.plan)
+        for row, reference in zip(plan["prerequisites"], ["0", "18446744073709551615", "9007199254740993", "12", "1"]):
+            row["reference"] = reference
+        plan["prerequisites"].reverse()
+        self.validate(plan)
+        for field in ("reference", "mount_index"):
+            for value in (0, True, 1.0, "", "01", "+1", "-1", "1.0", "1e0", "18446744073709551616", "9" * 100):
+                with self.subTest(field=field, value=value):
+                    plan = copy.deepcopy(self.plan)
+                    plan["prerequisites"][1][field] = value
+                    with self.assertRaises(contract.ExpectationError):
+                        self.validate(plan)
+        for collision in (0, 2):
+            with self.subTest(reference_collision=collision):
+                plan = copy.deepcopy(self.plan)
+                plan["prerequisites"][1]["reference"] = plan["prerequisites"][collision]["reference"]
+                with self.assertRaises(contract.ExpectationError):
+                    self.validate(plan)
+
+    def test_relabel_catalogue_fields_and_schema1_boundary_stay_closed(self):
+        for value in (None, True, "", "z", "Z", "verified", [], {}):
+            with self.subTest(relabel=value):
+                catalogue = copy.deepcopy(EXPECTED)
+                catalogue["applications"]["supabase"]["services"]["db"]["mounts"][1]["selinux_relabel"] = value
+                with self.assertRaises(contract.ExpectationError):
+                    contract.catalogue(encode(catalogue))
+        for mount, field, value in ((0, "selinux_relabel", "shared"), (1, "selinux_effect", "verified")):
+            with self.subTest(mount=mount, field=field):
+                catalogue = copy.deepcopy(EXPECTED)
+                catalogue["applications"]["supabase"]["services"]["db"]["mounts"][mount][field] = value
+                with self.assertRaises(contract.ExpectationError):
+                    contract.catalogue(encode(catalogue))
+        # Forgejo's default schema-1 topology still cannot introduce even empty Binds.
+        for request_row in self.plan["requests"]:
+            if "HostConfig" in request_row["body"]:
+                request_row["body"]["HostConfig"]["Binds"] = []
+                break
+        with self.assertRaises(contract.ExpectationError):
+            self.validate()
+
+    def test_legacy_relabel_paths_reject_ambiguity_with_fresh_bindings(self):
+        for invalid in (":", "\x00"):
+            for field in ("fixture_root", "source", "target"):
+                with self.subTest(character=repr(invalid), field=field):
+                    self.supabase()
+                    catalogue = copy.deepcopy(EXPECTED)
+                    fixture_root = "/tmp/offline-fixture"
+                    if field == "fixture_root":
+                        fixture_root = f"/tmp/offline{invalid}fixture"
+                    elif field == "source":
+                        catalogue["applications"]["supabase"]["services"]["db"]["mounts"][1]["source"] = f"db-init{invalid}extra.sql"
+                    else:
+                        catalogue["applications"]["supabase"]["services"]["db"]["mounts"][1]["target"] = f"/init{invalid}extra.sql"
+                    # Rebind every affected literal and prerequisite, not just the expectations.
+                    for row in self.plan["prerequisites"]:
+                        if row["kind"] != "bind_source":
+                            continue
+                        if field == "fixture_root":
+                            row["source"] = row["source"].replace("/tmp/offline-fixture", fixture_root, 1)
+                        elif row["identity"] == "unit-supabase-db":
+                            row[field] = f"{fixture_root}/db-init{invalid}extra.sql" if field == "source" else f"/init{invalid}extra.sql"
+                        body = next(request_row["body"] for request_row in self.plan["requests"]
+                                    if request_row["path"].endswith(f"name={row['identity']}"))
+                        body["HostConfig"]["Binds"] = [f"{row['source']}:{row['target']}:ro,z"]
+                    admission = self.admission(encode(self.plan))
+                    admission.update(fixture_root=fixture_root, expectations_sha256=hashlib.sha256(encode(catalogue)).hexdigest())
+                    message = "private fixture root differs" if invalid == "\x00" and field == "fixture_root" else "legacy relabel bind paths are not representable"
+                    with self.assertRaisesRegex(contract.ExpectationError, message):
+                        self.validate(admission=admission, catalogue_bytes=encode(catalogue), fixture_root=fixture_root)
+
+    def test_schema1_structured_bind_paths_still_allow_colons(self):
+        # Synthetic consumer control only; no claim about the canonical Forgejo source.
+        catalogue = copy.deepcopy(EXPECTED)
+        catalogue["applications"]["forgejo"]["services"]["forgejo"]["mounts"].append({
+            "kind": "bind", "source": "input:fixture", "target": "/fixture:target", "read_only": True})
+        body = next(row["body"] for row in self.plan["requests"] if row["path"].endswith("name=unit-forge-app"))
+        body["HostConfig"]["Mounts"].append({
+            "Type": "bind", "Source": "/tmp/offline:fixture/input:fixture", "Target": "/fixture:target", "ReadOnly": True})
+        admission = self.admission(encode(self.plan))
+        admission.update(fixture_root="/tmp/offline:fixture", expectations_sha256=hashlib.sha256(encode(catalogue)).hexdigest())
+        self.validate(admission=admission, catalogue_bytes=encode(catalogue), fixture_root="/tmp/offline:fixture")
+
+    def test_one_container_cannot_split_opaque_bind_references(self):
+        # Pure consumer control with a second authored tuple, not a canonical-fixture claim.
+        self.supabase()
+        catalogue = copy.deepcopy(EXPECTED)
+        catalogue["applications"]["supabase"]["services"]["db"]["mounts"].append({
+            "kind": "bind", "source": "second.sql", "target": "/second", "read_only": True, "selinux_relabel": "shared"})
+        body = next(row["body"] for row in self.plan["requests"] if row["path"].endswith("name=unit-supabase-db"))
+        body["HostConfig"]["Binds"].append("/tmp/offline-fixture/second.sql:/second:ro,z")
+        self.plan["prerequisites"].append(dict(self.plan["prerequisites"][1], mount_index="2",
+                                               source="/tmp/offline-fixture/second.sql", target="/second"))
+        for split in (False, True):
+            plan = copy.deepcopy(self.plan)
+            for row in plan["prerequisites"]:
+                if row.get("identity") == "unit-supabase-db":
+                    row["reference"] = "18446744073709551615"
+            if split:
+                plan["prerequisites"][-1]["reference"] = "9007199254740993"
+            raw = encode(plan)
+            admission = self.admission(raw)
+            admission["expectations_sha256"] = hashlib.sha256(encode(catalogue)).hexdigest()
+            if split:
+                with self.assertRaisesRegex(contract.ExpectationError, "opaque bind reference groups differ"):
+                    self.validate(plan, admission, catalogue_bytes=encode(catalogue))
+            else:
+                self.validate(plan, admission, catalogue_bytes=encode(catalogue))
 
     def test_four_other_independently_authored_application_artifacts(self):
         # A separate, literal source of native test topology. These rows do not

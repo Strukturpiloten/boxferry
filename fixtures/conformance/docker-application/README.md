@@ -524,7 +524,7 @@ harness cleanup annotation must have a separate receipt bound to the original
 plan bytes and cannot masquerade as rendered intent.
 
 [`docker-application-expectations.py`](../../../scripts/lib/docker-application-expectations.py)
-validates the actual inert DockerLens version-1 complete artifact, rather than
+validates the actual inert DockerLens complete artifact, rather than
 trusting a projected inventory. It checks the exact independently supplied target
 profile, private image-role aliases, resource creates, created-volume-before-mount
 ordering, network attachments, loopback-only publications, and complete external
@@ -536,11 +536,44 @@ are capped at 1 MiB and depth 32, with duplicate keys and nonfinite numbers refu
 The container-native schema is closed: only the reviewed topology fields and
 known command, environment, healthcheck, user, working-directory, and stop-setting
 fields are accepted. The latter receive shape checks only and still establish no
-semantic fidelity. `HostConfig` permits only `NetworkMode`, `Mounts`, and
+semantic fidelity. `HostConfig` permits only `NetworkMode`, `Mounts`, conditional `Binds`, and
 `PortBindings`; anonymous `Volumes`, dynamic publication, DNS/host overrides,
 links, and unknown native fields cannot bypass the inventory checks. Empty or
 short-form source network attachments author no aliases. Immich's server mounts
 only its library volume; the writable fixture bind belongs to the ML service.
+
+The four Supabase binds independently retain authored shared-relabel
+intent: DB init (original mount index 1), Functions, Studio, and Kong (index 0).
+Their exact legacy `HostConfig.Binds` literals must end in `:ro,z`, with no
+duplicate structured bind. Named-volume `Mounts` remain unchanged. These binds
+reject colon or NUL in their expanded source or target: legacy syntax cannot
+represent those paths. This restriction does not prohibit colons in schema-1
+structured bind paths and does not introduce a native mount-mode parser. These binds
+require DockerLens conditional schema 2 and a complete `bind_source` inventory;
+other applications keep schema 1 and cannot introduce `Binds`. Each prerequisite
+must match the protected container identity, original target mount index, source,
+destination, access, and relabel intent. Opaque canonical-u64 references may be
+consistently renamed, but cannot split a container, share across containers, or
+collide with external-resource references. The five closed source conditions
+(`exists`, reviewed type, contents, ownership, and permissions) are obligations,
+not satisfied facts. `selinux_effect` must remain `unverified`, with all four
+conditions for daemon SELinux, container mount label, policy/filesystem support,
+and relabel authority. Unknown, malformed, omitted, or invented effect/authority
+claims fail closed. Effective inspect `RW` facts remain separate and do not
+establish authored `z` intent or SELinux effects.
+
+The pure tests assert the four exact authored fixture spellings independently
+of the catalogue, plus bind/prerequisite mutations and opaque-reference controls.
+They neither inspect a host nor create, relabel, or apply a source. This restores
+offline expectation coverage only; native capability, generated-artifact,
+published-dependency, runtime, and SELinux-effect acceptance remain separate.
+No operational pins, profiles, or admission evidence change. The changed Python
+validators and JSON expectations match no Renovate custom-manager path. The
+unchanged `.github/renovate.json` managers extract application image tags/digests
+only from the six `*-application/images.tsv` catalogues and provider versions
+from `scripts/lib/compose-provider.sh`; their extraction expressions, grouping,
+approval rules, and integrity records need no change. The unchanged fixture
+`providers.tsv` files remain reviewed provenance. Historical evidence is not rewritten.
 
 The pure `validate_application` function receives plan and admission bytes plus
 independently selected application, lane, profile, image aliases, prefix, run ID,
