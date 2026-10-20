@@ -232,8 +232,10 @@ printf '%s\\n' "$state"
         for stream in ("stdout", "stderr"):
             source = f"import sys; sys.{stream}.write('x'*16385); sys.exit(1)"
             self.assertEqual(read([sys.executable, "-c", source], time.monotonic() + 2, presence=True), ("oversized", b""))
+        # The reader owns a three-second work window; its caller also budgets
+        # cleanup so a real timed-out child can be killed and positively reaped.
         self.assertEqual(read([sys.executable, "-c", "import time; time.sleep(60)"],
-                             time.monotonic() + 0.1, presence=True), ("timed-out", b""))
+                             time.monotonic() + 5, presence=True), ("timed-out", b""))
         previous = {signum: presence.signal.getsignal(signum) for signum in
                     (presence.signal.SIGTERM, presence.signal.SIGINT, presence.signal.SIGHUP)}
         for failure in (KeyboardInterrupt, OSError):
@@ -250,6 +252,32 @@ printf '%s\\n' "$state"
             self.assertEqual(kill.call_args_list[0].args, (12345, presence.signal.SIGKILL))
             self.assertTrue(all(call.args == (12345, 0) for call in kill.call_args_list[1:]))
             self.assertTrue(stream.closed)
+
+    def test_shared_reader_exhausted_cleanup_budget_is_termination_unverified(self) -> None:
+        # Entirely doubled: private bytes arrive, then the absolute caller
+        # budget expires and the one attempted reap cannot be verified.
+        stream = mock.Mock()
+        stream.fileno.return_value = 123
+        child = mock.Mock(pid=12345, stdout=stream)
+        child.wait.side_effect = subprocess.TimeoutExpired("private-native", 0.001)
+        lifecycle = mock.Mock()
+        lifecycle.attach_mock(child.wait, "wait")
+        lifecycle.attach_mock(stream.close, "close")
+        with mock.patch.object(presence.native_read.subprocess, "Popen", return_value=child), \
+                mock.patch.object(presence.native_read.os, "set_blocking"), \
+                mock.patch.object(presence.native_read.select, "select", return_value=([123], [], [])), \
+                mock.patch.object(presence.native_read.os, "read", return_value=b"PRIVATE/incomplete-output"), \
+                mock.patch.object(presence.native_read.time, "monotonic", side_effect=[100, 100, 100, 105, 105]), \
+                mock.patch.object(presence.native_read.os, "waitid") as observe, \
+                mock.patch.object(presence.native_read.os, "killpg") as kill:
+            lifecycle.attach_mock(kill, "killpg")
+            self.assertEqual(presence.native_read.readiness_read(["private-native"], 100.1, presence=True),
+                             ("termination-unverified", b""))
+        self.assertEqual(lifecycle.mock_calls, [mock.call.killpg(12345, presence.signal.SIGKILL),
+                                                mock.call.wait(timeout=0.001), mock.call.close()])
+        kill.assert_called_once_with(12345, presence.signal.SIGKILL)
+        observe.assert_not_called()
+        stream.close.assert_called_once_with()
 
 
 class LiveConsumerTests(unittest.TestCase):

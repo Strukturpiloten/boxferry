@@ -18,3 +18,4 @@ PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-application-c
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-native-presence.py"
 PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-readiness-comparison.py"
 bash "${script_directory}/test-podman-live-cleanup.sh"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-docker-nextcloud-contract.py"
