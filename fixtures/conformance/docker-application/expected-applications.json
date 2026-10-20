@@ -1269,7 +1269,8 @@
               "kind": "bind",
               "source": "db-init.sql",
               "target": "/docker-entrypoint-initdb.d/zzzzzzzzzzzz-boxferry.sql",
-              "read_only": true
+              "read_only": true,
+              "selinux_relabel": "shared"
             }
           ],
           "ingress": []
@@ -1362,7 +1363,8 @@
               "kind": "bind",
               "source": "functions",
               "target": "/home/deno/functions",
-              "read_only": true
+              "read_only": true,
+              "selinux_relabel": "shared"
             },
             {
               "kind": "volume",
@@ -1384,7 +1386,8 @@
               "kind": "bind",
               "source": ".",
               "target": "/boxferry-fixture",
-              "read_only": true
+              "read_only": true,
+              "selinux_relabel": "shared"
             }
           ],
           "ingress": []
@@ -1401,7 +1404,8 @@
               "kind": "bind",
               "source": "kong.yml",
               "target": "/etc/kong/kong.yml",
-              "read_only": true
+              "read_only": true,
+              "selinux_relabel": "shared"
             }
           ],
           "ingress": [
