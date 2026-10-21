@@ -828,7 +828,6 @@ BFP0007	services.redis.runtime_name	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.traefik.logging	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.traefik.mounts[0].source	unsupported	podman@5.4.0..6.1.0	1
 BFP0007	services.traefik.runtime_name	unsupported	podman@5.4.0..6.1.0	1
-BFP0007	volumes.appwrite-builds.settings	unsupported	podman@5.4.0..6.1.0	1
 BFP0008	services.appwrite-realtime.image	invalid	podman@5.4.0..6.1.0	1
 BFP0008	services.appwrite-task-interval.image	invalid	podman@5.4.0..6.1.0	1
 BFP0008	services.appwrite-task-maintenance.image	invalid	podman@5.4.0..6.1.0	1

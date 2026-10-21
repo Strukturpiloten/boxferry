@@ -872,7 +872,6 @@ BFP0007|services.redis.runtime_name
 BFP0007|services.traefik.logging
 BFP0007|services.traefik.mounts[0].source
 BFP0007|services.traefik.runtime_name
-BFP0007|volumes.appwrite-builds.settings
 BFP0008|services.appwrite-realtime.image
 BFP0008|services.appwrite-task-interval.image
 BFP0008|services.appwrite-task-maintenance.image
