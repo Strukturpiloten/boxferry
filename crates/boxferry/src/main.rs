@@ -5839,8 +5839,14 @@ fn serialize_console_report(
     Ok(serde_json::to_string(&value)?)
 }
 
+fn report_file_parent(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 fn write_report_file(path: &Path, report: &str) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = report_file_parent(path);
     let metadata = fs::symlink_metadata(parent)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(io::Error::new(
@@ -6706,6 +6712,20 @@ mod tests {
     }
 
     #[test]
+    fn report_file_parent_handles_bare_and_qualified_paths() {
+        for (path, expected) in [
+            ("report.json", "."),
+            ("./report.json", "."),
+            ("reports/report.json", "reports"),
+            ("./reports/report.json", "./reports"),
+        ] {
+            assert_eq!(report_file_parent(Path::new(path)), Path::new(expected));
+        }
+        let directory = env::temp_dir();
+        assert_eq!(report_file_parent(&directory.join("report.json")), directory);
+    }
+
+    #[test]
     fn report_file_creation_is_cross_platform_and_never_overwrites() -> io::Result<()> {
         let directory = env::temp_dir().join(format!(
             "boxferry-report-create-new-{}-{}",
@@ -6713,6 +6733,9 @@ mod tests {
             SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&directory)?;
+        let fresh_report = directory.join("fresh-report.json");
+        write_report_file(&fresh_report, "fresh")?;
+        assert_eq!(fs::read_to_string(&fresh_report)?, "fresh\n");
         let report = directory.join("report.json");
         fs::write(&report, "original")?;
         let error = match write_report_file(&report, "replacement") {
@@ -6721,6 +6744,52 @@ mod tests {
         };
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&report)?, "original");
+        fs::remove_dir_all(directory)
+    }
+
+    #[test]
+    fn report_file_refuses_missing_and_non_directory_parents() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-report-parent-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let parent_file = directory.join("parent-file");
+        fs::write(&parent_file, "parent-original")?;
+        let error = write_report_file(&parent_file.join("report.json"), "report")
+            .err()
+            .ok_or_else(|| io::Error::other("non-directory report parent was accepted"))?;
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read_to_string(&parent_file)?, "parent-original");
+        let missing_parent = directory.join("missing");
+        let error = write_report_file(&missing_parent.join("report.json"), "report")
+            .err()
+            .ok_or_else(|| io::Error::other("missing report parent was accepted"))?;
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(!missing_parent.exists());
+        fs::remove_dir_all(directory)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn report_file_refuses_symlink_parent_without_writing_through_it() -> io::Result<()> {
+        let directory = env::temp_dir().join(format!(
+            "boxferry-report-symlink-parent-{}-{}",
+            std::process::id(),
+            SUPPORT_BUNDLE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory)?;
+        let destination = directory.join("destination");
+        fs::create_dir(&destination)?;
+        let link = directory.join("linked");
+        std::os::unix::fs::symlink(&destination, &link)?;
+        let error = write_report_file(&link.join("report.json"), "report")
+            .err()
+            .ok_or_else(|| io::Error::other("symlink report parent was accepted"))?;
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(!destination.join("report.json").exists());
+        assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
         fs::remove_dir_all(directory)
     }
 
