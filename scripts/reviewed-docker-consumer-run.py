@@ -24,6 +24,30 @@ proof = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(proof)
 auth = proof.auth
 EXAMPLES = {"volume-fixtures": "docker-volume-fixture-rehearsal", "host-metadata": "docker-host-metadata"}
+RUNTIME_FACTS = {
+    "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux",
+    "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
+    "GITHUB_REPOSITORY": "Strukturpiloten/boxferry",
+    "GITHUB_WORKFLOW_REF": "Strukturpiloten/boxferry/.github/workflows/reviewed-docker-consumer-validation.yml@refs/heads/main",
+    "ImageOS": "ubuntu24",
+}
+
+
+def runtime_environment(environ, *, require_docker=False):
+    """Explicit accident-guard facts only; trusted admission remains separate."""
+    engine = environ.get("DOCKERLENS_OUTER_ENGINE", "podman")
+    auth.require(engine in {"podman", "docker"} and (not require_docker or engine == "docker"))
+    selected = {"DOCKERLENS_OUTER_ENGINE": engine}
+    forbidden = ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_API_VERSION",
+                 "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINER_SSHKEY", "PODMAN_CONNECTIONS_CONF")
+    auth.require(not any(environ.get(key) for key in forbidden))
+    if engine == "docker":
+        auth.require(all(environ.get(key) == value for key, value in RUNTIME_FACTS.items()))
+        image = environ.get("ImageVersion", "")
+        auth.require(type(image) is str and re.fullmatch(r"[0-9]{8}\.[0-9]+\.[0-9]+", image) is not None)
+        selected.update(RUNTIME_FACTS)
+        selected["ImageVersion"] = image
+    return selected
 
 
 def write(path: Path, value) -> None:
@@ -53,7 +77,7 @@ def child_environment():
     # Candidate builds and native runtime never receive API/Actions credentials.
     return {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"], "LC_ALL": "C",
             **{key: os.environ[key] for key in ("CARGO_HOME", "RUSTUP_HOME") if key in os.environ},
-            "PYTHONDONTWRITEBYTECODE": "1"}
+            "PYTHONDONTWRITEBYTECODE": "1", **runtime_environment(os.environ)}
 
 
 def execute(arguments, *, root: Path, log: Path, seconds: float, maximum=16 * 1024 * 1024,
@@ -212,6 +236,7 @@ def build(args):
 
 def run(args):
     auth.require(os.geteuid() == 0 and args.lane in auth.LANES)
+    runtime_environment(os.environ, require_docker=True)
     pair, digest, box_files, lens_files = inputs(args)
     expected = proof.context(pair, digest, args.trusted_sha, args.run_id, args.attempt)
     state = auth.document(args.private / "build-state.json", 128 * 1024)
@@ -239,6 +264,7 @@ def run(args):
         "--native-script-sha256", pair["docker_lens"]["files"]["scripts/native-conformance.sh"],
         "--unix-http-helper", str(args.lens_root / "scripts/native-unix-http.py"),
         "--unix-http-sha256", pair["docker_lens"]["files"]["scripts/native-unix-http.py"],
+        "--outer-runtime-closure-json", proof.encoded(proof.runtime_source_binding(pair)["files"]).decode().strip(),
         "--api-version", native["profiles"][args.lane]["rendering_api_version"],
         "--boxferry-root", str(args.box_root),
         "--boxferry-binary", str(args.box_root / "target/debug/examples/docker-volume-fixture-rehearsal"),
@@ -252,13 +278,15 @@ def run(args):
     execute(command, root=args.execution_root, log=args.private / "runtime.log", seconds=1020,
             cleanup_seconds=125, preserve_guard=True)
     auth.require(set(path.name for path in directory.iterdir()) == {"volume-proof.json"})
+    outer_runtime = proof.outer_runtime_from_log(auth.read(args.private / "runtime.log", 16 * 1024 * 1024), args.lane)
     volume = auth.document(directory / "volume-proof.json", 16 * 1024)
     auth.verify_source(args.box_root, pair["boxferry"])
     auth.verify_source(args.lens_root, pair["docker_lens"])
     for path, raw in box_files.items():
         auth.require(auth.read(args.execution_root / path) == raw)
-    consumer = {"schema": 1, "scope": auth.POLICY["scope"], "lane": args.lane, "result": "checks-passed",
+    consumer = {"schema": 2, "scope": auth.POLICY["scope"], "lane": args.lane, "result": "checks-passed",
                 "context": expected, "builds": state["builds"], "inert": state["inert"],
+                "source_binding": proof.runtime_source_binding(pair), "outer_runtime": outer_runtime,
                 "volume_proof_sha256": hashlib.sha256(proof.encoded(volume)).hexdigest()}
     proof.validate_lane(consumer, volume, expected_context=expected, lane=args.lane, pair=pair,
                         lens=args.lens_root, files=lens_files, box_files=box_files)

@@ -7,11 +7,14 @@ import copy
 import errno
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
 import shlex
+import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -37,6 +40,255 @@ def authored_reacquired_compose(image: str) -> bytes:
             "    environment:\n      - " + path + "\n"
             "    networks:\n      docker-network-1: {}\n"
             "networks:\n  docker-network-1:\n    name: bridge\n    external: true\n").encode()
+
+
+class SharedUnixHTTPTests(unittest.TestCase):
+    """Authored transport doubles; no runtime or sibling checkout is required."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        (self.root / "scripts").mkdir()
+        self.path = self.root / "scripts/native-unix-http.py"
+        self.raw = b'''class TransportError(Exception):
+    pass
+calls = []
+def request(*args, **kwargs):
+    calls.append((args, kwargs))
+    return 400, b"complete"
+def main():
+    return 7
+'''
+        self.path.write_bytes(self.raw)
+        self.digest = hashlib.sha256(self.raw).hexdigest()
+        self.addCleanup(setattr, contract, "UNIX_HTTP", None)
+        self.addCleanup(setattr, contract, "UNIX_HTTP_BINDING", None)
+
+    def bind(self, digest=None):
+        with mock.patch.object(contract, "git", side_effect=[str(self.root), "a" * 40, ""]):
+            return contract.bind_unix_http(self.path, "a" * 40, digest or self.digest)
+
+    def test_wrong_digest_revision_dirty_source_and_symlink_refuse_before_execution(self):
+        with self.assertRaises(contract.ContractError):
+            self.bind("0" * 64)
+        self.assertIsNone(contract.UNIX_HTTP)
+        for head, dirty in (("b" * 40, ""), ("a" * 40, " M scripts/native-unix-http.py")):
+            with mock.patch.object(contract, "git", side_effect=[str(self.root), head, dirty]), \
+                    self.assertRaises(contract.ContractError):
+                contract.bind_unix_http(self.path, "a" * 40, self.digest)
+        self.path.unlink()
+        self.path.symlink_to("missing")
+        with self.assertRaises((contract.ContractError, FileNotFoundError)):
+            self.bind()
+
+    def test_held_bytes_exact_forwarding_and_real_http_error_status(self):
+        helper = self.bind()
+        self.path.write_text("raise AssertionError('must not reopen helper')\n")
+        self.assertEqual(contract.engine_request(pathlib.Path("/owned/socket"), "POST", "/v1.41/volumes/create",
+                         b'{}', timeout=0.25), (400, b"complete"))
+        self.assertEqual(helper.calls, [(("/owned/socket", "POST", "/v1.41/volumes/create", b'{}'),
+            {"timeout": 0.25, "max_response_bytes": 16384, "max_request_bytes": 1048576,
+             "content_type": "application/json"})])
+        self.assertEqual(contract.unix_http_evidence(), {"schema_version": 1, "transport": "native-unix-http-v1",
+                         "docker_lens_revision": "a" * 40, "helper_sha256": self.digest})
+
+    def test_missing_binding_and_failed_mutation_never_use_another_transport(self):
+        with self.assertRaisesRegex(contract.ContractError, "not bound"):
+            contract.engine_request(pathlib.Path("/owned/socket"), "GET", "/_ping")
+        helper = self.bind()
+        with mock.patch.object(helper, "request", side_effect=helper.TransportError()), \
+                self.assertRaisesRegex(contract.ContractError, "mutation outcome may be uncertain"):
+            contract.engine_request(pathlib.Path("/owned/socket"), "POST", "/create", b"{}")
+        for interrupted in (KeyboardInterrupt, SystemExit):
+            with mock.patch.object(helper, "request", side_effect=interrupted), self.assertRaises(interrupted):
+                contract.engine_request(pathlib.Path("/owned/socket"), "POST", "/create", b"{}")
+
+    def test_cli_forwards_exact_arguments_and_closed_helper_status(self):
+        helper = self.bind()
+        arguments = ["--socket", "/owned/socket", "--method", "GET", "--path", "/_ping",
+                     "--timeout", "1", "--max-response-bytes", "65536", "--discard-body"]
+        with mock.patch.object(contract.sys, "argv", [str(SOURCE), "unix-http", "--", *arguments]), \
+                mock.patch.object(helper, "main", return_value=7) as forwarded:
+            self.assertEqual(contract.main(), 7)
+            self.assertEqual(contract.sys.argv, [str(self.path), *arguments])
+        forwarded.assert_called_once_with()
+
+    def test_non_http_safety_commands_do_not_import_a_missing_transport(self):
+        output = io.StringIO()
+        with mock.patch.object(contract.sys, "argv", [str(SOURCE), "--unix-http-helper", "/missing",
+                "--unix-http-revision", "a" * 40, "--unix-http-sha256", "b" * 64,
+                "parent-start", "--parent-pid", "123"]), \
+                mock.patch.object(contract, "bind_unix_http") as binding, \
+                mock.patch.object(contract, "process_start", return_value=456), \
+                mock.patch.object(contract.sys, "stdout", output):
+            self.assertEqual(contract.main(), 0)
+        binding.assert_not_called()
+        self.assertEqual(output.getvalue(), "456\n")
+
+    def test_dispatcher_flags_are_parsed_and_checked_before_any_runtime(self):
+        runner = self.root / "docker-application-conformance.sh"
+        runner.write_bytes((SOURCE.parent.parent / runner.name).read_bytes())
+        tools = self.root / "bin"
+        tools.mkdir()
+        log = self.root / "calls"
+        python = tools / "python3"
+        python.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$TRANSPORT_TEST_LOG"\n'
+                          'case " $* " in *" catalogue "*) printf "{}\\n";; '
+                          '*" check-unix-http-binding "*) exit 37;; *) exit 99;; esac\n')
+        python.chmod(0o700)
+        environment = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                       "TRANSPORT_TEST_LOG": str(log)}
+        base = ["bash", str(runner), "--docker-lens-root", str(self.root),
+                "--docker-lens-revision", "a" * 40, "--native-script-sha256", "b" * 64]
+        result = subprocess.run([*base, "--profile", "volume-fixtures", "--unix-http-helper", str(self.path),
+                                 "--unix-http-sha256", self.digest, "--outer-runtime-closure-json", "{}",
+                                 "--lane", "upstream-rootful",
+                                 "--evidence-directory", "/owned/evidence",
+                                 "--host-metadata-binary", "/owned/helper", "--host-metadata-receipt", "/owned/receipt",
+                                 "--boxferry-root", "/owned/box", "--boxferry-binary", "/owned/binary",
+                                 "--boxferry-receipt", "/owned/producer"],
+                                env=environment, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 37, result.stderr)
+        self.assertEqual(len(log.read_text().splitlines()), 2)
+        self.assertIn("check-unix-http-binding", log.read_text())
+        log.unlink()
+        missing = subprocess.run([*base, "--profile", "volume-fixtures"], env=environment,
+                                 capture_output=True, timeout=5)
+        self.assertEqual(missing.returncode, 2)
+        self.assertFalse(log.exists())
+        catalogue = subprocess.run([*base, "--profile", "catalogue"], env=environment,
+                                   capture_output=True, timeout=5)
+        self.assertEqual(catalogue.returncode, 0, catalogue.stderr)
+        self.assertEqual(len(log.read_text().splitlines()), 1)
+        self.assertNotIn("check-unix-http-binding", log.read_text())
+
+
+class OuterRuntimeSnapshotTests(unittest.TestCase):
+    """Exact source custody only; no producer helper is sourced or executed."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.source = pathlib.Path(temporary.name)
+        token = hashlib.sha256(os.fsencode(self.source)).hexdigest()[:8]
+        self.run = pathlib.Path("/tmp") / ("boxferry-docker-core." + token)
+        self.run.mkdir(mode=0o700)
+        self.addCleanup(shutil.rmtree, self.run)
+        info = self.run.stat()
+        self.identity = f"{info.st_dev}:{info.st_ino}"
+        self.destination = self.run / "outer-runtime-helper"
+        self.names = contract.OUTER_RUNTIME_FILES
+        self.contents = {name: ("raise AssertionError('source data is never executable in this control') # " + name).encode()
+                         for name in self.names}
+        for name, raw in self.contents.items():
+            path = self.source / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(raw)
+        self.closure = json.dumps({name: hashlib.sha256(raw).hexdigest() for name, raw in self.contents.items()})
+
+    def capture(self, closure=None, revision="a" * 40):
+        with mock.patch.object(contract, "git", side_effect=[str(self.source), revision, ""]):
+            return contract.capture_outer_runtime(self.source, "a" * 40, closure or self.closure,
+                                                  self.destination, self.identity)
+
+    def test_complete_held_bytes_copy_once_without_execution_or_probes(self):
+        digest = self.capture()
+        self.assertEqual(digest, contract.volume_identity_digest(json.loads(self.closure)))
+        self.assertEqual({path.name for path in self.destination.iterdir()}, {pathlib.Path(name).name for name in self.names})
+        for name, raw in self.contents.items():
+            snapshot = self.destination / pathlib.Path(name).name
+            self.assertEqual(snapshot.read_bytes(), raw)
+            self.assertEqual(stat.S_IMODE(snapshot.stat().st_mode), 0o600)
+            (self.source / name).write_bytes(b"later source replacement")
+        self.assertEqual(contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure), digest)
+        with self.assertRaises(FileExistsError):
+            with mock.patch.object(contract, "outer_runtime_sources", return_value=self.contents):
+                contract.capture_outer_runtime(self.source, "a" * 40, self.closure, self.destination, self.identity)
+
+    def test_bridge_argv_uses_only_complete_private_snapshot_without_execution(self):
+        self.capture()
+        with mock.patch.object(contract.subprocess, "run", side_effect=AssertionError("no probes")), \
+                mock.patch.object(contract.subprocess, "Popen", side_effect=AssertionError("no execution")):
+            for engine in ("podman", "docker"):
+                self.assertEqual(contract.outer_runtime_command(self.destination, self.identity, self.closure, engine),
+                    ["bash", str(self.destination / "native-outer-command.sh"), "--engine", engine,
+                     "--directory", str(self.run)])
+            for engine in ("", "Docker", "remote"):
+                with self.assertRaises(contract.ContractError):
+                    contract.outer_runtime_command(self.destination, self.identity, self.closure, engine)
+        (self.destination / "native-outer-command.sh").write_bytes(b"changed")
+        with self.assertRaises(contract.ContractError):
+            contract.outer_runtime_command(self.destination, self.identity, self.closure, "docker")
+
+    def test_fresh_private_preflight_projection_excludes_peer_paths_and_processes(self):
+        observation = {"schema_version": 1, "kind": "test-only-outer-docker-prerequisite", "native_qualified": False,
+                       "runner": "ubuntu-24.04", "runner_image_version": "20261019.1.0", "client_version": "28.0.4",
+                       "server_version": "28.0.4+reviewed", "storage_root": "/PRIVATE-STORAGE-CANARY",
+                       "peer": {"kind": "local-root-dockerd-observation", "socket": "/var/run/docker.sock",
+                                "uid": 0, "gid": 0, "peer_pid": 12345, "executable": "/PRIVATE-EXE-CANARY"}}
+        path = self.run / "outer-runtime.json"
+        path.write_text(json.dumps(observation))
+        path.chmod(0o600)
+        result = contract.outer_runtime_observation(self.run, self.identity)
+        self.assertEqual(result["client_version"], "28.0.4")
+        self.assertEqual(result["server_version"], "28.0.4+reviewed")
+        self.assertIs(result["native_qualified"], False)
+        self.assertTrue(result["rootful"] and result["local"])
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        self.assertNotIn("peer_pid", json.dumps(result))
+        for field, value in (("uid", False), ("uid", 1000), ("gid", 1000), ("socket", "/other.sock")):
+            changed = copy.deepcopy(observation)
+            changed["peer"][field] = value
+            path.write_text(json.dumps(changed))
+            with self.subTest(field=field, value=value), self.assertRaises(contract.ContractError):
+                contract.outer_runtime_observation(self.run, self.identity)
+        path.chmod(0o644)
+        with self.assertRaises(contract.ContractError):
+            contract.outer_runtime_observation(self.run, self.identity)
+
+    def test_each_dependency_is_required_and_source_drift_refuses_before_snapshot_creation(self):
+        for name in self.names:
+            changed = json.loads(self.closure)
+            changed.pop(name)
+            with self.subTest(missing=name), self.assertRaises(contract.ContractError):
+                self.capture(json.dumps(changed))
+            changed = json.loads(self.closure)
+            changed[name] = "0" * 64
+            with self.subTest(digest=name), self.assertRaises(contract.ContractError):
+                self.capture(json.dumps(changed))
+            self.assertFalse(self.destination.exists())
+        with self.assertRaises(contract.ContractError):
+            self.capture(revision="b" * 40)
+        self.assertFalse(self.destination.exists())
+
+    def test_held_run_identity_private_mode_and_snapshot_roster_are_mandatory(self):
+        self.capture()
+        with self.assertRaises(contract.ContractError):
+            contract.check_outer_runtime_snapshot(self.destination, "0:0", self.closure)
+        self.run.chmod(0o755)
+        with self.assertRaises(contract.ContractError):
+            contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
+        self.run.chmod(0o700)
+        (self.destination / "unexpected").write_bytes(b"not admitted")
+        with self.assertRaises(contract.ContractError):
+            contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
+
+    def test_snapshot_replacement_permissions_and_hardlinks_refuse(self):
+        self.capture()
+        snapshot = self.destination / "native-presence.py"
+        original = snapshot.read_bytes()
+        snapshot.write_bytes(original + b"changed")
+        with self.assertRaises(contract.ContractError):
+            contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
+        snapshot.write_bytes(original)
+        snapshot.chmod(0o644)
+        with self.assertRaises(contract.ContractError):
+            contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
+        snapshot.chmod(0o600)
+        os.link(snapshot, self.source / "linked-snapshot")
+        with self.assertRaises(contract.ContractError):
+            contract.check_outer_runtime_snapshot(self.destination, self.identity, self.closure)
 
 
 class CoreJourneyBoundaryTests(unittest.TestCase):
@@ -1115,6 +1367,36 @@ class ArtifactTests(unittest.TestCase):
             artifact = root / "docker-plan.json"
             artifact.write_text(json.dumps(self.record()))
             artifact.chmod(0o600)
+            # Supply an authored reviewed-helper binding so the replay CLI can
+            # reach the plan-identity refusal. Neither stub performs native I/O.
+            scripts, tools = root / "scripts", root / "bin"
+            scripts.mkdir()
+            tools.mkdir()
+            bound, requested = root / "helper-bound", root / "transport-requested"
+            helper = scripts / "native-unix-http.py"
+            raw = ("from pathlib import Path\n"
+                   f"Path({str(bound)!r}).touch()\n"
+                   "class TransportError(Exception):\n    pass\n"
+                   "def request(*args, **kwargs):\n"
+                   f"    Path({str(requested)!r}).touch()\n"
+                   "    raise AssertionError('replay must not request transport')\n"
+                   "def main():\n"
+                   f"    Path({str(requested)!r}).touch()\n"
+                   "    raise AssertionError('replay must not invoke transport CLI')\n").encode()
+            helper.write_bytes(raw)
+            native_git = tools / "git"
+            native_git.write_text(f"#!{sys.executable}\nimport sys\n"
+                                  "args = sys.argv[1:]\n"
+                                  "assert args[args.index('-C') + 1] == " + repr(str(root)) + "\n"
+                                  "command = args[args.index('-C') + 2:]\n"
+                                  "if command == ['rev-parse', '--show-toplevel']: print(" + repr(str(root)) + ")\n"
+                                  "elif command == ['rev-parse', 'HEAD']: print('a' * 40)\n"
+                                  "elif command == ['status', '--porcelain', '--untracked-files=all']: pass\n"
+                                  "else: raise AssertionError('unexpected Git request')\n")
+            native_git.chmod(0o700)
+            environment = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+            binding = ["--unix-http-helper", str(helper), "--unix-http-revision", "a" * 40,
+                       "--unix-http-sha256", hashlib.sha256(raw).hexdigest()]
             common = ["--artifact", str(artifact), "--image", self.image, "--api-version", self.api,
                       "--lane", self.lane, "--catalogue-json", json.dumps({"profiles": self.profiles})]
             for command in ("validate-artifact", "replay-test-only"):
@@ -1122,17 +1404,23 @@ class ArtifactTests(unittest.TestCase):
                     "--observed-release", "20.10.5", "--observed-api", "1.41", "--observed-package",
                     "20.10.5+dfsg1-1+deb11u2", "--socket", str(root / "absent.sock"),
                     "--state", str(root / "state.json"), "--allow-isolated-apply"]
-                missing = subprocess.run([sys.executable, str(SOURCE), command, *common, *options],
+                prefix = [] if command == "validate-artifact" else binding
+                missing = subprocess.run([sys.executable, str(SOURCE), *prefix, command, *common, *options],
+                                         env=environment,
                                          capture_output=True, text=True, timeout=5, check=False)
                 self.assertEqual(missing.returncode, 2)
                 self.assertIn("--artifact-sha256", missing.stderr)
-                mismatch = subprocess.run([sys.executable, str(SOURCE), command, *common, *options,
+                self.assertFalse(bound.exists())
+                mismatch = subprocess.run([sys.executable, str(SOURCE), *prefix, command, *common, *options,
                                            "--artifact-sha256", "0" * 64],
+                                          env=environment,
                                           capture_output=True, text=True, timeout=5, check=False)
                 self.assertEqual(mismatch.returncode, 1)
                 self.assertIn("exact plan byte binding differs", mismatch.stderr)
                 self.assertNotIn(str(root), mismatch.stderr)
                 self.assertFalse((root / "state.json").exists())
+                self.assertEqual(bound.exists(), command == "replay-test-only")
+                self.assertFalse(requested.exists())
 
     def test_replay_snapshot_failure_precedes_any_engine_request(self) -> None:
         with mock.patch.object(contract, "engine_request") as request:
@@ -1705,6 +1993,8 @@ class HostMetadataTests(unittest.TestCase):
         self.helper.chmod(0o500)
         self.digest = hashlib.sha256(self.helper.read_bytes()).hexdigest()
         self.socket = self.root / "socket/docker.sock"
+        self.outer_command = ["bash", "/authored/native-outer-command.sh", "--engine", "docker", "--directory", str(self.root)]
+        self.cid = "a" * 64
         self.responses = [("read", b"29.8.1 1.56\n"),
                           ("read", b"29.8.1\n/var/lib/docker\nname=seccomp,profile=builtin\n"),
                           ("read", b"29.8.1 1.56 1.49 unknown\n")]
@@ -1714,19 +2004,37 @@ class HostMetadataTests(unittest.TestCase):
 
     def acquire(self):
         return contract.application_metadata(f"bf-docker-core-{self.run}", self.run, self.socket,
-                                             self.helper, "999999999.00", self.digest)
+                                             self.helper, "999999999.00", self.digest,
+                                             outer_command=self.outer_command, container_id=self.cid)
 
     def test_independent_server_cli_and_public_lens_unknown_are_required(self) -> None:
         with mock.patch.object(contract, "readiness_read", side_effect=self.responses) as read:
             self.assertEqual(self.acquire(), "29.8.1 1.56 unknown /var/lib/docker")
         self.assertEqual(len(read.call_args_list), 3)
         version = read.call_args_list[0].args[0]
-        self.assertEqual(version[:7], ["podman", "exec", f"bf-docker-core-{self.run}", "docker", "--host",
-                                      "unix:///boxferry-core/docker.sock", "version"])
+        self.assertEqual(version[:-2], [*self.outer_command, "exec", self.cid, "docker", "--host",
+                                       "unix:///boxferry-core/docker.sock", "version"])
         self.assertEqual(version[-1], "{{with .Server}}{{.Version}} {{.APIVersion}}{{end}}")
         self.assertIn(".ServerVersion", read.call_args_list[1].args[0][-1])
         self.assertEqual(read.call_args_list[2].args[0][:3], [str(self.helper), "--socket", str(self.socket)])
         self.assertTrue(0 < int(read.call_args_list[2].args[0][-1]) <= 3500)
+
+    def test_shared_bridge_metadata_keeps_held_id_and_one_original_deadline(self) -> None:
+        prefix = ["bash", "/owned/native-outer-command.sh", "--engine", "docker", "--directory", str(self.root)]
+        cid = "b" * 64
+        with mock.patch.object(contract, "readiness_read", side_effect=self.responses) as read:
+            result = contract.application_metadata(f"bf-docker-core-{self.run}", self.run, self.socket, self.helper,
+                "999999999.00", self.digest, outer_command=prefix, container_id=cid)
+        self.assertEqual(result, "29.8.1 1.56 unknown /var/lib/docker")
+        for call in read.call_args_list[:2]:
+            self.assertEqual(call.args[0][:len(prefix) + 2], [*prefix, "exec", cid])
+            self.assertNotIn(f"bf-docker-core-{self.run}", call.args[0])
+            self.assertNotIn("preflight", call.args[0])
+        self.assertEqual(len({call.args[1] for call in read.call_args_list}), 1)
+        with mock.patch.object(contract, "readiness_read") as read, self.assertRaises(contract.ContractError):
+            contract.application_metadata(f"bf-docker-core-{self.run}", self.run, self.socket, self.helper,
+                "999999999.00", self.digest, outer_command=prefix, container_id="name-not-held-id")
+        read.assert_not_called()
 
     def test_client_only_or_cli_ready_lens_fail_never_accepts(self) -> None:
         cases = [(0, ("read", b"\n")), (0, ("read-failed", b"29.8.1 1.56\n")),
@@ -2407,6 +2715,29 @@ class PostReapTeardownTests(unittest.TestCase):
 
 
 class ReadinessDiagnosticTests(unittest.TestCase):
+    def test_canonical_diagnostics_keep_held_id_native_fields_and_original_deadline(self):
+        cid = "a" * 64
+        native = {"Id": cid, "Name": "/" + self.outer, "Config": {"Labels": self.record["labels"]},
+                  "State": {"Status": "exited", "Running": False}, "Private": "DO-NOT-PRINT"}
+        raw = json.dumps(native).encode()
+        prefix = ["bash", "/owned/native-outer-command.sh", "--engine", "docker", "--directory", self.temporary.name]
+        with mock.patch.object(contract, "readiness_read", side_effect=[("read", raw), ("read", b""), ("read", raw)]) as calls:
+            result = contract.readiness_diagnostics(self.outer, self.run_id, self.socket_path, registered=True,
+                                                   outer_command=prefix, container_id=cid)
+        self.assertEqual(result["outer"], "verified")
+        self.assertEqual(result["outer-recheck"], "stable")
+        self.assertEqual([call.args[0] for call in calls.call_args_list],
+                         [[*prefix, "observe", "container", cid], [*prefix, "logs", cid],
+                          [*prefix, "observe", "container", cid]])
+        self.assertEqual(len({call.args[1] for call in calls.call_args_list}), 1)
+        self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
+        native["Id"] = "b" * 64
+        with mock.patch.object(contract, "readiness_read", return_value=("read", json.dumps(native).encode())) as calls:
+            result = contract.readiness_diagnostics(self.outer, self.run_id, self.socket_path, registered=True,
+                                                   outer_command=prefix, container_id=cid)
+        self.assertEqual(result["outer"], "malformed")
+        self.assertEqual(len(calls.call_args_list), 1)
+
     def test_inspect_uses_native_go_id_field_not_plain_format_compatibility_alias(self) -> None:
         # Podman 6.0.2 accepts {{.Id}} but not {{json .Id}}. The native Go
         # field is ID; the controlled JSON key exposed to our parser stays id.
@@ -3156,12 +3487,12 @@ class VolumeEvidenceTests(unittest.TestCase):
 class RunnerSafetyTests(unittest.TestCase):
     runner = (pathlib.Path(__file__).parent / "docker-application-conformance.sh").read_text(encoding="utf-8")
 
-    def curl_statements(self) -> list[str]:
+    def bound_http_statements(self) -> list[str]:
         """Collect literal call sites independently of their option spelling."""
         statements = []
         lines = self.runner.splitlines()
         for index, line in enumerate(lines):
-            if "curl " not in line or line.strip().startswith("for tool in "):
+            if '"${unix_http_args[@]}" unix-http --' not in line:
                 continue
             statement = line.strip()
             while statement.endswith("\\"):
@@ -3173,10 +3504,56 @@ class RunnerSafetyTests(unittest.TestCase):
     def function(self, name: str) -> str:
         start = self.runner.index(f"{name}() {{")
         end = self.runner.index("\n}\n", start) + 3
-        return self.runner[start:end]
+        source = self.runner[start:end]
+        if name == "cleanup_owned":
+            # These authored cleanup models predate the shared bridge. Adapt
+            # only their mocked native ABI, retaining actual production
+            # cleanup/binding logic, budgets and failure propagation. Separate
+            # controls below check literal canonical bridge argv/custody.
+            source = self.function("outer_binding") + r'''
+outer_cid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+outer_owner=io.boxferry.docker-core-run
+outer_image=registry.invalid/test@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+outer_engine=podman
+outer_snapshot_ready=false
+outer_runtime=(fixture_outer)
+outer_exec=(fixture_exec)
+fixture_wrapper=$(declare -f cleanup_bounded)
+eval "${fixture_wrapper/cleanup_bounded /fixture_cleanup_bounded }"
+cleanup_bounded() {
+  local duration=$1 observed status=0
+  if [[ $2 == fixture_outer ]]; then
+    case $3 in
+      binding|daemon-binding)
+        if [[ $4 == container || $3 == daemon-binding ]]; then
+          observed=$(fixture_cleanup_bounded "$duration" podman inspect --format '{{index .Config.Labels "io.boxferry.docker-core-run"}}' "$outer") || return $?
+        else
+          observed=$(fixture_cleanup_bounded "$duration" podman volume inspect --format '{{index .Labels "io.boxferry.docker-core-run"}}' "$storage_volume") || return $?
+        fi
+        [[ $observed == "$run_id" ]]; return $? ;;
+      remove) fixture_cleanup_bounded "$duration" podman rm --force --volumes "$outer"; return $? ;;
+      volume-remove) fixture_cleanup_bounded "$duration" podman volume rm "$storage_volume"; return $? ;;
+      *) return 99 ;;
+    esac
+  elif [[ $2 == fixture_exec ]]; then
+    shift 2
+    fixture_cleanup_bounded "$duration" podman exec "$outer" "$@"
+    return $?
+  fi
+  local -a forwarded=()
+  local value
+  for value in "$@"; do
+    if [[ $value == "$outer_cid" ]]; then value=$outer; fi
+    forwarded+=("$value")
+  done
+  fixture_cleanup_bounded "${forwarded[@]}"
+}
+''' + source
+        return source
 
     def bash(self, body: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["bash", "-c", "set -Eeuo pipefail\ncontract=/unused\nprofile=replay-probe\n" +
+        return subprocess.run(["bash", "-c", "set -Eeuo pipefail\ncontract=/unused\nprofile=replay-probe\nouter_engine=podman\nouter_runtime_args=()\n"
+                               "outer_inspect=(podman inspect)\ndeclare -n outer_target=outer\n" +
                                self.function("podman_presence") + body],
                               capture_output=True, text=True, timeout=8, check=False)
 
@@ -3188,10 +3565,45 @@ class RunnerSafetyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 124)
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_canonical_binding_uses_external_fixed_bridge_held_id_image_and_original_bound(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = pathlib.Path(name)
+            bridge, log = root / "bridge.py", root / "argv.json"
+            bridge.write_text("import json,os,pathlib,sys\n"
+                              "pathlib.Path(os.environ['BRIDGE_TEST_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
+                              "print('matching stdout cannot override failure')\n"
+                              "raise SystemExit(int(os.environ['BRIDGE_TEST_STATUS']))\n")
+            cid, digest = "a" * 64, "b" * 64
+            prefix = [sys.executable, str(bridge), "--engine", "docker", "--directory", str(root)]
+            for status in (0, 1, 124):
+                body = f"""export BRIDGE_TEST_LOG={shlex.quote(str(log))} BRIDGE_TEST_STATUS={status}
+profile=volume-fixtures
+outer_runtime=({shlex.join(prefix)})
+outer_owner=io.boxferry.docker-core-run
+run_id=Ab123456
+outer_image=registry.invalid/test@sha256:{digest}
+""" + self.function("bounded") + self.function("outer_binding") + f"""
+outer_binding bounded container {cid} bf-docker-core-Ab123456
+"""
+                result = self.bash(body)
+                self.assertEqual(result.returncode, status)
+                self.assertEqual(json.loads(log.read_text()), prefix[2:] + ["daemon-binding", cid,
+                    "bf-docker-core-Ab123456", "io.boxferry.docker-core-run", "Ab123456",
+                    "registry.invalid/test@sha256:" + digest])
+                self.assertEqual(result.stdout, "")
+            # A name is not a substitute for a launch-returned exact CID.
+            log.unlink()
+            result = self.bash(body.rsplit("outer_binding bounded", 1)[0] +
+                               "outer_binding bounded container replacement bf-docker-core-Ab123456\n")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(log.exists())
+
     def readiness_unit(self) -> str:
         """The production readiness block, without rewriting its branches."""
         start = self.runner.index("read -r ping_readiness_uptime _ < /proc/uptime")
-        return self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)]
+        return ('outer_target=$outer\nouter_inspect=(podman inspect)\n'
+                'outer_exec=(podman exec "$outer")\n' +
+                self.runner[start:self.runner.index('\nchmod 0666 "$socket_path"', start)])
 
     def readiness_socket(self, path: pathlib.Path) -> None:
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -3306,9 +3718,13 @@ record_call POST approved
         self.assertIn("guard_alive || return 125", self.function("bounded"))
 
     def test_real_application_metadata_result_passes_volume_gate_without_launching_curl(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as directory:
-            root = pathlib.Path(directory)
-            root.chmod(0o700)
+        with tempfile.TemporaryDirectory() as directory:
+            # tempfile suffixes may contain '_'; production mktemp and the
+            # canonical custody contract require exactly eight alphanumerics.
+            token = hashlib.sha256(os.fsencode(directory)).hexdigest()[:8]
+            root = pathlib.Path("/tmp") / ("boxferry-docker-core." + token)
+            root.mkdir(mode=0o700)
+            self.addCleanup(shutil.rmtree, root)
             run = root.name.removeprefix("boxferry-docker-core.")
             path = root / "socket/docker.sock"
             path.parent.mkdir()
@@ -3316,6 +3732,21 @@ record_call POST approved
             helper = root / "boxferry-host-metadata"
             helper.write_text("#!/bin/sh\nprintf '20.10.5 1.41 1.41 unknown\\n'\n", encoding="ascii")
             helper.chmod(0o500)
+            runtime_directory = root / "outer-runtime-helper"
+            runtime_directory.mkdir(mode=0o700)
+            closure = {}
+            for name in contract.OUTER_RUNTIME_FILES:
+                raw = (b'#!/bin/bash\nshift 4\nexec podman "$@"\n' if name.endswith("native-outer-command.sh")
+                       else b"# inert authored dependency, never sourced\n")
+                source = runtime_directory / pathlib.Path(name).name
+                source.write_bytes(raw)
+                source.chmod(0o600)
+                closure[name] = hashlib.sha256(raw).hexdigest()
+            info = root.stat()
+            runtime_args = ["--outer-runtime-directory", str(runtime_directory), "--outer-runtime-run-identity",
+                            f"{info.st_dev}:{info.st_ino}", "--outer-runtime-engine", "podman",
+                            "--outer-runtime-closure-json", json.dumps(closure),
+                            "--outer-runtime-container-id", "c" * 64]
             native = root / "podman"
             native.write_text("""#!/bin/sh
 case "$6" in
@@ -3329,7 +3760,7 @@ esac
             curl = root / "curl"
             curl.write_text(f"#!/bin/sh\nprintf 'unexpected' > {shlex.quote(str(curl_calls))}\nexit 99\n", encoding="ascii")
             curl.chmod(0o700)
-            body = f"""PATH={shlex.quote(directory)}:"$PATH"
+            body = f"""PATH={shlex.quote(str(root))}:"$PATH"
 profile=volume-fixtures
 registered=false
 outer=bf-docker-core-{run}
@@ -3337,6 +3768,7 @@ run_id={run}
 socket_path={shlex.quote(str(path))}
 host_metadata_snapshot={shlex.quote(str(helper))}
 host_metadata_binary_sha256={hashlib.sha256(helper.read_bytes()).hexdigest()}
+outer_runtime_args=({shlex.join(runtime_args)})
 contract={shlex.quote(str(SOURCE))}
 bounded() {{ shift; "$@"; }}
 sleep() {{ return 99; }}
@@ -3374,7 +3806,7 @@ printf 'POST-approved\\n'
         self.assertIn("verify_host_metadata_binding\n  volume_apply_attempted=true", self.runner)
         self.assertIn("verify_host_metadata_binding || return 1", self.function("finish_volume_evidence"))
 
-    def test_other_profiles_preserve_curl_metadata_and_historical_observer(self) -> None:
+    def test_other_profiles_bind_metadata_and_preserve_historical_observer(self) -> None:
         block = self.readiness_unit()
         volume, original = block.split('  elif [[ -S $socket_path ]]; then', 1)
         self.assertNotIn("readiness-ping", volume)
@@ -3384,9 +3816,10 @@ printf 'POST-approved\\n'
         self.assertIn('python3 "$comparison" native-ready', original)
         metadata = self.runner[self.runner.index('\nchmod 0666 "$socket_path"'):self.runner.index('\npython3 "$contract" verify-docker-root')]
         self.assertRegex(metadata, r'if \[\[ \$profile == volume-fixtures \]\]; then')
-        self.assertIn('else\n  version_json=$(curl ', metadata)
-        self.assertIn('info_json=$(curl ', metadata)
-        self.assertEqual(len(self.curl_statements()), 4)
+        self.assertIn('else\n  version_record=$(bounded 15s python3 "$contract" "${unix_http_args[@]}" unix-http', metadata)
+        self.assertIn('info_record=$(bounded 15s python3 "$contract" "${unix_http_args[@]}" unix-http', metadata)
+        self.assertEqual(metadata.count('== 200 ]] || exit 1'), 2)
+        self.assertEqual(len(self.bound_http_statements()), 4)
 
     def test_volume_evidence_handoff_requires_all_gates_and_revokes_failed_or_interrupted_write(self) -> None:
         for status, interrupted in ((0, False), (1, False), (0, True)):
@@ -4048,7 +4481,7 @@ sleep() {{ return 99; }}
 
     def test_native_baseline_keeps_platform_and_id_selected_network_reads(self) -> None:
         self.assertIn(
-            "podman image inspect --format '{{.Os}}/{{.Architecture}}' \"$fixture_image\") == linux/amd64",
+            "jq -er '.Os + \"/\" + .Architecture' <<< \"$fixture_image_info\") == linux/amd64",
             self.runner,
         )
         self.assertIn(
@@ -4385,67 +4818,65 @@ cleanup_bounded() {{
     def test_failed_volume_inspection_cannot_authorize_removal_with_matching_stdout(self) -> None:
         self.failed_ownership_cleanup("volume")
 
-    def test_native_curl_responses_and_pre_watchdog_podman_calls_are_bounded(self) -> None:
-        curl_lines = self.curl_statements()
-        self.assertEqual(len(curl_lines), 4)
-        for line in curl_lines:
-            self.assertIn("curl -q --noproxy '*' ", line)
-            self.assertIn("--max-filesize 65536", line)
-            self.assertIn("--max-time 10", line)
+    def test_bound_http_responses_and_pre_watchdog_podman_calls_are_bounded(self) -> None:
+        statements = self.bound_http_statements()
+        self.assertEqual(len(statements), 4)
+        for statement in statements:
+            self.assertIn('python3 "$contract" "${unix_http_args[@]}" unix-http --', statement)
+            self.assertIn("--max-response-bytes 65536", statement)
+            self.assertIn("--timeout 10", statement)
         self.assertIn("bounded 15s podman info --format '{{.Host.Security.Rootless}}'", self.runner)
         self.assertIn('podman_presence cleanup_bounded container "$outer"', self.runner)
         self.assertIn('podman_presence cleanup_bounded volume "$storage_volume"', self.runner)
 
-    def test_all_four_shell_curl_sites_have_exact_isolated_get_argv_and_single_invocations(self) -> None:
-        statements = self.curl_statements()
+    def test_all_four_bound_shell_http_sites_have_exact_get_argv_and_single_invocations(self) -> None:
+        statements = self.bound_http_statements()
         self.assertEqual(len(statements), 4)
         self.assertEqual(sum(statement.startswith("inner_status=") for statement in statements), 2)
-        self.assertEqual(sum(statement.startswith("version_json=") for statement in statements), 1)
-        self.assertEqual(sum(statement.startswith("info_json=") for statement in statements), 1)
+        self.assertEqual(sum(statement.startswith("version_record=") for statement in statements), 1)
+        self.assertEqual(sum(statement.startswith("info_record=") for statement in statements), 1)
         with tempfile.TemporaryDirectory() as name:
             directory = pathlib.Path(name)
             socket_path = directory / "DO-NOT-CONNECT.sock"
             calls = directory / "calls.jsonl"
             wrapper_calls = directory / "wrappers"
-            # Entire argv literals assert default GET, URLs, counts and limits;
-            # each source call site is evaluated once without native resources.
-            cleanup = ["-q", "--noproxy", "*", "--silent", "--max-time", "10", "--max-filesize", "65536",
-                       "--output", "/dev/null", "--write-out", "%{http_code}", "--unix-socket", str(socket_path),
-                       "http://localhost/v1.41/containers/bf-docker-core/json"]
-            version = ["-q", "--noproxy", "*", "--fail", "--silent", "--max-time", "10", "--max-filesize", "65536",
-                       "--unix-socket", str(socket_path), "http://localhost/version"]
-            info = ["-q", "--noproxy", "*", "--fail", "--silent", "--max-time", "10", "--max-filesize", "65536",
-                    "--unix-socket", str(socket_path), "http://localhost/info"]
-            expected = [cleanup, cleanup, version, info]
-            curl = directory / "curl"
-            curl.write_text(f"""#!{sys.executable}
+            binding = ["--unix-http-helper", "/owned/lens/scripts/native-unix-http.py",
+                       "--unix-http-revision", "a" * 40, "--unix-http-sha256", "b" * 64]
+            prefix = ["/unused", *binding, "unix-http", "--", "--socket", str(socket_path),
+                      "--method", "GET", "--path"]
+            suffix = ["--timeout", "10", "--max-response-bytes", "65536"]
+            cleanup = [*prefix, "/v1.41/containers/bf-docker-core/json", *suffix, "--discard-body"]
+            version = [*prefix, "/version", *suffix]
+            info = [*prefix, "/info", *suffix]
+            python = directory / "python3"
+            python.write_text(f"""#!{sys.executable}
 import json, pathlib, sys
 calls = pathlib.Path({str(calls)!r})
-observed = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
-expected = {expected!r}
+rows = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+expected = [{cleanup!r}, {cleanup!r}, {version!r}, {info!r}]
 with calls.open('a') as stream:
     stream.write(json.dumps(sys.argv[1:]) + '\\n')
-if len(observed) >= len(expected) or sys.argv[1:] != expected[len(observed)]:
+if len(rows) >= len(expected) or sys.argv[1:] != expected[len(rows)]:
     sys.exit(98)
-sys.stdout.write('200' if len(observed) == 0 else '404' if len(observed) == 1 else '{{}}')
+sys.stdout.write('200\\n' if not rows else '404\\n' if len(rows) == 1 else '{{}}\\n200')
 """, encoding="utf-8")
-            curl.chmod(0o700)
+            python.chmod(0o700)
             body = f"""PATH={shlex.quote(name)}:"$PATH"
 socket_path={shlex.quote(str(socket_path))}
+unix_http_args=({' '.join(shlex.quote(item) for item in binding)})
 api_version=1.41
 failure=0
-cleanup_bounded() {{
-  printf '%s\\n' "$1" >> {shlex.quote(str(wrapper_calls))}
-  [[ $1 == 10s ]] || return 99
-  shift
-  "$@"
-}}
-""" + "\n".join(statements) + '\n[[ $failure == 0 && $inner_status == 404 && $version_json == "{}" && $info_json == "{}" ]]\n'
+cleanup_bounded() {{ printf '%s\\n' "$1" >> {shlex.quote(str(wrapper_calls))}; shift; "$@"; }}
+bounded() {{ printf '%s\\n' "$1" >> {shlex.quote(str(wrapper_calls))}; shift; "$@"; }}
+""" + "\n".join(statements) + """
+[[ $failure == 0 && $inner_status == 404 ]]
+[[ $version_record == $'{}\\n200' && $info_record == $'{}\\n200' ]]
+"""
             result = self.bash(body)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout + result.stderr, "")
-            self.assertEqual([json.loads(line) for line in calls.read_text().splitlines()], expected)
-            self.assertEqual(wrapper_calls.read_text(), "10s\n10s\n")
+            self.assertEqual([json.loads(line) for line in calls.read_text().splitlines()], [cleanup, cleanup, version, info])
+            self.assertEqual(wrapper_calls.read_text(), "10s\n10s\n15s\n15s\n")
 
     def test_retained_host_cache_report_names_exact_pinned_inputs(self) -> None:
         body = """outer_image=ghcr.io/example/engine:v1@sha256:aaaa

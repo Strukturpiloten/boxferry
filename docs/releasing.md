@@ -32,9 +32,9 @@ Helpers establish no runtime result or publication/deployment authority; complet
 PR/main/Release gates remain mandatory.
 See [ADR 0066](decisions/0066-metadata-only-reviewed-pr-catalogue-admission.md).
 
-The [proposed Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md)
-needs explicit exact-pair authorization. Workflow definitions prove neither native
-acceptance nor release readiness.
+The [Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md) needs
+[staged exact-pair authorization](decisions/0079-native-test-runtime-selection.md#safe-staged-bootstrap-and-acceptance-checkpoints).
+Infrastructure alone proves neither native acceptance nor release readiness.
 
 ## Automatic release validation
 

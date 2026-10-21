@@ -1,4 +1,73 @@
-# Offline Docker application contract prerequisite
+# Docker application contracts and runtime prerequisite
+
+## Bound volume-consumer HTTP prerequisite
+
+Live Engine request profiles require `--unix-http-helper` naming exactly
+`scripts/native-unix-http.py` in the selected DockerLens checkout and
+`--unix-http-sha256` naming its reviewed bytes. The existing
+`--docker-lens-revision` binds that helper to the same clean exact source revision.
+Verification precedes runtime setup. The contract executes the held verified
+bytes, not a later path import; volume apply/cleanup have no alternate HTTP
+transport when this binding is missing or unusable. The trusted consumer's exact
+Lens source/lock identity and complete file authorization already include this
+helper; hashes or receipts alone do not grant execution authority.
+
+The shared helper owns complete bounded HTTP responses. BoxFerry retains the
+reviewed methods, paths, bodies, 16-KiB Engine response cap, request deadlines,
+ownership ledgers and cleanup requirements. Failed requests do not prove that a
+mutation did not occur. CLI forwarding preserves the helper's closed statuses
+and private-output rules; HTTP error statuses remain responses, not acceptance.
+
+This is only the previously reviewed volume-consumer transport prerequisite.
+Catalogue extraction remains data-only and does not execute producer checkers.
+Core/replay metadata and exact cleanup GETs also use the bound CLI, while their
+legacy curl readiness poll and historical readiness-comparison remain unchanged.
+This change neither migrates their observation schemas nor claims
+their new native qualification. No #366 application, listener or capture module
+is adopted. Native qualification remains separately pending under
+[ADR 0079](../../../docs/decisions/0079-native-test-runtime-selection.md).
+No operational pin or Renovate extraction location changes.
+
+## Canonical outer runtime and separately observed facts
+
+Live profiles other than the historical `readiness-comparison` also require
+`--outer-runtime-closure-json`: an exact SHA-256 map for DockerLens's
+`scripts/native-outer-command.sh`, `scripts/native-outer-runtime.sh`,
+`scripts/native-outer-observation.py` and `scripts/native-presence.py`. The clean
+reviewed Lens revision binds the complete transitive closure. The harness holds
+verified bytes, creates a private mode-0700 run-local snapshot with mode-0600
+files, checks its identity and bytes, and invokes only the producer's fixed
+external bridge under the original caller deadlines. The caller retains the
+watchdog, launch-returned full container ID, names, ownership labels and cleanup
+liabilities. Failed launches do not authorize replacement discovery by name;
+removal requires actual ID/name/owner/image proof. Unknown presence or changed
+snapshot/client configuration retains the private recovery directory.
+
+Local runs default to Podman via `DOCKERLENS_OUTER_ENGINE=podman`. An empty or
+unknown value is rejected. Docker requires `DOCKERLENS_OUTER_ENGINE=docker` and
+the canonical GitHub-hosted Ubuntu 24.04 accident guards; the trusted consumer
+additionally requires the admitted main `workflow_dispatch` workflow and strips
+tokens/remote selectors. There is no backend fallback. The historical readiness
+comparison is Podman-only and keeps its existing observation schema. Catalogue
+extraction never runs helpers.
+
+New reviewed consumer lane receipts use schema 2. `source_binding` is explicitly
+`reviewed-source-identity-only` and exactly binds the admitted helper closure;
+it is not proof of runtime execution. Separate `outer_runtime` facts whitelist
+the fresh canonical Docker preflight's actual client/server and runner-image
+versions plus local/rootful observations. Private peer/process/socket/storage
+facts are not uploaded. The fixed bounded log projection is emitted only after
+successful cleanup and acknowledged volume-proof handoff; the trusted runner
+requires a successful process exit, exactly one complete final projection and
+the exact lane success trailer. Duplicated, missing, malformed or truncated
+projections fail closed. `native_qualified` must remain boolean false: these
+outer prerequisites are not inner Engine or application qualification. Existing
+schema-1 volume proofs, candidate receipts and historical evidence are unchanged.
+
+Renovate no-change evidence: this selects a backend and authorizes source files,
+not a new software/image version. DockerLens remains owner of the five image-pin
+declarations, and BoxFerry retains its single exact-admission-pin manager; no
+custom extraction paths, digest pins, groups or approval rules move or duplicate.
 
 ## Closed volume-only fixture rehearsal
 
@@ -80,8 +149,8 @@ DockerLens image assignments and their existing managers remain authoritative.
 
 Only `volume-fixtures` uses `application-metadata` as its primary readiness
 probe. This removes the host curl ping and subsequent host curl version/info
-reads from this profile. Core/replay retain their original curl readiness and
-metadata reads; the historical `readiness-comparison` observer, phases and
+reads from this profile. Core/replay retain their original curl readiness;
+their metadata reads now use the bound helper. The historical `readiness-comparison` observer, phases and
 five-field curl observations are unchanged.
 
 The volume caller must supply `--host-metadata-binary` and
@@ -327,17 +396,15 @@ fails. Stderr-only overflow retains valid HTTP stdout but leaves the text observ
 stdout overflow or malformed HTTP output cannot promote readiness.
 Raw stderr, response data, addresses, paths, protected values and exceptions are never emitted.
 
-All five existing local Docker curl call sites (readiness, version, info, and the two exact-owned
-cleanup GETs) deliberately harden the private-socket transport boundary with first-option `-q`
-and explicit `--noproxy '*'`. `-q` disables default curl configuration; proxy bypass is explicit
-because `-q` alone does not suppress environment-selected proxies. No environment/configuration
-values are read or cleared. Selected executables, inherited environment, URLs, default GET methods,
-conditional invocation counts, limits, readiness cadence and cleanup ownership remain unchanged;
-no request, probe, retry, privilege change or deadline extension is added. Independently authored
-offline expectations cover the complete readiness argv and all four shell call sites, exact
-per-site invocation counts and unchanged limits, including literal wildcard quoting. This is
-reviewed trust-boundary hardening, not evidence that ambient configuration or a proxy caused any
-historical native exit 7. Historical failed receipts remain failed and immutable.
+The legacy readiness curl poll retains first-option `-q` and explicit `--noproxy '*'`:
+`-q` alone does not suppress environment-selected proxies. Version/info and the two
+exact-owned cleanup GETs instead use the held bound helper, preserving their routes,
+invocation counts, ten-second request limits and 64-KiB response ceilings. Metadata
+requires HTTP 200; cleanup still requires the exact expected 200/404 observations.
+There is no fallback to curl when the binding or helper fails. These four shell reads
+have independent exact-argv controls, separate from the unchanged legacy readiness
+controls. No request, retry, privilege change or deadline extension is added. This
+does not explain any historical native exit 7; failed receipts remain immutable.
 
 `ping-curl-error` recognizes only whole, narrow English curl envelopes matching the actual native
 exit: connect, timeout, HTTP, proxy-resolution or host-resolution error observations. Empty,

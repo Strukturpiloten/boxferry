@@ -120,11 +120,13 @@ jobs:
           ref: ${{ inputs.lens_sha }}
           path: lens-execution
           persist-credentials: false
-      - name: Install existing isolated native prerequisites
+      - name: Check hosted Docker tooling without replacing the runtime
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes libcap2-bin podman skopeo jq
+          # Presence is not runtime qualification. The admitted canonical Lens
+          # preflight later verifies the actual local root Docker daemon.
+          command -v docker > /dev/null
+          command -v jq > /dev/null
       - name: Authorize complete copied closure and build exact bounded candidates
         run: |
           set -euo pipefail
@@ -143,10 +145,17 @@ jobs:
             --admission-revision "$ADMISSION_REVISION" \
             --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA"
       - name: Run only six-fixture 23-volume profile under existing owned watchdog
+        env:
+          DOCKERLENS_OUTER_ENGINE: docker
         run: |
           set -euo pipefail
           install -d -m 0700 staged
           sudo env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME=/root PYTHONDONTWRITEBYTECODE=1 \
+            DOCKERLENS_OUTER_ENGINE=docker GITHUB_ACTIONS="$GITHUB_ACTIONS" \
+            RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" \
+            GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+            ImageOS="$ImageOS" ImageVersion="$ImageVersion" \
             python3 "$PWD/trusted/scripts/reviewed-docker-consumer-run.py" run \
             --trusted-root "$PWD/trusted" --box-root "$PWD/candidate" --lens-root "$PWD/lens-execution" \
             --execution-root "$PWD/execution" --private "$PWD/private" \

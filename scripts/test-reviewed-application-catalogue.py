@@ -206,6 +206,15 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.admission = bridge_module("admission")
         self.evidence = bridge_module("evidence")
         self.launcher = bridge_module("run")
+        # Authored subprocess controls must not inherit a developer's remote
+        # runtime selector; separate policy tests exercise explicit refusals.
+        selectors = {"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_API_VERSION",
+                     "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINER_SSHKEY", "PODMAN_CONNECTIONS_CONF",
+                     "DOCKERLENS_OUTER_ENGINE"}
+        clean_environment = patch.dict(os.environ, {key: value for key, value in os.environ.items()
+                                                    if key not in selectors}, clear=True)
+        clean_environment.start()
+        self.addCleanup(clean_environment.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
@@ -219,7 +228,9 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
                                    "UPSTREAM_ROOTFUL_IMAGE", "UPSTREAM_ROOTLESS_IMAGE", "FIXTURE_IMAGE"), strict=True):
             images.append(f"{variable}='registry.invalid/test/{lane}:v1@sha256:{hashlib.sha256(lane.encode()).hexdigest()}'")
         self.lens_files = {"scripts/native-conformance.sh": ("\n".join(images) + "\n").encode(),
-                           "scripts/native-unix-http.py": b"# synthetic approved helper, never executed\n"}
+                           "scripts/native-unix-http.py": b"# synthetic approved helper, never executed\n",
+                           **{path: ("# synthetic runtime dependency: " + path + "\n").encode()
+                              for path in self.authorization.OUTER_RUNTIME_FILES}}
         declarations = []
         for lane, variant in zip(self.authorization.LANES,
                                  ("Debian11Rootful", "Debian11Rootless", "UpstreamRootful", "UpstreamRootless"), strict=True):
@@ -304,7 +315,12 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         token = token or "A000000" + str(auth.LANES.index(lane))
         builds = {profile: evidence.sanitized_build(self.pair, self.lens, profile, hashlib.sha256(profile.encode()).hexdigest())
                   for profile in ("volume-fixtures", "host-metadata")}
-        consumer = {"schema": 1, "scope": "volume-fixtures-only", "lane": lane, "result": "checks-passed",
+        consumer = {"schema": 2, "scope": "volume-fixtures-only", "lane": lane, "result": "checks-passed",
+                    "source_binding": evidence.runtime_source_binding(self.pair),
+                    "outer_runtime": {"qualification": "test-only-outer-prerequisite-observation", "engine": "docker",
+                                      "runner": "ubuntu-24.04", "runner_image_version": "20261019.1.0",
+                                      "client_version": "28.0.4", "server_version": "28.0.4",
+                                      "rootful": True, "local": True, "native_qualified": False},
                     "context": copy.deepcopy(self.context), "builds": builds,
                     "inert": {"kind": "inert-only-no-runtime", "binary_sha256": "d" * 64,
                               "tests": [{"name": name, "selected": 1, "passed": 1, "failed": 0, "ignored": 0}
@@ -359,6 +375,148 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.assertTrue((copied / "scripts/lib/docker-core-artifact.py").is_file())
         with self.assertRaises((ValueError, OSError)):
             self.authorization.copy_closure(files, copied)
+
+    def test_outer_runtime_sources_are_independently_required_and_changed_bytes_refuse(self):
+        required = {"scripts/native-outer-runtime.sh", "scripts/native-outer-observation.py",
+                    "scripts/native-presence.py"}
+        self.assertTrue(required <= self.authorization.LENS_FILES)
+        self.assertEqual(self.authorization.POLICY["outer_engine"], "docker")
+        binding = self.evidence.runtime_source_binding(self.pair)
+        self.assertEqual(binding["qualification"], "reviewed-source-identity-only")
+        self.assertEqual(binding["engine"], "docker")
+        self.assertEqual(set(binding["files"]), self.authorization.OUTER_RUNTIME_FILES)
+        self.assertEqual(binding["closure_sha256"], self.evidence.identity(binding["files"]))
+        self.assertEqual(binding["docker_lens_source_sha256"], self.pair["docker_lens"]["source_sha256"])
+        for name in sorted(required):
+            path = self.lens / name
+            original = path.read_bytes()
+            path.write_bytes(original + b"# changed runtime dependency\n")
+            try:
+                with self.subTest(path=name), patch.object(self.authorization, "git", side_effect=lambda root, *args:
+                        self.pair["docker_lens"]["revision"] if args[0] == "rev-parse" else ""), \
+                        patch.object(self.authorization, "source_digest", return_value=self.pair["docker_lens"]["source_sha256"]), \
+                        self.assertRaises(ValueError):
+                    self.authorization.verify_source(self.lens, self.pair["docker_lens"])
+            finally:
+                path.write_bytes(original)
+            value = copy.deepcopy(self.manifest)
+            value["authorizations"][0]["docker_lens"]["files"].pop(name)
+            self.manifest_path.write_bytes(self.evidence.encoded(value))
+            with self.subTest(missing=name), self.assertRaises(ValueError):
+                self.authorize()
+        self.manifest_path.write_bytes(self.evidence.encoded(self.manifest))
+
+    def test_runtime_environment_is_explicit_sanitized_and_never_runtime_authority(self):
+        facts = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux",
+                 "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
+                 "GITHUB_REPOSITORY": "Strukturpiloten/boxferry",
+                 "GITHUB_WORKFLOW_REF": "Strukturpiloten/boxferry/.github/workflows/reviewed-docker-consumer-validation.yml@refs/heads/main",
+                 "ImageOS": "ubuntu24", "ImageVersion": "20261021.1.0", "DOCKERLENS_OUTER_ENGINE": "docker"}
+        self.assertEqual(self.launcher.runtime_environment(facts, require_docker=True), facts)
+        for key in facts:
+            for mutation in ("missing", "changed"):
+                changed = dict(facts)
+                if mutation == "missing":
+                    changed.pop(key)
+                else:
+                    changed[key] = "not-approved"
+                with self.subTest(key=key, mutation=mutation), self.assertRaises(ValueError):
+                    self.launcher.runtime_environment(changed, require_docker=True)
+        for key in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_API_VERSION",
+                    "CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINER_SSHKEY", "PODMAN_CONNECTIONS_CONF"):
+            with self.subTest(selector=key), self.assertRaises(ValueError):
+                self.launcher.runtime_environment({**facts, key: "not-approved"}, require_docker=True)
+        for engine in ("", "Docker", "remote"):
+            with self.subTest(engine=engine), self.assertRaises(ValueError):
+                self.launcher.runtime_environment({"DOCKERLENS_OUTER_ENGINE": engine})
+        self.assertEqual(self.launcher.runtime_environment({}), {"DOCKERLENS_OUTER_ENGINE": "podman"})
+        with patch.dict(os.environ, {**facts, "PATH": "/safe/bin", "HOME": "/safe/home",
+                "GITHUB_TOKEN": "PRIVATE-API-CANARY", "ACTIONS_RUNTIME_TOKEN": "PRIVATE-ACTIONS-CANARY",
+                "UNRELATED_VALUE": "PRIVATE-EXTRA-CANARY"}, clear=True):
+            child = self.launcher.child_environment()
+        self.assertEqual(child, {**facts, "PATH": "/safe/bin", "HOME": "/safe/home", "LC_ALL": "C",
+                                 "PYTHONDONTWRITEBYTECODE": "1"})
+
+    def test_workflow_explicitly_passes_only_runtime_guard_facts_through_sudo_env_i(self):
+        workflow = (ROOT / ".github/workflows/reviewed-docker-consumer-validation.yml").read_text()
+        runtime = workflow.split("      - name: Run only six-fixture 23-volume profile", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("DOCKERLENS_OUTER_ENGINE: docker", runtime)
+        self.assertIn("DOCKERLENS_OUTER_ENGINE=docker", runtime)
+        self.assertIn("sudo env -i", runtime)
+        for key in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS", "GITHUB_REF", "GITHUB_EVENT_NAME",
+                    "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF", "ImageOS", "ImageVersion"):
+            self.assertIn(key + '=\"$' + key + '\"', runtime)
+        for forbidden in ("GITHUB_TOKEN", "GH_TOKEN", "ACTIONS_RUNTIME_TOKEN", "DOCKER_HOST", "DOCKER_CONTEXT"):
+            self.assertNotIn(forbidden, runtime)
+
+    def test_docker_lane_uses_hosted_tools_and_only_admitted_canonical_runtime_verification(self):
+        workflow = (ROOT / ".github/workflows/reviewed-docker-consumer-validation.yml").read_text()
+        prerequisite_name = "      - name: Check hosted Docker tooling without replacing the runtime"
+        prerequisites = workflow.split(prerequisite_name, 1)[1].split("      - name:", 1)[0]
+        self.assertIn("command -v docker > /dev/null", prerequisites)
+        self.assertIn("command -v jq > /dev/null", prerequisites)
+        # No unnecessary alternate engine installation, dependency conflict,
+        # daemon startup or competing CLI-based qualification in this lane.
+        for forbidden in ("apt-get", "podman", "skopeo", "libcap2-bin", "docker-ce", "moby", "systemctl",
+                          "docker info", "docker version", "docker run"):
+            self.assertNotIn(forbidden, workflow)
+        self.assertLess(workflow.index("Re-admit both heads and actors before privileged prerequisites"),
+                        workflow.index(prerequisite_name))
+        self.assertIn('test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"', workflow)
+        self.assertLess(workflow.index("Re-admit both exact heads immediately before isolated runtime"),
+                        workflow.index("Run only six-fixture 23-volume profile"))
+        self.assertIn('python3 "$PWD/trusted/scripts/reviewed-docker-consumer-run.py" run', workflow)
+        self.assertNotIn('candidate/scripts/reviewed-docker-consumer-run.py', workflow)
+        runner = (ROOT / "scripts/reviewed-docker-consumer-run.py").read_text()
+        run = runner.split("def run(args):", 1)[1].split("def main():", 1)[0]
+        self.assertLess(run.index("inputs(args)"), run.index("execute(command,"))
+        self.assertLess(run.index('auth.read(args.execution_root / path) == raw'), run.index("execute(command,"))
+        self.assertIn('"--outer-runtime-closure-json", proof.encoded(proof.runtime_source_binding(pair)["files"])', run)
+        harness = (ROOT / "scripts/docker-application-conformance.sh").read_text()
+        self.assertLess(harness.index('"$contract" verify-candidate'), harness.index('"${outer_runtime[@]}" preflight'))
+        self.assertLess(harness.index('capture-outer-runtime \\'), harness.index('"${outer_runtime[@]}" preflight'))
+        self.assertIn('graph_root=$(bounded 60s "${outer_runtime[@]}" preflight)', harness)
+
+    def test_schema2_requires_independent_exact_source_and_fresh_outer_facts(self):
+        consumer, volume = self.lane_fixture("debian11-rootful")
+        self.validate(consumer, volume)
+        for mutation in ("legacy", "missing-source", "source-qualification", "source-engine", "source-helper",
+                         "missing-observation", "native-qualified", "boolean-int", "remote", "rootless", "image", "version", "private"):
+            changed = copy.deepcopy(consumer)
+            if mutation == "legacy": changed["schema"] = 1
+            elif mutation == "missing-source": changed.pop("source_binding")
+            elif mutation == "source-qualification": changed["source_binding"]["qualification"] = "runtime-qualified"
+            elif mutation == "source-engine": changed["source_binding"]["engine"] = "podman"
+            elif mutation == "source-helper": changed["source_binding"]["files"].pop("scripts/native-outer-command.sh")
+            elif mutation == "missing-observation": changed.pop("outer_runtime")
+            elif mutation == "native-qualified": changed["outer_runtime"]["native_qualified"] = True
+            elif mutation == "boolean-int": changed["outer_runtime"]["native_qualified"] = 0
+            elif mutation == "remote": changed["outer_runtime"]["local"] = False
+            elif mutation == "rootless": changed["outer_runtime"]["rootful"] = False
+            elif mutation == "image": changed["outer_runtime"]["runner_image_version"] = "ubuntu-latest"
+            elif mutation == "version": changed["outer_runtime"]["server_version"] = "unknown"
+            else: changed["outer_runtime"]["peer_pid"] = 123
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                self.validate(changed, volume)
+
+    def test_outer_log_handoff_requires_one_complete_closed_final_projection(self):
+        lane = "debian11-rootful"
+        consumer, _ = self.lane_fixture(lane)
+        projection = self.evidence.OUTER_PROJECTION_PREFIX + self.evidence.encoded(consumer["outer_runtime"])
+        trailer = (f"VOLUME-ONLY REHEARSAL CHECKS-PASSED: lane={lane} fixtures=6 volumes=23 cleanup=verified "
+                   "acceptance=pending-reviewed-native-evidence; no container/image workload or six-application acceptance\n").encode()
+        good = b"private native diagnostic\n" + projection + trailer
+        self.assertEqual(self.evidence.outer_runtime_from_log(good, lane), consumer["outer_runtime"])
+        malformed = (b"", trailer, projection + projection + trailer, good[:-1], good + b"trailing\n",
+                     projection, projection + trailer.replace(lane.encode(), b"upstream-rootless"),
+                     b"native-prefix " + projection + trailer,
+                     projection.replace(b'"native_qualified":false', b'"native_qualified":0') + trailer,
+                     projection.replace(b'"local":true', b'"local":true,"local":true') + trailer,
+                     b"OUTER-RUNTIME-OBSERVATION {\n" + trailer,
+                     projection.replace(b'{', b'{"private_path":"/private/canary",', 1) + trailer)
+        for raw in malformed:
+            with self.subTest(raw=raw[:40]), self.assertRaises(ValueError):
+                self.evidence.outer_runtime_from_log(raw, lane)
 
     def test_manifest_identity_is_not_authority_and_budget_profile_head_changes_fail_closed(self):
         for mutation in ("box-head", "lens-head", "missing-import", "traversal", "budget", "profile", "boolean-id", "extra"):

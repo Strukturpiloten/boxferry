@@ -13,9 +13,23 @@ host_metadata_binary='' host_metadata_receipt='' host_metadata_sha256='' host_me
 evidence_directory='' evidence_identity='' volume_input_proof='' volume_cleanup_proof=''
 diagnostic_directory='' expected_pid_namespace='' comparison_initialized=false comparison_baseline=false
 comparison_bracketed=false comparison_origin=''
+unix_http_helper='' unix_http_sha256=''
+unix_http_args=()
+outer_runtime_closure=''
+outer_engine=${DOCKERLENS_OUTER_ENGINE-podman}
+outer_runtime=()
+outer_runtime_args=()
+outer_cid=''
+outer_owner=io.boxferry.docker-core-run
+outer_snapshot_ready=false
+outer_observation=''
+outer_exec=()
+outer_inspect=(podman inspect)
 
 usage() {
   printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures|readiness-comparison} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--host-metadata-binary PATH --host-metadata-receipt PATH --evidence-directory PATH (volume-fixtures only)] [--diagnostic-directory PATH --expected-pid-namespace DEV:INO (readiness-comparison only)]\n' "$0" >&2
+  printf 'Live Engine request profiles require --unix-http-helper PATH (exact DockerLens scripts/native-unix-http.py) --unix-http-sha256 SHA. Catalogue reads pins as data only.\n' >&2
+  printf 'Live outer-runtime profiles require --outer-runtime-closure-json JSON (exact four-file canonical bridge closure); DOCKERLENS_OUTER_ENGINE defaults to podman. Readiness-comparison is Podman-only.\n' >&2
   exit 2
 }
 
@@ -27,6 +41,9 @@ while (($#)); do
     --docker-lens-root) lens_root=$2 ;;
     --docker-lens-revision) lens_revision=$2 ;;
     --native-script-sha256) script_sha=$2 ;;
+    --unix-http-helper) unix_http_helper=$2 ;;
+    --unix-http-sha256) unix_http_sha256=$2 ;;
+    --outer-runtime-closure-json) outer_runtime_closure=$2 ;;
     --artifact) artifact=$2 ;;
     --api-version) api_version=$2 ;;
     --boxferry-root) boxferry_root=$2 ;;
@@ -43,6 +60,18 @@ while (($#)); do
 done
 [[ -n $lens_root && -n $lens_revision && -n $script_sha ]] || usage
 [[ $profile == catalogue || $profile == replay-probe || $profile == core-journey || $profile == volume-fixtures || $profile == readiness-comparison ]] || usage
+[[ $outer_engine == podman || $outer_engine == docker ]] || usage
+if [[ $profile == readiness-comparison ]]; then
+  [[ $outer_engine == podman && -z $outer_runtime_closure ]] || usage
+elif [[ $profile != catalogue ]]; then
+  [[ -n $outer_runtime_closure ]] || usage
+fi
+if [[ $profile != catalogue && $profile != readiness-comparison ]]; then
+  [[ $unix_http_helper == "$lens_root/scripts/native-unix-http.py" && $unix_http_sha256 =~ ^[0-9a-f]{64}$ ]] || usage
+  unix_http_args=(--unix-http-helper "$unix_http_helper" --unix-http-revision "$lens_revision" --unix-http-sha256 "$unix_http_sha256")
+else
+  [[ -z $unix_http_helper && -z $unix_http_sha256 ]] || usage
+fi
 if [[ $profile == readiness-comparison ]]; then
   [[ -n $diagnostic_directory && $expected_pid_namespace =~ ^[1-9][0-9]{0,19}:[1-9][0-9]{0,19}$ &&
     $lane == debian11-rootful && -z $artifact && -z $api_version && -z $boxferry_root &&
@@ -60,14 +89,17 @@ for tool in python3 git; do command -v "$tool" > /dev/null || {
   exit 1
 }; done
 
-# The caller names an exact, clean DockerLens checkout and script digest. No
-# shell code from that checkout is sourced, and no image pin is copied here.
+# Catalogue extraction reads the exact clean checkout as data only. The live
+# bridge is separately bound/captured below; no image pin is copied here.
 catalogue=$(python3 "$contract" catalogue --docker-lens-root "$lens_root" \
   --docker-lens-revision "$lens_revision" --native-script-sha256 "$script_sha")
 if [[ $profile == catalogue ]]; then
   [[ -z $lane && -z $artifact && -z $api_version && -z $boxferry_root ]] || usage
   printf '%s\n' "$catalogue"
   exit 0
+fi
+if [[ $profile != readiness-comparison ]]; then
+  python3 "$contract" "${unix_http_args[@]}" check-unix-http-binding > /dev/null
 fi
 
 [[ -n $lane && ($profile == readiness-comparison || -n $api_version) ]] || usage
@@ -91,14 +123,14 @@ case "$lane" in
   debian11-rootful | debian11-rootless | upstream-rootful | upstream-rootless) ;;
   *) usage ;;
 esac
-for tool in podman curl jq timeout df du mktemp; do
+for tool in "$outer_engine" curl jq timeout df du mktemp stat; do
   command -v "$tool" > /dev/null || {
     printf 'missing required tool: %s\n' "$tool" >&2
     exit 1
   }
 done
 [[ $EUID == 0 ]] || {
-  printf 'outer Podman must be rootful; invoke this opt-in harness explicitly as root\n' >&2
+  printf 'outer test runtime must be rootful; invoke this opt-in harness explicitly as root\n' >&2
   exit 1
 }
 bounded() {
@@ -188,7 +220,7 @@ readiness_failure() {
   fi
   # Observation only, before EXIT teardown; bounded() preserves cleanup reserve.
   if [[ $registered == true ]]; then
-    bounded 12s python3 "$contract" readiness-diagnostics --registered \
+    bounded 12s python3 "$contract" "${outer_runtime_args[@]}" readiness-diagnostics --registered \
       --outer "$outer" --run "$run_id" --socket "$socket_path" \
       --ping-curl-exit="$curl_exit" --ping-http-status="$http_status" \
       --ping-curl-error="$curl_error" --ping-collector="$collector" --ping-teardown-signal="$teardown_signal" >&2 2> /dev/null ||
@@ -215,6 +247,14 @@ cleanup_bounded() {
 }
 podman_presence() {
   local wrapper=$1 kind=$2 name=$3 observation status=0
+  if [[ ${profile:-} != readiness-comparison && ${outer_snapshot_ready:-false} == true ]]; then
+    observation=$("$wrapper" 15s "${outer_runtime[@]}" presence "$kind" "$name" 2> /dev/null) || status=$?
+    # The canonical classifier has no stdout. A native warning or wrapper
+    # failure is never converted into proof of absence.
+    if [[ -z $observation && ($status == 0 || $status == 1) ]]; then return "$status"; fi
+    presence_unverified=true
+    return 2
+  fi
   observation=$(
     "$wrapper" 15s python3 "$contract" podman-presence \
       --kind "$kind" --name "$name" --run "$run_id" 2> /dev/null
@@ -231,6 +271,21 @@ podman_presence() {
   presence_unverified=true
   printf '%s presence unverified; retaining private evidence\n' "$kind" >&2
   return 2
+}
+outer_binding() {
+  local wrapper=$1 kind=$2 identity=$3 name=$4 observed
+  if [[ $profile != readiness-comparison ]]; then
+    [[ $kind != container || $identity =~ ^[0-9a-f]{64}$ ]] || return 1
+    if [[ $kind == container ]]; then
+      "$wrapper" 15s "${outer_runtime[@]}" daemon-binding "$identity" "$name" "$outer_owner" "$run_id" "$outer_image" > /dev/null
+    else
+      "$wrapper" 15s "${outer_runtime[@]}" binding "$kind" "$identity" "$name" "$outer_owner" "$run_id" > /dev/null
+    fi
+  elif [[ $kind == container ]]; then
+    observed=$("$wrapper" 15s podman inspect --format '{{index .Config.Labels "io.boxferry.docker-core-run"}}' "$name") && [[ $observed == "$run_id" ]]
+  else
+    observed=$("$wrapper" 15s podman volume inspect --format '{{index .Labels "io.boxferry.docker-core-run"}}' "$name") && [[ $observed == "$run_id" ]]
+  fi
 }
 finish_volume_evidence() {
   local write_status=0
@@ -331,9 +386,11 @@ cleanup_owned() {
   if [[ $registered == true && -n $outer ]]; then
     outer_residual=$outer
     state=0
-    podman_presence cleanup_bounded container "$outer" || state=$?
+    local cleanup_outer_identity=$outer
+    [[ $profile == readiness-comparison || -z $outer_cid ]] || cleanup_outer_identity=$outer_cid
+    podman_presence cleanup_bounded container "$cleanup_outer_identity" || state=$?
     if ((state == 0)); then
-      if observed=$(cleanup_bounded 15s podman inspect --format '{{index .Config.Labels "io.boxferry.docker-core-run"}}' "$outer") && [[ $observed == "$run_id" ]]; then
+      if outer_binding cleanup_bounded container "$outer_cid" "$outer"; then
         local comparison_identity_verified=true
         if [[ $profile == readiness-comparison ]]; then
           if ! cleanup_bounded 6s python3 "$comparison" cleanup-check --directory "$diagnostic_directory" \
@@ -350,7 +407,7 @@ cleanup_owned() {
               if [[ $inner_volume_cleanup == unverified && $disposable_identity_verified == true ]]; then
                 local evidence_args=()
                 [[ -z ${volume_input_proof:-} ]] || evidence_args=(--evidence-json)
-                if volume_cleanup_proof=$(cleanup_bounded 30s python3 "$contract" cleanup-volume-fixtures --allow-isolated-apply \
+                if volume_cleanup_proof=$(cleanup_bounded 30s python3 "$contract" "${unix_http_args[@]}" cleanup-volume-fixtures --allow-isolated-apply \
                   --socket "$socket_path" --state "$run_dir/volume-ledger.json" --lane "$lane" \
                   --run "$volume_run" --prefix "$volume_prefix" --api-version "$api_version" "${evidence_args[@]}"); then
                   inner_volume_cleanup=verified
@@ -361,13 +418,15 @@ cleanup_owned() {
             elif [[ $profile != readiness-comparison ]]; then
               # Only remove the fixed name if this run actually created it. A
               # failed removal is still failure even though outer storage goes.
-              inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
-                --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
+              inner_status=$(cleanup_bounded 10s python3 "$contract" "${unix_http_args[@]}" unix-http -- \
+                --socket "$socket_path" --method GET --path "/v${api_version}/containers/bf-docker-core/json" \
+                --timeout 10 --max-response-bytes 65536 --discard-body) || failure=1
               if [[ $inner_status == 200 ]]; then
-                cleanup_bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+                cleanup_bounded 30s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
                   rm --force bf-docker-core > /dev/null 2>&1 || failure=1
-                inner_status=$(cleanup_bounded 10s curl -q --noproxy '*' --silent --max-time 10 --max-filesize 65536 --output /dev/null --write-out '%{http_code}' \
-                  --unix-socket "$socket_path" "http://localhost/v${api_version}/containers/bf-docker-core/json") || failure=1
+                inner_status=$(cleanup_bounded 10s python3 "$contract" "${unix_http_args[@]}" unix-http -- \
+                  --socket "$socket_path" --method GET --path "/v${api_version}/containers/bf-docker-core/json" \
+                  --timeout 10 --max-response-bytes 65536 --discard-body) || failure=1
                 [[ $inner_status == 404 ]] || failure=1
               elif [[ $inner_status != 404 ]]; then
                 failure=1
@@ -376,7 +435,11 @@ cleanup_owned() {
           elif [[ $profile == volume-fixtures && -e $run_dir/volume-ledger.json ]]; then
             failure=1
           fi
-          cleanup_bounded 60s podman rm --force --volumes "$outer" > /dev/null || failure=1
+          if [[ $profile == readiness-comparison ]]; then
+            cleanup_bounded 60s podman rm --force --volumes "$outer" > /dev/null || failure=1
+          else
+            cleanup_bounded 60s "${outer_runtime[@]}" remove "$outer_cid" "$outer" "$outer_owner" "$run_id" > /dev/null || failure=1
+          fi
           state=0
           podman_presence cleanup_bounded container "$outer" || state=$?
           ((state == 1)) || failure=1
@@ -389,7 +452,9 @@ cleanup_owned() {
     elif ((state != 1)); then
       failure=1
     else
-      outer_residual=none
+      state=0
+      podman_presence cleanup_bounded container "$outer" || state=$?
+      if ((state == 1)); then outer_residual=none; else failure=1; fi
     fi
   fi
   if [[ $registered == true && -n $storage_volume ]]; then
@@ -397,8 +462,12 @@ cleanup_owned() {
     state=0
     podman_presence cleanup_bounded volume "$storage_volume" || state=$?
     if ((state == 0)); then
-      if observed=$(cleanup_bounded 15s podman volume inspect --format '{{index .Labels "io.boxferry.docker-core-run"}}' "$storage_volume") && [[ $observed == "$run_id" ]]; then
-        cleanup_bounded 60s podman volume rm "$storage_volume" > /dev/null || failure=1
+      if outer_binding cleanup_bounded volume "$storage_volume" "$storage_volume"; then
+        if [[ $profile == readiness-comparison ]]; then
+          cleanup_bounded 60s podman volume rm "$storage_volume" > /dev/null || failure=1
+        else
+          cleanup_bounded 60s "${outer_runtime[@]}" volume-remove "$storage_volume" "$outer_owner" "$run_id" > /dev/null || failure=1
+        fi
         state=0
         podman_presence cleanup_bounded volume "$storage_volume" || state=$?
         ((state == 1)) || failure=1
@@ -423,6 +492,14 @@ cleanup_owned() {
     # Only the exact mktemp-owned private directory is removed. It contains
     # synthetic request/state and image archive material for this run alone.
     directory_residual=$run_dir
+    if [[ ${outer_snapshot_ready:-false} == true ]]; then
+      if ! cleanup_bounded 5s python3 "$contract" "${outer_runtime_args[@]}" check-outer-runtime \
+        --directory "$outer_helper_directory" --run-identity "$outer_run_identity" > /dev/null ||
+        ! cleanup_bounded 5s "${outer_runtime[@]}" check-context; then
+        disposable_identity_verified=false
+        failure=1
+      fi
+    fi
     if [[ $run_dir == /tmp/boxferry-docker-core.* && -d $run_dir && ! -L $run_dir ]]; then
       if [[ ${profile:-} == volume-fixtures && -n ${evidence_identity:-} ]]; then
         if ! cleanup_bounded 5s python3 "$contract" check-volume-disposable-identity \
@@ -511,6 +588,7 @@ run_id=${run_dir##*.}
 volume_run="bf-${run_id,,}"
 volume_prefix="bf-volume-${run_id,,}"
 outer="bf-docker-core-${run_id}"
+outer_target=$outer
 storage_volume="bf-docker-core-data-${run_id}"
 socket_dir="$run_dir/socket"
 socket_path="$socket_dir/docker.sock"
@@ -546,6 +624,19 @@ guard_alive || exit 1
 guard_ready=true
 runtime_deadline=$(cleanup_now)
 runtime_deadline=$((runtime_deadline + 750))
+if [[ $profile != readiness-comparison ]]; then
+  outer_run_identity=$(bounded 5s stat -c '%d:%i' "$run_dir")
+  outer_helper_directory="$run_dir/outer-runtime-helper"
+  bounded 30s python3 "$contract" --outer-runtime-closure-json "$outer_runtime_closure" capture-outer-runtime \
+    --docker-lens-root "$lens_root" --docker-lens-revision "$lens_revision" \
+    --directory "$outer_helper_directory" --run-identity "$outer_run_identity" > /dev/null
+  outer_runtime=(bash "$outer_helper_directory/native-outer-command.sh" --engine "$outer_engine" --directory "$run_dir")
+  outer_runtime_args=(--outer-runtime-closure-json "$outer_runtime_closure"
+    --outer-runtime-directory "$outer_helper_directory" --outer-runtime-run-identity "$outer_run_identity"
+    --outer-runtime-engine "$outer_engine")
+  outer_inspect=("${outer_runtime[@]}" inspect)
+  outer_snapshot_ready=true
+fi
 if [[ $profile == core-journey ]]; then
   case "$lane" in
     debian11-rootful) docker_preset=debian11-20.10.5-rootful ;;
@@ -595,10 +686,19 @@ if [[ $profile == volume-fixtures ]]; then
     --boxferry-root "$boxferry_root" --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
     --receipt-sha256 "$receipt_sha256" --api-version "$api_version" --catalogue-json "$catalogue" > /dev/null
 fi
-[[ $(bounded 15s podman info --format '{{.Host.Security.Rootless}}') == false ]] || {
-  printf 'outer Podman is not rootful\n' >&2
-  exit 1
-}
+if [[ $profile == readiness-comparison ]]; then
+  [[ $(bounded 15s podman info --format '{{.Host.Security.Rootless}}') == false ]] || {
+    printf 'outer Podman is not rootful\n' >&2
+    exit 1
+  }
+  graph_root=$(bounded 15s podman info --format '{{.Store.GraphRoot}}')
+else
+  graph_root=$(bounded 60s "${outer_runtime[@]}" preflight)
+  if [[ $outer_engine == docker ]]; then
+    outer_observation=$(bounded 5s python3 "$contract" outer-runtime-observation \
+      --directory "$run_dir" --run-identity "$outer_run_identity")
+  fi
+fi
 mkdir -m 0777 "$socket_dir"
 container_state=0
 podman_presence bounded container "$outer" || container_state=$?
@@ -613,7 +713,6 @@ podman_presence bounded volume "$storage_volume" || volume_state=$?
   exit 1
 }
 registered=true
-graph_root=$(bounded 15s podman info --format '{{.Store.GraphRoot}}')
 [[ $graph_root == /* && $graph_root != / ]] || {
   printf 'outer Podman graph root is invalid\n' >&2
   exit 1
@@ -628,8 +727,13 @@ if [[ ! $available_memory_kib =~ ^[0-9]+$ ]] || ((available_memory_kib < 6 * 102
   printf 'core probe requires 6 GiB available memory\n' >&2
   exit 1
 fi
-bounded 30s podman volume create --label "io.boxferry.docker-core-run=$run_id" "$storage_volume" > /dev/null
-volume_path=$(bounded 15s podman volume inspect --format '{{.Mountpoint}}' "$storage_volume")
+if [[ $profile == readiness-comparison ]]; then
+  bounded 30s podman volume create --label "io.boxferry.docker-core-run=$run_id" "$storage_volume" > /dev/null
+  volume_path=$(bounded 15s podman volume inspect --format '{{.Mountpoint}}' "$storage_volume")
+else
+  bounded 30s "${outer_runtime[@]}" volume-create "$storage_volume" "$outer_owner" "$run_id" > /dev/null
+  volume_path=$(bounded 15s "${outer_runtime[@]}" volume-path "$storage_volume" "$outer_owner" "$run_id")
+fi
 [[ $volume_path == /* && $volume_path != / && -d $volume_path && ! -L $volume_path ]] || {
   printf 'run-owned outer volume mountpoint is invalid\n' >&2
   exit 1
@@ -711,22 +815,27 @@ watchdog_pid=$!
 # No host Docker socket or checkout is mounted. The two exact digest pulls are
 # host-side prerequisites; the nested Engine is never asked to pull an image.
 outer_pull_attempted=true
-bounded 180s podman pull "$outer_image" > /dev/null
+if [[ $profile == readiness-comparison ]]; then
+  bounded 180s podman pull "$outer_image" > /dev/null
+else
+  bounded 180s "${outer_runtime[@]}" pull "$outer_image" > /dev/null
+fi
 if [[ $profile != volume-fixtures && $profile != readiness-comparison ]]; then
   fixture_pull_attempted=true
-  bounded 180s podman pull "$fixture_image" > /dev/null
-  host_image_id=$(bounded 15s podman image inspect --format '{{.Id}}' "$fixture_image")
+  bounded 180s "${outer_runtime[@]}" pull "$fixture_image" > /dev/null
+  fixture_image_info=$(bounded 15s "${outer_runtime[@]}" image-info "$fixture_image")
+  host_image_id=$(jq -er '.Id' <<< "$fixture_image_info")
   host_image_id=${host_image_id#sha256:}
   [[ $host_image_id =~ ^[0-9a-f]{64}$ ]] || {
     printf 'canonical fixture image ID unavailable\n' >&2
     exit 1
   }
-  [[ $(bounded 15s podman image inspect --format '{{.Os}}/{{.Architecture}}' "$fixture_image") == linux/amd64 ]] || {
+  [[ $(jq -er '.Os + "/" + .Architecture' <<< "$fixture_image_info") == linux/amd64 ]] || {
     printf 'host fixture image platform has no reviewed environment baseline\n' >&2
     exit 1
   }
   archive="$run_dir/busybox.tar"
-  bounded 120s podman save --format docker-archive --output "$archive" "$fixture_image"
+  bounded 120s "${outer_runtime[@]}" image-save "$fixture_image" "$archive"
 fi
 storage_target=/var/lib/docker
 [[ $lane == *-rootless ]] && storage_target=/home/docker/.local/share/docker
@@ -745,29 +854,52 @@ if [[ $profile == readiness-comparison ]]; then
   bounded 6s python3 "$comparison" start --directory "$diagnostic_directory" --origin "$comparison_origin"
 fi
 outer_launch_status=0
-bounded 120s podman run --pull=never --detach --name "$outer" \
-  --label "io.boxferry.docker-core-run=$run_id" \
-  --privileged --pids-limit=512 --memory=4g --cpus=2 --image-volume=ignore \
-  "${nesting_flags[@]}" --volume "$storage_mount" --volume "$socket_dir:/boxferry-core" \
-  "$outer_image" /usr/local/bin/start-dockerd --host=unix:///boxferry-core/docker.sock > "$outer_creation_output" || outer_launch_status=$?
 if [[ $profile == readiness-comparison ]]; then
+  bounded 120s podman run --pull=never --detach --name "$outer" \
+    --label "io.boxferry.docker-core-run=$run_id" \
+    --privileged --pids-limit=512 --memory=4g --cpus=2 --image-volume=ignore \
+    "${nesting_flags[@]}" --volume "$storage_mount" --volume "$socket_dir:/boxferry-core" \
+    "$outer_image" /usr/local/bin/start-dockerd --host=unix:///boxferry-core/docker.sock > "$outer_creation_output" || outer_launch_status=$?
   bounded 15s python3 "$comparison" bind --directory "$diagnostic_directory" --outer "$outer" --run "$run_id" \
     --socket "$socket_path" --created "$outer_creation_output" --origin "$comparison_origin"
+  outer_exec=(podman exec "$outer")
+else
+  outer_network=podman
+  [[ $outer_engine != docker ]] || outer_network=bridge
+  bounded 30s "${outer_runtime[@]}" prepare-data "$outer_image" "${lane##*-}" "$storage_volume" "$volume_path" "$graph_root"
+  # Capture even a failed launch's exact ID; never rediscover a replacement by name.
+  outer_cid=$(bounded 120s "${outer_runtime[@]}" create-daemon "$outer" "$run_id" "$outer_owner" \
+    "$outer_network" "$storage_volume" "$socket_dir" /boxferry-core "$lane" "$outer_image" "$run_dir/outer.log") || outer_launch_status=$?
+  [[ $outer_cid =~ ^[0-9a-f]{64}$ ]] || {
+    outer_cid=''
+    presence_unverified=true
+    exit 1
+  }
+  outer_target=$outer_cid
+  outer_exec=("${outer_runtime[@]}" exec "$outer_cid")
+  outer_runtime_args+=(--outer-runtime-container-id "$outer_cid")
 fi
 ((outer_launch_status == 0)) || exit "$outer_launch_status"
-[[ $(bounded 15s podman inspect --format '{{.HostConfig.Privileged}}' "$outer") == true ]] || {
+if [[ $profile == readiness-comparison ]]; then
+  outer_privileged=$(bounded 15s podman inspect --format '{{.HostConfig.Privileged}}' "$outer")
+else
+  bounded 15s "${outer_runtime[@]}" daemon-binding "$outer_cid" "$outer" "$outer_owner" "$run_id" "$outer_image" > /dev/null
+  outer_privileged=$(bounded 15s "${outer_runtime[@]}" observe container "$outer_cid" | jq -er '.HostConfig.Privileged')
+fi
+[[ $outer_privileged == true ]] || {
   printf 'reviewed outer nesting privilege was not applied\n' >&2
   exit 1
 }
-bounded 15s podman inspect --format '{{json .Mounts}}' "$outer" |
-  python3 "$contract" verify-outer-mounts --volume "$storage_volume" \
-    --destination "$storage_target" --socket-dir "$socket_dir" > /dev/null || {
-  printf 'outer Docker daemon has an unexpected mount\n' >&2
-  exit 1
-}
+if [[ $profile == readiness-comparison ]]; then
+  bounded 15s podman inspect --format '{{json .Mounts}}' "$outer" |
+    python3 "$contract" verify-outer-mounts --volume "$storage_volume" \
+      --destination "$storage_target" --socket-dir "$socket_dir" > /dev/null
+else
+  bounded 15s "${outer_runtime[@]}" check-mounts "$outer_cid" "$storage_volume" "${lane##*-}" "$socket_dir" /boxferry-core "$graph_root"
+fi
 if [[ $lane == debian11-rootless ]]; then
   # Mountinfo is data from the isolated container; never execute checkout code as root.
-  bounded 15s podman exec "$outer" cat /proc/self/mountinfo 2> /dev/null |
+  bounded 15s "${outer_exec[@]}" cat /proc/self/mountinfo 2> /dev/null |
     python3 "$contract" verify-storage-mount --destination "$storage_target" > /dev/null || {
     printf 'historical rootless data-root flags are not verified\n' >&2
     exit 1
@@ -810,7 +942,7 @@ while true; do
       ((ping_wrapper_seconds <= 5)) || ping_wrapper_seconds=5
       application_metadata_record='' metadata_wrapper_status=0
       application_metadata_status=unavailable
-      application_metadata_record=$(bounded "${ping_wrapper_seconds}s" python3 "$contract" application-metadata \
+      application_metadata_record=$(bounded "${ping_wrapper_seconds}s" python3 "$contract" "${outer_runtime_args[@]}" application-metadata \
         --outer "$outer" --run "$run_id" --socket "$socket_path" --helper "$host_metadata_snapshot" \
         --binary-sha256 "$host_metadata_binary_sha256" \
         --deadline-boottime "$ping_readiness_deadline" 2> /dev/null) || metadata_wrapper_status=$?
@@ -918,7 +1050,7 @@ while true; do
     readiness_failure 'nested Docker daemon did not become ready'
     exit 1
   fi
-  [[ $(bounded 15s podman inspect --format '{{.State.Running}}' "$outer" 2> /dev/null) == true ]] || {
+  [[ $(bounded 15s "${outer_inspect[@]}" --format '{{.State.Running}}' "$outer_target" 2> /dev/null) == true ]] || {
     readiness_failure 'outer Docker daemon exited before readiness'
     exit 1
   }
@@ -947,7 +1079,7 @@ if [[ $profile == readiness-comparison ]]; then
       ((comparison_native_status <= 1)) || exit 1
       ((comparison_native_status != 0)) || break
     fi
-    [[ $(bounded 15s podman inspect --format '{{.State.Running}}' "$outer" 2> /dev/null) == true ]] || exit 1
+    [[ $(bounded 15s "${outer_inspect[@]}" --format '{{.State.Running}}' "$outer_target" 2> /dev/null) == true ]] || exit 1
     sleep 2
   done
   # No version/info read, acceptance, workload, fixture mutation or receipt.
@@ -963,8 +1095,14 @@ if [[ $profile == volume-fixtures ]]; then
   esac
   verify_host_metadata_binding
 else
-  version_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/version)
-  info_json=$(curl -q --noproxy '*' --fail --silent --max-time 10 --max-filesize 65536 --unix-socket "$socket_path" http://localhost/info)
+  version_record=$(bounded 15s python3 "$contract" "${unix_http_args[@]}" unix-http -- --socket "$socket_path" \
+    --method GET --path /version --timeout 10 --max-response-bytes 65536)
+  [[ ${version_record##*$'\n'} == 200 ]] || exit 1
+  version_json=${version_record%$'\n'*}
+  info_record=$(bounded 15s python3 "$contract" "${unix_http_args[@]}" unix-http -- --socket "$socket_path" \
+    --method GET --path /info --timeout 10 --max-response-bytes 65536)
+  [[ ${info_record##*$'\n'} == 200 ]] || exit 1
+  info_json=${info_record%$'\n'*}
   observed_release=$(jq -er '.Version' <<< "$version_json")
   observed_api=$(jq -er '.ApiVersion' <<< "$version_json")
   observed_rootless=$(jq -r '(.Rootless == true) or any(.SecurityOptions[]?; . == "name=rootless" or startswith("name=rootless,"))' <<< "$info_json")
@@ -973,7 +1111,7 @@ fi
 python3 "$contract" verify-docker-root --lane "$lane" --observed "$observed_docker_root" > /dev/null
 # These variables expand only in the isolated guest shell, never on the host.
 # shellcheck disable=SC2016
-uid_report=$(bounded 15s podman exec "$outer" sh -ec '
+uid_report=$(bounded 15s "${outer_exec[@]}" sh -ec '
   count=0; effective=
   for status in /proc/[0-9]*/status; do
     [ -f "$status" ] || continue
@@ -992,7 +1130,7 @@ installed_package=''
 if [[ $lane == debian11-* ]]; then
   # dpkg-query expands its literal package-version template, not either shell.
   # shellcheck disable=SC2016
-  installed_package=$(bounded 15s podman exec "$outer" dpkg-query -W '-f=${Version}' docker.io 2> /dev/null)
+  installed_package=$(bounded 15s "${outer_exec[@]}" dpkg-query -W '-f=${Version}' docker.io 2> /dev/null)
 fi
 if [[ $profile == volume-fixtures ]]; then
   bounded 30s python3 "$contract" verify-candidate --boxferry-root "$boxferry_root" \
@@ -1004,7 +1142,7 @@ if [[ $profile == volume-fixtures ]]; then
   }
   verify_host_metadata_binding
   volume_apply_attempted=true
-  bounded 45s python3 "$contract" apply-volume-fixtures --allow-isolated-apply \
+  bounded 45s python3 "$contract" "${unix_http_args[@]}" apply-volume-fixtures --allow-isolated-apply \
     --directory "$run_dir/volume-output" --boxferry-root "$boxferry_root" \
     --lane "$lane" --run "$volume_run" --prefix "$volume_prefix" \
     --receipt-sha256 "$receipt_sha256" --api-version "$api_version" --catalogue-json "$catalogue" \
@@ -1034,23 +1172,23 @@ else
     --api-version "$api_version" --lane "$lane" \
     --observed-release "$observed_release" --observed-api "$observed_api" \
     --observed-package "$installed_package" --catalogue-json "$catalogue" > /dev/null
-  bounded 45s podman cp "$archive" "$outer:/tmp/bf-core-busybox.tar"
-  bounded 45s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+  bounded 45s "${outer_runtime[@]}" copy-into "$outer_cid" "$archive" /tmp/bf-core-busybox.tar
+  bounded 45s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
     load --input /tmp/bf-core-busybox.tar > /dev/null
-  inner_image_id=$(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+  inner_image_id=$(bounded 15s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
     image inspect --format '{{.Id}}' "$fixture_tag")
   inner_image_id=${inner_image_id#sha256:}
   [[ $inner_image_id == "$host_image_id" ]] || {
     printf 'loaded inner image ID differs from canonical pinned image\n' >&2
     exit 1
   }
-  [[ $(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+  [[ $(bounded 15s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
     image inspect --format '{{.Os}}/{{.Architecture}}' "$fixture_tag") == linux/amd64 ]] || {
     printf 'inner fixture image platform has no reviewed environment baseline\n' >&2
     exit 1
   }
-  bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock tag "$fixture_tag" "$core_alias"
-  alias_image_id=$(bounded 15s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+  bounded 15s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock tag "$fixture_tag" "$core_alias"
+  alias_image_id=$(bounded 15s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
     image inspect --format '{{.Id}}' "$core_alias")
   alias_image_id=${alias_image_id#sha256:}
   [[ $alias_image_id == "$host_image_id" ]] || {
@@ -1058,7 +1196,7 @@ else
     exit 1
   }
 
-  bounded 45s python3 "$contract" replay-test-only --allow-isolated-apply \
+  bounded 45s python3 "$contract" "${unix_http_args[@]}" replay-test-only --allow-isolated-apply \
     --artifact-sha256 "$artifact_sha256" \
     --artifact "$artifact" --image "$core_alias" --api-version "$api_version" --lane "$lane" \
     --observed-release "$observed_release" --observed-api "$observed_api" \
@@ -1069,7 +1207,7 @@ else
       --file "$run_dir/state.json" --image "$core_alias")
     (
       ulimit -f 128
-      bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+      bounded 30s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
         inspect --format '{{json .}}' "$container_id" > "$run_dir/native-inspect.json" 2> /dev/null
     )
     network_id=$(python3 "$contract" check-core-output --kind inspect \
@@ -1077,7 +1215,7 @@ else
       --image "$core_alias" --fixture-image "$fixture_image")
     (
       ulimit -f 128
-      bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+      bounded 30s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
         network inspect --format '{{json .}}' "$network_id" > "$run_dir/native-network-inspect.json" 2> /dev/null
     )
     python3 "$contract" check-core-output --kind network-inspect \
@@ -1117,7 +1255,7 @@ else
       --container-file "$run_dir/native-inspect.json" \
       --network-id "$network_id" --network-file "$run_dir/native-network-inspect.json"
   fi
-  marker=$(bounded 30s podman exec "$outer" docker -H unix:///boxferry-core/docker.sock \
+  marker=$(bounded 30s "${outer_exec[@]}" docker -H unix:///boxferry-core/docker.sock \
     exec bf-docker-core cat /tmp/boxferry-core-marker)
   [[ $marker == boxferry-core-ready ]] || {
     printf 'core marker behavior differs\n' >&2
@@ -1164,6 +1302,10 @@ if [[ $profile == volume-fixtures ]]; then
     exit 1
   fi
   report_host_cache
+  if [[ $outer_engine == docker ]]; then
+    [[ -n $outer_observation ]] || exit 1
+    printf 'OUTER-RUNTIME-OBSERVATION %s\n' "$outer_observation"
+  fi
   printf 'VOLUME-ONLY REHEARSAL CHECKS-PASSED: lane=%s fixtures=6 volumes=23 cleanup=verified acceptance=pending-reviewed-native-evidence; no container/image workload or six-application acceptance\n' "$lane"
   exit 0
 fi
