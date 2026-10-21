@@ -1391,6 +1391,176 @@ fn podman_fixture() -> PathBuf {
         .join("../../fixtures/scenarios/podman-portable-intent/input-podman.cassette.json")
 }
 
+const REPORT_PATH_COMPOSE: &str =
+    "---\nname: report-path-check\nservices:\n  web:\n    image: example.invalid/report-web:1\n";
+
+fn report_path_command(scratch: &Scratch, report_path: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_boxferry"));
+    command
+        .current_dir(scratch.path())
+        .args(["validate", "compose", "compose", "--input-file"])
+        .arg(scratch.path().join("input.yaml"))
+        .arg("--report-file")
+        .arg(report_path)
+        .args(["--console-format", "json"]);
+    command
+}
+
+fn assert_report_path_write_failure(output: &Output) -> Result<(), Box<dyn Error>> {
+    assert_eq!(output.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["status"], "failure");
+    assert_eq!(report["exit_category"], "report-write");
+    assert_eq!(report["failed_stage"], "report-write");
+    assert!(
+        report["events"]
+            .as_array()
+            .is_some_and(|events| { events.iter().any(|event| event == "report-file-write-failed") })
+    );
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| { diagnostics.iter().any(|diagnostic| diagnostic["severity"] == "error") })
+    );
+    Ok(())
+}
+
+#[test]
+fn report_file_paths_accept_bare_dot_nested_and_absolute() -> Result<(), Box<dyn Error>> {
+    for spelling in ["bare", "dot", "nested", "dot-nested", "absolute"] {
+        let scratch = Scratch::new(&format!("report-path-{spelling}"))?;
+        fs::write(scratch.path().join("input.yaml"), REPORT_PATH_COMPOSE)?;
+        fs::create_dir(scratch.path().join("reports"))?;
+        let report_path = match spelling {
+            "bare" => PathBuf::from("report.json"),
+            "dot" => PathBuf::from("./report.json"),
+            "nested" => PathBuf::from("reports/report.json"),
+            "dot-nested" => PathBuf::from("./reports/report.json"),
+            "absolute" => scratch.path().join("report.json"),
+            _ => unreachable!(),
+        };
+        let output = report_path_command(&scratch, &report_path).output()?;
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{spelling}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let console: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let written: serde_json::Value = serde_json::from_slice(&fs::read(scratch.path().join(&report_path))?)?;
+        assert_eq!(console["status"], "success");
+        assert_eq!(console["exit_category"], "success");
+        assert_eq!(console, written);
+        assert!(
+            !console["events"]
+                .as_array()
+                .is_some_and(|events| { events.iter().any(|event| event == "report-file-write-failed") })
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn report_file_paths_refuse_existing_missing_and_non_directory_parents() -> Result<(), Box<dyn Error>> {
+    for case in ["existing", "missing", "parent-file"] {
+        let scratch = Scratch::new(&format!("report-path-refusal-{case}"))?;
+        fs::write(scratch.path().join("input.yaml"), REPORT_PATH_COMPOSE)?;
+        let report_path = match case {
+            "existing" => {
+                fs::write(scratch.path().join("report.json"), "existing-report-canary")?;
+                Path::new("report.json")
+            }
+            "missing" => Path::new("missing/report.json"),
+            "parent-file" => {
+                fs::write(scratch.path().join("parent-file"), "parent-file-canary")?;
+                Path::new("parent-file/report.json")
+            }
+            _ => unreachable!(),
+        };
+        let output = report_path_command(&scratch, report_path).output()?;
+        assert_report_path_write_failure(&output)?;
+        match case {
+            "existing" => assert_eq!(
+                fs::read_to_string(scratch.path().join("report.json"))?,
+                "existing-report-canary"
+            ),
+            "missing" => assert!(!scratch.path().join("missing").exists()),
+            "parent-file" => assert_eq!(
+                fs::read_to_string(scratch.path().join("parent-file"))?,
+                "parent-file-canary"
+            ),
+            _ => unreachable!(),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn report_file_paths_refuse_symlink_parents() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new("report-path-symlink-parent")?;
+    fs::write(scratch.path().join("input.yaml"), REPORT_PATH_COMPOSE)?;
+    let destination = scratch.path().join("destination");
+    fs::create_dir(&destination)?;
+    let linked_parent = scratch.path().join("linked");
+    std::os::unix::fs::symlink(&destination, &linked_parent)?;
+    let output = report_path_command(&scratch, Path::new("linked/report.json")).output()?;
+    assert_report_path_write_failure(&output)?;
+    assert!(!destination.join("report.json").exists());
+    assert!(fs::symlink_metadata(linked_parent)?.file_type().is_symlink());
+    Ok(())
+}
+
+#[test]
+fn report_file_paths_preserve_blocked_and_conversion_failure_status() -> Result<(), Box<dyn Error>> {
+    for (case, input, status, category, stage, exit) in [
+        (
+            "blocked",
+            "---\nname: report-path-blocked\nservices:\n  web:\n    image: example.invalid/report-web:1\n    environment:\n      MODE: withheld-report-canary\n",
+            "blocked",
+            "policy-blocked",
+            "conversion",
+            2,
+        ),
+        (
+            "conversion-failure",
+            "services: [",
+            "failure",
+            "input-or-execution",
+            // Retained document findings fail at merge, not load construction.
+            "compose-merge",
+            1,
+        ),
+    ] {
+        for report_path in [Path::new("report.json"), Path::new("missing/report.json")] {
+            let scratch = Scratch::new(&format!("report-path-primary-{case}"))?;
+            fs::write(scratch.path().join("input.yaml"), input)?;
+            let output = report_path_command(&scratch, report_path)
+                .args(["--loss-policy", "exact", "--environment-values", "withhold"])
+                .output()?;
+            assert_eq!(output.status.code(), Some(exit));
+            let console: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            assert_eq!(console["status"], status);
+            assert_eq!(console["exit_category"], category);
+            assert_eq!(console["failed_stage"], stage);
+            let write_failed = report_path == Path::new("missing/report.json");
+            assert_eq!(
+                console["events"]
+                    .as_array()
+                    .is_some_and(|events| { events.iter().any(|event| event == "report-file-write-failed") }),
+                write_failed
+            );
+            if write_failed {
+                assert!(!scratch.path().join("missing").exists());
+            } else {
+                let written: serde_json::Value = serde_json::from_slice(&fs::read(scratch.path().join(report_path))?)?;
+                assert_eq!(console, written);
+            }
+        }
+    }
+    Ok(())
+}
+
 struct Scratch(PathBuf);
 
 impl Scratch {

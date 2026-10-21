@@ -63,6 +63,10 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Fixed
 
+- Accept bare relative `--report-file` paths in the current directory while retaining
+  existing-parent validation and create-new, non-overwriting report writes
+  ([#472](https://github.com/Strukturpiloten/boxferry/issues/472)).
+
 - Preserve Compose service-network aliases' native per-scalar sensitivity: retain public aliases
   without taint from protected siblings, keep sensitive substitutions protected, and fail closed when
   native metadata cannot be corroborated. Refuse the entire Compose candidate for protected aliases
