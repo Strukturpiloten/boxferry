@@ -7,7 +7,7 @@ use boxferry_model::{
     Application, EnvironmentValue, EnvironmentVariable, Identifier, ImageReference, MetadataLabel, Mount, MountSource,
     Network, NetworkAttachment, NetworkIpamConfig, ProtectedString, Provenance, ResourceOwnership,
     RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, SelinuxRelabel, Service,
-    ServiceGroup, SourceId, SourceSpan, Sourced,
+    ServiceGroup, SourceId, SourceSpan, Sourced, Volume,
 };
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanTargetError, resolve_podman_target, reviewed_podman_versions,
@@ -200,6 +200,655 @@ fn uncertain_runtime_group_is_omitted_and_partial_podman_output_remains_authoriz
     assert!(!output.commands_shell().contains(" 'pod' "));
     assert!(output.commands_shell().contains("podman 'container' 'create'"));
     Ok(())
+}
+
+#[test]
+fn volume_runtime_names_map_to_exact_declarations_and_mounts_across_services() -> Result<(), Box<dyn Error>> {
+    let application = volume_mapping_application(&[("data", Some("runtime-data")), ("cache", None)])?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let output = authorized.output().ok_or("exact volume output expected")?;
+
+    let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+    let operations = deployment["operations"]
+        .as_array()
+        .ok_or("deployment operations array expected")?;
+    assert_eq!(operations.len(), 8);
+    assert!(operations.iter().all(|operation| operation["status"] == "exact"));
+    let operation_roster = operations
+        .iter()
+        .map(|op| {
+            Ok((
+                op["action"].as_str().ok_or("operation action expected")?.to_owned(),
+                op["resource"]["kind"]
+                    .as_str()
+                    .ok_or("resource kind expected")?
+                    .to_owned(),
+                op["resource"]["name"]
+                    .as_str()
+                    .ok_or("resource name expected")?
+                    .to_owned(),
+            ))
+        })
+        .collect::<Result<BTreeSet<_>, Box<dyn Error>>>()?;
+    assert_eq!(
+        operation_roster,
+        BTreeSet::from([
+            ("ensure_image".to_owned(), "image".to_owned(), "web-image".to_owned()),
+            ("ensure_image".to_owned(), "image".to_owned(), "worker-image".to_owned()),
+            ("create".to_owned(), "volume".to_owned(), "cache".to_owned()),
+            ("create".to_owned(), "volume".to_owned(), "runtime-data".to_owned()),
+            ("create".to_owned(), "container".to_owned(), "web".to_owned()),
+            ("create".to_owned(), "container".to_owned(), "worker".to_owned()),
+            ("start_container".to_owned(), "container".to_owned(), "web".to_owned()),
+            (
+                "start_container".to_owned(),
+                "container".to_owned(),
+                "worker".to_owned()
+            ),
+        ])
+    );
+
+    let volume_creates = operations
+        .iter()
+        .filter(|op| op["action"] == "create" && op["resource"]["kind"] == "volume")
+        .collect::<Vec<_>>();
+    assert_eq!(volume_creates.len(), 2);
+    let volume_names = volume_creates
+        .iter()
+        .map(|op| op["resource"]["name"].as_str().ok_or("volume resource name expected"))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    assert_eq!(volume_names, BTreeSet::from(["runtime-data", "cache"]));
+    for operation in volume_creates {
+        let name = operation["resource"]["name"]
+            .as_str()
+            .ok_or("volume resource name expected")?;
+        assert_volume_create(operation, name, "6.1.0");
+    }
+
+    let container_creates = operations
+        .iter()
+        .filter(|op| op["action"] == "create" && op["resource"]["kind"] == "container")
+        .collect::<Vec<_>>();
+    assert_eq!(container_creates.len(), 2);
+    let web = container_creates
+        .iter()
+        .find(|op| op["resource"]["name"] == "web")
+        .ok_or("web container create expected")?;
+    assert_container_create(
+        web,
+        "web",
+        "6.1.0",
+        &[
+            ("runtime-data", "/data/0", &["rw", "copy"]),
+            ("cache", "/data/1", &["ro", "copy"]),
+        ],
+    );
+    let worker = container_creates
+        .iter()
+        .find(|op| op["resource"]["name"] == "worker")
+        .ok_or("worker container create expected")?;
+    assert_container_create(
+        worker,
+        "worker",
+        "6.1.0",
+        &[("runtime-data", "/worker/data", &["rw", "copy"])],
+    );
+    assert!(output.commands_shell().contains("'volume' 'create' 'runtime-data'"));
+    assert!(output.commands_shell().contains("'volume' 'create' 'cache'"));
+    Ok(())
+}
+
+#[test]
+fn equal_runtime_and_fallback_names_are_exact_at_reviewed_version_boundaries() -> Result<(), Box<dyn Error>> {
+    for (target_version, context) in [
+        (version(5, 4, 0), TargetExecutionContext::Unknown),
+        (version(6, 1, 0), TargetExecutionContext::Rootless),
+        (version(6, 1, 0), TargetExecutionContext::Rootful),
+    ] {
+        let application = volume_declarations_application(&[("data", Some("data")), ("cache", None)])?;
+        let target = TargetProfile::new(PODMAN_TARGET, target_version, Some(target_version))?;
+        let plan = PodmanExporter::new()?
+            .with_execution_context(context)
+            .plan(&application, &target)?;
+        let failure_context = format!(
+            "reviewed-boundary target_version={target_version}, context={context:?}, diagnostics={:?}, outcomes={:?}",
+            plan.diagnostics(),
+            plan.outcomes()
+        );
+        let authorized = plan.authorize(LossPolicy::ExactOnly);
+        let output = authorized.output().ok_or(failure_context)?;
+        let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+        let operations = deployment["operations"]
+            .as_array()
+            .ok_or("deployment operations array expected")?;
+        assert_eq!(operations.len(), 2);
+        let version = target_version.to_string();
+        let volume_creates = operations
+            .iter()
+            .filter(|op| op["action"] == "create" && op["resource"]["kind"] == "volume")
+            .collect::<Vec<_>>();
+        assert_eq!(volume_creates.len(), 2);
+        let volume_names = volume_creates
+            .iter()
+            .map(|op| op["resource"]["name"].as_str().ok_or("volume resource name expected"))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        assert_eq!(volume_names, BTreeSet::from(["data", "cache"]));
+        for operation in volume_creates {
+            let name = operation["resource"]["name"]
+                .as_str()
+                .ok_or("volume resource name expected")?;
+            assert_volume_create(operation, name, &version);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn equal_runtime_names_with_mounts_are_exact_for_rootless_and_rootful_targets() -> Result<(), Box<dyn Error>> {
+    for context in [TargetExecutionContext::Rootless, TargetExecutionContext::Rootful] {
+        let application = volume_mapping_application(&[("data", Some("data"))])?;
+        let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+        let plan = PodmanExporter::new()?
+            .with_execution_context(context)
+            .plan(&application, &target)?;
+        let failure_context = format!(
+            "mounted equal-name target_version=6.1.0, context={context:?}, diagnostics={:?}, outcomes={:?}",
+            plan.diagnostics(),
+            plan.outcomes()
+        );
+        let authorized = plan.authorize(LossPolicy::ExactOnly);
+        let output = authorized.output().ok_or(failure_context)?;
+        let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+        let operations = deployment["operations"]
+            .as_array()
+            .ok_or("deployment operations array expected")?;
+        let volume_create = operations
+            .iter()
+            .find(|op| op["action"] == "create" && op["resource"]["kind"] == "volume")
+            .ok_or("equal-name volume create expected")?;
+        assert_volume_create(volume_create, "data", "6.1.0");
+        for (container_name, destination) in [("web", "/data/0"), ("worker", "/worker/data")] {
+            let container_create = operations
+                .iter()
+                .find(|op| op["action"] == "create" && op["resource"]["name"] == container_name)
+                .ok_or("container create expected")?;
+            assert_container_create(
+                container_create,
+                container_name,
+                "6.1.0",
+                &[("data", destination, &["rw", "copy"])],
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn minimum_reviewed_unknown_context_retains_native_pull_policy_refusal() -> Result<(), Box<dyn Error>> {
+    let application = volume_mapping_application(&[("data", Some("data"))])?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(5, 4, 0), Some(version(5, 4, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+
+    assert!(plan.candidate().is_none());
+    let volume_outcome = plan
+        .outcomes()
+        .iter()
+        .find(|outcome| outcome.subject() == "volumes.data")
+        .ok_or("exact equal-name volume mapping outcome expected")?;
+    assert_eq!(volume_outcome.kind(), ConversionKind::Exact);
+
+    let invalid_images = plan
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.kind() == ConversionKind::Invalid)
+        .map(boxferry_engine::ConversionOutcome::subject)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        invalid_images,
+        BTreeSet::from(["image.web-image", "image.worker-image"])
+    );
+
+    let refusals = plan
+        .diagnostics()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code().as_str() == "BFP0008"
+                && diagnostic
+                    .native_finding()
+                    .is_some_and(|finding| finding.code() == "PLN0046")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(refusals.len(), 2);
+    let refused_images = refusals
+        .iter()
+        .map(|diagnostic| {
+            let finding = diagnostic.native_finding().ok_or("native rendering refusal expected")?;
+            let intent_field = finding
+                .fields()
+                .iter()
+                .find(|field| field.name() == "intent_field")
+                .ok_or("native intent field expected")?;
+            assert_eq!(intent_field.value().expose(), "pull_policy.target_version");
+            finding
+                .fields()
+                .iter()
+                .find(|field| field.name() == "resource_name")
+                .map(|field| field.value().expose())
+                .ok_or("refused image name expected")
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    assert_eq!(refused_images, BTreeSet::from(["web-image", "worker-image"]));
+
+    for policy in [
+        LossPolicy::ExactOnly,
+        LossPolicy::AllowApproximate,
+        LossPolicy::AllowPartial,
+    ] {
+        assert!(
+            plan.clone().authorize(policy).output().is_none(),
+            "{policy:?} must not authorize invalid output"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn duplicate_resolved_volume_identities_are_rejected_but_chained_renames_are_valid() -> Result<(), Box<dyn Error>> {
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    for volumes in [
+        vec![("first", Some("same")), ("second", Some("same"))],
+        vec![("first", Some("second")), ("second", None)],
+    ] {
+        let application = volume_mapping_application(&volumes)?;
+        let plan = PodmanExporter::new()?.plan(&application, &target)?;
+        assert!(
+            plan.candidate().is_none(),
+            "duplicate target volume identities must refuse planning"
+        );
+        assert!(
+            plan.outcomes()
+                .iter()
+                .any(|outcome| outcome.kind() == ConversionKind::Invalid)
+        );
+        assert!(
+            plan.diagnostics().iter().any(|diagnostic| {
+                diagnostic.code().as_str() == "BFP0008" && diagnostic.severity() == Severity::Error
+            })
+        );
+        assert!(plan.clone().authorize(LossPolicy::AllowPartial).output().is_none());
+    }
+    let application = volume_mapping_application(&[("first", Some("second")), ("second", Some("third"))])?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let output = authorized.output().ok_or("distinct volume identities expected")?;
+    let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+    let volume_names = deployment["operations"]
+        .as_array()
+        .ok_or("operations array expected")?
+        .iter()
+        .filter(|op| op["action"] == "create" && op["resource"]["kind"] == "volume")
+        .map(|op| op["resource"]["name"].as_str().ok_or("volume resource name expected"))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    assert_eq!(volume_names, BTreeSet::from(["second", "third"]));
+    let container = deployment["operations"]
+        .as_array()
+        .and_then(|operations| {
+            operations
+                .iter()
+                .find(|op| op["action"] == "create" && op["resource"]["name"] == "web")
+        })
+        .ok_or("web container create expected")?;
+    assert_container_create(
+        container,
+        "web",
+        "6.1.0",
+        &[
+            ("second", "/data/0", &["rw", "copy"]),
+            ("third", "/data/1", &["ro", "copy"]),
+        ],
+    );
+    Ok(())
+}
+
+#[test]
+fn external_implicit_and_uncertain_volumes_remain_preconditions() -> Result<(), Box<dyn Error>> {
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    for ownership in [
+        ResourceOwnership::External,
+        ResourceOwnership::Implicit,
+        ResourceOwnership::Uncertain,
+    ] {
+        let application =
+            volume_mapping_application_with_ownership(&[("logical-data", Some("runtime-data"))], ownership)?;
+        let plan = PodmanExporter::new()?.plan(&application, &target)?;
+        let authorized = plan.authorize(LossPolicy::ExactOnly);
+        let output = authorized
+            .output()
+            .ok_or("external volume precondition output expected")?;
+        let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+        let prerequisites = deployment["external_preconditions"]
+            .as_array()
+            .ok_or("preconditions array expected")?;
+        assert_eq!(
+            prerequisites
+                .iter()
+                .filter(|resource| resource["kind"] == "volume")
+                .map(|resource| resource["name"].as_str())
+                .collect::<Vec<_>>(),
+            vec![Some("runtime-data")]
+        );
+        assert_eq!(
+            deployment["operations"]
+                .as_array()
+                .ok_or("operations array expected")?
+                .iter()
+                .filter(|op| op["action"] == "create" && op["resource"]["kind"] == "volume")
+                .count(),
+            0
+        );
+        assert!(
+            output
+                .commands_shell()
+                .contains("Requires external volume: 'runtime-data'")
+        );
+        let operations = deployment["operations"].as_array().ok_or("operations array expected")?;
+        let container_creates = operations
+            .iter()
+            .filter(|op| op["action"] == "create" && op["resource"]["kind"] == "container")
+            .collect::<Vec<_>>();
+        assert_eq!(container_creates.len(), 2);
+        let web = container_creates
+            .iter()
+            .find(|op| op["resource"]["name"] == "web")
+            .ok_or("web container create expected")?;
+        assert_container_create(web, "web", "6.1.0", &[("runtime-data", "/data/0", &["rw", "copy"])]);
+        let worker = container_creates
+            .iter()
+            .find(|op| op["resource"]["name"] == "worker")
+            .ok_or("worker container create expected")?;
+        assert_container_create(
+            worker,
+            "worker",
+            "6.1.0",
+            &[("runtime-data", "/worker/data", &["rw", "copy"])],
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn protected_runtime_volume_names_fail_closed_without_disclosure_under_every_loss_policy() -> Result<(), Box<dyn Error>>
+{
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    for canary in [
+        "private-volume-runtime-name-cf20c31a",
+        "private\nvolume-runtime-name-cf20c31a",
+    ] {
+        let mut volume = Volume::new(Identifier::new("logical-data")?, ResourceOwnership::Application);
+        volume.set_runtime_name(Sourced::generated(ProtectedString::sensitive(canary)));
+        let application = volume_application_with_mounts(
+            vec![volume],
+            &[("logical-data", "/data", false)],
+            &[("logical-data", "/worker/data", false)],
+        )?;
+        let plan = PodmanExporter::new()?.plan(&application, &target)?;
+        assert!(plan.candidate().is_none());
+        let diagnostic = plan
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.code().as_str() == "BFP0008")
+            .ok_or("protected runtime name must produce BFP0008")?;
+        assert_eq!(diagnostic.severity(), Severity::Error);
+        assert_context_fields(diagnostic, &["subject", "reason", "decision"]);
+        assert!(diagnostic.fields().iter().any(|field| {
+            field.name() == "subject" && field.value().expose() == "volumes.logical-data.runtime_name"
+        }));
+        assert!(diagnostic.fields().iter().any(|field| {
+            field.name() == "reason"
+                && field.value().expose()
+                    == "Protected Podman volume runtime names cannot be emitted as target resource identities"
+        }));
+        assert!(plan.outcomes().iter().any(|outcome| {
+            outcome.kind() == ConversionKind::Invalid && outcome.subject() == "volumes.logical-data.runtime_name"
+        }));
+        assert!(!format!("{plan:?}").contains(canary));
+        assert!(!format!("{diagnostic:?}").contains(canary));
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .all(|field| !field.value().expose().contains(canary))
+        );
+        assert!(
+            diagnostic
+                .fields()
+                .iter()
+                .all(|field| field.value().expose() != "[REDACTED]")
+        );
+        for policy in [
+            LossPolicy::ExactOnly,
+            LossPolicy::AllowApproximate,
+            LossPolicy::AllowPartial,
+        ] {
+            let result = plan.clone().authorize(policy);
+            assert!(result.output().is_none());
+            assert!(!format!("{result:?}").contains(canary));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_runtime_names_and_undeclared_or_aliased_mounts_are_rejected() -> Result<(), Box<dyn Error>> {
+    let mut invalid = Volume::new(Identifier::new("logical-data")?, ResourceOwnership::Application);
+    invalid.set_runtime_name(Sourced::generated(ProtectedString::plain("bad\nname")));
+    let invalid_application = volume_application_with_mounts(vec![invalid], &[("logical-data", "/data", false)], &[])?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let invalid_plan = PodmanExporter::new()?.plan(&invalid_application, &target)?;
+    assert!(invalid_plan.candidate().is_none());
+    assert!(
+        invalid_plan
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code().as_str() == "BFP0008")
+    );
+    assert!(
+        invalid_plan
+            .clone()
+            .authorize(LossPolicy::AllowPartial)
+            .output()
+            .is_none()
+    );
+
+    for mount_name in ["runtime-data", "undeclared"] {
+        let volume_name = "logical-data";
+        let mut volume = Volume::new(Identifier::new(volume_name)?, ResourceOwnership::Application);
+        volume.set_runtime_name(Sourced::generated(ProtectedString::plain("runtime-data")));
+        let application = volume_application_with_mounts(vec![volume], &[(mount_name, "/data", false)], &[])?;
+        let plan = PodmanExporter::new()?.plan(&application, &target)?;
+        assert!(plan.candidate().is_none());
+        assert!(plan.clone().authorize(LossPolicy::AllowPartial).output().is_none());
+        assert!(plan.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code().as_str() == "BFP0008"
+                && diagnostic
+                    .fields()
+                    .iter()
+                    .any(|field| field.name() == "subject" && field.value().expose() == "services.web.mounts[0].source")
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_volume_settings_remain_partial_with_bfp0007() -> Result<(), Box<dyn Error>> {
+    let mut volume = Volume::new(Identifier::new("logical-data")?, ResourceOwnership::Application);
+    volume.set_runtime_name(Sourced::generated(ProtectedString::plain("runtime-data")));
+    volume.set_driver(Sourced::generated(ProtectedString::plain("local")));
+    let application = volume_application_with_mounts(vec![volume], &[("logical-data", "/data", false)], &[])?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    assert!(plan.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code().as_str() == "BFP0007"
+            && diagnostic
+                .fields()
+                .iter()
+                .any(|field| field.name() == "subject" && field.value().expose() == "volumes.logical-data.settings")
+    }));
+    let authorized = plan.authorize(LossPolicy::AllowPartial);
+    let output = authorized
+        .output()
+        .ok_or("partial output for unrelated volume setting expected")?;
+    let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+    let volume_create = deployment["operations"]
+        .as_array()
+        .and_then(|operations| {
+            operations
+                .iter()
+                .find(|op| op["action"] == "create" && op["resource"]["kind"] == "volume")
+        })
+        .ok_or("runtime-named volume create expected under partial policy")?;
+    assert_eq!(volume_create["resource"]["name"], "runtime-data");
+    Ok(())
+}
+
+fn volume_declarations_application(volumes: &[(&str, Option<&str>)]) -> Result<Application, Box<dyn Error>> {
+    let mut application = Application::new(Identifier::new("volume-declarations-test")?);
+    for (logical, runtime) in volumes {
+        let mut volume = Volume::new(Identifier::new(*logical)?, ResourceOwnership::Application);
+        if let Some(runtime) = runtime {
+            volume.set_runtime_name(Sourced::generated(ProtectedString::plain(*runtime)));
+        }
+        application.add_volume(Sourced::generated(volume))?;
+    }
+    Ok(application)
+}
+
+fn volume_mapping_application(volumes: &[(&str, Option<&str>)]) -> Result<Application, Box<dyn Error>> {
+    volume_mapping_application_with_ownership(volumes, ResourceOwnership::Application)
+}
+
+fn volume_mapping_application_with_ownership(
+    volumes: &[(&str, Option<&str>)],
+    ownership: ResourceOwnership,
+) -> Result<Application, Box<dyn Error>> {
+    let values = volumes
+        .iter()
+        .map(|(logical, runtime)| {
+            let mut volume = Volume::new(Identifier::new(*logical)?, ownership);
+            if let Some(runtime) = runtime {
+                volume.set_runtime_name(Sourced::generated(ProtectedString::plain(*runtime)));
+            }
+            Ok(volume)
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let web_mounts = volumes
+        .iter()
+        .enumerate()
+        .map(|(index, (logical, _))| (*logical, if index == 0 { "/data/0" } else { "/data/1" }, index == 1))
+        .collect::<Vec<_>>();
+    let worker_mounts = volumes
+        .first()
+        .map(|(logical, _)| vec![(*logical, "/worker/data", false)])
+        .unwrap_or_default();
+    volume_application_with_mounts(values, &web_mounts, &worker_mounts)
+}
+
+fn volume_application_with_mounts(
+    volumes: Vec<Volume>,
+    web_mounts: &[(&str, &str, bool)],
+    worker_mounts: &[(&str, &str, bool)],
+) -> Result<Application, Box<dyn Error>> {
+    let mut application = Application::new(Identifier::new("adapter-test")?);
+    for volume in volumes {
+        application.add_volume(Sourced::generated(volume))?;
+    }
+    add_volume_mounting_service(&mut application, "web", web_mounts)?;
+    if !worker_mounts.is_empty() {
+        add_volume_mounting_service(&mut application, "worker", worker_mounts)?;
+    }
+    Ok(application)
+}
+
+fn add_volume_mounting_service(
+    application: &mut Application,
+    service_name: &str,
+    mounts: &[(&str, &str, bool)],
+) -> Result<(), Box<dyn Error>> {
+    let mut service = Service::new(Identifier::new(service_name)?);
+    service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+    for (logical_name, destination, read_only) in mounts {
+        service.add_mount(Sourced::generated(Mount::new(
+            MountSource::Volume(Identifier::new(*logical_name)?),
+            *destination,
+            *read_only,
+        )?));
+    }
+    application.add_service(Sourced::generated(service))?;
+    Ok(())
+}
+
+fn assert_volume_create(operation: &serde_json::Value, name: &str, version: &str) {
+    assert_eq!(operation["status"], "exact");
+    assert_eq!(operation["action"], "create");
+    assert_eq!(
+        operation["resource"],
+        serde_json::json!({"kind": "volume", "name": name})
+    );
+    assert_eq!(operation["cli"]["program"], "podman");
+    assert_eq!(operation["cli"]["argv"], serde_json::json!(["volume", "create", name]));
+    assert_eq!(operation["cli"]["external_sensitive_input_required"], false);
+    assert_eq!(operation["libpod"]["method"], "POST");
+    assert_eq!(
+        operation["libpod"]["path_and_query"],
+        format!("/v{version}/libpod/volumes/create")
+    );
+    assert_eq!(operation["libpod"]["body"]["kind"], "json");
+    assert_eq!(operation["libpod"]["body"]["json"], serde_json::json!({"Name": name}));
+}
+
+fn assert_container_create(operation: &serde_json::Value, name: &str, version: &str, mounts: &[(&str, &str, &[&str])]) {
+    assert_eq!(operation["status"], "exact");
+    assert_eq!(operation["action"], "create");
+    assert_eq!(
+        operation["resource"],
+        serde_json::json!({"kind": "container", "name": name})
+    );
+    assert_eq!(operation["cli"]["program"], "podman");
+    let mut argv = vec![
+        "container".to_owned(),
+        "create".to_owned(),
+        "--name".to_owned(),
+        name.to_owned(),
+        "--pull=never".to_owned(),
+    ];
+    for (source, destination, options) in mounts {
+        argv.extend([
+            "--volume".to_owned(),
+            format!("{source}:{destination}:{},copy", options[0]),
+        ]);
+    }
+    argv.push("example.invalid/web:1".to_owned());
+    assert_eq!(operation["cli"]["argv"], serde_json::json!(argv));
+    assert_eq!(operation["cli"]["external_sensitive_input_required"], false);
+    assert_eq!(operation["libpod"]["method"], "POST");
+    assert_eq!(
+        operation["libpod"]["path_and_query"],
+        format!("/v{version}/libpod/containers/create?name={name}")
+    );
+    assert_eq!(operation["libpod"]["body"]["kind"], "json");
+    assert_eq!(operation["libpod"]["body"]["json"]["image"], "example.invalid/web:1");
+    let expected_volumes = mounts
+        .iter()
+        .map(|(source, destination, options)| {
+            serde_json::json!({"Name": source, "Dest": destination, "Options": options})
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        operation["libpod"]["body"]["json"]["volumes"],
+        serde_json::json!(expected_volumes)
+    );
 }
 
 fn minimal_application() -> Result<Application, Box<dyn Error>> {

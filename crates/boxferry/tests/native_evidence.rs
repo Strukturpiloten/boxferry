@@ -9,8 +9,8 @@ use boxferry::{
     Application, COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ConversionKind,
     ExportAdapter, Identifier, ImportAdapter, LossPolicy, ModelError, PODMAN_TARGET, PlatformVersion, PodmanExporter,
     ProtectedString, Provenance, QuadletDocumentInput, QuadletExporter, QuadletImporter, QuadletSource,
-    ResourceOwnership, RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, SourceId,
-    SourceSpan, Sourced, TargetProfile, Volume,
+    ResourceOwnership, RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, Severity,
+    SourceId, SourceSpan, Sourced, TargetProfile, Volume,
 };
 
 const SENTINEL: &str = "opaque-private-sentinel";
@@ -97,11 +97,20 @@ fn evidence_construction_requires_provenance_and_export_loss_keeps_every_origin(
 }
 
 #[test]
+fn quadlet_source_keeps_portable_intent_and_reports_opaque_evidence_on_every_exporter() -> Result<(), Box<dyn Error>> {
+    assert_quadlet_evidence_routes(false)
+}
+
+#[test]
+fn protected_quadlet_volume_identity_retains_evidence_and_refuses_podman_output() -> Result<(), Box<dyn Error>> {
+    assert_quadlet_evidence_routes(true)
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "one route contract deliberately verifies all three exporter artifacts"
 )]
-fn quadlet_source_keeps_portable_intent_and_reports_opaque_evidence_on_every_exporter() -> Result<(), Box<dyn Error>> {
+fn assert_quadlet_evidence_routes(protected_runtime_identity: bool) -> Result<(), Box<dyn Error>> {
     const VOLUME_SOURCE: &str = concat!(
         "[Volume]\n",
         "VolumeName=data-runtime\n",
@@ -122,16 +131,32 @@ fn quadlet_source_keeps_portable_intent_and_reports_opaque_evidence_on_every_exp
         "PodmanArgs=--secret=opaque-private-sentinel\n",
     );
 
+    // Preserve the original authored source for the protected-name refusal case;
+    // omit only that field for the separately tested portable-output case.
+    let volume_source = if protected_runtime_identity {
+        VOLUME_SOURCE.to_owned()
+    } else {
+        VOLUME_SOURCE.replace("VolumeName=data-runtime\n", "")
+    };
     let source = QuadletSource::parse(
         Identifier::new("native-evidence")?,
         [
-            QuadletDocumentInput::new("data.volume", QuadletSourceId::new(41), VOLUME_SOURCE),
+            QuadletDocumentInput::new("data.volume", QuadletSourceId::new(41), &volume_source),
             QuadletDocumentInput::new("web.container", QuadletSourceId::new(42), CONTAINER_SOURCE),
         ],
     )?
     .into_source();
     let imported = QuadletImporter::new()?.import(&source);
     let application = imported.application().ok_or("application expected")?;
+    let imported_volume = application.volumes().first().ok_or("volume expected")?.value();
+    assert_eq!(
+        imported_volume.runtime_name().map(|name| name.value().is_sensitive()),
+        protected_runtime_identity.then_some(true)
+    );
+    assert_eq!(
+        imported_volume.runtime_name().map(|name| name.value().expose()),
+        protected_runtime_identity.then_some("data-runtime")
+    );
     let evidence = application.retained_native_evidence();
     assert_eq!(evidence.len(), 5);
     assert!(matches!(
@@ -150,7 +175,7 @@ fn quadlet_source_keeps_portable_intent_and_reports_opaque_evidence_on_every_exp
         .iter()
         .map(|segment| {
             let text = segment.value().expose();
-            let start = VOLUME_SOURCE.find(text).ok_or("physical segment in source")?;
+            let start = volume_source.find(text).ok_or("physical segment in source")?;
             Ok(Some(SourceSpan::new(start, start + text.len())?))
         })
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
@@ -196,7 +221,7 @@ fn quadlet_source_keeps_portable_intent_and_reports_opaque_evidence_on_every_exp
     let volume = quadlet_output.file("data.volume").ok_or("volume expected")?.text();
     assert!(container.contains("Image=example.invalid/web:1"));
     assert!(container.contains("Notify=healthy"));
-    assert!(volume.contains("VolumeName=data-runtime"));
+    assert_eq!(volume.contains("VolumeName=data-runtime"), protected_runtime_identity);
     assert!(volume.contains("Driver=local"));
     assert!(volume.contains("Copy=true"));
     assert!(volume.contains("User=1000"));
@@ -206,12 +231,57 @@ fn quadlet_source_keeps_portable_intent_and_reports_opaque_evidence_on_every_exp
 
     let podman = PodmanExporter::new()?.plan(application, &target)?;
     assert_evidence_losses(&podman, &expected);
+    if protected_runtime_identity {
+        assert_protected_podman_volume_refusal(&podman)?;
+        return Ok(());
+    }
     let podman_result = podman.authorize(LossPolicy::AllowPartial);
     let podman_output = podman_result.output().ok_or("Podman output expected")?;
     assert!(podman_output.deployment_json().contains("example.invalid/web:1"));
     assert_no_opaque_native_values(podman_output.deployment_json());
     assert_no_opaque_native_values(podman_output.commands_shell());
     assert_private(&podman_result);
+    Ok(())
+}
+
+fn assert_protected_podman_volume_refusal(
+    plan: &boxferry::ConversionPlan<boxferry::PodmanOutput>,
+) -> Result<(), Box<dyn Error>> {
+    assert!(plan.candidate().is_none());
+    let refusals = plan
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.subject() == "volumes.data.runtime_name")
+        .collect::<Vec<_>>();
+    assert_eq!(refusals.len(), 1);
+    let refusal = refusals.first().ok_or("protected volume refusal expected")?;
+    assert_eq!(refusal.kind(), ConversionKind::Invalid);
+    let diagnostics =
+        plan.diagnostics()
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code().as_str() == "BFP0008"
+                    && diagnostic.severity() == Severity::Error
+                    && diagnostic.fields().iter().any(|field| {
+                        field.name() == "subject" && field.value().redacted() == "volumes.data.runtime_name"
+                    })
+            })
+            .count();
+    assert_eq!(diagnostics, 1);
+    assert!(!format!("{plan:?}").contains("data-runtime"));
+    for policy in [
+        LossPolicy::ExactOnly,
+        LossPolicy::AllowApproximate,
+        LossPolicy::AllowPartial,
+    ] {
+        let result = plan.clone().authorize(policy);
+        assert!(
+            result.output().is_none(),
+            "{policy:?} must not expose a protected volume identity"
+        );
+        assert_private(&result);
+        assert!(!format!("{result:?}").contains("data-runtime"));
+    }
     Ok(())
 }
 

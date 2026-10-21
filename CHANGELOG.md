@@ -7,6 +7,11 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Preserve explicit public Podman volume runtime names consistently in declarations and named
+  mounts, retaining external ownership and refusing protected names, collisions, and undeclared
+  logical references under every loss policy
+  ([#467](https://github.com/Strukturpiloten/boxferry/issues/467)).
+
 - [**breaking**] Require Rust 1.98.1 across BoxFerry and the Lens repositories, replacing the
   Rust 1.85 minimum. Update diagnostic-bundle ZIP generation to the advisory-fixed 9.0.3 line,
   without enabling extraction or changing archive privacy and size limits

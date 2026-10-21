@@ -1,6 +1,10 @@
 //! Neutral application model to reviewable Podman deployment artifacts.
 
-use std::{error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use boxferry_engine::{
     ConversionKind, ConversionOutcome, ConversionPlan, Diagnostic, DiagnosticCode, DiagnosticField, DiagnosticValue,
@@ -257,6 +261,7 @@ struct Mapping<'a> {
     exporter: &'a PodmanExporter,
     application: &'a Application,
     intent: Option<DeploymentIntent>,
+    volume_identities: BTreeMap<String, String>,
     outcomes: Vec<ConversionOutcome>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -267,6 +272,7 @@ impl<'a> Mapping<'a> {
             exporter,
             application,
             intent: Some(intent),
+            volume_identities: BTreeMap::new(),
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -274,6 +280,7 @@ impl<'a> Mapping<'a> {
 
     fn map_application(&mut self) {
         self.exact("application");
+        self.prepare_volume_identities();
         self.map_networks();
         self.map_volumes();
         self.map_secrets();
@@ -351,8 +358,11 @@ impl<'a> Mapping<'a> {
         for volume in self.application.volumes() {
             let volume = volume.value();
             let subject = format!("volumes.{}", volume.name().as_str());
+            let Some(identity) = self.volume_identities.get(volume.name().as_str()).cloned() else {
+                continue;
+            };
             let result = self
-                .resource_id(ResourceKind::Volume, volume.name().as_str())
+                .resource_id(ResourceKind::Volume, &identity)
                 .and_then(|id| match volume.ownership() {
                     ResourceOwnership::Application => VolumeIntent::new(id).map(DeploymentResource::Volume),
                     ResourceOwnership::External | ResourceOwnership::Implicit | ResourceOwnership::Uncertain => {
@@ -361,8 +371,7 @@ impl<'a> Mapping<'a> {
                     _ => ExternalPrecondition::new(id).map(DeploymentResource::ExternalPrecondition),
                 });
             self.add_resource_result(&subject, result);
-            if volume.runtime_name().is_some()
-                || volume.driver().is_some()
+            if volume.driver().is_some()
                 || volume.device().is_some()
                 || volume.volume_type().is_some()
                 || volume.options().is_some()
@@ -378,6 +387,74 @@ impl<'a> Mapping<'a> {
                     "PodmanLens volume intent does not yet expose all neutral volume settings",
                 );
             }
+        }
+    }
+
+    fn prepare_volume_identities(&mut self) {
+        let declared_names = self
+            .application
+            .volumes()
+            .iter()
+            .map(|sourced| sourced.value().name().as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        let identities = self
+            .application
+            .volumes()
+            .iter()
+            .map(|sourced| {
+                let volume = sourced.value();
+                let logical_name = volume.name().as_str().to_owned();
+                let target_name = match volume.runtime_name() {
+                    None => Some(logical_name.clone()),
+                    Some(runtime_name) if runtime_name.value().is_sensitive() => None,
+                    Some(runtime_name) => Some(runtime_name.value().expose().to_owned()),
+                };
+                (logical_name, target_name)
+            })
+            .collect::<Vec<_>>();
+        let mut owners = BTreeMap::<String, String>::new();
+        for (logical_name, target_name) in identities {
+            let Some(target_name) = target_name else {
+                self.error(
+                    format!("volumes.{logical_name}.runtime_name"),
+                    "Protected Podman volume runtime names cannot be emitted as target resource identities",
+                );
+                continue;
+            };
+            self.volume_identities.insert(logical_name.clone(), target_name.clone());
+            if let Some(first_logical_name) = owners.get(&target_name) {
+                self.error(
+                    format!("volumes.{logical_name}.runtime_name"),
+                    format!(
+                        "Podman volume identity resolves to the same name as logical volume {first_logical_name:?}"
+                    ),
+                );
+            } else {
+                owners.insert(target_name, logical_name);
+            }
+        }
+
+        let missing_references = self
+            .application
+            .services()
+            .iter()
+            .flat_map(|service| {
+                service
+                    .value()
+                    .mounts()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, mount)| match mount.value().source() {
+                        MountSource::Volume(name) if !declared_names.contains(name.as_str()) => Some(format!(
+                            "services.{}.mounts[{index}].source",
+                            service.value().name().as_str()
+                        )),
+                        _ => None,
+                    })
+            })
+            .collect::<Vec<_>>();
+        for subject in missing_references {
+            self.error(subject, "Named volume mount has no matching logical volume declaration");
         }
     }
 
@@ -672,7 +749,10 @@ impl<'a> Mapping<'a> {
             let destination = AbsoluteContainerPath::new(mount.value().target())?;
             match mount.value().source() {
                 MountSource::Volume(name) => {
-                    let source = self.resource_id(ResourceKind::Volume, name.as_str())?;
+                    let Some(identity) = self.volume_identities.get(name.as_str()) else {
+                        continue;
+                    };
+                    let source = self.resource_id(ResourceKind::Volume, identity)?;
                     container.add_mount(NamedVolumeMount::new(
                         source,
                         destination,
