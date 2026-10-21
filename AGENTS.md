@@ -105,14 +105,16 @@ checkout and must not perform those writes.
 Reserve release-worthy Conventional Commit types for product changes; use `docs`, `test`, `ci`,
 `build`, `style`, or `chore` for non-release work.
 
-The primary agent runs this workflow as GPT-6 Sol with `xhigh` reasoning, defines shared
-contracts before delegation, and reviews/verifies every final diff. Worker subagents may research,
-edit separate repository checkouts, or review bounded tasks but never execute the Git or GitHub
-write steps or share a writer checkout. The complete gate remains the primary agent's
-responsibility, as do integration, final verification, Git writes, and GitHub readback.
+The primary agent runs this workflow as GPT-6 Sol with `xhigh` reasoning,
+reviewing/verifying every final diff. Worker subagents never execute the Git or GitHub
+writes. The complete gate remains the primary agent's responsibility.
 
 ## Workflow and Renovate changes
 
+- GitHub native Docker tests use outer Docker; Podman/Quadlet use Podman. Local development
+  is Podman-only, including Docker guests. Select reviewed backends without fallback;
+  distinguish runner/outer/inner modes. Preserve version evidence/cleanup; follow
+  [ADR 0079](docs/decisions/0079-native-test-runtime-selection.md).
 - Align equivalent local/PR/main/release definitions across BoxFerry, ComposeLens, PodmanLens,
   QuadletLens, DockerLens, and the website. Identify canonical definitions and all consumers;
   coordinate updates, validate each consumer, and link justified differences/follow-ups.

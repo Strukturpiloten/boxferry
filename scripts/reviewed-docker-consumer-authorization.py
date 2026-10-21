@@ -47,10 +47,15 @@ BOX_FILES = frozenset({
     "fixtures/conformance/docker-application/core.compose.yaml",
     *(f"fixtures/conformance/{name}-application/compose.yaml" for name, _, _ in FIXTURES),
 })
+OUTER_RUNTIME_FILES = frozenset({
+    "scripts/native-outer-command.sh",
+    "scripts/native-outer-runtime.sh", "scripts/native-outer-observation.py", "scripts/native-presence.py",
+})
 LENS_FILES = frozenset({
     "scripts/native-conformance.sh", "scripts/native-unix-http.py", "src/reviewed_catalog.rs",
-})
+}) | OUTER_RUNTIME_FILES
 POLICY = {
+    "outer_engine": "docker",
     "scope": "volume-fixtures-only", "lanes": list(LANES), "fixtures": 6, "volumes_per_lane": 23,
     "inert_tests": list(INERT_TESTS), "minimum_available_memory_gib": 6, "minimum_free_disk_gib": 8,
     "outer_pids": 512, "outer_memory_gib": 4, "outer_cpus": 2,

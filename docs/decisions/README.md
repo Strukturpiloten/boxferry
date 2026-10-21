@@ -8,6 +8,10 @@ active table; superseded records are history and are read only when that history
 
 ## Active decisions
 
+[ADR 0079](0079-native-test-runtime-selection.md) selects matching GitHub outer
+runtimes while preserving Podman-only local development; implementation is tracked
+separately from native qualification.
+
 [ADR 0077](0077-workspace-rust198-baseline.md) raises the workspace Rust baseline and updates
 the diagnostic ZIP dependency without changing its privacy or writer-only boundaries.
 

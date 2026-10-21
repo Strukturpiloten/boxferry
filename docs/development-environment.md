@@ -64,7 +64,7 @@ Commit the manifest and lock file together; never replace the Renovate-managed C
 
 ## Local verification
 
-For lightweight pre-push cleanup, run:
+Follow [Podman-only policy](decisions/0079-native-test-runtime-selection.md); pre-push cleanup:
 
 ```console
 ./scripts/format-lint.sh --fix

@@ -1507,6 +1507,8 @@ comparison_bracketed=false
 socket_path={shlex.quote(str(socket_path))}
 run_id=AbCd
 outer=bf-docker-core-AbCd
+outer_target=$outer
+outer_inspect=(podman inspect)
 read() {{
   if [[ $2 == ping_readiness_uptime || $2 == ping_poll_uptime || $2 == ping_handoff_uptime || $2 == comparison_now || $2 == now ]]; then
     printf -v "$2" '%s' 101.00

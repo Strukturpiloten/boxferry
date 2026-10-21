@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 from typing import Any
 
 
@@ -34,6 +35,57 @@ assert CORE_SPEC is not None and CORE_SPEC.loader is not None
 core_artifact = importlib.util.module_from_spec(CORE_SPEC)
 CORE_SPEC.loader.exec_module(core_artifact)
 REPOSITORY_ROOT = pathlib.Path(__file__).resolve().parents[2]
+UNIX_HTTP = None
+UNIX_HTTP_BINDING = None
+OUTER_RUNTIME_FILES = (
+    "scripts/native-outer-command.sh",
+    "scripts/native-outer-runtime.sh", "scripts/native-outer-observation.py", "scripts/native-presence.py",
+)
+# Ownership checks, watchdogs and evidence revocation do not depend on transport.
+UNIX_HTTP_COMMANDS = frozenset({
+    "check-unix-http-binding", "unix-http", "cleanup-core",
+    "apply-volume-fixtures", "cleanup-volume-fixtures", "replay-test-only",
+})
+
+
+def bind_unix_http(path: pathlib.Path, revision: str, digest: str):
+    """Execute held reviewed helper bytes, not a later path-based import."""
+    global UNIX_HTTP, UNIX_HTTP_BINDING
+    UNIX_HTTP = UNIX_HTTP_BINDING = None
+    require(path.is_absolute() and path.resolve(strict=True) == path
+            and path.name == "native-unix-http.py" and path.parent.name == "scripts"
+            and SHA_PATTERN.fullmatch(revision) is not None
+            and DIGEST_PATTERN.fullmatch(digest) is not None,
+            "Unix HTTP helper binding is invalid")
+    root = path.parent.parent
+    require(git(root, "rev-parse", "--show-toplevel") == str(root)
+            and git(root, "rev-parse", "HEAD") == revision
+            and git(root, "status", "--porcelain", "--untracked-files=all") == "",
+            "Unix HTTP helper requires the reviewed clean DockerLens revision")
+    raw = bounded_regular_bytes(path, 256 * 1024)
+    require(hashlib.sha256(raw).hexdigest() == digest, "Unix HTTP helper digest differs")
+    module = types.ModuleType("boxferry_reviewed_native_unix_http")
+    module.__file__ = str(path)
+    exec(compile(raw, str(path), "exec"), module.__dict__)
+    require(callable(getattr(module, "request", None)) and callable(getattr(module, "main", None))
+            and isinstance(getattr(module, "TransportError", None), type),
+            "Unix HTTP helper interface differs")
+    UNIX_HTTP, UNIX_HTTP_BINDING = module, {
+        "schema_version": 1, "transport": "native-unix-http-v1",
+        "docker_lens_revision": revision, "helper_sha256": digest, "helper_path": str(path)}
+    return module
+
+
+def unix_http_binding_arguments() -> list[str]:
+    require(UNIX_HTTP is not None and UNIX_HTTP_BINDING is not None, "Unix HTTP helper is not bound")
+    return ["--unix-http-helper", UNIX_HTTP_BINDING["helper_path"],
+            "--unix-http-revision", UNIX_HTTP_BINDING["docker_lens_revision"],
+            "--unix-http-sha256", UNIX_HTTP_BINDING["helper_sha256"]]
+
+
+def unix_http_evidence() -> dict[str, Any]:
+    unix_http_binding_arguments()
+    return {key: value for key, value in UNIX_HTTP_BINDING.items() if key != "helper_path"}
 
 
 IMAGE_KEYS = {
@@ -768,12 +820,133 @@ def canonical_images(root_text: str, revision: str, script_digest: str) -> dict[
     return {lane: assignments[key] for lane, key in IMAGE_KEYS.items()}
 
 
+def outer_runtime_closure(raw: str) -> dict[str, str]:
+    """Caller-reviewed exact source roster, not a receipt granting authority."""
+    require(type(raw) is str and 0 < len(raw.encode()) <= 16_384, "outer runtime closure is invalid")
+    value = json.loads(raw, object_pairs_hook=no_duplicate_keys)
+    require(type(value) is dict and set(value) == set(OUTER_RUNTIME_FILES)
+            and all(type(digest) is str and DIGEST_PATTERN.fullmatch(digest) is not None
+                    for digest in value.values()), "outer runtime closure differs")
+    return value
+
+
+def outer_run_directory(directory: pathlib.Path, identity: str) -> None:
+    require(re.fullmatch(r"/tmp/boxferry-docker-core\.[A-Za-z0-9]{8}", str(directory)) is not None
+            and directory.resolve(strict=True) == directory, "outer runtime run directory differs")
+    info = directory.lstat()
+    require(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700
+            and info.st_uid == os.geteuid() and identity == f"{info.st_dev}:{info.st_ino}",
+            "outer runtime run identity differs")
+
+
+def outer_runtime_bytes(path: pathlib.Path, *, private=False) -> bytes:
+    require(path.is_absolute() and path.resolve(strict=True) == path, "outer runtime source path differs")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as source:
+        before = os.fstat(source.fileno())
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and 0 < before.st_size <= 262_144,
+                "outer runtime source file differs")
+        if private:
+            require(before.st_uid == os.geteuid() and stat.S_IMODE(before.st_mode) == 0o600,
+                    "outer runtime snapshot ownership differs")
+        raw = source.read(262_145)
+        stamp = lambda info: (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+                              info.st_mode, info.st_uid, info.st_gid, info.st_nlink)
+        require(len(raw) == before.st_size and stamp(before) == stamp(os.fstat(source.fileno()))
+                and stamp(before) == stamp(path.lstat()), "outer runtime source changed")
+    return raw
+
+
+def outer_runtime_sources(root: pathlib.Path, revision: str, closure: str) -> dict[str, bytes]:
+    expected = outer_runtime_closure(closure)
+    require(root.is_absolute() and root.resolve(strict=True) == root
+            and SHA_PATTERN.fullmatch(revision) is not None, "outer runtime source root differs")
+    require(git(root, "rev-parse", "--show-toplevel") == str(root)
+            and git(root, "rev-parse", "HEAD") == revision
+            and git(root, "status", "--porcelain", "--untracked-files=all") == "",
+            "outer runtime source is not the reviewed clean revision")
+    held = {name: outer_runtime_bytes(root / name) for name in OUTER_RUNTIME_FILES}
+    require(all(hashlib.sha256(raw).hexdigest() == expected[name] for name, raw in held.items()),
+            "outer runtime source digest differs")
+    return held
+
+
+def check_outer_runtime_snapshot(directory: pathlib.Path, identity: str, closure: str) -> str:
+    outer_run_directory(directory.parent, identity)
+    expected = outer_runtime_closure(closure)
+    require(directory.name == "outer-runtime-helper" and directory.resolve(strict=True) == directory,
+            "outer runtime snapshot path differs")
+    info = directory.lstat()
+    require(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == os.geteuid(),
+            "outer runtime snapshot directory differs")
+    names = {pathlib.Path(name).name for name in expected}
+    require({entry.name for entry in directory.iterdir()} == names, "outer runtime snapshot roster differs")
+    for name, digest in expected.items():
+        require(hashlib.sha256(outer_runtime_bytes(directory / pathlib.Path(name).name, private=True)).hexdigest() == digest,
+                "outer runtime snapshot digest differs")
+    outer_run_directory(directory.parent, identity)
+    return volume_identity_digest(expected)
+
+
+def capture_outer_runtime(root: pathlib.Path, revision: str, closure: str,
+                          directory: pathlib.Path, identity: str) -> str:
+    outer_run_directory(directory.parent, identity)
+    require(directory.name == "outer-runtime-helper", "outer runtime snapshot destination differs")
+    held = outer_runtime_sources(root, revision, closure)
+    directory.mkdir(mode=0o700)
+    for name, raw in held.items():
+        descriptor = os.open(directory / pathlib.Path(name).name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+    return check_outer_runtime_snapshot(directory, identity, closure)
+
+
 def no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     value: dict[str, Any] = {}
     for key, item in pairs:
         require(key not in value, "request JSON repeats a key")
         value[key] = item
     return value
+
+
+def outer_runtime_command(directory: pathlib.Path, identity: str, closure: str, engine: str) -> list[str]:
+    """Build only the reviewed producer's fixed bridge argv; no probe or timer."""
+    require(engine in {"podman", "docker"}, "outer runtime engine differs")
+    require(isinstance(directory, pathlib.Path) and type(identity) is str, "outer runtime context missing")
+    check_outer_runtime_snapshot(directory, identity, closure)
+    return ["bash", str(directory / "native-outer-command.sh"), "--engine", engine,
+            "--directory", str(directory.parent)]
+
+
+def outer_runtime_observation(directory: pathlib.Path, identity: str) -> dict[str, Any]:
+    """Whitelist a fresh private canonical preflight audit; never replay authority."""
+    outer_run_directory(directory, identity)
+    record = json.loads(outer_runtime_bytes(directory / "outer-runtime.json", private=True), object_pairs_hook=no_duplicate_keys)
+    require(type(record) is dict and set(record) == {"schema_version", "kind", "native_qualified", "runner",
+            "runner_image_version", "client_version", "server_version", "storage_root", "peer"},
+            "outer runtime audit shape differs")
+    require(type(record["schema_version"]) is int and record["schema_version"] == 1
+            and record["kind"] == "test-only-outer-docker-prerequisite" and record["native_qualified"] is False
+            and record["runner"] == "ubuntu-24.04", "outer runtime audit qualification differs")
+    peer = record["peer"]
+    require(type(peer) is dict and peer.get("kind") == "local-root-dockerd-observation"
+            and peer.get("socket") == "/var/run/docker.sock"
+            and type(peer.get("uid")) is int and type(peer.get("gid")) is int
+            and peer["uid"] == peer["gid"] == 0, "outer runtime local/rootful observation differs")
+    require(type(record["runner_image_version"]) is str
+            and re.fullmatch(r"[0-9]{8}\.[0-9]+\.[0-9]+", record["runner_image_version"]) is not None,
+            "outer runner image observation differs")
+    for field in ("client_version", "server_version"):
+        require(type(record[field]) is str and len(record[field]) <= 128
+                and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9_.-]+)?", record[field]) is not None,
+                "outer version observation differs")
+    outer_run_directory(directory, identity)
+    return {"qualification": "test-only-outer-prerequisite-observation", "engine": "docker",
+            "runner": record["runner"], "runner_image_version": record["runner_image_version"],
+            "client_version": record["client_version"], "server_version": record["server_version"],
+            "local": True, "rootful": True, "native_qualified": False}
 
 
 def bounded_regular_bytes(path: pathlib.Path, limit: int, *, allow_empty: bool = False) -> bytes:
@@ -1099,30 +1272,15 @@ def core_request(
     return record["requests"][0]
 
 
-class UnixConnection(http.client.HTTPConnection):
-    def __init__(self, socket_path: pathlib.Path) -> None:
-        super().__init__("localhost", timeout=10)
-        self.socket_path = socket_path
-
-    def connect(self) -> None:
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        self.sock.connect(str(self.socket_path))
-
-
 def engine_request(socket_path: pathlib.Path, method: str, path: str, body: bytes | None = None,
                    *, timeout: float = 10) -> tuple[int, bytes]:
-    connection = UnixConnection(socket_path)
-    connection.timeout = timeout
+    unix_http_binding_arguments()
     try:
-        headers = {"Content-Type": "application/json"} if body is not None else {}
-        connection.request(method, path, body=body, headers=headers)
-        response = connection.getresponse()
-        data = response.read(16_385)
-        require(len(data) <= 16_384, "Engine response exceeded the core limit")
-        return response.status, data
-    finally:
-        connection.close()
+        return UNIX_HTTP.request(str(socket_path), method, path, body, timeout=timeout,
+                                 max_response_bytes=16_384, max_request_bytes=1_048_576,
+                                 content_type="application/json" if body is not None else None)
+    except UNIX_HTTP.TransportError as error:
+        raise ContractError("Engine Unix HTTP request failed; mutation outcome may be uncertain") from error
 
 
 def volume_document(raw: bytes) -> dict[str, Any]:
@@ -1642,7 +1800,8 @@ def host_metadata_proof(root: pathlib.Path, binary: pathlib.Path, receipt: pathl
 
 
 def application_metadata(outer: str, run: str, socket_path: pathlib.Path,
-                         helper: pathlib.Path, deadline_boottime: str, binary_sha256: str) -> str:
+                         helper: pathlib.Path, deadline_boottime: str, binary_sha256: str,
+                         *, outer_command: list[str], container_id: str) -> str:
     """Independent CLI SERVER evidence plus the attested public Lens helper; no curl."""
     require(outer == f"bf-docker-core-{run}" and re.fullmatch(r"[A-Za-z0-9_]{1,64}", run) is not None
             and socket_path == pathlib.Path(f"/tmp/boxferry-docker-core.{run}/socket/docker.sock")
@@ -1672,10 +1831,14 @@ def application_metadata(outer: str, run: str, socket_path: pathlib.Path,
             require(digest.hexdigest() == binary_sha256, "helper snapshot bytes differ")
         version_template = "{{with .Server}}{{.Version}} {{.APIVersion}}{{end}}"
         info_template = "{{println .ServerVersion}}{{println .DockerRootDir}}{{range .SecurityOptions}}{{println .}}{{end}}"
-        outcome, cli_version = readiness_read(["podman", "exec", outer, "docker", "--host", "unix:///boxferry-core/docker.sock",
+        command, target = outer_command, container_id
+        require(type(command) is list and command and all(type(value) is str for value in command)
+                and type(target) is str and DIGEST_PATTERN.fullmatch(target) is not None,
+                "outer metadata container identity differs")
+        outcome, cli_version = readiness_read([*command, "exec", target, "docker", "--host", "unix:///boxferry-core/docker.sock",
                                               "version", "--format", version_template], deadline)
         require(outcome == "read", "CLI server version unavailable")
-        outcome, cli_info = readiness_read(["podman", "exec", outer, "docker", "--host", "unix:///boxferry-core/docker.sock",
+        outcome, cli_info = readiness_read([*command, "exec", target, "docker", "--host", "unix:///boxferry-core/docker.sock",
                                            "info", "--format", info_template], deadline)
         require(outcome == "read", "CLI server info unavailable")
         milliseconds = min(3500, int((deadline - time.monotonic() - 0.25) * 1000))
@@ -1707,6 +1870,8 @@ def application_metadata(outer: str, run: str, socket_path: pathlib.Path,
 
 def podman_presence(kind: str, name: str, run: str) -> str:
     """Observe only an exact run-owned name; return a closed, private result."""
+    if os.environ.get("DOCKERLENS_OUTER_ENGINE", "podman") != "podman":
+        return "unknown"
     prefix = {"container": "bf-docker-core-", "volume": "bf-docker-core-data-"}.get(kind)
     if prefix is None or re.fullmatch(r"[A-Za-z0-9_]{1,64}", run) is None or name != prefix + run:
         return "unknown"
@@ -1929,8 +2094,13 @@ def readiness_socket_observations(socket_path: pathlib.Path, deadline: float) ->
     return result
 
 
-def readiness_outer_record(raw: bytes, outer: str) -> dict:
+def readiness_outer_record(raw: bytes, outer: str, *, native=False) -> dict:
     record = volume_document(raw)
+    if native:
+        require(type(record.get("Config")) is dict and type(record.get("State")) is dict
+                and record.get("Name") in (outer, "/" + outer), "readiness native inspect shape differs")
+        record = {"id": record.get("Id"), "name": outer, "labels": record["Config"].get("Labels"),
+                  "state": record["State"].get("Status"), "running": record["State"].get("Running")}
     require(set(record) == {"id", "name", "labels", "state", "running"}
             and isinstance(record["id"], str) and DIGEST_PATTERN.fullmatch(record["id"]) is not None
             and record["name"] == outer and isinstance(record["labels"], dict)
@@ -1940,7 +2110,8 @@ def readiness_outer_record(raw: bytes, outer: str) -> dict:
     return record
 
 
-def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, registered: bool) -> dict[str, str]:
+def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, registered: bool,
+                          outer_command: list[str] | None = None, container_id: str | None = None) -> dict[str, str]:
     """Private observations only; this cannot establish startup cause or readiness."""
     result = {"socket": "unavailable", "outer": "not-registered", "state": "unverified", "logs": "not-read",
               "socket-owner": "unknown", "socket-mode": "unknown", "socket-lifetime": "unknown",
@@ -1951,6 +2122,13 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
         result["outer"] = "invalid-boundary"
         return result
     deadline = time.monotonic() + 8
+    native = outer_command is not None
+    if native and (type(container_id) is not str or DIGEST_PATTERN.fullmatch(container_id) is None):
+        result["outer"] = "invalid-boundary"
+        return result
+    inspect = ([*outer_command, "observe", "container"] if native else
+               ["podman", "inspect", "--format", READINESS_INSPECT_FORMAT])
+    target = container_id if native else outer
     try:
         root = socket_path.parent.parent.lstat()
         require(stat.S_ISDIR(root.st_mode) and stat.S_IMODE(root.st_mode) == 0o700 and root.st_uid == os.geteuid(),
@@ -1965,12 +2143,13 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
     try:
         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             previous[signum] = signal.signal(signum, cancelled)
-        outcome, raw = readiness_read(["podman", "inspect", "--format", READINESS_INSPECT_FORMAT, outer], deadline)
+        outcome, raw = readiness_read([*inspect, target], deadline)
         if outcome != "read":
             result["outer"] = outcome
             return result
         try:
-            record = readiness_outer_record(raw, outer)
+            record = readiness_outer_record(raw, outer, native=native)
+            require(not native or record["id"] == container_id, "readiness held container differs")
         except ContractError:
             result["outer"] = "malformed"
             return result
@@ -1984,14 +2163,14 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
         else:
             result["state"] = "unknown"
         result.update(readiness_socket_observations(socket_path, deadline))
-        outcome, raw = readiness_read(["podman", "logs", "--tail", "80", record["id"]], deadline, merge_output=True)
+        logs = [*outer_command, "logs"] if native else ["podman", "logs", "--tail", "80"]
+        outcome, raw = readiness_read([*logs, record["id"]], deadline, merge_output=True)
         result["logs"] = readiness_log_category(raw) if outcome == "read" else outcome
-        outcome, raw = readiness_read(["podman", "inspect", "--format", READINESS_INSPECT_FORMAT,
-                                       record["id"]], deadline)
+        outcome, raw = readiness_read([*inspect, record["id"]], deadline)
         result["outer-recheck"] = outcome
         if outcome == "read":
             try:
-                current = readiness_outer_record(raw, outer)
+                current = readiness_outer_record(raw, outer, native=native)
                 result["outer-recheck"] = "stable" if (
                     current["id"] == record["id"]
                     and current["labels"].get("io.boxferry.docker-core-run") == run) else "changed"
@@ -2013,8 +2192,30 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument("--unix-http-helper", type=pathlib.Path)
+    parser.add_argument("--unix-http-revision")
+    parser.add_argument("--unix-http-sha256")
+    parser.add_argument("--outer-runtime-closure-json")
+    parser.add_argument("--outer-runtime-directory", type=pathlib.Path)
+    parser.add_argument("--outer-runtime-run-identity")
+    parser.add_argument("--outer-runtime-engine")
+    parser.add_argument("--outer-runtime-container-id")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("check-unix-http-binding")
+    transport = commands.add_parser("unix-http")
+    transport.add_argument("arguments", nargs=argparse.REMAINDER)
+    runtime_capture = commands.add_parser("capture-outer-runtime")
+    runtime_capture.add_argument("--docker-lens-root", type=pathlib.Path, required=True)
+    runtime_capture.add_argument("--docker-lens-revision", required=True)
+    runtime_capture.add_argument("--directory", type=pathlib.Path, required=True)
+    runtime_capture.add_argument("--run-identity", required=True)
+    runtime_check = commands.add_parser("check-outer-runtime")
+    runtime_check.add_argument("--directory", type=pathlib.Path, required=True)
+    runtime_check.add_argument("--run-identity", required=True)
+    runtime_observation = commands.add_parser("outer-runtime-observation")
+    runtime_observation.add_argument("--directory", type=pathlib.Path, required=True)
+    runtime_observation.add_argument("--run-identity", required=True)
     presence = commands.add_parser("podman-presence")
     presence.add_argument("--kind", choices=("container", "volume"), required=True)
     presence.add_argument("--name", required=True)
@@ -2194,6 +2395,32 @@ def main() -> int:
     deadline.add_argument("--ready-file")
     args = parser.parse_args()
     try:
+        if args.command in UNIX_HTTP_COMMANDS and any(value is not None for value in
+                (args.unix_http_helper, args.unix_http_revision, args.unix_http_sha256)):
+            require(all(value is not None for value in
+                    (args.unix_http_helper, args.unix_http_revision, args.unix_http_sha256)),
+                    "Unix HTTP helper binding is incomplete")
+            bind_unix_http(args.unix_http_helper, args.unix_http_revision, args.unix_http_sha256)
+        if args.command in UNIX_HTTP_COMMANDS:
+            unix_http_binding_arguments()
+        if args.command == "check-unix-http-binding":
+            print(json.dumps(unix_http_evidence(), sort_keys=True))
+            return 0
+        if args.command == "unix-http":
+            unix_http_binding_arguments()
+            forwarded = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
+            sys.argv = [UNIX_HTTP.__file__, *forwarded]
+            return UNIX_HTTP.main()
+        if args.command == "capture-outer-runtime":
+            print(capture_outer_runtime(args.docker_lens_root, args.docker_lens_revision,
+                  args.outer_runtime_closure_json, args.directory, args.run_identity))
+            return 0
+        if args.command == "check-outer-runtime":
+            print(check_outer_runtime_snapshot(args.directory, args.run_identity, args.outer_runtime_closure_json))
+            return 0
+        if args.command == "outer-runtime-observation":
+            print(json.dumps(outer_runtime_observation(args.directory, args.run_identity), sort_keys=True, separators=(",", ":")))
+            return 0
         if args.command == "podman-presence":
             outcome = podman_presence(args.kind, args.name, args.run)
             print(outcome)
@@ -2201,7 +2428,11 @@ def main() -> int:
         elif args.command == "readiness-ping":
             print(" ".join(readiness_ping(args.socket, args.deadline_boottime).values()))
         elif args.command == "application-metadata":
-            print(application_metadata(args.outer, args.run, args.socket, args.helper, args.deadline_boottime, args.binary_sha256))
+            command = outer_runtime_command(args.outer_runtime_directory, args.outer_runtime_run_identity,
+                                            args.outer_runtime_closure_json, args.outer_runtime_engine)
+            print(application_metadata(args.outer, args.run, args.socket, args.helper, args.deadline_boottime,
+                                       args.binary_sha256, outer_command=command,
+                                       container_id=args.outer_runtime_container_id))
         elif args.command == "verify-host-metadata":
             producer = (json.loads(read_private_artifact(args.producer_receipt), object_pairs_hook=no_duplicate_keys)
                         if args.producer_receipt is not None else None)
@@ -2211,7 +2442,13 @@ def main() -> int:
         elif args.command == "readiness-diagnostics":
             result = readiness_ping_observations(args.ping_curl_exit, args.ping_http_status,
                                                 args.ping_curl_error, args.ping_collector, args.ping_teardown_signal)
-            result.update(readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered))
+            command = (outer_runtime_command(args.outer_runtime_directory, args.outer_runtime_run_identity,
+                                             args.outer_runtime_closure_json, args.outer_runtime_engine)
+                       if args.outer_runtime_directory is not None else None)
+            require(command is not None or os.environ.get("DOCKERLENS_OUTER_ENGINE", "podman") == "podman",
+                    "legacy diagnostics are Podman-only")
+            result.update(readiness_diagnostics(args.outer, args.run, args.socket, registered=args.registered,
+                                               outer_command=command, container_id=args.outer_runtime_container_id))
             print("readiness observations: " + " ".join(f"{key}={value}" for key, value in result.items())
                   + "; startup-cause=unestablished")
         elif args.command == "parent-start":

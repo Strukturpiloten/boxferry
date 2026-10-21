@@ -78,7 +78,7 @@ exists; invent neither. One `github-digest` manager owns this pin; a later rule 
 approval and disables automerge. Review producer/consumer together: both actors' permissions,
 exact-head admission, privacy, and fail-closed cases.
 
-The Docker consumer bridge reuses this pin, manager and approval rule.
+The [consumer runtime](decisions/0079-native-test-runtime-selection.md#runner-prerequisites-and-renovate) reuses this pin, manager and approval rule.
 Its `.github/workflows/reviewed-docker-consumer-validation.yml` adds no image pins.
 Exact-pair execution authorization needs renewed source/closure review, never
 automatic dependency updates or generated receipts. Other Lens products and

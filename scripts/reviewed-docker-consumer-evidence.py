@@ -32,6 +32,53 @@ def identity(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def runtime_source_binding(pair):
+    """Sanitized reviewed source identity, never evidence of runtime execution."""
+    dependency = pair["docker_lens"]
+    files = {name: dependency["files"][name] for name in sorted(auth.OUTER_RUNTIME_FILES)}
+    auth.sha(dependency["revision"], auth.SHA)
+    auth.sha(dependency["source_sha256"])
+    for digest in files.values():
+        auth.sha(digest)
+    return {"qualification": "reviewed-source-identity-only", "engine": auth.POLICY["outer_engine"],
+            "docker_lens_revision": dependency["revision"], "docker_lens_source_sha256": dependency["source_sha256"],
+            "files": files, "closure_sha256": identity(files)}
+
+
+OUTER_PROJECTION_PREFIX = b"OUTER-RUNTIME-OBSERVATION "
+OUTER_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9_.-]+)?\Z")
+
+
+def validate_outer_runtime(value):
+    auth.keys(value, ("qualification", "engine", "runner", "runner_image_version", "client_version",
+                      "server_version", "rootful", "local", "native_qualified"))
+    auth.require(value["qualification"] == "test-only-outer-prerequisite-observation"
+                 and value["engine"] == "docker" and value["runner"] == "ubuntu-24.04"
+                 and value["rootful"] is True and value["local"] is True and value["native_qualified"] is False)
+    auth.require(type(value["runner_image_version"]) is str
+                 and re.fullmatch(r"[0-9]{8}\.[0-9]+\.[0-9]+", value["runner_image_version"]) is not None)
+    for field in ("client_version", "server_version"):
+        auth.require(type(value[field]) is str and len(value[field]) <= 128
+                     and OUTER_VERSION.fullmatch(value[field]) is not None)
+
+
+def outer_runtime_from_log(raw: bytes, lane: str):
+    """Whole successful private log, never a first-match or native stdout claim."""
+    auth.require(type(raw) is bytes and 0 < len(raw) <= 16 * 1024 * 1024)
+    auth.require(lane in auth.LANES)
+    lines = [line for line in raw.split(b"\n") if OUTER_PROJECTION_PREFIX.rstrip() in line]
+    auth.require(len(lines) == 1 and lines[0].startswith(OUTER_PROJECTION_PREFIX)
+                 and len(lines[0]) <= 2048 and raw.endswith(b"\n"))
+    # Only the final harness-owned handoff can emit this exact trailing pair.
+    auth.require(len(raw.split(b"\n")) >= 3 and raw.split(b"\n")[-3] == lines[0]
+                 and re.fullmatch(rb"VOLUME-ONLY REHEARSAL CHECKS-PASSED: lane=" + lane.encode() + rb" fixtures=6 volumes=23 cleanup=verified acceptance=pending-reviewed-native-evidence; no container/image workload or six-application acceptance",
+                                  raw.split(b"\n")[-2]) is not None)
+    value = json.loads(lines[0][len(OUTER_PROJECTION_PREFIX):], object_pairs_hook=auth.no_duplicates)
+    validate_outer_runtime(value)
+    auth.require(lines[0] == OUTER_PROJECTION_PREFIX + encoded(value).rstrip(b"\n"))
+    return value
+
+
 def build_command(lens: Path, profile: str) -> list[str]:
     auth.require(profile in {"volume-fixtures", "host-metadata"})
     example, features = ("docker-volume-fixture-rehearsal", "compose,docker") if profile == "volume-fixtures" else (
@@ -189,13 +236,16 @@ def validate_volume(value, *, lane, pair, lens, builds, files, box_files):
 
 
 def validate_lane(consumer, volume, *, expected_context, lane, pair, lens, files, box_files):
-    auth.keys(consumer, ("schema", "scope", "lane", "result", "context", "builds", "inert", "volume_proof_sha256"))
+    auth.keys(consumer, ("schema", "scope", "lane", "result", "context", "builds", "inert", "volume_proof_sha256",
+                         "source_binding", "outer_runtime"))
+    auth.require(consumer["source_binding"] == runtime_source_binding(pair))
+    validate_outer_runtime(consumer["outer_runtime"])
     auth.sha(consumer["volume_proof_sha256"])
     auth.require(consumer["volume_proof_sha256"] == hashlib.sha256(encoded(volume)).hexdigest())
     auth.keys(consumer["context"], expected_context)
     for field in ("run_id", "run_attempt", "box_pr", "lens_pr"):
         auth.positive(consumer["context"][field])
-    auth.require(type(consumer["schema"]) is int and consumer["schema"] == 1
+    auth.require(type(consumer["schema"]) is int and consumer["schema"] == 2
                  and consumer["scope"] == auth.POLICY["scope"] and consumer["lane"] == lane
                  and consumer["result"] == "checks-passed" and consumer["context"] == expected_context)
     builds = consumer["builds"]
