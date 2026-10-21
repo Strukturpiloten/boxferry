@@ -2192,7 +2192,7 @@ def readiness_diagnostics(outer: str, run: str, socket_path: pathlib.Path, *, re
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--unix-http-helper", type=pathlib.Path)
     parser.add_argument("--unix-http-revision")
     parser.add_argument("--unix-http-sha256")

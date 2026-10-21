@@ -3194,6 +3194,22 @@ class ReadinessDiagnosticTests(unittest.TestCase):
             self.assertEqual(result["outer"], "wrong-owner" if outcome == "read" else "read-failed")
             self.assertEqual(calls.call_count, 1)
 
+    def test_cli_runtime_flags_require_exact_names_before_read_only_parent_command(self) -> None:
+        for option in ("--outer-runtime-e", "--outer-runtime-director"):
+            with self.subTest(option=option):
+                result = subprocess.run([sys.executable, str(SOURCE), option, "podman", "parent-start",
+                                         "--parent-pid", str(os.getpid())], capture_output=True,
+                                        text=True, timeout=3, check=False)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertTrue(result.stderr)
+        result = subprocess.run([sys.executable, str(SOURCE), "--outer-runtime-engine", "podman", "parent-start",
+                                 "--parent-pid", str(os.getpid())], capture_output=True,
+                                text=True, timeout=3, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(result.stdout.strip().isdecimal(), result.stdout)
+        self.assertEqual(result.stderr, "")
+
     def test_cli_unregistered_diagnostic_is_sanitized_without_native_execution(self) -> None:
         result = subprocess.run([sys.executable, str(SOURCE), "readiness-diagnostics", "--outer", "bf-docker-core-test",
                                  "--run", "test", "--socket", str(self.socket_path)], capture_output=True,
