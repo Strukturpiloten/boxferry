@@ -16,5 +16,3 @@ BFP0007|services.webserver.environment.PAPERLESS_TIME_ZONE
 BFP0007|services.webserver.environment.USERMAP_UID
 BFP0007|services.webserver.environment.PAPERLESS_WEBSERVER_WORKERS
 BFP0007|services.webserver.ports
-BFP0007|services.broker.runtime_name
-BFP0007|services.db.runtime_name

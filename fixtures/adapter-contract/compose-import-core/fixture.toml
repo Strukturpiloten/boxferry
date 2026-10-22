@@ -85,7 +85,6 @@ diagnostic-codes = [
   "BFP0007",
   "BFP0007",
   "BFP0007",
-  "BFP0007",
 ]
 
 [[extensions.scenarios.exports.podman.artifacts]]

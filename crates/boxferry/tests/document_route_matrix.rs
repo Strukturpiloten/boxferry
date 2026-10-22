@@ -210,14 +210,13 @@ fn exact_generated_artifacts_reimport_to_fixed_points_and_are_path_independent()
 
             for terminal in &outputs {
                 let chained_directory = root.path().join(format!("chain-{input}-{intermediate}-{terminal}"));
-                let loss_policy = if terminal == "podman" { "partial" } else { "exact" };
                 run_conversion(
                     intermediate,
                     terminal,
                     &first_sources,
                     application_name,
                     &chained_directory,
-                    loss_policy,
+                    "exact",
                 )?;
                 assert_eq!(
                     artifact_bytes(&chained_directory)?,
@@ -369,7 +368,7 @@ fn explicit_files_and_directory_discovery_produce_identical_artifacts() -> Resul
                 .args(["convert", input, output, "--input-directory"])
                 .arg(&input_directory);
             if output == "podman" {
-                command.args(["--podman-target-context", "unknown", "--loss-policy", "partial"]);
+                command.args(["--podman-target-context", "unknown"]);
             }
             if let Some(application_name) = scenario.application_name.as_deref() {
                 command.args(["--application-name", application_name]);
@@ -396,7 +395,7 @@ fn explicit_files_and_directory_discovery_produce_identical_artifacts() -> Resul
                     .collect::<Vec<_>>(),
                 scenario.application_name.as_deref(),
                 &explicit_output,
-                if output == "podman" { "partial" } else { "exact" },
+                "exact",
             )?;
             assert_eq!(
                 artifact_bytes(&discovered_output)?,
@@ -427,7 +426,7 @@ fn every_document_route_validates_planned_artifacts_without_writing() -> Result<
             command.args(["--application-name", application_name]);
         }
         if route.output == "podman" {
-            command.args(["--podman-target-context", "unknown", "--loss-policy", "partial"]);
+            command.args(["--podman-target-context", "unknown"]);
         }
         let result = command.args(["--console-format", "json"]).output()?;
         assert!(
@@ -621,7 +620,7 @@ fn convert_route(route: &Route, fixture: &Path, output: &Path) -> Result<std::pr
         command.args(["--application-name", application_name]);
     }
     if route.output == "podman" {
-        command.args(["--podman-target-context", "unknown", "--loss-policy", "partial"]);
+        command.args(["--podman-target-context", "unknown"]);
     }
     Ok(command
         .arg("--output-directory")
@@ -695,14 +694,7 @@ fn assert_success_report(bytes: &[u8], route: &Route, command_kind: &str) -> Res
         assert_eq!(report["resolved_versions"]["minimum"], "5.4.0");
         assert_eq!(report["resolved_versions"]["maximum"], "6.1.2");
     }
-    assert_eq!(
-        report_diagnostic_codes(&report)?,
-        if route.output == "podman" {
-            vec!["BFP0007"]
-        } else {
-            Vec::new()
-        }
-    );
+    assert!(report_diagnostic_codes(&report)?.is_empty());
     assert_eq!(report["events"], serde_json::json!([]));
     assert_eq!(
         report["output_artifacts"]
@@ -726,27 +718,13 @@ fn assert_podman_artifacts(output_directory: &Path, route: &str) -> Result<(), B
     let review = fs::read_to_string(output_directory.join("podman-commands.sh"))?;
     let deployment: serde_json::Value = serde_json::from_str(&deployment_text)?;
 
-    assert_eq!(deployment["schema_version"], 1, "{route} Podman schema changed");
-    assert!(
-        matches!(
-            deployment["status"].as_str(),
-            Some("exact" | "deferred_sensitive_input")
-        ),
-        "{route} Podman deployment has an unexpected status"
-    );
-    assert!(
-        deployment["connection"].is_null(),
-        "{route} Podman output must remain connection-independent"
-    );
-    assert!(
-        deployment["external_preconditions"].is_array(),
-        "{route} Podman preconditions must be explicit"
-    );
+    assert_podman_deployment_envelope(&deployment, route);
 
     let operations = deployment["operations"]
         .as_array()
         .ok_or_else(|| format!("{route} Podman operations array missing"))?;
     assert!(!operations.is_empty(), "{route} Podman deployment has no operations");
+    assert_authored_podman_container_identity(operations);
     let command_lines = review
         .lines()
         .filter(|line| line.starts_with("podman "))
@@ -826,6 +804,56 @@ fn assert_podman_artifacts(output_directory: &Path, route: &str) -> Result<(), B
     assert!(review.contains("# Review generated Podman commands before running this file.\n"));
     assert!(review.contains("set -eu\n"));
     Ok(())
+}
+
+fn assert_podman_deployment_envelope(deployment: &serde_json::Value, route: &str) {
+    assert_eq!(deployment["schema_version"], 1, "{route} Podman schema changed");
+    assert!(
+        matches!(
+            deployment["status"].as_str(),
+            Some("exact" | "deferred_sensitive_input")
+        ),
+        "{route} Podman deployment has an unexpected status"
+    );
+    assert!(
+        deployment["connection"].is_null(),
+        "{route} Podman output must remain connection-independent"
+    );
+    assert!(
+        deployment["external_preconditions"].is_array(),
+        "{route} Podman preconditions must be explicit"
+    );
+}
+
+fn assert_authored_podman_container_identity(operations: &[serde_json::Value]) {
+    // Both authored normal inputs declare web-runtime for logical service web.
+    assert_eq!(operations.len(), 3);
+    assert_eq!(
+        operations[0]["resource"],
+        serde_json::json!({ "kind": "image", "name": "web-image" })
+    );
+    for operation in &operations[1..] {
+        assert_eq!(
+            operation["resource"],
+            serde_json::json!({ "kind": "container", "name": "web-runtime" })
+        );
+    }
+    assert_eq!(operations[1]["action"], "create");
+    assert_eq!(operations[1]["cli"]["argv"][2], "--name");
+    assert_eq!(operations[1]["cli"]["argv"][3], "web-runtime");
+    assert_eq!(
+        operations[1]["libpod"]["path_and_query"],
+        "/v6.1.0/libpod/containers/create?name=web-runtime"
+    );
+    assert_eq!(operations[2]["action"], "start_container");
+    assert_eq!(
+        operations[2]["cli"]["argv"],
+        serde_json::json!(["container", "start", "web-runtime"])
+    );
+    assert_eq!(
+        operations[2]["libpod"]["path_and_query"],
+        "/v6.1.0/libpod/containers/web-runtime/start"
+    );
 }
 
 fn podman_shell_quote(value: &str) -> String {

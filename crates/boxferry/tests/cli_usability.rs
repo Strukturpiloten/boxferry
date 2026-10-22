@@ -1027,11 +1027,7 @@ fn assert_core_podman(destination: &Path, report: &serde_json::Value) -> Result<
     );
     let plan: serde_json::Value = serde_json::from_slice(&fs::read(destination.join("podman.json"))?)?;
     let operations = plan["operations"].as_array().ok_or("Podman plan operations")?;
-    let create = operations
-        .iter()
-        .find(|operation| operation["action"] == "create" && operation["resource"]["kind"] == "container")
-        .ok_or("missing container create operation")?;
-    assert_eq!(create["resource"]["name"], "web");
+    let create = assert_podman_container_identity(operations, "ferry-web")?;
     let body = &create["libpod"]["body"]["json"];
     assert_eq!(body["command"], serde_json::json!(["php", "-v"]));
     assert_eq!(body["restart_policy"], "no");
@@ -1040,13 +1036,15 @@ fn assert_core_podman(destination: &Path, report: &serde_json::Value) -> Result<
     assert_eq!(body["volumes"][0]["Options"], serde_json::json!(["ro", "copy"]));
     assert!(body.get("environment").is_none());
     assert!(body.get("ports").is_none());
-    for subject in [
-        "services.web.environment.PORT",
-        "services.web.ports",
-        "services.web.runtime_name",
-    ] {
+    for subject in ["services.web.environment.PORT", "services.web.ports"] {
         assert_diagnostic_subject(report, "BFP0007", subject)?;
     }
+    assert!(
+        !diagnostic_codes_and_subjects(report)?
+            .iter()
+            .any(|(code, subject)| code == "BFP0007" && subject == "services.web.runtime_name"),
+        "the authored container name must not be reported as omitted"
+    );
     Ok(())
 }
 
@@ -1116,9 +1114,6 @@ fn run_route(verb: &str, input: &str, output: &str, destination: &Path) -> Resul
     }
     if output == "podman" {
         command.args(["--podman-target-context", "unknown"]);
-        if input != "podman" {
-            command.args(["--loss-policy", "partial"]);
-        }
     }
     if verb == "convert" {
         command.arg("--output-directory").arg(destination);
@@ -1183,11 +1178,14 @@ fn assert_expected_diagnostics(
                 assert_diagnostic_subject(report, "BFP0007", subject)?;
             }
         }
-    } else if output == "podman" {
-        assert!(codes.contains("BFP0007"), "{label}: missing target-context warning");
-        assert_diagnostic_subject(report, "BFP0007", "services.web.runtime_name")?;
     } else {
-        assert!(codes.is_empty(), "{label}: clean document route raised {codes:?}");
+        assert!(
+            report["diagnostics"]
+                .as_array()
+                .ok_or("missing diagnostics")?
+                .is_empty(),
+            "{label}: clean document route raised {codes:?}"
+        );
     }
     Ok(())
 }
@@ -1305,13 +1303,13 @@ fn assert_podman_artifact(directory: &Path, input: &str, image: &str) -> Result<
             .is_some_and(|operations| !operations.is_empty())
     );
     let operations = plan["operations"].as_array().ok_or("Podman operations")?;
-    let create = operations
-        .iter()
-        .find(|operation| operation["action"] == "create" && operation["resource"]["kind"] == "container")
-        .ok_or("Podman container create operation")?;
+    let create = if input == "podman" {
+        assert_podman_container_identity(operations, "portable-app")?
+    } else {
+        assert_podman_container_identity(operations, "web-runtime")?
+    };
     assert_eq!(create["libpod"]["body"]["json"]["image"], image);
     if input == "podman" {
-        assert_eq!(create["resource"]["name"], "portable-app");
         // A separately planned network does not prove that the
         // container joins it. The reviewed Libpod create body does.
         assert!(
@@ -1328,10 +1326,6 @@ fn assert_podman_artifact(directory: &Path, input: &str, image: &str) -> Result<
         );
         assert_no_unpromoted_bind_sources(&fs::read(directory.join("podman.json"))?, "Podman -> Podman plan");
     } else {
-        assert_eq!(
-            create["resource"]["name"], "web",
-            "authored runtime-name loss must be explicit"
-        );
         assert_eq!(create["libpod"]["body"]["json"]["restart_policy"], "no");
     }
     let review = fs::read_to_string(directory.join("podman-commands.sh"))?;
@@ -1340,6 +1334,54 @@ fn assert_podman_artifact(directory: &Path, input: &str, image: &str) -> Result<
         assert_no_unpromoted_bind_sources(review.as_bytes(), "Podman -> Podman script");
     }
     Ok(())
+}
+
+fn assert_podman_container_identity<'a>(
+    operations: &'a [serde_json::Value],
+    expected_name: &str,
+) -> Result<&'a serde_json::Value, Box<dyn Error>> {
+    let creates = operations
+        .iter()
+        .filter(|operation| operation["action"] == "create" && operation["resource"]["kind"] == "container")
+        .collect::<Vec<_>>();
+    assert_eq!(creates.len(), 1, "one authored container create expected");
+    let create = creates[0];
+    assert_eq!(
+        create["resource"],
+        serde_json::json!({ "kind": "container", "name": expected_name })
+    );
+    let argv = create["cli"]["argv"].as_array().ok_or("container create arguments")?;
+    let names = argv
+        .windows(2)
+        .filter(|pair| pair[0] == "--name")
+        .map(|pair| pair[1].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names, [Some(expected_name)]);
+    assert_eq!(create["libpod"]["method"], "POST");
+    assert_eq!(
+        create["libpod"]["path_and_query"],
+        format!("/v6.1.0/libpod/containers/create?name={expected_name}")
+    );
+    let starts = operations
+        .iter()
+        .filter(|operation| operation["action"] == "start_container")
+        .collect::<Vec<_>>();
+    assert_eq!(starts.len(), 1, "one authored container start expected");
+    let start = starts[0];
+    assert_eq!(
+        start["resource"],
+        serde_json::json!({ "kind": "container", "name": expected_name })
+    );
+    assert_eq!(
+        start["cli"]["argv"],
+        serde_json::json!(["container", "start", expected_name])
+    );
+    assert_eq!(start["libpod"]["method"], "POST");
+    assert_eq!(
+        start["libpod"]["path_and_query"],
+        format!("/v6.1.0/libpod/containers/{expected_name}/start")
+    );
+    Ok(create)
 }
 
 fn assert_no_unpromoted_bind_sources(bytes: &[u8], label: &str) {

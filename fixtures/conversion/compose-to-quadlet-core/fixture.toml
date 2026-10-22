@@ -96,7 +96,6 @@ diagnostic-codes = [
   "BFP0007",
   "BFP0007",
   "BFP0007",
-  "BFP0007",
 ]
 artifact-values = ["{\"channel\": \"stable\"}", "literal%h"]
 

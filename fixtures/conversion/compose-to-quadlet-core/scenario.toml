@@ -110,7 +110,7 @@ target-minimum = "5.4.0"
 target-maximum = "6.1.0"
 loss-policy = "partial"
 outcome = "known-migration-gap"
-reason = "Podman deployment output omits reviewed environment, execution-context, mount, host-mapping, healthcheck, runtime-name, and publication intent."
+reason = "Podman deployment output omits reviewed environment, execution-context, mount, host-mapping, healthcheck, and publication intent."
 artifacts = ["podman-commands.sh", "podman.json"]
 native-validation = { state = "passed" }
 runtime-probe = { state = "not-applicable", reason = "Offline authored fixture; no runtime operation is claimed." }
@@ -126,7 +126,6 @@ diagnostics = [
   "BFP0007|services.web.mounts[2].selinux_relabel",
   "BFP0007|services.web.mounts[3].source",
   "BFP0007|services.web.mounts[3].selinux_relabel",
-  "BFP0007|services.web.runtime_name",
   "BFP0007|services.web.healthcheck",
   "BFP0007|services.web.user_namespace",
   "BFP0007|services.web.supplementary_groups",
@@ -138,7 +137,6 @@ semantic-gaps = [
   "environment:web:EMPTY",
   "environment:web:OVERRIDE_ONLY",
   "environment:web:PORT",
-  "runtime-name:web",
   "healthcheck:web",
   "port:web:80:Some(8080)",
   "port:web:8443:Some(8443)",
@@ -154,7 +152,6 @@ allowed-losses = [
   { rule = "BFP0007", subject = "services.web.mounts[2].selinux_relabel", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.mounts[3].source", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.mounts[3].selinux_relabel", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
-  { rule = "BFP0007", subject = "services.web.runtime_name", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.healthcheck", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.user_namespace", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },
   { rule = "BFP0007", subject = "services.web.supplementary_groups", decision = "unsupported", version-scope = "podman@5.4.0..6.1.0" },

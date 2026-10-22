@@ -7,7 +7,7 @@ use boxferry_model::{
     Application, EnvironmentValue, EnvironmentVariable, Identifier, ImageReference, MetadataLabel, Mount, MountSource,
     Network, NetworkAttachment, NetworkIpamConfig, ProtectedString, Provenance, ResourceOwnership,
     RetainedNativeEvidence, RetainedNativeEvidenceEvent, RetainedNativeEvidenceSubject, SelinuxRelabel, Service,
-    ServiceGroup, SourceId, SourceSpan, Sourced, Volume,
+    ServiceDependency, ServiceGroup, SourceId, SourceSpan, Sourced, Volume,
 };
 use boxferry_podman::{
     PODMAN_TARGET, PodmanExporter, PodmanTargetError, resolve_podman_target, reviewed_podman_versions,
@@ -455,6 +455,300 @@ fn minimum_reviewed_unknown_context_retains_native_pull_policy_refusal() -> Resu
 }
 
 #[test]
+fn container_runtime_names_preserve_create_start_and_logical_image_identities() -> Result<(), Box<dyn Error>> {
+    for names in [
+        vec![("web", Some("runtime-web")), ("worker", None)],
+        vec![("web", Some("web")), ("worker", Some("worker"))],
+        vec![("web", Some("worker")), ("worker", Some("third"))],
+        vec![("web", Some("worker")), ("worker", Some("web"))],
+        vec![("web", None), ("worker", None)],
+    ] {
+        let application = container_identity_application(&names, None)?;
+        for reviewed in reviewed_podman_versions() {
+            let target = TargetProfile::new(PODMAN_TARGET, *reviewed, Some(*reviewed))?;
+            let plan = PodmanExporter::new()?.plan(&application, &target)?;
+            if *reviewed < version(5, 6, 0) {
+                // Container identities are mapped exactly; the existing native image-policy
+                // version refusal still prevents rendering at these reviewed targets.
+                assert!(plan.candidate().is_none());
+                for (logical, runtime) in &names {
+                    if runtime.is_some() {
+                        assert!(plan.outcomes().iter().any(|outcome| {
+                            outcome.subject() == format!("services.{logical}.runtime_name")
+                                && outcome.kind() == ConversionKind::Exact
+                        }));
+                    }
+                }
+                assert!(plan.diagnostics().iter().all(|diagnostic| {
+                    diagnostic.code().as_str() == "BFP0008"
+                        && diagnostic
+                            .native_finding()
+                            .is_some_and(|finding| finding.code() == "PLN0046")
+                }));
+                assert!(plan.authorize(LossPolicy::AllowPartial).output().is_none());
+                continue;
+            }
+            assert!(plan.diagnostics().is_empty(), "{:?}", plan.diagnostics());
+            assert!(
+                plan.outcomes()
+                    .iter()
+                    .all(|outcome| outcome.kind() == ConversionKind::Exact)
+            );
+            for (logical, runtime) in &names {
+                let subject = format!("services.{logical}.runtime_name");
+                assert_eq!(
+                    plan.outcomes()
+                        .iter()
+                        .filter(|outcome| outcome.subject() == subject)
+                        .count(),
+                    usize::from(runtime.is_some())
+                );
+            }
+            let authorized = plan.authorize(LossPolicy::ExactOnly);
+            let output = authorized.output().ok_or("exact container identity output expected")?;
+            let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+            let operations = deployment["operations"].as_array().ok_or("operations expected")?;
+            assert_eq!(operations.len(), names.len() * 3);
+            for (logical, runtime) in &names {
+                let native = runtime.unwrap_or(logical);
+                assert_container_identity_operations(operations, logical, native, &reviewed.to_string());
+                assert!(output.commands_shell().contains(&format!("'--name' '{native}'")));
+                assert!(
+                    output
+                        .commands_shell()
+                        .contains(&format!("'container' 'start' '{native}'"))
+                );
+            }
+        }
+        assert_eq!(
+            application
+                .services()
+                .iter()
+                .map(|service| service.value().name().as_str())
+                .collect::<Vec<_>>(),
+            vec!["web", "worker"]
+        );
+    }
+    Ok(())
+}
+
+fn assert_container_identity_operations(operations: &[serde_json::Value], logical: &str, native: &str, version: &str) {
+    let creates = operations
+        .iter()
+        .filter(|op| {
+            op["action"] == "create" && op["resource"]["kind"] == "container" && op["resource"]["name"] == native
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(creates.len(), 1);
+    assert_container_create(creates[0], native, version, &[]);
+    assert_eq!(
+        operations
+            .iter()
+            .filter(|op| op["action"] == "ensure_image" && op["resource"]["name"] == format!("{logical}-image"))
+            .count(),
+        1
+    );
+    let starts = operations
+        .iter()
+        .filter(|op| op["action"] == "start_container" && op["resource"]["name"] == native)
+        .collect::<Vec<_>>();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(
+        starts[0]["cli"]["argv"],
+        serde_json::json!(["container", "start", native])
+    );
+    assert_eq!(starts[0]["libpod"]["method"], "POST");
+    assert_eq!(
+        starts[0]["libpod"]["path_and_query"],
+        format!("/v{version}/libpod/containers/{native}/start")
+    );
+}
+
+#[test]
+fn renamed_container_dependencies_order_native_starts_and_reject_undeclared_aliases() -> Result<(), Box<dyn Error>> {
+    let names = [("web", Some("z-native")), ("worker", Some("a-native"))];
+    let application = container_identity_application(&names, Some("web"))?;
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(&application, &target)?;
+    assert!(plan.outcomes().iter().any(
+        |outcome| outcome.subject() == "services.worker.dependencies[0]" && outcome.kind() == ConversionKind::Exact
+    ));
+    let authorized = plan.authorize(LossPolicy::ExactOnly);
+    let output = authorized.output().ok_or("ordered container output expected")?;
+    let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+    let starts = deployment["operations"]
+        .as_array()
+        .ok_or("operations expected")?
+        .iter()
+        .filter(|op| op["action"] == "start_container")
+        .map(|op| op["resource"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(starts, vec![Some("z-native"), Some("a-native")]);
+    for missing in ["z-native", "undeclared"] {
+        let application = container_identity_application(&names, Some(missing))?;
+        assert_container_identity_rejected(&application, "services.worker.dependencies[0]", None)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn pod_members_resolve_logical_services_to_native_containers() -> Result<(), Box<dyn Error>> {
+    let mut application =
+        container_identity_application(&[("web", Some("worker")), ("worker", Some("native-worker"))], None)?;
+    let mut group = ServiceGroup::new(Identifier::new("app-pod")?, ResourceOwnership::Application);
+    for member in ["web", "worker"] {
+        group.add_member(Sourced::generated(Identifier::new(member)?))?;
+    }
+    application.add_service_group(Sourced::generated(group))?;
+    for context in [TargetExecutionContext::Rootless, TargetExecutionContext::Rootful] {
+        let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+        let plan = PodmanExporter::new()?
+            .with_execution_context(context)
+            .plan(&application, &target)?;
+        assert!(plan.diagnostics().is_empty(), "{:?}", plan.diagnostics());
+        let authorized = plan.authorize(LossPolicy::ExactOnly);
+        let output = authorized
+            .output()
+            .ok_or("consistent bidirectional pod membership expected")?;
+        let deployment: serde_json::Value = serde_json::from_str(output.deployment_json())?;
+        let operations = deployment["operations"].as_array().ok_or("operations expected")?;
+        let members = operations
+            .iter()
+            .filter(|op| op["action"] == "create" && op["resource"]["kind"] == "container")
+            .collect::<Vec<_>>();
+        assert_eq!(members.len(), 2);
+        assert_eq!(
+            members
+                .iter()
+                .map(|op| op["resource"]["name"].as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([Some("worker"), Some("native-worker")])
+        );
+        for member in members {
+            assert_eq!(member["libpod"]["body"]["json"]["pod"], "app-pod");
+            let argv = member["cli"]["argv"].as_array().ok_or("container argv expected")?;
+            assert!(
+                argv.windows(2)
+                    .any(|pair| pair == [serde_json::json!("--pod"), serde_json::json!("app-pod")])
+            );
+        }
+        assert_eq!(operations.last().ok_or("pod start expected")?["action"], "start_pod");
+    }
+    // Neutral membership validation rejects native aliases without logical declarations.
+    for missing in ["native-worker", "undeclared"] {
+        let mut group = ServiceGroup::new(Identifier::new("invalid-pod")?, ResourceOwnership::Application);
+        group.add_member(Sourced::generated(Identifier::new(missing)?))?;
+        assert!(application.add_service_group(Sourced::generated(group)).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_or_colliding_container_runtime_names_never_authorize_output() -> Result<(), Box<dyn Error>> {
+    let oversized = "é".repeat(129);
+    for name in ["", "bad\nname", "bad\0name", oversized.as_str()] {
+        let application = container_identity_application(&[("web", Some(name))], None)?;
+        assert_container_identity_rejected(&application, "services.web.runtime_name", None)?;
+    }
+    for names in [
+        vec![("web", Some("same")), ("worker", Some("same"))],
+        vec![("web", Some("worker")), ("worker", None)],
+        vec![("web", None), ("worker", Some("web"))],
+    ] {
+        let application = container_identity_application(&names, None)?;
+        assert_container_identity_rejected(&application, "services.worker.runtime_name", None)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn protected_container_runtime_names_are_rejected_before_native_construction() -> Result<(), Box<dyn Error>> {
+    for canary in ["private-container-name-39b760e4", "private\ncontainer-name-39b760e4"] {
+        let mut service = Service::new(Identifier::new("web")?);
+        service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+        service.set_runtime_name(Sourced::generated(ProtectedString::sensitive(canary)));
+        let mut application = Application::new(Identifier::new("protected-container-test")?);
+        application.add_service(Sourced::generated(service))?;
+        assert_container_identity_rejected(&application, "services.web.runtime_name", Some(canary))?;
+    }
+    Ok(())
+}
+
+fn container_identity_application(
+    names: &[(&str, Option<&str>)],
+    dependency: Option<&str>,
+) -> Result<Application, Box<dyn Error>> {
+    let mut application = Application::new(Identifier::new("container-identity-test")?);
+    for (logical, runtime) in names {
+        let mut service = Service::new(Identifier::new(*logical)?);
+        service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+        if let Some(runtime) = runtime {
+            service.set_runtime_name(Sourced::generated(ProtectedString::plain(*runtime)));
+        }
+        if *logical == "worker"
+            && let Some(dependency) = dependency
+        {
+            service.add_dependency(Sourced::generated(ServiceDependency::new(Identifier::new(dependency)?)));
+        }
+        application.add_service(Sourced::generated(service))?;
+    }
+    Ok(application)
+}
+
+fn assert_container_identity_rejected(
+    application: &Application,
+    subject: &str,
+    canary: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
+    let plan = PodmanExporter::new()?.plan(application, &target)?;
+    assert!(plan.candidate().is_none());
+    assert!(
+        plan.outcomes()
+            .iter()
+            .any(|outcome| outcome.subject() == subject && outcome.kind() == ConversionKind::Invalid)
+    );
+    let diagnostic = plan
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code().as_str() == "BFP0008"
+                && diagnostic.severity() == Severity::Error
+                && diagnostic
+                    .fields()
+                    .iter()
+                    .any(|field| field.name() == "subject" && field.value().expose() == subject)
+        })
+        .ok_or("identity refusal diagnostic expected")?;
+    assert_context_fields(diagnostic, &["subject", "reason", "decision"]);
+    if let Some(canary) = canary {
+        assert!(!format!("{plan:?}").contains(canary));
+        assert!(!format!("{diagnostic:?}").contains(canary));
+        assert!(
+            plan.diagnostics()
+                .iter()
+                .flat_map(boxferry_engine::Diagnostic::fields)
+                .all(|field| !field.value().expose().contains(canary))
+        );
+        assert!(diagnostic.fields().iter().any(|field| field.name() == "reason"
+            && field.value().expose()
+                == "Protected Podman container runtime names cannot be emitted as target resource identities"));
+    }
+    for policy in [
+        LossPolicy::ExactOnly,
+        LossPolicy::AllowApproximate,
+        LossPolicy::AllowPartial,
+    ] {
+        let authorized = plan.clone().authorize(policy);
+        assert!(authorized.output().is_none());
+        if let Some(canary) = canary {
+            assert!(!format!("{authorized:?}").contains(canary));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn duplicate_resolved_volume_identities_are_rejected_but_chained_renames_are_valid() -> Result<(), Box<dyn Error>> {
     let target = TargetProfile::new(PODMAN_TARGET, version(6, 1, 0), Some(version(6, 1, 0)))?;
     for volumes in [
@@ -845,10 +1139,14 @@ fn assert_container_create(operation: &serde_json::Value, name: &str, version: &
             serde_json::json!({"Name": source, "Dest": destination, "Options": options})
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        operation["libpod"]["body"]["json"]["volumes"],
-        serde_json::json!(expected_volumes)
-    );
+    if mounts.is_empty() {
+        assert!(operation["libpod"]["body"]["json"].get("volumes").is_none());
+    } else {
+        assert_eq!(
+            operation["libpod"]["body"]["json"]["volumes"],
+            serde_json::json!(expected_volumes)
+        );
+    }
 }
 
 fn minimal_application() -> Result<Application, Box<dyn Error>> {

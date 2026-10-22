@@ -102,8 +102,7 @@ artifact = "web.container"
 expected = "expected-web.container"
 
 [extensions.scenarios.exports.podman]
-loss-policy = "partial"
-diagnostic-codes = ["BFP0007"]
+loss-policy = "exact"
 
 [[extensions.scenarios.exports.podman.artifacts]]
 artifact = "podman-commands.sh"
@@ -136,8 +135,7 @@ artifact = "web.container"
 expected = "expected-web.container"
 
 [extensions.scenarios.exports.podman]
-loss-policy = "partial"
-diagnostic-codes = ["BFP0007"]
+loss-policy = "exact"
 
 [[extensions.scenarios.exports.podman.artifacts]]
 artifact = "podman-commands.sh"

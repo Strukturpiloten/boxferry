@@ -19,7 +19,3 @@ BFP0007	services.webserver.environment.PAPERLESS_TIME_ZONE	unsupported	podman@6.
 BFP0007	services.webserver.environment.USERMAP_UID	unsupported	podman@6.1.0..6.1.0	1
 BFP0007	services.webserver.environment.PAPERLESS_WEBSERVER_WORKERS	unsupported	podman@6.1.0..6.1.0	1
 BFP0007	services.webserver.ports	unsupported	podman@6.1.0..6.1.0	1
-BFP0007	services.broker.runtime_name	unsupported	podman@6.1.0..6.1.0	1
-BFP0007	services.db.runtime_name	unsupported	podman@6.1.0..6.1.0	1
-BFP0007	services.gotenberg.runtime_name	unsupported	podman@6.1.0..6.1.0	1
-BFP0007	services.tika.runtime_name	unsupported	podman@6.1.0..6.1.0	1
