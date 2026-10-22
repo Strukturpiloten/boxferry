@@ -2511,7 +2511,18 @@ fn podman_semantics(
                 Ok(format!("{kind}:{}", resource["name"].as_str().ok_or("resource name")?))
             })
             .collect::<Result<BTreeSet<_>, Box<dyn Error>>>()?;
-        assert_eq!(actual, manifest.semantics.selected_resources.iter().cloned().collect());
+        let expected = manifest
+            .semantics
+            .selected_resources
+            .iter()
+            .map(|resource| {
+                resource.strip_prefix("service:").map_or_else(
+                    || resource.clone(),
+                    |service| format!("service:{}", expected_podman_container_name(manifest, service)),
+                )
+            })
+            .collect();
+        assert_eq!(actual, expected);
     }
     for operation in operations {
         assert_eq!(operation["cli"]["program"], "podman");
@@ -2526,10 +2537,11 @@ fn podman_semantics(
     }
     let mut gaps = Vec::new();
     for component in &manifest.components {
+        let expected_name = expected_podman_container_name(manifest, &component.name);
         let create = creates
             .iter()
             .find(|operation| {
-                operation["resource"]["kind"] == "container" && operation["resource"]["name"] == component.name
+                operation["resource"]["kind"] == "container" && operation["resource"]["name"] == expected_name
             })
             .ok_or("missing container create")?;
         let argv = create["cli"]["argv"].as_array().ok_or("create argv")?;
@@ -2591,12 +2603,13 @@ fn podman_semantics(
         if let Some(gap) = podman_entrypoint_gap(&component.name, expected_entrypoint, options, body)? {
             gaps.push(gap);
         }
-        for requirement in &manifest.semantics.required_runtime_names {
-            let (service, expected) = requirement.split_once(':').ok_or("runtime-name grammar")?;
-            if service == component.name && option_values(options, &["--name"]).as_slice() != [expected] {
-                gaps.push(format!("runtime-name:{service}"));
-            }
-        }
+        validate_podman_container_identity(
+            operations,
+            create,
+            options,
+            expected_name,
+            expected_podman_pod_name(manifest, &component.name),
+        )?;
         gaps.extend(podman_environment_and_ports(
             manifest,
             route,
@@ -2627,6 +2640,89 @@ fn podman_semantics(
     }
     gaps.extend(podman_network_gaps(manifest, &creates)?);
     Ok(gaps)
+}
+
+fn expected_podman_container_name<'a>(manifest: &'a ScenarioManifest, service: &'a str) -> &'a str {
+    // Expectations come from authored semantic declarations, never observed output.
+    manifest
+        .semantics
+        .required_runtime_names
+        .iter()
+        .filter_map(|requirement| requirement.split_once(':'))
+        .find_map(|(logical, native)| (logical == service).then_some(native))
+        .unwrap_or(service)
+}
+
+fn expected_podman_pod_name<'a>(manifest: &'a ScenarioManifest, service: &str) -> Option<&'a str> {
+    manifest
+        .semantics
+        .required_groups
+        .iter()
+        .find(|group| group.ownership == "application" && group.members.iter().any(|member| member == service))
+        .map(|group| group.name.as_str())
+}
+
+fn validate_podman_container_identity(
+    operations: &[serde_json::Value],
+    create: &serde_json::Value,
+    options: &[serde_json::Value],
+    expected_name: &str,
+    expected_pod: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    if create["resource"]["name"] != expected_name {
+        return Err("Podman create resource differs from authored container identity".into());
+    }
+    if option_values(options, &["--name"]).as_slice() != [expected_name] {
+        return Err("Podman create CLI differs from authored container identity".into());
+    }
+    let encoded_name = expected_name.bytes().fold(String::new(), |mut encoded, byte| {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            const HEX: &[u8; 16] = b"0123456789ABCDEF";
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 15)]));
+        }
+        encoded
+    });
+    if !create["libpod"]["path_and_query"]
+        .as_str()
+        .is_some_and(|path| path.ends_with(&format!("/libpod/containers/create?name={encoded_name}")))
+    {
+        return Err("Podman create API differs from authored container identity".into());
+    }
+    let actual_pod = create["libpod"]["body"]["json"].get("pod");
+    if actual_pod.and_then(serde_json::Value::as_str) != expected_pod
+        || actual_pod.is_some_and(|pod| !pod.is_string())
+        || option_values(options, &["--pod"]) != expected_pod.into_iter().collect::<Vec<_>>()
+    {
+        return Err("Podman pod association differs from authored group membership".into());
+    }
+    if expected_pod.is_some() {
+        return Ok(());
+    }
+    let starts = operations
+        .iter()
+        .filter(|operation| {
+            operation["action"] == "start_container"
+                && operation["resource"]["kind"] == "container"
+                && operation["resource"]["name"] == expected_name
+        })
+        .collect::<Vec<_>>();
+    if starts.len() != 1 {
+        return Err("Podman start resource differs from authored container identity".into());
+    }
+    if starts[0]["cli"]["argv"] != serde_json::json!(["container", "start", expected_name]) {
+        return Err("Podman start CLI differs from authored container identity".into());
+    }
+    if !starts[0]["libpod"]["path_and_query"]
+        .as_str()
+        .is_some_and(|path| path.ends_with(&format!("/libpod/containers/{encoded_name}/start")))
+    {
+        return Err("Podman start API differs from authored container identity".into());
+    }
+    Ok(())
 }
 
 fn validate_podman_plan_observation(
@@ -3216,6 +3312,118 @@ fn native_assertions_associate_values_with_their_flags() -> Result<(), Box<dyn E
     assert_eq!(option_values(arguments, &["--env", "-e"]), ["OTHER=value"]);
     assert_eq!(option_values(arguments, &["--publish", "-p"]), ["8080:8080"]);
     assert_eq!(option_values(arguments, &["--volume", "-v"]), ["state:/data:rw,copy"]);
+    Ok(())
+}
+
+#[test]
+fn podman_container_identity_counterfactuals_detect_each_native_surface() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/conversion/document-route-matrix");
+    let manifest = read_manifest_file(&fixture.join("document-route-normal.scenario.toml"))?;
+    assert_eq!(expected_podman_container_name(&manifest, "web"), "web-runtime");
+    assert_eq!(manifest.components[0].name, "web");
+    let baseline = serde_json::json!([
+        {
+            "action": "create",
+            "resource": { "kind": "container", "name": "web-runtime" },
+            "cli": { "argv": ["container", "create", "--name", "web-runtime"] },
+            "libpod": { "path_and_query": "/v6.1.0/libpod/containers/create?name=web-runtime" }
+        },
+        {
+            "action": "start_container",
+            "resource": { "kind": "container", "name": "web-runtime" },
+            "cli": { "argv": ["container", "start", "web-runtime"] },
+            "libpod": { "path_and_query": "/v6.1.0/libpod/containers/web-runtime/start" }
+        }
+    ]);
+    let check = |value: &serde_json::Value| -> Result<(), Box<dyn Error>> {
+        let operations = value.as_array().ok_or("identity operations")?;
+        let create = operations.first().ok_or("identity create")?;
+        let options = create["cli"]["argv"].as_array().ok_or("identity options")?;
+        validate_podman_container_identity(
+            operations,
+            create,
+            options,
+            "web-runtime",
+            expected_podman_pod_name(&manifest, "web"),
+        )
+    };
+    check(&baseline)?;
+    for (pointer, replacement, reason) in [
+        ("/0/resource/name", serde_json::json!("web"), "create resource"),
+        ("/0/cli/argv/3", serde_json::json!("web"), "create CLI"),
+        (
+            "/0/libpod/path_and_query",
+            serde_json::json!("/v6.1.0/libpod/containers/create?name=web"),
+            "create API",
+        ),
+        ("/1/resource/name", serde_json::json!("web"), "start resource"),
+        ("/1/cli/argv/2", serde_json::json!("web"), "start CLI"),
+        (
+            "/1/libpod/path_and_query",
+            serde_json::json!("/v6.1.0/libpod/containers/web/start"),
+            "start API",
+        ),
+    ] {
+        let mut changed = baseline.clone();
+        *changed.pointer_mut(pointer).ok_or("identity mutation pointer")? = replacement;
+        let error = check(&changed).err().ok_or("identity mutation must fail")?;
+        assert!(
+            error.to_string().contains(reason),
+            "{pointer} failed for the wrong reason: {error}"
+        );
+    }
+    let mut forged = baseline.clone();
+    forged[0]["libpod"]["body"] = serde_json::json!({ "json": { "pod": "forged-pod" } });
+    forged[1]["resource"]["name"] = serde_json::json!("web");
+    let error = check(&forged)
+        .err()
+        .ok_or("forged pod must not hide invalid start identity")?;
+    assert_eq!(
+        error.to_string(),
+        "Podman pod association differs from authored group membership"
+    );
+    Ok(())
+}
+
+#[test]
+fn podman_container_identity_uses_authored_group_membership() -> Result<(), Box<dyn Error>> {
+    let fixture = repository_root().join("fixtures/conversion/document-route-matrix");
+    let mut manifest = read_manifest_file(&fixture.join("document-route-normal.scenario.toml"))?;
+    manifest.semantics.required_groups.push(toml::from_str(
+        "name = 'authored-pod'\nownership = 'application'\nmembers = ['web']\n",
+    )?);
+    let expected_pod = expected_podman_pod_name(&manifest, "web");
+    assert_eq!(expected_pod, Some("authored-pod"));
+    assert_eq!(expected_podman_pod_name(&manifest, "other"), None);
+    let create = serde_json::json!({
+        "action": "create",
+        "resource": { "kind": "container", "name": "web-runtime" },
+        "cli": { "argv": ["container", "create", "--name", "web-runtime", "--pod", "authored-pod"] },
+        "libpod": {
+            "path_and_query": "/v6.1.0/libpod/containers/create?name=web-runtime",
+            "body": { "json": { "pod": "authored-pod" } }
+        }
+    });
+    let options = create["cli"]["argv"].as_array().ok_or("pod member options")?;
+    // Authored pod members share the pod start operation and need no individual start.
+    validate_podman_container_identity(&[], &create, options, "web-runtime", expected_pod)?;
+    for (pointer, replacement) in [
+        ("/libpod/body/json/pod", serde_json::json!("other-pod")),
+        ("/cli/argv/5", serde_json::json!("other-pod")),
+    ] {
+        let mut changed = create.clone();
+        *changed.pointer_mut(pointer).ok_or("pod mutation pointer")? = replacement;
+        let options = changed["cli"]["argv"].as_array().ok_or("changed pod member options")?;
+        let error = validate_podman_container_identity(&[], &changed, options, "web-runtime", expected_pod)
+            .err()
+            .ok_or("pod membership mutation must fail")?;
+        assert_eq!(
+            error.to_string(),
+            "Podman pod association differs from authored group membership"
+        );
+    }
+    manifest.semantics.required_groups[0].ownership = "uncertain".into();
+    assert_eq!(expected_podman_pod_name(&manifest, "web"), None);
     Ok(())
 }
 

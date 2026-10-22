@@ -27,8 +27,9 @@ thread.
 The authored route matrix exercises both `validate` and `convert` for all nine
 Compose/Podman/Quadlet source-target pairs, checks that their semantic decisions agree, and
 inspects planned and written artifacts against independent fixture intent. Authored runtime
-names and restart behavior must survive document targets; Podman output must report its
-runtime-name loss. The Podman cassette proves named network attachment and reports that
+names and restart behavior must survive every target. Podman output checks container
+create/start resource, CLI and API identities independently. The Podman cassette proves
+named network attachment and reports that
 host-local bind sources need explicit same-host promotion; an additional case exercises
 that opt-in for document targets. A separate reviewed scenario checks ports, mounts,
 environment, runtime identity, restart policy, and selected subject-level diagnostics. The

@@ -88,7 +88,7 @@
       "action": "create",
       "resource": {
         "kind": "container",
-        "name": "web"
+        "name": "ferry-web"
       },
       "cli": {
         "program": "podman",
@@ -96,7 +96,7 @@
           "container",
           "create",
           "--name",
-          "web",
+          "ferry-web",
           "--pull=never",
           "--network",
           "frontend:alias=web.local",
@@ -116,7 +116,7 @@
       },
       "libpod": {
         "method": "POST",
-        "path_and_query": "/v6.1.0/libpod/containers/create?name=web",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=ferry-web",
         "body": {
           "kind": "json",
           "json": {
@@ -154,20 +154,20 @@
       "action": "start_container",
       "resource": {
         "kind": "container",
-        "name": "web"
+        "name": "ferry-web"
       },
       "cli": {
         "program": "podman",
         "argv": [
           "container",
           "start",
-          "web"
+          "ferry-web"
         ],
         "external_sensitive_input_required": false
       },
       "libpod": {
         "method": "POST",
-        "path_and_query": "/v6.1.0/libpod/containers/web/start",
+        "path_and_query": "/v6.1.0/libpod/containers/ferry-web/start",
         "body": {
           "kind": "empty"
         }

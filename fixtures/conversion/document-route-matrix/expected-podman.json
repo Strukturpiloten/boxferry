@@ -34,7 +34,7 @@
       "action": "create",
       "resource": {
         "kind": "container",
-        "name": "web"
+        "name": "web-runtime"
       },
       "cli": {
         "program": "podman",
@@ -42,7 +42,7 @@
           "container",
           "create",
           "--name",
-          "web",
+          "web-runtime",
           "--pull=never",
           "--restart",
           "no",
@@ -52,7 +52,7 @@
       },
       "libpod": {
         "method": "POST",
-        "path_and_query": "/v6.1.0/libpod/containers/create?name=web",
+        "path_and_query": "/v6.1.0/libpod/containers/create?name=web-runtime",
         "body": {
           "kind": "json",
           "json": {
@@ -68,20 +68,20 @@
       "action": "start_container",
       "resource": {
         "kind": "container",
-        "name": "web"
+        "name": "web-runtime"
       },
       "cli": {
         "program": "podman",
         "argv": [
           "container",
           "start",
-          "web"
+          "web-runtime"
         ],
         "external_sensitive_input_required": false
       },
       "libpod": {
         "method": "POST",
-        "path_and_query": "/v6.1.0/libpod/containers/web/start",
+        "path_and_query": "/v6.1.0/libpod/containers/web-runtime/start",
         "body": {
           "kind": "empty"
         }

@@ -63,6 +63,11 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Fixed
 
+- Preserve explicit public Podman container runtime names in create/start artifacts, pod membership,
+  and dependency ordering while retaining logical service identities. Refuse protected or invalid
+  names, target collisions, and undeclared logical references under every loss policy
+  ([#474](https://github.com/Strukturpiloten/boxferry/issues/474)).
+
 - Accept bare relative `--report-file` paths in the current directory while retaining
   existing-parent validation and create-new, non-overwriting report writes
   ([#472](https://github.com/Strukturpiloten/boxferry/issues/472)).

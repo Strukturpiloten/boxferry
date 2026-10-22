@@ -118,6 +118,10 @@ pub fn resolve_podman_target(target: &TargetProfile) -> Result<ResolvedPodmanTar
 }
 
 /// Loss-aware Podman exporter producing only review artifacts.
+///
+/// Public service runtime names become target container identities without changing
+/// neutral logical identifiers. Protected names, invalid native identities, collisions,
+/// and references without logical service declarations reject the complete candidate.
 #[derive(Clone, Debug)]
 pub struct PodmanExporter {
     codes: Codes,
@@ -262,6 +266,7 @@ struct Mapping<'a> {
     application: &'a Application,
     intent: Option<DeploymentIntent>,
     volume_identities: BTreeMap<String, String>,
+    container_identities: BTreeMap<String, DeploymentResourceId>,
     outcomes: Vec<ConversionOutcome>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -273,6 +278,7 @@ impl<'a> Mapping<'a> {
             application,
             intent: Some(intent),
             volume_identities: BTreeMap::new(),
+            container_identities: BTreeMap::new(),
             outcomes: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -281,12 +287,51 @@ impl<'a> Mapping<'a> {
     fn map_application(&mut self) {
         self.exact("application");
         self.prepare_volume_identities();
+        self.prepare_container_identities();
         self.map_networks();
         self.map_volumes();
         self.map_secrets();
         self.map_groups();
         self.map_services();
         self.map_dependencies();
+    }
+
+    fn prepare_container_identities(&mut self) {
+        let mut owners = BTreeMap::<String, String>::new();
+        for service in self.application.services() {
+            let service = service.value();
+            let logical_name = service.name().as_str();
+            let subject = format!("services.{logical_name}.runtime_name");
+            let target_name = match service.runtime_name() {
+                Some(name) if name.value().is_sensitive() => {
+                    self.error(
+                        subject,
+                        "Protected Podman container runtime names cannot be emitted as target resource identities",
+                    );
+                    continue;
+                }
+                Some(name) => name.value().expose(),
+                None => logical_name,
+            };
+            let identity = match DeploymentResourceId::new(ResourceKind::Container, target_name) {
+                Ok(identity) => identity,
+                Err(error) => {
+                    self.native_error(&subject, error.code().as_str(), error.message(), "mapping");
+                    continue;
+                }
+            };
+            if let Some(first_logical_name) = owners.get(target_name) {
+                self.error(
+                    subject,
+                    format!(
+                        "Podman container identity resolves to the same name as logical service {first_logical_name:?}"
+                    ),
+                );
+            } else {
+                owners.insert(target_name.to_owned(), logical_name.to_owned());
+            }
+            self.container_identities.insert(logical_name.to_owned(), identity);
+        }
     }
 
     fn map_networks(&mut self) {
@@ -575,6 +620,9 @@ impl<'a> Mapping<'a> {
             self.map_service_networks(service, &mut container);
             Ok(DeploymentResource::Container(container))
         })();
+        if container_result.is_ok() && service.runtime_name().is_some() {
+            self.exact(format!("{subject}.runtime_name"));
+        }
         self.add_resource_result(&subject, container_result);
         self.report_unmapped_service_fields(service, &subject);
     }
@@ -907,7 +955,6 @@ impl<'a> Mapping<'a> {
 
     fn report_unmapped_service_fields(&mut self, service: &Service, subject: &str) {
         for (field, present) in [
-            ("runtime_name", service.runtime_name().is_some()),
             ("rootfs", service.rootfs().is_some()),
             ("image_acquisition", service.image_acquisition().is_some()),
             ("image_build", service.image_build().is_some()),
@@ -967,11 +1014,16 @@ impl<'a> Mapping<'a> {
         })
     }
 
-    #[allow(
-        clippy::unused_self,
-        reason = "keeps resource validation local to one mapping instance"
-    )]
     fn resource_id(&self, kind: ResourceKind, name: &str) -> podman_lens::PodmanLensResult<DeploymentResourceId> {
+        if kind == ResourceKind::Container {
+            // Resolve exactly once: a runtime alias may itself be another logical name.
+            // Missing declarations must never resolve through native-name coincidence.
+            return self
+                .container_identities
+                .get(name)
+                .cloned()
+                .ok_or_else(|| podman_lens::Diagnostic::new(podman_lens::DiagnosticCode::InvalidDeploymentIntent));
+        }
         DeploymentResourceId::new(kind, name)
     }
 
@@ -1216,4 +1268,93 @@ const fn resource_kind_name(kind: ResourceKind) -> &'static str {
 
 fn expose(values: &[ProtectedString]) -> Vec<&str> {
     values.iter().map(ProtectedString::expose).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use boxferry_model::{Identifier, ImageReference, ServiceDependency, ServiceGroup, Sourced};
+    use podman_lens::SemanticOperationAction;
+
+    use super::*;
+
+    #[test]
+    fn native_members_dependencies_and_operation_ids_resolve_logical_names_once() -> Result<(), Box<dyn Error>> {
+        let mut application = Application::new(Identifier::new("identity-test")?);
+        for (logical, native) in [("web", "worker"), ("worker", "third")] {
+            let mut service = Service::new(Identifier::new(logical)?);
+            service.set_image(Sourced::generated(ImageReference::parse("example.invalid/web:1")?));
+            service.set_runtime_name(Sourced::generated(ProtectedString::plain(native)));
+            if logical == "worker" {
+                service.add_dependency(Sourced::generated(ServiceDependency::new(Identifier::new("web")?)));
+            }
+            application.add_service(Sourced::generated(service))?;
+        }
+        let mut group = ServiceGroup::new(Identifier::new("app-pod")?, ResourceOwnership::Application);
+        group.add_member(Sourced::generated(Identifier::new("web")?))?;
+        application.add_service_group(Sourced::generated(group))?;
+        let target = TargetProfile::new(PODMAN_TARGET, PlatformVersion::new(6, 1, 0), None)?;
+        let resolved = resolve_podman_target(&target)?;
+        let exporter = PodmanExporter::new()?;
+        let mut mapping = Mapping::new(
+            &exporter,
+            &application,
+            DeploymentIntent::new(resolved.profile().clone()),
+        );
+        mapping.map_application();
+        assert!(mapping.diagnostics.is_empty(), "{:?}", mapping.diagnostics);
+        assert_eq!(mapping.resource_id(ResourceKind::Container, "web")?.name(), "worker");
+        assert_eq!(mapping.resource_id(ResourceKind::Container, "worker")?.name(), "third");
+        assert!(mapping.resource_id(ResourceKind::Container, "third").is_err());
+        let intent = mapping.intent.as_ref().ok_or("mapped intent expected")?;
+        let edge = intent.startup_dependencies().first().ok_or("dependency expected")?;
+        assert_eq!(edge.predecessor().name(), "worker");
+        assert_eq!(edge.dependent().name(), "third");
+        for resource in intent.resources() {
+            match resource {
+                DeploymentResource::Pod(pod) => {
+                    assert_eq!(
+                        pod.members(),
+                        &[DeploymentResourceId::new(ResourceKind::Container, "worker")?]
+                    );
+                }
+                DeploymentResource::Container(container) if container.identity().name() == "worker" => {
+                    assert_eq!(container.pod().map(DeploymentResourceId::name), Some("app-pod"));
+                    assert_eq!(container.image().name(), "web-image");
+                }
+                DeploymentResource::Container(container) => {
+                    assert_eq!(container.identity().name(), "third");
+                    assert!(container.pod().is_none());
+                    assert_eq!(container.image().name(), "worker-image");
+                }
+                _ => {}
+            }
+        }
+        let planning = plan_deployment(intent);
+        assert!(planning.findings().is_empty(), "{:?}", planning.findings());
+        let operations = planning.plan().ok_or("native plan expected")?.operations();
+        let starts = operations
+            .iter()
+            .filter(|operation| {
+                matches!(
+                    operation.id().action(),
+                    SemanticOperationAction::StartPod | SemanticOperationAction::StartContainer
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(starts.len(), 2);
+        assert_eq!(starts[0].id().resource().name(), "app-pod");
+        assert_eq!(starts[1].id().resource().name(), "third");
+        assert!(starts[1].depends_on().contains(starts[0].id()));
+        assert!(
+            starts[0]
+                .depends_on()
+                .iter()
+                .any(|id| id.action() == SemanticOperationAction::Create
+                    && id.resource().kind() == ResourceKind::Container
+                    && id.resource().name() == "worker")
+        );
+        Ok(())
+    }
 }
