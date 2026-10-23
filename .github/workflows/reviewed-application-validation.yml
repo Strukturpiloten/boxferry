@@ -38,7 +38,7 @@ jobs:
   admission:
     name: Admit exact reviewed PR head
     if: github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check out immutable shared admission source
@@ -63,7 +63,7 @@ jobs:
     name: Reviewed PR / ${{ inputs.task }}
     needs: admission
     if: github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     env:
       TASK: ${{ inputs.task }}
@@ -198,7 +198,7 @@ jobs:
     name: Fresh trusted exact-head application result
     needs: [admission, application]
     if: always() && github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     env:
       TASK: ${{ inputs.task }}
