@@ -5,6 +5,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/Strukturpiloten/boxferry/compare/boxferry-v0.9.0...boxferry-v0.10.0) - 2026-10-23
+
 ### Changed
 
 - Preserve explicit public Podman volume runtime names consistently in declarations and named
