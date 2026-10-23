@@ -22,7 +22,7 @@ env:
 jobs:
   validation-plan:
     name: Validation plan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
@@ -96,7 +96,7 @@ jobs:
     name: Rust quality
     needs: validation-plan
     if: needs.validation-plan.outputs.select_rust == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - &checkout
@@ -133,7 +133,7 @@ jobs:
     name: Coverage ratchet
     needs: validation-plan
     if: needs.validation-plan.outputs.select_coverage == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - *checkout
@@ -153,7 +153,7 @@ jobs:
     name: MSRV
     needs: validation-plan
     if: needs.validation-plan.outputs.select_msrv == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - *checkout
@@ -183,7 +183,7 @@ jobs:
     name: Dependency and license policy
     needs: validation-plan
     if: needs.validation-plan.outputs.select_dependencies == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - *checkout
@@ -197,7 +197,7 @@ jobs:
     name: Repository files and documentation
     needs: validation-plan
     if: needs.validation-plan.outputs.select_documentation == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - *checkout
@@ -237,7 +237,7 @@ jobs:
     name: Release metadata and changelog
     needs: validation-plan
     if: needs.validation-plan.outputs.select_release_metadata == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Check out repository with release history
@@ -252,7 +252,7 @@ jobs:
     name: SemVer release type
     needs: validation-plan
     if: needs.validation-plan.outputs.select_semver_release_type == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       release_type: ${{ steps.classify.outputs.release_type }}
@@ -288,7 +288,7 @@ jobs:
     name: SemVer (${{ matrix.package }})
     needs: [validation-plan, semver-release-type]
     if: needs.validation-plan.outputs.select_semver == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -346,7 +346,7 @@ jobs:
     name: Offline migration readiness
     needs: validation-plan
     if: needs.validation-plan.outputs.select_migration_readiness == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The 20-minute catalogue deadline leaves ten minutes for checkout and evidence handling.
     timeout-minutes: 30
     steps:
@@ -385,7 +385,7 @@ jobs:
     name: Lockfile release age
     needs: validation-plan
     if: needs.validation-plan.outputs.select_lockfile_release_age == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Preserve the aggregate result outside pull requests
@@ -436,7 +436,7 @@ jobs:
         migration-readiness,
         lockfile-release-age,
       ]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check out candidate aggregate verifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
