@@ -72,6 +72,9 @@ pub enum RuleId {
     QuadletNativeDocumentSet = 5_001_103,
     QuadletNativeFailure = 5_001_104,
     PodmanStateReconstructed = 4_000_009,
+    DockerTargetInvalid = 2_000_005,
+    DockerOutputUnsupported = 2_000_006,
+    DockerPlanningFailed = 2_000_007,
 }
 
 /// Immutable metadata shared by human, JSON, and support-bundle presentation.
@@ -115,6 +118,7 @@ impl DiagnosticRule {
     pub fn owner(self) -> &'static str {
         match self.code.as_bytes().get(..3) {
             Some(b"BFC") => "Compose adapter",
+            Some(b"BFD") => "Docker target adapter",
             Some(b"BFO") => "BoxFerry orchestration",
             Some(b"BFP") => "Podman adapter",
             Some(b"BFQ") => "Quadlet adapter",
@@ -294,6 +298,30 @@ pub const RULES: &[DiagnosticRule] = &[
         Note,
         "ComposeLens reported native Compose information.",
         "Review the retained source code when more context is needed."
+    ),
+    rule!(
+        DockerTargetInvalid,
+        "BFD0005",
+        "docker-target-invalid",
+        Error,
+        "The Docker target does not match an exact reviewed native profile or the requested version range.",
+        "Select one DockerLens reviewed target profile and a compatible BoxFerry version range."
+    ),
+    rule!(
+        DockerOutputUnsupported,
+        "BFD0006",
+        "docker-output-unsupported",
+        Warning,
+        "The Docker target cannot represent this neutral application field under the reviewed contract.",
+        "Review the subject and author a supported standalone shape, or explicitly allow partial loss."
+    ),
+    rule!(
+        DockerPlanningFailed,
+        "BFD0007",
+        "docker-planning-failed",
+        Error,
+        "DockerLens rejected the typed standalone target or inert request rendering.",
+        "Correct the reported subject and select a reviewed native target capability profile."
     ),
     rule!(
         OrchestrationFailed,
@@ -671,50 +699,53 @@ impl RuleId {
             Self::ComposeNativeError => &RULES[14],
             Self::ComposeNativeWarning => &RULES[15],
             Self::ComposeNativeNote => &RULES[16],
-            Self::OrchestrationFailed => &RULES[17],
-            Self::InputReadFailed => &RULES[18],
-            Self::ComposeProjectRootInvalid => &RULES[19],
-            Self::PodmanTargetSelectionInvalid => &RULES[20],
-            Self::InterpolationInputInvalid => &RULES[21],
-            Self::ComposeLoadFailed => &RULES[22],
-            Self::ConversionFailed => &RULES[23],
-            Self::QuadletParseFailed => &RULES[24],
-            Self::OutputDirectoryNotEmpty => &RULES[25],
-            Self::OutputPathInvalid => &RULES[26],
-            Self::OutputWriteFailed => &RULES[27],
-            Self::ReportWriteFailed => &RULES[28],
-            Self::SupportBundleWriteFailed => &RULES[29],
-            Self::PodmanSourceInvalid => &RULES[30],
-            Self::PodmanInputUnmodelled => &RULES[31],
-            Self::PodmanPromotionRequired => &RULES[32],
-            Self::PodmanIdentityConflict => &RULES[33],
-            Self::PodmanSecretGrantIncomplete => &RULES[34],
-            Self::PodmanTargetInvalid => &RULES[35],
-            Self::PodmanOutputUnsupported => &RULES[36],
-            Self::PodmanPlanningFailed => &RULES[37],
-            Self::PodmanStateReconstructed => &RULES[38],
-            Self::QuadletTargetInvalid => &RULES[39],
-            Self::QuadletOpenEndedTarget => &RULES[40],
-            Self::QuadletOutputUnsupported => &RULES[41],
-            Self::QuadletValueInvalid => &RULES[42],
-            Self::QuadletGenerationFailed => &RULES[43],
-            Self::QuadletCapabilityUnavailable => &RULES[44],
-            Self::QuadletGroupingApproximation => &RULES[45],
-            Self::QuadletDependencyUnsupported => &RULES[46],
-            Self::QuadletRestartApproximation => &RULES[47],
-            Self::QuadletEnvironmentFileApproximation => &RULES[48],
-            Self::QuadletGroupingInvalid => &RULES[49],
-            Self::QuadletDependencyInvalid => &RULES[50],
-            Self::QuadletCapabilityDeprecated => &RULES[51],
-            Self::QuadletUnresolvedVariable => &RULES[52],
-            Self::QuadletSourceInvalid => &RULES[53],
-            Self::QuadletModelInvalid => &RULES[54],
-            Self::QuadletInputUnsupported => &RULES[55],
-            Self::QuadletInputApproximation => &RULES[56],
-            Self::QuadletNativeSyntax => &RULES[57],
-            Self::QuadletNativeModel => &RULES[58],
-            Self::QuadletNativeDocumentSet => &RULES[59],
-            Self::QuadletNativeFailure => &RULES[60],
+            Self::DockerTargetInvalid => &RULES[17],
+            Self::DockerOutputUnsupported => &RULES[18],
+            Self::DockerPlanningFailed => &RULES[19],
+            Self::OrchestrationFailed => &RULES[20],
+            Self::InputReadFailed => &RULES[21],
+            Self::ComposeProjectRootInvalid => &RULES[22],
+            Self::PodmanTargetSelectionInvalid => &RULES[23],
+            Self::InterpolationInputInvalid => &RULES[24],
+            Self::ComposeLoadFailed => &RULES[25],
+            Self::ConversionFailed => &RULES[26],
+            Self::QuadletParseFailed => &RULES[27],
+            Self::OutputDirectoryNotEmpty => &RULES[28],
+            Self::OutputPathInvalid => &RULES[29],
+            Self::OutputWriteFailed => &RULES[30],
+            Self::ReportWriteFailed => &RULES[31],
+            Self::SupportBundleWriteFailed => &RULES[32],
+            Self::PodmanSourceInvalid => &RULES[33],
+            Self::PodmanInputUnmodelled => &RULES[34],
+            Self::PodmanPromotionRequired => &RULES[35],
+            Self::PodmanIdentityConflict => &RULES[36],
+            Self::PodmanSecretGrantIncomplete => &RULES[37],
+            Self::PodmanTargetInvalid => &RULES[38],
+            Self::PodmanOutputUnsupported => &RULES[39],
+            Self::PodmanPlanningFailed => &RULES[40],
+            Self::PodmanStateReconstructed => &RULES[41],
+            Self::QuadletTargetInvalid => &RULES[42],
+            Self::QuadletOpenEndedTarget => &RULES[43],
+            Self::QuadletOutputUnsupported => &RULES[44],
+            Self::QuadletValueInvalid => &RULES[45],
+            Self::QuadletGenerationFailed => &RULES[46],
+            Self::QuadletCapabilityUnavailable => &RULES[47],
+            Self::QuadletGroupingApproximation => &RULES[48],
+            Self::QuadletDependencyUnsupported => &RULES[49],
+            Self::QuadletRestartApproximation => &RULES[50],
+            Self::QuadletEnvironmentFileApproximation => &RULES[51],
+            Self::QuadletGroupingInvalid => &RULES[52],
+            Self::QuadletDependencyInvalid => &RULES[53],
+            Self::QuadletCapabilityDeprecated => &RULES[54],
+            Self::QuadletUnresolvedVariable => &RULES[55],
+            Self::QuadletSourceInvalid => &RULES[56],
+            Self::QuadletModelInvalid => &RULES[57],
+            Self::QuadletInputUnsupported => &RULES[58],
+            Self::QuadletInputApproximation => &RULES[59],
+            Self::QuadletNativeSyntax => &RULES[60],
+            Self::QuadletNativeModel => &RULES[61],
+            Self::QuadletNativeDocumentSet => &RULES[62],
+            Self::QuadletNativeFailure => &RULES[63],
         }
     }
 }
@@ -740,6 +771,22 @@ mod tests {
         assert!(help.contains("keep private alias configuration outside the generated document"));
         assert!(help.contains("Otherwise, use --loss-policy partial only when a candidate exists"));
         assert!(help.contains("omitted intent is acceptable"));
+    }
+
+    #[test]
+    fn docker_catalogue_contains_only_target_rules_and_preserves_existing_ids() {
+        let docker: Vec<_> = RULES.iter().filter(|rule| rule.code().starts_with("BFD")).collect();
+        assert_eq!(docker.len(), 3);
+        for (id, code) in [
+            (RuleId::DockerTargetInvalid, "BFD0005"),
+            (RuleId::DockerOutputUnsupported, "BFD0006"),
+            (RuleId::DockerPlanningFailed, "BFD0007"),
+        ] {
+            assert_eq!(id.definition().code(), code);
+            assert_eq!(id.definition().owner(), "Docker target adapter");
+        }
+        assert_eq!(RuleId::OrchestrationFailed as u32, 3_001_000);
+        assert_eq!(RuleId::PodmanStateReconstructed as u32, 4_000_009);
     }
 
     #[test]

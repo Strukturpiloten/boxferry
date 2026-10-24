@@ -15,6 +15,11 @@ separately from native qualification.
 [ADR 0077](0077-workspace-rust198-baseline.md) raises the workspace Rust baseline and updates
 the diagnostic ZIP dependency without changing its privacy or writer-only boundaries.
 
+[ADR 0081](0081-bounded-docker-target-consumer-preparation.md) permits only a nondefault
+Docker target-library checkpoint and inert prerelease consumers, not Docker CLI/input or
+application qualification. Number 0080 remains reserved for the preserved, unadopted
+`0080-source-daemon-context-without-portable-loss.md`; it is not renumbered or adopted here.
+
 | ADR                                                                   | Decision                                                                     |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | [0001](0001-project-boundaries-and-origin.md)                         | Repository boundaries, dependency direction, and from-scratch implementation |
@@ -69,6 +74,7 @@ the diagnostic ZIP dependency without changing its privacy or writer-only bounda
 | [0067](0067-run-owned-host-archive-aliases.md) | Run-owned host archive aliases and unchanged nested fixture references |
 | [0073](0073-compose-alias-sensitivity-and-export-refusal.md) | Scalar-specific Compose alias sensitivity and whole-candidate protected-alias export refusal |
 | [0078](0078-trusted-docker-consumer-validation.md) | Proposed trusted exact-pair Docker volume-consumer diagnostic; production authorization pending |
+| [0081](0081-bounded-docker-target-consumer-preparation.md) | Target-only Docker library and bounded inert prerelease consumer preparation |
 
 ## Superseded history
 

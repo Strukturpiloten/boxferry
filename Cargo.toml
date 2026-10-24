@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/boxferry",
   "crates/boxferry-compose",
+  "crates/boxferry-docker",
   "crates/boxferry-engine",
   "crates/boxferry-model",
   "crates/boxferry-podman",

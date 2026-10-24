@@ -21,7 +21,8 @@ ADRs; add or supersede any contradicted accepted ADR in the same change. Also re
   same-format routes.
 - Podman acquisition is explicit, read-only. Never apply output, invoke generated commands, deploy,
   or send mutating runtime requests.
-- Docker and Kubernetes remain deferred; do not add placeholder adapters.
+- Docker: [nondefault target-only preparation](docs/decisions/0081-bounded-docker-target-consumer-preparation.md);
+  Kubernetes deferred. No placeholders or neutral-model bypass.
 
 Implement from scratch; never copy or mechanically translate oracle source. Record external oracle
 version, command, provenance, license, and redistribution status.

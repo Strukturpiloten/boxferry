@@ -21,12 +21,18 @@ const FIXTURE_SUITES: &[&str] = &[
     "real-world",
 ];
 
-const FORMAT_ADAPTER_PACKAGES: &[&str] = &["boxferry-compose", "boxferry-podman", "boxferry-quadlet"];
+const FORMAT_ADAPTER_PACKAGES: &[&str] = &[
+    "boxferry-compose",
+    "boxferry-docker",
+    "boxferry-podman",
+    "boxferry-quadlet",
+];
 
 const PUBLISHED_PACKAGES: &[&str] = &[
     "boxferry-model",
     "boxferry-engine",
     "boxferry-compose",
+    "boxferry-docker",
     "boxferry-podman",
     "boxferry-quadlet",
     "boxferry",
@@ -6019,6 +6025,7 @@ fn local_validation_runner_covers_deterministic_repository_checks() -> Result<()
         "cargo ci-check",
         "cargo ci-core",
         "cargo ci-compose",
+        "cargo ci-docker",
         "cargo ci-podman",
         "cargo ci-quadlet",
         "cargo ci-policy",
@@ -7404,7 +7411,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .as_array()
         .ok_or_else(|| "release-plz.toml must configure every published package".to_owned())?;
     if packages.len() != PUBLISHED_PACKAGES.len() {
-        return Err("release-plz.toml must configure all six lockstep packages".to_owned());
+        return Err("release-plz.toml must configure all seven lockstep packages".to_owned());
     }
     for package in PUBLISHED_PACKAGES {
         let configured = packages.iter().find(|entry| entry["name"].as_str() == Some(package));
@@ -7419,7 +7426,7 @@ fn release_plz_prepares_only_guarded_lockstep_releases() -> Result<(), String> {
         .ok_or_else(|| "release-plz.toml is missing the facade package".to_owned())?;
     if facade["changelog_update"].as_bool() != Some(true)
         || facade["changelog_path"].as_str() != Some("CHANGELOG.md")
-        || facade["changelog_include"].as_array().map(Vec::len) != Some(5)
+        || facade["changelog_include"].as_array().map(Vec::len) != Some(PUBLISHED_PACKAGES.len() - 1)
     {
         return Err("the facade must aggregate all component changes into the root changelog".to_owned());
     }
@@ -7845,6 +7852,7 @@ fn validate_first_party_release_age(renovate: &serde_json::Value) -> Result<(), 
         "boxferry-model",
         "boxferry-engine",
         "boxferry-compose",
+        "boxferry-docker",
         "boxferry-podman",
         "boxferry-quadlet",
         "compose-lens",
@@ -9432,14 +9440,72 @@ fn maintainer_documentation_is_small_and_has_one_current_inventory() -> Result<(
 }
 
 #[test]
-fn deferred_docker_and_runtime_namespaces_are_not_published_by_the_current_product() {
+fn docker_target_namespace_is_bounded_and_runtime_namespace_remains_deferred() {
+    let docker: Vec<_> = boxferry_engine::RULES
+        .iter()
+        .filter(|rule| rule.code().starts_with("BFD"))
+        .map(|rule| (rule.code(), rule.owner()))
+        .collect();
+    assert_eq!(
+        docker,
+        [
+            ("BFD0005", "Docker target adapter"),
+            ("BFD0006", "Docker target adapter"),
+            ("BFD0007", "Docker target adapter"),
+        ]
+    );
     for rule in boxferry_engine::RULES {
         assert!(
-            !matches!(rule.code().get(..3), Some("BFD" | "BFR")),
-            "deferred Docker or runtime rule namespace must not remain published: {}",
+            !rule.code().starts_with("BFR"),
+            "deferred runtime rule namespace must not remain published: {}",
             rule.code()
         );
     }
+}
+
+#[test]
+fn docker_target_checkpoint_is_nondefault_and_does_not_widen_cli_or_add_input_stubs() -> Result<(), String> {
+    let root = repository_root();
+    let read_toml = |path: &Path| -> Result<toml::Value, String> {
+        let text = fs::read_to_string(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        toml::from_str(&text).map_err(|error| format!("invalid {}: {error}", path.display()))
+    };
+    let manifest = read_toml(&root.join("crates/boxferry/Cargo.toml"))?;
+    let features = manifest["features"].as_table().ok_or("facade features missing")?;
+    assert_eq!(features["docker"].as_array().map(Vec::len), Some(1));
+    assert_eq!(features["docker"][0].as_str(), Some("dep:boxferry-docker"));
+    for feature in manifest["features"]["default"].as_array().ok_or("defaults missing")? {
+        assert_ne!(feature.as_str(), Some("docker"));
+    }
+    for binary in manifest["bin"].as_array().ok_or("CLI registration missing")? {
+        for feature in binary["required-features"]
+            .as_array()
+            .ok_or("CLI feature boundary missing")?
+        {
+            assert_ne!(feature.as_str(), Some("docker"));
+        }
+    }
+    assert_eq!(
+        manifest["dependencies"]["boxferry-docker"]["optional"].as_bool(),
+        Some(true)
+    );
+    let aliases = read_toml(&root.join(".cargo/config.toml"))?;
+    assert_eq!(
+        aliases["alias"]["ci-docker"].as_str(),
+        Some("check --locked --package boxferry --all-targets --no-default-features --features docker")
+    );
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml")).map_err(|error| error.to_string())?;
+    assert!(ci.contains("cargo ci-docker"));
+    let facade = fs::read_to_string(root.join("crates/boxferry/src/lib.rs")).map_err(|error| error.to_string())?;
+    for deferred in ["DockerImporter", "DockerSource", "acquire_docker_source"] {
+        assert!(!facade.contains(deferred), "target checkpoint must not add {deferred}");
+    }
+    let routes = fs::read_to_string(root.join("crates/boxferry/src/route.rs")).map_err(|error| error.to_string())?;
+    assert!(!routes.contains("Docker =>"));
+    for deferred in ["import.rs", "source.rs", "resource_decisions.rs", "public_labels.rs"] {
+        assert!(!root.join("crates/boxferry-docker/src").join(deferred).exists());
+    }
+    Ok(())
 }
 
 #[test]

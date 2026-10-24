@@ -1,0 +1,3511 @@
+{
+  "schema_version": 1,
+  "kind": "boxferry-docker-core-reacquisition-expectations",
+  "evidence_kind": "independent-native-derived-contract",
+  "provenance": {
+    "authoring_policy": "Native inputs and semantic contracts were reviewed independently; the fourth lane was frozen before reading its producer outputs. Exact full diagnostic objects and their order are intentional.",
+    "historical_three_lane_proposal_sha256": "4cd5071aee2fbcfc60b7d0f2cfe028d6e41ea2f72ce621be651f2c0388bbc052",
+    "fourth_lane_proposal_sha256": "1a82202227328d625add8eb0d4828a7cbbd292e171b34cd7c029f574b63865e4",
+    "semantic_source": {
+      "revision": "a83bd82f4294b60393343c84fb8197d5bef87fdd",
+      "candidate_source_sha256": "f7cf880b78827eee3742320aa46983d1d3b6afc557b60babe8ee24412102c775"
+    },
+    "native_source": {
+      "revision": "76654dbde09eb6d0f668014049fc7f94bda83e22",
+      "source_sha256": "b81bb26a6fa59a3cfb76fb169ac54684bcfa7d52378f018fb0588d973dec9639"
+    },
+    "fourth_native_capture": {
+      "invocation_id": "5ce58859bcc04503a743e8a5856a4525",
+      "completion_sha256": "a90400aad10b371c530d283f134e577bbc8d0b77d690bb1055da890cd25a340e",
+      "binding_sha256": "ae51046182d5aec7070476bd982a4b4aed24668ab1714138a7501ac502d8ae73",
+      "native_stage_sha256": "39eea07c05fc1571467f7a28661c29aa473048e97836a5ce5e909d55e6dec66f"
+    },
+    "evidence_boundary": "Raw native captures remain private and are not redistributed. These reviewed expectations are not exact-candidate core/application, publication, or broad compatibility evidence. Intrinsic parent acknowledgment and eventual guard self-join are not proven."
+  },
+  "lanes": {
+    "debian11-rootful": {
+      "fidelity": {
+        "exact": 17,
+        "approximate": 5,
+        "unsupported": 20,
+        "invalid": 0,
+        "other": 0
+      },
+      "diagnostics": [
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.driver"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.internal"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker user does not establish a requested user",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].user"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker working directory does not establish intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].working_directory"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].network_id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ip_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ipv6_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image_id"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].hostname"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_ports"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].network_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].read_only_rootfs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].memory_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].shm_size_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].userns_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].logging"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker inspected network ID is observation-only, not a portable resource name",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].enable_ipv6"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_driver"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_configs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].options"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": "CapabilityUnknown",
+          "severity": "warning",
+          "summary": "DockerLens reported a typed native finding",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "docker.native.DaemonMode"
+            }
+          ],
+          "spans": [],
+          "native_finding": {
+            "source_format": "docker",
+            "producer": "docker-lens",
+            "producer_version": null,
+            "code": "CapabilityUnknown",
+            "stage": "acquisition",
+            "severity": "warning",
+            "summary": "DockerLens reported a typed native finding",
+            "fields": [],
+            "labels": [],
+            "notes": [],
+            "help": null
+          }
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].command"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].restart_policy"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].mounts"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker runtime name is effective state, not proof of an authored service identity",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_name"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership is reconstructed as uncertain current-state topology",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership does not prove authored topology or resource ownership",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker bridge driver is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].driver"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker internal flag is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].internal"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        }
+      ]
+    },
+    "upstream-rootful": {
+      "fidelity": {
+        "exact": 18,
+        "approximate": 5,
+        "unsupported": 20,
+        "invalid": 0,
+        "other": 0
+      },
+      "diagnostics": [
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.driver"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.internal"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker user does not establish a requested user",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].user"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker working directory does not establish intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].working_directory"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].network_id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ip_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ipv6_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image_id"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].hostname"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_ports"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].network_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].read_only_rootfs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].memory_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].shm_size_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].userns_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].logging"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker inspected network ID is observation-only, not a portable resource name",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].enable_ipv6"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_driver"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_configs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].options"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": "CapabilityUnknown",
+          "severity": "warning",
+          "summary": "DockerLens reported a typed native finding",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "docker.native.DaemonMode"
+            }
+          ],
+          "spans": [],
+          "native_finding": {
+            "source_format": "docker",
+            "producer": "docker-lens",
+            "producer_version": null,
+            "code": "CapabilityUnknown",
+            "stage": "acquisition",
+            "severity": "warning",
+            "summary": "DockerLens reported a typed native finding",
+            "fields": [],
+            "labels": [],
+            "notes": [],
+            "help": null
+          }
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].command"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].restart_policy"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].configured_ports"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].mounts"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker runtime name is effective state, not proof of an authored service identity",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_name"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership is reconstructed as uncertain current-state topology",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership does not prove authored topology or resource ownership",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker bridge driver is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].driver"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker internal flag is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].internal"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        }
+      ]
+    },
+    "upstream-rootless": {
+      "fidelity": {
+        "exact": 18,
+        "approximate": 5,
+        "unsupported": 19,
+        "invalid": 0,
+        "other": 0
+      },
+      "diagnostics": [
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.driver"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.internal"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker user does not establish a requested user",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].user"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker working directory does not establish intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].working_directory"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].network_id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ip_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ipv6_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image_id"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].hostname"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_ports"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].network_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].read_only_rootfs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].memory_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].shm_size_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].userns_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].logging"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker inspected network ID is observation-only, not a portable resource name",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].enable_ipv6"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_driver"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_configs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].options"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].command"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].restart_policy"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].configured_ports"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].mounts"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker runtime name is effective state, not proof of an authored service identity",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_name"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership is reconstructed as uncertain current-state topology",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership does not prove authored topology or resource ownership",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker bridge driver is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].driver"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker internal flag is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].internal"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        }
+      ]
+    },
+    "debian11-rootless": {
+      "fidelity": {
+        "exact": 17,
+        "approximate": 5,
+        "unsupported": 19,
+        "invalid": 0,
+        "other": 0
+      },
+      "diagnostics": [
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.driver"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFC0007",
+          "name": "compose-output-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "neutral application intent is not represented in generated Compose output",
+          "help": "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks.docker-network-1.internal"
+            },
+            {
+              "name": "reason",
+              "value": "Compose external networks may only declare their platform name"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker user does not establish a requested user",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].user"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "empty effective Docker working directory does not establish intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].working_directory"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].network_id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ip_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker runtime network identity or address is observation-only, not static intent",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0].ipv6_address"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image_id"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].hostname"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_ports"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].network_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].read_only_rootfs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].memory_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].shm_size_bytes"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].userns_mode"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].logging"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "note",
+          "summary": "Docker inspected network ID is observation-only, not a portable resource name",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].id"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observation-only"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].enable_ipv6"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_driver"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].ipam_configs"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].options"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0002",
+          "name": "docker-input-unsupported",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker field is retained as native evidence but not mapped by this source checkpoint",
+          "help": "Review and author the affected field before accepting a target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].labels"
+            },
+            {
+              "name": "remediation",
+              "value": "Review and author this field before accepting a target conversion."
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].image"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].command"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].restart_policy"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].environment"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0003",
+          "name": "docker-state-reconstructed",
+          "source_code": null,
+          "severity": "note",
+          "summary": "reviewed effective Docker state reconstructed without a known behavior change",
+          "help": "Review the original authored-versus-default distinction before treating the candidate as maintained intent.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].mounts"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "source_intent_certainty",
+              "value": "observed-state-only"
+            },
+            {
+              "name": "remediation",
+              "value": "Review whether this setting was authored or inherited before maintaining it."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker runtime name is effective state, not proof of an authored service identity",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].runtime_name"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership is reconstructed as uncertain current-state topology",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks[0]"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "Docker runtime network membership does not prove authored topology or resource ownership",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "services[0].networks"
+            },
+            {
+              "name": "observation_origin",
+              "value": "runtime-assigned"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker bridge driver is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].driver"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        },
+        {
+          "code": "BFD0004",
+          "name": "docker-input-approximation",
+          "source_code": null,
+          "severity": "warning",
+          "summary": "inspected Docker internal flag is effective state, not authored network intent",
+          "help": "Review the reported source field and accept or repair the approximation before target conversion.",
+          "fields": [
+            {
+              "name": "subject",
+              "value": "networks[0].internal"
+            },
+            {
+              "name": "observation_origin",
+              "value": "effective"
+            },
+            {
+              "name": "remediation",
+              "value": "Review this current-state assumption and repair the target behavior if needed."
+            }
+          ],
+          "spans": [],
+          "native_finding": null
+        }
+      ]
+    }
+  }
+}

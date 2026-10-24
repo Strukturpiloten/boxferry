@@ -17,7 +17,10 @@ structured diagnostics instead of being silently discarded.
 | Quadlet | Generated Compose | Reviewable Podman artifacts | Generated unit files |
 
 All nine routes use the same importer → neutral model → exporter pipeline. Same-format conversion
-is never a native passthrough. Docker Engine resources and Kubernetes are not yet implemented.
+is never a native passthrough. Docker Engine input and CLI routes, and Kubernetes, are not yet
+implemented. A nondefault library-only `docker` target feature prepares bounded prerelease
+consumer checks; it does not expand this route table or establish application/runtime acceptance.
+See [the checkpoint contract](docs/decisions/0081-bounded-docker-target-consumer-preparation.md).
 
 ## Quick start
 
