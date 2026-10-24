@@ -29,7 +29,7 @@ outer_inspect=(podman inspect)
 usage() {
   printf 'usage: %s --profile {catalogue|replay-probe|core-journey|volume-fixtures|readiness-comparison} --docker-lens-root PATH --docker-lens-revision SHA --native-script-sha256 SHA [--lane LANE --artifact PATH --api-version API] [--boxferry-root PATH --boxferry-binary PATH --boxferry-receipt PATH] [--host-metadata-binary PATH --host-metadata-receipt PATH --evidence-directory PATH (volume-fixtures only)] [--diagnostic-directory PATH --expected-pid-namespace DEV:INO (readiness-comparison only)]\n' "$0" >&2
   printf 'Live Engine request profiles require --unix-http-helper PATH (exact DockerLens scripts/native-unix-http.py) --unix-http-sha256 SHA. Catalogue reads pins as data only.\n' >&2
-  printf 'Live outer-runtime profiles require --outer-runtime-closure-json JSON (exact four-file canonical bridge closure); DOCKERLENS_OUTER_ENGINE defaults to podman. Readiness-comparison is Podman-only.\n' >&2
+  printf 'Live outer-runtime profiles require --outer-runtime-closure-json JSON (exact six-file canonical bridge closure); DOCKERLENS_OUTER_ENGINE defaults to podman. Readiness-comparison is Podman-only.\n' >&2
   exit 2
 }
 
@@ -181,6 +181,15 @@ run_dir='' outer='' storage_volume='' watchdog_pid='' socket_path='' volume_path
 registered=false
 presence_unverified=false
 volume_apply_attempted=false
+runner_profile_required=false
+runner_profile_attempted=false
+runner_profile_removed=false
+runner_profile_nonce=''
+runner_prerequisite='{"required":false}'
+runner_profile_create_args=()
+if [[ $profile == volume-fixtures && $outer_engine == docker && $lane == upstream-rootless ]]; then
+  runner_profile_required=true
+fi
 main_pid=$$
 main_start=$(python3 "$contract" parent-start --parent-pid "$main_pid")
 signal_main() {
@@ -457,6 +466,21 @@ cleanup_owned() {
       if ((state == 1)); then outer_residual=none; else failure=1; fi
     fi
   fi
+  # Profile teardown follows exact outer absence and precedes storage cleanup.
+  # The held helper refuses unknown completion; retain its custody and run tree.
+  if [[ ${runner_profile_attempted:-false} == true ]]; then
+    local runner_profile_receipt=''
+    if runner_profile_receipt=$(cleanup_bounded 30s "${outer_runtime[@]}" apparmor cleanup "$lane" "$runner_profile_nonce") &&
+      printf '%s\n' "$runner_profile_receipt" | cleanup_bounded 5s python3 -B "$outer_helper_directory/native-runner-apparmor.py" \
+        validate-box-consumer-receipt "$lens_revision" "${GITHUB_RUN_ID:-}" "${GITHUB_RUN_ATTEMPT:-}" > /dev/null &&
+      runner_prerequisite=$(printf '%s\n' "$runner_profile_receipt" | cleanup_bounded 5s python3 "$contract" runner-prerequisite \
+        --docker-lens-revision "$lens_revision" --workflow-run "${GITHUB_RUN_ID:-}" --attempt "${GITHUB_RUN_ATTEMPT:-}"); then
+      runner_profile_removed=true
+    else
+      printf 'runner prerequisite cleanup/receipt unverified; retaining private custody\n' >&2
+      failure=1
+    fi
+  fi
   if [[ $registered == true && -n $storage_volume ]]; then
     volume_residual=$storage_volume
     state=0
@@ -510,7 +534,8 @@ cleanup_owned() {
       fi
       if [[ $outer_residual == none && $volume_residual == none &&
         $inner_volume_cleanup != unverified && ${presence_unverified:-false} == false &&
-        $disposable_identity_verified == true ]]; then
+        $disposable_identity_verified == true &&
+        (${runner_profile_attempted:-false} == false || ${runner_profile_removed:-false} == true) ]]; then
         cleanup_bounded 30s rm -r -- "$run_dir" || failure=1
         [[ -e $run_dir ]] || directory_residual=none
       elif [[ $disposable_identity_verified == true ]]; then
@@ -867,9 +892,17 @@ else
   outer_network=podman
   [[ $outer_engine != docker ]] || outer_network=bridge
   bounded 30s "${outer_runtime[@]}" prepare-data "$outer_image" "${lane##*-}" "$storage_volume" "$volume_path" "$graph_root"
+  if [[ $runner_profile_required == true ]]; then
+    runner_profile_nonce=$(bounded 5s python3 -c 'import secrets; print(secrets.token_hex(16))')
+    [[ $runner_profile_nonce =~ ^[0-9a-f]{32}$ ]] || exit 1
+    runner_profile_attempted=true
+    bounded 30s "${outer_runtime[@]}" apparmor prepare "$lane" "$runner_profile_nonce" "$outer" "$run_id" "$outer_image"
+    bounded 30s "${outer_runtime[@]}" apparmor load "$lane" "$runner_profile_nonce"
+    runner_profile_create_args=("$runner_profile_nonce")
+  fi
   # Capture even a failed launch's exact ID; never rediscover a replacement by name.
   outer_cid=$(bounded 120s "${outer_runtime[@]}" create-daemon "$outer" "$run_id" "$outer_owner" \
-    "$outer_network" "$storage_volume" "$socket_dir" /boxferry-core "$lane" "$outer_image" "$run_dir/outer.log") || outer_launch_status=$?
+    "$outer_network" "$storage_volume" "$socket_dir" /boxferry-core "$lane" "$outer_image" "$run_dir/outer.log" "${runner_profile_create_args[@]}") || outer_launch_status=$?
   [[ $outer_cid =~ ^[0-9a-f]{64}$ ]] || {
     outer_cid=''
     presence_unverified=true
@@ -1126,6 +1159,9 @@ uid_report=$(bounded 15s "${outer_exec[@]}" sh -ec '
 ' 2> /dev/null)
 python3 "$contract" verify-mode --lane "$lane" --rootless-marker "$observed_rootless" \
   --uid-report "$uid_report" > /dev/null
+if [[ $runner_profile_required == true ]]; then
+  bounded 30s "${outer_runtime[@]}" apparmor verify "$lane" "$runner_profile_nonce"
+fi
 installed_package=''
 if [[ $lane == debian11-* ]]; then
   # dpkg-query expands its literal package-version template, not either shell.
@@ -1304,6 +1340,8 @@ if [[ $profile == volume-fixtures ]]; then
   report_host_cache
   if [[ $outer_engine == docker ]]; then
     [[ -n $outer_observation ]] || exit 1
+    [[ $runner_profile_required == false || $runner_profile_removed == true ]] || exit 1
+    printf 'RUNNER-PREREQUISITE %s\n' "$runner_prerequisite"
     printf 'OUTER-RUNTIME-OBSERVATION %s\n' "$outer_observation"
   fi
   printf 'VOLUME-ONLY REHEARSAL CHECKS-PASSED: lane=%s fixtures=6 volumes=23 cleanup=verified acceptance=pending-reviewed-native-evidence; no container/image workload or six-application acceptance\n' "$lane"

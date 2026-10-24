@@ -36,6 +36,7 @@ BOX_FILES = frozenset({
     "scripts/lib/docker-application-expectations.py",
     "scripts/lib/bounded-native-read.py",
     "crates/boxferry/examples/docker-volume-fixture-rehearsal.rs",
+    "crates/boxferry/tests/support/docker_volume_fixtures.rs",
     "crates/boxferry/examples/docker-host-metadata.rs",
     "crates/boxferry/tests/docker_authored_bind_rehearsal.rs",
     "fixtures/scenarios/nextcloud-application/compose.yaml",
@@ -50,6 +51,7 @@ BOX_FILES = frozenset({
 OUTER_RUNTIME_FILES = frozenset({
     "scripts/native-outer-command.sh",
     "scripts/native-outer-runtime.sh", "scripts/native-outer-observation.py", "scripts/native-presence.py",
+    "scripts/native-runner-apparmor.py", "scripts/native_outer_diagnostic_capture.py",
 })
 LENS_FILES = frozenset({
     "scripts/native-conformance.sh", "scripts/native-unix-http.py", "src/reviewed_catalog.rs",
@@ -60,6 +62,7 @@ POLICY = {
     "inert_tests": list(INERT_TESTS), "minimum_available_memory_gib": 6, "minimum_free_disk_gib": 8,
     "outer_pids": 512, "outer_memory_gib": 4, "outer_cpus": 2,
     "execution_seconds": 780, "cleanup_seconds": 120, "cargo_jobs": 2,
+    "upstream_rootless_prerequisite": "github_runner_userns_v1",
 }
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")

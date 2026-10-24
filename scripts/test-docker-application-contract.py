@@ -164,6 +164,47 @@ def main():
         self.assertNotIn("check-unix-http-binding", log.read_text())
 
 
+class RunnerPrerequisiteTests(unittest.TestCase):
+    def setUp(self):
+        self.receipt = {"schema": 1, "prerequisite": "github_runner_userns_v1", "outcome": "verified",
+                        "candidate": "a" * 40, "label": "verified", "profile_sha256": "1" * 64,
+                        "parser_sha256": "2" * 64, "abi_sha256": "3" * 64, "parser_version": "4.0.1",
+                        "cleanup": "removed", "consumer": "boxferry-reviewed-docker-consumer",
+                        "workflow_run": "1234", "attempt": "2"}
+
+    def encode(self, receipt):
+        return "DOCKERLENS_NATIVE_APPARMOR_PROFILE: " + json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+
+    def test_current_complete_receipt_projects_without_execution(self):
+        for ending in ("", "\n"):
+            with mock.patch.object(contract.subprocess, "run", side_effect=AssertionError("no execution")), \
+                    mock.patch.object(contract.subprocess, "Popen", side_effect=AssertionError("no execution")):
+                value = contract.runner_prerequisite(self.encode(self.receipt) + ending, "a" * 40, "1234", "2")
+            self.assertEqual(json.loads(value), {"required": True, "receipt": self.receipt})
+
+    def test_closed_receipt_types_context_completion_and_canonical_encoding(self):
+        mutations = {"schema": True, "prerequisite": "other", "consumer": "docker-lens-native",
+                     "candidate": "b" * 40, "workflow_run": "1235", "attempt": 2,
+                     "outcome": "prepared", "label": "unknown", "cleanup": "unknown",
+                     "parser_version": "4.0.2", "profile_sha256": "bad", "parser_sha256": "A" * 64,
+                     "abi_sha256": None, "extra": "forbidden"}
+        for key, value in mutations.items():
+            with self.subTest(key=key), self.assertRaises(contract.ContractError):
+                contract.runner_prerequisite(self.encode({**self.receipt, key: value}), "a" * 40, "1234", "2")
+        for key in self.receipt:
+            changed = {field: value for field, value in self.receipt.items() if field != key}
+            with self.subTest(missing=key), self.assertRaises(contract.ContractError):
+                contract.runner_prerequisite(self.encode(changed), "a" * 40, "1234", "2")
+        raw = self.encode(self.receipt)
+        for value in (raw + "\n\n", " " + raw, raw.replace('{"', '{ "'), raw + raw,
+                      raw.replace('"schema":1', '"schema":1,"schema":1')):
+            with self.subTest(raw=value[:60]), self.assertRaises((contract.ContractError, ValueError)):
+                contract.runner_prerequisite(value, "a" * 40, "1234", "2")
+        for run, attempt in (("01234", "2"), ("1234", "0"), ("1" * 21, "2"), ("1234", "2" * 21)):
+            with self.subTest(run=run, attempt=attempt), self.assertRaises(contract.ContractError):
+                contract.runner_prerequisite(raw, "a" * 40, run, attempt)
+
+
 class OuterRuntimeSnapshotTests(unittest.TestCase):
     """Exact source custody only; no producer helper is sourced or executed."""
 
@@ -3502,6 +3543,68 @@ class VolumeEvidenceTests(unittest.TestCase):
 
 class RunnerSafetyTests(unittest.TestCase):
     runner = (pathlib.Path(__file__).parent / "docker-application-conformance.sh").read_text(encoding="utf-8")
+
+    def test_box_runner_prerequisite_has_fixed_scope_and_ordered_lifecycle(self):
+        self.assertIn('[[ $profile == volume-fixtures && $outer_engine == docker && $lane == upstream-rootless ]]', self.runner)
+        prepare = self.runner.index('"${outer_runtime[@]}" apparmor prepare')
+        load = self.runner.index('"${outer_runtime[@]}" apparmor load')
+        create = self.runner.index('"${outer_runtime[@]}" create-daemon')
+        verify = self.runner.index('"${outer_runtime[@]}" apparmor verify')
+        self.assertLess(self.runner.index('runner_profile_attempted=true'), prepare)
+        self.assertLess(prepare, load)
+        self.assertLess(load, create)
+        self.assertLess(create, verify)
+        self.assertLess(verify, self.runner.index('"${unix_http_args[@]}" apply-volume-fixtures'))
+        self.assertIn('"$run_dir/outer.log" "${runner_profile_create_args[@]}"', self.runner)
+        cleanup = self.runner[self.runner.index('cleanup_owned() {'):self.runner.index('\non_exit() {')]
+        self.assertLess(cleanup.index('"${outer_runtime[@]}" remove'), cleanup.index('"${outer_runtime[@]}" apparmor cleanup'))
+        self.assertLess(cleanup.index('"${outer_runtime[@]}" apparmor cleanup'), cleanup.index('"${outer_runtime[@]}" volume-remove'))
+        self.assertIn('cleanup_bounded 30s "${outer_runtime[@]}" apparmor cleanup', cleanup)
+        self.assertIn('validate-box-consumer-receipt', cleanup)
+        self.assertIn('(${runner_profile_attempted:-false} == false || ${runner_profile_removed:-false} == true)', cleanup)
+        final = self.runner.rindex("printf 'RUNNER-PREREQUISITE")
+        self.assertLess(self.runner.rindex('cleanup_owned'), final)
+        self.assertLess(final, self.runner.rindex("printf 'OUTER-RUNTIME-OBSERVATION"))
+
+    def test_profile_cleanup_unknown_or_invalid_receipt_retains_private_custody(self):
+        cleanup = self.runner[self.runner.index('cleanup_owned() {'):self.runner.index('\non_exit() {')]
+        for failure in ("none", "cleanup", "validator", "projection"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory(prefix="boxferry-docker-core.", dir="/tmp") as name:
+                directory = pathlib.Path(name)
+                (directory / "profile-custody").write_text("inert private recovery marker")
+                body = f'''run_dir={shlex.quote(name)}
+profile=volume-fixtures
+registered=false
+watchdog_pid=''
+outer=''
+storage_volume=''
+contract=/unused
+lane=upstream-rootless
+runner_profile_attempted=true
+runner_profile_removed=false
+runner_profile_nonce={'a' * 32}
+outer_runtime=(fixture_profile)
+outer_helper_directory=/unused
+lens_revision={'b' * 40}
+GITHUB_RUN_ID=1234
+GITHUB_RUN_ATTEMPT=2
+mock_failure={failure}
+cleanup_now() {{ printf '1\\n'; }}
+cleanup_bounded() {{ shift; "$@"; }}
+fixture_profile() {{ [[ $mock_failure != cleanup ]] || return 124; printf 'inert-receipt\\n'; }}
+python3() {{
+  local ignored
+  read -r ignored
+  if [[ $1 == -B ]]; then [[ $mock_failure != validator ]]; return; fi
+  [[ $mock_failure != projection ]] || return 1
+  printf '{{"required":true}}\\n'
+}}
+''' + cleanup + '\ncleanup_owned\n'
+                result = self.bash(body)
+                self.assertEqual(result.returncode, 0 if failure == "none" else 1, result.stderr)
+                self.assertEqual((directory / "profile-custody").exists(), failure != "none")
+                if failure != "none":
+                    self.assertIn("runner prerequisite cleanup/receipt unverified", result.stderr)
 
     def bound_http_statements(self) -> list[str]:
         """Collect literal call sites independently of their option spelling."""
