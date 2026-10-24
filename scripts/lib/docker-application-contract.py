@@ -40,6 +40,7 @@ UNIX_HTTP_BINDING = None
 OUTER_RUNTIME_FILES = (
     "scripts/native-outer-command.sh",
     "scripts/native-outer-runtime.sh", "scripts/native-outer-observation.py", "scripts/native-presence.py",
+    "scripts/native-runner-apparmor.py", "scripts/native_outer_diagnostic_capture.py",
 )
 # Ownership checks, watchdogs and evidence revocation do not depend on transport.
 UNIX_HTTP_COMMANDS = frozenset({
@@ -818,6 +819,31 @@ def canonical_images(root_text: str, revision: str, script_digest: str) -> dict[
     require(set(assignments) == set(IMAGE_KEYS.values()), "canonical image assignments are missing")
     require(len(set(assignments.values())) == len(assignments), "canonical image references repeat")
     return {lane: assignments[key] for lane, key in IMAGE_KEYS.items()}
+
+
+def runner_prerequisite(raw: str, revision: str, workflow_run: str, attempt: str) -> str:
+    """Project only a completed, canonical Box prerequisite receipt for this run."""
+    prefix = "DOCKERLENS_NATIVE_APPARMOR_PROFILE: "
+    require(type(raw) is str and 0 < len(raw.encode()) <= 8192 and raw.startswith(prefix)
+            and SHA_PATTERN.fullmatch(revision) is not None
+            and all(re.fullmatch(r"[1-9][0-9]{0,19}", item) is not None for item in (workflow_run, attempt)),
+            "runner prerequisite identity differs")
+    value = json.loads(raw[len(prefix):], object_pairs_hook=no_duplicate_keys)
+    fields = {"schema", "prerequisite", "outcome", "candidate", "label", "profile_sha256", "parser_sha256",
+              "abi_sha256", "parser_version", "cleanup", "consumer", "workflow_run", "attempt"}
+    require(type(value) is dict and set(value) == fields and type(value["schema"]) is int and value["schema"] == 1
+            and all(type(value[key]) is str for key in fields - {"schema"})
+            and value["consumer"] == "boxferry-reviewed-docker-consumer"
+            and value["prerequisite"] == "github_runner_userns_v1" and value["candidate"] == revision
+            and value["workflow_run"] == workflow_run and value["attempt"] == attempt
+            and value["outcome"] == "verified" and value["label"] == "verified"
+            and value["cleanup"] == "removed" and value["parser_version"] == "4.0.1"
+            and all(DIGEST_PATTERN.fullmatch(value[key]) is not None
+                    for key in ("profile_sha256", "parser_sha256", "abi_sha256")),
+            "runner prerequisite is incomplete or differs")
+    canonical = prefix + json.dumps(value, sort_keys=True, separators=(",", ":"))
+    require(raw in (canonical, canonical + "\n"), "runner prerequisite is not canonical")
+    return json.dumps({"required": True, "receipt": value}, sort_keys=True, separators=(",", ":"))
 
 
 def outer_runtime_closure(raw: str) -> dict[str, str]:
@@ -2202,6 +2228,10 @@ def main() -> int:
     parser.add_argument("--outer-runtime-engine")
     parser.add_argument("--outer-runtime-container-id")
     commands = parser.add_subparsers(dest="command", required=True)
+    prerequisite = commands.add_parser("runner-prerequisite")
+    prerequisite.add_argument("--docker-lens-revision", required=True)
+    prerequisite.add_argument("--workflow-run", required=True)
+    prerequisite.add_argument("--attempt", required=True)
     commands.add_parser("check-unix-http-binding")
     transport = commands.add_parser("unix-http")
     transport.add_argument("arguments", nargs=argparse.REMAINDER)
@@ -2411,6 +2441,9 @@ def main() -> int:
             forwarded = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
             sys.argv = [UNIX_HTTP.__file__, *forwarded]
             return UNIX_HTTP.main()
+        if args.command == "runner-prerequisite":
+            print(runner_prerequisite(sys.stdin.read(8193), args.docker_lens_revision, args.workflow_run, args.attempt))
+            return 0
         if args.command == "capture-outer-runtime":
             print(capture_outer_runtime(args.docker_lens_root, args.docker_lens_revision,
                   args.outer_runtime_closure_json, args.directory, args.run_identity))

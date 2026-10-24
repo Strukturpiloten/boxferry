@@ -28,6 +28,7 @@ RUNTIME_FACTS = {
     "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux",
     "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
     "GITHUB_REPOSITORY": "Strukturpiloten/boxferry",
+    "GITHUB_JOB": "lanes",
     "GITHUB_WORKFLOW_REF": "Strukturpiloten/boxferry/.github/workflows/reviewed-docker-consumer-validation.yml@refs/heads/main",
     "ImageOS": "ubuntu24",
 }
@@ -47,6 +48,13 @@ def runtime_environment(environ, *, require_docker=False):
         auth.require(type(image) is str and re.fullmatch(r"[0-9]{8}\.[0-9]+\.[0-9]+", image) is not None)
         selected.update(RUNTIME_FACTS)
         selected["ImageVersion"] = image
+        for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
+            value = environ.get(key, "")
+            auth.require(type(value) is str and re.fullmatch(r"[1-9][0-9]{0,19}", value) is not None)
+            selected[key] = value
+        candidate = environ.get("DOCKERLENS_NATIVE_CANDIDATE_SHA", "")
+        auth.sha(candidate, auth.SHA)
+        selected["DOCKERLENS_NATIVE_CANDIDATE_SHA"] = candidate
     return selected
 
 
@@ -236,7 +244,10 @@ def build(args):
 
 def run(args):
     auth.require(os.geteuid() == 0 and args.lane in auth.LANES)
-    runtime_environment(os.environ, require_docker=True)
+    environment = runtime_environment(os.environ, require_docker=True)
+    auth.require(environment["GITHUB_RUN_ID"] == str(args.run_id)
+                 and environment["GITHUB_RUN_ATTEMPT"] == str(args.attempt)
+                 and environment["DOCKERLENS_NATIVE_CANDIDATE_SHA"] == args.lens_sha)
     pair, digest, box_files, lens_files = inputs(args)
     expected = proof.context(pair, digest, args.trusted_sha, args.run_id, args.attempt)
     state = auth.document(args.private / "build-state.json", 128 * 1024)
@@ -278,7 +289,9 @@ def run(args):
     execute(command, root=args.execution_root, log=args.private / "runtime.log", seconds=1020,
             cleanup_seconds=125, preserve_guard=True)
     auth.require(set(path.name for path in directory.iterdir()) == {"volume-proof.json"})
-    outer_runtime = proof.outer_runtime_from_log(auth.read(args.private / "runtime.log", 16 * 1024 * 1024), args.lane)
+    runtime_log = auth.read(args.private / "runtime.log", 16 * 1024 * 1024)
+    outer_runtime = proof.outer_runtime_from_log(runtime_log, args.lane)
+    prerequisite = proof.runner_prerequisite_from_log(runtime_log, args.lane, expected)
     volume = auth.document(directory / "volume-proof.json", 16 * 1024)
     auth.verify_source(args.box_root, pair["boxferry"])
     auth.verify_source(args.lens_root, pair["docker_lens"])
@@ -287,6 +300,7 @@ def run(args):
     consumer = {"schema": 2, "scope": auth.POLICY["scope"], "lane": args.lane, "result": "checks-passed",
                 "context": expected, "builds": state["builds"], "inert": state["inert"],
                 "source_binding": proof.runtime_source_binding(pair), "outer_runtime": outer_runtime,
+                "runner_prerequisite": prerequisite,
                 "volume_proof_sha256": hashlib.sha256(proof.encoded(volume)).hexdigest()}
     proof.validate_lane(consumer, volume, expected_context=expected, lane=args.lane, pair=pair,
                         lens=args.lens_root, files=lens_files, box_files=box_files)

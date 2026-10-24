@@ -321,6 +321,7 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
                                       "runner": "ubuntu-24.04", "runner_image_version": "20261019.1.0",
                                       "client_version": "28.0.4", "server_version": "28.0.4",
                                       "rootful": True, "local": True, "native_qualified": False},
+                    "runner_prerequisite": self.runner_prerequisite(lane),
                     "context": copy.deepcopy(self.context), "builds": builds,
                     "inert": {"kind": "inert-only-no-runtime", "binary_sha256": "d" * 64,
                               "tests": [{"name": name, "selected": 1, "passed": 1, "failed": 0, "ignored": 0}
@@ -377,9 +378,10 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
             self.authorization.copy_closure(files, copied)
 
     def test_outer_runtime_sources_are_independently_required_and_changed_bytes_refuse(self):
-        required = {"scripts/native-outer-runtime.sh", "scripts/native-outer-observation.py",
-                    "scripts/native-presence.py"}
+        required = {"scripts/native-outer-command.sh", "scripts/native-outer-runtime.sh", "scripts/native-outer-observation.py",
+                    "scripts/native-presence.py", "scripts/native-runner-apparmor.py", "scripts/native_outer_diagnostic_capture.py"}
         self.assertTrue(required <= self.authorization.LENS_FILES)
+        self.assertIn("crates/boxferry/tests/support/docker_volume_fixtures.rs", self.authorization.BOX_FILES)
         self.assertEqual(self.authorization.POLICY["outer_engine"], "docker")
         binding = self.evidence.runtime_source_binding(self.pair)
         self.assertEqual(binding["qualification"], "reviewed-source-identity-only")
@@ -406,11 +408,23 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
                 self.authorize()
         self.manifest_path.write_bytes(self.evidence.encoded(self.manifest))
 
+    def runner_prerequisite(self, lane):
+        if lane != "upstream-rootless":
+            return {"required": False}
+        return {"required": True, "receipt": {
+            "schema": 1, "prerequisite": "github_runner_userns_v1", "outcome": "verified",
+            "candidate": self.context["lens_sha"], "label": "verified", "profile_sha256": "1" * 64,
+            "parser_sha256": "2" * 64, "abi_sha256": "3" * 64, "parser_version": "4.0.1",
+            "cleanup": "removed", "consumer": "boxferry-reviewed-docker-consumer",
+            "workflow_run": str(self.context["run_id"]), "attempt": str(self.context["run_attempt"])}}
+
     def test_runtime_environment_is_explicit_sanitized_and_never_runtime_authority(self):
         facts = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux",
                  "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
                  "GITHUB_REPOSITORY": "Strukturpiloten/boxferry",
                  "GITHUB_WORKFLOW_REF": "Strukturpiloten/boxferry/.github/workflows/reviewed-docker-consumer-validation.yml@refs/heads/main",
+                 "GITHUB_JOB": "lanes", "GITHUB_RUN_ID": "1234", "GITHUB_RUN_ATTEMPT": "2",
+                 "DOCKERLENS_NATIVE_CANDIDATE_SHA": "b" * 40,
                  "ImageOS": "ubuntu24", "ImageVersion": "20261021.1.0", "DOCKERLENS_OUTER_ENGINE": "docker"}
         self.assertEqual(self.launcher.runtime_environment(facts, require_docker=True), facts)
         for key in facts:
@@ -444,8 +458,10 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.assertIn("DOCKERLENS_OUTER_ENGINE=docker", runtime)
         self.assertIn("sudo env -i", runtime)
         for key in ("GITHUB_ACTIONS", "RUNNER_ENVIRONMENT", "RUNNER_OS", "GITHUB_REF", "GITHUB_EVENT_NAME",
-                    "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF", "ImageOS", "ImageVersion"):
+                    "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF", "GITHUB_JOB", "GITHUB_RUN_ID",
+                    "GITHUB_RUN_ATTEMPT", "ImageOS", "ImageVersion"):
             self.assertIn(key + '=\"$' + key + '\"', runtime)
+        self.assertIn('DOCKERLENS_NATIVE_CANDIDATE_SHA="$LENS_SHA"', runtime)
         for forbidden in ("GITHUB_TOKEN", "GH_TOKEN", "ACTIONS_RUNTIME_TOKEN", "DOCKER_HOST", "DOCKER_CONTEXT"):
             self.assertNotIn(forbidden, runtime)
 
@@ -498,6 +514,68 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
             else: changed["outer_runtime"]["peer_pid"] = 123
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 self.validate(changed, volume)
+
+    def test_schema2_runner_prerequisite_is_required_only_for_current_upstream_rootless(self):
+        for lane in self.authorization.LANES:
+            consumer, volume = self.lane_fixture(lane)
+            self.validate(consumer, volume, lane)
+            for value in ({}, {"required": 0}, {"required": False, "receipt": {}},
+                          {"required": True}, {"required": False, "extra": False}):
+                changed = copy.deepcopy(consumer)
+                changed["runner_prerequisite"] = value
+                with self.subTest(lane=lane, value=value), self.assertRaises(ValueError):
+                    self.validate(changed, volume, lane)
+            changed = copy.deepcopy(consumer)
+            changed.pop("runner_prerequisite")
+            with self.assertRaises(ValueError):
+                self.validate(changed, volume, lane)
+        consumer, volume = self.lane_fixture("upstream-rootless")
+        changed = copy.deepcopy(consumer)
+        changed["runner_prerequisite"] = {"required": False}
+        with self.assertRaises(ValueError):
+            self.validate(changed, volume, "upstream-rootless")
+        mutations = {"schema": True, "consumer": "docker-lens-native", "prerequisite": "other",
+                     "outcome": "prepared", "label": "unknown", "cleanup": "unknown",
+                     "candidate": "a" * 40, "workflow_run": "1235", "attempt": "1",
+                     "profile_sha256": "bad", "parser_sha256": 1, "abi_sha256": "A" * 64,
+                     "parser_version": "4.0.2", "extra": "not-allowed"}
+        for field, value in mutations.items():
+            changed = copy.deepcopy(consumer)
+            changed["runner_prerequisite"]["receipt"][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.validate(changed, volume, "upstream-rootless")
+        for field in consumer["runner_prerequisite"]["receipt"]:
+            changed = copy.deepcopy(consumer)
+            changed["runner_prerequisite"]["receipt"].pop(field)
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                self.validate(changed, volume, "upstream-rootless")
+        for lane in (value for value in self.authorization.LANES if value != "upstream-rootless"):
+            changed, volume = self.lane_fixture(lane)
+            changed["runner_prerequisite"] = consumer["runner_prerequisite"]
+            with self.assertRaises(ValueError):
+                self.validate(changed, volume, lane)
+
+    def test_prerequisite_handoff_rejects_replay_duplicates_and_noncanonical_final_lines(self):
+        for lane in self.authorization.LANES:
+            consumer, _ = self.lane_fixture(lane)
+            prerequisite = self.evidence.PREREQUISITE_PREFIX + self.evidence.encoded(consumer["runner_prerequisite"])
+            outer = self.evidence.OUTER_PROJECTION_PREFIX + self.evidence.encoded(consumer["outer_runtime"])
+            trailer = (f"VOLUME-ONLY REHEARSAL CHECKS-PASSED: lane={lane} fixtures=6 volumes=23 cleanup=verified "
+                       "acceptance=pending-reviewed-native-evidence; no container/image workload or six-application acceptance\n").encode()
+            good = prerequisite + outer + trailer
+            self.assertEqual(self.evidence.runner_prerequisite_from_log(good, lane, self.context),
+                             consumer["runner_prerequisite"])
+            for raw in (b"", outer + trailer, good[:-1], good + b"\n", good + b"trailing\n",
+                        prerequisite + good, b"prefix " + good, prerequisite + b"interposed\n" + outer + trailer,
+                        good.replace(b'"required":', b'"required": '), good.replace(b'CHECKS-PASSED', b'FAILED'),
+                        good.replace(b'"required":', b'"required":false,"required":')):
+                with self.subTest(lane=lane, raw=raw[:60]), self.assertRaises(ValueError):
+                    self.evidence.runner_prerequisite_from_log(raw, lane, self.context)
+            if lane == "upstream-rootless":
+                for field in ("lens_sha", "run_id", "run_attempt"):
+                    context = {**self.context, field: "9" * 40 if field == "lens_sha" else 9}
+                    with self.subTest(context=field), self.assertRaises(ValueError):
+                        self.evidence.runner_prerequisite_from_log(good, lane, context)
 
     def test_outer_log_handoff_requires_one_complete_closed_final_projection(self):
         lane = "debian11-rootful"

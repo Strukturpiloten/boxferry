@@ -155,6 +155,8 @@ jobs:
             RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" \
             GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
             GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+            GITHUB_JOB="$GITHUB_JOB" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            DOCKERLENS_NATIVE_CANDIDATE_SHA="$LENS_SHA" \
             ImageOS="$ImageOS" ImageVersion="$ImageVersion" \
             python3 "$PWD/trusted/scripts/reviewed-docker-consumer-run.py" run \
             --trusted-root "$PWD/trusted" --box-root "$PWD/candidate" --lens-root "$PWD/lens-execution" \

@@ -33,13 +33,24 @@ DockerLens Unix-HTTP helper by held bytes, clean reviewed revision and SHA-256,
 before runtime setup. It does not adopt the unfinished #366 application/capture
 modules or migrate historical curl readiness. Catalogue extraction remains
 data-only. Live consumer profiles separately bind the canonical fixed outer
-command bridge and its complete runtime/observation/presence source closure into
+command bridge and its complete six-file runtime/observation/presence/profile
+source closure (including `native-runner-apparmor.py` and
+`native_outer_diagnostic_capture.py`) into
 a private owned snapshot. Caller deadlines, watchdog and held resource identity
 remain authoritative; the historical readiness comparison remains Podman-only.
 New consumer lane schema 2 independently binds reviewed helper source identity
 and whitelisted fresh outer preflight observations. Neither a helper hash nor
 outer-version observations qualify the inner Engine or applications. Historical
 volume proofs and evidence are unchanged; native qualification is still pending.
+
+The reviewed hosted Docker volume lane uses the same canonical narrowly scoped
+user-namespace prerequisite for `upstream-rootless`, with a distinct BoxFerry
+workflow/job identity, owner label, guest socket, profile prefix and custody
+directory. Native Lens modes and receipts remain unchanged. The Box receipt
+validator is read-only and rejects native, cross-source and cross-attempt
+receipts; the native validator rejects Box receipts. Other lanes and local or
+self-hosted execution do not acquire this exception. See ADR 0078 for lifecycle,
+custody and schema-2 acceptance requirements.
 
 [BoxFerry #469](https://github.com/Strukturpiloten/boxferry/issues/469) coordinates
 DockerLens #127, QuadletLens #157 and containers #442. Update local, admitted PR,

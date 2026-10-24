@@ -1,8 +1,8 @@
 # Testing
 
-The [proposed Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md)
-has mandatory offline adversarial controls, not native acceptance. Existing gates
-remain unchanged.
+The [Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.md)
+requires offline source-custody/current-attempt/cleanup controls, not native
+acceptance. Complete gates remain mandatory.
 
 Run the complete deterministic gate before every pull request:
 

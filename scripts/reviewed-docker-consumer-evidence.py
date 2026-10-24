@@ -46,6 +46,7 @@ def runtime_source_binding(pair):
 
 
 OUTER_PROJECTION_PREFIX = b"OUTER-RUNTIME-OBSERVATION "
+PREREQUISITE_PREFIX = b"RUNNER-PREREQUISITE "
 OUTER_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9_.-]+)?\Z")
 
 
@@ -76,6 +77,47 @@ def outer_runtime_from_log(raw: bytes, lane: str):
     value = json.loads(lines[0][len(OUTER_PROJECTION_PREFIX):], object_pairs_hook=auth.no_duplicates)
     validate_outer_runtime(value)
     auth.require(lines[0] == OUTER_PROJECTION_PREFIX + encoded(value).rstrip(b"\n"))
+    return value
+
+
+def validate_runner_prerequisite(value, lane, expected_context):
+    """Independent closed current-attempt validation, without candidate imports."""
+    auth.require(lane in auth.LANES)
+    required = lane == "upstream-rootless"
+    auth.keys(value, ("required", "receipt") if required else ("required",))
+    auth.require(value["required"] is required)
+    if not required:
+        return
+    receipt = value["receipt"]
+    fields = ("schema", "prerequisite", "outcome", "candidate", "label", "profile_sha256",
+              "parser_sha256", "abi_sha256", "parser_version", "cleanup", "consumer", "workflow_run", "attempt")
+    auth.keys(receipt, fields)
+    auth.require(type(receipt["schema"]) is int and receipt["schema"] == 1
+                 and all(type(receipt[key]) is str for key in fields if key != "schema")
+                 and receipt["consumer"] == "boxferry-reviewed-docker-consumer"
+                 and receipt["prerequisite"] == auth.POLICY["upstream_rootless_prerequisite"]
+                 and receipt["candidate"] == expected_context["lens_sha"]
+                 and receipt["workflow_run"] == str(expected_context["run_id"])
+                 and receipt["attempt"] == str(expected_context["run_attempt"])
+                 and receipt["outcome"] == "verified" and receipt["label"] == "verified"
+                 and receipt["cleanup"] == "removed" and receipt["parser_version"] == "4.0.1")
+    auth.sha(receipt["candidate"], auth.SHA)
+    for field in ("workflow_run", "attempt"):
+        auth.require(re.fullmatch(r"[1-9][0-9]{0,19}", receipt[field]) is not None)
+    for field in ("profile_sha256", "parser_sha256", "abi_sha256"):
+        auth.sha(receipt[field])
+
+
+def runner_prerequisite_from_log(raw: bytes, lane: str, expected_context):
+    outer_runtime_from_log(raw, lane)
+    auth.require(type(raw) is bytes and 0 < len(raw) <= 16 * 1024 * 1024 and raw.endswith(b"\n"))
+    lines = raw.split(b"\n")
+    selected = [line for line in lines if PREREQUISITE_PREFIX.rstrip() in line]
+    auth.require(len(selected) == 1 and selected[0].startswith(PREREQUISITE_PREFIX)
+                 and len(selected[0]) <= 8192 and len(lines) >= 4 and lines[-4] == selected[0])
+    value = json.loads(selected[0][len(PREREQUISITE_PREFIX):], object_pairs_hook=auth.no_duplicates)
+    validate_runner_prerequisite(value, lane, expected_context)
+    auth.require(selected[0] == PREREQUISITE_PREFIX + encoded(value).rstrip(b"\n"))
     return value
 
 
@@ -237,9 +279,10 @@ def validate_volume(value, *, lane, pair, lens, builds, files, box_files):
 
 def validate_lane(consumer, volume, *, expected_context, lane, pair, lens, files, box_files):
     auth.keys(consumer, ("schema", "scope", "lane", "result", "context", "builds", "inert", "volume_proof_sha256",
-                         "source_binding", "outer_runtime"))
+                         "source_binding", "outer_runtime", "runner_prerequisite"))
     auth.require(consumer["source_binding"] == runtime_source_binding(pair))
     validate_outer_runtime(consumer["outer_runtime"])
+    validate_runner_prerequisite(consumer["runner_prerequisite"], lane, expected_context)
     auth.sha(consumer["volume_proof_sha256"])
     auth.require(consumer["volume_proof_sha256"] == hashlib.sha256(encoded(volume)).hexdigest())
     auth.keys(consumer["context"], expected_context)

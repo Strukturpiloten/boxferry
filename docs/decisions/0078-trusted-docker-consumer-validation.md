@@ -52,7 +52,9 @@ core-artifact, application-schedule, application-expectations and bounded-native
 modules, relevant fixture/expectation files, producer examples and inert test source.
 Repository-relative paths and `__file__` layout remain intact; no candidate
 validator is selected by an uploaded path. A separate real clean exact Lens checkout
-retains existing Git guards. Its native Unix-HTTP helper, canonical native image
+retains existing Git guards. The volume producer's imported
+`tests/support/docker_volume_fixtures.rs` is also an authorized Box source input.
+Its native Unix-HTTP helper, canonical native image
 assignments, reviewed catalogue and all four referenced records are explicitly
 authorized before use. Never fabricate Git metadata for a partial Lens tree.
 
@@ -68,7 +70,15 @@ The live launcher has no profile override: it invokes only `volume-fixtures`.
 Existing capacity preflight (6 GiB available RAM/8 GiB free disk), 512 PID/4 GiB/
 2 CPU outer limits, owned socket/storage, 780-second work/120-second cleanup
 watchdogs, lane-specific nesting exceptions and exact ownership/absence checks
-remain unchanged. Do not relax the unconfined/host-policy guard or contact ambient
+remain unchanged. Only the Docker-backed `upstream-rootless` volume lane uses the
+canonical DockerLens `github_runner_userns_v1` prerequisite, under the actual
+BoxFerry workflow/job/run/attempt identity. It prepares and loads a unique
+run-owned AppArmor profile, binds its nonce to creation, verifies the live label,
+and removes the profile after exact outer teardown, before storage cleanup.
+The existing deadlines also bound these phases; no timer is renewed. Unknown
+load/create/unload completion fails closed and retains private custody and the
+run directory. Debian-rootless, rootful, local and self-hosted execution gain no
+profile authority. Do not relax the unconfined/global host-policy guard or contact ambient
 host Docker. Capture build/runtime output privately; never upload raw captures/logs.
 Build and inert-test subprocesses have owned process-group cleanup before the
 leader is reaped. The native backstop first signals its owner and preserves its
@@ -78,6 +88,14 @@ Upload only bounded, closed sanitized `volume-proof.json` and `consumer.json`.
 The volume proof retains the existing 16 KiB bound; its exact canonical uploaded
 bytes are SHA-256-bound into the current-run consumer envelope, preventing a
 separately completed same-head proof from being substituted beside that envelope.
+Schema 2 also requires `runner_prerequisite`: exactly `required=false` on the
+other three lanes, or the closed Box consumer receipt on `upstream-rootless`,
+bound to the exact Lens source and current run/attempt, with verified label/outcome
+and removed cleanup. Native receipts, prepared-only receipts and earlier-attempt
+receipts cannot substitute. The bounded canonical prerequisite and
+outer-observation records must immediately precede the successful final log
+line; no raw receipt file is uploaded. This prerequisite is not native
+product/application evidence.
 The new trusted read-only validator is not the existing runtime evidence writer.
 A fresh aggregate rechecks admission, exact source and authorized closure, constructs
 its own verifier tree, and requires all four complete current-run/current-attempt
@@ -122,3 +140,27 @@ when combining the index, rather than renumbering or hiding their history.
 
 The alternative is a reusable long-term Docker dispatcher framework. This narrow
 explicitly reviewed bridge avoids importing unrelated multiprofile execution now.
+
+## Maintained prerequisite and offline controls
+
+The trusted-main bootstrap must include the Box consumer's fixed prerequisite
+policy, six-file canonical Lens closure and schema-2 validator before admitting
+the corresponding product/helper source pair. Renew exact source identities
+after infrastructure integration, including the volume producer's imported
+fixture-support source. The upstream-rootless lane additionally needs a fresh
+Box-specific verified-and-removed prerequisite receipt for the same Lens SHA,
+workflow run and attempt; prior native or prepared-only receipts are ineligible.
+The remaining lanes explicitly report that no profile is required. No new image,
+Action, tool or admission pin is introduced by this seam: existing DockerLens
+image ownership, Action managers and the single admission-revision manager are
+unchanged. This diagnostic does not alter PR/main/Release gates or qualify other
+repositories' consumers.
+
+The inert consumer controls cover the complete authorized source closure, actual
+workflow/job/run/attempt identity, upstream-rootless-only profile selection,
+prepare/load/create/verify/cleanup ordering, and private custody retention after
+unknown cleanup or invalid receipts. They reject native or cross-source receipts,
+attempt replay, incomplete cleanup, extra/missing fields, wrong types/digests,
+and duplicate, noncanonical or misplaced final log projections. These controls
+do not load AppArmor profiles or run a container runtime. Fresh hosted native
+lanes and the complete gate remain separate requirements.

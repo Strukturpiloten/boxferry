@@ -36,6 +36,8 @@ The [Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.m
 [staged exact-pair authorization](decisions/0079-native-test-runtime-selection.md#safe-staged-bootstrap-and-acceptance-checkpoints).
 Infrastructure alone proves neither native acceptance nor release readiness.
 
+Upstream-rootless requires current-attempt verified-and-removed Box receipts; see that ADR.
+
 ## Automatic release validation
 
 `Release` owns fresh current-run pre-release evidence. It runs the complete deterministic
