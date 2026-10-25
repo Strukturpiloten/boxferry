@@ -4,16 +4,16 @@ Canonical manifests, lockfiles, workflows and installers own dependency versions
 
 ## Sources of truth
 
-| Concern                      | Canonical source                       |
-| ---------------------------- | -------------------------------------- |
-| Rust requirements/features   | workspace and crate `Cargo.toml` files |
-| Resolved Rust graph          | `Cargo.lock`                           |
-| Allowed licenses/sources     | `deny.toml`                            |
-| Node development tools       | `package.json` and `package-lock.json` |
-| File-quality tools           | `scripts/install-file-tools.sh`        |
-| Kubernetes development tools | `scripts/install-kubernetes-tools.sh`  |
-| Workflow tools and Actions   | `.github/workflows/`                   |
-| Dev Container tools          | `.devcontainer/`                       |
+| Concern                      | Canonical source                         |
+| ---------------------------- | ---------------------------------------- |
+| Rust requirements/features   | workspace and crate `Cargo.toml` files   |
+| Resolved Rust graph          | `Cargo.lock`                             |
+| Allowed licenses/sources     | `deny.toml`                              |
+| Node development tools       | `package.json` and `package-lock.json`   |
+| File-quality tools           | `scripts/install-file-tools.sh`          |
+| Kubernetes development tools | `scripts/install-kubernetes-tools.sh`    |
+| Workflow tools and Actions   | `.github/workflows/`, `.github/actions/` |
+| Dev Container tools          | `.devcontainer/`                         |
 
 ## Review rules
 

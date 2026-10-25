@@ -328,7 +328,7 @@ def aggregate(root: Path, *, expected_context, pair, lens, files, box_files):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("trusted-root", "box-root", "lens-root", "verifier-root", "artifacts"):
+    for name in ("trusted-root", "box-root", "lens-root", "verifier-root", "artifacts", "bindings"):
         parser.add_argument("--" + name, type=Path, required=True)
     for name in ("box-pr", "lens-pr", "run-id", "attempt"):
         parser.add_argument("--" + name, type=int, required=True)
@@ -346,6 +346,13 @@ def main():
     expected = context(pair, digest, args.trusted_sha, args.run_id, args.attempt)
     aggregate(args.artifacts, expected_context=expected, pair=pair, lens=args.lens_root,
               files=lens_files, box_files=box_files)
+    transfer_spec = importlib.util.spec_from_file_location(
+        "reviewed_aggregate_transfer", Path(__file__).with_name("reviewed-docker-consumer-transfer.py"))
+    assert transfer_spec is not None and transfer_spec.loader is not None
+    transfer = importlib.util.module_from_spec(transfer_spec)
+    transfer_spec.loader.exec_module(transfer)
+    transfer.validate_results(args.bindings, expected_context=expected, pair=pair,
+                              lens=args.lens_root, results=args.artifacts)
 
 
 if __name__ == "__main__":

@@ -122,6 +122,19 @@ def admit_pair(env, pair, helper, get, *, phase=None) -> None:
                      and repository["id"] == lens["repository_id"] and repository.get("full_name") == LENS)
 
 
+def repository_getter(helper, box_token, lens_token):
+    """Select an explicit credential only for the two literal repository policies."""
+    auth.require(type(box_token) is str and bool(box_token)
+                 and type(lens_token) is str and bool(lens_token))
+
+    def get(path, repository):
+        auth.require(type(repository) is str and repository in (BOX, LENS))
+        token = box_token if repository == BOX else lens_token
+        return helper.fetch_json(path, token, expected_repository=repository)
+
+    return get
+
+
 def main():
     phase = "authorization"
     helper = None
@@ -148,11 +161,9 @@ def main():
         mark("helper-load")
         helper = shared_helper(args.admission_root, args.admission_revision)
         mark("context/Box-admission")
-        token = os.environ.get("GITHUB_TOKEN", "")
-        auth.require(bool(token))
-        admit_pair(os.environ, pair, helper,
-                   lambda path, repository: helper.fetch_json(path, token, expected_repository=repository),
-                   phase=mark)
+        get = repository_getter(helper, os.environ.get("GITHUB_TOKEN", ""),
+                                os.environ.get("DOCKERLENS_ADMISSION_TOKEN", ""))
+        admit_pair(os.environ, pair, helper, get, phase=mark)
     except Exception as error:
         print(failure_message(phase, error, helper), file=sys.stderr)
         return 1
