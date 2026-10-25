@@ -141,6 +141,44 @@ fn retains_empty_entrypoint_and_logging_options_without_a_driver() -> Result<(),
 }
 
 #[test]
+fn imports_interpolated_container_names_with_their_sensitivity() -> Result<(), Box<dyn Error>> {
+    for sensitive in [false, true] {
+        let id = ComposeSourceId::new(118);
+        let loaded = LoadedProject::load([DocumentInput::new(
+            id,
+            DocumentOrigin::new("runtime-name.yaml", "."),
+            "services:\n  web:\n    image: example.invalid/web:1\n    container_name: ${CONTAINER_NAME}\n",
+        )])?;
+        let mut environment = MapEnvironment::new();
+        if sensitive {
+            let _ = environment.insert_sensitive("CONTAINER_NAME", "private-runtime-name");
+        } else {
+            let _ = environment.insert("CONTAINER_NAME", "public-runtime-name");
+        }
+        let interpolation = loaded.interpolate(&environment);
+        let merged = merge_project(&loaded, Some(&interpolation));
+        assert!(merged.is_valid(), "{:?}", merged.diagnostics());
+        let project = merged.project().ok_or("merged project")?.clone();
+        let source = ComposeSource::new(project, Identifier::new("runtime-name")?)?
+            .with_source_id(id, SourceId::new("runtime-name.yaml")?);
+        let result = ComposeImporter::new()?.import(&source);
+        let application = result.application().ok_or("application")?;
+        let runtime_name = application.services()[0].value().runtime_name().ok_or("runtime name")?;
+        assert_eq!(runtime_name.value().is_sensitive(), sensitive);
+        assert_eq!(
+            runtime_name.value().expose(),
+            if sensitive {
+                "private-runtime-name"
+            } else {
+                "public-runtime-name"
+            }
+        );
+        assert!(!format!("{application:?}").contains("private-runtime-name"));
+    }
+    Ok(())
+}
+
+#[test]
 fn imports_network_definitions_with_runtime_identity_protected_options_and_associated_ipam_rows()
 -> Result<(), Box<dyn Error>> {
     let id = ComposeSourceId::new(114);

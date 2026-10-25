@@ -7,6 +7,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ### Changed
 
+- Preserve sensitivity on interpolated Compose container names so protected identities remain
+  guarded during target planning and reporting.
 - Preserve explicit public Podman volume runtime names consistently in declarations and named
   mounts, retaining external ownership and refusing protected names, collisions, and undeclared
   logical references under every loss policy

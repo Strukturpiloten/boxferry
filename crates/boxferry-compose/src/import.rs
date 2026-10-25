@@ -386,7 +386,7 @@ impl<'a> Mapping<'a> {
             return;
         };
         service.set_runtime_name(self.sourced_provenance(
-            ProtectedString::plain(container_name.value()),
+            Self::protected(container_name.value(), container_name.is_sensitive()),
             container_name.provenance(),
         ));
         self.exact_provenance(format!("{subject}.container_name"), container_name.provenance());
