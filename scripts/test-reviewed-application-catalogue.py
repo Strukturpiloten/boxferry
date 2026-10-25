@@ -1055,6 +1055,215 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 self.validate(consumer, volume)
 
+    def compiler_output(self, profile, *, root=None):
+        root = root or self.box
+        if profile == "inert-tests":
+            path = root / "target/debug/deps/docker_authored_bind_rehearsal-0123456789abcdef"
+        else:
+            example = {"volume-fixtures": "docker-volume-fixture-rehearsal", "host-metadata": "docker-host-metadata"}[profile]
+            path = root / "target/debug/examples" / example
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = b"\x7fELF" + b"\x00" * 60 + profile.encode()
+        path.write_bytes(payload)
+        path.chmod(0o755)
+        alias = path.with_name("cargo_alias_" + profile + "-0123456789abcdef")
+        os.link(path, alias)
+        return path, alias, payload
+
+    def test_build_capture_breaks_cargo_aliases_before_unchanged_strict_readers(self):
+        for profile in ("volume-fixtures", "host-metadata", "inert-tests"):
+            path, alias, payload = self.compiler_output(profile)
+            original_inode = path.stat().st_ino
+            self.assertEqual(path.stat().st_nlink, 2)
+            with self.assertRaises(ValueError): self.launcher.binary_digest(path, self.box)
+            with self.assertRaises(ValueError): self.transfer.binary(path)
+            digest = self.launcher.capture_compiler_executable(path, self.box, profile, deadline=10**12)
+            self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
+            self.assertNotEqual(path.stat().st_ino, original_inode)
+            self.assertEqual(alias.stat().st_ino, original_inode)
+            self.assertEqual((path.stat().st_nlink, alias.stat().st_nlink), (1, 1))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+            alias.write_bytes(b"changed through Cargo's other name")
+            self.assertEqual(path.read_bytes(), payload)
+            self.assertEqual(self.launcher.binary_digest(path, self.box), digest)
+            self.assertEqual(self.transfer.binary(path), {"sha256": digest, "size": len(payload)})
+            # An untrusted bundle input still cannot acquire capture authority.
+            untrusted = self.root / ("untrusted-" + profile)
+            os.link(path, untrusted)
+            with self.assertRaises(ValueError): self.transfer.binary(untrusted)
+            with self.assertRaises(ValueError): self.launcher.binary_digest(path, self.box)
+            untrusted.unlink()
+
+    def test_build_capture_rejects_unknown_paths_links_types_owner_format_size_and_deadline(self):
+        for mutation in ("unknown-path", "unknown-profile", "symlink", "parent-symlink", "directory", "fifo",
+                         "not-executable", "wrong-owner", "not-elf", "empty", "oversize", "deadline"):
+            root = self.root / mutation
+            path, alias, payload = self.compiler_output("volume-fixtures", root=root)
+            profile, deadline = "volume-fixtures", 10**12
+            if mutation == "unknown-path":
+                other = path.with_name("unrelated-artifact")
+                path.rename(other)
+                path = other
+            elif mutation == "unknown-profile": profile = "untrusted-download"
+            elif mutation == "symlink":
+                path.unlink()
+                path.symlink_to(alias)
+            elif mutation == "parent-symlink":
+                real_parent = path.parent.with_name("real-examples")
+                path.parent.rename(real_parent)
+                path.parent.symlink_to(real_parent, target_is_directory=True)
+            elif mutation in ("directory", "fifo"):
+                path.unlink()
+                if mutation == "directory": path.mkdir()
+                else: os.mkfifo(path)
+            elif mutation == "not-executable": path.chmod(0o600)
+            elif mutation == "not-elf": path.write_bytes(b"script" + b"\x00" * 64)
+            elif mutation == "empty": path.write_bytes(b"")
+            elif mutation == "oversize":
+                with path.open("wb") as stream: stream.truncate(512 * 1024 * 1024 + 1)
+            elif mutation == "deadline": deadline = 0
+            real_fstat = os.fstat
+            def observed(descriptor):
+                value = real_fstat(descriptor)
+                if mutation == "wrong-owner" and value.st_ino == path.stat().st_ino:
+                    fields = ("st_dev", "st_ino", "st_mode", "st_uid", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")
+                    return types.SimpleNamespace(**{key: value.st_uid + 1 if key == "st_uid" else getattr(value, key)
+                                                    for key in fields})
+                return value
+            with patch.object(self.launcher.os, "fstat", side_effect=observed), \
+                    self.subTest(mutation=mutation), self.assertRaises((ValueError, OSError)):
+                self.launcher.capture_compiler_executable(path, root, profile, deadline=deadline)
+            self.assertEqual(list(root.rglob(".reviewed-compiler-*")), [])
+
+    def test_build_capture_refuses_alias_mutation_path_swap_and_failed_atomic_install(self):
+        for mutation in ("alias-write", "path-swap", "replace-error"):
+            root = self.root / mutation
+            path, alias, payload = self.compiler_output("volume-fixtures", root=root)
+            original_inode = path.stat().st_ino
+            real_fstat, real_stat, real_replace = os.fstat, os.stat, os.replace
+            observations = 0
+            replacement = b"\x7fELF" + b"R" * 80
+            def observed(descriptor):
+                nonlocal observations
+                value = real_fstat(descriptor)
+                if value.st_ino == original_inode:
+                    observations += 1
+                    if mutation == "alias-write" and observations == 2:
+                        alias.write_bytes(replacement)
+                        value = real_fstat(descriptor)
+                return value
+            def named(name, *args, **kwargs):
+                if mutation == "path-swap" and name == path.name and "dir_fd" in kwargs:
+                    path.unlink()
+                    path.write_bytes(replacement)
+                return real_stat(name, *args, **kwargs)
+            def install(*args, **kwargs):
+                if mutation == "replace-error": raise OSError("PRIVATE-OUTPUT-CANARY")
+                return real_replace(*args, **kwargs)
+            with patch.object(self.launcher.os, "fstat", side_effect=observed), \
+                    patch.object(self.launcher.os, "stat", side_effect=named), \
+                    patch.object(self.launcher.os, "replace", side_effect=install) as replacing, \
+                    self.subTest(mutation=mutation), self.assertRaises((ValueError, OSError)):
+                self.launcher.capture_compiler_executable(path, root, "volume-fixtures", deadline=10**12)
+            self.assertEqual(list(root.rglob(".reviewed-compiler-*")), [])
+            if mutation != "replace-error": replacing.assert_not_called()
+            self.assertEqual(path.read_bytes(), replacement if mutation != "replace-error" else payload)
+
+    def test_actual_build_flow_captures_all_three_outputs_and_retains_two_exact_inert_tests(self):
+        args = types.SimpleNamespace(box_root=self.box, lens_root=self.lens, trusted_root=self.trusted,
+            execution_root=self.root / "build-execution", private=self.root / "build-private",
+            bundle_root=self.root / "build-bundle", lane="debian11-rootful", trusted_sha="c" * 40,
+            run_id=1234, attempt=2)
+        phases, tested = [], []
+        def compiler(command, **kwargs):
+            if command[1] == "build":
+                profile = "volume-fixtures" if "docker-volume-fixture-rehearsal" in command else "host-metadata"
+                self.compiler_output(profile)
+                return b"private authored compiler output\n"
+            self.assertIn("--no-run", command)
+            self.assertIn("--message-format=json", command)
+            path, _, _ = self.compiler_output("inert-tests")
+            return self.evidence.encoded({"reason": "compiler-artifact", "target": {"name": "docker_authored_bind_rehearsal"},
+                "profile": {"test": True}, "executable": str(path)})
+        def exact(binary, name, **kwargs):
+            self.assertEqual(binary.stat().st_nlink, 1)
+            tested.append(name)
+            return {"name": name, "selected": 1, "passed": 1, "failed": 0, "ignored": 0}
+        # Isolate the filesystem/build driver; existing tests independently check
+        # real-context refusal. No invented live GitHub facts or compiler is used.
+        with patch.object(self.launcher.transfer, "layout"), patch.object(self.launcher, "runtime_environment"), \
+                patch.object(self.launcher, "inputs", return_value=(self.pair, self.context["manifest_sha256"], self.box_files, self.lens_files)), \
+                patch.object(self.launcher, "execute", side_effect=compiler), \
+                patch.object(self.launcher, "exact_test", side_effect=exact), \
+                patch.object(self.launcher.auth, "verify_source"):
+            self.launcher.build(args, phase=phases.append)
+        self.assertEqual(tested, list(self.authorization.INERT_TESTS))
+        self.assertIn("inert-capture", phases)
+        self.assertLess(phases.index("inert-capture"), phases.index("inert-tests"))
+        self.assertLess(phases.index("volume-fixtures-capture"), phases.index("volume-fixtures-receipt"))
+        self.assertLess(phases.index("host-metadata-capture"), phases.index("host-metadata-receipt"))
+        value = self.transfer.bundle(args.bundle_root, pair=self.pair, context=self.context,
+                                     lane=args.lane, lens=self.lens)
+        self.assertEqual([item["selected"] for item in value["inert"]["tests"]], [1, 1])
+        self.assertEqual([item["passed"] for item in value["inert"]["tests"]], [1, 1])
+        for profile in ("volume-fixtures", "host-metadata", "inert-tests"):
+            self.assertEqual((args.bundle_root / profile).stat().st_nlink, 1)
+
+    def test_build_capture_cancellation_removes_partial_snapshot_and_restores_handlers(self):
+        import signal
+        path, alias, payload = self.compiler_output("volume-fixtures")
+        original = path.stat().st_ino
+        real_fstat = os.fstat
+        observations = 0
+        handlers = {kind: signal.getsignal(kind) for kind in (signal.SIGTERM, signal.SIGINT)}
+        def observed(descriptor):
+            nonlocal observations
+            value = real_fstat(descriptor)
+            if value.st_ino == original:
+                observations += 1
+                if observations == 2:
+                    signal.raise_signal(signal.SIGTERM)
+            return value
+        with patch.object(self.launcher.os, "fstat", side_effect=observed), self.assertRaises(SystemExit) as failure:
+            self.launcher.capture_compiler_executable(path, self.box, "volume-fixtures", deadline=10**12)
+        self.assertEqual(failure.exception.code, 128 + signal.SIGTERM)
+        self.assertEqual(path.read_bytes(), payload)
+        self.assertEqual(path.stat().st_ino, alias.stat().st_ino)
+        self.assertEqual(list(self.box.rglob(".reviewed-compiler-*")), [])
+        for kind, handler in handlers.items(): self.assertEqual(signal.getsignal(kind), handler)
+
+    def test_execution_failure_phases_never_print_raw_private_errors_or_arguments(self):
+        args = types.SimpleNamespace(command="build", lane="debian11-rootful", output=None, build_artifact_id=None)
+        class Unprintable(Exception):
+            def __str__(self): raise AssertionError("must never stringify private failures")
+        for phase in ("build-layout", "build-context", "build-authorization", "build-copy", "volume-fixtures-build",
+                      "volume-fixtures-capture", "volume-fixtures-receipt", "host-metadata-build", "host-metadata-capture",
+                      "host-metadata-receipt", "inert-build", "inert-discovery", "inert-capture", "inert-tests",
+                      "build-source-recheck", "build-state", "build-export"):
+            def failure(_args, *, phase):
+                phase(selected)
+                raise Unprintable("SECRET-CANARY /private/compiler-log")
+            selected = phase
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(self.launcher, "arguments", return_value=args), \
+                    patch.object(self.launcher, "build", side_effect=failure), redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(self.launcher.main(), 1)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "reviewed Docker consumer execution rejected: phase=" + phase
+                             + " reason=rejected; no passing evidence\n")
+        parser = self.launcher.ClosedArgumentParser()
+        parser.add_argument("--run-id", type=int)
+        with self.assertRaises(ValueError): parser.parse_args(["--run-id", "SECRET-CANARY"])
+        self.assertEqual(self.launcher.failure_message("SECRET-CANARY"),
+                         "reviewed Docker consumer execution rejected: phase=arguments reason=rejected; no passing evidence")
+        args.command, args.output, args.build_artifact_id = "run", self.root / "output", "123"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(self.launcher, "arguments", return_value=args), \
+                patch.object(self.launcher, "run", side_effect=Unprintable("SECRET-CANARY")), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(self.launcher.main(), 1)
+        self.assertEqual((stdout.getvalue(), stderr.getvalue()), ("", self.launcher.failure_message("native-runtime") + "\n"))
+
     def test_exact_inert_test_discovery_and_nonzero_execution_are_mandatory(self):
         name = self.authorization.INERT_TESTS[0]
         valid = b"test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out;\n"
