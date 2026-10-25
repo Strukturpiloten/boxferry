@@ -39,6 +39,9 @@ pub mod report;
 /// Compose native-model adapter APIs, enabled by the additive `compose` feature.
 #[cfg(feature = "compose")]
 pub use boxferry_compose as compose;
+/// Inert Docker target adapter APIs, enabled by the nondefault `docker` feature.
+#[cfg(feature = "docker")]
+pub use boxferry_docker as docker;
 /// Conversion planning, policy, capability, and diagnostic APIs.
 pub use boxferry_engine as engine;
 /// Format-independent container application model APIs.
@@ -75,6 +78,10 @@ pub use boxferry_model::{
 pub use boxferry_compose::{
     COMPOSE_SPECIFICATION_PROFILE_REVISION, COMPOSE_SPECIFICATION_TARGET, ComposeExporter, ComposeFindingStage,
     ComposeImporter, ComposeRuntime, ComposeSource, DOCKER_COMPOSE_TARGET, PODMAN_COMPOSE_TARGET,
+};
+#[cfg(feature = "docker")]
+pub use boxferry_docker::{
+    DOCKER_TARGET, DockerDependencyDecision, DockerEnvironmentPolicy, DockerExporter, DockerOutput,
 };
 #[cfg(feature = "podman")]
 pub use boxferry_podman::{

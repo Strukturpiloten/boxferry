@@ -137,6 +137,30 @@
       "owner": "Compose adapter"
     },
     {
+      "code": "BFD0005",
+      "default_severity": "error",
+      "description": "The Docker target does not match an exact reviewed native profile or the requested version range.",
+      "help": "Select one DockerLens reviewed target profile and a compatible BoxFerry version range.",
+      "name": "docker-target-invalid",
+      "owner": "Docker target adapter"
+    },
+    {
+      "code": "BFD0006",
+      "default_severity": "warning",
+      "description": "The Docker target cannot represent this neutral application field under the reviewed contract.",
+      "help": "Review the subject and author a supported standalone shape, or explicitly allow partial loss.",
+      "name": "docker-output-unsupported",
+      "owner": "Docker target adapter"
+    },
+    {
+      "code": "BFD0007",
+      "default_severity": "error",
+      "description": "DockerLens rejected the typed standalone target or inert request rendering.",
+      "help": "Correct the reported subject and select a reviewed native target capability profile.",
+      "name": "docker-planning-failed",
+      "owner": "Docker target adapter"
+    },
+    {
       "code": "BFO1000",
       "default_severity": "error",
       "description": "BoxFerry could not complete the requested orchestration stage.",

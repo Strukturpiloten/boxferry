@@ -15,6 +15,18 @@ first public end-to-end golden conversion when both document-adapter features ar
 validate-without-writing, chained conversion, discovery, fixed-point, path-consistency, policy,
 diagnostic, and redaction boundaries using `fixtures/conversion/document-route-matrix/`.
 
+With the nondefault `docker` feature, `docker_fixture_volume_labels.rs` checks independently
+authored volume identities/labels over six fixtures (23 requests per profile), and
+`docker_authored_bind_rehearsal.rs` owns the exact Nextcloud/Supabase bind and external-constraint
+checks named in [ADR 0078](../../../docs/decisions/0078-trusted-docker-consumer-validation.md).
+The latter retains full Nextcloud and only the explicitly named Supabase bind/mount projection,
+plus the full Supabase protected-health negative control. Shared
+`support/docker_volume_fixtures.rs` supplies loading/import/projection mechanics, not expectations.
+The two validation examples produce inert volume artifacts or bounded read-only daemon metadata;
+their unit tests use private temporary paths/fake sockets, not a runtime. No Docker CLI route,
+host-path/SELinux effect, application readiness or full migration is claimed. See
+[ADR 0081](../../../docs/decisions/0081-bounded-docker-target-consumer-preparation.md).
+
 `fixture_route_corpus.rs` discovers every positive adapter-contract and conversion manifest,
 requires each input scenario to define every exporter reported by live capabilities, validates
 reviewed artifacts and diagnostic sequences across the policy lattice, and re-imports every

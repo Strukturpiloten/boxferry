@@ -25,8 +25,17 @@ required-features = ["cli", "compose", "podman", "quadlet"]
 name = "quadlet_to_compose"
 required-features = ["compose", "quadlet"]
 
+[[example]]
+name = "docker-volume-fixture-rehearsal"
+required-features = ["compose", "docker"]
+
+[[example]]
+name = "docker-host-metadata"
+required-features = ["docker"]
+
 [dependencies]
 boxferry-compose = { path = "../boxferry-compose", version = "0.9.0", optional = true }
+boxferry-docker = { path = "../boxferry-docker", version = "0.9.0", optional = true }
 boxferry-engine = { path = "../boxferry-engine", version = "0.9.0" }
 boxferry-model = { path = "../boxferry-model", version = "0.9.0" }
 boxferry-podman = { path = "../boxferry-podman", version = "0.9.0", optional = true }
@@ -49,12 +58,14 @@ optional = true
 
 [dev-dependencies]
 serde_json = "1.0.151"
+sha2 = { version = "=0.11.0", default-features = false }
 toml = "=1.1.8"
 
 [features]
 default = ["cli", "compose", "podman", "quadlet"]
 cli = ["dep:clap", "dep:jiff", "dep:serde", "dep:serde_json", "dep:tokio", "dep:zip"]
 compose = ["dep:boxferry-compose"]
+docker = ["dep:boxferry-docker"]
 quadlet = ["dep:boxferry-quadlet"]
 podman = ["dep:boxferry-podman"]
 

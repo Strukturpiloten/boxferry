@@ -34,6 +34,7 @@ public orchestration APIs available to embedded callers.
 | `boxferry-model`         | Format-neutral intent, provenance, and protected values              |
 | `boxferry-engine`        | Adapter traits, planning, target profiles, outcomes, and loss policy |
 | `boxferry-compose`       | Compose ↔ neutral semantic mapping                                   |
+| `boxferry-docker`        | Nondefault, target-only neutral → inert DockerLens mapping           |
 | `boxferry-podman`        | PodmanLens ↔ neutral semantic mapping                                |
 | `boxferry-quadlet`       | QuadletLens ↔ neutral semantic mapping                               |
 | `boxferry`               | Facade, CLI, reports, presentation, and create-new file boundary     |
@@ -92,8 +93,11 @@ the command script, but a user who runs it performs real Podman operations. Test
 deterministic bytes, semantic operations, findings, and redaction.
 
 BoxFerry exposes no executor, invokes no generated command, starts no unit, and sends no mutating
-runtime request. Docker and Kubernetes remain deferred until independent native libraries and
-reviewed adapter contracts exist.
+runtime request. Docker input and CLI routes and Kubernetes remain deferred. The
+[bounded Docker target checkpoint](decisions/0081-bounded-docker-target-consumer-preparation.md)
+exposes a real optional exporter, not an input stub or a claim that all Docker routes are available.
+Its validation-only producers and inert authored checks are separate from trusted source-pair
+admission, native/runtime evidence, application acceptance and normal registry/package proof.
 
 ## Change checklist
 

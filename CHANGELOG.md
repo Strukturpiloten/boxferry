@@ -5,6 +5,12 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+### Added
+
+- Add a nondefault, target-only Docker library checkpoint and bounded inert volume/bind consumer
+  tests for prerelease preparation. This does not add Docker CLI routes or establish runtime,
+  application or normal registry compatibility ([#343](https://github.com/Strukturpiloten/boxferry/issues/343)).
+
 ### Changed
 
 - Preserve sensitivity on interpolated Compose container names so protected identities remain

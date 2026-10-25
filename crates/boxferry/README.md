@@ -25,7 +25,12 @@ All nine routes use an importer → neutral `Application` → exporter pipeline.
 explicit read-only acquisition; Podman output is reviewable material. BoxFerry never executes
 generated commands, starts units, or mutates a container runtime.
 
-Default features provide the CLI and all three adapters. Embedded callers may disable defaults and
+Default features provide the CLI and all three CLI adapters. The nondefault `docker` feature exposes
+only a reviewed inert target exporter for bounded prerelease consumer preparation, not Docker
+input, CLI routes, runtime or application acceptance. See the
+[checkpoint contract](../../docs/decisions/0081-bounded-docker-target-consumer-preparation.md).
+
+Embedded callers may disable defaults and
 select only the features they need. See the [BoxFerry documentation](https://boxferry.dev/docs/)
 for conversion guides, compatibility boundaries, diagnostics, and CLI reference.
 

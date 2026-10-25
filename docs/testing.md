@@ -4,7 +4,9 @@ The [Docker consumer bridge](decisions/0078-trusted-docker-consumer-validation.m
 requires offline source-custody/current-attempt/cleanup controls, not native
 acceptance. Complete gates remain mandatory.
 
-Run the complete deterministic gate before every pull request:
+The [target-only checkpoint](decisions/0081-bounded-docker-target-consumer-preparation.md#independent-inert-consumer-contracts) defines separate inert consumer contracts.
+
+Before every PR:
 
 ```console
 ./scripts/check-all.sh

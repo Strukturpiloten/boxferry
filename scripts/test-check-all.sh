@@ -42,7 +42,8 @@ case "${command_name}:$*" in
     printf '%s\n' "${command_line% }" >> "${CHECK_ALL_TEST_LOG}"
     ;;
 esac
-if [[ "${CHECK_ALL_TEST_FAIL:-}" == "${command_name}" ]]; then
+if [[ "${CHECK_ALL_TEST_FAIL:-}" == "${command_name}" ||
+  "${CHECK_ALL_TEST_FAIL_COMMAND:-}" == "${command_name}:$*" ]]; then
   exit 17
 fi
 case "${command_name}:$*" in
@@ -94,9 +95,11 @@ CHECK_ALL_TEST_REPOSITORY_ROOT="${test_root}/relocated" \
 [[ "${status}" == 2 && ! -s "${test_root}/relocated.commands" ]]
 grep --fixed-strings --quiet -- 'CARGO_TARGET_DIR must be inside this worktree' \
   "${test_root}/relocated.output"
-[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/34\]' "${test_root}/default.output")" == 34 ]]
-grep --fixed-strings --quiet -- '[34/34] Check published API compatibility' "${test_root}/default.output"
-[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 34 steps.' ]]
+[[ "$(grep --extended-regexp --count '^\[[0-9]{2}/35\]' "${test_root}/default.output")" == 35 ]]
+grep --fixed-strings --quiet -- '[35/35] Check published API compatibility' "${test_root}/default.output"
+[[ "$(tail -n 1 "${test_root}/default.output")" == 'BoxFerry local validation passed all 35 steps.' ]]
+assert_contains default "cargo ci-docker"
+assert_contains check "cargo ci-docker"
 assert_contains default "bash scripts/test-application-probes.sh"
 assert_contains check "bash scripts/test-application-probes.sh"
 assert_contains default "python3 scripts/test-reviewed-application-catalogue.py"
@@ -149,5 +152,13 @@ for mode in fix check; do
   run_gate failure "--${mode}" || status=$?
   [[ "${status}" == 17 ]]
   [[ "$(tail -n 1 "${test_root}/failure.commands")" == "actionlint" ]]
+done
+unset CHECK_ALL_TEST_FAIL
+export CHECK_ALL_TEST_FAIL_COMMAND=cargo:ci-docker
+for mode in fix check; do
+  status=0
+  run_gate docker_failure "--${mode}" || status=$?
+  [[ "${status}" == 17 ]]
+  [[ "$(tail -n 1 "${test_root}/docker_failure.commands")" == "cargo ci-docker" ]]
 done
 printf 'Complete gate mode regression tests passed.\n'
