@@ -7,7 +7,9 @@ import argparse
 import importlib.util
 import os
 from pathlib import Path
+import re
 import subprocess
+import sys
 import types
 from urllib.parse import quote
 
@@ -19,6 +21,35 @@ auth = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(auth)
 BOX = "Strukturpiloten/boxferry"
 LENS = "Strukturpiloten/docker-lens"
+PHASES = frozenset({
+    "authorization", "workflow-pin", "helper-load", "context/Box-admission",
+    "Box-permission", "Box-pull", "Lens-permission", "Lens-pull",
+})
+# Exact value-free AdmissionError constants in the independently pinned helper.
+# Do not stringify unknown errors or infer HTTP status: fetch_json discards it.
+HELPER_REASONS = frozenset({
+    "invalid-api-path", "api-unavailable", "api-response-too-large", "api-invalid-response",
+    "invalid-repository-policy", "untrusted-dispatch-ref", "invalid-input", "unknown-actor",
+    "insufficient-actor-permission", "invalid-pull-response", "pull-head-mismatch",
+})
+
+
+class ClosedArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse's normal error contains caller-supplied argument text.
+        raise ValueError("rejected") from None
+
+
+def failure_message(phase, error, helper=None) -> str:
+    """Only fixed labels and explicitly allowed pinned-helper reasons reach logs."""
+    if type(phase) is not str or phase not in PHASES:
+        phase = "authorization"
+    reason = "rejected"
+    if (type(error) is getattr(helper, "AdmissionError", None)
+            and type(error.args) is tuple and len(error.args) == 1
+            and type(error.args[0]) is str and error.args[0] in HELPER_REASONS):
+        reason = error.args[0]
+    return f"reviewed Docker consumer admission denied: phase={phase} reason={reason}"
 
 
 def shared_helper(root: Path, revision: str):
@@ -37,8 +68,13 @@ def shared_helper(root: Path, revision: str):
     return module
 
 
-def admit_pair(env, pair, helper, get) -> None:
+def admit_pair(env, pair, helper, get, *, phase=None) -> None:
     """Never replace GITHUB_REPOSITORY, IDs, ref, event or either real actor."""
+    def mark(name):
+        if phase is not None:
+            phase(name)
+
+    mark("context/Box-admission")
     auth.keys(pair, ("boxferry", "docker_lens"))
     auth.entry(pair["boxferry"], BOX)
     auth.entry(pair["docker_lens"], LENS)
@@ -55,11 +91,26 @@ def admit_pair(env, pair, helper, get) -> None:
     auth.require(all(helper.ACTOR_RE.fullmatch(actor) is not None for actor in actors))
     box_env = {**env, "PR_NUMBER": str(box["pr"]), "EXPECTED_SHA": box["revision"],
                "EXPECTED_REPOSITORY": BOX}
-    helper.admit(box_env, lambda path: get(path, BOX), BOX)
+    box_permissions = {f"/repos/{BOX}/collaborators/{quote(actor, safe='')}/permission" for actor in actors}
+    box_pull = f"/repos/{BOX}/pulls/{box['pr']}"
+
+    def box_get(path):
+        # Label only known literal request classes; fetching remains wholly canonical.
+        if path in box_permissions:
+            mark("Box-permission")
+        elif path == box_pull:
+            mark("Box-pull")
+        else:
+            mark("context/Box-admission")
+        return get(path, BOX)
+
+    helper.admit(box_env, box_get, BOX)
+    mark("Lens-permission")
     for actor in set(actors):
         permission = get(f"/repos/{LENS}/collaborators/{quote(actor, safe='')}/permission", LENS)
         auth.require(type(permission) is dict and type(permission.get("permission")) is str
                      and permission["permission"] in helper.ALLOWED_ROLES)
+    mark("Lens-pull")
     pull = get(f"/repos/{LENS}/pulls/{lens['pr']}", LENS)
     auth.require(type(pull) is dict and type(pull.get("number")) is int
                  and pull["number"] == lens["pr"] and pull.get("state") == "open")
@@ -72,30 +123,41 @@ def admit_pair(env, pair, helper, get) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--trusted-root", type=Path, required=True)
-    parser.add_argument("--admission-root", type=Path, required=True)
-    parser.add_argument("--admission-revision", required=True)
-    parser.add_argument("--box-pr", type=int, required=True)
-    parser.add_argument("--box-sha", required=True)
-    parser.add_argument("--lens-pr", type=int, required=True)
-    parser.add_argument("--lens-sha", required=True)
-    args = parser.parse_args()
-    pair, _ = auth.authorize(args.trusted_root, args.box_pr, args.box_sha, args.lens_pr, args.lens_sha)
-    workflow = auth.read(args.trusted_root / ".github/workflows/reviewed-docker-consumer-validation.yml").decode()
-    import re
-    pins = re.findall(r"(?m)^  ADMISSION_REVISION: ([0-9a-f]{40})$", workflow)
-    auth.require(pins == [args.admission_revision])
-    helper = shared_helper(args.admission_root, args.admission_revision)
-    token = os.environ.get("GITHUB_TOKEN", "")
-    auth.require(bool(token))
-    admit_pair(os.environ, pair, helper,
-               lambda path, repository: helper.fetch_json(path, token, expected_repository=repository))
+    phase = "authorization"
+    helper = None
+
+    def mark(name):
+        nonlocal phase
+        phase = name
+
+    try:
+        parser = ClosedArgumentParser(description=__doc__)
+        parser.add_argument("--trusted-root", type=Path, required=True)
+        parser.add_argument("--admission-root", type=Path, required=True)
+        parser.add_argument("--admission-revision", required=True)
+        parser.add_argument("--box-pr", type=int, required=True)
+        parser.add_argument("--box-sha", required=True)
+        parser.add_argument("--lens-pr", type=int, required=True)
+        parser.add_argument("--lens-sha", required=True)
+        args = parser.parse_args()
+        pair, _ = auth.authorize(args.trusted_root, args.box_pr, args.box_sha, args.lens_pr, args.lens_sha)
+        mark("workflow-pin")
+        workflow = auth.read(args.trusted_root / ".github/workflows/reviewed-docker-consumer-validation.yml").decode()
+        pins = re.findall(r"(?m)^  ADMISSION_REVISION: ([0-9a-f]{40})$", workflow)
+        auth.require(pins == [args.admission_revision])
+        mark("helper-load")
+        helper = shared_helper(args.admission_root, args.admission_revision)
+        mark("context/Box-admission")
+        token = os.environ.get("GITHUB_TOKEN", "")
+        auth.require(bool(token))
+        admit_pair(os.environ, pair, helper,
+                   lambda path, repository: helper.fetch_json(path, token, expected_repository=repository),
+                   phase=mark)
+    except Exception as error:
+        print(failure_message(phase, error, helper), file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        # Pinned helper errors are deliberately closed; never echo API data/token.
-        raise SystemExit("reviewed Docker consumer admission denied") from None
+    raise SystemExit(main())
