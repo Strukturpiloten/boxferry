@@ -46,6 +46,13 @@ and actors are re-admitted before every privileged job, immediately before runti
 and in the fresh aggregate. Tokens exist only in admission steps; checkout never
 persists credentials.
 
+Admission failures report only a fixed phase and an explicitly allowlisted, value-free
+pinned-helper reason; unknown exceptions become `rejected`. Authorization, workflow pin,
+helper load, Box context/admission, and each repository's permission/pull checks remain
+distinct. These labels identify a failed boundary, not an HTTP status or proven root cause:
+the canonical fetch helper discards non-success status details. No exception text, API
+payload, request path, actor or token is emitted; no alternate credential is selected.
+
 All authorized Box execution/import files are copied into a separate canonical
 `scripts/lib` tree before import/source. This includes the harness, contract,
 core-artifact, application-schedule, application-expectations and bounded-native-read

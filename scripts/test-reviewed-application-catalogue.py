@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import hashlib
 import copy
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -282,7 +284,8 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.helper = types.SimpleNamespace(
             PR_RE=re.compile(r"[1-9][0-9]{0,8}\Z"), SHA_RE=re.compile(r"[0-9a-f]{40}\Z"),
             ID_RE=re.compile(r"[1-9][0-9]*\Z"), ACTOR_RE=re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}\Z"),
-            ALLOWED_ROLES={"write", "maintain", "admin"})
+            ALLOWED_ROLES={"write", "maintain", "admin"},
+            AdmissionError=type("AdmissionError", (Exception,), {}))
         def normal_box_admit(env, get, repository):
             self.box_environments.append(dict(env))
             self.assertEqual(repository, "Strukturpiloten/boxferry")
@@ -309,6 +312,62 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
 
     def authorize(self):
         return self.authorization.authorize(self.trusted, 77, "a" * 40, 88, "b" * 40)
+
+    def capture_admission_cli(self, *, failed_phase=None, error=None, environment=None):
+        """Authored phase failures; no process, network, or real credential is used."""
+        args = types.SimpleNamespace(
+            trusted_root=self.trusted, admission_root=self.root / "private-helper-path-canary",
+            admission_revision="c" * 40, box_pr=77, box_sha="a" * 40, lens_pr=88, lens_sha="b" * 40)
+        error = error if error is not None else RuntimeError(
+            'secret-token-canary /private/path-canary {"api-payload-canary":"private"}')
+        targets = {
+            "Box-permission": ("Strukturpiloten/boxferry", "/repos/Strukturpiloten/boxferry/collaborators/Alice/permission"),
+            "Box-pull": ("Strukturpiloten/boxferry", "/repos/Strukturpiloten/boxferry/pulls/77"),
+            "Lens-permission": ("Strukturpiloten/docker-lens", "/repos/Strukturpiloten/docker-lens/collaborators/Alice/permission"),
+            "Lens-pull": ("Strukturpiloten/docker-lens", "/repos/Strukturpiloten/docker-lens/pulls/88"),
+        }
+
+        def authorize(*_args):
+            if failed_phase == "authorization":
+                raise error
+            return copy.deepcopy(self.pair), "d" * 64
+
+        def read(*_args):
+            if failed_phase == "workflow-pin":
+                raise error
+            return b"env:\n  ADMISSION_REVISION: " + b"c" * 40 + b"\n"
+
+        def load(*_args):
+            if failed_phase == "helper-load":
+                raise error
+            return self.helper
+
+        normal_admit = self.helper.admit
+
+        def admit(*arguments):
+            if failed_phase == "context/Box-admission":
+                raise error
+            return normal_admit(*arguments)
+
+        def fetch(path, token, *, expected_repository):
+            self.assertEqual(token, "secret-token-canary")
+            if targets.get(failed_phase) == (expected_repository, path):
+                raise error
+            return self.get(path, expected_repository)
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        self.requests.clear()
+        env = {**self.env, "GITHUB_TOKEN": "secret-token-canary", **(environment or {})}
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(self.admission.ClosedArgumentParser, "parse_args", return_value=args), \
+                patch.object(self.admission.auth, "authorize", side_effect=authorize), \
+                patch.object(self.admission.auth, "read", side_effect=read), \
+                patch.object(self.admission, "shared_helper", side_effect=load), \
+                patch.object(self.helper, "admit", side_effect=admit), \
+                patch.object(self.helper, "fetch_json", side_effect=fetch, create=True), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            status = self.admission.main()
+        return status, stdout.getvalue(), stderr.getvalue()
 
     def lane_fixture(self, lane, token=None):
         evidence, auth = self.evidence, self.authorization
@@ -645,6 +704,111 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
                     self.subTest(name=name), self.assertRaises(ValueError):
                 self.authorization.verify_source(self.box, self.pair["boxferry"])
             path.write_bytes(before)
+
+    def assert_closed_admission_failure(self, result, phase, reason="rejected"):
+        status, stdout, stderr = result
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, f"reviewed Docker consumer admission denied: phase={phase} reason={reason}\n")
+        for canary in ("secret-token-canary", "/private/path-canary", "api-payload-canary",
+                       "private-helper-path-canary", "fallback-secret-canary"):
+            self.assertNotIn(canary, stdout + stderr)
+
+    def test_admission_cli_unknown_errors_are_closed_at_each_fixed_phase(self):
+        for phase in ("authorization", "workflow-pin", "helper-load", "context/Box-admission",
+                      "Box-permission", "Box-pull", "Lens-permission", "Lens-pull"):
+            with self.subTest(phase=phase):
+                self.assert_closed_admission_failure(self.capture_admission_cli(failed_phase=phase), phase)
+
+    def test_admission_cli_success_is_silent_and_preserves_all_six_canonical_fetches(self):
+        self.assertEqual(self.capture_admission_cli(), (0, "", ""))
+        self.assertEqual(len(self.requests), 6)
+        self.assertEqual(set(self.requests), {
+            ("Strukturpiloten/boxferry", "/repos/Strukturpiloten/boxferry/collaborators/Alice/permission"),
+            ("Strukturpiloten/boxferry", "/repos/Strukturpiloten/boxferry/collaborators/Bob/permission"),
+            ("Strukturpiloten/boxferry", "/repos/Strukturpiloten/boxferry/pulls/77"),
+            ("Strukturpiloten/docker-lens", "/repos/Strukturpiloten/docker-lens/collaborators/Alice/permission"),
+            ("Strukturpiloten/docker-lens", "/repos/Strukturpiloten/docker-lens/collaborators/Bob/permission"),
+            ("Strukturpiloten/docker-lens", "/repos/Strukturpiloten/docker-lens/pulls/88"),
+        })
+
+    def test_admission_cli_only_maps_exact_pinned_helper_reason_constants(self):
+        # Independent expected list: extending implementation alone cannot expand log vocabulary.
+        reasons = ("invalid-api-path", "api-unavailable", "api-response-too-large", "api-invalid-response",
+                   "invalid-repository-policy", "untrusted-dispatch-ref", "invalid-input", "unknown-actor",
+                   "insufficient-actor-permission", "invalid-pull-response", "pull-head-mismatch")
+        self.assertEqual(self.admission.HELPER_REASONS, frozenset(reasons))
+        for phase in ("Box-permission", "Box-pull", "Lens-permission", "Lens-pull"):
+            for reason in reasons:
+                with self.subTest(phase=phase, reason=reason):
+                    error = self.helper.AdmissionError(reason)
+                    self.assert_closed_admission_failure(
+                        self.capture_admission_cli(failed_phase=phase, error=error), phase, reason)
+
+    def test_admission_cli_never_stringifies_unknown_or_forged_helper_errors(self):
+        class UnprintableError(Exception):
+            def __str__(self):
+                raise AssertionError("raw exception must never be formatted")
+
+        class AdmissionSubclass(self.helper.AdmissionError):
+            pass
+
+        class ReasonSubclass(str):
+            pass
+
+        errors = (
+            ValueError("api-unavailable"),
+            OSError("secret-token-canary /private/path-canary api-payload-canary"),
+            UnprintableError("secret-token-canary"),
+            AdmissionSubclass("api-unavailable"),
+            self.helper.AdmissionError("api-unavailable\nsecret-token-canary"),
+            self.helper.AdmissionError("403"),
+            self.helper.AdmissionError({"api-payload-canary": "secret-token-canary"}),
+            self.helper.AdmissionError("api-unavailable", "/private/path-canary"),
+            self.helper.AdmissionError(ReasonSubclass("api-unavailable")),
+        )
+        for index, error in enumerate(errors):
+            with self.subTest(index=index):
+                self.assert_closed_admission_failure(
+                    self.capture_admission_cli(failed_phase="Lens-permission", error=error), "Lens-permission")
+        message = self.admission.failure_message("secret-token-canary", ValueError("api-unavailable"), self.helper)
+        self.assertEqual(message, "reviewed Docker consumer admission denied: phase=authorization reason=rejected")
+
+    def test_admission_cli_check_failures_keep_the_phase_after_successful_fetches(self):
+        for repository, expected in (("Strukturpiloten/boxferry", "Box"), ("Strukturpiloten/docker-lens", "Lens")):
+            for actor in ("Alice", "Bob"):
+                self.roles[(repository, actor)] = "read"
+                with self.subTest(repository=repository, actor=actor):
+                    self.assert_closed_admission_failure(self.capture_admission_cli(), expected + "-permission")
+                self.roles.clear()
+            original = self.pulls[repository]["head"]["sha"]
+            try:
+                self.pulls[repository]["head"]["sha"] = "9" * 40
+                self.assert_closed_admission_failure(self.capture_admission_cli(), expected + "-pull")
+            finally:
+                self.pulls[repository]["head"]["sha"] = original
+
+    def test_admission_cli_missing_token_never_uses_alternate_credentials(self):
+        result = self.capture_admission_cli(environment={"GITHUB_TOKEN": "", "GH_TOKEN": "fallback-secret-canary"})
+        self.assert_closed_admission_failure(result, "context/Box-admission")
+        self.assertEqual(self.requests, [])
+
+    def test_admission_parser_suppresses_argument_payloads(self):
+        parser = self.admission.ClosedArgumentParser()
+        parser.add_argument("--box-pr", type=int, required=True)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr), self.assertRaises(ValueError) as caught:
+            parser.parse_args(["--box-pr", "secret-token-canary /private/path-canary api-payload-canary"])
+        self.assertEqual(str(caught.exception), "rejected")
+        self.assertEqual((stdout.getvalue(), stderr.getvalue()), ("", ""))
+
+    def test_dual_admission_phase_observer_is_optional_and_uses_fixed_labels(self):
+        phases = []
+        self.assertIsNone(self.admission.admit_pair(self.env, self.pair, self.helper, self.get, phase=phases.append))
+        self.assertEqual(phases[0], "context/Box-admission")
+        self.assertEqual(phases[-1], "Lens-pull")
+        self.assertEqual(set(phases), {"context/Box-admission", "Box-permission", "Box-pull",
+                                       "Lens-permission", "Lens-pull"})
 
     def test_positive_dual_admission_keeps_real_box_context_and_distinct_literal_request_paths(self):
         before = copy.deepcopy(self.env)
