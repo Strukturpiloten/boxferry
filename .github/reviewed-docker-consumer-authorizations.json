@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "policy": {
+    "outer_engine": "docker",
+    "scope": "volume-fixtures-only",
+    "lanes": ["debian11-rootful", "debian11-rootless", "upstream-rootful", "upstream-rootless"],
+    "fixtures": 6,
+    "volumes_per_lane": 23,
+    "inert_tests": [
+      "full_nextcloud_and_explicit_supabase_bind_mount_only_projection_retain_binds_for_all_profiles",
+      "generated_external_constraint_controls_retain_actual_fixture_binds_on_all_four_profiles"
+    ],
+    "minimum_available_memory_gib": 6,
+    "minimum_free_disk_gib": 8,
+    "outer_pids": 512,
+    "outer_memory_gib": 4,
+    "outer_cpus": 2,
+    "execution_seconds": 780,
+    "cleanup_seconds": 120,
+    "cargo_jobs": 2,
+    "upstream_rootless_prerequisite": "github_runner_userns_v1"
+  },
+  "authorizations": [
+    {
+      "boxferry": {
+        "repository": "Strukturpiloten/boxferry",
+        "repository_id": 1318220645,
+        "pr": 489,
+        "revision": "eff6a0df664d1b16281cccf0fe655354b4355886",
+        "source_sha256": "8b229304e454b0e183db27c44f8e1a4a2dbc819ccd4beec4250f2d1ae09f42d8",
+        "lock_sha256": "2dc7cbead9885b90fd4422628ddbd62838317bcb18c3b155d99684b27ffa0079",
+        "files": {
+          "crates/boxferry/examples/docker-host-metadata.rs": "e200cb07a7def5ec2db5a6ab2d202aa5ffe12e2666b01027a0f122142a9e63cd",
+          "crates/boxferry/examples/docker-volume-fixture-rehearsal.rs": "3d8d1181b0c6c9b389dff352c75aeec255b17094a22ee6e66cefe89fd450e155",
+          "crates/boxferry/tests/docker_authored_bind_rehearsal.rs": "a225ea5708810b82cee5ec0cc6426690fd1f8684b96f3e4ab04fd79c4e910cb6",
+          "crates/boxferry/tests/support/docker_volume_fixtures.rs": "945d85a85c1c08f05e8ef69e8627c765e7788adb22353baaf543946499aa8e43",
+          "fixtures/conformance/docker-application/core-expectations.json": "fb0420af56f851ddd7d8ad4e0b01c272d79c6158ea710a0cb465e93c4ef323e1",
+          "fixtures/conformance/docker-application/core-reacquire-expectations.json": "473d94e1762de31115d595833c07932f66de4f7106658b5a1b9d62612411db83",
+          "fixtures/conformance/docker-application/core.compose.yaml": "64c77d9c9f63f9dbdba21a61c0538acf4a2cdd59c4a4d8765d493c32ce2aff48",
+          "fixtures/conformance/docker-application/expected-applications.json": "9fded0c055ee297ac8363a9d92f0f301c7378c62d2a5c19b03b33724faa4d90d",
+          "fixtures/conformance/forgejo-application/compose.yaml": "2d7e81eeefc7060812900791db0a3a9fef08b748779f8697fef12f0cced4d5be",
+          "fixtures/conformance/immich-application/compose.yaml": "a1ca57ad8d5342aafa2e947c9ed657b6006e89288c97d1d12166ddc86b55755d",
+          "fixtures/conformance/nextcloud-application/compose.yaml": "ca714ddfe9b64620faf47c714db6be2907f7ec6428529c3e041bfd123bdd4761",
+          "fixtures/conformance/observability-application/compose.yaml": "d66a018d9c3cfe804ab594ad6a1bcbe89e366ac1780422efa90ef3fca3143cbc",
+          "fixtures/conformance/paperless-ngx-application/compose.yaml": "f22f0e4194db3b907cdb0845045339f8561ad830407acf66f6f1063fcca6f762",
+          "fixtures/conformance/supabase-application/compose.yaml": "9dd2e33343e8cf00836d783fb25d6488dcc0b958f68472dafa4b6d7b24c8a42b",
+          "fixtures/scenarios/nextcloud-application/compose.acceptance.yaml": "79dc3dc478b710a9545a010a7e0f1338628c2c352e446dcfaef039238ea6447d",
+          "fixtures/scenarios/nextcloud-application/compose.yaml": "9ed20c06a3b2b340833e5f660e47725593b84540f3b473009bffe7f69df6536f",
+          "fixtures/scenarios/nextcloud-application/nextcloud.env.example": "b9e1182df0d7aee94a3b3758b27501649d0aa6a1ee2b52683f81baf3ddc95eac",
+          "scripts/docker-application-conformance.sh": "bb22060fae123955769e056ba5b656621c584e1e3242391fd0f08d478c3737ab",
+          "scripts/lib/bounded-native-read.py": "284e8d519f943a95e371c9cf3a475d9226a00601c97c4f1d520c63ee4efa6ae2",
+          "scripts/lib/docker-application-contract.py": "9946fbfd82ad75ca9b138c0cd5b1ed3e7d632398a662a2d185dc96ece5390fed",
+          "scripts/lib/docker-application-expectations.py": "6f11a2efc64b92d70f37368c9c1c87a5e0be66d8424ef05a140b2f53c56bb5e2",
+          "scripts/lib/docker-application-schedule.py": "f34bc5ddd10482f5d694822e443d183be93baf6d3cdc150a44796dc07d6a1683",
+          "scripts/lib/docker-core-artifact.py": "f885ba893b7c388588c41a8595a9299e05cc68e9b0c08074096a9396cda6e060"
+        }
+      },
+      "docker_lens": {
+        "repository": "Strukturpiloten/docker-lens",
+        "repository_id": 1387403220,
+        "pr": 128,
+        "revision": "f8c6c6a62e341f4b53cb80230a7c421338904863",
+        "source_sha256": "59c85295d0c3aca1df81f65edaed9be289849760fd131cf4e553c1165badf6df",
+        "lock_sha256": "073b784a9cc6d5f64ce9760398e7b977e95a457e8b9efa9016bfec2f2c18df3c",
+        "files": {
+          "docs/evidence/reviewed/sha256/1843873d6cae5b91d0ae3917f8238491239089905747c193e7f46027f17d891c.json": "1843873d6cae5b91d0ae3917f8238491239089905747c193e7f46027f17d891c",
+          "docs/evidence/reviewed/sha256/9f26a185660badfbd6777bbf3a520f03e8fb48a777f8724bff506af5d28ba910.json": "9f26a185660badfbd6777bbf3a520f03e8fb48a777f8724bff506af5d28ba910",
+          "docs/evidence/reviewed/sha256/b0825b797f052257f706b0102c5c720e7fcbbaef0e585869bb6d23d2e756fb94.json": "b0825b797f052257f706b0102c5c720e7fcbbaef0e585869bb6d23d2e756fb94",
+          "docs/evidence/reviewed/sha256/e6d27662271bcce957d25fe83f027eafa0264f65787d4be9b8314eb157c9ec74.json": "e6d27662271bcce957d25fe83f027eafa0264f65787d4be9b8314eb157c9ec74",
+          "scripts/native-conformance.sh": "d497297cfb130bccc1788fb2767a82ae32531c908e485d6d1903983f8203d3c3",
+          "scripts/native-outer-command.sh": "c215444e0bd9eedaa38b77bf72c7ad444d93244b21ee994557a503d31e9a0c51",
+          "scripts/native-outer-observation.py": "43106af3b9c05696a028dfb59b8d85cf78f28bdb518fa9b87a59643112f610ff",
+          "scripts/native-outer-runtime.sh": "10ab1d724dd16eca99830ded853dedd547226430ac95f9955bcd4885fd55f867",
+          "scripts/native-presence.py": "cb7fe40f0687d8b9c4f998d00894767860ab94a3307f55e3907f0e1a98ab6b98",
+          "scripts/native-runner-apparmor.py": "17cc280b593466f143ba848183485b796d1e87a60b41d74ca25d49dc86241abe",
+          "scripts/native-unix-http.py": "47e995deee0c6e3675baf72b69d68d4654d10018c993ef8e2311db0d03fecd64",
+          "scripts/native_outer_diagnostic_capture.py": "23202211ec3b58a70c1120b0395f43663e3cacff1948609a8fb0fe2dac012962",
+          "src/reviewed_catalog.rs": "a6ce1e7928e4e81629be6e4aa1f77034f84e91d2b109bca80322ca19dcce30b0"
+        }
+      }
+    }
+  ]
+}
