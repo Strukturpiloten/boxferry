@@ -10,10 +10,12 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import selectors
 import signal
 import stat
 import subprocess
+import sys
 import time
 
 
@@ -29,6 +31,13 @@ assert TRANSFER_SPEC is not None and TRANSFER_SPEC.loader is not None
 transfer = importlib.util.module_from_spec(TRANSFER_SPEC)
 TRANSFER_SPEC.loader.exec_module(transfer)
 EXAMPLES = {"volume-fixtures": "docker-volume-fixture-rehearsal", "host-metadata": "docker-host-metadata"}
+FAILURE_PHASES = frozenset({
+    "arguments", "build-layout", "build-context", "build-authorization", "build-copy",
+    "volume-fixtures-build", "volume-fixtures-capture", "volume-fixtures-receipt",
+    "host-metadata-build", "host-metadata-capture", "host-metadata-receipt", "inert-build",
+    "inert-discovery", "inert-capture", "inert-tests", "build-source-recheck", "build-state", "build-export",
+    "native-runtime",
+})
 RUNTIME_FACTS = {
     "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux",
     "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
@@ -84,6 +93,100 @@ def binary_digest(path: Path, root: Path) -> str:
         auth.require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
                      == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns))
     return digest.hexdigest()
+
+
+def capture_compiler_executable(path: Path, root: Path, profile: str, *, deadline: float) -> str:
+    """Break Cargo's output aliases only at the three known build-owned paths.
+
+    Runtime and bundle readers still require single links. The independent inode
+    replaces only the observed compiler output, never a downloaded artifact.
+    """
+    auth.require(root.is_absolute() and root.resolve(strict=True) == root
+                 and path.is_absolute() and path.resolve(strict=True) == path)
+    if profile in EXAMPLES:
+        auth.require(path == root / "target/debug/examples" / EXAMPLES[profile])
+    else:
+        auth.require(profile == "inert-tests" and path.parent == root / "target/debug/deps"
+                     and re.fullmatch(r"docker_authored_bind_rehearsal-[0-9a-f]{16}", path.name) is not None)
+    auth.require(time.monotonic() < deadline)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = None
+    owned = None
+    handlers = {}
+    cancelled = None
+    identity = lambda item: (item.st_dev, item.st_ino, item.st_mode, item.st_uid, item.st_nlink,
+                             item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+
+    def cancel_capture(kind, _frame):
+        nonlocal cancelled
+        if cancelled is None:
+            cancelled = kind
+
+    def check_budget():
+        if cancelled is not None:
+            raise SystemExit(128 + cancelled)
+        auth.require(time.monotonic() < deadline)
+
+    try:
+        parent = os.fstat(directory)
+        auth.require(stat.S_ISDIR(parent.st_mode) and parent.st_uid == os.geteuid())
+        for kind in (signal.SIGTERM, signal.SIGINT):
+            handlers[kind] = signal.signal(kind, cancel_capture)
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(descriptor, "rb") as source:
+            before = os.fstat(source.fileno())
+            auth.require(stat.S_ISREG(before.st_mode) and before.st_uid == os.geteuid()
+                         and before.st_nlink >= 1 and before.st_mode & stat.S_IXUSR
+                         and 64 <= before.st_size <= 512 * 1024 * 1024)
+            temporary = ".reviewed-compiler-" + secrets.token_hex(16)
+            output = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+            with os.fdopen(output, "wb") as snapshot:
+                item = os.fstat(snapshot.fileno())
+                owned = item.st_dev, item.st_ino
+                digest, size = hashlib.sha256(), 0
+                while chunk := source.read(1024 * 1024):
+                    check_budget()
+                    if size == 0:
+                        auth.require(chunk.startswith(b"\x7fELF"))
+                    size += len(chunk)
+                    auth.require(size <= before.st_size)
+                    digest.update(chunk)
+                    snapshot.write(chunk)
+                snapshot.flush()
+                os.fchmod(snapshot.fileno(), 0o700)
+                os.fsync(snapshot.fileno())
+                copied = os.fstat(snapshot.fileno())
+                auth.require(size == before.st_size and copied.st_size == size and copied.st_nlink == 1
+                             and copied.st_uid == os.geteuid() and stat.S_ISREG(copied.st_mode))
+            auth.require(identity(before) == identity(os.fstat(source.fileno()))
+                         and identity(before) == identity(os.stat(path.name, dir_fd=directory, follow_symlinks=False)))
+            current_parent = path.parent.stat(follow_symlinks=False)
+            auth.require(path.parent.resolve(strict=True) == path.parent
+                         and (current_parent.st_dev, current_parent.st_ino) == (parent.st_dev, parent.st_ino))
+            check_budget()
+            auth.require(identity(copied) == identity(os.stat(temporary, dir_fd=directory, follow_symlinks=False)))
+            os.replace(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory)
+            temporary = None
+            installed = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+            auth.require((installed.st_dev, installed.st_ino) == owned and installed.st_nlink == 1)
+        return digest.hexdigest()
+    finally:
+        try:
+            if temporary is not None and owned is not None:
+                try:
+                    item = os.stat(temporary, dir_fd=directory, follow_symlinks=False)
+                    if (item.st_dev, item.st_ino) == owned:
+                        os.unlink(temporary, dir_fd=directory)
+                except FileNotFoundError:
+                    pass
+        finally:
+            try:
+                os.close(directory)
+            finally:
+                for kind, handler in handlers.items():
+                    signal.signal(kind, handler)
+        if cancelled is not None:
+            raise SystemExit(128 + cancelled)
 
 
 def child_environment():
@@ -208,28 +311,43 @@ def inputs(args):
     return pair, digest, box_files, lens_files
 
 
-def build(args):
+def build(args, *, phase=None):
+    def mark(name):
+        if phase is not None:
+            phase(name)
+
+    mark("build-layout")
     transfer.layout(args, os.environ)
+    mark("build-context")
     runtime_environment(os.environ, require_docker=True)
+    mark("build-authorization")
     pair, digest, box_files, _ = inputs(args)
     # Full unconditional import closure and all repository-relative inputs are
     # copied before any candidate helper is imported or sourced.
+    mark("build-copy")
     auth.copy_closure(box_files, args.execution_root)
     args.private.mkdir(mode=0o700)
     deadline = time.monotonic() + 1200
     builds = {}
     for profile, example in EXAMPLES.items():
+        mark(profile + "-build")
         execute(proof.build_command(args.lens_root, profile), root=args.box_root,
                 log=args.private / (profile + "-build.log"), seconds=deadline - time.monotonic())
         binary = args.box_root / "target/debug/examples" / example
+        mark(profile + "-capture")
+        captured = capture_compiler_executable(binary, args.box_root, profile, deadline=deadline)
         digest_binary = binary_digest(binary, args.box_root)
+        auth.require(digest_binary == captured)
+        mark(profile + "-receipt")
         write(args.private / (profile + "-receipt.json"), proof.build_receipt(pair, args.lens_root, profile, digest_binary))
         builds[profile] = proof.sanitized_build(pair, args.lens_root, profile, digest_binary)
     command = ["cargo", "test", "--locked", "--package", "boxferry", "--test", "docker_authored_bind_rehearsal",
                "--no-default-features", "--features", "compose,docker", "--jobs", "2",
                "--config", f'patch.crates-io.docker-lens.path="{args.lens_root}"', "--no-run", "--message-format=json"]
+    mark("inert-build")
     messages = execute(command, root=args.box_root, log=args.private / "inert-build.log",
                        seconds=deadline - time.monotonic()).decode()
+    mark("inert-discovery")
     executables = []
     for line in messages.splitlines():
         if line.startswith("{"):
@@ -239,15 +357,23 @@ def build(args):
                 executables.append(Path(item["executable"]))
     auth.require(len(executables) == 1)
     binary = executables[0]
-    inert = {"kind": "inert-only-no-runtime", "binary_sha256": binary_digest(binary, args.box_root),
+    mark("inert-capture")
+    captured = capture_compiler_executable(binary, args.box_root, "inert-tests", deadline=deadline)
+    digest_binary = binary_digest(binary, args.box_root)
+    auth.require(digest_binary == captured)
+    mark("inert-tests")
+    inert = {"kind": "inert-only-no-runtime", "binary_sha256": digest_binary,
              "tests": [exact_test(binary, name, root=args.box_root, private=args.private, index=index, deadline=deadline)
                        for index, name in enumerate(auth.INERT_TESTS)]}
+    mark("build-source-recheck")
     auth.verify_source(args.box_root, pair["boxferry"])
     auth.verify_source(args.lens_root, pair["docker_lens"])
     state = {
         "context": proof.context(pair, digest, args.trusted_sha, args.run_id, args.attempt),
         "builds": builds, "inert": inert, "test_binary": str(binary)}
+    mark("build-state")
     write(args.private / "build-state.json", state)
+    mark("build-export")
     transfer.export(args, pair=pair, context=state["context"], state=state)
 
 
@@ -321,8 +447,13 @@ def run(args):
     write(args.output / "volume-proof.json", volume)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+class ClosedArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise ValueError("rejected") from None
+
+
+def arguments():
+    parser = ClosedArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("build", "run"))
     for name in ("trusted-root", "box-root", "lens-root", "execution-root", "private"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -334,17 +465,36 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--bundle-root", type=Path, required=True)
     parser.add_argument("--build-artifact-id")
-    args = parser.parse_args()
-    if args.command == "build":
-        auth.require(args.lane in auth.LANES and args.output is None and args.build_artifact_id is None)
-        build(args)
-    else:
-        auth.require(args.lane is not None and args.output is not None and args.build_artifact_id is not None)
-        run(args)
+    return parser.parse_args()
+
+
+def failure_message(phase):
+    if type(phase) is not str or phase not in FAILURE_PHASES:
+        phase = "arguments"
+    return f"reviewed Docker consumer execution rejected: phase={phase} reason=rejected; no passing evidence"
+
+
+def main():
+    phase = "arguments"
+
+    def mark(name):
+        nonlocal phase
+        phase = name
+
+    try:
+        args = arguments()
+        if args.command == "build":
+            auth.require(args.lane in auth.LANES and args.output is None and args.build_artifact_id is None)
+            build(args, phase=mark)
+        else:
+            auth.require(args.lane is not None and args.output is not None and args.build_artifact_id is not None)
+            mark("native-runtime")
+            run(args)
+    except Exception:
+        print(failure_message(phase), file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        raise SystemExit("reviewed Docker consumer execution rejected; no passing evidence") from None
+    raise SystemExit(main())

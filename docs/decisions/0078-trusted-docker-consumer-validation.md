@@ -149,6 +149,25 @@ nonignored execution for each of:
 - `full_nextcloud_and_explicit_supabase_bind_mount_only_projection_retain_binds_for_all_profiles`
 - `generated_external_constraint_controls_retain_actual_fixture_binds_on_all_four_profiles`
 
+Cargo may hardlink each executable's normal name to its hashed compiler-cache
+alias. Before strict hashing, the build driver captures the two known example
+outputs and the compiler-selected inert test executable into independent inodes
+at their existing owned target paths. Only those build outputs are eligible:
+canonical paths, current ownership, regular executable ELF marker/minimum size,
+the existing 512 MiB limit, and the original deadline are checked. A held no-follow
+descriptor supplies the bytes; inode/link/size/mode/timestamp checks reject changes
+or path replacement during capture. A create-new same-directory snapshot is
+flushed, atomically installed and checked by the unchanged strict digest reader.
+Failed or cancelled captures remove their owned partial snapshot. Other compiler
+aliases cannot mutate the captured bytes afterward. This capture is never applied
+to downloaded artifacts; runtime, restore and transfer readers still reject
+multiple links. It grants no repository or native authority on its own.
+
+Build failures identify a fixed value-free phase from argument/context/source
+checks through compilation, capture, receipts, inert tests and export. Raw compiler
+output, paths, arguments and exception text remain private; a phase label is not
+proof of a compiler error or native result. Both exact inert tests remain mandatory.
+
 The live launcher has no profile override: it invokes only `volume-fixtures`.
 Existing capacity preflight (6 GiB available RAM/8 GiB free disk), 512 PID/4 GiB/
 2 CPU outer limits, owned socket/storage, 780-second work/120-second cleanup
@@ -205,6 +224,10 @@ The App action reuses the exact release-plz SHA/tag; existing Action pinning,
 grouping and reviewed update policy apply once. The admission revision remains
 canonical in the dispatcher with its existing separate approval rule. No new
 Renovate manager, extraction path override or software version is needed.
+The compiler-capture repair uses only the standard library and owning driver/tests:
+no dependency, Action/tool/image pin, workflow consumer or extraction path moves.
+Existing single-manager ownership, grouping and approval rules therefore remain
+unchanged; the catalogue's extraction and consumer regressions still apply.
 Ephemeral outer-runner prerequisites intentionally follow Ubuntu 24.04's signed
 distribution repositories rather than pinning package revisions that security
 updates can retire. APT verifies repository metadata and package digests; there
