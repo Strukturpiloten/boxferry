@@ -302,6 +302,198 @@ fn github_actions_are_immutable_and_versioned() -> Result<(), String> {
     support::validate_action_pins(&repository_root())
 }
 
+fn reviewed_docker_app_pin(source: &str) -> Result<&str, String> {
+    let references = source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("uses: actions/create-github-app-token@"))
+        .collect::<Vec<_>>();
+    if references.len() != 1 || source.matches("actions/create-github-app-token").count() != 1 {
+        return Err("Docker admission requires one immutable versioned App Action reference".to_owned());
+    }
+    let reference = references[0];
+    let (revision, tag) = reference
+        .split_once(" # ")
+        .ok_or("Docker admission App Action requires an exact release-tag comment")?;
+    let version = tag
+        .strip_prefix('v')
+        .ok_or("Docker admission App Action requires a version tag")?;
+    let parts = version.split('.').collect::<Vec<_>>();
+    if revision.len() != 40
+        || !revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || parts.len() != 3
+        || !parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err("Docker admission App Action requires a full immutable SHA and exact version tag".to_owned());
+    }
+    Ok(reference)
+}
+
+fn validate_reviewed_docker_credential_isolation(sources: &[String; 4], release_plz: &str) -> Result<(), String> {
+    let [dispatcher, lane, worker, action] = sources;
+    if reviewed_docker_app_pin(action)? != reviewed_docker_app_pin(release_plz)? {
+        return Err("Docker admission must reuse the current canonical release-plz App Action pin".to_owned());
+    }
+    let admission = "uses: ./trusted/.github/actions/reviewed-docker-admission";
+    if dispatcher.matches(admission).count() != 2 || lane.matches(admission).count() != 2 {
+        return Err("Docker consumer must retain ten isolated admissions across four lanes".to_owned());
+    }
+    for required in [
+        "    needs: context-smoke\n",
+        "    needs: admission\n",
+        "    needs: [admission, lanes]\n",
+        "uses: ./.github/workflows/reviewed-docker-consumer-lane.yml",
+        "--bindings \"$PWD/bindings\"",
+        "      context_only: true",
+    ] {
+        if !dispatcher.contains(required) {
+            return Err(format!("Docker dispatcher lacks isolation contract `{required}`"));
+        }
+    }
+    for (start, end, dependency, mode) in [
+        ("  build:\n", "  seal:\n", "pre-build", "build"),
+        ("  native:\n", "", "[build, seal]", "native"),
+    ] {
+        let tail = lane.split_once(start).ok_or("Docker lane lacks candidate job")?.1;
+        let job = if end.is_empty() {
+            tail
+        } else {
+            tail.split_once(end).ok_or("Docker lane lacks sealing job")?.0
+        };
+        if !job.contains(&format!("    needs: {dependency}\n"))
+            || !job.contains(&format!("      mode: {mode}\n"))
+            || !job.contains("uses: ./.github/workflows/reviewed-docker-consumer-worker.yml")
+            || ["secrets:", "environment:", "always()", "continue-on-error:"]
+                .iter()
+                .any(|value| job.contains(value))
+        {
+            return Err("Docker candidate calls must have successful dependencies and no forwarded secrets".to_owned());
+        }
+    }
+    for required in [
+        "    needs: build\n",
+        "artifact-ids: ${{ needs.build.outputs.artifact_id }}",
+        "binding: ${{ needs.seal.outputs.binding }}",
+        "--checked-at \"$CHECKED_AT\"",
+    ] {
+        if !lane.contains(required) {
+            return Err("Docker trusted seal must depend on the exact build and final admission".to_owned());
+        }
+    }
+    if ["secrets:", "secrets.", "environment:", "RELEASE_PLZ", "ADMISSION_TOKEN"]
+        .iter()
+        .any(|value| worker.contains(value))
+        || !worker.contains("  lanes:\n")
+        || !worker.contains("permissions:\n  contents: read\n\n")
+        || worker.matches("if: inputs.mode == 'build'").count() != 2
+        || worker.matches("if: inputs.mode == 'native'").count() != 3
+        || worker.matches("if: inputs.mode != 'context'").count() != 3
+        || !worker.contains("EXPECTED_GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}")
+        || !worker.contains("os.environ[key] == os.environ[\"EXPECTED_\" + key]")
+        || !worker.contains("Require real nested caller context")
+        || !worker.contains("digest-mismatch: error")
+    {
+        return Err("Docker worker must preserve real caller guards and accept no stored secrets".to_owned());
+    }
+    for required in [
+        "        owner: Strukturpiloten\n",
+        "        repositories: docker-lens\n",
+        "        permission-metadata: read\n",
+        "        permission-pull-requests: read\n",
+        "if: always() && steps.token.outputs.token != ''",
+        "run: python3 trusted/scripts/revoke-reviewed-docker-admission-token.py",
+        "test \"$TOKEN_RESULT\" = success",
+        "test \"$ADMISSION_RESULT\" = success",
+        "test \"$REVOCATION_RESULT\" = success",
+    ] {
+        if !action.contains(required) {
+            return Err("Docker admission requires literal read scope and successful immediate revocation".to_owned());
+        }
+    }
+    if action.matches("        permission-").count() != 2
+        || ["continue-on-error:", "skip-token-revoke:", "permission-contents:"]
+            .iter()
+            .any(|value| action.contains(value))
+    {
+        return Err("Docker admission must not inherit or expand App permissions or weaken cleanup".to_owned());
+    }
+    Ok(())
+}
+
+#[test]
+fn reviewed_docker_app_credentials_are_isolated_from_candidate_jobs() -> Result<(), String> {
+    let root = repository_root();
+    let paths = [
+        ".github/workflows/reviewed-docker-consumer-validation.yml",
+        ".github/workflows/reviewed-docker-consumer-lane.yml",
+        ".github/workflows/reviewed-docker-consumer-worker.yml",
+        ".github/actions/reviewed-docker-admission/action.yml",
+    ];
+    let sources: [String; 4] = paths
+        .map(|path| fs::read_to_string(root.join(path)).map_err(|error| format!("failed to read {path}: {error}")))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?
+        .try_into()
+        .map_err(|_| "Docker isolation policy must inspect four sources".to_owned())?;
+    let release_plz = fs::read_to_string(root.join(".github/workflows/release-plz.yml"))
+        .map_err(|error| format!("failed to read canonical release-plz workflow: {error}"))?;
+    validate_reviewed_docker_credential_isolation(&sources, &release_plz)?;
+    for (index, before, after) in [
+        (0, "needs: context-smoke", "needs: []"),
+        (0, "needs: admission", "needs: []"),
+        (0, "needs: [admission, lanes]", "needs: admission"),
+        (1, "needs: pre-build", "needs: []"),
+        (1, "needs: build", "needs: []"),
+        (1, "needs: [build, seal]", "needs: build"),
+        (1, "      mode: native", "      mode: native\n    secrets: inherit"),
+        (1, "      mode: build", "      mode: build\n    secrets: inherit"),
+        (2, "jobs:\n", "jobs:\n  # secrets:\n"),
+        (2, "if: inputs.mode == 'build'", "if: always()"),
+        (2, "if: inputs.mode == 'native'", "if: always()"),
+        (2, "if: inputs.mode != 'context'", "if: always()"),
+        (3, "permission-metadata: read", "permission-metadata: write"),
+        (3, "permission-pull-requests: read", "permission-pull-requests: write"),
+        (3, "owner: Strukturpiloten", "owner: Other"),
+        (3, "if: always() && steps.token.outputs.token != ''", "if: success()"),
+        (3, "test \"$REVOCATION_RESULT\" = success", "true"),
+    ] {
+        let mut changed = sources.clone();
+        changed[index] = changed[index].replacen(before, after, 1);
+        if changed == sources || validate_reviewed_docker_credential_isolation(&changed, &release_plz).is_ok() {
+            return Err(format!("Docker credential isolation accepted mutation `{before}`"));
+        }
+    }
+    let canonical = reviewed_docker_app_pin(&release_plz)?;
+    let revision = canonical.split_once(" # ").ok_or("canonical App pin lacks version")?.0;
+    for malformed in [
+        format!("{} # v1.2.3", &revision[..39]),
+        revision.to_owned(),
+        "main # v1.2.3".to_owned(),
+        format!("{revision} # main"),
+        format!("{revision} # v1.2"),
+    ] {
+        let mut changed = sources.clone();
+        changed[3] = changed[3].replacen(canonical, &malformed, 1);
+        if reviewed_docker_app_pin(&format!("uses: actions/create-github-app-token@{malformed}")).is_ok()
+            || validate_reviewed_docker_credential_isolation(&changed, &release_plz).is_ok()
+        {
+            return Err("Docker credential isolation accepted a malformed or unversioned App pin".to_owned());
+        }
+    }
+    // A coordinated Renovate update is allowed; this synthetic pin is a fixture.
+    let future = format!("{} # v123.456.789", "f".repeat(40));
+    let mut advanced = sources.clone();
+    advanced[3] = advanced[3].replacen(canonical, &future, 1);
+    if validate_reviewed_docker_credential_isolation(&advanced, &release_plz).is_ok() {
+        return Err("Docker admission App pin must stay synchronized with canonical release-plz".to_owned());
+    }
+    validate_reviewed_docker_credential_isolation(&advanced, &release_plz.replacen(canonical, &future, 1))?;
+    Ok(())
+}
+
 #[test]
 fn live_scenario_podman_adapter_preserves_the_action_argument() -> Result<(), String> {
     let validators = fs::read_to_string(repository_root().join("scripts/lib/scenario-validators.sh"))

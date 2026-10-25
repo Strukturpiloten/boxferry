@@ -60,7 +60,17 @@ verified. Native evidence and complete gates remain separate requirements.
 PodmanLens already uses Podman. Compose provider configuration checks and website
 checks need no daemon switch; planned Compose runtime lanes remain unimplemented.
 Review pins, integrity and Renovate ownership in each affected change. Preserve
-historical evidence. Existing exact-pair admission under ADR 0078 is unchanged.
+historical evidence. Exact-pair authorization and all ten admissions under ADR
+0078 remain mandatory. Its credential-isolation split uses fresh trusted
+App-bearing jobs and reusable candidate workers with no forwarded stored secrets.
+Require the real nested caller context and fixed `lanes` job identity before any
+candidate build; the native handoff also requires the current-attempt trusted
+binding within its 120-second admission budget. Queue delay or context mismatch
+fails closed and needs a new attempt, never a fabricated runtime context.
+Use the dispatcher's `context_only: true` route to establish the real hosted
+nested-call behavior before native qualification; it receives no stored App
+secret and executes no candidate code. Every normal run repeats that same smoke
+as a prerequisite to its first admission.
 
 ## Safe staged bootstrap and acceptance checkpoints
 

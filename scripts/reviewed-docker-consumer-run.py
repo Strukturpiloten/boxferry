@@ -23,6 +23,11 @@ assert SPEC is not None and SPEC.loader is not None
 proof = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(proof)
 auth = proof.auth
+TRANSFER_SPEC = importlib.util.spec_from_file_location(
+    "reviewed_docker_transfer", Path(__file__).with_name("reviewed-docker-consumer-transfer.py"))
+assert TRANSFER_SPEC is not None and TRANSFER_SPEC.loader is not None
+transfer = importlib.util.module_from_spec(TRANSFER_SPEC)
+TRANSFER_SPEC.loader.exec_module(transfer)
 EXAMPLES = {"volume-fixtures": "docker-volume-fixture-rehearsal", "host-metadata": "docker-host-metadata"}
 RUNTIME_FACTS = {
     "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "RUNNER_OS": "Linux",
@@ -204,6 +209,8 @@ def inputs(args):
 
 
 def build(args):
+    transfer.layout(args, os.environ)
+    runtime_environment(os.environ, require_docker=True)
     pair, digest, box_files, _ = inputs(args)
     # Full unconditional import closure and all repository-relative inputs are
     # copied before any candidate helper is imported or sourced.
@@ -237,9 +244,11 @@ def build(args):
                        for index, name in enumerate(auth.INERT_TESTS)]}
     auth.verify_source(args.box_root, pair["boxferry"])
     auth.verify_source(args.lens_root, pair["docker_lens"])
-    write(args.private / "build-state.json", {
+    state = {
         "context": proof.context(pair, digest, args.trusted_sha, args.run_id, args.attempt),
-        "builds": builds, "inert": inert, "test_binary": str(binary)})
+        "builds": builds, "inert": inert, "test_binary": str(binary)}
+    write(args.private / "build-state.json", state)
+    transfer.export(args, pair=pair, context=state["context"], state=state)
 
 
 def run(args):
@@ -250,6 +259,7 @@ def run(args):
                  and environment["DOCKERLENS_NATIVE_CANDIDATE_SHA"] == args.lens_sha)
     pair, digest, box_files, lens_files = inputs(args)
     expected = proof.context(pair, digest, args.trusted_sha, args.run_id, args.attempt)
+    binding = transfer.restore(args, pair=pair, context=expected, box_files=box_files)
     state = auth.document(args.private / "build-state.json", 128 * 1024)
     auth.keys(state, ("context", "builds", "inert", "test_binary"))
     auth.require(state["context"] == expected)
@@ -286,6 +296,8 @@ def run(args):
     ]
     # The existing owned watchdog remains authoritative (780s + 120s cleanup).
     # This backstop does not change its inner budgets or nesting/host policy.
+    transfer.binding(binding, pair=pair, context=expected, lane=args.lane, lens=args.lens_root,
+                     identifier=args.build_artifact_id, fresh=True)
     execute(command, root=args.execution_root, log=args.private / "runtime.log", seconds=1020,
             cleanup_seconds=125, preserve_guard=True)
     auth.require(set(path.name for path in directory.iterdir()) == {"volume-proof.json"})
@@ -320,12 +332,14 @@ def main():
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--lane", choices=auth.LANES)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--bundle-root", type=Path, required=True)
+    parser.add_argument("--build-artifact-id")
     args = parser.parse_args()
     if args.command == "build":
-        auth.require(args.lane is None and args.output is None)
+        auth.require(args.lane in auth.LANES and args.output is None and args.build_artifact_id is None)
         build(args)
     else:
-        auth.require(args.output is not None)
+        auth.require(args.lane is not None and args.output is not None and args.build_artifact_id is not None)
         run(args)
 
 

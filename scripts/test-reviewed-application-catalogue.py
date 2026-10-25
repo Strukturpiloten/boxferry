@@ -208,6 +208,11 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.admission = bridge_module("admission")
         self.evidence = bridge_module("evidence")
         self.launcher = bridge_module("run")
+        self.transfer = bridge_module("transfer")
+        revoke_spec = importlib.util.spec_from_file_location(
+            "reviewed_revoke_test", ROOT / "scripts/revoke-reviewed-docker-admission-token.py")
+        self.revocation = importlib.util.module_from_spec(revoke_spec)
+        revoke_spec.loader.exec_module(self.revocation)
         # Authored subprocess controls must not inherit a developer's remote
         # runtime selector; separate policy tests exercise explicit refusals.
         selectors = {"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_API_VERSION",
@@ -350,14 +355,16 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
             return normal_admit(*arguments)
 
         def fetch(path, token, *, expected_repository):
-            self.assertEqual(token, "secret-token-canary")
+            self.assertEqual(token, "secret-token-canary" if expected_repository == self.admission.BOX
+                             else "lens-installation-CANARY")
             if targets.get(failed_phase) == (expected_repository, path):
                 raise error
             return self.get(path, expected_repository)
 
         stdout, stderr = io.StringIO(), io.StringIO()
         self.requests.clear()
-        env = {**self.env, "GITHUB_TOKEN": "secret-token-canary", **(environment or {})}
+        env = {**self.env, "GITHUB_TOKEN": "secret-token-canary",
+               "DOCKERLENS_ADMISSION_TOKEN": "lens-installation-CANARY", **(environment or {})}
         with patch.dict(os.environ, env, clear=True), \
                 patch.object(self.admission.ClosedArgumentParser, "parse_args", return_value=args), \
                 patch.object(self.admission.auth, "authorize", side_effect=authorize), \
@@ -511,7 +518,7 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
                                  "PYTHONDONTWRITEBYTECODE": "1"})
 
     def test_workflow_explicitly_passes_only_runtime_guard_facts_through_sudo_env_i(self):
-        workflow = (ROOT / ".github/workflows/reviewed-docker-consumer-validation.yml").read_text()
+        workflow = (ROOT / ".github/workflows/reviewed-docker-consumer-worker.yml").read_text()
         runtime = workflow.split("      - name: Run only six-fixture 23-volume profile", 1)[1].split("      - name:", 1)[0]
         self.assertIn("DOCKERLENS_OUTER_ENGINE: docker", runtime)
         self.assertIn("DOCKERLENS_OUTER_ENGINE=docker", runtime)
@@ -525,7 +532,8 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
             self.assertNotIn(forbidden, runtime)
 
     def test_docker_lane_uses_hosted_tools_and_only_admitted_canonical_runtime_verification(self):
-        workflow = (ROOT / ".github/workflows/reviewed-docker-consumer-validation.yml").read_text()
+        workflow = (ROOT / ".github/workflows/reviewed-docker-consumer-worker.yml").read_text()
+        lane = (ROOT / ".github/workflows/reviewed-docker-consumer-lane.yml").read_text()
         prerequisite_name = "      - name: Check hosted Docker tooling without replacing the runtime"
         prerequisites = workflow.split(prerequisite_name, 1)[1].split("      - name:", 1)[0]
         self.assertIn("command -v docker > /dev/null", prerequisites)
@@ -535,11 +543,12 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         for forbidden in ("apt-get", "podman", "skopeo", "libcap2-bin", "docker-ce", "moby", "systemctl",
                           "docker info", "docker version", "docker run"):
             self.assertNotIn(forbidden, workflow)
-        self.assertLess(workflow.index("Re-admit both heads and actors before privileged prerequisites"),
-                        workflow.index(prerequisite_name))
-        self.assertIn('test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"', workflow)
-        self.assertLess(workflow.index("Re-admit both exact heads immediately before isolated runtime"),
-                        workflow.index("Run only six-fixture 23-volume profile"))
+        self.assertLess(lane.index("Re-admit both heads and actors before privileged prerequisites"),
+                        lane.index("  build:\n"))
+        self.assertLess(lane.index("Re-admit both exact heads immediately before isolated runtime"),
+                        lane.index("  native:\n"))
+        self.assertIn("    needs: [build, seal]", lane)
+        self.assertIn("Require real nested caller context", workflow)
         self.assertIn('python3 "$PWD/trusted/scripts/reviewed-docker-consumer-run.py" run', workflow)
         self.assertNotIn('candidate/scripts/reviewed-docker-consumer-run.py', workflow)
         runner = (ROOT / "scripts/reviewed-docker-consumer-run.py").read_text()
@@ -710,7 +719,7 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(stdout, "")
         self.assertEqual(stderr, f"reviewed Docker consumer admission denied: phase={phase} reason={reason}\n")
-        for canary in ("secret-token-canary", "/private/path-canary", "api-payload-canary",
+        for canary in ("secret-token-canary", "lens-installation-CANARY", "/private/path-canary", "api-payload-canary",
                        "private-helper-path-canary", "fallback-secret-canary"):
             self.assertNotIn(canary, stdout + stderr)
 
@@ -789,9 +798,56 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
                 self.pulls[repository]["head"]["sha"] = original
 
     def test_admission_cli_missing_token_never_uses_alternate_credentials(self):
-        result = self.capture_admission_cli(environment={"GITHUB_TOKEN": "", "GH_TOKEN": "fallback-secret-canary"})
-        self.assert_closed_admission_failure(result, "context/Box-admission")
-        self.assertEqual(self.requests, [])
+        for missing in ("GITHUB_TOKEN", "DOCKERLENS_ADMISSION_TOKEN"):
+            result = self.capture_admission_cli(environment={missing: "", "GH_TOKEN": "fallback-secret-canary"})
+            self.assert_closed_admission_failure(result, "context/Box-admission")
+            self.assertEqual(self.requests, [])
+
+    def test_explicit_repository_token_routing_rejects_unknown_repositories_before_fetch(self):
+        calls = []
+        helper = types.SimpleNamespace(fetch_json=lambda path, token, **kw: calls.append((path, token, kw)))
+        get = self.admission.repository_getter(helper, "BOX-CANARY", "LENS-CANARY")
+        for repository, token in ((self.admission.BOX, "BOX-CANARY"), (self.admission.LENS, "LENS-CANARY")):
+            path = "/repos/" + repository + "/pulls/7"
+            get(path, repository)
+            self.assertEqual(calls[-1], (path, token, {"expected_repository": repository}))
+        for repository in (None, "", "Other/docker-lens", "Strukturpiloten/Docker-lens", self.admission.LENS + "/"):
+            with self.subTest(repository=repository), self.assertRaises(ValueError):
+                get("/private-canary", repository)
+        self.assertEqual(len(calls), 2)
+
+    def test_revocation_requires_fixed_endpoint_success_and_has_value_free_failures(self):
+        class Response:
+            def __init__(self, status=204, url=self.revocation.ENDPOINT):
+                self.status, self.url = status, url
+            def geturl(self): return self.url
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+
+        class Opener:
+            def __init__(self, response): self.response, self.requests = response, []
+            def open(self, request, **kwargs):
+                self.requests.append((request, kwargs))
+                return self.response
+
+        opener = Opener(Response())
+        self.revocation.revoke("LENS-CANARY", opener=opener)
+        request, kwargs = opener.requests[0]
+        self.assertEqual((request.full_url, request.method, kwargs),
+                         ("https://api.github.com/installation/token", "DELETE", {"timeout": 10}))
+        self.assertEqual(request.headers["Authorization"], "Bearer LENS-CANARY")
+        for response in (Response(200), Response(401), Response(302), Response(url="https://evil.invalid/")):
+            with self.assertRaises(ValueError): self.revocation.revoke("LENS-CANARY", opener=Opener(response))
+        for token in (None, "", "CANARY\nheader"):
+            with self.assertRaises(ValueError): self.revocation.revoke(token, opener=opener)
+        self.assertIsNone(self.revocation.NoRedirect().redirect_request(None, None, 302, "", {}, "https://evil.invalid"))
+        for error in (OSError("LENS-CANARY private-path CANARY"), ValueError("private-response-CANARY")):
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with patch.object(sys, "argv", ["revoke"]), patch.dict(os.environ, {"DOCKERLENS_ADMISSION_TOKEN": "LENS-CANARY"}), \
+                    patch.object(self.revocation, "revoke", side_effect=error), redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(self.revocation.main(), 1)
+            self.assertEqual((stdout.getvalue(), stderr.getvalue()),
+                             ("", "reviewed Docker admission token revocation rejected\n"))
 
     def test_admission_parser_suppresses_argument_payloads(self):
         parser = self.admission.ClosedArgumentParser()
@@ -1022,10 +1078,10 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.assertIn("needs: [admission, lanes]", workflow)
         self.assertIn('test "$ADMISSION_RESULT" = success', workflow)
         self.assertIn('test "$LANES_RESULT" = success', workflow)
-        self.assertEqual(workflow.count("GITHUB_TOKEN:"), 4)
+        self.assertEqual(workflow.count("uses: ./trusted/.github/actions/reviewed-docker-admission"), 2)
         self.assertEqual(workflow.count("persist-credentials: false"), workflow.count("uses: actions/checkout@"))
         for line in workflow.splitlines():
-            if "uses:" in line:
+            if "uses: actions/" in line:
                 self.assertRegex(line, r"uses: actions/[a-z-]+@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$")
         for forbidden in ("pull_request_target:", "secrets: inherit", "contents: write", "id-token: write",
                           "cargo publish", "forgejo-application", "--profile core-journey", "apparmor=unconfined"):
@@ -1045,6 +1101,367 @@ class ReviewedDockerConsumerTests(unittest.TestCase):
         self.assertEqual(len(rules), 1)
         self.assertTrue(rules[0]["dependencyDashboardApproval"])
         self.assertFalse(rules[0]["automerge"])
+
+    def isolation_contract(self, main, lane, worker, action):
+        """Independent fixed graph and secret-delivery requirements, including mutations."""
+        def jobs(value):
+            tail = value.split("\njobs:\n", 1)[1]
+            matches = list(re.finditer(r"(?m)^  ([a-z-]+):\n", tail))
+            return {match[1]: tail[match.start():matches[index + 1].start() if index + 1 < len(matches) else len(tail)]
+                    for index, match in enumerate(matches)}
+
+        primary, orchestration, candidates = jobs(main), jobs(lane), jobs(worker)
+        for source in (main, lane, worker, action):
+            for forbidden in ("contents: write", "pull-requests: write", "id-token: write", "secrets: inherit"):
+                self.assertNotIn(forbidden, source)
+        self.assertEqual(set(primary), {"context-smoke", "admission", "lanes", "aggregate"})
+        self.assertEqual(set(orchestration), {"context-smoke", "pre-build", "build", "seal", "native"})
+        self.assertEqual(set(candidates), {"lanes"})
+        for block, dependency in ((primary["admission"], "context-smoke"), (primary["lanes"], "admission"),
+                                  (primary["aggregate"], "[admission, lanes]"),
+                                  (orchestration["build"], "pre-build"),
+                                  (orchestration["seal"], "build"),
+                                  (orchestration["native"], "[build, seal]")):
+            self.assertIn("    needs: " + dependency + "\n", block)
+        self.assertIn("uses: ./.github/workflows/reviewed-docker-consumer-lane.yml", primary["lanes"])
+        self.assertIn("      context_only: true", primary["context-smoke"])
+        self.assertIn("      mode: context", orchestration["context-smoke"])
+        for block in (primary["context-smoke"], orchestration["context-smoke"]):
+            self.assertNotIn("secrets:", block)
+            self.assertNotIn("environment:", block)
+        self.assertIn("if: inputs.context_only", orchestration["context-smoke"])
+        self.assertIn("if: inputs.context_only == false", primary["admission"])
+        self.assertIn("if: inputs.context_only == false", orchestration["pre-build"])
+        for name in ("build", "native"):
+            block = orchestration[name]
+            self.assertIn("uses: ./.github/workflows/reviewed-docker-consumer-worker.yml", block)
+            self.assertIn("mode: " + name, block)
+            for forbidden in ("secrets:", "environment:", "always()", "continue-on-error:"):
+                self.assertNotIn(forbidden, block)
+        for forbidden in ("secrets:", "secrets.", "environment:", "RELEASE_PLZ", "ADMISSION_TOKEN", "create-github-app-token"):
+            self.assertNotIn(forbidden, worker)
+        call = "uses: ./trusted/.github/actions/reviewed-docker-admission"
+        self.assertEqual(main.count(call) + 4 * lane.count(call), 10)
+        self.assertEqual(primary["admission"].count(call), 1)
+        self.assertEqual(primary["aggregate"].count(call), 1)
+        for name in ("pre-build", "seal"):
+            self.assertEqual(orchestration[name].count(call), 1)
+        for block in (primary["admission"], primary["aggregate"], orchestration["pre-build"], orchestration["seal"]):
+            for forbidden in (" cargo ", "sudo ", "candidate/scripts/", "continue-on-error:"):
+                self.assertNotIn(forbidden, block)
+        seal = orchestration["seal"]
+        self.assertLess(seal.index("transfer.py inspect"), seal.index(call))
+        self.assertLess(seal.index(call), seal.index("transfer.py issue"))
+        self.assertIn("--checked-at \"$CHECKED_AT\"", seal)
+        self.assertIn("artifact-ids: ${{ needs.build.outputs.artifact_id }}", seal)
+        self.assertIn("binding: ${{ needs.seal.outputs.binding }}", orchestration["native"])
+        self.assertIn("artifact_id: ${{ needs.build.outputs.artifact_id }}", orchestration["native"])
+        self.assertIn("Require real nested caller context", worker)
+        self.assertIn("permissions:\n  contents: read\n\n", worker)
+        self.assertEqual(worker.count("if: inputs.mode == 'build'"), 2)
+        self.assertEqual(worker.count("if: inputs.mode == 'native'"), 3)
+        self.assertEqual(worker.count("if: inputs.mode != 'context'"), 3)
+        for key in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR", "GITHUB_REPOSITORY_ID", "GITHUB_RUN_ID",
+                    "GITHUB_RUN_ATTEMPT", "GITHUB_REF", "GITHUB_EVENT_NAME", "GITHUB_WORKFLOW_REF",
+                    "GITHUB_WORKFLOW_SHA", "GITHUB_SHA"):
+            self.assertIn("EXPECTED_" + key + ": ${{ github.", worker)
+        self.assertIn('os.environ[key] == os.environ["EXPECTED_" + key]', worker)
+        self.assertIn("digest-mismatch: error", worker)
+        self.assertIn("--bindings \"$PWD/bindings\"", primary["aggregate"])
+        for requirement in ("owner: Strukturpiloten", "repositories: docker-lens", "permission-metadata: read",
+                            "permission-pull-requests: read", "if: always() && steps.token.outputs.token != ''",
+                            "run: python3 trusted/scripts/revoke-reviewed-docker-admission-token.py",
+                            'test "$TOKEN_RESULT" = success', 'test "$ADMISSION_RESULT" = success',
+                            'test "$REVOCATION_RESULT" = success'):
+            self.assertIn(requirement, action)
+        self.assertEqual(re.findall(r"(?m)^        permission-([^:]+): (.+)$", action),
+                         [("metadata", "read"), ("pull-requests", "read")])
+        for forbidden in ("skip-token-revoke:", "continue-on-error:", "secrets: inherit", "permission-contents:"):
+            self.assertNotIn(forbidden, action)
+        self.assertLess(action.index("id: admit"), action.index("id: revoke"))
+        self.assertLess(action.index("id: revoke"), action.index('test "$REVOCATION_RESULT" = success'))
+
+    def test_isolated_workflow_graph_keeps_ten_admissions_and_mutations_fail_closed(self):
+        paths = (".github/workflows/reviewed-docker-consumer-validation.yml",
+                 ".github/workflows/reviewed-docker-consumer-lane.yml",
+                 ".github/workflows/reviewed-docker-consumer-worker.yml",
+                 ".github/actions/reviewed-docker-admission/action.yml")
+        sources = [(ROOT / path).read_text() for path in paths]
+        self.isolation_contract(*sources)
+        mutations = ((0, "needs: context-smoke", "needs: []"),
+                     (0, "needs: admission", "needs: []"), (0, "needs: [admission, lanes]", "needs: admission"),
+                     (0, "      context_only: true", "      context_only: false"),
+                     (1, "      mode: context", "      mode: context\n    secrets: inherit"),
+                     (1, "needs: pre-build", "needs: []"), (1, "needs: build", "needs: []"),
+                     (1, "needs: [build, seal]", "needs: build"),
+                     (1, "      mode: native", "      mode: native\n    secrets: inherit"),
+                     (1, "      mode: build", "      mode: build\n    secrets: inherit"),
+                     (2, "jobs:\n", "jobs:\n  # secrets:\n"),
+                     (2, "if: inputs.mode == 'build'", "if: always()"),
+                     (2, "if: inputs.mode == 'native'", "if: always()"),
+                     (2, "if: inputs.mode != 'context'", "if: always()"),
+                     (2, 'os.environ[key] == os.environ["EXPECTED_" + key]', "True"),
+                     (3, "permission-metadata: read", "permission-metadata: write"),
+                     (3, "permission-pull-requests: read", "permission-pull-requests: write"),
+                     (3, "owner: Strukturpiloten", "owner: Other"),
+                     (3, "repositories: docker-lens", "repositories: boxferry,docker-lens"),
+                     (3, "if: always() && steps.token.outputs.token != ''", "if: success()"),
+                     (3, 'test "$REVOCATION_RESULT" = success', "true"),
+                     (1, '--checked-at "$CHECKED_AT"', ""))
+        for index, original, replacement in mutations:
+            changed = list(sources)
+            self.assertIn(original, changed[index])
+            changed[index] = changed[index].replace(original, replacement, 1)
+            with self.subTest(index=index, original=original), self.assertRaises(AssertionError):
+                self.isolation_contract(*changed)
+
+    def test_existing_native_renovate_manager_owns_new_workflows_and_reused_composite_pin(self):
+        # Renovate's github-actions defaults include workflow/action trees and
+        # action.yml files; overlapping path patterns still identify one manager.
+        patterns = (r"(^|/)(workflow-templates|\.(?:github|gitea|forgejo)/(?:workflows|actions))/.+\.ya?ml$",
+                    r"(^|/)action\.ya?ml$")
+        configuration = json.loads((ROOT / ".github/renovate.json").read_text())
+        self.assertTrue(configuration.get("github-actions", {}).get("enabled", True))
+        paths = (".github/workflows/reviewed-docker-consumer-validation.yml",
+                 ".github/workflows/reviewed-docker-consumer-lane.yml",
+                 ".github/workflows/reviewed-docker-consumer-worker.yml",
+                 ".github/actions/reviewed-docker-admission/action.yml")
+        def app_pin(text):
+            self.assertEqual(text.count("actions/create-github-app-token"), 1)
+            records = re.findall(r"(?m)^\s*uses: (actions/create-github-app-token)@([0-9a-f]{40}) # (v[0-9]+\.[0-9]+\.[0-9]+)$", text)
+            self.assertEqual(len(records), 1)
+            return records[0]
+
+        canonical = app_pin((ROOT / ".github/workflows/release-plz.yml").read_text())
+        extracted = []
+        for path in paths:
+            self.assertTrue(any(re.search(pattern, path) for pattern in patterns))
+            text = (ROOT / path).read_text()
+            if "actions/create-github-app-token" in text:
+                extracted.append(app_pin(text))
+            for manager in configuration["customManagers"]:
+                if any(re.search(pattern[1:-1], path) for pattern in manager.get("managerFilePatterns", [])):
+                    for expression in manager["matchStrings"]:
+                        python = re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", expression)
+                        self.assertFalse(any(match.groupdict().get("depName") == "actions/create-github-app-token"
+                                             for match in re.finditer(python, text)))
+        self.assertEqual(extracted, [canonical])
+        for suffix in (canonical[1][:39] + " # v1.2.3", canonical[1], "main # v1.2.3",
+                       canonical[1] + " # main", canonical[1] + " # v1.2"):
+            with self.subTest(suffix=suffix), self.assertRaises(AssertionError):
+                app_pin("uses: actions/create-github-app-token@" + suffix)
+        future = ("actions/create-github-app-token", "f" * 40, "v123.456.789")
+        self.assertEqual(app_pin("uses: " + future[0] + "@" + future[1] + " # " + future[2]), future)
+        action_rules = [rule for rule in configuration["packageRules"]
+                        if rule.get("matchManagers") == ["github-actions"]]
+        self.assertEqual(len([rule for rule in action_rules if rule.get("pinDigests")]), 1)
+        self.assertEqual(len([rule for rule in action_rules if rule.get("groupName") == "GitHub Actions"]), 1)
+
+    def transfer_fixture(self, lane="debian11-rootful", *, lens=None, consumer=None):
+        directory = self.root / ("bundle-" + lane)
+        directory.mkdir()
+        for name in ("volume-fixtures", "host-metadata", "inert-tests"):
+            (directory / name).write_bytes(("inert authored binary bytes " + name).encode())
+        metadata = {name: {"sha256": hashlib.sha256((directory / name).read_bytes()).hexdigest(),
+                           "size": (directory / name).stat().st_size}
+                    for name in ("volume-fixtures", "host-metadata", "inert-tests")}
+        inert = {"kind": "inert-only-no-runtime", "binary_sha256": metadata["inert-tests"]["sha256"],
+                 "tests": [{"name": name, "selected": 1, "passed": 1, "failed": 0, "ignored": 0}
+                           for name in self.authorization.INERT_TESTS]}
+        if consumer is not None:
+            for profile in ("volume-fixtures", "host-metadata"):
+                metadata[profile]["sha256"] = consumer["builds"][profile]["binary_sha256"]
+            metadata["inert-tests"]["sha256"] = consumer["inert"]["binary_sha256"]
+            inert = copy.deepcopy(consumer["inert"])
+        value = self.transfer.manifest(self.pair, self.context, lane, lens or self.lens, metadata, inert)
+        (directory / "manifest.json").write_bytes(self.evidence.encoded(value))
+        return directory, value
+
+    def test_closed_binary_bundle_independently_rejects_mutated_bytes_names_types_and_json(self):
+        directory, original = self.transfer_fixture()
+        def inspect():
+            return self.transfer.bundle(directory, pair=self.pair, context=self.context,
+                                        lane="debian11-rootful", lens=self.lens)
+        self.assertEqual(inspect(), original)
+        path = directory / "volume-fixtures"
+        raw = path.read_bytes()
+        for mutation in ("changed", "missing", "empty", "symlink", "hardlink", "directory", "fifo", "extra", "oversize"):
+            with self.subTest(mutation=mutation):
+                path.unlink()
+                if mutation == "changed": path.write_bytes(raw + b"changed")
+                elif mutation == "empty": path.write_bytes(b"")
+                elif mutation in ("symlink", "hardlink"):
+                    backing = self.root / "binary-backing"
+                    backing.write_bytes(raw)
+                    if mutation == "symlink": path.symlink_to(backing)
+                    else: os.link(backing, path)
+                elif mutation == "directory": path.mkdir()
+                elif mutation == "fifo": os.mkfifo(path)
+                elif mutation == "extra":
+                    path.write_bytes(raw)
+                    (directory / "private.log").write_bytes(b"must not transfer")
+                elif mutation == "oversize":
+                    with path.open("wb") as stream: stream.truncate(512 * 1024 * 1024 + 1)
+                with self.assertRaises((ValueError, OSError)): inspect()
+                if path.is_dir(): path.rmdir()
+                elif path.exists() or path.is_symlink(): path.unlink()
+                if (directory / "private.log").exists(): (directory / "private.log").unlink()
+                if (self.root / "binary-backing").exists(): (self.root / "binary-backing").unlink()
+                path.write_bytes(raw)
+        manifest_path = directory / "manifest.json"
+        for raw_json in (b'{"schema":1,"schema":1}', b"{}", self.evidence.encoded(original) + b" ",
+                         b"{" * (128 * 1024 + 1)):
+            manifest_path.write_bytes(raw_json)
+            with self.assertRaises((ValueError, OSError)): inspect()
+        manifest_path.write_bytes(self.evidence.encoded(original))
+        with patch.object(self.transfer, "MAX_TOTAL", 1), self.assertRaises(ValueError): inspect()
+
+    def test_export_transfers_only_three_verified_binaries_and_closed_manifest(self):
+        workspace = self.root / "build-runner"
+        workspace.mkdir()
+        args = types.SimpleNamespace(trusted_root=workspace / "trusted", box_root=workspace / "candidate",
+            lens_root=workspace / "lens-execution", execution_root=workspace / "execution", private=workspace / "private",
+            lane="debian11-rootful", bundle_root=workspace / "build-bundle")
+        for path in (args.trusted_root, args.box_root, args.lens_root): path.mkdir()
+        examples = {"volume-fixtures": "docker-volume-fixture-rehearsal", "host-metadata": "docker-host-metadata"}
+        sources = {profile: args.box_root / "target/debug/examples" / name for profile, name in examples.items()}
+        sources["inert-tests"] = args.box_root / "target/debug/deps/authored-inert-test"
+        for name, path in sources.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(("synthetic-" + name).encode())
+        inert = {"kind": "inert-only-no-runtime", "binary_sha256": hashlib.sha256(sources["inert-tests"].read_bytes()).hexdigest(),
+                 "tests": [{"name": name, "selected": 1, "passed": 1, "failed": 0, "ignored": 0}
+                           for name in self.authorization.INERT_TESTS]}
+        state = {"context": self.context, "inert": inert, "test_binary": str(sources["inert-tests"]),
+                 "builds": {profile: self.evidence.sanitized_build(self.pair, args.lens_root, profile,
+                             hashlib.sha256(sources[profile].read_bytes()).hexdigest()) for profile in examples}}
+        with patch.object(self.transfer, "WORKSPACE", workspace), \
+                patch.dict(os.environ, {"GITHUB_WORKSPACE": str(workspace)}, clear=True), \
+                patch.object(subprocess, "Popen", side_effect=AssertionError("export must not execute binaries")):
+            self.transfer.export(args, pair=self.pair, context=self.context, state=state)
+        self.assertEqual({path.name for path in args.bundle_root.iterdir()},
+                         {"manifest.json", "volume-fixtures", "host-metadata", "inert-tests"})
+        value = self.transfer.bundle(args.bundle_root, pair=self.pair, context=self.context,
+                                     lane=args.lane, lens=args.lens_root)
+        self.assertEqual(value["builds"], state["builds"])
+        self.assertNotIn("test_binary", value)
+        self.assertNotIn("private", value)
+        for name, source in sources.items(): self.assertEqual((args.bundle_root / name).read_bytes(), source.read_bytes())
+
+    def test_build_manifest_and_trusted_binding_reject_independent_context_recipe_and_freshness_mutations(self):
+        _, original = self.transfer_fixture()
+        paths = (("schema",), ("layout",), ("context", "run_id"), ("context", "run_attempt"),
+                 ("context", "workflow_sha"), ("context", "manifest_sha256"),
+                 ("pair", "boxferry", "repository_id"), ("pair", "boxferry", "lock_sha256"),
+                 ("pair", "docker_lens", "revision"), ("pair", "docker_lens", "source_sha256"),
+                 ("pair", "boxferry", "files", "scripts/lib/docker-core-artifact.py"),
+                 ("producer", "job"), ("producer", "lane"), ("producer", "mode"),
+                 ("recipes", "volume-fixtures"), ("builds", "host-metadata", "binary_sha256"),
+                 ("source_binding", "closure_sha256"), ("files", "volume-fixtures", "size"),
+                 ("files", "host-metadata", "sha256"), ("inert", "tests"), ("inert", "binary_sha256"))
+        for path in paths:
+            value = copy.deepcopy(original)
+            parent = value
+            for key in path[:-1]: parent = parent[key]
+            parent[path[-1]] = "foreign-CANARY"
+            with self.subTest(path=path), self.assertRaises((ValueError, TypeError)):
+                self.transfer.validate_manifest(value, pair=self.pair, context=self.context,
+                                                lane="debian11-rootful", lens=self.lens)
+        value = self.transfer.issue(self.transfer.draft(original, "123", "debian11-rootful", self.context),
+            pair=self.pair, context=self.context, lane="debian11-rootful", lens=self.lens, now=1000)
+        self.transfer.binding(value, pair=self.pair, context=self.context, lane="debian11-rootful",
+                              lens=self.lens, identifier="123", fresh=True, now=1001)
+        for now in (999, 1120, 2000):
+            with self.subTest(now=now), self.assertRaises(ValueError):
+                self.transfer.binding(value, pair=self.pair, context=self.context, lane="debian11-rootful",
+                                      lens=self.lens, identifier="123", fresh=True, now=now)
+        for field in ("artifact", "manifest_sha256", "issued_at", "expires_at", "kind", "schema"):
+            changed = copy.deepcopy(value)
+            changed[field] = {} if field == "artifact" else "CANARY"
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.transfer.binding(changed, pair=self.pair, context=self.context,
+                    lane="debian11-rootful", lens=self.lens, identifier="123")
+        with self.assertRaises(ValueError):
+            self.transfer.binding(value, pair=self.pair, context=self.context, lane="debian11-rootful",
+                                  lens=self.lens, identifier="124")
+        for invalid in ("", "0", "123,124", "123suffix", "-1", True):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError): self.transfer.artifact_id(invalid)
+
+    def test_fresh_import_reconstructs_only_fixed_private_receipts_without_executing_bundle(self):
+        workspace = self.root / "fresh-runner"
+        workspace.mkdir()
+        args = types.SimpleNamespace(trusted_root=workspace / "trusted", box_root=workspace / "candidate",
+            lens_root=workspace / "lens-execution", execution_root=workspace / "execution", private=workspace / "private",
+            lane="debian11-rootful", build_artifact_id="123")
+        for path in (args.trusted_root, args.box_root, args.lens_root): path.mkdir()
+        args.bundle_root, manifest = self.transfer_fixture(lens=args.lens_root)
+        value = self.transfer.issue(self.transfer.draft(manifest, "123", args.lane, self.context),
+            pair=self.pair, context=self.context, lane=args.lane, lens=args.lens_root, now=1000)
+        environment = {"GITHUB_WORKSPACE": str(workspace), "BUILD_BINDING_JSON": self.evidence.encoded(value).decode()}
+        with patch.object(self.transfer, "WORKSPACE", workspace), patch.dict(os.environ, environment, clear=True), \
+                patch.object(self.transfer.time, "time", return_value=1001), \
+                patch.object(subprocess, "Popen", side_effect=AssertionError("must never execute transferred bytes")):
+            self.transfer.restore(args, pair=self.pair, context=self.context, box_files=self.box_files)
+        state = self.authorization.document(args.private / "build-state.json")
+        self.assertEqual(state["builds"], manifest["builds"])
+        self.assertEqual(state["inert"], manifest["inert"])
+        self.assertEqual(set(path.name for path in args.private.iterdir()),
+                         {"build-state.json", "volume-fixtures-receipt.json", "host-metadata-receipt.json"})
+        for profile, example in (("volume-fixtures", "docker-volume-fixture-rehearsal"),
+                                  ("host-metadata", "docker-host-metadata")):
+            binary = args.box_root / "target/debug/examples" / example
+            self.assertEqual(binary.read_bytes(), (args.bundle_root / profile).read_bytes())
+            self.assertEqual(binary.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(self.authorization.document(args.private / (profile + "-receipt.json")),
+                self.evidence.build_receipt(self.pair, args.lens_root, profile, manifest["files"][profile]["sha256"]))
+        for name, raw in self.box_files.items(): self.assertEqual((args.execution_root / name).read_bytes(), raw)
+        with self.assertRaises(ValueError):
+            self.transfer.layout(args, {"GITHUB_WORKSPACE": "/not-the-reviewed-host-layout"})
+
+    def test_aggregate_matches_each_result_to_separately_trusted_current_attempt_binding(self):
+        results, bindings = self.root / "result-transfer", self.root / "trusted-bindings"
+        results.mkdir()
+        bindings.mkdir()
+        values = {}
+        for index, lane in enumerate(self.authorization.LANES):
+            consumer, _ = self.lane_fixture(lane)
+            _, manifest = self.transfer_fixture(lane, consumer=consumer)
+            value = self.transfer.issue(self.transfer.draft(manifest, str(index + 1), lane, self.context),
+                pair=self.pair, context=self.context, lane=lane, lens=self.lens, now=1000)
+            binding_root = bindings / self.transfer.artifact_name("binding", lane, self.context)
+            binding_root.mkdir()
+            values[lane] = binding_root / "binding.json"
+            values[lane].write_bytes(self.evidence.encoded(value))
+            result_root = results / self.evidence.artifact_name(lane, self.context)
+            result_root.mkdir()
+            (result_root / "consumer.json").write_bytes(self.evidence.encoded(consumer))
+        def validate():
+            self.transfer.validate_results(bindings, expected_context=self.context, pair=self.pair,
+                                           lens=self.lens, results=results)
+        validate()
+        first, second = self.authorization.LANES[:2]
+        raw = values[first].read_bytes()
+        for mutation in ("missing", "extra", "prior-attempt", "duplicate-artifact", "replaced-binary", "replaced-inert"):
+            value = json.loads(raw)
+            if mutation == "missing": values[first].unlink()
+            elif mutation == "extra": (bindings / "unselected").mkdir()
+            elif mutation == "prior-attempt":
+                value["manifest"]["context"]["run_attempt"] = 1
+                values[first].write_bytes(self.evidence.encoded(value))
+            elif mutation == "duplicate-artifact":
+                value["artifact"]["id"] = json.loads(values[second].read_bytes())["artifact"]["id"]
+                values[first].write_bytes(self.evidence.encoded(value))
+            else:
+                path = results / self.evidence.artifact_name(first, self.context) / "consumer.json"
+                consumer = json.loads(path.read_bytes())
+                if mutation == "replaced-binary": consumer["builds"]["volume-fixtures"]["binary_sha256"] = "e" * 64
+                else: consumer["inert"]["binary_sha256"] = "e" * 64
+                path.write_bytes(self.evidence.encoded(consumer))
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError): validate()
+            if mutation == "extra": (bindings / "unselected").rmdir()
+            values[first].write_bytes(raw)
+            consumer, _ = self.lane_fixture(first)
+            (results / self.evidence.artifact_name(first, self.context) / "consumer.json").write_bytes(self.evidence.encoded(consumer))
 
     def test_private_output_collector_caps_only_logs_not_compiler_artifact_file_sizes(self):
         # Tiny Python-only subprocess controls: no compiler, Rust test or runtime.

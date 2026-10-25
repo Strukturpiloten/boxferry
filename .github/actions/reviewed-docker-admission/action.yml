@@ -1,0 +1,80 @@
+---
+name: Reviewed Docker pair admission and immediate revocation
+description: Trusted-job-only explicit read credentials with a mandatory revocation barrier.
+inputs:
+  client-id:
+    description: Existing release-plz App client ID reference.
+    required: true
+  private-key:
+    description: Existing release-plz App private key reference; trusted jobs only.
+    required: true
+  admission-revision:
+    description: Independently pinned canonical DockerLens admission helper.
+    required: true
+  box-pr:
+    description: Authorized BoxFerry PR number.
+    required: true
+  box-sha:
+    description: Authorized BoxFerry head.
+    required: true
+  lens-pr:
+    description: Authorized DockerLens PR number.
+    required: true
+  lens-sha:
+    description: Authorized DockerLens head.
+    required: true
+outputs:
+  checked-at:
+    description: Last successful canonical admission time, before immediate revocation.
+    value: ${{ steps.admit.outputs.checked_at }}
+runs:
+  using: composite
+  steps:
+    - name: Create narrowly scoped DockerLens read token
+      id: token
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: Strukturpiloten
+        repositories: docker-lens
+        permission-metadata: read
+        permission-pull-requests: read
+    - name: Admit both exact heads and both real actors
+      id: admit
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        DOCKERLENS_ADMISSION_TOKEN: ${{ steps.token.outputs.token }}
+        ADMISSION_REVISION: ${{ inputs.admission-revision }}
+        BOX_PR: ${{ inputs.box-pr }}
+        BOX_SHA: ${{ inputs.box-sha }}
+        LENS_PR: ${{ inputs.lens-pr }}
+        LENS_SHA: ${{ inputs.lens-sha }}
+      run: |
+        set -euo pipefail
+        test "$(git -C trusted rev-parse HEAD)" = "$GITHUB_SHA"
+        python3 trusted/scripts/reviewed-docker-consumer-admission.py \
+          --trusted-root "$PWD/trusted" --admission-root "$PWD/admission" \
+          --admission-revision "$ADMISSION_REVISION" \
+          --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA"
+        echo "checked_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+    - name: Immediately revoke DockerLens token including failed or cancelled admission
+      id: revoke
+      if: always() && steps.token.outputs.token != ''
+      shell: bash
+      env:
+        DOCKERLENS_ADMISSION_TOKEN: ${{ steps.token.outputs.token }}
+      run: python3 trusted/scripts/revoke-reviewed-docker-admission-token.py
+    - name: Require admission and successful immediate revocation
+      if: always()
+      shell: bash
+      env:
+        TOKEN_RESULT: ${{ steps.token.outcome }}
+        ADMISSION_RESULT: ${{ steps.admit.outcome }}
+        REVOCATION_RESULT: ${{ steps.revoke.outcome }}
+      run: |
+        set -euo pipefail
+        test "$TOKEN_RESULT" = success
+        test "$ADMISSION_RESULT" = success
+        test "$REVOCATION_RESULT" = success

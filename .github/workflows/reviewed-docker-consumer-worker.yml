@@ -1,0 +1,196 @@
+---
+name: Reviewed Docker consumer candidate worker
+
+# No stored secrets or environment are accepted. The automatic read-only workflow
+# and artifact credentials still exist; candidate subprocesses do not inherit them.
+on:
+  workflow_call:
+    inputs:
+      mode:
+        required: true
+        type: string
+      lane:
+        required: true
+        type: string
+      box_pr:
+        required: true
+        type: string
+      box_sha:
+        required: true
+        type: string
+      lens_pr:
+        required: true
+        type: string
+      lens_sha:
+        required: true
+        type: string
+      artifact_id:
+        default: ""
+        type: string
+      binding:
+        default: ""
+        type: string
+    outputs:
+      artifact_id:
+        description: Immutable identity of this successful lane build artifact.
+        value: ${{ jobs.lanes.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+env:
+  BOX_PR: ${{ inputs.box_pr }}
+  BOX_SHA: ${{ inputs.box_sha }}
+  LENS_PR: ${{ inputs.lens_pr }}
+  LENS_SHA: ${{ inputs.lens_sha }}
+  LANE: ${{ inputs.lane }}
+  WORKER_MODE: ${{ inputs.mode }}
+  BUILD_ARTIFACT_ID: ${{ inputs.artifact_id }}
+  BUILD_BINDING_JSON: ${{ inputs.binding }}
+
+jobs:
+  lanes:
+    name: Isolated ${{ inputs.mode }} / ${{ inputs.lane }}
+    if: github.repository == 'Strukturpiloten/boxferry' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      artifact_id: ${{ steps.upload-build.outputs.artifact-id }}
+    steps:
+      - name: Check out trusted dispatcher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Require real nested caller context and fixed worker inputs before candidates
+        env:
+          EXPECTED_GITHUB_ACTOR: ${{ github.actor }}
+          EXPECTED_GITHUB_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          EXPECTED_GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          EXPECTED_GITHUB_RUN_ID: ${{ github.run_id }}
+          EXPECTED_GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_GITHUB_REF: ${{ github.ref }}
+          EXPECTED_GITHUB_EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+          EXPECTED_GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXPECTED_GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("reviewed_worker", "trusted/scripts/reviewed-docker-consumer-run.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          module.auth.require(module.auth.git(Path.cwd() / "trusted", "rev-parse", "HEAD") == os.environ["GITHUB_SHA"])
+          module.runtime_environment({**os.environ, "DOCKERLENS_OUTER_ENGINE": "docker",
+                                      "DOCKERLENS_NATIVE_CANDIDATE_SHA": os.environ["LENS_SHA"]}, require_docker=True)
+          for key in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR", "GITHUB_REPOSITORY_ID", "GITHUB_RUN_ID",
+                      "GITHUB_RUN_ATTEMPT", "GITHUB_REF", "GITHUB_EVENT_NAME", "GITHUB_WORKFLOW_REF",
+                      "GITHUB_WORKFLOW_SHA", "GITHUB_SHA"):
+              module.auth.require(bool(os.environ.get(key)) and os.environ[key] == os.environ["EXPECTED_" + key])
+          module.auth.require(os.environ["WORKER_MODE"] in ("context", "build", "native")
+                              and os.environ["LANE"] in module.auth.LANES
+                              and Path.cwd() == module.transfer.WORKSPACE)
+          if os.environ["WORKER_MODE"] in ("context", "build"):
+              module.auth.require(not os.environ["BUILD_ARTIFACT_ID"] and not os.environ["BUILD_BINDING_JSON"])
+          else:
+              module.transfer.artifact_id(os.environ["BUILD_ARTIFACT_ID"])
+              module.auth.require(bool(os.environ["BUILD_BINDING_JSON"]))
+          print("reviewed Docker consumer nested caller context verified; no candidate execution in this step")
+          PY
+      - name: Check out exact BoxFerry build source
+        if: inputs.mode != 'context'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/boxferry
+          ref: ${{ inputs.box_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Check out real clean exact Lens execution and build dependency
+        if: inputs.mode != 'context'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Strukturpiloten/docker-lens
+          ref: ${{ inputs.lens_sha }}
+          path: lens-execution
+          persist-credentials: false
+      - name: Check hosted Docker tooling without replacing the runtime
+        if: inputs.mode != 'context'
+        run: |
+          set -euo pipefail
+          # Presence is not runtime qualification; the canonical preflight owns it.
+          command -v docker > /dev/null
+          command -v jq > /dev/null
+      - name: Authorize complete copied closure and build exact bounded candidates
+        if: inputs.mode == 'build'
+        env:
+          DOCKERLENS_OUTER_ENGINE: docker
+          DOCKERLENS_NATIVE_CANDIDATE_SHA: ${{ inputs.lens_sha }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/reviewed-docker-consumer-run.py build \
+            --trusted-root "$PWD/trusted" --box-root "$PWD/candidate" --lens-root "$PWD/lens-execution" \
+            --execution-root "$PWD/execution" --private "$PWD/private" --bundle-root "$PWD/build-bundle" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA" \
+            --trusted-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --lane "$LANE"
+      - name: Upload only closed three-binary build handoff
+        if: inputs.mode == 'build'
+        id: upload-build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reviewed-docker-build-${{ inputs.lane }}-${{ inputs.box_sha }}-${{ inputs.lens_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build-bundle/manifest.json
+            build-bundle/volume-fixtures
+            build-bundle/host-metadata
+            build-bundle/inert-tests
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 1
+      - name: Download only sealed direct build artifact identity
+        if: inputs.mode == 'native'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.artifact_id }}
+          path: build-bundle
+          merge-multiple: false
+          digest-mismatch: error
+      - name: Run only six-fixture 23-volume profile under existing owned watchdog
+        if: inputs.mode == 'native'
+        env:
+          DOCKERLENS_OUTER_ENGINE: docker
+        run: |
+          set -euo pipefail
+          install -d -m 0700 staged
+          sudo env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME=/root PYTHONDONTWRITEBYTECODE=1 \
+            DOCKERLENS_OUTER_ENGINE=docker GITHUB_ACTIONS="$GITHUB_ACTIONS" \
+            RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" \
+            GITHUB_REF="$GITHUB_REF" GITHUB_EVENT_NAME="$GITHUB_EVENT_NAME" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_WORKFLOW_REF="$GITHUB_WORKFLOW_REF" \
+            GITHUB_JOB="$GITHUB_JOB" GITHUB_RUN_ID="$GITHUB_RUN_ID" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" BUILD_BINDING_JSON="$BUILD_BINDING_JSON" \
+            DOCKERLENS_NATIVE_CANDIDATE_SHA="$LENS_SHA" \
+            ImageOS="$ImageOS" ImageVersion="$ImageVersion" \
+            python3 "$PWD/trusted/scripts/reviewed-docker-consumer-run.py" run \
+            --trusted-root "$PWD/trusted" --box-root "$PWD/candidate" --lens-root "$PWD/lens-execution" \
+            --execution-root "$PWD/execution" --private "$PWD/private" --bundle-root "$PWD/build-bundle" \
+            --build-artifact-id "$BUILD_ARTIFACT_ID" \
+            --box-pr "$BOX_PR" --box-sha "$BOX_SHA" --lens-pr "$LENS_PR" --lens-sha "$LENS_SHA" \
+            --trusted-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --lane "$LANE" --output "$PWD/staged/$LANE"
+          sudo chown -- "$(id -u):$(id -g)" "staged/$LANE" \
+            "staged/$LANE/consumer.json" "staged/$LANE/volume-proof.json"
+      - name: Upload only trusted-validated sanitized volume and inert receipts
+        if: inputs.mode == 'native'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reviewed-docker-consumer-${{ inputs.lane }}-${{ inputs.box_sha }}-${{ inputs.lens_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            staged/${{ inputs.lane }}/consumer.json
+            staged/${{ inputs.lane }}/volume-proof.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 7
