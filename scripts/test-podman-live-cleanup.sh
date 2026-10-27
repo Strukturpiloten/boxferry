@@ -6,6 +6,7 @@ set -Eeuo pipefail
 
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 runner="${script_directory}/podman-live-conformance.sh"
+PYTHONDONTWRITEBYTECODE=1 python3 "${script_directory}/test-podman-live-image-setup.py"
 
 collections=(
   outer_containers

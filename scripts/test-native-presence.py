@@ -887,7 +887,12 @@ printf 'state=%s id=%s uncertain=%s\\n' "$state" "${{run_owned_host_image_id[{se
         workloads = self.function("create_workloads")
         self.assertLess(workloads.index("podman load --input"), workloads.index('podman tag "${BF_ARCHIVE_IMAGE_ID}" "${image}"'))
         self.assertLess(workloads.index('podman tag "${BF_ARCHIVE_IMAGE_ID}" "${image}"'), workloads.index('podman tag "${image}" "${portable_image}"'))
-        self.assertIn('podman image rm --no-prune -- "${BF_ARCHIVE_ALIAS}"', workloads)
+        untag = 'podman untag -- "${BF_ARCHIVE_IMAGE_ID}" "${BF_ARCHIVE_ALIAS}"'
+        self.assertLess(workloads.index('podman tag "${BF_ARCHIVE_IMAGE_ID}" "${image}"'), workloads.index(untag))
+        after_untag = workloads[workloads.index(untag):]
+        self.assertLess(after_untag.index('podman image exists "${BF_ARCHIVE_ALIAS}"'), after_untag.index('podman image inspect --format'))
+        self.assertLess(after_untag.index('podman image inspect --format'), after_untag.index('podman tag "${image}" "${portable_image}"'))
+        self.assertNotIn("podman image rm", workloads)
         apply_target = self.function("start_apply_target")
         self.assertLess(apply_target.index("podman load --input"), apply_target.index("restore_nested_archive_alias"))
         self.assertLess(apply_target.index("restore_nested_archive_alias"), apply_target.index("tag apply-target workload"))
