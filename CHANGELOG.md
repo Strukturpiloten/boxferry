@@ -5,6 +5,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/Strukturpiloten/boxferry/compare/v0.9.0...v0.10.0) - 2026-10-27
+
 ### Changed
 
 - Embedded Compose callers must mark every applied interpolation overlay with
@@ -22,7 +24,8 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 
 - Add an optional bounded Quadlet transport bundle and explicit byte-preserving extraction,
   retaining native filenames, references, conversion losses and privacy-safe member reports
-  ([#478](https://github.com/Strukturpiloten/boxferry/issues/478)).
+  through an additive `InvocationReport` envelope that preserves existing `ConversionReport`
+  construction ([#478](https://github.com/Strukturpiloten/boxferry/issues/478)).
 
 - Preserve inert application and direct-service Compose vendor metadata through the neutral model
   and original Quadlet vendor sections, retaining nested types, folded text, ownership and sensitivity
@@ -55,8 +58,7 @@ policy in [`docs/api-stability.md`](docs/api-stability.md).
 - Extend the default Quadlet target range through 6.1.2, matching QuadletLens evidence while
   retaining the separate 6.1.0 Podman deployment target ([#335](https://github.com/Strukturpiloten/boxferry/issues/335)).
 
-- Consume ComposeLens 0.3.4, PodmanLens 0.2.5, and QuadletLens 0.2.4; preserve generated
-  Compose strings containing YAML separation characters and service/environment associations in
+- Preserve generated Compose strings containing YAML separation characters and service/environment associations in
   application definitions such as Appwrite. Refresh active upstream Podman test lanes to 5.8.7 and
   6.1.2 in both root modes, while retaining historical captures and the separate
   exact Podman rendering boundary ([#340](https://github.com/Strukturpiloten/boxferry/issues/340)).
