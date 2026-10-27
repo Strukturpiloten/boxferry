@@ -2985,66 +2985,161 @@ supabase_protected_service_alias_inventory() {
   local mode=$1 source=$2 prefix=$3
   local specification='{
   "cli": {
-    "auth": [],
-    "db": [],
-    "functions": [],
-    "imgproxy": [],
-    "kong": [],
-    "meta": [],
-    "realtime": [
-      "realtime-dev.supabase-realtime",
-      "realtime"
-    ],
-    "rest": [],
-    "storage": [],
-    "studio": [],
-    "supavisor": [],
-    "boundary-peer": []
+    "auth": {
+      "network": "backend",
+      "aliases": [
+        "auth"
+      ]
+    },
+    "db": {
+      "network": "backend",
+      "aliases": [
+        "db"
+      ]
+    },
+    "functions": {
+      "network": "backend",
+      "aliases": [
+        "functions"
+      ]
+    },
+    "imgproxy": {
+      "network": "backend",
+      "aliases": [
+        "imgproxy"
+      ]
+    },
+    "kong": {
+      "network": "backend",
+      "aliases": []
+    },
+    "meta": {
+      "network": "backend",
+      "aliases": [
+        "meta"
+      ]
+    },
+    "realtime": {
+      "network": "backend",
+      "aliases": [
+        "realtime-dev.supabase-realtime",
+        "realtime"
+      ]
+    },
+    "rest": {
+      "network": "backend",
+      "aliases": [
+        "rest"
+      ]
+    },
+    "storage": {
+      "network": "backend",
+      "aliases": [
+        "storage"
+      ]
+    },
+    "studio": {
+      "network": "backend",
+      "aliases": [
+        "studio"
+      ]
+    },
+    "supavisor": {
+      "network": "backend",
+      "aliases": [
+        "supavisor"
+      ]
+    },
+    "boundary-peer": {
+      "network": "edge",
+      "aliases": [
+        "boundary-peer"
+      ]
+    }
   },
   "compose": {
-    "auth": [
-      "@service",
-      "auth"
-    ],
-    "db": [
-      "@service",
-      "db"
-    ],
-    "functions": [
-      "@service",
-      "functions"
-    ],
-    "imgproxy": [
-      "@service",
-      "imgproxy"
-    ],
-    "kong": [],
-    "meta": [
-      "@service",
-      "meta"
-    ],
-    "realtime": [
-      "@service",
-      "realtime",
-      "realtime-dev.supabase-realtime"
-    ],
-    "rest": [
-      "@service",
-      "rest"
-    ],
-    "storage": [
-      "@service",
-      "storage"
-    ],
-    "studio": [
-      "@service",
-      "studio"
-    ],
-    "supavisor": [
-      "@service",
-      "supavisor"
-    ],
-    "boundary-peer": []
+    "auth": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "auth"
+      ]
+    },
+    "db": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "db"
+      ]
+    },
+    "functions": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "functions"
+      ]
+    },
+    "imgproxy": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "imgproxy"
+      ]
+    },
+    "kong": {
+      "network": "backend",
+      "aliases": []
+    },
+    "meta": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "meta"
+      ]
+    },
+    "realtime": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "realtime",
+        "realtime-dev.supabase-realtime"
+      ]
+    },
+    "rest": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "rest"
+      ]
+    },
+    "storage": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "storage"
+      ]
+    },
+    "studio": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "studio"
+      ]
+    },
+    "supavisor": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "supavisor"
+      ]
+    },
+    "boundary-peer": {
+      "network": "edge",
+      "aliases": [
+        "@service",
+        "boundary-peer"
+      ]
+    }
   }
 }'
   python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/protected-service-alias-contract.py" \

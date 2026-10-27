@@ -1620,43 +1620,85 @@ observability_protected_service_alias_inventory() {
   local mode=$1 source=$2 prefix=$3
   local specification='{
   "cli": {
-    "alloy": [],
-    "log-producer": [],
-    "loki": [
-      "loki"
-    ],
-    "metrics-producer": [
-      "metrics-producer"
-    ],
-    "prometheus": [
-      "prometheus"
-    ],
-    "grafana": [],
-    "boundary-peer": []
+    "alloy": {
+      "network": "backend",
+      "aliases": []
+    },
+    "log-producer": {
+      "network": "backend",
+      "aliases": []
+    },
+    "loki": {
+      "network": "backend",
+      "aliases": [
+        "loki"
+      ]
+    },
+    "metrics-producer": {
+      "network": "backend",
+      "aliases": [
+        "metrics-producer"
+      ]
+    },
+    "prometheus": {
+      "network": "backend",
+      "aliases": [
+        "prometheus"
+      ]
+    },
+    "grafana": {
+      "network": "backend",
+      "aliases": []
+    },
+    "boundary-peer": {
+      "network": "edge",
+      "aliases": []
+    }
   },
   "compose": {
-    "alloy": [
-      "@service",
-      "alloy"
-    ],
-    "log-producer": [
-      "@service",
-      "log-producer"
-    ],
-    "loki": [
-      "@service",
-      "loki"
-    ],
-    "metrics-producer": [
-      "@service",
-      "metrics-producer"
-    ],
-    "prometheus": [
-      "@service",
-      "prometheus"
-    ],
-    "grafana": [],
-    "boundary-peer": []
+    "alloy": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "alloy"
+      ]
+    },
+    "log-producer": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "log-producer"
+      ]
+    },
+    "loki": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "loki"
+      ]
+    },
+    "metrics-producer": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "metrics-producer"
+      ]
+    },
+    "prometheus": {
+      "network": "backend",
+      "aliases": [
+        "@service",
+        "prometheus"
+      ]
+    },
+    "grafana": {
+      "network": "backend",
+      "aliases": []
+    },
+    "boundary-peer": {
+      "network": "edge",
+      "aliases": []
+    }
   }
 }'
   python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/protected-service-alias-contract.py" \

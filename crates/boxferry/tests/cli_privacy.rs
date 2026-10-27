@@ -951,6 +951,75 @@ fn invalid_document_cannot_echo_a_neighboring_environment_value() -> Result<(), 
 }
 
 #[test]
+fn quadlet_cli_report_satisfies_application_protected_alias_contract() -> Result<(), Box<dyn Error>> {
+    let scratch = Scratch::new()?;
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = scratch.0.join("quadlet-source");
+    fs::create_dir(&source)?;
+    fs::write(
+        source.join("private.container"),
+        "[Container]\nImage=example.invalid/private:1\nNetwork=backend.network\nNetworkAlias=protected-alias-canary-never-print\nNetworkAlias=unexpected-private-value\n",
+    )?;
+    fs::write(source.join("backend.network"), "[Network]\n")?;
+    // Authored independently of the CLI report: two protected slots and no other losses.
+    let inventory = serde_json::json!({
+        "subjects": [
+            "services.private.networks.backend.aliases[0]",
+            "services.private.networks.backend.aliases[1]"
+        ],
+        "source_sha256": "unused-by-report-validator"
+    });
+    let baseline = serde_json::json!({
+        "diagnostics": [],
+        "fidelity": { "approximate": 0, "unsupported": 0, "invalid": 0, "other": 0 }
+    });
+    for policy in ["exact", "approximate", "partial"] {
+        let destination = scratch.0.join(format!("application-refusal-{policy}"));
+        let report_path = scratch.0.join(format!("application-refusal-{policy}.json"));
+        let output = Command::new(env!("CARGO_BIN_EXE_boxferry"))
+            .args([
+                "convert",
+                "quadlet",
+                "compose",
+                "--application-name",
+                "privacy",
+                "--input-directory",
+            ])
+            .arg(&source)
+            .args(["--loss-policy", policy, "--console-format", "json", "--report-file"])
+            .arg(&report_path)
+            .arg("--output-directory")
+            .arg(&destination)
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(!destination.exists());
+        let report = fs::read(&report_path)?;
+        for bytes in [&output.stdout, &output.stderr, &report] {
+            let text = String::from_utf8_lossy(bytes);
+            assert!(!text.contains("protected-alias-canary-never-print"));
+            assert!(!text.contains("unexpected-private-value"));
+        }
+        // Feed physical CLI output to the same exact validator used by both application runners.
+        // A synthetic diagnostic cannot hide changes to the real catalogue remediation here.
+        let validation = Command::new("python3")
+            .arg(repository.join("scripts/lib/protected-service-alias-contract.py"))
+            .arg("report-refusal")
+            .arg(&report_path)
+            .arg(&destination)
+            .arg(inventory.to_string())
+            .arg(baseline.to_string())
+            .output()?;
+        assert!(
+            validation.status.success(),
+            "{}",
+            String::from_utf8_lossy(&validation.stderr)
+        );
+        assert!(validation.stdout.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn protected_service_alias_refusal_has_actionable_help_even_under_partial() -> Result<(), Box<dyn Error>> {
     let scratch = Scratch::new()?;
     let source = scratch.0.join("protected-alias.yaml");

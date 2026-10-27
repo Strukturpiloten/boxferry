@@ -1323,7 +1323,7 @@ subjects = ["services.fixture.networks.backend.aliases[0]", "services.fixture.ne
 inventory = {"subjects": subjects, "source_sha256": "a" * 64}
 expected = {"diagnostics": [], "fidelity": {"approximate": 0, "unsupported": 0, "invalid": 0, "other": 0}}
 reason = "protected network aliases cannot retain sensitivity in fresh Compose text; keep protected alias configuration outside this generated document"
-help_text = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
+help_text = "Review the named subject. Protected service network aliases block every loss policy; keep private alias configuration outside the generated document. Protected vendor metadata also blocks every loss policy because fresh Compose text cannot retain sensitivity. Otherwise, use --loss-policy partial only when a candidate exists and omitted intent is acceptable."
 report = {"schema_version": 1, "status": "blocked", "exit_category": "policy-blocked",
           "source_type": "quadlet", "target_type": "compose", "fix_first": {"code": "BFC0007", "help": help_text},
           "output_artifacts": [], "fidelity": {"exact": 0, "approximate": 0, "unsupported": 2, "invalid": 0, "other": 0},

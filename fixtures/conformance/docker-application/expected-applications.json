@@ -847,11 +847,11 @@
         },
         {
           "path": "scripts/lib/observability-application.sh",
-          "sha256": "e017e4dca78b56fb9076f21dbb428a4475c5c0a838a86a0db70b5f37ab0fdc60"
+          "sha256": "f268ef8350851ac84d2d160935143e600e50b3e7f56d7355f524abe4b3b9fedd"
         },
         {
           "path": "scripts/lib/protected-service-alias-contract.py",
-          "sha256": "d57babe20e78fb42c9a5d47dae76fb15bf45a970ac928dd9c9d28857b0eeff13"
+          "sha256": "764fc3aa41a55f9d7241ec8347c1257d83160f624e3876bb8034e3546e51c0d0"
         },
         {
           "path": "scripts/lib/observability-application-probes.sh",
@@ -1197,11 +1197,11 @@
         },
         {
           "path": "scripts/lib/supabase-application.sh",
-          "sha256": "ec466e84919bf0a8c1da538ea5d3cdd1c257bf9d33ad06438683f5ac0cb410d8"
+          "sha256": "21e3de059881665b148c75dbb6ffebf35e2e4523aa4286734f081a8793fe5be6"
         },
         {
           "path": "scripts/lib/protected-service-alias-contract.py",
-          "sha256": "d57babe20e78fb42c9a5d47dae76fb15bf45a970ac928dd9c9d28857b0eeff13"
+          "sha256": "764fc3aa41a55f9d7241ec8347c1257d83160f624e3876bb8034e3546e51c0d0"
         },
         {
           "path": "fixtures/conformance/supabase-application/application.tsv",
